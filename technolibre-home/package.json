@@ -1,6 +1,6 @@
 {
-  "name": "com.technolibre.technolibrehome",
-  "displayName": "TechnolibreHome",
+  "name": "ca.technolibre.home",
+  "displayName": "TechnoLibreName",
   "version": "1.0.0",
   "description": "A sample Apache Cordova application that responds to the deviceready event.",
   "main": "index.js",
@@ -13,11 +13,15 @@
   "author": "Apache Cordova Team",
   "license": "Apache-2.0",
   "devDependencies": {
-    "cordova-android": "^13.0.0"
+    "cordova-android": "^13.0.0",
+    "cordova-plugin-inappbrowser": "^6.0.0"
   },
   "cordova": {
     "platforms": [
       "android"
-    ]
+    ],
+    "plugins": {
+      "cordova-plugin-inappbrowser": {}
+    }
   }
 }

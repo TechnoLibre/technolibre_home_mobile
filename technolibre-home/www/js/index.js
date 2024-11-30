@@ -27,3 +27,20 @@ function onDeviceReady() {
     console.log('Running cordova-' + cordova.platformId + '@' + cordova.version);
     document.getElementById('deviceready').classList.add('ready');
 }
+
+document.addEventListener('deviceready', onDeviceReady, false);
+
+function onDeviceReady() {
+  // Lire l'URL de la page web depuis le fichier config.json
+  fetch('config.json')
+    .then(response => response.json())
+    .then(config => {
+      const webpageUrl = config.webpageUrl;
+
+      // Ajouter un écouteur d'événement à un bouton (ou tout autre élément)
+      document.getElementById('monBouton').addEventListener('click', function() {
+        // Rediriger vers la page web
+        window.open(webpageUrl, '_system');
+      });
+    });
+}
