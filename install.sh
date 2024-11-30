@@ -1,2 +1,2 @@
-#!/bin/env sh
+#!/bin/env bash
 npm install -g cordova
