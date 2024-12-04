@@ -20,8 +20,7 @@ Show list of platform, choose the command :
 
 # Android
 
-Read this for installation Android-studio
-https://developer.android.com/studio/install?hl=fr
+[Read this for installation Android-studio](https://developer.android.com/studio/install)
 
 For Android new project
 
@@ -34,4 +33,11 @@ Move the app-debug.apk file into the ADV in Android Studio.
 
 ```bash
 nautilus $(cat "project-path.txt")/platforms/android/app/build/outputs/apk/debug/
+```
+
+## Dev
+
+Open the IDE for Android
+```bash
+./open_dev.sh
 ```
