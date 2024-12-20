@@ -42,3 +42,4 @@ cordova platform add $PLATFORM
 # Plugin
 cordova plugin add cordova-plugin-inappbrowser
 cordova plugin add cordova-plugin-globalization
+cordova plugin add cordova-plugin-contacts
