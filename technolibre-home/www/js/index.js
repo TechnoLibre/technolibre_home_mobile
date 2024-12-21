@@ -42,5 +42,58 @@ function onDeviceReady() {
         // Rediriger vers la page web
         window.open(webpageUrl, '_system');
       });
+
+      // Ajout de contact lors du clic du bouton associé
+      document.getElementById('btn-ajout-contact').addEventListener('click', function () {
+        // Demander à l'utilisateur s'il souhaite réellement ajouter le contact.
+        // Si l'utilisateur confirme, ajouter le contact à la liste.
+        navigator.notification.confirm(
+          "Ajouter le contact?",
+          onAjouterContactConfirm,
+          "Confirmation requise",
+          ["Ok", "Annuler"]
+        );
+      });
     });
+}
+
+function onAjouterContactConfirm(buttonIndex) {
+  var indexBtnOk = 1;
+  if (buttonIndex !== indexBtnOk) {
+    return;
+  }
+  try {
+    // Ajouter le contact
+    console.log("Creating contact variable");
+    var contact = navigator.contacts.create({
+      displayName: "RobotLibre",
+      phoneNumbers: [
+        new ContactField(
+          "Compagnie",
+          "514-555-5555",
+          true
+        )
+      ],
+      emails: [
+        new ContactField(
+          "Compagnie",
+          "robotlibre@technolibre.ca",
+          true
+        )
+      ],
+      photos: [
+        new ContactField(
+          "Photo de profil",
+          "https://technolibre.ca/web/image/website/1/favicon/",
+          true
+        )
+      ]
+    });
+    console.log("Saving contact");
+    contact.save();
+    console.log("After contact save")
+  } catch (error) {
+    console.error(error);
+  }
+  
 }
