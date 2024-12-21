@@ -25,11 +25,13 @@ project_name_package_content=$(cat $PROJET_NAME_PACKAGE) || {
   exit 1
 }
 
-echo cordova create "$project_path_content" "$project_name_package_content" "$project_name_content"
-cordova create "$project_path_content" "$project_name_package_content" "$project_name_content" || {
-  echo "Error: cordova create $project_path_content $project_name_package_content $project_name_content"
-  exit 1
-}
+if [ ! -d "$project_path_content" ]; then
+  echo cordova create "$project_path_content" "$project_name_package_content" "$project_name_content"
+  cordova create "$project_path_content" "$project_name_package_content" "$project_name_content" || {
+    echo "Error: cordova create $project_path_content $project_name_package_content $project_name_content"
+    exit 1
+  }
+fi
 
 cd "$project_path_content" || {
   echo "Error: Could not change to directory $directory"
@@ -43,3 +45,4 @@ cordova platform add $PLATFORM
 cordova plugin add cordova-plugin-inappbrowser
 cordova plugin add cordova-plugin-globalization
 cordova plugin add cordova-plugin-contacts
+cordova plugin add cordova-plugin-dialogs
