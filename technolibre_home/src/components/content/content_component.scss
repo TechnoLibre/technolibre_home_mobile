@@ -1,0 +1,8 @@
+#content-component {
+	overflow-y: auto;
+}
+
+#content-component #content {
+	grid-area: router;
+	height: 100%;
+}

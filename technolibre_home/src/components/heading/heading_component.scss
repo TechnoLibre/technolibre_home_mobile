@@ -1,0 +1,11 @@
+.heading-component {
+	align-items: center;
+	display: flex;
+	justify-content: center;
+}
+
+.heading-component h1.page-heading {
+	flex-grow: 1;
+	max-width: 48rem;
+	padding: 1rem 1.25rem;
+}

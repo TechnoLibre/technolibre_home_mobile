@@ -1,0 +1,24 @@
+#options-component #options-list {
+	list-style: none;
+	margin: 0 auto 1rem;
+	max-width: 48rem;
+	padding: 0 1em;
+	width: 100%;
+}
+
+#options-component .options-list__item {
+	background-color: var(--options__item__background-color);
+	border-radius: 0.25em;
+	color: var(--options__item__color);
+	font-weight: 700;
+	text-decoration: none;
+	& a {
+		color: var(--options__item__color);
+		display: block;
+		padding: 1em;
+		text-decoration: none;
+	}
+	& + .options-list__item {
+		margin-top: 0.5em;
+	}
+}

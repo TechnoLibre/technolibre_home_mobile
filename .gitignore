@@ -169,3 +169,14 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# System files
+.DS_Store
+Thumbs.db
+
+# VS Code files
+.vscode/
+
+# Formatting config files
+technolibre_home/src/.editorconfig
+technolibre_home/src/.prettierrc

@@ -1,0 +1,3 @@
+@use "./../application_mixins.scss" as mixins;
+
+@include mixins.appFormComponent(edit);

@@ -1,0 +1,19 @@
+{
+  "appId": "ca.technolibre.home",
+  "appName": "TechnolibreHome",
+  "webDir": "dist",
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": false
+    }
+  },
+  "android": {
+    "buildOptions": {
+      "releaseType": "APK",
+      "keystorePath": "./../../debug.keystore",
+      "keystorePassword": "android",
+      "keystoreAlias": "android",
+      "keystoreAliasPassword": "android"
+    }
+  }
+}

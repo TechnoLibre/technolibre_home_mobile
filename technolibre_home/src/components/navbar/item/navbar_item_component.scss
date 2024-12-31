@@ -1,0 +1,46 @@
+$numberOfNavItems: 3;
+
+.nav-list__item {
+	-webkit-tap-highlight-color: transparent;
+	align-items: center;
+	background-color: var(--nav-background-color);
+	border-radius: 0.5rem;
+	color: var(--nav-text-color);
+	cursor: pointer;
+	display: flex;
+	font-weight: 400;
+	justify-content: center;
+	list-style: none;
+	padding: 1rem 1.25rem;
+	user-select: none;
+	transition: background-color 200ms ease-in-out, text 200ms ease-in-out, font-weight 200ms ease-in-out;
+	width: calc(100% / $numberOfNavItems);
+	&.active,
+	&.active-subpath {
+		color: var(--text);
+		&:active {
+			color: var(--nav-text-color-selected-active);
+		}
+	}
+	&.active {
+		background-color: #000;
+	}
+	&.active-subpath {
+		background-color: #0a0a0a;
+	}
+	&:not(.active, .active-subpath):active {
+		color: var(--nav-text-color-deselected-active);
+	}
+	&.held {
+		font-weight: 700;
+	}
+	&__text {
+		pointer-events: none;
+	}
+}
+
+@media only screen and (max-width: 27rem) {
+	.nav-list__item {
+		font-size: min(4vw, 1rem);
+	}
+}

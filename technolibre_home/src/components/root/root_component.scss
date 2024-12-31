@@ -1,0 +1,7 @@
+main#main {
+	display: grid;
+	grid-template-areas: "router" "nav";
+	grid-template-rows: 1fr auto;
+	height: 100%;
+	width: 100%;
+}
