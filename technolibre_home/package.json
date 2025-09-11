@@ -29,7 +29,8 @@
     "@capgo/inappbrowser": "^7.16.2",
     "@odoo/owl": "^2.8.0",
     "capacitor-secure-storage-plugin": "^0.11.0",
-    "change-case": "^5.4.4"
+    "change-case": "^5.4.4",
+    "mkdirp": "^3.0.1"
   },
   "devDependencies": {
     "@capacitor/cli": "latest",
