@@ -1,3 +1,74 @@
-#notes-item-component {
-	//
+#notes-component .notes-item {
+	align-items: center;
+	border: 2px solid var(--section-border-color);
+	border-radius: 0.5em;
+	background-color: #151515;
+	cursor: pointer;
+	display: flex;
+	justify-content: flex-start;
+	overflow: hidden;
+	transition: background-color 150ms ease-in-out;
+	&:hover {
+		background-color: #1a1a1a;
+	}
+	& + .notes-item {
+		margin-top: 0.75rem;
+	}
+	&__data {
+		align-items: center;
+		display: flex;
+		flex-grow: 1;
+		justify-content: space-between;
+		margin: 0.75rem 0.75rem 0.75rem 1rem;
+		min-width: 0;
+	}
+	&__title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	&__date {
+		margin: 0.75rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		&.no-date {
+			color: var(--text-greyed-out);
+		}
+	}
+	&__actions {
+		display: flex;
+		gap: 0.5rem;
+		margin: 0.75rem 0.75rem 0.75rem 0;
+	}
+	&__action {
+		border: none;
+		border-radius: 0.25rem;
+		color: var(--text);
+		cursor: pointer;
+		outline: none;
+		padding: 0.75rem;
+		transition: background-color 150ms ease-in-out;
+		& img {
+			display: block;
+			height: 1.75em;
+			margin: 0 auto;
+			pointer-events: none;
+			width: 1.75em;
+		}
+	}
+	&__delete {
+		background-color: var(--btn-red-color);
+		grid-area: delete;
+		&:hover {
+			background-color: var(--btn-red-hover-color);
+		}
+	}
+	&__edit {
+		background-color: var(--btn-blue-color);
+		grid-area: edit;
+		&:hover {
+			background-color: var(--btn-blue-hover-color);
+		}
+	}
 }

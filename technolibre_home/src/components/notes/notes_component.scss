@@ -9,3 +9,28 @@
 	max-width: 48rem;
 	padding: 0 1rem 1rem;
 }
+
+#notes-component #notes-list,
+#notes-component #notes-empty {
+	border-radius: 0.25em;
+	margin: 0.75em 0 0 0;
+}
+
+#notes-component #notes-list {
+	list-style: none;
+	padding: 0;
+}
+
+#notes-component #notes-empty {
+	align-items: center;
+	background-color: #222;
+	display: flex;
+	justify-content: center;
+	padding: 1em;
+	text-align: center;
+	& p {
+		line-height: 1.35em;
+		margin: 0;
+		text-wrap-style: balance;
+	}
+}
