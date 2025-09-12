@@ -3,6 +3,7 @@ import { ApplicationsComponent } from "../components/applications/applications_c
 import { OptionsComponent } from "../components/options/options_component";
 import { ApplicationsAddComponent } from "../components/applications/add/applications_add_component";
 import { ApplicationsEditComponent } from "../components/applications/edit/applications_edit_component";
+import { NotesComponent } from "../components/notes/notes_component";
 
 export interface Route {
 	pathname: string;
@@ -14,6 +15,7 @@ export const routes: Route[] = [
 	{ pathname: "/applications/edit/:url/:username", component: ApplicationsEditComponent },
 	{ pathname: "/applications/add", component: ApplicationsAddComponent },
 	{ pathname: "/applications", component: ApplicationsComponent },
+	{ pathname: "/notes", component: NotesComponent },
 	{ pathname: "/options", component: OptionsComponent },
 	{ pathname: "*", component: HomeComponent }
 ];

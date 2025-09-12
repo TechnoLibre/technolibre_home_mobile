@@ -1,8 +1,6 @@
 import { Component, useState, xml } from "@odoo/owl";
 
-import { ToolBarType } from "@capgo/inappbrowser";
-
-import { WebViewUtils } from "../../utils/webViewUtils";
+import { Constants } from "../../js/constants";
 
 import CompanyLogo from "../../assets/company_logo.png";
 
@@ -20,7 +18,7 @@ export class HomeComponent extends Component {
         <img id="logo" src="${CompanyLogo}" alt="Logo TechnoLibre" />
         <h3 id="title" t-esc="state.title" />
         <section id="buttons">
-          <button id="openWebsite" class="buttons-primary" t-on-click="onOpenWebsiteClick">Connexion</button>
+          <button id="notes" class="buttons-primary" t-on-click.stop.prevent="onNotesClick">Notes</button>
         </section>
       </div>
     </div>
@@ -51,5 +49,8 @@ export class HomeComponent extends Component {
 		// 	return "https://technolibre.ca/web/login";
 		// }
 		// return "https://technolibre.ca/web/login";
+	}
+	onNotesClick() {
+		this.env.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: "/notes" });
 	}
 }
