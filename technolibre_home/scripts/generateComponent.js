@@ -34,9 +34,9 @@ async function addCSSFileToImports(componentName, componentPath, defaultComponen
 	let lineToAppend;
 
 	if (componentPath === defaultComponentPath) {
-		lineToAppend = `@use \"../components/${snakeCase(componentName)}/${snakeCase(componentName)}_component.scss\";`;
+		lineToAppend = `@use \"../components/${snakeCase(componentName)}/${snakeCase(componentName)}_component.scss\";\n`;
 	} else {
-		lineToAppend = `@use \"../components/${componentPath}/${snakeCase(componentName)}_component.scss\";`;
+		lineToAppend = `@use \"../components/${componentPath}/${snakeCase(componentName)}_component.scss\";\n`;
 	}
 
 	return promises.appendFile(fileName, lineToAppend);
