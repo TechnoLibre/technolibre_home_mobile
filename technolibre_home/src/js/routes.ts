@@ -16,6 +16,8 @@ export const routes: Route[] = [
 	{ pathname: "/applications/add", component: ApplicationsAddComponent },
 	{ pathname: "/applications", component: ApplicationsComponent },
 	{ pathname: "/notes", component: NotesComponent },
+	{ pathname: "/notes/edit/:id", component: NotesComponent },
+	{ pathname: "/note/:id", component: NotesComponent },
 	{ pathname: "/options", component: OptionsComponent },
 	{ pathname: "*", component: HomeComponent }
 ];

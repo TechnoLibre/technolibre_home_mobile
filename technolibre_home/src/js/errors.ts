@@ -63,6 +63,8 @@ export class ErrorMessages {
 
 	public static APP_DELETE: string = "Échec de la suppression de l'application du stockage local.";
 
+	public static NOTE_DELETE: string = "Échec de la suppression de la note du stockage local.";
+
 	public static APP_SAVE: string = "Échec de la sauvegarde de l'application dans le stockage local.";
 
 	public static EMPTY_FIELDS: string = "Tous les champs de texte doivent être remplis.";

@@ -3,6 +3,10 @@ import { Component, useState, xml } from "@odoo/owl";
 import { HeadingComponent } from "../heading/heading_component";
 import { NotesItemComponent } from "./item/notes_item_component";
 import { Note } from "./types";
+import { BiometryUtils } from "../../utils/biometryUtils";
+import { Dialog } from "@capacitor/dialog";
+import { ErrorMessages } from "../../js/errors";
+import { Constants } from "../../js/constants";
 
 export class NotesComponent extends Component {
 	static template = xml`
@@ -41,14 +45,47 @@ export class NotesComponent extends Component {
 	}
 
 	openNote(noteId: string) {
-		console.log(`TODO: Open note ${noteId}.`);
+		const encodedId = encodeURIComponent(noteId);
+		this.env.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
+			url: `/note/${encodedId}`
+		});
 	}
 
 	editNote(noteId: string) {
-		console.log(`TODO: Edit note ${noteId}.`);
+		const encodedId = encodeURIComponent(noteId);
+		this.env.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
+			url: `/notes/edit/${encodedId}`
+		});
 	}
 
-	deleteNote(noteId: string) {
-		console.log(`TODO: Delete note ${noteId}.`);
+	async deleteNote(noteId: string) {
+		const deleteConfirmed = confirm(`Voulez-vous vraiment supprimer cette note?`);
+
+		if (!deleteConfirmed) {
+			return;
+		}
+
+		const isBiometricAuthSuccessful: boolean = await BiometryUtils.authenticateIfAvailable();
+
+		if (!isBiometricAuthSuccessful) {
+			Dialog.alert({ message: ErrorMessages.BIOMETRIC_AUTH });
+			return;
+		}
+
+		let deleteSucceeded: boolean = false;
+
+		try {
+			deleteSucceeded = await this.env.noteService.delete(noteId);
+		} catch (error: unknown) {
+			Dialog.alert({ message: ErrorMessages.NOTE_DELETE });
+			return;
+		}
+
+		if (!deleteSucceeded) {
+			Dialog.alert({ message: ErrorMessages.NOTE_DELETE });
+			return;
+		}
+
+		this.state.notes = await this.env.noteService.getNotes();
 	}
 }
