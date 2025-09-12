@@ -83,6 +83,45 @@ Here are the commands
 
 `npm run bsr android`: Builds and syncs the app, then runs it on an android device.
 
+## GenComp Script
+
+> [!IMPORTANT]  
+> The GenComp script must be executed from the `technolibre_home` folder.
+
+This section provices details on the GenComp script.
+
+GenComp means _Generate Component_. The Script allows you to generate a boilerplate Owl component so you can start programming component features faster.
+
+### Commands
+
+`npm run gencomp <name>`: Generates the component in the `components` folder  
+`npm run gencomp <name> <path>`: Generates the component in the provided folder  
+`npm run gencomp <name> <path> <add-css>`: Generates the component in the provided folder, and omits the CSS file if add-css is set to `false`.
+
+### Parameters
+
+#### Name
+
+Name of the component, will have "Component" appended to it automatically.
+
+#### Path
+
+Path of the component relative to the `components` folder.
+
+A path of `notes/item` will create the component in `src/components/notes/item`.
+
+Optional parameter.
+
+#### AddCSS
+
+If set to `false`, the CSS file will not be created and it will not be added to the imports in `src/css/components.scss`.
+
+Optional parameter.
+
+### Example
+
+`npm run gencomp noteItem notes/item false` will create the component `NoteItem` in `src/components/notes/item` without the CSS file.
+
 ## Shell Scripts
 
 This section provides details on the provided shell scripts to help you better understand them and use them in appropriate situations.

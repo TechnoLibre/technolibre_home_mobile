@@ -14,7 +14,8 @@
     "build:staging": "vite build --mode staging",
     "build:prod": "vite build --mode production",
     "preview": "vite preview",
-    "bsr": "node ./scripts/bsr.js"
+    "bsr": "node ./scripts/bsr.js",
+    "gencomp": "node ./scripts/generateComponent.js"
   },
   "dependencies": {
     "@aparajita/capacitor-biometric-auth": "^9.0.0",
