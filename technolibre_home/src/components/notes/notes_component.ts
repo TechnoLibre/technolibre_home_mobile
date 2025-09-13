@@ -99,6 +99,6 @@ export class NotesComponent extends Component {
 	}
 
 	onNoteAddClick() {
-		console.log("Add Note");
+		this.env.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: "/note/new" });
 	}
 }
