@@ -4,22 +4,26 @@ import { NoteService } from "../../../js/noteService";
 import { Note } from "../types";
 import { Dialog } from "@capacitor/dialog";
 import { ErrorMessages } from "../../../js/errors";
+import { HeadingComponent } from "../../heading/heading_component";
 
 export class NoteComponent extends Component {
 	static template = xml`
 		<div id="note-component">
-			<h1>Note</h1>
+			<section id="note-editable">
+				
+			</section>
 		</div>
 	`;
 
-	static components = {};
+	static components = { HeadingComponent };
 
 	state: any = undefined;
 
 	setup() {
 		this.state = useState({
 			noteId: undefined,
-			note: undefined
+			note: undefined,
+			newNote: false
 		});
 		this.setParams();
 		this.getNote();
@@ -28,10 +32,19 @@ export class NoteComponent extends Component {
 	private setParams() {
 		const router: SimpleRouter = this.env.router;
 		const params = router.getRouteParams(window.location.pathname);
-		this.state.noteId = decodeURIComponent(params["id"]);
+
+		if (params?.["id"]) {
+			this.state.noteId = decodeURIComponent(params?.["id"]);
+		} else {
+			this.state.newNote = true;
+		}
 	}
 
 	private async getNote() {
+		if (this.state.newNote) {
+			return;
+		}
+
 		const noteService: NoteService = this.env.noteService;
 		let matchingNote: Note | undefined;
 
