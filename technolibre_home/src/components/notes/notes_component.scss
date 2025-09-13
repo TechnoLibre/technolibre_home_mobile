@@ -1,5 +1,36 @@
-#notes-component {
-	//
+#notes-component #notes-header {
+	align-items: center;
+	display: flex;
+	justify-content: center;
+	max-width: 48rem;
+	margin: 0 auto;
+	padding: 1rem 1.25rem;
+}
+
+#notes-component #notes-heading {
+	flex-grow: 1;
+}
+
+#notes-component #notes-add {
+	background-color: var(--btn-blue-color);
+	border: none;
+	border-radius: 0.5rem;
+	box-shadow: 0px 4px 4px 0 rgba(0, 0, 0, 0.35);
+	color: var(--text);
+	cursor: pointer;
+	display: flex;
+	outline: none;
+	padding: 1rem;
+	text-decoration: none;
+	transition: background-color 150ms ease-in-out;
+	&:hover {
+		background-color: var(--btn-blue-hover-color);
+	}
+	& img {
+		height: 1.5rem;
+		pointer-events: none;
+		width: 1.5rem;
+	}
 }
 
 #notes-component #notes {

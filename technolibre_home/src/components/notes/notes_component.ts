@@ -7,11 +7,20 @@ import { BiometryUtils } from "../../utils/biometryUtils";
 import { Dialog } from "@capacitor/dialog";
 import { ErrorMessages } from "../../js/errors";
 import { Constants } from "../../js/constants";
+import NoteAddIcon from "../../assets/icon/note_add.svg";
 
 export class NotesComponent extends Component {
 	static template = xml`
 		<div id="notes-component">
-			<HeadingComponent title="'Notes'"/>
+			<header id="notes-header">
+				<h1 id="notes-heading">Notes</h1>
+				<a
+					id="notes-add"
+					t-on-click.stop.prevent="onNoteAddClick"
+				>
+					<img src="${NoteAddIcon}" />
+				</a>
+			</header>
 			<section id="notes">
 				<ul id="notes-list" t-if="state.notes.length !== 0">
 					<NotesItemComponent
@@ -87,5 +96,9 @@ export class NotesComponent extends Component {
 		}
 
 		this.state.notes = await this.env.noteService.getNotes();
+	}
+
+	onNoteAddClick() {
+		console.log("Add Note");
 	}
 }
