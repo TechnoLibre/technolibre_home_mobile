@@ -32,6 +32,7 @@
     "capacitor-secure-storage-plugin": "^0.11.0",
     "change-case": "^5.4.4",
     "mkdirp": "^3.0.1",
+    "sortablejs": "^1.15.6",
     "uuid": "^13.0.0"
   },
   "devDependencies": {
