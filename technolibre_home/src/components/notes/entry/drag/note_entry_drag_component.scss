@@ -1,3 +1,17 @@
-#note-entry-drag-component {
-	//
+.note-entry-drag-component {
+	align-items: center;
+	cursor: move;
+	display: flex;
+	flex-shrink: 0;
+	justify-content: center;
+	margin-right: 0.5rem;
+	overflow: hidden;
+	transition: width 100ms ease-in-out;
+	width: 0;
+	& img {
+		pointer-events: none;
+	}
+	&.active {
+		width: 3rem;
+	}
 }

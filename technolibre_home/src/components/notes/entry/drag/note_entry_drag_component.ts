@@ -1,9 +1,16 @@
 import { Component, useState, xml } from "@odoo/owl";
 
+import DragIcon from "../../../../assets/icon/drag.svg";
+
 export class NoteEntryDragComponent extends Component {
 	static template = xml`
-		<div id="note-entry-drag-component">
-			<h1>NoteEntryDrag</h1>
+		<div
+			class="note-entry-drag-component"
+			t-att-class="{
+				'active': props.editMode
+			}"
+		>
+			<img src="${DragIcon}" />
 		</div>
 	`;
 
