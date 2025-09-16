@@ -48,9 +48,9 @@ export class NotesComponent extends Component {
 		this.state = useState({ notes: new Array<Note>() });
 
 		// Mock Notes
-		this.state.notes.push({ id: "1", title: "NoteOne" });
-		this.state.notes.push({ id: "2", title: "NoteTwo", date: "2025-09-12" });
-		this.state.notes.push({ id: "3", title: "NoteThree" });
+		this.state.notes.push({ id: "1", title: "MockNoteOne" });
+		this.state.notes.push({ id: "2", title: "MockNoteTwo", date: "2025-09-12" });
+		this.state.notes.push({ id: "3", title: "MockNoteThree" });
 	}
 
 	openNote(noteId: string) {
