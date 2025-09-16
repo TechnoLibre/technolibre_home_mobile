@@ -1,7 +1,7 @@
 import { Application, ApplicationID } from "../components/applications/types";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
 import { Constants } from "./constants";
-import { AppAlreadyExistsError, KeyNotFoundError, NoAppMatchError, UndefinedAppListError } from "./errors";
+import { AppAlreadyExistsError, AppKeyNotFoundError, NoAppMatchError, UndefinedAppListError } from "./errors";
 
 export interface GetAppListResult {
 	appList: Array<Application>;
@@ -133,7 +133,7 @@ export class AppService {
 		);
 
 		if (!storageGetResult.keyExists) {
-			throw new KeyNotFoundError();
+			throw new AppKeyNotFoundError();
 		}
 
 		if (storageGetResult.value === undefined) {

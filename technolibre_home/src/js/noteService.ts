@@ -1,7 +1,7 @@
 import { Note } from "../components/notes/types";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
 import { Constants } from "./constants";
-import { KeyNotFoundError, NoNoteMatchError, UndefinedNoteListError } from "./errors";
+import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "./errors";
 
 export interface GetNoteListResult {
 	noteList: Array<Note>;
@@ -121,7 +121,7 @@ export class NoteService {
 		);
 
 		if (!storageGetResult.keyExists) {
-			throw new KeyNotFoundError();
+			throw new NoteKeyNotFoundError();
 		}
 
 		if (storageGetResult.value === undefined) {

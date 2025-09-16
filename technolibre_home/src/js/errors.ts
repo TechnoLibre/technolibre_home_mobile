@@ -1,8 +1,16 @@
-export class KeyNotFoundError extends Error {
+export class AppKeyNotFoundError extends Error {
 	constructor(message?: string) {
-		const errorMessage = message || ErrorMessages.KEY_NOT_FOUND;
+		const errorMessage = message || ErrorMessages.APP_KEY_NOT_FOUND;
 		super(errorMessage);
-		this.name = "KeyNotFoundError";
+		this.name = "AppKeyNotFoundError";
+	}
+}
+
+export class NoteKeyNotFoundError extends Error {
+	constructor(message?: string) {
+		const errorMessage = message || ErrorMessages.NOTE_KEY_NOT_FOUND;
+		super(errorMessage);
+		this.name = "NoteKeyNotFoundError";
 	}
 }
 
@@ -47,7 +55,9 @@ export class AppAlreadyExistsError extends Error {
 }
 
 export class ErrorMessages {
-	public static KEY_NOT_FOUND: string = "Échec de la récupération des applications du stockage local.";
+	public static APP_KEY_NOT_FOUND: string = "Échec de la récupération des applications du stockage local.";
+
+	public static NOTE_KEY_NOT_FOUND: string = "Échec de la récupération des notes du stockage local.";
 
 	public static UNDEFINED_APP_LIST: string = "Liste d'applications non existante dans le stockage local.";
 
