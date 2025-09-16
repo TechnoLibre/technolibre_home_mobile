@@ -25,7 +25,7 @@ export class NoteComponent extends Component {
 						t-on-click.stop.prevent="addAudio"
 					>
 						<img src="${AudioIcon}" />
-						<p>Add Audio</p>
+						<p class="greyed-out">Add Audio</p>
 					</a>
 					<a
 						id="note__control__text"
@@ -34,7 +34,7 @@ export class NoteComponent extends Component {
 						t-on-click.stop.prevent="addText"
 					>
 						<img src="${TextIcon}" />
-						<p>Add Text</p>
+						<p class="greyed-out">Add Text</p>
 					</a>
 					<a
 						id="note__control__edit"
