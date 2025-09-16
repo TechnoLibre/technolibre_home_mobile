@@ -76,11 +76,9 @@ export class NoteComponent extends Component {
 			this.sortable = Sortable.create(this.entries.el, {
 				animation: 150,
 				easing: "cubic-bezier(0.37, 0, 0.63, 1)",
-				filter: ".note-entry-title-component",
 				ghostClass: "sortable-ghost",
 				handle: ".note-entry-drag-component"
 			});
-			console.log(this.sortable);
 		});
 		this.setParams();
 		this.getNote();
