@@ -1,7 +1,6 @@
 import { Component, useState, xml } from "@odoo/owl";
 
 import DeleteIcon from "../../../assets/icon/delete.svg";
-import EditIcon from "../../../assets/icon/edit.svg";
 
 export class NotesItemComponent extends Component {
 	static template = xml`
@@ -25,13 +24,6 @@ export class NotesItemComponent extends Component {
 				</p>
 			</div>
 			<div class="notes-item__actions">
-				<button
-					type="button"
-					class="notes-item__action notes-item__edit"
-					t-on-click.stop.prevent="() => this.props.editNote(props.note.id)"
-				>
-					<img src="${EditIcon}" />
-				</button>
 				<button
 					type="button"
 					class="notes-item__action notes-item__delete"
