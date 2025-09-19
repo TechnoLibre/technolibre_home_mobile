@@ -15,7 +15,7 @@ export class AppService {
 	private _applications?: Array<Application>;
 
 	constructor() {
-		this.setApplications();
+		this.setApps();
 	}
 
 	/**
@@ -281,7 +281,7 @@ export class AppService {
 	 * @throws UndefinedAppListError
 	 * Thrown if the list of apps is undefined.
 	 */
-	private async setApplications() {
+	private async setApps() {
 		this._applications = await this.getApps();
 	}
 
