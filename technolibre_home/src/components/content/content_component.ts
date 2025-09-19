@@ -1,9 +1,9 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
 import { Constants } from "../../js/constants";
-import { SimpleRouter } from "../../js/router";
+import { EnhancedComponent } from "../../js/enhancedComponent";
 
-export class ContentComponent extends Component {
+export class ContentComponent extends EnhancedComponent {
 	static template = xml`
         <div id="content-component">
             <section id="content">
@@ -12,21 +12,18 @@ export class ContentComponent extends Component {
         </div>
     `;
 
-	state: any = undefined;
-
 	setup() {
 		this.state = useState({ currentRoute: window.location.pathname, params: {} });
 		this.listenForEvents();
 	}
 
 	getRouteComponent() {
-		const router: SimpleRouter = this.env.router;
-		const getComponentResult = router.getComponent(this.state.currentRoute);
+		const getComponentResult = this.router.getComponent(this.state.currentRoute);
 		return getComponentResult.component;
 	}
 
 	private listenForEvents() {
-		this.env.eventBus.addEventListener(Constants.ROUTER_NAVIGATION_EVENT_NAME, () => {
+		this.eventBus.addEventListener(Constants.ROUTER_NAVIGATION_EVENT_NAME, () => {
 			this.state.currentRoute = window.location.pathname;
 		});
 

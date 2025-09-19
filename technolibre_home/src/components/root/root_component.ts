@@ -1,4 +1,4 @@
-import { Component, onMounted, useState, xml } from "@odoo/owl";
+import { onMounted, useState, xml } from "@odoo/owl";
 
 import { SplashScreen } from "@capacitor/splash-screen";
 import { App } from "@capacitor/app";
@@ -6,13 +6,14 @@ import { EdgeToEdge } from "@capawesome/capacitor-android-edge-to-edge-support";
 import { StatusBar, Style } from "@capacitor/status-bar";
 
 import { Constants } from "../../js/constants";
+import { EnhancedComponent } from "../../js/enhancedComponent";
 import { StorageGetResult, StorageUtils } from "../../utils/storageUtils";
 
 import { ContentComponent } from "../content/content_component";
 import { NavbarComponent } from "../navbar/navbar_component";
 import { Capacitor } from "@capacitor/core";
 
-export class RootComponent extends Component {
+export class RootComponent extends EnhancedComponent {
 	static template = xml`
     <main id="main">
       <ContentComponent />
@@ -21,8 +22,6 @@ export class RootComponent extends Component {
   `;
 
 	static components = { ContentComponent, NavbarComponent };
-
-	state: any = undefined;
 
 	setup() {
 		this.state = useState({ title: "This is my title" });

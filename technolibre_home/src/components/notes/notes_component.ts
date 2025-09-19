@@ -1,4 +1,6 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
+
+import { EnhancedComponent } from "../../js/enhancedComponent";
 
 import { HeadingComponent } from "../heading/heading_component";
 import { NotesItemComponent } from "./item/notes_item_component";
@@ -9,7 +11,7 @@ import { ErrorMessages } from "../../js/errors";
 import { Constants } from "../../js/constants";
 import NoteAddIcon from "../../assets/icon/note_add.svg";
 
-export class NotesComponent extends Component {
+export class NotesComponent extends EnhancedComponent {
 	static template = xml`
 		<div id="notes-component">
 			<header id="notes-header">
@@ -42,8 +44,6 @@ export class NotesComponent extends Component {
 
 	static components = { HeadingComponent, NotesItemComponent };
 
-	state: any = undefined;
-
 	setup() {
 		this.state = useState({ notes: new Array<Note>() });
 
@@ -55,14 +55,14 @@ export class NotesComponent extends Component {
 
 	openNote(noteId: string) {
 		const encodedId = encodeURIComponent(noteId);
-		this.env.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
+		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
 			url: `/note/${encodedId}`
 		});
 	}
 
 	editNote(noteId: string) {
 		const encodedId = encodeURIComponent(noteId);
-		this.env.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
+		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
 			url: `/notes/edit/${encodedId}`
 		});
 	}
@@ -84,7 +84,7 @@ export class NotesComponent extends Component {
 		let deleteSucceeded: boolean = false;
 
 		try {
-			deleteSucceeded = await this.env.noteService.delete(noteId);
+			deleteSucceeded = await this.noteService.delete(noteId);
 		} catch (error: unknown) {
 			Dialog.alert({ message: ErrorMessages.NOTE_DELETE });
 			return;
@@ -95,10 +95,10 @@ export class NotesComponent extends Component {
 			return;
 		}
 
-		this.state.notes = await this.env.noteService.getNotes();
+		this.state.notes = await this.noteService.getNotes();
 	}
 
 	onNoteAddClick() {
-		this.env.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: "/note/new" });
+		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: "/note/new" });
 	}
 }

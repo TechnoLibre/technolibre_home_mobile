@@ -1,10 +1,12 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { xml } from "@odoo/owl";
+
+import { EnhancedComponent } from "../../../../js/enhancedComponent";
 
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
 
 import PlayIcon from "../../../../assets/icon/play.svg";
 
-export class NoteEntryAudioComponent extends Component {
+export class NoteEntryAudioComponent extends EnhancedComponent {
 	static template = xml`
 		<div class="note-entry-component note-entry-audio-component">
 			<NoteEntryDragComponent editMode="props.editMode" />
@@ -21,12 +23,6 @@ export class NoteEntryAudioComponent extends Component {
 	`;
 
 	static components = { NoteEntryDragComponent };
-
-	state: any = undefined;
-
-	setup() {
-		this.state = useState({});
-	}
 
 	playAudio() {
 		console.log("Playing audio");

@@ -1,14 +1,14 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
 import { Dialog } from "@capacitor/dialog";
 
 import { BiometryUtils } from "../../../utils/biometryUtils";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { ErrorMessages } from "../../../js/errors";
-import { SimpleRouter } from "../../../js/router";
 
 import { HeadingComponent } from "../../heading/heading_component";
 
-export class ApplicationsEditComponent extends Component {
+export class ApplicationsEditComponent extends EnhancedComponent {
 	static template = xml`
     <div id="applications-edit-component">
       <HeadingComponent title="'Modifier une application'" />
@@ -36,8 +36,6 @@ export class ApplicationsEditComponent extends Component {
   `;
 
 	static components = { HeadingComponent };
-
-	state: any = undefined;
 
 	setup() {
 		this.state = useState({
@@ -70,7 +68,7 @@ export class ApplicationsEditComponent extends Component {
 		let saveSucceeded: boolean = false;
 
 		try {
-			saveSucceeded = await this.env.appService.edit(this.state.originalAppID, this.state.app);
+			saveSucceeded = await this.appService.edit(this.state.originalAppID, this.state.app);
 		} catch (error: unknown) {
 			if (error instanceof Error) {
 				Dialog.alert({ message: error.message });
@@ -88,8 +86,7 @@ export class ApplicationsEditComponent extends Component {
 	}
 
 	private setParams() {
-		const router: SimpleRouter = this.env.router;
-		const params = router.getRouteParams(window.location.pathname);
+		const params = this.router.getRouteParams(window.location.pathname);
 		this.state.app.url = decodeURIComponent(params["url"]);
 		this.state.app.username = decodeURIComponent(params["username"]);
 		this.state.originalAppID.url = this.state.app.url;

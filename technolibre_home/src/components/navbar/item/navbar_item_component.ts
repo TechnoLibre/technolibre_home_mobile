@@ -1,8 +1,8 @@
-import { Component, onMounted, onWillUnmount, useRef, useState, xml } from "@odoo/owl";
+import { onMounted, onWillUnmount, useRef, useState, xml } from "@odoo/owl";
 
-import { SimpleRouter } from "../../../js/router";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
 
-export class NavbarItemComponent extends Component {
+export class NavbarItemComponent extends EnhancedComponent {
 	static template = xml`
 		<li
 			class="nav-list__item"
@@ -17,8 +17,6 @@ export class NavbarItemComponent extends Component {
 			<p class="nav-list__item__text"><t t-esc="props.displayName"></t></p>
 		</li>
 	`;
-
-	state: any = {};
 
 	li = useRef("li");
 
@@ -57,10 +55,8 @@ export class NavbarItemComponent extends Component {
 	}
 
 	subpathMatches(): boolean {
-		const router: SimpleRouter = this.env.router;
-
 		for (let subpath of this.props.subpaths) {
-			if (router.doRoutesMatch(this.props.currentRoute, subpath)) {
+			if (this.router.doRoutesMatch(this.props.currentRoute, subpath)) {
 				return true;
 			}
 		}

@@ -1,11 +1,13 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
+
+import { EnhancedComponent } from "../../../js/enhancedComponent";
 
 import DeleteIcon from "../../../assets/icon/delete.svg";
 import EditIcon from "../../../assets/icon/edit.svg";
 import OpenIcon from "../../../assets/icon/open.svg";
 import UserIcon from "../../../assets/icon/user.svg";
 
-export class ApplicationsItemComponent extends Component {
+export class ApplicationsItemComponent extends EnhancedComponent {
 	static template = xml`
     <li
       class="app-list__item"
@@ -42,8 +44,6 @@ export class ApplicationsItemComponent extends Component {
       </div>
     </li>
   `;
-
-	state: any = undefined;
 
 	setup() {
 		this.state = useState({ appID: undefined });

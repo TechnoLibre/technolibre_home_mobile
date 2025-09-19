@@ -1,13 +1,14 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
 import { Dialog } from "@capacitor/dialog";
 
 import { BiometryUtils } from "../../../utils/biometryUtils";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { ErrorMessages } from "../../../js/errors";
 
 import { HeadingComponent } from "../../heading/heading_component";
 
-export class ApplicationsAddComponent extends Component {
+export class ApplicationsAddComponent extends EnhancedComponent {
 	static template = xml`
     <div id="applications-add-component">
       <HeadingComponent title="'Ajouter une application'" />
@@ -35,8 +36,6 @@ export class ApplicationsAddComponent extends Component {
   `;
 
 	static components = { HeadingComponent };
-
-	state: any = undefined;
 
 	setup() {
 		this.state = useState({
@@ -68,7 +67,7 @@ export class ApplicationsAddComponent extends Component {
 		let saveSucceeded: boolean = false;
 
 		try {
-			saveSucceeded = await this.env.appService.add(newApp);
+			saveSucceeded = await this.appService.add(newApp);
 		} catch (error: unknown) {
 			if (error instanceof Error) {
 				Dialog.alert({ message: error.message });

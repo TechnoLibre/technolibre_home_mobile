@@ -1,8 +1,10 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { xml } from "@odoo/owl";
+
+import { EnhancedComponent } from "../../../js/enhancedComponent";
 
 import DeleteIcon from "../../../assets/icon/delete.svg";
 
-export class NotesItemComponent extends Component {
+export class NotesItemComponent extends EnhancedComponent {
 	static template = xml`
 		<li
 			class="notes-item"
@@ -34,12 +36,4 @@ export class NotesItemComponent extends Component {
 			</div>
 		</li>
 	`;
-
-	static components = {};
-
-	state: any = undefined;
-
-	setup() {
-		this.state = useState({});
-	}
 }
