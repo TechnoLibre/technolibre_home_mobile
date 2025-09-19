@@ -14,10 +14,6 @@ export interface GetMatchesResult extends GetNoteListResult {
 export class NoteService {
 	private _notes?: Array<Note>;
 
-	constructor() {
-		this.setNotes();
-	}
-
 	/**
 	 * Returns all of the current notes.
 	 *
@@ -241,19 +237,6 @@ export class NoteService {
 	 */
 	private async saveNoteListToStorage(noteList: Array<Note>): Promise<{ value: boolean }> {
 		return StorageUtils.setKeyValuePair(Constants.NOTES_STORAGE_KEY, noteList);
-	}
-
-	/**
-	 * Gives the list of notes their initial value.
-	 *
-	 * @throws NoteKeyNotFoundError
-	 * Thrown if the notes key is not found in the secure storage.
-	 *
-	 * @throws UndefinedNoteListError
-	 * Thrown if the list of notes is undefined.
-	 */
-	private async setNotes() {
-		this._notes = await this.getNotes();
 	}
 
 	/**
