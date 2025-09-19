@@ -14,10 +14,6 @@ export interface GetMatchesResult extends GetAppListResult {
 export class AppService {
 	private _applications?: Array<Application>;
 
-	constructor() {
-		this.setApps();
-	}
-
 	/**
 	 * Returns all of the current apps.
 	 *
@@ -270,19 +266,6 @@ export class AppService {
 	 */
 	public appIDFrom(app: Application): ApplicationID {
 		return { url: app.url, username: app.username };
-	}
-
-	/**
-	 * Gives the list of apps their initial value.
-	 *
-	 * @throws AppKeyNotFoundError
-	 * Thrown if the applications key is not found in the secure storage.
-	 *
-	 * @throws UndefinedAppListError
-	 * Thrown if the list of apps is undefined.
-	 */
-	private async setApps() {
-		this._applications = await this.getApps();
 	}
 
 	private matchesID(id: ApplicationID, app: Application): boolean {
