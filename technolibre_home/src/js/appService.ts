@@ -261,14 +261,6 @@ export class AppService {
 		return StorageUtils.setKeyValuePair(Constants.APPLICATIONS_STORAGE_KEY, appList);
 	}
 
-	public isMatchResultValid(result: Partial<GetMatchesResult>): result is GetMatchesResult {
-		return result.appList !== undefined && result.matches !== undefined;
-	}
-
-	public isMatchResultEmpty(result: GetMatchesResult): boolean {
-		return result.appList?.length === 0 || result.matches?.length === 0;
-	}
-
 	/**
 	 * Returns an app's id.
 	 *
