@@ -1,6 +1,8 @@
-import { Component, xml } from "@odoo/owl";
+import { xml } from "@odoo/owl";
 
-export class HeadingComponent extends Component {
+import { EnhancedComponent } from "../../js/enhancedComponent";
+
+export class HeadingComponent extends EnhancedComponent {
 	static template = xml`
     <div class="heading-component">
       <h1 class="page-heading">

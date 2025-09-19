@@ -1,10 +1,11 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
 import { ConfirmResult, Dialog } from "@capacitor/dialog";
 
+import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { WebViewUtils } from "../../../utils/webViewUtils";
 
-export class OptionsClearCacheComponent extends Component {
+export class OptionsClearCacheComponent extends EnhancedComponent {
 	static template = xml`
     <li class="options-list__item">
       <a
@@ -15,8 +16,6 @@ export class OptionsClearCacheComponent extends Component {
       </a>
     </li>
   `;
-
-	state: any = undefined;
 
 	setup() {
 		this.state = useState({});

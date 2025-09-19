@@ -1,5 +1,6 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
+import { EnhancedComponent } from "../../js/enhancedComponent";
 import { Constants } from "../../js/constants";
 
 import CompanyLogo from "../../assets/company_logo.png";
@@ -11,7 +12,7 @@ const ENV = {
   WEBSITE_URL: import.meta.env.VITE_WEBSITE_URL ?? "https://erplibre.ca",
 };
 
-export class HomeComponent extends Component {
+export class HomeComponent extends EnhancedComponent {
 	static template = xml`
     <div id="home-component">
       <div id="centered-content">
@@ -23,8 +24,6 @@ export class HomeComponent extends Component {
       </div>
     </div>
   `;
-
-	state: any = undefined;
 
 	setup() {
 		this.state = useState({ title: ENV.TITLE, isDev: false  });
@@ -51,6 +50,6 @@ export class HomeComponent extends Component {
 		// return "https://technolibre.ca/web/login";
 	}
 	onNotesClick() {
-		this.env.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: "/notes" });
+		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: "/notes" });
 	}
 }

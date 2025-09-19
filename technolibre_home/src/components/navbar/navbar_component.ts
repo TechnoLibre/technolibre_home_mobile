@@ -1,10 +1,11 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
 import { Constants } from "../../js/constants";
+import { EnhancedComponent } from "../../js/enhancedComponent";
 
 import { NavbarItemComponent } from "./item/navbar_item_component";
 
-export class NavbarComponent extends Component {
+export class NavbarComponent extends EnhancedComponent {
 	static template = xml`
 		<nav id="nav">
 			<ul id="nav-list">
@@ -35,12 +36,10 @@ export class NavbarComponent extends Component {
 
 	static components = { NavbarItemComponent };
 
-	state: any = undefined;
-
 	setup() {
 		this.state = useState({ currentRoute: window.location.pathname });
 
-		this.env.eventBus.addEventListener(Constants.ROUTER_NAVIGATION_EVENT_NAME, () => {
+		this.eventBus.addEventListener(Constants.ROUTER_NAVIGATION_EVENT_NAME, () => {
 			this.state.currentRoute = window.location.pathname;
 		});
 
@@ -50,6 +49,6 @@ export class NavbarComponent extends Component {
 	}
 
 	onNavListItemClick(path) {
-		this.env.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: path });
+		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: path });
 	}
 }

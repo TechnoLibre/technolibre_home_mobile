@@ -1,8 +1,10 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { xml } from "@odoo/owl";
+
+import { EnhancedComponent } from "../../../../js/enhancedComponent";
 
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
 
-export class NoteEntryTitleComponent extends Component {
+export class NoteEntryTitleComponent extends EnhancedComponent {
 	static template = xml`
 		<div class="note-entry-component note-entry-title-component">
 			<div class="note-entry__content">
@@ -12,10 +14,4 @@ export class NoteEntryTitleComponent extends Component {
 	`;
 
 	static components = { NoteEntryDragComponent };
-
-	state: any = undefined;
-
-	setup() {
-		this.state = useState({});
-	}
 }
