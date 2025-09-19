@@ -243,14 +243,6 @@ export class NoteService {
 		return StorageUtils.setKeyValuePair(Constants.NOTES_STORAGE_KEY, noteList);
 	}
 
-	public isMatchResultValid(result: Partial<GetMatchesResult>): result is GetMatchesResult {
-		return result.noteList !== undefined && result.matches !== undefined;
-	}
-
-	public isMatchResultEmpty(result: GetMatchesResult): boolean {
-		return result.noteList?.length === 0 || result.matches?.length === 0;
-	}
-
 	/**
 	 * Gives the list of notes their initial value.
 	 *
