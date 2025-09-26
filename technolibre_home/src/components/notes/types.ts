@@ -12,12 +12,8 @@ export interface NoteEntryTextParams {
 	text: string;
 }
 
-export interface NoteEntryTitleParams {
-	title: string;
-}
-
-export type NoteEntryType = "audio" | "text" | "title";
-export type NoteEntryParams = NoteEntryAudioParams | NoteEntryTextParams | NoteEntryTitleParams;
+export type NoteEntryType = "audio" | "text";
+export type NoteEntryParams = NoteEntryAudioParams | NoteEntryTextParams;
 
 export interface NoteEntry {
 	id: string;
