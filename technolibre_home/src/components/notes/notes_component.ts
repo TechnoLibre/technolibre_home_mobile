@@ -99,6 +99,7 @@ export class NotesComponent extends EnhancedComponent {
 	}
 
 	onNoteAddClick() {
-		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: "/note/new" });
+		const newId = this.noteService.getNewId();
+		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: `/note/${newId}` });
 	}
 }

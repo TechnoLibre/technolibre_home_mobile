@@ -32,6 +32,7 @@ export class RootComponent extends EnhancedComponent {
 		this.setupAndroidBackButton();
 		this.setDefaultBiometryStorageValue();
 		this.setDefaultAppStorageValue();
+		this.setDefaultNoteStorageValue();
 	}
 
 	private async enableEdgeToEdge() {
@@ -65,6 +66,14 @@ export class RootComponent extends EnhancedComponent {
 
 		if (!getResult.keyExists) {
 			await StorageUtils.setKeyValuePair(Constants.APPLICATIONS_STORAGE_KEY, []);
+		}
+	}
+
+	private async setDefaultNoteStorageValue() {
+		const getResult: StorageGetResult = await StorageUtils.getValueByKey(Constants.NOTES_STORAGE_KEY);
+
+		if (!getResult.keyExists) {
+			await StorageUtils.setKeyValuePair(Constants.NOTES_STORAGE_KEY, []);
 		}
 	}
 }

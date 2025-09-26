@@ -6,10 +6,18 @@ import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
 
 export class NoteEntryTextComponent extends EnhancedComponent {
 	static template = xml`
-		<div class="note-entry-component note-entry-text-component">
+		<div
+			class="note-entry-component note-entry-text-component"
+			t-att-data-id="props.id"
+		>
 			<NoteEntryDragComponent editMode="props.editMode" />
 			<div class="note-entry__content">
-				<p>NoteEntryText</p>
+				<textarea
+					t-att-id="props.id"
+					class="note-entry__text"
+					placeholder="Text"
+					t-model="props.params.text"
+				></textarea>
 			</div>
 		</div>
 	`;

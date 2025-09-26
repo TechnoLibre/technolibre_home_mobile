@@ -1,4 +1,5 @@
-import { Note } from "../components/notes/types";
+import { v4 as uuidv4, validate, version } from "uuid";
+import { Note, NoteEntry } from "../components/notes/types";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
 import { Constants } from "./constants";
 import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "./errors";
@@ -199,6 +200,51 @@ export class NoteService {
 		}
 
 		return matches[0];
+	}
+
+	/**
+	 * Returns a new unique id.
+	 *
+	 * @returns a new v4 UUID
+	 */
+	public getNewId(): string {
+		return uuidv4();
+	}
+
+	/**
+	 * Returns a new note.
+	 *
+	 * @param noteId - The id of the note
+	 *
+	 * @returns a new (empty) note
+	 */
+	public getNewNote(noteId?: string): Note {
+		return {
+			id: noteId || "",
+			title: "New note",
+			entries: []
+		};
+	}
+
+	public getNewTextEntry(): NoteEntry {
+		return {
+			id: this.getNewId(),
+			type: "text",
+			params: {
+				text: "New text entry"
+			}
+		};
+	}
+
+	/**
+	 * Returns whether or not the provided id is valid.
+	 *
+	 * @param noteId - The id to validate
+	 *
+	 * @returns True if the id is valid, otherwise false
+	 */
+	public isValidId(noteId: string): boolean {
+		return validate(noteId) && version(noteId) === 4;
 	}
 
 	/**

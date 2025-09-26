@@ -8,7 +8,10 @@ import PlayIcon from "../../../../assets/icon/play.svg";
 
 export class NoteEntryAudioComponent extends EnhancedComponent {
 	static template = xml`
-		<div class="note-entry-component note-entry-audio-component">
+		<div
+			class="note-entry-component note-entry-audio-component"
+			t-att-data-id="props.id"
+		>
 			<NoteEntryDragComponent editMode="props.editMode" />
 			<div class="note-entry__content">
 				<button

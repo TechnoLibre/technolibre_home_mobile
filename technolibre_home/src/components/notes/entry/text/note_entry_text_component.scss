@@ -1,3 +1,15 @@
 .note-entry-text-component .note-entry__content {
 	padding: 0 0.25rem;
 }
+
+.note-entry-text-component .note-entry__text {
+	background-color: transparent;
+	border: none;
+	color: var(--text);
+	field-sizing: content;
+	font-family: VarOpenSans;
+	font-size: 1rem;
+	outline: none;
+	resize: none;
+	width: 100%;
+}
