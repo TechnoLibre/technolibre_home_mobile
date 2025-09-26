@@ -103,7 +103,8 @@ export class ApplicationsComponent extends Component {
 				url: url_rewrite_odoo,
 				title: matchingApp.url,
 				isPresentAfterPageLoad: true,
-				preShowScript: loginScript
+				preShowScript: loginScript,
+				enabledSafeBottomMargin: true
 			});
 		} else {
 			WebViewUtils.openWebViewDesktop(url_rewrite_odoo, loginScript);
