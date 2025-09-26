@@ -46,11 +46,17 @@ export class NotesComponent extends EnhancedComponent {
 
 	setup() {
 		this.state = useState({ notes: new Array<Note>() });
+		this.getNotes();
+	}
 
-		// Mock Notes
-		this.state.notes.push({ id: "1", title: "MockNoteOne" });
-		this.state.notes.push({ id: "2", title: "MockNoteTwo", date: "2025-09-12" });
-		this.state.notes.push({ id: "3", title: "MockNoteThree" });
+	async getNotes() {
+		try {
+			this.state.notes = await this.noteService.getNotes();
+		} catch (error: unknown) {
+			if (error instanceof Error) {
+				Dialog.alert({ message: error.message });
+			}
+		}
 	}
 
 	openNote(noteId: string) {
