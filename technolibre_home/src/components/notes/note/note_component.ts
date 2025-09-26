@@ -85,8 +85,7 @@ export class NoteComponent extends EnhancedComponent {
 			noteId: undefined,
 			note: this.noteService.getNewNote(),
 			newNote: false,
-			editMode: false,
-			hasBeenEdited: false
+			editMode: false
 		});
 		onMounted(() => {
 			this.sortable = Sortable.create(this.entries.el, {

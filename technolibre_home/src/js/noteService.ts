@@ -171,9 +171,9 @@ export class NoteService {
 	 * Thrown if the list of notes is undefined.
 	 */
 	public async matches(noteId: string): Promise<Array<Note>> {
-		const noteList: Array<Note> = await this.getNotesFromStorage();
+		this._notes = await this.getNotesFromStorage();
 
-		return noteList.filter(note => noteId === note.id);
+		return this._notes.filter(note => noteId === note.id);
 	}
 
 	/**
