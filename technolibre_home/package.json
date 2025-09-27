@@ -26,6 +26,7 @@
     "@capacitor/dialog": "^7.0.2",
     "@capacitor/splash-screen": "latest",
     "@capacitor/status-bar": "^7.0.3",
+    "@capawesome-team/capacitor-datetime-picker": "^7.0.1",
     "@capawesome/capacitor-android-edge-to-edge-support": "^7.2.3",
     "@capgo/inappbrowser": "^7.16.2",
     "@odoo/owl": "^2.8.0",
