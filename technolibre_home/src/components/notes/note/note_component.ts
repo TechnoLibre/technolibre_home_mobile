@@ -107,7 +107,7 @@ export class NoteComponent extends EnhancedComponent {
 			popover=""
 			t-if="!state.isMobile"
 			t-ref="datepicker-popover"
-			t-on-click.stop.prevent="event => this.onWcDatePickerPopoverClick(event)"
+			t-on-click.stop.prevent="onWcDatePickerPopoverClick"
 		>
 			<div id="datepicker__wrapper" t-on-click.stop.prevent="">
 				<wc-datepicker
@@ -134,21 +134,23 @@ export class NoteComponent extends EnhancedComponent {
 			editMode: false,
 			isMobile: WebViewUtils.isMobile()
 		});
-		onMounted(() => {
-			if (!customElements.get("wc-datepicker")) {
-				customElements.define("wc-datepicker", WcDatepicker);
-			}
-			this.sortable = Sortable.create(this.entries.el, {
-				animation: 150,
-				easing: "cubic-bezier(0.37, 0, 0.63, 1)",
-				ghostClass: "sortable-ghost",
-				handle: ".note-entry-drag-component",
-				onSort: this.onSort.bind(this)
-			});
-			this.sortable;
-		});
+		onMounted(this.onMounted.bind(this));
 		this.setParams();
 		this.getNote();
+	}
+
+	private onMounted() {
+		if (!customElements.get("wc-datepicker")) {
+			customElements.define("wc-datepicker", WcDatepicker);
+		}
+
+		this.sortable = Sortable.create(this.entries.el, {
+			animation: 150,
+			easing: "cubic-bezier(0.37, 0, 0.63, 1)",
+			ghostClass: "sortable-ghost",
+			handle: ".note-entry-drag-component",
+			onSort: this.onSort.bind(this)
+		});
 	}
 
 	addAudio() {
@@ -182,13 +184,10 @@ export class NoteComponent extends EnhancedComponent {
 		this.wcDatePickerPopover.el.showPopover();
 	}
 
-	onWcDatePickerPopoverClick(event: Event) {
-		console.log(event.target);
-		console.log("onDatePickerPopoverClick");
+	onWcDatePickerPopoverClick() {
 		if (!this.wcDatePickerPopover.el) {
 			return;
 		}
-		console.log("hiding popover");
 		this.wcDatePickerPopover.el.hidePopover();
 	}
 
