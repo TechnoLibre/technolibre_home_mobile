@@ -13,8 +13,8 @@ import { NoteEntryComponent } from "../entry/note_entry_component";
 import { WebViewUtils } from "../../../utils/webViewUtils";
 
 import AudioIcon from "../../../assets/icon/audio.svg";
-import CheckBox from "../../../assets/icon/check_box.svg";
-import CheckBoxBlank from "../../../assets/icon/check_box_blank.svg";
+import CheckBoxIcon from "../../../assets/icon/check_box.svg";
+import CheckBoxBlankIcon from "../../../assets/icon/check_box_blank.svg";
 import EditNoteIcon from "../../../assets/icon/edit_note.svg";
 import EditDateIcon from "../../../assets/icon/edit_date.svg";
 import TextIcon from "../../../assets/icon/text.svg";
@@ -96,8 +96,9 @@ export class NoteComponent extends EnhancedComponent {
 						href="#"
 						t-on-click.stop.prevent="toggleDone"
 					>
-						<img src="${CheckBoxBlank}" />
-						<p class="greyed-out">Done</p>
+						<img src="${CheckBoxIcon}" t-if="state.note.done" />
+						<img src="${CheckBoxBlankIcon}" t-else="" />
+						<p>Done</p>
 					</a>
 				</section>
 			</div>
@@ -202,7 +203,8 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	toggleDone() {
-		console.log("Toggle Done");
+		this.state.note.done = !this.state.note.done;
+		this.saveNoteData();
 	}
 
 	toggleEditMode() {

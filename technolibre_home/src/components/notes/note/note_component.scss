@@ -109,8 +109,4 @@
 
 #note-component #note__control__done {
 	grid-area: done;
-	pointer-events: none;
-	& .greyed-out {
-		color: grey;
-	}
 }
