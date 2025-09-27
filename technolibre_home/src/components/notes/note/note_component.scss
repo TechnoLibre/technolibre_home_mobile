@@ -105,10 +105,6 @@
 
 #note-component #note__control__date {
 	grid-area: date;
-	pointer-events: none;
-	& .greyed-out {
-		color: grey;
-	}
 }
 
 #note-component #note__control__done {
