@@ -8,6 +8,9 @@ export class NotesItemComponent extends EnhancedComponent {
 	static template = xml`
 		<li
 			class="notes-item"
+			t-att-class="{
+				'notes-item--done': props.note.done
+			}"
 			t-on-click="() => this.props.openNote(props.note.id)"
 		>
 			<div class="notes-item__data">

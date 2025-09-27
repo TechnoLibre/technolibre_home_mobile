@@ -2,6 +2,7 @@ export interface Note {
 	id: string;
 	title: string;
 	date?: string;
+	done: boolean;
 	entries: Array<NoteEntry>;
 }
 

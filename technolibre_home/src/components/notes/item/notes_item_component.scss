@@ -22,6 +22,10 @@
 		margin: 0.75rem 0.75rem 0.75rem 1rem;
 		min-width: 0;
 	}
+	&--done .notes-item__title,
+	&--done .notes-item__date {
+		color: var(--text-greyed-out);
+	}
 	&__title {
 		overflow: hidden;
 		text-overflow: ellipsis;

@@ -222,6 +222,7 @@ export class NoteService {
 		return {
 			id: noteId || "",
 			title: "New note",
+			done: false,
 			entries: []
 		};
 	}
