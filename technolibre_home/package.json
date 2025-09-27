@@ -34,7 +34,8 @@
     "change-case": "^5.4.4",
     "mkdirp": "^3.0.1",
     "sortablejs": "^1.15.6",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "wc-datepicker": "^0.9.1"
   },
   "devDependencies": {
     "@capacitor/cli": "latest",
