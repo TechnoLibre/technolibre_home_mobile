@@ -3,11 +3,13 @@ import { onMounted, useRef, useState, xml } from "@odoo/owl";
 import { DatetimePicker, PresentResult } from "@capawesome-team/capacitor-datetime-picker";
 import { Dialog } from "@capacitor/dialog";
 import { Sortable } from "sortablejs";
+import { WCDatepicker } from "wc-datepicker/dist/types/components/wc-datepicker/wc-datepicker";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../../js/errors";
 import { NoteEntry } from "../types";
 import { NoteEntryComponent } from "../entry/note_entry_component";
+import { WebViewUtils } from "../../../utils/webViewUtils";
 
 import AudioIcon from "../../../assets/icon/audio.svg";
 import CheckBox from "../../../assets/icon/check_box.svg";
@@ -99,6 +101,9 @@ export class NoteComponent extends EnhancedComponent {
 				</section>
 			</div>
 		</div>
+		<div id="datepicker__popover" popover="">
+			<wc-datepicker id="datepicker"></wc-datepicker>
+		</div>
 	`;
 
 	static components = { NoteEntryComponent };
@@ -137,7 +142,11 @@ export class NoteComponent extends EnhancedComponent {
 		this.focusLastEntry();
 	}
 
-	async onSetDateClick() {
+	onSetDateClick() {
+		WebViewUtils.isMobile() ? this.setDateMobile() : this.setDateWeb();
+	}
+
+	private async setDateMobile() {
 		const presentResult: PresentResult = await DatetimePicker.present({
 			mode: "date"
 		});
@@ -145,6 +154,10 @@ export class NoteComponent extends EnhancedComponent {
 		date.setHours(0, 0, 0, 0);
 		this.state.note.date = date.toISOString();
 		this.saveNoteData();
+	}
+
+	private async setDateWeb() {
+		alert("setDateWeb()");
 	}
 
 	toggleDone() {
