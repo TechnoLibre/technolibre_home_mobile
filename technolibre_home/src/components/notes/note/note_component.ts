@@ -9,7 +9,10 @@ import { NoteEntry } from "../types";
 import { NoteEntryComponent } from "../entry/note_entry_component";
 
 import AudioIcon from "../../../assets/icon/audio.svg";
+import CheckBox from "../../../assets/icon/check_box.svg";
+import CheckBoxBlank from "../../../assets/icon/check_box_blank.svg";
 import EditNoteIcon from "../../../assets/icon/edit_note.svg";
+import EditDateIcon from "../../../assets/icon/edit_date.svg";
 import TextIcon from "../../../assets/icon/text.svg";
 
 export class NoteComponent extends EnhancedComponent {
@@ -72,6 +75,28 @@ export class NoteComponent extends EnhancedComponent {
 					</div>
 				</section>
 			</div>
+			<div id="note__bottom-controls__wrapper">
+				<section id="note__bottom-controls">
+					<a
+						id="note__control__date"
+						class="note__control"
+						href="#"
+						t-on-click.stop.prevent="setDate"
+					>
+						<img src="${EditDateIcon}" />
+						<p class="greyed-out">Set Date</p>
+					</a>
+					<a
+						id="note__control__done"
+						class="note__control"
+						href="#"
+						t-on-click.stop.prevent="toggleDone"
+					>
+						<img src="${CheckBoxBlank}" />
+						<p class="greyed-out">Done</p>
+					</a>
+				</section>
+			</div>
 		</div>
 	`;
 
@@ -109,6 +134,14 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.note.entries.push(this.noteService.getNewTextEntry());
 		this.saveNoteData();
 		this.focusLastEntry();
+	}
+
+	setDate() {
+		console.log("Set Date");
+	}
+
+	toggleDone() {
+		console.log("Toggle Done");
 	}
 
 	toggleEditMode() {

@@ -7,23 +7,32 @@
 	width: 100%;
 }
 
-#note-component #note__controls__wrapper {
+#note-component #note__controls__wrapper,
+#note-component #note__bottom-controls__wrapper {
 	margin: 0 auto;
 	max-width: 48rem;
 	width: 100%;
 }
 
-#note-component #note__controls {
+#note-component #note__controls,
+#note-component #note__bottom-controls {
 	align-items: center;
 	border-radius: 0.5rem;
 	display: grid;
 	gap: 0.75rem;
-	grid-template-areas: "audio text" "edit edit";
 	margin: 0 1rem;
 	@media only screen and (min-width: 48rem) {
 		display: flex;
 		justify-content: flex-end;
 	}
+}
+
+#note-component #note__controls {
+	grid-template-areas: "audio text" "edit edit";
+}
+
+#note-component #note__bottom-controls {
+	grid-template-areas: "date done";
 }
 
 #note-component .note__control {
@@ -92,4 +101,20 @@
 
 #note-component #note__draggables {
 	margin-top: 1rem;
+}
+
+#note-component #note__control__date {
+	grid-area: date;
+	pointer-events: none;
+	& .greyed-out {
+		color: grey;
+	}
+}
+
+#note-component #note__control__done {
+	grid-area: done;
+	pointer-events: none;
+	& .greyed-out {
+		color: grey;
+	}
 }
