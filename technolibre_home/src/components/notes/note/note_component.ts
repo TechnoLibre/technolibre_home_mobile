@@ -111,6 +111,7 @@ export class NoteComponent extends EnhancedComponent {
 		>
 			<div id="datepicker__wrapper" t-on-click.stop.prevent="">
 				<wc-datepicker
+					t-att-start-date="this.getStartDate()"
 					id="datepicker"
 					t-ref="datepicker"
 					t-on-selectDate="onWcDatePickerSelect"
@@ -192,11 +193,12 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	onWcDatePickerSelect() {
-		if (!this.wcDatePicker.el) {
+		if (!this.wcDatePickerPopover.el || !this.wcDatePicker.el) {
 			return;
 		}
 		const date = new Date((this.wcDatePicker.el as any)?.value);
 		this.setDate(date.toISOString());
+		this.wcDatePickerPopover.el.hidePopover();
 	}
 
 	toggleDone() {
@@ -250,6 +252,11 @@ export class NoteComponent extends EnhancedComponent {
 	private setDate(date: string) {
 		this.state.note.date = date;
 		this.saveNoteData();
+	}
+
+	private getStartDate() {
+		const date = this.state.note.date ? new Date(this.state.note.date) : new Date();
+		return date.toISOString().split("T")[0];
 	}
 
 	private reorderEntries() {
