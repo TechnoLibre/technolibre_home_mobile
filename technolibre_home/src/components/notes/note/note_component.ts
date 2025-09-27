@@ -1,5 +1,6 @@
 import { onMounted, useRef, useState, xml } from "@odoo/owl";
 
+import { DatetimePicker, PresentResult } from "@capawesome-team/capacitor-datetime-picker";
 import { Dialog } from "@capacitor/dialog";
 import { Sortable } from "sortablejs";
 
@@ -81,10 +82,10 @@ export class NoteComponent extends EnhancedComponent {
 						id="note__control__date"
 						class="note__control"
 						href="#"
-						t-on-click.stop.prevent="setDate"
+						t-on-click.stop.prevent="onSetDateClick"
 					>
 						<img src="${EditDateIcon}" />
-						<p class="greyed-out">Set Date</p>
+						<p>Set Date</p>
 					</a>
 					<a
 						id="note__control__done"
@@ -136,8 +137,14 @@ export class NoteComponent extends EnhancedComponent {
 		this.focusLastEntry();
 	}
 
-	setDate() {
-		console.log("Set Date");
+	async onSetDateClick() {
+		const presentResult: PresentResult = await DatetimePicker.present({
+			mode: "date"
+		});
+		const date = new Date(presentResult.value);
+		date.setHours(0, 0, 0, 0);
+		this.state.note.date = date.toISOString();
+		this.saveNoteData();
 	}
 
 	toggleDone() {

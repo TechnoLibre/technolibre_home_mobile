@@ -21,7 +21,7 @@ export class NotesItemComponent extends EnhancedComponent {
 					}"
 				>
 
-					<t t-if="props.note.date" t-esc="props.note.date"></t>
+					<t t-if="props.note.date" t-esc="formatDate(props.note.date)"></t>
 					<t t-else="" t-esc="'Sans date'"></t>
 				</p>
 			</div>
@@ -36,4 +36,8 @@ export class NotesItemComponent extends EnhancedComponent {
 			</div>
 		</li>
 	`;
+
+	formatDate(date: Date) {
+		return new Date(date).toLocaleDateString();
+	}
 }
