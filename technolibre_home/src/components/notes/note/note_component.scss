@@ -32,7 +32,7 @@
 }
 
 #note-component #note__bottom-controls {
-	grid-template-areas: "date done";
+	grid-template-areas: "date archive" "done done";
 }
 
 #note-component .note__control {
@@ -105,6 +105,10 @@
 
 #note-component #note__control__date {
 	grid-area: date;
+}
+
+#note-component #note__control__archive {
+	grid-area: archive;
 }
 
 #note-component #note__control__done {
