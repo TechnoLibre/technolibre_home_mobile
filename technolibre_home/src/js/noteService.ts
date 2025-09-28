@@ -203,6 +203,28 @@ export class NoteService {
 	}
 
 	/**
+	 * Returns all tags.
+	 *
+	 * @returns The list of all tags
+	 *
+	 * @throws NoteKeyNotFoundError
+	 * Thrown if the notes key is not found in the secure storage.
+	 *
+	 * @throws UndefinedNoteListError
+	 * Thrown if the list of notes is undefined.
+	 */
+	public async getTags(): Promise<Array<string>> {
+		const tags: Set<string> = new Set<string>();
+		const notes = await this.getNotes();
+		for (const note of notes) {
+			for (const tag of note.tags) {
+				tags.add(tag);
+			}
+		}
+		return Array.from(tags).sort();
+	}
+
+	/**
 	 * Returns a new unique id.
 	 *
 	 * @returns a new v4 UUID
@@ -225,6 +247,7 @@ export class NoteService {
 			done: false,
 			archived: false,
 			pinned: false,
+			tags: [],
 			entries: []
 		};
 	}
