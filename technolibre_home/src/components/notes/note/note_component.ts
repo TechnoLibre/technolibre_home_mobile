@@ -18,6 +18,7 @@ import CheckBoxIcon from "../../../assets/icon/check_box.svg";
 import CheckBoxBlankIcon from "../../../assets/icon/check_box_blank.svg";
 import EditNoteIcon from "../../../assets/icon/edit_note.svg";
 import EditDateIcon from "../../../assets/icon/edit_date.svg";
+import PinNoteIcon from "../../../assets/icon/pin.svg";
 import TextIcon from "../../../assets/icon/text.svg";
 
 export class NoteComponent extends EnhancedComponent {
@@ -105,6 +106,19 @@ export class NoteComponent extends EnhancedComponent {
 						<p t-else="">Archive</p>
 					</a>
 					<a
+						id="note__control__pin"
+						class="note__control"
+						t-att-class="{
+							'note__control__pin--active': state.note.pinned
+						}"
+						href="#"
+						t-on-click.stop.prevent="onPinClick"
+					>
+						<img src="${PinNoteIcon}" />
+						<p t-if="state.note.pinned">Unpin</p>
+						<p t-else="">Pin</p>
+					</a>
+					<a
 						id="note__control__done"
 						class="note__control"
 						href="#"
@@ -186,6 +200,10 @@ export class NoteComponent extends EnhancedComponent {
 	onArchiveClick() {
 		this.state.note.archived = !this.state.note.archived;
 		this.saveNoteData();
+	}
+
+	onPinClick() {
+		console.log("onPinClick()");
 	}
 
 	private async setDateMobile() {
