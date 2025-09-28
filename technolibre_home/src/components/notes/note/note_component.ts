@@ -12,6 +12,7 @@ import { NoteEntry } from "../types";
 import { NoteEntryComponent } from "../entry/note_entry_component";
 import { WebViewUtils } from "../../../utils/webViewUtils";
 
+import ArchiveNoteIcon from "../../../assets/icon/archive_note.svg";
 import AudioIcon from "../../../assets/icon/audio.svg";
 import CheckBoxIcon from "../../../assets/icon/check_box.svg";
 import CheckBoxBlankIcon from "../../../assets/icon/check_box_blank.svg";
@@ -91,6 +92,15 @@ export class NoteComponent extends EnhancedComponent {
 						<p>Set Date</p>
 					</a>
 					<a
+						id="note__control__archive"
+						class="note__control"
+						href="#"
+						t-on-click.stop.prevent="onArchiveClick"
+					>
+						<img src="${ArchiveNoteIcon}" />
+						<p>Archive</p>
+					</a>
+					<a
 						id="note__control__done"
 						class="note__control"
 						href="#"
@@ -167,6 +177,10 @@ export class NoteComponent extends EnhancedComponent {
 
 	onSetDateClick() {
 		WebViewUtils.isMobile() ? this.setDateMobile() : this.setDateWeb();
+	}
+
+	onArchiveClick() {
+		console.log("Toggle Archive");
 	}
 
 	private async setDateMobile() {
