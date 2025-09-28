@@ -13,6 +13,11 @@ export class NotesItemComponent extends EnhancedComponent {
 			}"
 			t-on-click="() => this.props.openNote(props.note.id)"
 		>
+			<div class="notes-item__tags" t-on-click.stop.prevent="">
+				<div class="notes-item__tag">Tag One</div>
+				<div class="notes-item__tag">Tag Two</div>
+				<div class="notes-item__tag">Tag Three</div>
+			</div>
 			<div class="notes-item__data">
 				<p class="notes-item__title">
 					<t t-esc="props.note.title"></t>
@@ -23,7 +28,6 @@ export class NotesItemComponent extends EnhancedComponent {
 						'no-date': !props.note.date
 					}"
 				>
-
 					<t t-if="props.note.date" t-esc="formatDate(props.note.date)"></t>
 					<t t-else="" t-esc="'Sans date'"></t>
 				</p>

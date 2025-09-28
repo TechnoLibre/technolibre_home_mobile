@@ -4,7 +4,9 @@
 	border-radius: 0.5em;
 	background-color: #151515;
 	cursor: pointer;
-	display: flex;
+	display: grid;
+	grid-template-areas: "tags tags" "data actions";
+	grid-template-columns: 1fr auto;
 	justify-content: flex-start;
 	overflow: hidden;
 	transition: background-color 150ms ease-in-out;
@@ -14,10 +16,29 @@
 	& + .notes-item {
 		margin-top: 0.75rem;
 	}
+	&__tags {
+		background-color: #000;
+		padding: 0.5rem;
+		display: flex;
+		grid-area: tags;
+	}
+	&__tag {
+		background-color: #1e2e93;
+		padding: 0.35rem 0.75rem;
+		border-radius: 0.25rem;
+		font-size: 0.75rem;
+		&:hover {
+			background-color: darken(#1e2e93, 5);
+		}
+	}
+	&__tag + .notes-item__tag {
+		margin-left: 0.5rem;
+	}
 	&__data {
 		align-items: center;
 		display: flex;
 		flex-grow: 1;
+		grid-area: data;
 		justify-content: space-between;
 		margin: 0.75rem 0.75rem 0.75rem 1rem;
 		min-width: 0;
@@ -43,6 +64,7 @@
 	&__actions {
 		display: flex;
 		gap: 0.5rem;
+		grid-area: actions;
 		margin: 0.75rem 0.75rem 0.75rem 0;
 	}
 	&__action {
