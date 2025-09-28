@@ -41,18 +41,37 @@ export class NotesComponent extends EnhancedComponent {
 				</a>
 			</section>
 			<section id="notes">
-				<ul id="notes-list" t-if="currentNoteList.length !== 0">
-					<NotesItemComponent
-						t-foreach="currentNoteList"
-						t-as="noteItem"
-						t-key="noteItem.id"
-						note="noteItem"
-						openNote.bind="openNote"
-						editNote.bind="editNote"
-						deleteNote.bind="deleteNote"
-					/>
-				</ul>
-				<div id="notes-empty" t-else="">
+				<t t-set="pinned" t-value="getPinned(currentNoteList)"></t>
+				<t t-set="unpinned" t-value="getUnpinned(currentNoteList)"></t>
+				<div id="notes__pinned" t-if="pinned.length !== 0">
+					<h3>Notes épinglées</h3>
+					<ul class="notes-list">
+						<NotesItemComponent
+							t-foreach="pinned"
+							t-as="noteItem"
+							t-key="noteItem.id"
+							note="noteItem"
+							openNote.bind="openNote"
+							editNote.bind="editNote"
+							deleteNote.bind="deleteNote"
+						/>
+					</ul>
+				</div>
+				<div id="notes__unpinned" t-if="unpinned.length !== 0">
+					<h3>Notes non épinglées</h3>
+					<ul class="notes-list">
+						<NotesItemComponent
+							t-foreach="unpinned"
+							t-as="noteItem"
+							t-key="noteItem.id"
+							note="noteItem"
+							openNote.bind="openNote"
+							editNote.bind="editNote"
+							deleteNote.bind="deleteNote"
+						/>
+					</ul>
+				</div>
+				<div id="notes-empty" t-if="currentNoteList.length === 0">
 					<p t-if="state.showArchivedNotes">Les notes archivées se trouveront ici.</p>
 					<p t-else="">Les notes se trouveront ici.</p>
 				</div>
@@ -82,6 +101,14 @@ export class NotesComponent extends EnhancedComponent {
 				Dialog.alert({ message: error.message });
 			}
 		}
+	}
+
+	getPinned(noteList: Array<Note>): Array<Note> {
+		return noteList.filter(note => note.pinned);
+	}
+
+	getUnpinned(noteList: Array<Note>): Array<Note> {
+		return noteList.filter(note => !note.pinned);
 	}
 
 	public get currentNoteList() {
