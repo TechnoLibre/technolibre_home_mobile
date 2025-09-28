@@ -10,6 +10,8 @@ import { Dialog } from "@capacitor/dialog";
 import { ErrorMessages } from "../../js/errors";
 import { Constants } from "../../js/constants";
 import NoteAddIcon from "../../assets/icon/note_add.svg";
+import ToggleOffIcon from "../../assets/icon/toggle_off.svg";
+import ToggleOnIcon from "../../assets/icon/toggle_on.svg";
 
 export class NotesComponent extends EnhancedComponent {
 	static template = xml`
@@ -23,10 +25,25 @@ export class NotesComponent extends EnhancedComponent {
 					<img src="${NoteAddIcon}" />
 				</a>
 			</header>
+			<section id="notes__controls">
+				<a
+					class="notes__control notes__control__show-archived"
+					t-att-class="{
+						'notes__control__show-archived--true': state.showArchivedNotes,
+						'notes__control__show-archived--false': !state.showArchivedNotes
+					}"
+					href="#"
+					t-on-click.stop.prevent="onToggleNoteListClick"
+				>
+					<p>Montrer les notes archivées</p>
+					<img src="${ToggleOnIcon}" t-if="state.showArchivedNotes" />
+					<img src="${ToggleOffIcon}" t-else="" />
+				</a>
+			</section>
 			<section id="notes">
-				<ul id="notes-list" t-if="state.notes.length !== 0">
+				<ul id="notes-list" t-if="currentNoteList.length !== 0">
 					<NotesItemComponent
-						t-foreach="state.notes"
+						t-foreach="currentNoteList"
 						t-as="noteItem"
 						t-key="noteItem.id"
 						note="noteItem"
@@ -36,7 +53,8 @@ export class NotesComponent extends EnhancedComponent {
 					/>
 				</ul>
 				<div id="notes-empty" t-else="">
-					<p>Il n'y a pas de note dans le stockage local.</p>
+					<p t-if="state.showArchivedNotes">Les notes archivées se trouveront ici.</p>
+					<p t-else="">Les notes se trouveront ici.</p>
 				</div>
 			</section>
 		</div>
@@ -45,18 +63,29 @@ export class NotesComponent extends EnhancedComponent {
 	static components = { HeadingComponent, NotesItemComponent };
 
 	setup() {
-		this.state = useState({ notes: new Array<Note>() });
+		this.state = useState({
+			notes: new Array<Note>(),
+			archivedNotes: new Array<Note>(),
+			unarchivedNotes: new Array<Note>(),
+			showArchivedNotes: false
+		});
 		this.getNotes();
 	}
 
 	async getNotes() {
 		try {
 			this.state.notes = await this.noteService.getNotes();
+			this.state.archivedNotes = this.state.notes.filter(note => note.archived);
+			this.state.unarchivedNotes = this.state.notes.filter(note => !note.archived);
 		} catch (error: unknown) {
 			if (error instanceof Error) {
 				Dialog.alert({ message: error.message });
 			}
 		}
+	}
+
+	public get currentNoteList() {
+		return this.state.showArchivedNotes ? this.state.archivedNotes : this.state.unarchivedNotes;
 	}
 
 	openNote(noteId: string) {
@@ -101,11 +130,15 @@ export class NotesComponent extends EnhancedComponent {
 			return;
 		}
 
-		this.state.notes = await this.noteService.getNotes();
+		this.getNotes();
 	}
 
 	onNoteAddClick() {
 		const newId = this.noteService.getNewId();
 		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: `/note/${newId}` });
+	}
+
+	onToggleNoteListClick() {
+		this.state.showArchivedNotes = !this.state.showArchivedNotes;
 	}
 }
