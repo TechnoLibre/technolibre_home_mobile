@@ -203,7 +203,8 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	onPinClick() {
-		console.log("onPinClick()");
+		this.state.note.pinned = !this.state.note.pinned;
+		this.saveNoteData();
 	}
 
 	private async setDateMobile() {

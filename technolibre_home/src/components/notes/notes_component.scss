@@ -72,13 +72,18 @@
 	padding: 0 1rem 1rem;
 }
 
-#notes-component #notes-list,
+#notes-component #notes__pinned,
+#notes-component #notes__unpinned {
+	margin-top: 1rem;
+}
+
+#notes-component .notes-list,
 #notes-component #notes-empty {
 	border-radius: 0.25em;
 	margin: 0.75em 0 0 0;
 }
 
-#notes-component #notes-list {
+#notes-component .notes-list {
 	list-style: none;
 	padding: 0;
 }

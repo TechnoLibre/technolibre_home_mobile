@@ -125,6 +125,13 @@
 	}
 }
 
+#note-component .note__control__pin--active {
+	background-color: #931a07;
+	&:hover {
+		background-color: darken(#931a07, 5);
+	}
+}
+
 #note-component #note__control__done {
 	grid-area: done;
 }
