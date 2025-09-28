@@ -4,6 +4,7 @@ export interface Note {
 	date?: string;
 	done: boolean;
 	archived: boolean;
+	pinned: boolean;
 	entries: Array<NoteEntry>;
 }
 

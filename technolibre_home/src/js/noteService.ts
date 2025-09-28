@@ -224,6 +224,7 @@ export class NoteService {
 			title: "New note",
 			done: false,
 			archived: false,
+			pinned: false,
 			entries: []
 		};
 	}
