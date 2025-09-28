@@ -41,6 +41,7 @@ export class NotesComponent extends EnhancedComponent {
 				</a>
 			</section>
 			<section id="notes">
+				<t t-set="currentNoteList" t-value="getCurrentNoteList()"></t>
 				<t t-set="pinned" t-value="getPinned(currentNoteList)"></t>
 				<t t-set="unpinned" t-value="getUnpinned(currentNoteList)"></t>
 				<div id="notes__pinned" t-if="pinned.length !== 0">
@@ -84,8 +85,6 @@ export class NotesComponent extends EnhancedComponent {
 	setup() {
 		this.state = useState({
 			notes: new Array<Note>(),
-			archivedNotes: new Array<Note>(),
-			unarchivedNotes: new Array<Note>(),
 			showArchivedNotes: false
 		});
 		this.getNotes();
@@ -94,12 +93,27 @@ export class NotesComponent extends EnhancedComponent {
 	async getNotes() {
 		try {
 			this.state.notes = await this.noteService.getNotes();
-			this.state.archivedNotes = this.state.notes.filter(note => note.archived);
-			this.state.unarchivedNotes = this.state.notes.filter(note => !note.archived);
 		} catch (error: unknown) {
 			if (error instanceof Error) {
 				Dialog.alert({ message: error.message });
 			}
+		}
+	}
+
+	onNoteAddClick() {
+		const newId = this.noteService.getNewId();
+		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: `/note/${newId}` });
+	}
+
+	onToggleNoteListClick() {
+		this.state.showArchivedNotes = !this.state.showArchivedNotes;
+	}
+
+	getCurrentNoteList(): Array<Note> {
+		if (this.state.showArchivedNotes) {
+			return this.state.notes.filter(note => note.archived);
+		} else {
+			return this.state.notes.filter(note => !note.archived);
 		}
 	}
 
@@ -109,10 +123,6 @@ export class NotesComponent extends EnhancedComponent {
 
 	getUnpinned(noteList: Array<Note>): Array<Note> {
 		return noteList.filter(note => !note.pinned);
-	}
-
-	public get currentNoteList() {
-		return this.state.showArchivedNotes ? this.state.archivedNotes : this.state.unarchivedNotes;
 	}
 
 	openNote(noteId: string) {
@@ -158,14 +168,5 @@ export class NotesComponent extends EnhancedComponent {
 		}
 
 		this.getNotes();
-	}
-
-	onNoteAddClick() {
-		const newId = this.noteService.getNewId();
-		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: `/note/${newId}` });
-	}
-
-	onToggleNoteListClick() {
-		this.state.showArchivedNotes = !this.state.showArchivedNotes;
 	}
 }
