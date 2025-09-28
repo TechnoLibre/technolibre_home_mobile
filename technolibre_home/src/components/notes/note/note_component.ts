@@ -94,11 +94,15 @@ export class NoteComponent extends EnhancedComponent {
 					<a
 						id="note__control__archive"
 						class="note__control"
+						t-att-class="{
+							'note__control__archive--active': state.note.archived
+						}"
 						href="#"
 						t-on-click.stop.prevent="onArchiveClick"
 					>
 						<img src="${ArchiveNoteIcon}" />
-						<p>Archive</p>
+						<p t-if="state.note.archived">Unarchive</p>
+						<p t-else="">Archive</p>
 					</a>
 					<a
 						id="note__control__done"
@@ -180,7 +184,8 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	onArchiveClick() {
-		console.log("Toggle Archive");
+		this.state.note.archived = !this.state.note.archived;
+		this.saveNoteData();
 	}
 
 	private async setDateMobile() {

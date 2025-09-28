@@ -3,6 +3,7 @@ export interface Note {
 	title: string;
 	date?: string;
 	done: boolean;
+	archived: boolean;
 	entries: Array<NoteEntry>;
 }
 
