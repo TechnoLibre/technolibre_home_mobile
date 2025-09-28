@@ -19,6 +19,7 @@ import CheckBoxBlankIcon from "../../../assets/icon/check_box_blank.svg";
 import EditNoteIcon from "../../../assets/icon/edit_note.svg";
 import EditDateIcon from "../../../assets/icon/edit_date.svg";
 import PinNoteIcon from "../../../assets/icon/pin.svg";
+import TagIcon from "../../../assets/icon/tag.svg";
 import TextIcon from "../../../assets/icon/text.svg";
 
 export class NoteComponent extends EnhancedComponent {
@@ -60,6 +61,19 @@ export class NoteComponent extends EnhancedComponent {
 					id="note__content"
 					t-on-input.stop.prevent="saveNoteData"
 				>
+					<ul
+						id="note__tags__list"
+						t-if="state.note.tags.length !== 0"
+					>
+						<li
+							class="note__tag"
+							t-foreach="state.note.tags"
+							t-as="tag"
+							t-key="tag"
+						>
+							<t t-esc="tag"></t>
+						</li>
+					</ul>
 					<textarea
 						type="text"
 						id="note__title"
@@ -91,6 +105,15 @@ export class NoteComponent extends EnhancedComponent {
 					>
 						<img src="${EditDateIcon}" />
 						<p>Set Date</p>
+					</a>
+					<a
+						id="note__control__tags"
+						class="note__control"
+						href="#"
+						t-on-click.stop.prevent="onTagsClick"
+					>
+						<img src="${TagIcon}" />
+						<p>Tags</p>
 					</a>
 					<a
 						id="note__control__archive"
@@ -195,6 +218,10 @@ export class NoteComponent extends EnhancedComponent {
 
 	onSetDateClick() {
 		WebViewUtils.isMobile() ? this.setDateMobile() : this.setDateWeb();
+	}
+
+	onTagsClick() {
+		console.log("onTagsClick()");
 	}
 
 	onArchiveClick() {

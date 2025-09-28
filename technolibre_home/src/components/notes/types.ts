@@ -5,6 +5,7 @@ export interface Note {
 	done: boolean;
 	archived: boolean;
 	pinned: boolean;
+	tags: Array<string>;
 	entries: Array<NoteEntry>;
 }
 

@@ -33,7 +33,7 @@
 }
 
 #note-component #note__bottom-controls {
-	grid-template-areas: "date archive" "pin done";
+	grid-template-areas: "date date" "tags archive" "pin done";
 	grid-template-columns: repeat(2, 1fr);
 }
 
@@ -90,6 +90,21 @@
 	padding: 1rem;
 }
 
+#note-component #note__tags__list {
+	align-items: center;
+	display: flex;
+	justify-content: flex-start;
+	list-style: none;
+	margin-bottom: 0.75rem;
+}
+
+#note-component .note__tag {
+	background-color: #1e2e93;
+	padding: 0.35rem 0.75rem;
+	border-radius: 0.25rem;
+	font-size: 0.75rem;
+}
+
 #note-component #note__title {
 	background-color: transparent;
 	border: none;
@@ -108,6 +123,10 @@
 
 #note-component #note__control__date {
 	grid-area: date;
+}
+
+#note-component #note__control__tags {
+	grid-area: tags;
 }
 
 #note-component #note__control__archive {

@@ -13,10 +13,19 @@ export class NotesItemComponent extends EnhancedComponent {
 			}"
 			t-on-click="() => this.props.openNote(props.note.id)"
 		>
-			<div class="notes-item__tags" t-on-click.stop.prevent="">
-				<div class="notes-item__tag">Tag One</div>
-				<div class="notes-item__tag">Tag Two</div>
-				<div class="notes-item__tag">Tag Three</div>
+			<div
+				class="notes-item__tags"
+				t-if="props.note.tags.length !== 0"
+				t-on-click.stop.prevent=""
+			>
+				<div
+					t-foreach="props.note.tags"
+					t-as="tag"
+					t-key="tag"
+					class="notes-item__tag"
+				>
+					<t t-esc="tag"></t>
+				</div>
 			</div>
 			<div class="notes-item__data">
 				<p class="notes-item__title">
