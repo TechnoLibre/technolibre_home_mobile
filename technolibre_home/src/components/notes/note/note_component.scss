@@ -29,10 +29,12 @@
 
 #note-component #note__controls {
 	grid-template-areas: "audio text" "edit edit";
+	grid-template-columns: repeat(2, 1fr);
 }
 
 #note-component #note__bottom-controls {
 	grid-template-areas: "date archive" "done done";
+	grid-template-columns: repeat(2, 1fr);
 }
 
 #note-component .note__control {
@@ -44,6 +46,7 @@
 	background-color: #222;
 	border-radius: 0.5rem;
 	padding: 0.75rem;
+	transition: background-color 150ms ease-in-out;
 	& img {
 		pointer-events: none;
 		width: 1.25rem;
@@ -109,6 +112,13 @@
 
 #note-component #note__control__archive {
 	grid-area: archive;
+}
+
+#note-component .note__control__archive--active {
+	background-color: #ad6704;
+	&:hover {
+		background-color: darken(#ad6704, 5);
+	}
 }
 
 #note-component #note__control__done {

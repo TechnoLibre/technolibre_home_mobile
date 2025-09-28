@@ -223,6 +223,7 @@ export class NoteService {
 			id: noteId || "",
 			title: "New note",
 			done: false,
+			archived: false,
 			entries: []
 		};
 	}
