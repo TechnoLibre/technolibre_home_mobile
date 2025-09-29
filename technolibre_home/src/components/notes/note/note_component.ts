@@ -12,15 +12,9 @@ import { NoteEntry } from "../types";
 import { NoteEntryComponent } from "../entry/note_entry_component";
 
 import { DatePickerComponent } from "../date_picker/date_picker_component";
+import { NoteBottomControlsComponent } from "../bottom_controls/note_bottom_controls_component";
 import { NoteTopControlsComponent } from "../../notes/top_controls/note_top_controls_component";
 import { TagManagerComponent } from "../tag_manager/tag_manager_component";
-
-import ArchiveNoteIcon from "../../../assets/icon/archive_note.svg";
-import CheckBoxIcon from "../../../assets/icon/check_box.svg";
-import CheckBoxBlankIcon from "../../../assets/icon/check_box_blank.svg";
-import EditDateIcon from "../../../assets/icon/edit_date.svg";
-import PinNoteIcon from "../../../assets/icon/pin.svg";
-import TagIcon from "../../../assets/icon/tag.svg";
 
 export class NoteComponent extends EnhancedComponent {
 	static template = xml`
@@ -69,64 +63,14 @@ export class NoteComponent extends EnhancedComponent {
 					</div>
 				</section>
 			</div>
-			<div id="note__bottom-controls__wrapper">
-				<section id="note__bottom-controls">
-					<a
-						id="note__control__date"
-						class="note__control"
-						href="#"
-						t-on-click.stop.prevent="onSetDateClick"
-					>
-						<img src="${EditDateIcon}" />
-						<p>Set Date</p>
-					</a>
-					<a
-						id="note__control__tags"
-						class="note__control"
-						href="#"
-						t-on-click.stop.prevent="onTagsClick"
-					>
-						<img src="${TagIcon}" />
-						<p>Tags</p>
-					</a>
-					<a
-						id="note__control__archive"
-						class="note__control"
-						t-att-class="{
-							'note__control__archive--active': state.note.archived
-						}"
-						href="#"
-						t-on-click.stop.prevent="onArchiveClick"
-					>
-						<img src="${ArchiveNoteIcon}" />
-						<p t-if="state.note.archived">Unarchive</p>
-						<p t-else="">Archive</p>
-					</a>
-					<a
-						id="note__control__pin"
-						class="note__control"
-						t-att-class="{
-							'note__control__pin--active': state.note.pinned
-						}"
-						href="#"
-						t-on-click.stop.prevent="onPinClick"
-					>
-						<img src="${PinNoteIcon}" />
-						<p t-if="state.note.pinned">Unpin</p>
-						<p t-else="">Pin</p>
-					</a>
-					<a
-						id="note__control__done"
-						class="note__control"
-						href="#"
-						t-on-click.stop.prevent="toggleDone"
-					>
-						<img src="${CheckBoxIcon}" t-if="state.note.done" />
-						<img src="${CheckBoxBlankIcon}" t-else="" />
-						<p>Done</p>
-					</a>
-				</section>
-			</div>
+			<NoteBottomControlsComponent
+				note="state.note"
+				onSetDateClick.bind="onSetDateClick"
+				onTagsClick.bind="onTagsClick"
+				onArchiveClick.bind="onArchiveClick"
+				onPinClick.bind="onPinClick"
+				toggleDone.bind="toggleDone"
+			/>
 		</div>
 		<DatePickerComponent note="state.note" setNoteDate.bind="setNoteDate" />
 		<TagManagerComponent />
@@ -134,6 +78,7 @@ export class NoteComponent extends EnhancedComponent {
 
 	static components = {
 		DatePickerComponent,
+		NoteBottomControlsComponent,
 		NoteEntryComponent,
 		NoteTopControlsComponent,
 		TagManagerComponent
