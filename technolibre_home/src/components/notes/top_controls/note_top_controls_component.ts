@@ -3,7 +3,7 @@ import { xml } from "@odoo/owl";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 
 import AudioIcon from "../../../assets/icon/audio.svg";
-import EditNoteIcon from "../../../assets/icon/edit_note.svg";
+import EditNoteIcon from "../../../assets/icon/note_edit.svg";
 import TextIcon from "../../../assets/icon/text.svg";
 
 export class NoteTopControlsComponent extends EnhancedComponent {

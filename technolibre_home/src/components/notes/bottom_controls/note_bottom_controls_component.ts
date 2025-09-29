@@ -2,10 +2,10 @@ import { xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 
-import ArchiveNoteIcon from "../../../assets/icon/archive_note.svg";
+import ArchiveNoteIcon from "../../../assets/icon/note_archive.svg";
 import CheckBoxIcon from "../../../assets/icon/check_box.svg";
 import CheckBoxBlankIcon from "../../../assets/icon/check_box_blank.svg";
-import EditDateIcon from "../../../assets/icon/edit_date.svg";
+import EditDateIcon from "../../../assets/icon/date_edit.svg";
 import PinNoteIcon from "../../../assets/icon/pin.svg";
 import TagIcon from "../../../assets/icon/tag.svg";
 

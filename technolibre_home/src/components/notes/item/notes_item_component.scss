@@ -18,15 +18,15 @@
 	}
 	&__tags {
 		background-color: #000;
-		padding: 0.5rem;
 		display: flex;
 		grid-area: tags;
+		padding: 0.5rem;
 	}
 	&__tag {
 		background-color: #1e2e93;
-		padding: 0.35rem 0.75rem;
 		border-radius: 0.25rem;
 		font-size: 0.75rem;
+		padding: 0.35rem 0.75rem;
 		&:hover {
 			background-color: darken(#1e2e93, 5);
 		}

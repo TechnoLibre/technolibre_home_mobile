@@ -29,13 +29,13 @@
 
 #note-component .note__control {
 	align-items: center;
-	display: flex;
-	gap: 0.5rem;
-	text-decoration: none;
-	color: var(--text);
 	background-color: #222;
 	border-radius: 0.5rem;
+	color: var(--text);
+	display: flex;
+	gap: 0.5rem;
 	padding: 0.75rem;
+	text-decoration: none;
 	transition: background-color 150ms ease-in-out;
 	& img {
 		pointer-events: none;
