@@ -1,3 +1,23 @@
-#tag-manager-component {
-	//
+#tag-manager__popover {
+	background-color: rgba(0, 0, 0, 0.35);
+	height: 100%;
+	margin: auto;
+	width: 100%;
+}
+
+#tag-manager__wrapper {
+	align-items: center;
+	display: flex;
+	height: 100%;
+	justify-content: center;
+	pointer-events: none;
+	width: 100%;
+}
+
+#tag-manager {
+	background-color: #555;
+	color: var(--text);
+	pointer-events: auto;
+	max-width: 30rem;
+	width: 100%;
 }
