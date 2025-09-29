@@ -1,9 +1,7 @@
 import { onMounted, useRef, useState, xml } from "@odoo/owl";
 
-import { DatetimePicker, PresentResult } from "@capawesome-team/capacitor-datetime-picker";
 import { Dialog } from "@capacitor/dialog";
 import { Sortable } from "sortablejs";
-import { WcDatepicker } from "wc-datepicker/dist/components/wc-datepicker";
 
 import "wc-datepicker/dist/themes/dark.css";
 
@@ -12,8 +10,8 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../../js/errors";
 import { NoteEntry } from "../types";
 import { NoteEntryComponent } from "../entry/note_entry_component";
-import { WebViewUtils } from "../../../utils/webViewUtils";
 
+import { DatePickerComponent } from "../date_picker/date_picker_component";
 import { TagManagerComponent } from "../tag_manager/tag_manager_component";
 
 import ArchiveNoteIcon from "../../../assets/icon/archive_note.svg";
@@ -158,39 +156,21 @@ export class NoteComponent extends EnhancedComponent {
 				</section>
 			</div>
 		</div>
-		<div
-			id="datepicker__popover"
-			popover=""
-			t-if="!state.isMobile"
-			t-ref="datepicker-popover"
-			t-on-click.stop.prevent="onWcDatePickerPopoverClick"
-		>
-			<div id="datepicker__wrapper" t-on-click.stop.prevent="">
-				<wc-datepicker
-					t-att-start-date="this.getStartDate()"
-					id="datepicker"
-					t-ref="datepicker"
-					t-on-selectDate="onWcDatePickerSelect"
-				></wc-datepicker>
-			</div>
-		</div>
+		<DatePickerComponent note="state.note" setNoteDate.bind="setNoteDate" />
 		<TagManagerComponent />
 	`;
 
-	static components = { NoteEntryComponent, TagManagerComponent };
+	static components = { DatePickerComponent, NoteEntryComponent, TagManagerComponent };
 
 	sortable: any = undefined;
 	entries = useRef("note-entries");
-	wcDatePickerPopover = useRef("datepicker-popover");
-	wcDatePicker = useRef("datepicker");
 
 	setup() {
 		this.state = useState({
 			noteId: undefined,
 			note: this.noteService.getNewNote(),
 			newNote: false,
-			editMode: false,
-			isMobile: WebViewUtils.isMobile()
+			editMode: false
 		});
 		onMounted(this.onMounted.bind(this));
 		this.setParams();
@@ -198,10 +178,6 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	private onMounted() {
-		if (!customElements.get("wc-datepicker")) {
-			customElements.define("wc-datepicker", WcDatepicker);
-		}
-
 		this.sortable = Sortable.create(this.entries.el, {
 			animation: 150,
 			easing: "cubic-bezier(0.37, 0, 0.63, 1)",
@@ -222,7 +198,7 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	onSetDateClick() {
-		WebViewUtils.isMobile() ? this.setDateMobile() : this.setDateWeb();
+		this.eventBus.trigger(Constants.DATE_PICKER_EVENT_NAME);
 	}
 
 	onTagsClick() {
@@ -239,39 +215,6 @@ export class NoteComponent extends EnhancedComponent {
 		this.saveNoteData();
 	}
 
-	private async setDateMobile() {
-		const presentResult: PresentResult = await DatetimePicker.present({
-			mode: "date"
-		});
-		const date = new Date(presentResult.value);
-		date.setHours(0, 0, 0, 0);
-		this.setDate(date.toISOString());
-	}
-
-	private setDateWeb() {
-		if (!this.wcDatePickerPopover.el) {
-			return;
-		}
-
-		this.wcDatePickerPopover.el.showPopover();
-	}
-
-	onWcDatePickerPopoverClick() {
-		if (!this.wcDatePickerPopover.el) {
-			return;
-		}
-		this.wcDatePickerPopover.el.hidePopover();
-	}
-
-	onWcDatePickerSelect() {
-		if (!this.wcDatePickerPopover.el || !this.wcDatePicker.el) {
-			return;
-		}
-		const date = new Date((this.wcDatePicker.el as any)?.value);
-		this.setDate(date.toISOString());
-		this.wcDatePickerPopover.el.hidePopover();
-	}
-
 	toggleDone() {
 		this.state.note.done = !this.state.note.done;
 		this.saveNoteData();
@@ -283,6 +226,11 @@ export class NoteComponent extends EnhancedComponent {
 
 	onSort() {
 		this.reorderEntries();
+		this.saveNoteData();
+	}
+
+	setNoteDate(date: string) {
+		this.state.note.date = date;
 		this.saveNoteData();
 	}
 
@@ -319,16 +267,6 @@ export class NoteComponent extends EnhancedComponent {
 				this.state.note = this.noteService.getNewNote(this.state.noteId);
 			}
 		}
-	}
-
-	private setDate(date: string) {
-		this.state.note.date = date;
-		this.saveNoteData();
-	}
-
-	private getStartDate() {
-		const date = this.state.note.date ? new Date(this.state.note.date) : new Date();
-		return date.toISOString().split("T")[0];
 	}
 
 	private reorderEntries() {
