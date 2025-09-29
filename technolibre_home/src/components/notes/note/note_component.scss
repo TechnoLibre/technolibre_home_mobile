@@ -7,14 +7,14 @@
 	width: 100%;
 }
 
-#note-component #note__controls__wrapper,
+#note-component #note__top-controls__wrapper,
 #note-component #note__bottom-controls__wrapper {
 	margin: 0 auto;
 	max-width: 48rem;
 	width: 100%;
 }
 
-#note-component #note__controls,
+#note-component #note__top-controls,
 #note-component #note__bottom-controls {
 	align-items: center;
 	border-radius: 0.5rem;
@@ -25,11 +25,6 @@
 		display: flex;
 		justify-content: flex-end;
 	}
-}
-
-#note-component #note__controls {
-	grid-template-areas: "audio text" "edit edit";
-	grid-template-columns: repeat(2, 1fr);
 }
 
 #note-component #note__bottom-controls {
@@ -55,22 +50,6 @@
 	&:hover {
 		background-color: #333;
 	}
-}
-
-#note__control__audio {
-	grid-area: audio;
-	pointer-events: none;
-	& .greyed-out {
-		color: grey;
-	}
-}
-
-#note__control__text {
-	grid-area: text;
-}
-
-#note__control__edit {
-	grid-area: edit;
 }
 
 #note-component #note__content__wrapper {
