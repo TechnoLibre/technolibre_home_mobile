@@ -3,7 +3,7 @@ import { useState, xml } from "@odoo/owl";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 
 import { HeadingComponent } from "../heading/heading_component";
-import { NotesItemComponent } from "./item/notes_item_component";
+import { NotesItemComponent } from "./item/note_list_item_component";
 import { Note } from "./types";
 import { BiometryUtils } from "../../utils/biometryUtils";
 import { Dialog } from "@capacitor/dialog";
@@ -13,9 +13,9 @@ import NoteAddIcon from "../../assets/icon/note_add.svg";
 import ToggleOffIcon from "../../assets/icon/toggle_off.svg";
 import ToggleOnIcon from "../../assets/icon/toggle_on.svg";
 
-export class NotesComponent extends EnhancedComponent {
+export class NoteListComponent extends EnhancedComponent {
 	static template = xml`
-		<div id="notes-component">
+		<div id="note-list-component">
 			<header id="notes-header">
 				<h1 id="notes-heading">Notes</h1>
 				<a
