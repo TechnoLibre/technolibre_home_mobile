@@ -10,4 +10,6 @@ export class Constants {
 	public static ROUTER_NAVIGATION_EVENT_NAME: string = "routernav";
 
 	public static TAG_MANAGER_EVENT_NAME: string = "tag_manager";
+
+	public static DATE_PICKER_EVENT_NAME: string = "date_picker";
 }
