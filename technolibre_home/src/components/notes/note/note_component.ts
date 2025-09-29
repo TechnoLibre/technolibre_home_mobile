@@ -36,7 +36,10 @@ export class NoteComponent extends EnhancedComponent {
 				toggleDone.bind="toggleDone"
 			/>
 		</div>
-		<DatePickerComponent note="state.note" setNoteDate.bind="setNoteDate" />
+		<DatePickerComponent
+			note="state.note"
+			setNoteDate.bind="setNoteDate"
+		/>
 		<TagManagerComponent />
 	`;
 

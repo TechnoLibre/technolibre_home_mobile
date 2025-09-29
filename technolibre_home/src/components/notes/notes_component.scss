@@ -2,8 +2,8 @@
 	align-items: center;
 	display: flex;
 	justify-content: center;
-	max-width: 48rem;
 	margin: 0 auto;
+	max-width: 48rem;
 	padding: 1rem 1.25rem;
 }
 
@@ -34,13 +34,13 @@
 }
 
 #notes-component #notes__controls {
+	align-items: center;
 	display: grid;
 	grid-template-areas: "archived";
-	align-items: center;
-	min-height: 2rem;
-	padding: 0 1rem;
 	max-width: 48rem;
+	min-height: 2rem;
 	margin: 0 auto;
+	padding: 0 1rem;
 	@media only screen and (min-width: 48rem) {
 		display: flex;
 		justify-content: flex-end;
