@@ -4,13 +4,17 @@ import { DatetimePicker, PresentResult } from "@capawesome-team/capacitor-dateti
 import { Dialog } from "@capacitor/dialog";
 import { Sortable } from "sortablejs";
 import { WcDatepicker } from "wc-datepicker/dist/components/wc-datepicker";
+
 import "wc-datepicker/dist/themes/dark.css";
 
+import { Constants } from "../../../js/constants";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../../js/errors";
 import { NoteEntry } from "../types";
 import { NoteEntryComponent } from "../entry/note_entry_component";
 import { WebViewUtils } from "../../../utils/webViewUtils";
+
+import { TagManagerComponent } from "../tag_manager/tag_manager_component";
 
 import ArchiveNoteIcon from "../../../assets/icon/archive_note.svg";
 import AudioIcon from "../../../assets/icon/audio.svg";
@@ -170,9 +174,10 @@ export class NoteComponent extends EnhancedComponent {
 				></wc-datepicker>
 			</div>
 		</div>
+		<TagManagerComponent />
 	`;
 
-	static components = { NoteEntryComponent };
+	static components = { NoteEntryComponent, TagManagerComponent };
 
 	sortable: any = undefined;
 	entries = useRef("note-entries");
@@ -221,7 +226,7 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	onTagsClick() {
-		console.log("onTagsClick()");
+		this.eventBus.trigger(Constants.TAG_MANAGER_EVENT_NAME);
 	}
 
 	onArchiveClick() {

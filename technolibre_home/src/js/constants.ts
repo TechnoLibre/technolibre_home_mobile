@@ -8,4 +8,6 @@ export class Constants {
 	public static LOGIN_COMPONENT_URL: string = "/";
 
 	public static ROUTER_NAVIGATION_EVENT_NAME: string = "routernav";
+
+	public static TAG_MANAGER_EVENT_NAME: string = "tag_manager";
 }
