@@ -12,4 +12,6 @@ export class Constants {
 	public static TAG_MANAGER_EVENT_NAME: string = "tag_manager";
 
 	public static DATE_PICKER_EVENT_NAME: string = "date_picker";
+
+	public static FOCUS_LAST_ENTRY_EVENT_NAME: string = "focus_last_entry";
 }
