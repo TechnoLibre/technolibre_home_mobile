@@ -12,52 +12,24 @@ import { NoteEntry } from "../types";
 import { NoteEntryComponent } from "../entry/note_entry_component";
 
 import { DatePickerComponent } from "../date_picker/date_picker_component";
+import { NoteTopControlsComponent } from "../../notes/top_controls/note_top_controls_component";
 import { TagManagerComponent } from "../tag_manager/tag_manager_component";
 
 import ArchiveNoteIcon from "../../../assets/icon/archive_note.svg";
-import AudioIcon from "../../../assets/icon/audio.svg";
 import CheckBoxIcon from "../../../assets/icon/check_box.svg";
 import CheckBoxBlankIcon from "../../../assets/icon/check_box_blank.svg";
-import EditNoteIcon from "../../../assets/icon/edit_note.svg";
 import EditDateIcon from "../../../assets/icon/edit_date.svg";
 import PinNoteIcon from "../../../assets/icon/pin.svg";
 import TagIcon from "../../../assets/icon/tag.svg";
-import TextIcon from "../../../assets/icon/text.svg";
 
 export class NoteComponent extends EnhancedComponent {
 	static template = xml`
 		<div id="note-component">
-			<div id="note__controls__wrapper">
-				<section id="note__controls">
-					<a
-						id="note__control__audio"
-						class="note__control"
-						href="#"
-						t-on-click.stop.prevent="addAudio"
-					>
-						<img src="${AudioIcon}" />
-						<p class="greyed-out">Add Audio</p>
-					</a>
-					<a
-						id="note__control__text"
-						class="note__control"
-						href="#"
-						t-on-click.stop.prevent="addText"
-					>
-						<img src="${TextIcon}" />
-						<p>Add Text</p>
-					</a>
-					<a
-						id="note__control__edit"
-						class="note__control"
-						href="#"
-						t-on-click.stop.prevent="toggleEditMode"
-					>
-						<img src="${EditNoteIcon}" />
-						<p>Edit Mode</p>
-					</a>
-				</section>
-			</div>
+			<NoteTopControlsComponent
+				addAudio.bind="addAudio"
+				addText.bind="addText"
+				toggleEditMode.bind="toggleEditMode"
+			/>
 			<div id="note__content__wrapper">
 				<section
 					id="note__content"
@@ -160,7 +132,12 @@ export class NoteComponent extends EnhancedComponent {
 		<TagManagerComponent />
 	`;
 
-	static components = { DatePickerComponent, NoteEntryComponent, TagManagerComponent };
+	static components = {
+		DatePickerComponent,
+		NoteEntryComponent,
+		NoteTopControlsComponent,
+		TagManagerComponent
+	};
 
 	sortable: any = undefined;
 	entries = useRef("note-entries");
@@ -197,6 +174,10 @@ export class NoteComponent extends EnhancedComponent {
 		this.focusLastEntry();
 	}
 
+	toggleEditMode() {
+		this.state.editMode = !this.state.editMode;
+	}
+
 	onSetDateClick() {
 		this.eventBus.trigger(Constants.DATE_PICKER_EVENT_NAME);
 	}
@@ -218,10 +199,6 @@ export class NoteComponent extends EnhancedComponent {
 	toggleDone() {
 		this.state.note.done = !this.state.note.done;
 		this.saveNoteData();
-	}
-
-	toggleEditMode() {
-		this.state.editMode = !this.state.editMode;
 	}
 
 	onSort() {

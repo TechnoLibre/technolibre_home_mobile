@@ -1,3 +1,20 @@
-#note-top-controls-component {
-	//
+#note__top-controls__wrapper #note__controls {
+	grid-template-areas: "audio text" "edit edit";
+	grid-template-columns: repeat(2, 1fr);
+}
+
+#note__control__audio {
+	grid-area: audio;
+	pointer-events: none;
+	& .greyed-out {
+		color: grey;
+	}
+}
+
+#note__control__text {
+	grid-area: text;
+}
+
+#note__control__edit {
+	grid-area: edit;
 }
