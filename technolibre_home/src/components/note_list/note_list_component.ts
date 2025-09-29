@@ -1,14 +1,15 @@
 import { useState, xml } from "@odoo/owl";
 
+import { BiometryUtils } from "../../utils/biometryUtils";
+import { Constants } from "../../js/constants";
+import { Dialog } from "@capacitor/dialog";
 import { EnhancedComponent } from "../../js/enhancedComponent";
+import { ErrorMessages } from "../../js/errors";
+import { Note } from "./types";
 
 import { HeadingComponent } from "../heading/heading_component";
 import { NotesItemComponent } from "./item/note_list_item_component";
-import { Note } from "./types";
-import { BiometryUtils } from "../../utils/biometryUtils";
-import { Dialog } from "@capacitor/dialog";
-import { ErrorMessages } from "../../js/errors";
-import { Constants } from "../../js/constants";
+
 import NoteAddIcon from "../../assets/icon/note_add.svg";
 import ToggleOffIcon from "../../assets/icon/toggle_off.svg";
 import ToggleOnIcon from "../../assets/icon/toggle_on.svg";
