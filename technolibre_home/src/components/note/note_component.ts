@@ -4,15 +4,15 @@ import { Dialog } from "@capacitor/dialog";
 
 import "wc-datepicker/dist/themes/dark.css";
 
-import { Constants } from "../../../js/constants";
-import { EnhancedComponent } from "../../../js/enhancedComponent";
-import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../../js/errors";
+import { Constants } from "../../js/constants";
+import { EnhancedComponent } from "../../js/enhancedComponent";
+import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 
-import { DatePickerComponent } from "../date_picker/date_picker_component";
-import { NoteBottomControlsComponent } from "../bottom_controls/note_bottom_controls_component";
-import { NoteContentComponent } from "../content/note_content_component";
-import { NoteTopControlsComponent } from "../../notes/top_controls/note_top_controls_component";
-import { TagManagerComponent } from "../tag_manager/tag_manager_component";
+import { DatePickerComponent } from "./date_picker/date_picker_component";
+import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
+import { NoteContentComponent } from "./content/note_content_component";
+import { NoteTopControlsComponent } from "./top_controls/note_top_controls_component";
+import { TagManagerComponent } from "./tag_manager/tag_manager_component";
 
 export class NoteComponent extends EnhancedComponent {
 	static template = xml`

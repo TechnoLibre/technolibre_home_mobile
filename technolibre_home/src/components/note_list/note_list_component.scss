@@ -1,4 +1,4 @@
-#notes-component #notes-header {
+#note-list-component #notes-header {
 	align-items: center;
 	display: flex;
 	justify-content: center;
@@ -7,11 +7,11 @@
 	padding: 1rem 1.25rem;
 }
 
-#notes-component #notes-heading {
+#note-list-component #notes-heading {
 	flex-grow: 1;
 }
 
-#notes-component #notes-add {
+#note-list-component #notes-add {
 	background-color: var(--btn-blue-color);
 	border: none;
 	border-radius: 0.5rem;
@@ -33,7 +33,7 @@
 	}
 }
 
-#notes-component #notes__controls {
+#note-list-component #notes__controls {
 	align-items: center;
 	display: grid;
 	grid-template-areas: "archived";
@@ -47,7 +47,7 @@
 	}
 }
 
-#notes-component .notes__control {
+#note-list-component .notes__control {
 	background-color: #222;
 	border-radius: 0.5rem;
 	color: var(--text);
@@ -60,11 +60,11 @@
 	}
 }
 
-#notes-component .notes__control__show-archived {
+#note-list-component .notes__control__show-archived {
 	grid-area: archived;
 }
 
-#notes-component #notes {
+#note-list-component #notes {
 	border: none;
 	border-radius: 0.25rem;
 	margin: 0 auto;
@@ -72,23 +72,23 @@
 	padding: 0 1rem 1rem;
 }
 
-#notes-component #notes__pinned,
-#notes-component #notes__unpinned {
+#note-list-component #notes__pinned,
+#note-list-component #notes__unpinned {
 	margin-top: 1rem;
 }
 
-#notes-component .notes-list,
-#notes-component #notes-empty {
+#note-list-component .notes-list,
+#note-list-component #notes-empty {
 	border-radius: 0.25em;
 	margin: 0.75em 0 0 0;
 }
 
-#notes-component .notes-list {
+#note-list-component .notes-list {
 	list-style: none;
 	padding: 0;
 }
 
-#notes-component #notes-empty {
+#note-list-component #notes-empty {
 	align-items: center;
 	background-color: #1a1a1a;
 	display: flex;
