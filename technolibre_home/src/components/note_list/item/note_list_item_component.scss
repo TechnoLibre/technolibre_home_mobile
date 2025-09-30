@@ -1,3 +1,5 @@
+@use "sass:color";
+
 #note-list-component .notes-item {
 	align-items: center;
 	border: 2px solid var(--section-border-color);
@@ -28,7 +30,7 @@
 		font-size: 0.75rem;
 		padding: 0.35rem 0.75rem;
 		&:hover {
-			background-color: darken(#1e2e93, 5);
+			background-color: color.scale(#1e2e93, $lightness: -5%);
 		}
 	}
 	&__tag + .notes-item__tag {
