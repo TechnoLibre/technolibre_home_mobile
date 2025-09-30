@@ -1,3 +1,5 @@
+@use "sass:color";
+
 #note-component {
 	display: flex;
 	flex-direction: column;
@@ -50,13 +52,13 @@
 #note-component .note__control__archive--active {
 	background-color: #ad6704;
 	&:hover {
-		background-color: darken(#ad6704, 5);
+		background-color: color.scale(#ad6704, $lightness: -5%);
 	}
 }
 
 #note-component .note__control__pin--active {
 	background-color: #931a07;
 	&:hover {
-		background-color: darken(#931a07, 5);
+		background-color: color.scale(#931a07, $lightness: -5%);
 	}
 }
