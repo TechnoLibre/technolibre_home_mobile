@@ -103,7 +103,9 @@ export class ApplicationsComponent extends EnhancedComponent {
 				title: matchingApp.url,
 				isPresentAfterPageLoad: true,
 				preShowScript: loginScript,
-				enabledSafeBottomMargin: true
+				enabledSafeBottomMargin: true,
+				useTopInset: true,
+				activeNativeNavigationForWebview: true,
 			});
 		} else {
 			WebViewUtils.openWebViewDesktop(url_rewrite_odoo, loginScript);
