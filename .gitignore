@@ -177,6 +177,10 @@ Thumbs.db
 # VS Code files
 .vscode/
 
+# Idea files
+.idea
+
 # Formatting config files
 technolibre_home/src/.editorconfig
 technolibre_home/src/.prettierrc
+
