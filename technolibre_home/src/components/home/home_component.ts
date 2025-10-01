@@ -18,6 +18,7 @@ export class HomeComponent extends Component {
         <img id="logo" src="${CompanyLogo}" alt="Logo TechnoLibre" />
         <h3 id="title" t-esc="state.title" />
         <section id="buttons">
+          <button id="openWebsite" class="buttons-primary" t-on-click="onOpenWebsiteClick">Connexion</button>
           <button id="notes" class="buttons-primary" t-on-click.stop.prevent="onNotesClick">Notes</button>
         </section>
       </div>
