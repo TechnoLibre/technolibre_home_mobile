@@ -4,14 +4,21 @@ import { ToolBarType } from "@capgo/inappbrowser";
 
 import { WebViewUtils } from "../../utils/webViewUtils";
 
-import TechnolibreLogo from "../../assets/technolibre_logo.png";
+import CompanyLogo from "../../assets/company_logo.png";
+
+const ENV = {
+  TITLE: import.meta.env.VITE_TITLE ?? "TITLE",
+  BUTTON_LABEL: import.meta.env.VITE_BUTTON_LABEL ?? "Connexion",
+  LOGO_KEY: import.meta.env.VITE_LOGO_KEY ?? "techno",
+  WEBSITE_URL: import.meta.env.VITE_WEBSITE_URL ?? "https://erplibre.ca",
+};
 
 export class HomeComponent extends Component {
 	static template = xml`
     <div id="home-component">
       <div id="centered-content">
-        <img id="logo" src="${TechnolibreLogo}" alt="Logo TechnoLibre" />
-        <h3 id="title">TECHNOLIBRE</h3>
+        <img id="logo" src="${CompanyLogo}" alt="Logo TechnoLibre" />
+        <h3 id="title" t-esc="state.title" />
         <section id="buttons">
           <button id="openWebsite" class="buttons-primary" t-on-click="onOpenWebsiteClick">Connexion</button>
         </section>
@@ -22,14 +29,14 @@ export class HomeComponent extends Component {
 	state: any = undefined;
 
 	setup() {
-		this.state = useState({ title: "HomeComponent", isDev: false });
+		this.state = useState({ title: ENV.TITLE, isDev: false  });
 	}
 
 	onOpenWebsiteClick() {
 		if (WebViewUtils.isMobile()) {
 			WebViewUtils.openWebViewMobile({
 				url: this.getWebsiteURL(),
-				title: "technolibre.ca",
+				title: ENV.WEBSITE_URL,
 				showReloadButton: true,
 				toolbarType: ToolBarType.NAVIGATION
 			});
@@ -39,9 +46,10 @@ export class HomeComponent extends Component {
 	}
 
 	getWebsiteURL() {
-		if (this.state.isDev) {
-			return "https://technolibre.ca/web/login";
-		}
-		return "https://technolibre.ca/web/login";
+        return ENV.WEBSITE_URL;
+		// if (this.state.isDev) {
+		// 	return "https://technolibre.ca/web/login";
+		// }
+		// return "https://technolibre.ca/web/login";
 	}
 }

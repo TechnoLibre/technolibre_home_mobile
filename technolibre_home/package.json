@@ -9,7 +9,10 @@
   ],
   "scripts": {
     "start": "vite",
-    "build": "vite build",
+    "build": "vite build --mode production",
+    "build:dev": "vite build --mode development",
+    "build:staging": "vite build --mode staging",
+    "build:prod": "vite build --mode production",
     "preview": "vite preview",
     "bsr": "node ./scripts/bsr.js"
   },
@@ -32,6 +35,6 @@
     "sass-embedded": "^1.89.2",
     "vite": "^5.4.2"
   },
-  "author": "",
-  "license": "ISC"
+  "author": "TechnoLibre",
+  "license": "AGPLv3"
 }
