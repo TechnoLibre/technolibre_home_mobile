@@ -1,4 +1,4 @@
-#note__top-controls__wrapper #note__controls {
+#note__top-controls__wrapper #note__top-controls {
 	grid-template-areas: "audio text" "edit edit";
 	grid-template-columns: repeat(2, 1fr);
 }
