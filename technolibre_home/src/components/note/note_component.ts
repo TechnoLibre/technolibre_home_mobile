@@ -26,6 +26,7 @@ export class NoteComponent extends EnhancedComponent {
 				note="state.note"
 				editMode="state.editMode"
 				saveNoteData.bind="saveNoteData"
+				addText.bind="addText"
 			/>
 			<NoteBottomControlsComponent
 				note="state.note"

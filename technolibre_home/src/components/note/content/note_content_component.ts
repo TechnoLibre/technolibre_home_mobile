@@ -34,6 +34,7 @@ export class NoteContentComponent extends EnhancedComponent {
 					id="note__title"
 					placeholder="Title"
 					t-model="props.note.title"
+					t-on-keydown="onTitleKeydown"
 				/>
 				<div id="note__draggables" t-ref="note-entries">
 					<NoteEntryComponent
@@ -70,6 +71,16 @@ export class NoteContentComponent extends EnhancedComponent {
 				}
 			});
 		});
+	}
+
+	private onTitleKeydown(ev: KeyboardEvent) {
+		// Create a new text instead of accept enter into title
+		if ((ev as any).isComposing) return;
+
+		if (ev.key === "Enter" && !ev.shiftKey) {
+			ev.preventDefault(); // ignore enter into textarea
+			this.props.addText?.();
+		}
 	}
 
 	private onMounted() {

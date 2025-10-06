@@ -257,7 +257,7 @@ export class NoteService {
 			id: this.getNewId(),
 			type: "text",
 			params: {
-				text: "New text entry"
+				text: ""
 			}
 		};
 	}
