@@ -243,7 +243,7 @@ export class NoteService {
 	public getNewNote(noteId?: string): Note {
 		return {
 			id: noteId || "",
-			title: "New note",
+			title: "",
 			done: false,
 			archived: false,
 			pinned: false,

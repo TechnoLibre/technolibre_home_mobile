@@ -1,4 +1,4 @@
-import { onMounted, useRef, xml } from "@odoo/owl";
+import { onMounted, onPatched, useRef, xml } from "@odoo/owl";
 
 import { Sortable } from "sortablejs";
 
@@ -30,12 +30,11 @@ export class NoteContentComponent extends EnhancedComponent {
 				</ul>
 				<textarea
 					type="text"
+					t-ref="note-title"
 					id="note__title"
 					placeholder="Title"
 					t-model="props.note.title"
-				>
-					<t t-esc="props.note.title"></t>
-				</textarea>
+				/>
 				<div id="note__draggables" t-ref="note-entries">
 					<NoteEntryComponent
 						t-foreach="props.note.entries"
@@ -55,9 +54,22 @@ export class NoteContentComponent extends EnhancedComponent {
 
 	sortable: any = undefined;
 	entries = useRef("note-entries");
+	private didAutoFocus = false;
+	titleRef = useRef("note-title");
 
 	setup() {
 		onMounted(this.onMounted.bind(this));
+
+		onPatched(() => {
+			if (this.didAutoFocus) return;
+			requestAnimationFrame(() => {
+				const el = this.titleRef.el as HTMLTextAreaElement | null;
+				if (el && el.value.trim() === "") {
+					el.focus();
+					this.didAutoFocus = true;
+				}
+			});
+		});
 	}
 
 	private onMounted() {

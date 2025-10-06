@@ -74,8 +74,10 @@ export class NoteListComponent extends EnhancedComponent {
 					</ul>
 				</div>
 				<div id="notes-empty" t-if="currentNoteList.length === 0">
-					<p t-if="state.showArchivedNotes">Les notes archivées se trouveront ici.</p>
-					<p t-else="">Les notes se trouveront ici.</p>
+					<p t-if="state.showArchivedNotes">Aucune note archivée.</p>
+					<p t-else="">
+						<a id="notes-add" t-on-click.stop.prevent="onNoteAddClick">Ajoutez une note 🤖</a>
+					</p>
 				</div>
 			</section>
 		</div>

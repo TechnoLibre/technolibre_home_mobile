@@ -110,6 +110,7 @@ export class NoteComponent extends EnhancedComponent {
 				await this.noteService.add(this.state.note);
 				this.state.newNote = false;
 			} else {
+
 				await this.noteService.edit(this.state.noteId, this.state.note);
 			}
 		} catch (error: unknown) {
