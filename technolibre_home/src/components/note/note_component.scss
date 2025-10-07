@@ -56,6 +56,13 @@
 	}
 }
 
+#note-component .note__control__done--active {
+	background-color: #0aad04;
+	&:hover {
+		background-color: color.scale(#0aad04, $lightness: -5%);
+	}
+}
+
 #note-component .note__control__pin--active {
 	background-color: #931a07;
 	&:hover {

@@ -2,9 +2,10 @@ import { xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 
+import AddIcon from "../../../assets/icon/add-plus-square-svgrepo-com.svg";
 import AudioIcon from "../../../assets/icon/audio.svg";
-import EditNoteIcon from "../../../assets/icon/note_edit.svg";
-import TextIcon from "../../../assets/icon/text.svg";
+import EditDateIcon from "../../../assets/icon/date_edit.svg";
+import TextIcon from "../../../assets/icon/text-selection-svgrepo-com.svg";
 
 export class NoteTopControlsComponent extends EnhancedComponent {
 	static template = xml`
@@ -16,8 +17,8 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 					href="#"
 					t-on-click.stop.prevent="props.addAudio"
 				>
+					<img src="${AddIcon}" />
 					<img src="${AudioIcon}" />
-					<p class="greyed-out">Add Audio</p>
 				</a>
 				<a
 					id="note__control__text"
@@ -25,17 +26,17 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 					href="#"
 					t-on-click.stop.prevent="props.addText"
 				>
+					<img src="${AddIcon}" />
 					<img src="${TextIcon}" />
-					<p>Add Text</p>
 				</a>
 				<a
-					id="note__control__edit"
+					id="note__control__date"
 					class="note__control"
 					href="#"
-					t-on-click.stop.prevent="props.toggleEditMode"
+					t-on-click.stop.prevent="props.onSetDateClick"
 				>
-					<img src="${EditNoteIcon}" />
-					<p>Edit Mode</p>
+					<img src="${AddIcon}" />
+					<img src="${EditDateIcon}" />
 				</a>
 			</section>
 		</div>

@@ -20,7 +20,7 @@ export class NoteComponent extends EnhancedComponent {
 			<NoteTopControlsComponent
 				addAudio.bind="addAudio"
 				addText.bind="addText"
-				toggleEditMode.bind="toggleEditMode"
+				onSetDateClick.bind="onSetDateClick"
 			/>
 			<NoteContentComponent
 				note="state.note"
@@ -30,11 +30,13 @@ export class NoteComponent extends EnhancedComponent {
 			/>
 			<NoteBottomControlsComponent
 				note="state.note"
-				onSetDateClick.bind="onSetDateClick"
+				toggleEditMode.bind="toggleEditMode"
 				onTagsClick.bind="onTagsClick"
 				onArchiveClick.bind="onArchiveClick"
 				onPinClick.bind="onPinClick"
 				toggleDone.bind="toggleDone"
+				toggleOptionMode.bind="toggleOptionMode"
+				optionMode="state.optionMode"
 			/>
 		</div>
 		<DatePickerComponent
@@ -57,7 +59,8 @@ export class NoteComponent extends EnhancedComponent {
 			noteId: undefined,
 			note: this.noteService.getNewNote(),
 			newNote: false,
-			editMode: false
+			editMode: true,
+			optionMode: false
 		});
 		this.setParams();
 		this.getNote();
@@ -75,6 +78,10 @@ export class NoteComponent extends EnhancedComponent {
 
 	toggleEditMode() {
 		this.state.editMode = !this.state.editMode;
+	}
+
+	toggleOptionMode() {
+		this.state.optionMode = !this.state.optionMode;
 	}
 
 	onSetDateClick() {

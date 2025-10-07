@@ -1,10 +1,14 @@
 #note__bottom-controls__wrapper #note__bottom-controls {
-	grid-template-areas: "date date" "tags archive" "pin done";
+	grid-template-areas: "tags archive" "pin done" "edit option";
 	grid-template-columns: repeat(2, 1fr);
 }
 
-#note-component #note__control__date {
-	grid-area: date;
+#note__control__edit {
+	grid-area: edit;
+}
+
+#note__control__option {
+	grid-area: option;
 }
 
 #note-component #note__control__tags {

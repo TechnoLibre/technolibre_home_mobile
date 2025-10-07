@@ -5,7 +5,8 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 import ArchiveNoteIcon from "../../../assets/icon/note_archive.svg";
 import CheckBoxIcon from "../../../assets/icon/check_box.svg";
 import CheckBoxBlankIcon from "../../../assets/icon/check_box_blank.svg";
-import EditDateIcon from "../../../assets/icon/date_edit.svg";
+import EditNoteIcon from "../../../assets/icon/note_edit.svg";
+import OptionNoteIcon from "../../../assets/icon/options-vertical-svgrepo-com.svg";
 import PinNoteIcon from "../../../assets/icon/pin.svg";
 import TagIcon from "../../../assets/icon/tag.svg";
 
@@ -14,19 +15,28 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 		<div id="note__bottom-controls__wrapper">
 			<section id="note__bottom-controls">
 				<a
-					id="note__control__date"
+					id="note__control__edit"
 					class="note__control"
 					href="#"
-					t-on-click.stop.prevent="props.onSetDateClick"
+					t-on-click.stop.prevent="props.toggleEditMode"
 				>
-					<img src="${EditDateIcon}" />
-					<p>Set Date</p>
+					<img src="${EditNoteIcon}" />
+					<p>Edit Mode</p>
+				</a>
+				<a
+					id="note__control__option"
+					class="note__control"
+					href="#"
+					t-on-click.stop.prevent="props.toggleOptionMode"
+				>
+					<img src="${OptionNoteIcon}" />
 				</a>
 				<a
 					id="note__control__tags"
 					class="note__control"
 					href="#"
 					t-on-click.stop.prevent="props.onTagsClick"
+					t-if="props.optionMode"
 				>
 					<img src="${TagIcon}" />
 					<p>Tags</p>
@@ -39,6 +49,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 					}"
 					href="#"
 					t-on-click.stop.prevent="props.onArchiveClick"
+					t-if="props.optionMode"
 				>
 					<img src="${ArchiveNoteIcon}" />
 					<p t-if="props.note.archived">Unarchive</p>
@@ -52,6 +63,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 					}"
 					href="#"
 					t-on-click.stop.prevent="props.onPinClick"
+					t-if="props.optionMode"
 				>
 					<img src="${PinNoteIcon}" />
 					<p t-if="props.note.pinned">Unpin</p>
@@ -60,8 +72,12 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 				<a
 					id="note__control__done"
 					class="note__control"
+					t-att-class="{
+						'note__control__done--active': props.note.done
+					}"
 					href="#"
 					t-on-click.stop.prevent="props.toggleDone"
+					t-if="props.optionMode"
 				>
 					<img src="${CheckBoxIcon}" t-if="props.note.done" />
 					<img src="${CheckBoxBlankIcon}" t-else="" />

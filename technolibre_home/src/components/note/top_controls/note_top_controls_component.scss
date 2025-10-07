@@ -1,6 +1,6 @@
 #note__top-controls__wrapper #note__top-controls {
-	grid-template-areas: "audio text" "edit edit";
-	grid-template-columns: repeat(2, 1fr);
+	grid-template-areas: "audio date text";
+	grid-template-columns: repeat(3, 1fr);
 }
 
 #note__control__audio {
@@ -15,6 +15,6 @@
 	grid-area: text;
 }
 
-#note__control__edit {
-	grid-area: edit;
+#note-component #note__control__date {
+	grid-area: date;
 }
