@@ -63,7 +63,7 @@ export class NoteService {
 	 * Clears the list of notes.
 	 */
 	public async clear() {
-		const newNoteList = [];
+		const newNoteList: Note[] = [];
 
 		const saveResult = await this.saveNoteListToStorage(newNoteList);
 
@@ -257,9 +257,21 @@ export class NoteService {
 			id: this.getNewId(),
 			type: "text",
 			params: {
-				text: ""
+				text: "",
+				readonly: false
 			}
 		};
+	}
+
+	public getNewGeolocationEntry(latitude: number, longitude: number): NoteEntry {
+		return {
+			id: this.getNewId(),
+			type: "text",
+			params: {
+				text: `${latitude} ${longitude}`,
+				readonly: true
+			}
+		}
 	}
 
 	/**
