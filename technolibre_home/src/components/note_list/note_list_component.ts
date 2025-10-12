@@ -11,8 +11,6 @@ import { HeadingComponent } from "../heading/heading_component";
 import { NotesItemComponent } from "./item/note_list_item_component";
 
 import NoteAddIcon from "../../assets/icon/note_add.svg";
-import ToggleOffIcon from "../../assets/icon/toggle_off.svg";
-import ToggleOnIcon from "../../assets/icon/toggle_on.svg";
 
 export class NoteListComponent extends EnhancedComponent {
 	static template = xml`
@@ -37,8 +35,14 @@ export class NoteListComponent extends EnhancedComponent {
 					t-on-click.stop.prevent="onToggleNoteListClick"
 				>
 					<p>Montrer les notes archivées</p>
-					<img src="${ToggleOnIcon}" t-if="state.showArchivedNotes" />
-					<img src="${ToggleOffIcon}" t-else="" />
+					<div
+						id="notes__control__show-archived__indicator"
+						t-att-class="{
+							active: state.showArchivedNotes
+						}"
+					>
+						<div class="pill"></div>
+					</div>
 				</a>
 			</section>
 			<section id="notes">

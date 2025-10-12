@@ -48,6 +48,7 @@
 }
 
 #note-list-component .notes__control {
+	align-items: center;
 	background-color: #222;
 	border-radius: 0.5rem;
 	color: var(--text);
@@ -62,6 +63,31 @@
 
 #note-list-component .notes__control__show-archived {
 	grid-area: archived;
+}
+
+#note-list-component #notes__control__show-archived__indicator {
+	$indicatorWidth: 2rem;
+	$pillMargin: 0.125rem;
+	$pillWidth: 1rem;
+	background-color: red;
+	border-radius: 0.25rem;
+	overflow: hidden;
+	width: $indicatorWidth;
+	& .pill {
+		background-color: darkred;
+		border-radius: 0.125rem;
+		height: 0.75rem;
+		margin: $pillMargin;
+		transition: transform 150ms ease-in-out;
+		width: $pillWidth;
+	}
+	&.active {
+		background-color: green;
+		& .pill {
+			background-color: darkgreen;
+			transform: translateX(calc($indicatorWidth - $pillWidth - 2 * $pillMargin));
+		}
+	}
 }
 
 #note-list-component #notes {
