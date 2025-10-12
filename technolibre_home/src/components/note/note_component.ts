@@ -1,6 +1,7 @@
 import { useState, xml } from "@odoo/owl";
 
 import { Dialog } from "@capacitor/dialog";
+import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
 
 import "wc-datepicker/dist/themes/dark.css";
 
@@ -71,8 +72,19 @@ export class NoteComponent extends EnhancedComponent {
 		console.log("Add Audio");
 	}
 
-	addLocation() {
-		console.log("Add Location");
+	async addLocation() {
+		const permissions = await this.getGeolocationPermissions();
+
+		if (!permissions || permissions.location === "denied") {
+			return;
+		}
+
+		const currentPosition: Position = await Geolocation.getCurrentPosition();
+		const newEntry = this.noteService
+			.getNewGeolocationEntry(currentPosition.coords.latitude, currentPosition.coords.longitude);
+
+		this.state.note.entries.push(newEntry);
+		this.saveNoteData();
 	}
 
 	addText() {
@@ -155,5 +167,19 @@ export class NoteComponent extends EnhancedComponent {
 
 	private focusLastEntry() {
 		this.eventBus.trigger(Constants.FOCUS_LAST_ENTRY_EVENT_NAME);
+	}
+
+	private async getGeolocationPermissions(): Promise<PermissionStatus | undefined> {
+		let permissions: PermissionStatus | undefined;
+
+		try {
+			permissions = await Geolocation.checkPermissions();
+		} catch (error: unknown) {
+			if (error instanceof Error) {
+				return undefined;
+			}
+		}
+
+		return permissions;
 	}
 }

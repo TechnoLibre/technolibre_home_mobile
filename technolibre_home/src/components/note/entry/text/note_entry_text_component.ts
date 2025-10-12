@@ -14,6 +14,7 @@ export class NoteEntryTextComponent extends EnhancedComponent {
 			<div class="note-entry__content">
 				<textarea
 					t-att-id="props.id"
+					t-att-disabled="props.params.readonly ? true : false"
 					class="note-entry__text"
 					placeholder="Text"
 					t-model="props.params.text"

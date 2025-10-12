@@ -15,6 +15,7 @@ export interface NoteEntryAudioParams {
 
 export interface NoteEntryTextParams {
 	text: string;
+	readonly: boolean;
 }
 
 export type NoteEntryType = "audio" | "text";
