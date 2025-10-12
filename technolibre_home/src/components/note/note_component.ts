@@ -19,6 +19,7 @@ export class NoteComponent extends EnhancedComponent {
 		<div id="note-component">
 			<NoteTopControlsComponent
 				addAudio.bind="addAudio"
+				addLocation.bind="addLocation"
 				addText.bind="addText"
 				onSetDateClick.bind="onSetDateClick"
 			/>
@@ -68,6 +69,10 @@ export class NoteComponent extends EnhancedComponent {
 
 	addAudio() {
 		console.log("Add Audio");
+	}
+
+	addLocation() {
+		console.log("Add Location");
 	}
 
 	addText() {
