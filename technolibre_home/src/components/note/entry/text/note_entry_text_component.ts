@@ -10,7 +10,6 @@ export class NoteEntryTextComponent extends EnhancedComponent {
 			class="note-entry-component note-entry-text-component"
 			t-att-data-id="props.id"
 		>
-			<NoteEntryDragComponent editMode="props.editMode" />
 			<div class="note-entry__content">
 				<textarea
 					t-att-id="props.id"
@@ -20,6 +19,7 @@ export class NoteEntryTextComponent extends EnhancedComponent {
 					t-model="props.params.text"
 				></textarea>
 			</div>
+			<NoteEntryDragComponent editMode="props.editMode" />
 		</div>
 	`;
 

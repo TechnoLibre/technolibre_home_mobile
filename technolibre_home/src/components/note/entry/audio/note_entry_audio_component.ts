@@ -12,7 +12,6 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 			class="note-entry-component note-entry-audio-component"
 			t-att-data-id="props.id"
 		>
-			<NoteEntryDragComponent editMode="props.editMode" />
 			<div class="note-entry__content">
 				<button
 					type="button"
@@ -22,6 +21,7 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 					<img src="${PlayIcon}" />
 				</button>
 			</div>
+			<NoteEntryDragComponent editMode="props.editMode" />
 		</div>
 	`;
 
