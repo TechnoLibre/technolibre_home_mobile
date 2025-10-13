@@ -64,7 +64,7 @@ export class SimpleRouter {
 
 		for (let i = 0; i < numIterations; i++) {
 			if (this.isParamSegment(splitParamRoute[i])) {
-				routeParams[splitParamRoute[i].slice(1)] = splitIncomingRoute[i];
+				routeParams.set(splitParamRoute[i].slice(1), splitIncomingRoute[i]);
 			}
 		}
 
