@@ -1,7 +1,7 @@
+@use "../../css/mixins.scss";
+
 .heading-component {
-	align-items: center;
-	display: flex;
-	justify-content: center;
+	@include mixins.flex--center;
 }
 
 .heading-component h1.page-heading {

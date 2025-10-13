@@ -1,7 +1,8 @@
 @use "sass:color";
+@use "../../css/mixins.scss";
 
 #note-component {
-	display: flex;
+	@include mixins.flex();
 	flex-direction: column;
 	gap: 0.75rem;
 	height: 100%;
@@ -24,17 +25,15 @@
 	gap: 0.75rem;
 	margin: 0 1rem;
 	@media only screen and (min-width: 48rem) {
-		display: flex;
-		justify-content: flex-end;
+		@include mixins.flex(center, flex-end);
 	}
 }
 
 #note-component .note__control {
-	align-items: center;
+	@include mixins.flex(center);
 	background-color: #222;
 	border-radius: 0.5rem;
 	color: var(--text);
-	display: flex;
 	gap: 0.5rem;
 	padding: 0.75rem;
 	text-decoration: none;

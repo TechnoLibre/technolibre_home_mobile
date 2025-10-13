@@ -1,12 +1,12 @@
+@use "../../css/mixins.scss";
+
 #applications-component #applications-heading {
 	font-size: 1.75em;
 	padding: 0 0.5em 0 0;
 }
 
 #applications-component #applications-options {
-	display: flex;
-	align-items: center;
-	justify-content: flex-end;
+	@include mixins.flex(center, flex-end);
 }
 
 #applications-component #applications {
@@ -45,10 +45,8 @@
 }
 
 #applications-component #applications-empty {
-	align-items: center;
+	@include mixins.flex--center;
 	background-color: #222;
-	display: flex;
-	justify-content: center;
 	padding: 1em;
 	text-align: center;
 	& p {

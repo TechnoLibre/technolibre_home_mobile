@@ -1,3 +1,5 @@
+@use "../../../css/mixins.scss";
+
 #applications-component .app-list__item {
 	align-items: center;
 	border: 2px solid var(--section-border-color);
@@ -34,8 +36,7 @@
 		width: 100%;
 	}
 	&__user {
-		align-items: center;
-		display: flex;
+		@include mixins.flex(center);
 		grid-area: user;
 		padding: 1rem;
 		min-width: 0;

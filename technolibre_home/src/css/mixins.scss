@@ -1,3 +1,15 @@
+@mixin flex--center {
+	align-items: center;
+	display: flex;
+	justify-content: center;
+}
+
+@mixin flex($align-items: normal, $justify-content: normal) {
+	display: flex;
+	align-items: $align-items;
+	justify-content: $justify-content;
+}
+
 @mixin popover {
   background-color: rgba(0, 0, 0, 0.35);
 	border: none;
