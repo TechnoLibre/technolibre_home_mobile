@@ -32,9 +32,20 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 		>
 			<div class="geolocation-display__wrapper" t-on-click.stop.prevent="">
 				<div class="geolocation-display">
-					<h1>
-						Geolocation information
-					</h1>
+					<section class="geolocation-display__heading">
+						<h3>Données de géolocalisation</h3>
+					</section>
+					<section class="geolocation-display__content">
+						<p>
+							<b>Latitude:</b>&#160;<t t-esc="props.params.latitude"></t>
+						</p>
+						<p>
+							<b>Longitude:</b>&#160;<t t-esc="props.params.longitude"></t>
+						</p>
+						<p>
+							<b>Date:</b>&#160;<t t-esc="formatGeolocationTimestamp(props.params.timestamp)"></t>
+						</p>
+					</section>
 				</div>
 			</div>
 		</div>
@@ -62,5 +73,18 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 		}
 
 		this.geolocationPopover.el.hidePopover();
+	}
+
+	formatGeolocationTimestamp(timestamp: number) {
+		return (new Date(timestamp)).toLocaleDateString("fr-CA", {
+				day: "numeric",
+				month: "long",
+				year: "numeric",
+				hour: "2-digit",
+				minute: "2-digit",
+				second: "2-digit",
+				hour12: false
+			}
+		);
 	}
 }
