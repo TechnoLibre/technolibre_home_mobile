@@ -11,7 +11,6 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 			class="note-entry-component note-entry-geolocation-component"
 			t-att-data-id="props.id"
 		>
-			<NoteEntryDragComponent editMode="props.editMode" />
 			<div class="note-entry__content">
 				<button
 					type="button"
@@ -21,6 +20,7 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 					<t t-esc="props.params.text"></t>
 				</button>
 			</div>
+			<NoteEntryDragComponent editMode="props.editMode" />
 		</div>
 		<div
 			class="geolocation-popover"
