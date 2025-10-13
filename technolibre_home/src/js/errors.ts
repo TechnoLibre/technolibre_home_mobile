@@ -67,6 +67,8 @@ export class ErrorMessages {
 
 	public static NO_NOTE_MATCH: string = "Aucune note ne correspond aux données saisies.";
 
+	public static NO_NOTE_ENTRY_MATCH: string = "Aucune entrée de note ne correspond aux données saisies.";
+
 	public static APP_ALREADY_EXISTS: string = "Une application avec cet identifiant existe déjà.";
 
 	public static BIOMETRIC_AUTH: string = "Échec de l'authentification biométrique.";
