@@ -1,9 +1,9 @@
+@use "../../../../css/mixins.scss";
+
 .note-entry-drag-component {
-	align-items: center;
+	@include mixins.flex--center;
 	cursor: move;
-	display: flex;
 	flex-shrink: 0;
-	justify-content: center;
 	margin-right: 0.5rem;
 	overflow: hidden;
 	transition: width 100ms ease-in-out;

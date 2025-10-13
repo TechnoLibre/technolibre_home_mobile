@@ -1,4 +1,5 @@
 @use "sass:color";
+@use "../../../css/mixins.scss";
 
 #note-list-component .notes-item {
 	align-items: center;
@@ -19,8 +20,8 @@
 		margin-top: 0.75rem;
 	}
 	&__tags {
+		@include mixins.flex();
 		background-color: #000;
-		display: flex;
 		grid-area: tags;
 		padding: 0.5rem;
 	}
@@ -37,11 +38,9 @@
 		margin-left: 0.5rem;
 	}
 	&__data {
-		align-items: center;
-		display: flex;
+		@include mixins.flex(center, space-between);
 		flex-grow: 1;
 		grid-area: data;
-		justify-content: space-between;
 		margin: 0.75rem 0.75rem 0.75rem 1rem;
 		min-width: 0;
 	}
@@ -64,7 +63,7 @@
 		}
 	}
 	&__actions {
-		display: flex;
+		@include mixins.flex();
 		gap: 0.5rem;
 		grid-area: actions;
 		margin: 0.75rem 0.75rem 0.75rem 0;

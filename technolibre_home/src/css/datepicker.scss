@@ -5,10 +5,8 @@
 }
 
 #datepicker__wrapper {
-	align-items: center;
-	display: flex;
+	@include mixins.flex--center;
 	height: 100%;
-	justify-content: center;
 	pointer-events: none;
 	width: 100%;
 }

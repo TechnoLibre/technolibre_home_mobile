@@ -1,3 +1,5 @@
+@use "../../../css/mixins.scss";
+
 #note__content__wrapper {
 	flex-grow: 1;
 	margin: 0 auto;
@@ -16,9 +18,7 @@
 }
 
 #note-component #note__tags__list {
-	align-items: center;
-	display: flex;
-	justify-content: flex-start;
+	@include mixins.flex(center, flex-start);
 	list-style: none;
 	margin-bottom: 0.75rem;
 }

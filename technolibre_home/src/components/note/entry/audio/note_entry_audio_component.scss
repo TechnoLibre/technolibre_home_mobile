@@ -1,3 +1,5 @@
+@use "../../../../css/mixins.scss";
+
 .note-entry-audio-component .note-entry__content {
 	background-color: #262626;
 	border-radius: 1.25rem;
@@ -5,11 +7,11 @@
 }
 
 .note-entry-audio-component .note-entry--audio__play {
+	@include mixins.flex();
 	background-color: #000;
 	border: none;
 	border-radius: 50%;
 	cursor: pointer;
-	display: flex;
 	outline: none;
 	padding: 0.5rem;
 	& img {
