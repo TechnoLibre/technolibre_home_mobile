@@ -13,3 +13,26 @@
 .geolocation-popover {
 	@include mixins.popover;
 }
+
+.geolocation-display__wrapper {
+	@include mixins.popover__content__wrapper;
+}
+
+.geolocation-display {
+	@include mixins.popover__content;
+	display: grid;
+	gap: 0.75rem;
+	grid-template-areas: "heading" "content";
+	grid-template-rows: auto 1fr;
+}
+
+.geolocation-display__heading {
+	grid-area: heading;
+}
+
+.geolocation-display__content {
+	@include mixins.flex();
+	flex-direction: column;
+	gap: 0.5rem;
+	grid-area: content;
+}
