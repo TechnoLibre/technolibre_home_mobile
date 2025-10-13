@@ -1,3 +1,6 @@
-.note-entry-geolocation-component {
-	//
+@use "../../../../css/mixins.scss";
+}
+
+.geolocation-popover {
+	@include mixins.popover;
 }
