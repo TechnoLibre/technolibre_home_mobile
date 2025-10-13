@@ -7,13 +7,14 @@ import "wc-datepicker/dist/themes/dark.css";
 
 import { Constants } from "../../js/constants";
 import { EnhancedComponent } from "../../js/enhancedComponent";
-import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
+import { ErrorMessages, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 
 import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
 import { NoteContentComponent } from "./content/note_content_component";
 import { NoteTopControlsComponent } from "./top_controls/note_top_controls_component";
 import { TagManagerComponent } from "./tag_manager/tag_manager_component";
+import { NoteEntry } from "../note_list/types";
 
 export class NoteComponent extends EnhancedComponent {
 	static template = xml`
@@ -29,6 +30,7 @@ export class NoteComponent extends EnhancedComponent {
 				editMode="state.editMode"
 				saveNoteData.bind="saveNoteData"
 				addText.bind="addText"
+				deleteEntry.bind="deleteEntry"
 			/>
 			<NoteBottomControlsComponent
 				note="state.note"
@@ -97,6 +99,19 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.note.entries.push(this.noteService.getNewTextEntry());
 		this.saveNoteData();
 		this.focusLastEntry();
+	}
+
+	deleteEntry(entryId: string) {
+		const entries: Array<NoteEntry> = this.state.note.entries;
+		const entryIndex = entries.findIndex(entry => entry.id === entryId);
+
+		if (entryIndex === -1) {
+			Dialog.alert({ message: ErrorMessages.NO_NOTE_ENTRY_MATCH });
+			return;
+		}
+
+		entries.splice(entryIndex, 1);
+		this.saveNoteData();
 	}
 
 	toggleEditMode() {
