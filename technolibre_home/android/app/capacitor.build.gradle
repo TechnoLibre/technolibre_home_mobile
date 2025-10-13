@@ -20,6 +20,7 @@ dependencies {
     implementation project(':capawesome-capacitor-android-edge-to-edge-support')
     implementation project(':capgo-inappbrowser')
     implementation project(':capacitor-secure-storage-plugin')
+    implementation project(':capacitor-voice-recorder')
 
 }
 
