@@ -1,7 +1,7 @@
 import { useRef, xml } from "@odoo/owl";
 
-import { Constants } from "../../../../js/constants";
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
+import { events } from "../../../../js/events";
 
 import { NoteEntryDeleteComponent } from "../delete/note_entry_delete_component";
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
@@ -56,7 +56,7 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 	geolocationPopover = useRef("geolocation-popover");
 
 	setup() {
-		this.eventBus.addEventListener(Constants.GEOLOCATION_EVENT_NAME, this.showPopover.bind(this));
+		this.eventBus.addEventListener(events.GEOLOCATION, this.showPopover.bind(this));
 	}
 
 	showPopover() {

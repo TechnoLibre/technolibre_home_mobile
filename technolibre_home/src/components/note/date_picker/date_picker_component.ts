@@ -1,10 +1,11 @@
 import { onMounted, useRef, useState, xml } from "@odoo/owl";
 
-import { EnhancedComponent } from "../../../js/enhancedComponent";
-import { WebViewUtils } from "../../../utils/webViewUtils";
-import { Constants } from "../../../js/constants";
-import { WcDatepicker } from "wc-datepicker/dist/components/wc-datepicker";
 import { DatetimePicker, PresentResult } from "@capawesome-team/capacitor-datetime-picker";
+import { WcDatepicker } from "wc-datepicker/dist/components/wc-datepicker";
+
+import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { events } from "../../../js/events";
+import { WebViewUtils } from "../../../utils/webViewUtils";
 
 export class DatePickerComponent extends EnhancedComponent {
 	static template = xml`
@@ -38,7 +39,7 @@ export class DatePickerComponent extends EnhancedComponent {
 		if (!customElements.get("wc-datepicker")) {
 			customElements.define("wc-datepicker", WcDatepicker);
 		}
-		this.eventBus.addEventListener(Constants.DATE_PICKER_EVENT_NAME, this.openDatePicker.bind(this));
+		this.eventBus.addEventListener(events.DATE_PICKER, this.openDatePicker.bind(this));
 	}
 
 	openDatePicker() {
