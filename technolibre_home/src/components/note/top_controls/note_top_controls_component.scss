@@ -5,10 +5,6 @@
 
 #note__control__audio {
 	grid-area: audio;
-	pointer-events: none;
-	& .greyed-out {
-		color: grey;
-	}
 }
 
 #note__control__text {
