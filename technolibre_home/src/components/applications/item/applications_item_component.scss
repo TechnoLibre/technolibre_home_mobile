@@ -26,13 +26,11 @@
 		max-width: 12rem;
 	}
 	&__url {
+		@include mixins.ellipsis;
 		background-color: #000;
 		border-bottom: 2px solid #202020;
 		font-weight: 600;
-		overflow: hidden;
 		padding: 1rem;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 		width: 100%;
 	}
 	&__user {
@@ -47,10 +45,8 @@
 		}
 	}
 	&__username {
-		overflow: hidden;
+		@include mixins.ellipsis;
 		padding: 0 0 0 0.5rem;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 		width: 100%;
 	}
 	&__action {

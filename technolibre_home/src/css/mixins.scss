@@ -4,6 +4,12 @@
 	justify-content: center;
 }
 
+@mixin ellipsis {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 @mixin flex($align-items: normal, $justify-content: normal) {
 	display: flex;
 	align-items: $align-items;
