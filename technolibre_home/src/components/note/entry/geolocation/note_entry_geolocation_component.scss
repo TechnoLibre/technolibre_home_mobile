@@ -1,10 +1,11 @@
 @use "../../../../css/mixins.scss";
 
 .note-entry-geolocation-component .geolocation__open-popover {
-	background-color: purple;
+	@include mixins.ellipsis;
+	background-color: var(--btn-blue-color);
 	border: none;
 	border-radius: 0.5rem;
-	color: yellow;
+	color: var(--text);
 	cursor: pointer;
 	outline: none;
 	padding: 0.5rem;
