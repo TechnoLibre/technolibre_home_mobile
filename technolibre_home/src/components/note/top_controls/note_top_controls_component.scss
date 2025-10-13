@@ -1,6 +1,6 @@
 #note__top-controls__wrapper #note__top-controls {
-	grid-template-areas: "audio date text";
-	grid-template-columns: repeat(3, 1fr);
+	grid-template-areas: "geolocation audio" "date text";
+	grid-template-columns: repeat(2, 1fr);
 }
 
 #note__control__audio {
@@ -15,6 +15,10 @@
 	grid-area: text;
 }
 
-#note-component #note__control__date {
+#note__control__date {
 	grid-area: date;
+}
+
+#note__control__location {
+	grid-area: geolocation;
 }
