@@ -28,6 +28,13 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 			t-ref="geolocation-popover"
 			t-on-click.stop.prevent="hidePopover"
 		>
+			<div class="geolocation-display__wrapper" t-on-click.stop.prevent="">
+				<div class="geolocation-display">
+					<h1>
+						Geolocation information
+					</h1>
+				</div>
+			</div>
 		</div>
 	`;
 
