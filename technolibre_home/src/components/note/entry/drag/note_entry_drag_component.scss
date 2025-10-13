@@ -4,14 +4,15 @@
 	@include mixins.flex--center;
 	cursor: move;
 	flex-shrink: 0;
-	margin-right: 0.5rem;
 	overflow: hidden;
-	transition: width 100ms ease-in-out;
+	transition: margin 100ms ease-in-out, width 100ms ease-in-out;
+	margin-left: 0;
 	width: 0;
 	& img {
 		pointer-events: none;
 	}
 	&.active {
+		margin-left: 0.5rem;
 		width: 3rem;
 	}
 }
