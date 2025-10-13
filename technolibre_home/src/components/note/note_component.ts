@@ -5,9 +5,9 @@ import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation"
 
 import "wc-datepicker/dist/themes/dark.css";
 
-import { Constants } from "../../js/constants";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
+import { events } from "../../js/events";
 
 import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
@@ -123,11 +123,11 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	onSetDateClick() {
-		this.eventBus.trigger(Constants.DATE_PICKER_EVENT_NAME);
+		this.eventBus.trigger(events.DATE_PICKER);
 	}
 
 	onTagsClick() {
-		this.eventBus.trigger(Constants.TAG_MANAGER_EVENT_NAME);
+		this.eventBus.trigger(events.TAG_MANAGER);
 	}
 
 	onArchiveClick() {
@@ -187,7 +187,7 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	private focusLastEntry() {
-		this.eventBus.trigger(Constants.FOCUS_LAST_ENTRY_EVENT_NAME);
+		this.eventBus.trigger(events.FOCUS_LAST_ENTRY);
 	}
 
 	private async getGeolocationPermissions(): Promise<PermissionStatus | undefined> {

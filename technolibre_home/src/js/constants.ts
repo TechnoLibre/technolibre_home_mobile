@@ -6,14 +6,4 @@ export class Constants {
 	public static BIOMETRY_ENABLED_STORAGE_KEY: string = "biometry_enabled";
 
 	public static LOGIN_COMPONENT_URL: string = "/";
-
-	public static ROUTER_NAVIGATION_EVENT_NAME: string = "routernav";
-
-	public static TAG_MANAGER_EVENT_NAME: string = "tag_manager";
-
-	public static DATE_PICKER_EVENT_NAME: string = "date_picker";
-
-	public static GEOLOCATION_EVENT_NAME: string = "geolocation";
-
-	public static FOCUS_LAST_ENTRY_EVENT_NAME: string = "focus_last_entry";
 }

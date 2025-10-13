@@ -2,8 +2,8 @@ import { onMounted, onPatched, useRef, xml } from "@odoo/owl";
 
 import { Sortable } from "sortablejs";
 
-import { Constants } from "../../../js/constants";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { events } from "../../../js/events";
 import { NoteEntry } from "../types";
 
 import { NoteEntryComponent } from "../entry/note_entry_component";
@@ -92,7 +92,7 @@ export class NoteContentComponent extends EnhancedComponent {
 			handle: ".note-entry-drag-component",
 			onSort: this.onSort.bind(this)
 		});
-		this.eventBus.addEventListener(Constants.FOCUS_LAST_ENTRY_EVENT_NAME, this.focusLastEntry.bind(this));
+		this.eventBus.addEventListener(events.FOCUS_LAST_ENTRY, this.focusLastEntry.bind(this));
 	}
 
 	private onSort() {

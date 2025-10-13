@@ -1,7 +1,7 @@
 import { useState, xml } from "@odoo/owl";
 
-import { Constants } from "../../js/constants";
 import { EnhancedComponent } from "../../js/enhancedComponent";
+import { events } from "../../js/events";
 
 export class ContentComponent extends EnhancedComponent {
 	static template = xml`
@@ -23,7 +23,7 @@ export class ContentComponent extends EnhancedComponent {
 	}
 
 	private listenForEvents() {
-		this.eventBus.addEventListener(Constants.ROUTER_NAVIGATION_EVENT_NAME, () => {
+		this.eventBus.addEventListener(events.ROUTER_NAVIGATION, () => {
 			this.state.currentRoute = window.location.pathname;
 		});
 

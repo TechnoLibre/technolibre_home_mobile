@@ -1,10 +1,10 @@
 import { useState, xml } from "@odoo/owl";
 
 import { BiometryUtils } from "../../utils/biometryUtils";
-import { Constants } from "../../js/constants";
 import { Dialog } from "@capacitor/dialog";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../js/errors";
+import { events } from "../../js/events";
 import { Note } from "./types";
 
 import { HeadingComponent } from "../heading/heading_component";
@@ -109,7 +109,7 @@ export class NoteListComponent extends EnhancedComponent {
 
 	onNoteAddClick() {
 		const newId = this.noteService.getNewId();
-		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: `/note/${newId}` });
+		this.eventBus.trigger(events.ROUTER_NAVIGATION, { url: `/note/${newId}` });
 	}
 
 	onToggleNoteListClick() {
@@ -134,14 +134,14 @@ export class NoteListComponent extends EnhancedComponent {
 
 	openNote(noteId: string) {
 		const encodedId = encodeURIComponent(noteId);
-		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
+		this.eventBus.trigger(events.ROUTER_NAVIGATION, {
 			url: `/note/${encodedId}`
 		});
 	}
 
 	editNote(noteId: string) {
 		const encodedId = encodeURIComponent(noteId);
-		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
+		this.eventBus.trigger(events.ROUTER_NAVIGATION, {
 			url: `/notes/edit/${encodedId}`
 		});
 	}
