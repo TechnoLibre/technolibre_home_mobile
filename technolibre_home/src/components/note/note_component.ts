@@ -148,7 +148,7 @@ export class NoteComponent extends EnhancedComponent {
 
 	private setParams() {
 		const params = this.router.getRouteParams(window.location.pathname);
-		this.state.noteId = decodeURIComponent(params?.["id"] || "");
+		this.state.noteId = decodeURIComponent(params?.get("id") || "");
 	}
 
 	private async getNote() {
