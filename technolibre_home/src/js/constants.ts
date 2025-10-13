@@ -13,5 +13,7 @@ export class Constants {
 
 	public static DATE_PICKER_EVENT_NAME: string = "date_picker";
 
+	public static GEOLOCATION_EVENT_NAME: string = "geolocation";
+
 	public static FOCUS_LAST_ENTRY_EVENT_NAME: string = "focus_last_entry";
 }

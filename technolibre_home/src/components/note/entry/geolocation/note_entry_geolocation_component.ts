@@ -1,8 +1,9 @@
-import { xml } from "@odoo/owl";
+import { useRef, xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
 
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
+import { Constants } from "../../../../js/constants";
 
 export class NoteEntryGeolocationComponent extends EnhancedComponent {
 	static template = xml`
@@ -12,10 +13,45 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 		>
 			<NoteEntryDragComponent editMode="props.editMode" />
 			<div class="note-entry__content">
-				<p>This is where the geolocation data will be set</p>
+				<button
+					type="button"
+					class="geolocation__open-popover"
+					t-on-click.stop.prevent="showPopover"
+				>
+					<t t-esc="props.params.text"></t>
+				</button>
 			</div>
+		</div>
+		<div
+			class="geolocation-popover"
+			popover=""
+			t-ref="geolocation-popover"
+			t-on-click.stop.prevent="hidePopover"
+		>
 		</div>
 	`;
 
 	static components = { NoteEntryDragComponent };
+
+	geolocationPopover = useRef("geolocation-popover");
+
+	setup() {
+		this.eventBus.addEventListener(Constants.GEOLOCATION_EVENT_NAME, this.showPopover.bind(this));
+	}
+
+	showPopover() {
+		if (!this.geolocationPopover.el) {
+			return;
+		}
+
+		this.geolocationPopover.el.showPopover();
+	}
+
+	hidePopover() {
+		if (!this.geolocationPopover.el) {
+			return;
+		}
+
+		this.geolocationPopover.el.hidePopover();
+	}
 }
