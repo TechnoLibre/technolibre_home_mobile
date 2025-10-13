@@ -1,9 +1,10 @@
 import { useRef, xml } from "@odoo/owl";
 
+import { Constants } from "../../../../js/constants";
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
 
+import { NoteEntryDeleteComponent } from "../delete/note_entry_delete_component";
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
-import { Constants } from "../../../../js/constants";
 
 export class NoteEntryGeolocationComponent extends EnhancedComponent {
 	static template = xml`
@@ -11,6 +12,7 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 			class="note-entry-component note-entry-geolocation-component"
 			t-att-data-id="props.id"
 		>
+			<NoteEntryDeleteComponent id="props.id" editMode="props.editMode" deleteEntry.bind="props.deleteEntry" />
 			<div class="note-entry__content">
 				<button
 					type="button"
@@ -38,7 +40,7 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 		</div>
 	`;
 
-	static components = { NoteEntryDragComponent };
+	static components = { NoteEntryDeleteComponent, NoteEntryDragComponent };
 
 	geolocationPopover = useRef("geolocation-popover");
 
