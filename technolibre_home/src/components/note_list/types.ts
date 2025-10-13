@@ -18,8 +18,15 @@ export interface NoteEntryTextParams {
 	readonly: boolean;
 }
 
-export type NoteEntryType = "audio" | "text";
-export type NoteEntryParams = NoteEntryAudioParams | NoteEntryTextParams;
+export interface NoteEntryGeolocationParams {
+	text: string;
+	latitude: number;
+	longitude: number;
+	timestamp: number;
+}
+
+export type NoteEntryType = "audio" | "geolocation" | "text";
+export type NoteEntryParams = NoteEntryAudioParams | NoteEntryGeolocationParams | NoteEntryTextParams;
 
 export interface NoteEntry {
 	id: string;

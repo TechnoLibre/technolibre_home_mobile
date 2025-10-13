@@ -1,5 +1,5 @@
 import { v4 as uuidv4, validate, version } from "uuid";
-import { Note, NoteEntry } from "../components/note_list/types";
+import { Note, NoteEntry, NoteEntryGeolocationParams } from "../components/note_list/types";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
 import { Constants } from "./constants";
 import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "./errors";
@@ -263,13 +263,15 @@ export class NoteService {
 		};
 	}
 
-	public getNewGeolocationEntry(latitude: number, longitude: number): NoteEntry {
+	public getNewGeolocationEntry(): NoteEntry {
 		return {
 			id: this.getNewId(),
-			type: "text",
+			type: "geolocation",
 			params: {
-				text: `${latitude} ${longitude}`,
-				readonly: true
+				text: "",
+				latitude: 0.0,
+				longitude: 0.0,
+				timestamp: 0
 			}
 		}
 	}

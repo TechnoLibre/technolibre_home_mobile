@@ -80,8 +80,14 @@ export class NoteComponent extends EnhancedComponent {
 		}
 
 		const currentPosition: Position = await Geolocation.getCurrentPosition();
-		const newEntry = this.noteService
-			.getNewGeolocationEntry(currentPosition.coords.latitude, currentPosition.coords.longitude);
+		const newEntry = this.noteService.getNewGeolocationEntry();
+
+		newEntry.params = {
+			text: "Données de géolocalisation",
+			latitude: currentPosition.coords.latitude,
+			longitude: currentPosition.coords.longitude,
+			timestamp: currentPosition.timestamp
+		};
 
 		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
