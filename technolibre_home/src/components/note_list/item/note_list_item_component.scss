@@ -49,15 +49,11 @@
 		color: var(--text-greyed-out);
 	}
 	&__title {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		@include mixins.ellipsis;
 	}
 	&__date {
+		@include mixins.ellipsis;
 		margin: 0.75rem;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 		&.no-date {
 			color: var(--text-greyed-out);
 		}
