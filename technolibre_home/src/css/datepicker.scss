@@ -1,8 +1,7 @@
+@use "../css/mixins.scss";
+
 #datepicker__popover {
-	background-color: rgba(0, 0, 0, 0.35);
-	height: 100%;
-	margin: auto;
-	width: 100%;
+	@include mixins.popover;
 }
 
 #datepicker__wrapper {
