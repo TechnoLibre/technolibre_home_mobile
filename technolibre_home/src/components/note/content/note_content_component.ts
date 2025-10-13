@@ -45,6 +45,7 @@ export class NoteContentComponent extends EnhancedComponent {
 						id="entry.id"
 						params="entry.params"
 						editMode="props.editMode"
+						deleteEntry.bind="deleteEntry"
 					/>
 				</div>
 			</section>
@@ -92,6 +93,10 @@ export class NoteContentComponent extends EnhancedComponent {
 			onSort: this.onSort.bind(this)
 		});
 		this.eventBus.addEventListener(Constants.FOCUS_LAST_ENTRY_EVENT_NAME, this.focusLastEntry.bind(this));
+	}
+
+	deleteEntry(entryId: string) {
+		console.log(`Delete entry ${entryId}.`);
 	}
 
 	private onSort() {

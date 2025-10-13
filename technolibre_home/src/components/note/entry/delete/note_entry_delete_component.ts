@@ -1,17 +1,31 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { xml } from "@odoo/owl";
 
-export class NoteEntryDeleteComponent extends Component {
+import { ConfirmResult, Dialog } from "@capacitor/dialog";
+import { EnhancedComponent } from "../../../../js/enhancedComponent";
+
+import DeleteIcon from "../../../../assets/icon/delete.svg";
+
+export class NoteEntryDeleteComponent extends EnhancedComponent {
 	static template = xml`
-		<div id="note-entry-delete-component">
-			<h1>NoteEntryDelete</h1>
+		<div
+			class="note-entry-delete-component"
+			t-att-class="{
+				'active': props.editMode
+			}"
+		>
+			<button
+				class="note-entry__delete"
+				t-on-click.stop.prevent="onNoteEntryDeleteClick"
+			>
+				<img src="${DeleteIcon}" />
+			</button>
 		</div>
 	`;
 
-	static components = {};
-
-	state: any = undefined;
-
-	setup() {
-		this.state = useState({});
+	async onNoteEntryDeleteClick() {
+		const confirm: ConfirmResult = await Dialog.confirm({ message: "Supprimer cette entrée de note?" });
+		if (confirm.value) {
+			this.props.deleteEntry(this.props.id);
+		}
 	}
 }

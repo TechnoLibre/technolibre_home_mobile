@@ -2,6 +2,7 @@ import { xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
 
+import { NoteEntryDeleteComponent } from "../delete/note_entry_delete_component";
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
 
 export class NoteEntryTextComponent extends EnhancedComponent {
@@ -10,6 +11,7 @@ export class NoteEntryTextComponent extends EnhancedComponent {
 			class="note-entry-component note-entry-text-component"
 			t-att-data-id="props.id"
 		>
+			<NoteEntryDeleteComponent id="props.id" editMode="props.editMode" deleteEntry.bind="props.deleteEntry" />
 			<div class="note-entry__content">
 				<textarea
 					t-att-id="props.id"
@@ -23,5 +25,5 @@ export class NoteEntryTextComponent extends EnhancedComponent {
 		</div>
 	`;
 
-	static components = { NoteEntryDragComponent };
+	static components = { NoteEntryDeleteComponent, NoteEntryDragComponent };
 }
