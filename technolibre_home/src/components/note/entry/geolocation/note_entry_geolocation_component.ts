@@ -1,17 +1,21 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { xml } from "@odoo/owl";
 
-export class NoteEntryGeolocationComponent extends Component {
+import { EnhancedComponent } from "../../../../js/enhancedComponent";
+
+import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
+
+export class NoteEntryGeolocationComponent extends EnhancedComponent {
 	static template = xml`
-		<div id="note-entry-geolocation-component">
-			<h1>NoteEntryGeolocation</h1>
+		<div
+			class="note-entry-component note-entry-geolocation-component"
+			t-att-data-id="props.id"
+		>
+			<NoteEntryDragComponent editMode="props.editMode" />
+			<div class="note-entry__content">
+				<p>This is where the geolocation data will be set</p>
+			</div>
 		</div>
 	`;
 
-	static components = {};
-
-	state: any = undefined;
-
-	setup() {
-		this.state = useState({});
-	}
+	static components = { NoteEntryDragComponent };
 }
