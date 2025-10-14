@@ -1,5 +1,5 @@
 import { v4 as uuidv4, validate, version } from "uuid";
-import { Note, NoteEntry } from "../components/note_list/types";
+import { Note, NoteEntry, NoteEntryAudioParams } from "../components/note_list/types";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
 import { Constants } from "./constants";
 import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "./errors";
@@ -250,6 +250,17 @@ export class NoteService {
 			tags: [],
 			entries: []
 		};
+	}
+
+	public getNewAudioEntry(): NoteEntry {
+		return {
+			id: this.getNewId(),
+			type: "audio",
+			params: {
+				audio: "",
+				mimeType: ""
+			}
+		}
 	}
 
 	public getNewTextEntry(): NoteEntry {

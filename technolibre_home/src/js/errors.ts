@@ -80,4 +80,10 @@ export class ErrorMessages {
 	public static APP_SAVE: string = "Échec de la sauvegarde de l'application dans le stockage local.";
 
 	public static EMPTY_FIELDS: string = "Tous les champs de texte doivent être remplis.";
+
+	public static VOICE_RECORDING_INCOMPATIBLE: string = "Appareil incompatible pour l'enregistrement de messages vocaux.";
+
+	public static VOICE_RECORDING_PERMISSIONS: string = "Permissions manquantes pour enregistrer un message vocal.";
+
+	public static VOICE_RECORDING_GENERIC: string = "Échec de la tentative d'enregistrement de message vocal.";
 }

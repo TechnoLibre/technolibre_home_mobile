@@ -14,7 +14,7 @@ import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_contr
 import { NoteContentComponent } from "./content/note_content_component";
 import { NoteTopControlsComponent } from "./top_controls/note_top_controls_component";
 import { TagManagerComponent } from "./tag_manager/tag_manager_component";
-import { NoteEntry } from "../note_list/types";
+import { NoteEntry, NoteEntryAudioParams } from "../note_list/types";
 
 export class NoteComponent extends EnhancedComponent {
 	static template = xml`
@@ -68,10 +68,13 @@ export class NoteComponent extends EnhancedComponent {
 		});
 		this.setParams();
 		this.getNote();
+		this.listenForEvents();
 	}
 
 	addAudio() {
-		console.log("Add Audio");
+		const newEntry = this.noteService.getNewAudioEntry();
+		this.state.note.entries.push(newEntry);
+		this.saveNoteData();
 	}
 
 	async addLocation() {
@@ -186,6 +189,10 @@ export class NoteComponent extends EnhancedComponent {
 		}
 	}
 
+	private listenForEvents() {
+		this.eventBus.addEventListener(events.SET_AUDIO_RECORDING, this.setAudioRecording.bind(this));
+	}
+
 	private focusLastEntry() {
 		this.eventBus.trigger(events.FOCUS_LAST_ENTRY);
 	}
@@ -202,5 +209,34 @@ export class NoteComponent extends EnhancedComponent {
 		}
 
 		return permissions;
+	}
+
+	private setAudioRecording(event: any) {
+		const details = event?.detail;
+		
+		if (!details?.entryId || !details?.audio || !details?.mimeType) {
+			return;
+		}
+
+		console.log(details);
+
+		const entries: Array<NoteEntry> = this.state.note.entries;
+		const entryIndex = entries.findIndex(entry => entry.id === details.entryId);
+
+		if (entryIndex === -1) {
+			return;
+		}
+
+		const entry = entries.at(entryIndex);
+
+		if (!entry || entry.type !== "audio") {
+			return;
+		}
+
+		const params = entry.params as NoteEntryAudioParams;
+
+		params.audio = details.audio;
+		params.mimeType = details.mimeType;
+		this.saveNoteData();
 	}
 }
