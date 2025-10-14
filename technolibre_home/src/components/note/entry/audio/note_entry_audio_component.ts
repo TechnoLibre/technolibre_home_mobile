@@ -1,11 +1,18 @@
-import { xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
+
+import { Dialog } from "@capacitor/dialog";
+import { VoiceRecorder } from "capacitor-voice-recorder";
 
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
+import { ErrorMessages } from "../../../../js/errors";
+import { events } from "../../../../js/events";
 
 import { NoteEntryDeleteComponent } from "../delete/note_entry_delete_component";
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
 
 import PlayIcon from "../../../../assets/icon/play.svg";
+import RecordIcon from "../../../../assets/icon/mic.svg";
+import StopIcon from "../../../../assets/icon/stop.svg";
 
 export class NoteEntryAudioComponent extends EnhancedComponent {
 	static template = xml`
@@ -14,10 +21,41 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 			t-att-data-id="props.id"
 		>
 			<NoteEntryDeleteComponent id="props.id" editMode="props.editMode" deleteEntry.bind="props.deleteEntry" />
-			<div class="note-entry__content">
+			<div
+				class="note-entry__content"
+				t-att-class="{
+					'playing': state.isPlaying,
+					'recording': state.isRecording
+				}"
+			>
 				<button
 					type="button"
-					class="note-entry--audio__play"
+					class="note-entry--audio__control note-entry--audio__stop-recording"
+					t-if="!state.isPlaying and state.isRecording"
+					t-on-click.stop.prevent="stopRecording"
+				>
+					<img src="${StopIcon}" />
+				</button>
+				<button
+					type="button"
+					class="note-entry--audio__control note-entry--audio__stop-playback"
+					t-if="state.isPlaying and !state.isRecording"
+					t-on-click.stop.prevent="stopPlayback"
+				>
+					<img src="${StopIcon}" />
+				</button>
+				<button
+					type="button"
+					class="note-entry--audio__control note-entry--audio__record"
+					t-if="!state.isPlaying and state.isRecording === false and props.params.audio === ''"
+					t-on-click.stop.prevent="startRecording"
+				>
+					<img src="${RecordIcon}" />
+				</button>
+				<button
+					type="button"
+					class="note-entry--audio__control note-entry--audio__play"
+					t-if="!state.isPlaying and state.isRecording === false and props.params.audio !== ''"
 					t-on-click.stop.prevent="playAudio"
 				>
 					<img src="${PlayIcon}" />
@@ -29,7 +67,81 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 
 	static components = { NoteEntryDeleteComponent, NoteEntryDragComponent };
 
+	setup() {
+		this.state = useState({ isRecording: false, isPlaying: false, audioRef: undefined });
+	}
+
 	playAudio() {
-		console.log("Playing audio");
+		this.state.audioRef = new Audio(`data:${this.props.params.mimeType};base64,${this.props.params.audio}`);
+
+		this.state.audioRef.addEventListener("canplaythrough", this.onCanPlayThrough.bind(this));
+		this.state.audioRef.addEventListener("ended", this.onEnded.bind(this));
+
+		this.state.audioRef.load();
+	}
+
+	private onCanPlayThrough() {
+		this.state.isPlaying = true;
+
+		this.state.audioRef.play();
+		this.state.audioRef.removeEventListener("canplaythrough", this.onCanPlayThrough.bind(this));
+	}
+
+	private onEnded() {
+		this.state.isPlaying = false;
+		
+		this.state.audioRef.removeEventListener("ended", this.onEnded.bind(this));
+	}
+
+	async startRecording() {
+		const canVoiceRecord = await VoiceRecorder.canDeviceVoiceRecord();
+
+		if (!canVoiceRecord.value) {
+			Dialog.alert({ message: ErrorMessages.VOICE_RECORDING_INCOMPATIBLE });
+			return;
+		}
+
+		const hasPermission = await VoiceRecorder.hasAudioRecordingPermission();
+
+		if (!hasPermission.value) {
+			const requestPermissions = await VoiceRecorder.requestAudioRecordingPermission();
+
+			if (!requestPermissions.value) {
+				Dialog.alert({ message: ErrorMessages.VOICE_RECORDING_PERMISSIONS });
+				return;
+			}
+		}
+
+		const recording = await VoiceRecorder.startRecording();
+
+		if (!recording.value) {
+			Dialog.alert({ message: ErrorMessages.VOICE_RECORDING_GENERIC });
+			return;
+		}
+
+		this.state.isRecording = true;
+	}
+
+	async stopRecording() {
+		this.state.isRecording = false;
+
+		const recording = await VoiceRecorder.stopRecording();
+
+		if (recording.value.recordDataBase64) {
+			this.eventBus.trigger(events.SET_AUDIO_RECORDING, {
+				entryId: this.props.id,
+				audio: recording.value.recordDataBase64,
+				mimeType: recording.value.mimeType
+			});
+		}
+	}
+
+	stopPlayback() {
+		if (!this.state.audioRef) {
+			return;
+		}
+		
+		this.state.audioRef.pause();
+		this.state.isPlaying = false;
 	}
 }

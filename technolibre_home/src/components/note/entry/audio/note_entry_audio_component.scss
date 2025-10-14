@@ -4,17 +4,41 @@
 	background-color: #262626;
 	border-radius: 1.25rem;
 	padding: 0.5rem;
+	transition: background-color 150ms ease-in-out;
+	&.recording {
+		background-color: #300808;
+	}
+	&.playing {
+		background-color: #300808;
+	}
 }
 
-.note-entry-audio-component .note-entry--audio__play {
+.note-entry-audio-component .note-entry--audio__control {
 	@include mixins.flex();
-	background-color: #000;
+	background-color: rgb(110, 20, 20);
 	border: none;
 	border-radius: 50%;
 	cursor: pointer;
 	outline: none;
 	padding: 0.5rem;
+	transition: background-color 150ms ease-in-out;
 	& img {
 		pointer-events: none;
 	}
+}
+
+.note-entry-audio-component .note-entry--audio__play {
+	background-color: #000;
+}
+
+.note-entry-audio-component .note-entry--audio__record {
+	background-color: #000;
+}
+
+.note-entry-audio-component .note-entry--audio__stop-recording {
+	background-color: rgb(110, 20, 20);
+}
+
+.note-entry-audio-component .note-entry--audio__pause-playback {
+	background-color: rgb(110, 20, 20);
 }
