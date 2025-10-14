@@ -10,11 +10,15 @@
 
 #note__content__wrapper #note__content {
 	background-color: #141414;
-	border-radius: 0.5rem;
+	border-radius: 0.25rem;
 	height: 100%;
-	margin: 0 1rem;
+	margin: 0 0.5rem;
 	overflow-y: auto;
 	padding: 1rem;
+	@media only screen and (min-width: 48rem) {
+		border-radius: 0.5rem;
+		margin: 0 1rem;
+	}
 }
 
 #note-component #note__tags__list {
