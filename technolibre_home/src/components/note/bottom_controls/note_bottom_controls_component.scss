@@ -1,6 +1,25 @@
 #note__bottom-controls__wrapper #note__bottom-controls {
-	grid-template-areas: "tags archive" "pin done" "edit option";
+	grid-template-areas: "edit option";
 	grid-template-columns: repeat(2, 1fr);
+	&.options--active {
+		grid-template-areas: "tags archive" "pin done" "edit option";
+		grid-template-columns: repeat(2, 1fr);
+	}
+	@media only screen and (min-width: 32rem) {
+		&.options--active {
+			grid-template-areas: "tags archive pin done" "edit edit option option";
+			grid-template-columns: repeat(4, 1fr);
+		}
+	}
+	@media only screen and (min-width: 48rem) {
+		grid-template-areas: "edit option";
+		grid-template-columns: repeat(2, auto);
+		justify-content: flex-end;
+		&.options--active {
+			grid-template-areas: "tags archive pin done edit option";
+			grid-template-columns: repeat(4, auto);
+		}
+	}
 }
 
 #note__control__edit {

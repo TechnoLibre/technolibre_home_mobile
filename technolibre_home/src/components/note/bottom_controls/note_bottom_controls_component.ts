@@ -13,7 +13,12 @@ import TagIcon from "../../../assets/icon/tag.svg";
 export class NoteBottomControlsComponent extends EnhancedComponent {
 	static template = xml`
 		<div id="note__bottom-controls__wrapper">
-			<section id="note__bottom-controls">
+			<section
+				id="note__bottom-controls"
+				t-att-class="{
+					'options--active': props.optionMode
+				}"
+			>
 				<a
 					id="note__control__edit"
 					class="note__control"
