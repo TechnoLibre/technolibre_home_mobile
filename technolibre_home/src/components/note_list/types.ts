@@ -14,6 +14,11 @@ export interface NoteEntryAudioParams {
 	mimeType: string
 }
 
+export interface NoteEntryDateParams {
+	/** La date en format ISO */
+	date: string
+}
+
 export interface NoteEntryTextParams {
 	text: string;
 	readonly: boolean;
@@ -26,8 +31,8 @@ export interface NoteEntryGeolocationParams {
 	timestamp: number;
 }
 
-export type NoteEntryType = "audio" | "geolocation" | "text";
-export type NoteEntryParams = NoteEntryAudioParams | NoteEntryGeolocationParams | NoteEntryTextParams;
+export type NoteEntryType = "audio" | "date" | "geolocation" | "text";
+export type NoteEntryParams = NoteEntryAudioParams | NoteEntryDateParams | NoteEntryGeolocationParams | NoteEntryTextParams;
 
 export interface NoteEntry {
 	id: string;

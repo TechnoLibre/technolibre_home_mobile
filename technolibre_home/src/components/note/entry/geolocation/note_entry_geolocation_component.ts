@@ -5,6 +5,7 @@ import { events } from "../../../../js/events";
 
 import { NoteEntryDeleteComponent } from "../delete/note_entry_delete_component";
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
+import { helpers } from "../../../../js/helpers";
 
 export class NoteEntryGeolocationComponent extends EnhancedComponent {
 	static template = xml`
@@ -76,15 +77,6 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 	}
 
 	formatGeolocationTimestamp(timestamp: number) {
-		return (new Date(timestamp)).toLocaleDateString("fr-CA", {
-				day: "numeric",
-				month: "long",
-				year: "numeric",
-				hour: "2-digit",
-				minute: "2-digit",
-				second: "2-digit",
-				hour12: false
-			}
-		);
+		return helpers.formatDate(timestamp);
 	}
 }
