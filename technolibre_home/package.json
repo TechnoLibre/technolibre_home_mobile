@@ -30,6 +30,7 @@
     "@capawesome-team/capacitor-datetime-picker": "^7.0.1",
     "@capawesome/capacitor-android-edge-to-edge-support": "^7.2.3",
     "@capgo/inappbrowser": "^7.20.0",
+    "@eonasdan/tempus-dominus": "^6.10.4",
     "@odoo/owl": "^2.8.1",
     "capacitor-secure-storage-plugin": "^0.12.0",
     "capacitor-voice-recorder": "^7.0.6",
