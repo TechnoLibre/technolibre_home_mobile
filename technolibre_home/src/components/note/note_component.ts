@@ -3,18 +3,16 @@ import { useState, xml } from "@odoo/owl";
 import { Dialog } from "@capacitor/dialog";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
 
-import "wc-datepicker/dist/themes/dark.css";
 
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { events } from "../../js/events";
+import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams } from "../note_list/types";
 
-import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
 import { NoteContentComponent } from "./content/note_content_component";
 import { NoteTopControlsComponent } from "./top_controls/note_top_controls_component";
 import { TagManagerComponent } from "./tag_manager/tag_manager_component";
-import { NoteEntry, NoteEntryAudioParams } from "../note_list/types";
 
 export class NoteComponent extends EnhancedComponent {
 	static template = xml`
@@ -23,7 +21,7 @@ export class NoteComponent extends EnhancedComponent {
 				addAudio.bind="addAudio"
 				addLocation.bind="addLocation"
 				addText.bind="addText"
-				onSetDateClick.bind="onSetDateClick"
+				addDateEntry.bind="addDateEntry"
 			/>
 			<NoteContentComponent
 				note="state.note"
@@ -43,15 +41,10 @@ export class NoteComponent extends EnhancedComponent {
 				optionMode="state.optionMode"
 			/>
 		</div>
-		<DatePickerComponent
-			note="state.note"
-			setNoteDate.bind="setNoteDate"
-		/>
 		<TagManagerComponent />
 	`;
 
 	static components = {
-		DatePickerComponent,
 		NoteBottomControlsComponent,
 		NoteContentComponent,
 		NoteTopControlsComponent,
@@ -125,10 +118,6 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.optionMode = !this.state.optionMode;
 	}
 
-	onSetDateClick() {
-		this.eventBus.trigger(events.DATE_PICKER);
-	}
-
 	onTagsClick() {
 		this.eventBus.trigger(events.TAG_MANAGER);
 	}
@@ -148,8 +137,15 @@ export class NoteComponent extends EnhancedComponent {
 		this.saveNoteData();
 	}
 
-	setNoteDate(date: string) {
-		this.state.note.date = date;
+	addDateEntry() {
+		const entries: Array<NoteEntry> = this.state.note.entries;
+		const newEntry = this.noteService.getNewDateEntry();
+
+		const params = newEntry.params as NoteEntryDateParams;
+
+		params.date = (new Date()).toISOString();
+		
+		entries.push(newEntry);
 		this.saveNoteData();
 	}
 

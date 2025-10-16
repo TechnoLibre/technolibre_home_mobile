@@ -3,8 +3,8 @@ import { xml } from "@odoo/owl";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 
 import AddIcon from "../../../assets/icon/add-plus-square-svgrepo-com.svg";
+import AddDateIcon from "../../../assets/icon/date_edit.svg";
 import AudioIcon from "../../../assets/icon/audio.svg";
-import EditDateIcon from "../../../assets/icon/date_edit.svg";
 import GlobeLocationIcon from "../../../assets/icon/globe_location.svg";
 import TextIcon from "../../../assets/icon/text-selection-svgrepo-com.svg";
 
@@ -43,10 +43,10 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 					id="note__control__date"
 					class="note__control"
 					href="#"
-					t-on-click.stop.prevent="props.onSetDateClick"
+					t-on-click.stop.prevent="props.addDateEntry"
 				>
 					<img src="${AddIcon}" />
-					<img src="${EditDateIcon}" />
+					<img src="${AddDateIcon}" />
 				</a>
 			</section>
 		</div>

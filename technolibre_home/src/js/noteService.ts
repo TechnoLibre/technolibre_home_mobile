@@ -263,6 +263,16 @@ export class NoteService {
 		}
 	}
 
+	public getNewDateEntry(): NoteEntry {
+		return {
+			id: this.getNewId(),
+			type: "date",
+			params: {
+				date: ""
+			}
+		}
+	}
+
 	public getNewTextEntry(): NoteEntry {
 		return {
 			id: this.getNewId(),
