@@ -10,8 +10,7 @@ export interface Note {
 }
 
 export interface NoteEntryAudioParams {
-	audio: string,
-	mimeType: string
+	path: string
 }
 
 export interface NoteEntryDateParams {
