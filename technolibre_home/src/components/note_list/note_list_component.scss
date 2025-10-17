@@ -47,7 +47,7 @@
 }
 
 #note-list-component .notes__control {
-	@include mixins.flex(center);
+	@include mixins.flex(center, space-between);
 	background-color: #222;
 	border-radius: 0.5rem;
 	color: var(--text);
