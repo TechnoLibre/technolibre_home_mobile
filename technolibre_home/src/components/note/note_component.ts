@@ -214,6 +214,7 @@ export class NoteComponent extends EnhancedComponent {
 			} else if (error instanceof NoNoteMatchError && this.noteService.isValidId(this.state.noteId)) {
 				this.state.newNote = true;
 				this.state.note = this.noteService.getNewNote(this.state.noteId);
+				this.state.note.date = (new Date()).toISOString();
 			}
 		}
 	}
