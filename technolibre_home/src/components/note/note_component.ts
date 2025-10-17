@@ -3,12 +3,12 @@ import { useState, xml } from "@odoo/owl";
 import { Dialog } from "@capacitor/dialog";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
 
-
 import { EnhancedComponent } from "../../js/enhancedComponent";
-import { ErrorMessages, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
+import { ErrorMessages, NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { events } from "../../js/events";
 import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams } from "../note_list/types";
 
+import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
 import { NoteContentComponent } from "./content/note_content_component";
 import { NoteTopControlsComponent } from "./top_controls/note_top_controls_component";
@@ -41,10 +41,15 @@ export class NoteComponent extends EnhancedComponent {
 				optionMode="state.optionMode"
 			/>
 		</div>
+		<DatePickerComponent
+			note="state.note"
+			setEntryDate.bind="setEntryDate"
+		/>
 		<TagManagerComponent />
 	`;
 
 	static components = {
+		DatePickerComponent,
 		NoteBottomControlsComponent,
 		NoteContentComponent,
 		NoteTopControlsComponent,
@@ -67,6 +72,19 @@ export class NoteComponent extends EnhancedComponent {
 	addAudio() {
 		const newEntry = this.noteService.getNewAudioEntry();
 		this.state.note.entries.push(newEntry);
+		this.saveNoteData();
+	}
+
+	addDateEntry() {
+		const newEntry = this.noteService.getNewDateEntry();
+
+		const params = newEntry.params as NoteEntryDateParams;
+
+		params.date = (new Date()).toISOString();
+
+		const entries: Array<NoteEntry> = this.state.note.entries;
+		
+		entries.push(newEntry);
 		this.saveNoteData();
 	}
 
@@ -132,20 +150,35 @@ export class NoteComponent extends EnhancedComponent {
 		this.saveNoteData();
 	}
 
-	toggleDone() {
-		this.state.note.done = !this.state.note.done;
+	setEntryDate(entryId: string, date: string) {
+		let entry: NoteEntry | undefined;
+
+		try {
+			entry = this.getEntry(entryId);
+		} catch (error: unknown) {
+			if (error instanceof Error) {
+				Dialog.alert({ message: error.message });
+				return;
+			}
+		}
+
+		if (!entry) {
+			Dialog.alert({ message: ErrorMessages.NO_NOTE_ENTRY_MATCH });
+			return;
+		}
+
+		if (entry.type !== "date") {
+			return;
+		}
+
+		const params = entry.params as NoteEntryDateParams;
+
+		params.date = date;
 		this.saveNoteData();
 	}
 
-	addDateEntry() {
-		const entries: Array<NoteEntry> = this.state.note.entries;
-		const newEntry = this.noteService.getNewDateEntry();
-
-		const params = newEntry.params as NoteEntryDateParams;
-
-		params.date = (new Date()).toISOString();
-		
-		entries.push(newEntry);
+	toggleDone() {
+		this.state.note.done = !this.state.note.done;
 		this.saveNoteData();
 	}
 
@@ -193,6 +226,29 @@ export class NoteComponent extends EnhancedComponent {
 		this.eventBus.trigger(events.FOCUS_LAST_ENTRY);
 	}
 
+	private getEntry(entryId: string): NoteEntry {
+		const entryIndex = this.getEntryIndex(entryId);
+
+		if (entryIndex === -1) {
+			throw new NoNoteEntryMatchError();
+		}
+
+		const entries: Array<NoteEntry> = this.state.note.entries;
+
+		const entry: NoteEntry | undefined = entries.at(entryIndex);
+
+		if (!entry) {
+			throw new NoNoteEntryMatchError();
+		}
+
+		return entry;
+	}
+
+	private getEntryIndex(entryId: string): number {
+		const entries: Array<NoteEntry> = this.state.note.entries;
+		return entries.findIndex(entry => entry.id === entryId);
+	}
+
 	private async getGeolocationPermissions(): Promise<PermissionStatus | undefined> {
 		let permissions: PermissionStatus | undefined;
 
@@ -214,18 +270,23 @@ export class NoteComponent extends EnhancedComponent {
 			return;
 		}
 
-		console.log(details);
+		let entry: NoteEntry | undefined;
 
-		const entries: Array<NoteEntry> = this.state.note.entries;
-		const entryIndex = entries.findIndex(entry => entry.id === details.entryId);
+		try {
+			entry = this.getEntry(details?.entryId);
+		} catch (error: unknown) {
+			if (error instanceof Error) {
+				Dialog.alert({ message: error.message });
+				return;
+			}
+		}
 
-		if (entryIndex === -1) {
+		if (!entry) {
+			Dialog.alert({ message: ErrorMessages.NO_NOTE_ENTRY_MATCH });
 			return;
 		}
 
-		const entry = entries.at(entryIndex);
-
-		if (!entry || entry.type !== "audio") {
+		if (entry.type !== "audio") {
 			return;
 		}
 

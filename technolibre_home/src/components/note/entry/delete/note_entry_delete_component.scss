@@ -1,6 +1,6 @@
 @use "../../../../css/mixins.scss";
 
-$deleteButtonWidth: 1.75rem;
+$deleteButtonWidth: 2rem;
 
 .note-entry-delete-component {
 	@include mixins.flex--center;
@@ -20,7 +20,7 @@ $deleteButtonWidth: 1.75rem;
 	border: none;
 	border-radius: 0.25rem;
 	cursor: pointer;
-	height: 1.75rem;
+	height: $deleteButtonWidth;
 	outline: none;
 	width: $deleteButtonWidth;
 	&:hover {
