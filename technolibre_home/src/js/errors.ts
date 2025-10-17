@@ -46,6 +46,14 @@ export class NoNoteMatchError extends Error {
 	}
 }
 
+export class NoNoteEntryMatchError extends Error {
+	constructor(message?: string) {
+		const errorMessage = message || ErrorMessages.NO_NOTE_ENTRY_MATCH;
+		super(errorMessage);
+		this.name = "NoNoteEntryMatchError";
+	}
+}
+
 export class AppAlreadyExistsError extends Error {
 	constructor(message?: string) {
 		const errorMessage = message || ErrorMessages.APP_ALREADY_EXISTS;
