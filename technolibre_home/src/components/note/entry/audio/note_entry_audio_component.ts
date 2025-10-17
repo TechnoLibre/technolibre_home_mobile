@@ -1,6 +1,8 @@
 import { useState, xml } from "@odoo/owl";
 
+import { Capacitor } from "@capacitor/core";
 import { Dialog } from "@capacitor/dialog";
+import { Directory, Filesystem } from "@capacitor/filesystem"
 import { VoiceRecorder } from "capacitor-voice-recorder";
 
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
@@ -47,7 +49,7 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 				<button
 					type="button"
 					class="note-entry--audio__control note-entry--audio__record"
-					t-if="!state.isPlaying and state.isRecording === false and props.params.audio === ''"
+					t-if="!state.isPlaying and !state.isRecording and props.params.path === ''"
 					t-on-click.stop.prevent="startRecording"
 				>
 					<img src="${RecordIcon}" />
@@ -55,7 +57,7 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 				<button
 					type="button"
 					class="note-entry--audio__control note-entry--audio__play"
-					t-if="!state.isPlaying and state.isRecording === false and props.params.audio !== ''"
+					t-if="!state.isPlaying and !state.isRecording and props.params.path !== ''"
 					t-on-click.stop.prevent="playAudio"
 				>
 					<img src="${PlayIcon}" />
@@ -69,15 +71,6 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 
 	setup() {
 		this.state = useState({ isRecording: false, isPlaying: false, audioRef: undefined });
-	}
-
-	playAudio() {
-		this.state.audioRef = new Audio(`data:${this.props.params.mimeType};base64,${this.props.params.audio}`);
-
-		this.state.audioRef.addEventListener("canplaythrough", this.onCanPlayThrough.bind(this));
-		this.state.audioRef.addEventListener("ended", this.onEnded.bind(this));
-
-		this.state.audioRef.load();
 	}
 
 	private onCanPlayThrough() {
@@ -112,7 +105,9 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 			}
 		}
 
-		const recording = await VoiceRecorder.startRecording();
+		const recording = await VoiceRecorder.startRecording({
+			directory: Directory.Data
+		});
 
 		if (!recording.value) {
 			Dialog.alert({ message: ErrorMessages.VOICE_RECORDING_GENERIC });
@@ -127,11 +122,10 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 
 		const recording = await VoiceRecorder.stopRecording();
 
-		if (recording.value.recordDataBase64) {
+		if (recording.value.path) {
 			this.eventBus.trigger(events.SET_AUDIO_RECORDING, {
 				entryId: this.props.id,
-				audio: recording.value.recordDataBase64,
-				mimeType: recording.value.mimeType
+				path: recording.value.path
 			});
 		}
 	}
@@ -143,5 +137,57 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 		
 		this.state.audioRef.pause();
 		this.state.isPlaying = false;
+	}
+
+
+	/**
+	 * Voir la {@link https://www.npmjs.com/package/capacitor-voice-recorder | documentation NPM}
+	 */
+	private async getBlobURL(path: string) {
+		const directory = Directory.Data;
+
+		if (Capacitor.getPlatform() === "web") {
+			const { data } = await Filesystem.readFile({ directory, path });
+
+			if (!(data instanceof Blob)) {
+				// TODO ERROR MESSAGE
+				return;
+			}
+
+			return URL.createObjectURL(data);
+		}
+
+		const { uri } = await Filesystem.getUri({ directory, path });
+		return Capacitor.convertFileSrc(uri);
+	}
+
+	/**
+	 * Voir la {@link https://www.npmjs.com/package/capacitor-voice-recorder | documentation NPM}
+	 */
+	private async playAudio() {
+		const path = this.props.params.path;
+
+		if (!path) {
+			// TODO ERROR MESSAGE
+			return;
+		}
+
+		const url = await this.getBlobURL(path);
+
+		if (!url) {
+			// TODO ERROR MESSAGE
+			return;
+		}
+		
+		this.state.audioRef = new Audio(url);
+
+		this.state.audioRef.addEventListener("canplaythrough", this.onCanPlayThrough.bind(this));
+		this.state.audioRef.addEventListener("ended", this.onEnded.bind(this));
+
+		this.state.audioRef.onended = function () {
+			URL.revokeObjectURL(url);
+		}
+
+		this.state.audioRef.play();
 	}
 }

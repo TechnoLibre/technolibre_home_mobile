@@ -267,7 +267,7 @@ export class NoteComponent extends EnhancedComponent {
 	private setAudioRecording(event: any) {
 		const details = event?.detail;
 		
-		if (!details?.entryId || !details?.audio || !details?.mimeType) {
+		if (!details?.entryId || !details?.path) {
 			return;
 		}
 
@@ -293,8 +293,7 @@ export class NoteComponent extends EnhancedComponent {
 
 		const params = entry.params as NoteEntryAudioParams;
 
-		params.audio = details.audio;
-		params.mimeType = details.mimeType;
+		params.path = details.path;
 		this.saveNoteData();
 	}
 }
