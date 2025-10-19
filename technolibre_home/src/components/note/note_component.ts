@@ -22,6 +22,7 @@ export class NoteComponent extends EnhancedComponent {
 				addLocation.bind="addLocation"
 				addText.bind="addText"
 				addDateEntry.bind="addDateEntry"
+				addVideo.bind="addVideo"
 			/>
 			<NoteContentComponent
 				note="state.note"
@@ -113,6 +114,10 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.note.entries.push(this.noteService.getNewTextEntry());
 		this.saveNoteData();
 		this.focusLastEntry();
+	}
+
+	addVideo() {
+		console.log("Add video");
 	}
 
 	deleteEntry(entryId: string) {
