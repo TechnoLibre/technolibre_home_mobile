@@ -4,6 +4,7 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 
 import AddIcon from "../../../assets/icon/add-plus-square-svgrepo-com.svg";
 import AddDateIcon from "../../../assets/icon/date_edit.svg";
+import AddVideoIcon from "../../../assets/icon/video_add.svg";
 import AudioIcon from "../../../assets/icon/audio.svg";
 import GlobeLocationIcon from "../../../assets/icon/globe_location.svg";
 import TextIcon from "../../../assets/icon/text-selection-svgrepo-com.svg";
@@ -20,6 +21,15 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 				>
 					<img src="${AddIcon}" />
 					<img src="${GlobeLocationIcon}" />
+				</a>
+				<a
+					id="note__control__video"
+					class="note__control"
+					href="#"
+					t-on-click.stop.prevent="props.addVideo"
+				>
+					<img src="${AddIcon}" />
+					<img src="${AddVideoIcon}" />
 				</a>
 				<a
 					id="note__control__audio"
