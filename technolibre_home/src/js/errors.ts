@@ -62,6 +62,14 @@ export class AppAlreadyExistsError extends Error {
 	}
 }
 
+export class VideoNotSupportedOnWebError extends Error {
+	constructor(message?: string) {
+		const errorMessage = message || ErrorMessages.VIDEO_RECORDING_WEB;
+		super(errorMessage);
+		this.name = "VideoNotSupportedOnWebError";
+	}
+}
+
 export class ErrorMessages {
 	public static APP_KEY_NOT_FOUND: string = "Échec de la récupération des applications du stockage local.";
 
@@ -94,4 +102,6 @@ export class ErrorMessages {
 	public static VOICE_RECORDING_PERMISSIONS: string = "Permissions manquantes pour enregistrer un message vocal.";
 
 	public static VOICE_RECORDING_GENERIC: string = "Échec de la tentative d'enregistrement de message vocal.";
+
+	public static VIDEO_RECORDING_WEB: string = "Les enregistrements vidéo ne sont pas supportés sur la version web.";
 }

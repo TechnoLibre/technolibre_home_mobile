@@ -3,8 +3,8 @@
 $numberOfNavItems: 3;
 
 .nav-list__item {
+	@include mixins.button-clear;
 	@include mixins.flex--center;
-	-webkit-tap-highlight-color: transparent;
 	background-color: var(--nav-background-color);
 	border-radius: 0.5rem;
 	color: var(--nav-text-color);

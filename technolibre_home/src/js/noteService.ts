@@ -283,6 +283,16 @@ export class NoteService {
 		};
 	}
 
+	public getNewVideoEntry(): NoteEntry {
+		return {
+			id: this.getNewId(),
+			type: "video",
+			params: {
+				path: ""
+			}
+		};
+	}
+
 	public getNewGeolocationEntry(): NoteEntry {
 		return {
 			id: this.getNewId(),

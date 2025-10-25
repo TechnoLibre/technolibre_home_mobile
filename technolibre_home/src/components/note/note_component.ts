@@ -117,7 +117,9 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	addVideo() {
-		console.log("Add video");
+		this.state.note.entries.push(this.noteService.getNewVideoEntry());
+		this.saveNoteData();
+		this.focusLastEntry();
 	}
 
 	deleteEntry(entryId: string) {

@@ -38,4 +38,7 @@ body {
 	overflow: hidden;
 	position: relative;
 	width: 100%;
+	&.transparent {
+		background-color: transparent;
+	}
 }

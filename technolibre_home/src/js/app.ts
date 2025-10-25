@@ -11,6 +11,14 @@ eventBus.addEventListener(events.ROUTER_NAVIGATION, (event: any) => {
 	window.history.pushState({}, "", event?.detail?.url);
 });
 
+eventBus.addEventListener(events.OPEN_CAMERA, (_event: any) => {
+	document.body.classList.add("transparent");
+});
+
+eventBus.addEventListener(events.CLOSE_CAMERA, (_event: any) => {
+	document.body.classList.remove("transparent");
+});
+
 const router = new SimpleRouter();
 
 const appService = new AppService();

@@ -23,6 +23,10 @@ export interface NoteEntryTextParams {
 	readonly: boolean;
 }
 
+export interface NoteEntryVideoParams {
+	path: string
+}
+
 export interface NoteEntryGeolocationParams {
 	text: string;
 	latitude: number;
@@ -30,8 +34,12 @@ export interface NoteEntryGeolocationParams {
 	timestamp: number;
 }
 
-export type NoteEntryType = "audio" | "date" | "geolocation" | "text";
-export type NoteEntryParams = NoteEntryAudioParams | NoteEntryDateParams | NoteEntryGeolocationParams | NoteEntryTextParams;
+export type NoteEntryType = "audio" | "date" | "geolocation" | "text" | "video";
+export type NoteEntryParams = NoteEntryAudioParams |
+	NoteEntryDateParams |
+	NoteEntryGeolocationParams |
+	NoteEntryTextParams |
+	NoteEntryVideoParams;
 
 export interface NoteEntry {
 	id: string;
