@@ -1,8 +1,9 @@
 import { onMounted, useState, xml } from "@odoo/owl";
 
-import { SplashScreen } from "@capacitor/splash-screen";
 import { App } from "@capacitor/app";
+import { Capacitor } from "@capacitor/core";
 import { EdgeToEdge } from "@capawesome/capacitor-android-edge-to-edge-support";
+import { SplashScreen } from "@capacitor/splash-screen";
 import { StatusBar, Style } from "@capacitor/status-bar";
 
 import { Constants } from "../../js/constants";
@@ -11,20 +12,29 @@ import { StorageGetResult, StorageUtils } from "../../utils/storageUtils";
 
 import { ContentComponent } from "../content/content_component";
 import { NavbarComponent } from "../navbar/navbar_component";
-import { Capacitor } from "@capacitor/core";
+import { VideoCameraComponent } from "../video_camera/video_camera_component";
+import { events } from "../../js/events";
 
 export class RootComponent extends EnhancedComponent {
 	static template = xml`
-    <main id="main">
+    <main
+			id="main"
+			t-att-class="{
+				'hidden': state.isCameraOpen
+			}"
+		>
       <ContentComponent />
       <NavbarComponent />
     </main>
+		<VideoCameraComponent
+			active="state.isCameraOpen"
+		/>
   `;
 
-	static components = { ContentComponent, NavbarComponent };
+	static components = { ContentComponent, NavbarComponent, VideoCameraComponent };
 
 	setup() {
-		this.state = useState({ title: "This is my title" });
+		this.state = useState({ title: "This is my title", isCameraOpen: false });
 		onMounted(() => {
 			SplashScreen.hide();
 		});
@@ -33,6 +43,7 @@ export class RootComponent extends EnhancedComponent {
 		this.setDefaultBiometryStorageValue();
 		this.setDefaultAppStorageValue();
 		this.setDefaultNoteStorageValue();
+		this.listenForEvents();
 	}
 
 	private async enableEdgeToEdge() {
@@ -75,5 +86,18 @@ export class RootComponent extends EnhancedComponent {
 		if (!getResult.keyExists) {
 			await StorageUtils.setKeyValuePair(Constants.NOTES_STORAGE_KEY, []);
 		}
+	}
+
+	private listenForEvents() {
+		this.eventBus.addEventListener(events.OPEN_CAMERA, this.showCamera.bind(this));
+		this.eventBus.addEventListener(events.CLOSE_CAMERA, this.hideCamera.bind(this));
+	}
+
+	private showCamera(_event: any) {
+		this.state.isCameraOpen = true;
+	}
+
+	private hideCamera(_event: any) {
+		this.state.isCameraOpen = false;
 	}
 }

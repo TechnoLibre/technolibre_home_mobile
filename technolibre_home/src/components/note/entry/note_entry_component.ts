@@ -6,6 +6,7 @@ import { NoteEntryAudioComponent } from "./audio/note_entry_audio_component";
 import { NoteEntryDateComponent } from "./date/note_entry_date_component";
 import { NoteEntryGeolocationComponent } from "./geolocation/note_entry_geolocation_component";
 import { NoteEntryTextComponent } from "./text/note_entry_text_component";
+import { NoteEntryVideoComponent } from "./video/note_entry_video_component";
 
 export class NoteEntryComponent extends EnhancedComponent {
 	static template = xml`
@@ -37,7 +38,20 @@ export class NoteEntryComponent extends EnhancedComponent {
 			editMode="props.editMode"
 			deleteEntry.bind="props.deleteEntry"
 		/>
+		<NoteEntryVideoComponent
+			t-elif="props.type === 'video'"
+			id="props.id"
+			params="props.params"
+			editMode="props.editMode"
+			deleteEntry.bind="props.deleteEntry"
+		/>
 	`;
 
-	static components = { NoteEntryAudioComponent, NoteEntryDateComponent, NoteEntryGeolocationComponent, NoteEntryTextComponent };
+	static components = {
+		NoteEntryAudioComponent,
+		NoteEntryDateComponent,
+		NoteEntryGeolocationComponent,
+		NoteEntryTextComponent,
+		NoteEntryVideoComponent
+	};
 }

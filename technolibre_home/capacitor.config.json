@@ -1,7 +1,7 @@
 {
   "appId": "ca.technolibre.home",
   "appName": "TechnolibreHome",
-  "backgroundColor": "#ff000000",
+  "backgroundColor": "#00000000",
   "webDir": "dist",
   "plugins": {
     "SplashScreen": {
@@ -16,6 +16,6 @@
       "keystoreAlias": "android",
       "keystoreAliasPassword": "android"
     },
-    "backgroundColor": "#ff000000"
+    "backgroundColor": "#00000000"
   }
 }
