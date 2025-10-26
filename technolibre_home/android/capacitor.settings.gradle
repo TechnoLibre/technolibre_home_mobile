@@ -38,6 +38,9 @@ project(':capawesome-capacitor-android-edge-to-edge-support').projectDir = new F
 include ':capgo-inappbrowser'
 project(':capgo-inappbrowser').projectDir = new File('../node_modules/@capgo/inappbrowser/android')
 
+include ':chrismclarke-capacitor-video-player'
+project(':chrismclarke-capacitor-video-player').projectDir = new File('../node_modules/@chrismclarke/capacitor-video-player/android')
+
 include ':capacitor-plugin-safe-area'
 project(':capacitor-plugin-safe-area').projectDir = new File('../node_modules/capacitor-plugin-safe-area/android')
 

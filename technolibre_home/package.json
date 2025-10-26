@@ -32,6 +32,7 @@
     "@capawesome-team/capacitor-datetime-picker": "^7.0.1",
     "@capawesome/capacitor-android-edge-to-edge-support": "^7.2.3",
     "@capgo/inappbrowser": "^7.20.0",
+    "@chrismclarke/capacitor-video-player": "^7.0.0",
     "@odoo/owl": "^2.8.1",
     "@popperjs/core": "^2.11.8",
     "air-datepicker": "^3.6.0",
