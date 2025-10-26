@@ -6,7 +6,7 @@ import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation"
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages, NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { events } from "../../js/events";
-import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams } from "../note_list/types";
+import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryVideoParams } from "../note_list/types";
 
 import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
@@ -228,6 +228,7 @@ export class NoteComponent extends EnhancedComponent {
 
 	private listenForEvents() {
 		this.eventBus.addEventListener(events.SET_AUDIO_RECORDING, this.setAudioRecording.bind(this));
+		this.eventBus.addEventListener(events.SET_VIDEO_RECORDING, this.setVideoRecording.bind(this));
 	}
 
 	private focusLastEntry() {
@@ -281,7 +282,7 @@ export class NoteComponent extends EnhancedComponent {
 		let entry: NoteEntry | undefined;
 
 		try {
-			entry = this.getEntry(details?.entryId);
+			entry = this.getEntry(details.entryId);
 		} catch (error: unknown) {
 			if (error instanceof Error) {
 				Dialog.alert({ message: error.message });
@@ -301,6 +302,42 @@ export class NoteComponent extends EnhancedComponent {
 		const params = entry.params as NoteEntryAudioParams;
 
 		params.path = details.path;
+		this.saveNoteData();
+	}
+
+	private setVideoRecording(event: any) {
+		const details = event?.detail;
+
+		if (!details?.entryId || !details?.path) {
+			return;
+		}
+
+		let entry: NoteEntry | undefined;
+
+		try {
+			entry = this.getEntry(details.entryId);
+		} catch (error: unknown) {
+			if (error instanceof Error) {
+				Dialog.alert({ message: error.message });
+				return;
+			}
+		}
+
+		if (!entry) {
+			Dialog.alert({ message: ErrorMessages.NO_NOTE_ENTRY_MATCH });
+			return;
+		}
+
+		if (entry.type !== "video") {
+			return;
+		}
+
+		const params = entry.params as NoteEntryVideoParams;
+
+		params.path = details.path;
+
+		alert(params.path);
+
 		this.saveNoteData();
 	}
 }

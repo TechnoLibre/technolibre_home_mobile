@@ -1,12 +1,16 @@
 import { useState, xml } from "@odoo/owl";
+
+import { Capacitor } from "@capacitor/core";
+import { ScreenOrientation } from "@capacitor/screen-orientation";
+import { SafeArea } from "capacitor-plugin-safe-area";
+import { VideoRecorder, VideoRecorderCamera, VideoRecorderPreviewFrame, VideoRecorderQuality } from "@capacitor-community/video-recorder";
+
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { events } from "../../js/events";
-import { Capacitor } from "@capacitor/core";
-import { VideoRecorder, VideoRecorderCamera, VideoRecorderPreviewFrame, VideoRecorderQuality } from "@capacitor-community/video-recorder";
 import { VideoNotSupportedOnWebError } from "../../js/errors";
-import { helpers } from "../../js/helpers";
-import { ScreenOrientation } from "@capacitor/screen-orientation";
-import { Dialog } from "@capacitor/dialog";
+
+import CloseIcon from "../../assets/icon/close.svg";
+import FlipCameraAndroidIcon from "../../assets/icon/flip_camera_android.svg";
 
 export class VideoCameraComponent extends EnhancedComponent {
 	static template = xml`
@@ -20,7 +24,7 @@ export class VideoCameraComponent extends EnhancedComponent {
 			</section>
 			<section id="video-camera__bottom-controls">
 				<button id="video-camera__close-camera" t-on-click.stop.prevent="closeCamera">
-					Close
+					<img src="${CloseIcon}" />
 				</button>
 				<button
 					id="video-camera__record"
@@ -31,7 +35,7 @@ export class VideoCameraComponent extends EnhancedComponent {
 				>
 				</button>
 				<button id="video-camera__flip-camera" t-on-click.stop.prevent="flipCamera">
-					Flip
+					<img src="${FlipCameraAndroidIcon}" />
 				</button>
 			</section>
 		</div>
@@ -51,7 +55,24 @@ export class VideoCameraComponent extends EnhancedComponent {
 	}
 
 	onRecordButtonClick() {
-		this.state.isRecording = !this.state.isRecording;
+		const isRecording = this.state.isRecording;
+
+		this.state.isRecording = !isRecording;
+
+		!isRecording ? this.startRecording() : this.stopRecording();
+	}
+
+	private async startRecording() {
+		VideoRecorder.startRecording();
+	}
+
+	private async stopRecording() {
+		const result = await VideoRecorder.stopRecording();
+		
+		this.eventBus.trigger(events.SET_VIDEO_RECORDING, {
+			entryId: this.state.entryId,
+			path: result.videoUrl
+		});
 	}
 
 	async closeCamera() {
@@ -100,18 +121,20 @@ export class VideoCameraComponent extends EnhancedComponent {
 		const orientation = await ScreenOrientation.orientation();
 		const type: OrientationType = orientation.type;
 
+		const topSafeArea = await this.getTopSafeArea();
+
 		let width, height, x, y;
 
 		if (type === "portrait-primary" || type === "portrait-secondary") {
 			width = dimensions.screenWidth;
 			height = dimensions.screenHeight;
 			x = 0;
-			y = 0;
+			y = topSafeArea;
 		} else {
 			width = dimensions.screenHeight;
 			height = dimensions.screenWidth;
 			x = width / 2;
-			y = 0;
+			y = topSafeArea;
 		}
 
 		const back: VideoRecorderPreviewFrame = {
@@ -132,5 +155,10 @@ export class VideoCameraComponent extends EnhancedComponent {
 		const screenHeight = window.innerHeight;
 
 		return { screenWidth, screenHeight };
+	}
+
+	private async getTopSafeArea(): Promise<number> {
+		const result = await SafeArea.getSafeAreaInsets();
+		return result.insets.top;
 	}
 }

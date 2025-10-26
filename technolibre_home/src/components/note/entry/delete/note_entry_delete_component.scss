@@ -4,10 +4,11 @@ $deleteButtonWidth: 2rem;
 
 .note-entry-delete-component {
 	@include mixins.flex--center;
+	flex-shrink: 0;
+	margin-right: 0;
 	overflow: hidden;
 	transition: margin 100ms ease-in-out, width 100ms ease-in-out;
 	width: 0;
-	margin-right: 0;
 	&.active {
 		margin-right: 0.75rem;
 		width: $deleteButtonWidth;

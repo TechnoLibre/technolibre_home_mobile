@@ -1,14 +1,9 @@
 import { useState, xml } from "@odoo/owl";
 
-import { VideoRecorder, VideoRecorderCamera, VideoRecorderPreviewFrame, VideoRecorderQuality } from "@capacitor-community/video-recorder";
-
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
 
 import { NoteEntryDeleteComponent } from "../delete/note_entry_delete_component";
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
-import { Dialog } from "@capacitor/dialog";
-import { Capacitor } from "@capacitor/core";
-import { VideoNotSupportedOnWebError } from "../../../../js/errors";
 
 import VideoOffIcon from "../../../../assets/icon/video_off.svg";
 import { events } from "../../../../js/events";
@@ -34,7 +29,8 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 							class="note-entry__video__button"
 							t-on-click.stop.prevent="onClickOpenCamera"
 						>
-							Ouvrir la caméra
+							<t t-if="props.params.path" t-esc="props.params.path"></t>
+							<t t-else="" t-esc="'Ouvrir la caméra'"></t>
 						</button>
 					</div>
 					<div>

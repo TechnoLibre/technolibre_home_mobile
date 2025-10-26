@@ -46,6 +46,7 @@
 .note-entry-video-component .note-entry__video__data {
 	grid-area: data;
 	height: 100%;
+	min-width: 0;
 	&--new {
 		@include mixins.flex(center, flex-end);
 		height: 100%;
