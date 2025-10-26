@@ -29,6 +29,7 @@ export class RootComponent extends EnhancedComponent {
 		<VideoCameraComponent
 			active="state.isCameraOpen"
 		/>
+		<div id="video-player__wrapper"></div>
   `;
 
 	static components = { ContentComponent, NavbarComponent, VideoCameraComponent };

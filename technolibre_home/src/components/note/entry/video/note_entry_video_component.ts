@@ -1,12 +1,14 @@
 import { useState, xml } from "@odoo/owl";
 
+import { CapacitorVideoPlayer } from "@chrismclarke/capacitor-video-player";
+
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
+import { events } from "../../../../js/events";
 
 import { NoteEntryDeleteComponent } from "../delete/note_entry_delete_component";
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
 
 import VideoOffIcon from "../../../../assets/icon/video_off.svg";
-import { events } from "../../../../js/events";
 
 export class NoteEntryVideoComponent extends EnhancedComponent {
 	static template = xml`
@@ -19,21 +21,28 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 				class="note-entry__content"
 			>
 				<div class="note-entry__video__thumbnail__wrapper">
-					<div class="note-entry__video__thumbnail">
+					<div
+						class="note-entry__video__thumbnail"
+					>
 						<img src="${VideoOffIcon}" />
 					</div>
 				</div>
 				<div class="note-entry__video__data">
-					<div class="note-entry__video__data--new">
+					<div class="note-entry__video__data--new" t-if="!props.params.path">
 						<button
 							class="note-entry__video__button"
 							t-on-click.stop.prevent="onClickOpenCamera"
 						>
-							<t t-if="props.params.path" t-esc="props.params.path"></t>
-							<t t-else="" t-esc="'Ouvrir la caméra'"></t>
+							Ouvrir la caméra
 						</button>
 					</div>
-					<div>
+					<div class="note-entry__video__data--recorded" t-else="">
+						<button
+							class="note-entry__video__button"
+							t-on-click.stop.prevent="onClickOpenVideo"
+						>
+							Ouvrir la vidéo
+						</button>
 					</div>
 				</div>
 			</div>
@@ -53,5 +62,24 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 		this.eventBus.trigger(events.OPEN_CAMERA, {
 			entryId: this.props.id
 		});
+	}
+
+	async onClickOpenVideo() {
+		await CapacitorVideoPlayer.initPlayer({
+			url: this.getNativePath(this.props.params.path),
+			playerId: this.getPlayerId(),
+			mode: "fullscreen",
+			componentTag: "video-player__wrapper"
+		});
+
+		await CapacitorVideoPlayer.play({ playerId: this.getPlayerId() });
+	}
+
+	getPlayerId() {
+		return `${this.props.id}-player`;
+	}
+
+	getNativePath(capacitorUrl: string) {
+		return capacitorUrl.replace("https://localhost/_capacitor_file_/", "file:///");
 	}
 }

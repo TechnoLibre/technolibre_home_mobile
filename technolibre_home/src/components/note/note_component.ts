@@ -336,8 +336,6 @@ export class NoteComponent extends EnhancedComponent {
 
 		params.path = details.path;
 
-		alert(params.path);
-
 		this.saveNoteData();
 	}
 }
