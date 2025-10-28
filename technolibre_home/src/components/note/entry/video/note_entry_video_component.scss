@@ -44,18 +44,25 @@
 }
 
 .note-entry-video-component .note-entry__video__data {
+	@include mixins.flex(center, flex-end);
+	gap: 0.5rem;
 	grid-area: data;
 	height: 100%;
 	min-width: 0;
-	&--new {
-		@include mixins.flex(center, flex-end);
-		height: 100%;
-		@media only screen and (min-width: 36rem) {
-			@include mixins.flex(flex-start, flex-start);
-		}
+	@media only screen and (min-width: 36rem) {
+		@include mixins.flex(flex-start, flex-start);
 	}
 }
 
 .note-entry-video-component .note-entry__video__button {
 	@include mixins.button();
+}
+
+.note-entry-video-component .note-entry__video__open-camera,
+.note-entry-video-component .note-entry__video__open-video {
+	width: 100%;
+}
+
+.note-entry-video-component:not(.not-empty) .note-entry__video__open-video {
+	display: none;
 }
