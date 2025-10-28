@@ -46,7 +46,7 @@ export class VideoCameraComponent extends EnhancedComponent {
 	state: any = undefined;
 
 	setup() {
-		this.state = useState({ entryId: undefined, isRecording: false });
+		this.state = useState({ entryId: undefined, isRecording: false, isRecorderOpen: false });
 		this.listenForEvents();
 	}
 
@@ -82,6 +82,7 @@ export class VideoCameraComponent extends EnhancedComponent {
 
 		this.eventBus.trigger(events.CLOSE_CAMERA, { entryId });
 		await VideoRecorder.destroy();
+		this.state.isRecorderOpen = false;
 	}
 
 	private listenForEvents() {
@@ -95,7 +96,13 @@ export class VideoCameraComponent extends EnhancedComponent {
 	}
 
 	private async handleResize() {
+		if (!this.state.isRecorderOpen) {
+			return;
+		}
+
 		await VideoRecorder.destroy();
+		this.state.isRecorderOpen = false;
+		
 		await this.initializeVideoRecorder();
 	}
 
@@ -106,13 +113,13 @@ export class VideoCameraComponent extends EnhancedComponent {
 
 		const previewFrames: Array<VideoRecorderPreviewFrame> = await this.getPreviewFrames();
 
-		const back = previewFrames?.[0];
-
-		VideoRecorder.initialize({
+		await VideoRecorder.initialize({
 			camera: VideoRecorderCamera.BACK,
 			quality: VideoRecorderQuality.HIGHEST,
 			previewFrames
 		});
+
+		this.state.isRecorderOpen = true;
 	}
 
 	private async getPreviewFrames(): Promise<Array<VideoRecorderPreviewFrame>> {
