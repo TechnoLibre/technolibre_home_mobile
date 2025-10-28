@@ -15,6 +15,9 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 		<div
 			class="note-entry-component note-entry-video-component"
 			t-att-data-id="props.id"
+			t-att-class="{
+				'not-empty': props.params.path
+			}"
 		>
 			<NoteEntryDeleteComponent id="props.id" editMode="props.editMode" deleteEntry.bind="props.deleteEntry" />
 			<div
@@ -28,22 +31,19 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 					</div>
 				</div>
 				<div class="note-entry__video__data">
-					<div class="note-entry__video__data--new" t-if="!props.params.path">
-						<button
-							class="note-entry__video__button"
-							t-on-click.stop.prevent="onClickOpenCamera"
-						>
-							Ouvrir la caméra
-						</button>
-					</div>
-					<div class="note-entry__video__data--recorded" t-else="">
-						<button
-							class="note-entry__video__button"
-							t-on-click.stop.prevent="onClickOpenVideo"
-						>
-							Ouvrir la vidéo
-						</button>
-					</div>
+					<button
+						class="note-entry__video__button note-entry__video__open-camera"
+						t-on-click.stop.prevent="onClickOpenCamera"
+					>
+						Ouvrir la caméra
+					</button>
+					<button
+						class="note-entry__video__button note-entry__video__open-video"
+						t-if="props.params.path"
+						t-on-click.stop.prevent="onClickOpenVideo"
+					>
+						Ouvrir la vidéo
+					</button>
 				</div>
 			</div>
 			<NoteEntryDragComponent editMode="props.editMode" />
