@@ -14,12 +14,7 @@ import FlipCameraAndroidIcon from "../../assets/icon/flip_camera_android.svg";
 
 export class VideoCameraComponent extends EnhancedComponent {
 	static template = xml`
-		<div
-			id="video-camera-component"
-			t-att-class="{
-				'active': props.active
-			}"
-		>
+		<div id="video-camera-component">
 			<section id="video-camera__top-controls">
 			</section>
 			<section id="video-camera__bottom-controls">
@@ -46,7 +41,8 @@ export class VideoCameraComponent extends EnhancedComponent {
 	state: any = undefined;
 
 	setup() {
-		this.state = useState({ entryId: undefined, isRecording: false, isRecorderOpen: false });
+		this.state = useState({ entryId: undefined, isRecording: false });
+		this.initializeVideoRecorder();
 		this.listenForEvents();
 	}
 
@@ -76,13 +72,8 @@ export class VideoCameraComponent extends EnhancedComponent {
 	}
 
 	async closeCamera() {
-		const entryId = this.state.entryId;
-
-		this.state.entryId = undefined;
-
-		this.eventBus.trigger(events.CLOSE_CAMERA, { entryId });
 		await VideoRecorder.destroy();
-		this.state.isRecorderOpen = false;
+		this.eventBus.trigger(events.CLOSE_CAMERA, { entryId: this.state.entryId });
 	}
 
 	private listenForEvents() {
@@ -92,17 +83,10 @@ export class VideoCameraComponent extends EnhancedComponent {
 
 	private openCamera(event: any) {
 		this.state.entryId = event?.detail?.entryId;
-		this.initializeVideoRecorder();
 	}
 
 	private async handleResize() {
-		if (!this.state.isRecorderOpen) {
-			return;
-		}
-
 		await VideoRecorder.destroy();
-		this.state.isRecorderOpen = false;
-		
 		await this.initializeVideoRecorder();
 	}
 
@@ -118,8 +102,6 @@ export class VideoCameraComponent extends EnhancedComponent {
 			quality: VideoRecorderQuality.HIGHEST,
 			previewFrames
 		});
-
-		this.state.isRecorderOpen = true;
 	}
 
 	private async getPreviewFrames(): Promise<Array<VideoRecorderPreviewFrame>> {
