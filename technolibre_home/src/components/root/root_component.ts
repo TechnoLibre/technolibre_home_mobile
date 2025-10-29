@@ -27,7 +27,7 @@ export class RootComponent extends EnhancedComponent {
       <NavbarComponent />
     </main>
 		<VideoCameraComponent
-			active="state.isCameraOpen"
+			t-if="state.isCameraOpen"
 		/>
 		<div id="video-player__wrapper"></div>
   `;

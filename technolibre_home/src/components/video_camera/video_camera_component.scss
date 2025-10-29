@@ -8,11 +8,7 @@
 	flex-direction: column;
 	position: absolute;
 	top: 0;
-	visibility: hidden;
 	width: 100%;
-	&.active {
-		visibility: visible;
-	}
 }
 
 #video-camera-component #video-camera__top-controls {
