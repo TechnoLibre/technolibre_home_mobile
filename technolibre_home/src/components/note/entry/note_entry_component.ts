@@ -5,6 +5,7 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { NoteEntryAudioComponent } from "./audio/note_entry_audio_component";
 import { NoteEntryDateComponent } from "./date/note_entry_date_component";
 import { NoteEntryGeolocationComponent } from "./geolocation/note_entry_geolocation_component";
+import { NoteEntryPhotoComponent } from "./photo/note_entry_photo_component";
 import { NoteEntryTextComponent } from "./text/note_entry_text_component";
 import { NoteEntryVideoComponent } from "./video/note_entry_video_component";
 
@@ -31,6 +32,13 @@ export class NoteEntryComponent extends EnhancedComponent {
 			editMode="props.editMode"
 			deleteEntry.bind="props.deleteEntry"
 		/>
+		<NoteEntryPhotoComponent
+			t-elif="props.type === 'photo'"
+			id="props.id"
+			params="props.params"
+			editMode="props.editMode"
+			deleteEntry.bind="props.deleteEntry"
+		/>
 		<NoteEntryTextComponent
 			t-elif="props.type === 'text'"
 			id="props.id"
@@ -51,6 +59,7 @@ export class NoteEntryComponent extends EnhancedComponent {
 		NoteEntryAudioComponent,
 		NoteEntryDateComponent,
 		NoteEntryGeolocationComponent,
+		NoteEntryPhotoComponent,
 		NoteEntryTextComponent,
 		NoteEntryVideoComponent
 	};
