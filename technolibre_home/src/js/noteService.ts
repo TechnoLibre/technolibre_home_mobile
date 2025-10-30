@@ -272,6 +272,16 @@ export class NoteService {
 		}
 	}
 
+	public getNewPhotoEntry(): NoteEntry {
+		return {
+			id: this.getNewId(),
+			type: "photo",
+			params: {
+				path: ""
+			}
+		}
+	}
+
 	public getNewTextEntry(): NoteEntry {
 		return {
 			id: this.getNewId(),

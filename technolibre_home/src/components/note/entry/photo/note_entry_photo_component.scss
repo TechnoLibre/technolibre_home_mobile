@@ -1,3 +1,68 @@
-.note-entry-photo-component {
-	//
+@use "sass:math";
+@use "../../../../css/mixins.scss";
+
+.note-entry-photo-component .note-entry__content {
+	background-color: #262626;
+	border-radius: 0.5rem;
+	display: grid;
+	gap: 0.75rem;
+	grid-template-areas: "thumbnail" "data";
+	grid-template-columns: 1fr;
+	grid-template-rows: auto 1fr;
+	padding: 0.5rem;
+	@media only screen and (min-width: 36rem) {
+		grid-template-areas: "thumbnail data";
+		grid-template-columns: auto 1fr;
+		grid-template-rows: 1fr;
+	}
+}
+
+.note-entry-photo-component .note-entry__photo__thumbnail__wrapper {
+	@include mixins.flex--center;
+	background-color: #1A1A1A;
+	border-radius: 0.25rem;
+	flex-direction: column;
+	grid-area: thumbnail;
+}
+
+.note-entry-photo-component .note-entry__photo__thumbnail {
+	@include mixins.flex--center;
+	$aspectRatio: math.div(16, 9);
+	$maxWidth: 16rem;
+	aspect-ratio: $aspectRatio;
+	background-color: #101010;
+	border-radius: 0.25rem;
+	min-height: 3.75rem;
+	max-height: math.div($maxWidth, $aspectRatio);
+	max-width: $maxWidth;
+	@media only screen and (min-width: 36rem) {
+		grid-template-areas: "thumbnail data";
+		grid-template-columns: auto 1fr;
+		grid-template-rows: 1fr;
+		width: 8.75rem;
+	}
+}
+
+.note-entry-photo-component .note-entry__photo__data {
+	@include mixins.flex(center, flex-end);
+	gap: 0.5rem;
+	grid-area: data;
+	height: 100%;
+	min-width: 0;
+	@media only screen and (min-width: 36rem) {
+		@include mixins.flex(flex-start, flex-start);
+	}
+}
+
+.note-entry-photo-component .note-entry__photo__button {
+	@include mixins.button();
+}
+
+.note-entry-photo-component .note-entry__photo__open-camera,
+.note-entry-photo-component .note-entry__photo__open-photo {
+	width: 100%;
+}
+
+.note-entry-photo-component:not(.not-empty) .note-entry__photo__open-photo {
+	display: none;
 }

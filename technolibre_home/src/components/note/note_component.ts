@@ -112,7 +112,9 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	addPhoto() {
-		console.log("Add Photo Entry");
+		this.state.note.entries.push(this.noteService.getNewPhotoEntry());
+		this.saveNoteData();
+		this.focusLastEntry();
 	}
 
 	addText() {
