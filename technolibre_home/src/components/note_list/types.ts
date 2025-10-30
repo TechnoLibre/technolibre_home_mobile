@@ -18,6 +18,10 @@ export interface NoteEntryDateParams {
 	date: string
 }
 
+export interface NoteEntryPhotoParams {
+	path: string;
+}
+
 export interface NoteEntryTextParams {
 	text: string;
 	readonly: boolean;
@@ -34,10 +38,11 @@ export interface NoteEntryGeolocationParams {
 	timestamp: number;
 }
 
-export type NoteEntryType = "audio" | "date" | "geolocation" | "text" | "video";
+export type NoteEntryType = "audio" | "date" | "geolocation" | "photo" | "text" | "video";
 export type NoteEntryParams = NoteEntryAudioParams |
 	NoteEntryDateParams |
 	NoteEntryGeolocationParams |
+	NoteEntryPhotoParams |
 	NoteEntryTextParams |
 	NoteEntryVideoParams;
 
