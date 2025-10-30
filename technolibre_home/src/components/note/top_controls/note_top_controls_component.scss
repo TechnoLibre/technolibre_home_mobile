@@ -1,10 +1,10 @@
 #note__top-controls__wrapper #note__top-controls {
-	grid-template-areas: "geolocation geolocation geolocation audio audio audio" "video video date date text text";
+	grid-template-areas: "geolocation geolocation date date text text" "photo photo video video audio audio";
 	grid-template-columns: repeat(6, 1fr);
 	grid-template-rows: repeat(2, 1fr);
 	@media only screen and (min-width: 48rem) {
-		grid-template-areas: "geolocation audio video date text";
-		grid-template-columns: repeat(5, auto);
+		grid-template-areas: "geolocation photo video audio date text";
+		grid-template-columns: repeat(6, auto);
 		grid-template-rows: 1fr;
 		justify-content: flex-end;
 	}
@@ -28,4 +28,8 @@
 
 #note__control__video {
 	grid-area: video;
+}
+
+#note__control__photo {
+	grid-area: photo;
 }
