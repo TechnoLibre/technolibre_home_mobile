@@ -4,6 +4,8 @@ import { EnhancedComponent } from "../../../../js/enhancedComponent";
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
 import { NoteEntryDeleteComponent } from "../delete/note_entry_delete_component";
 
+import PhotoOffIcon from "../../../../assets/icon/photo_off.svg";
+
 export class NoteEntryPhotoComponent extends EnhancedComponent {
 	static template = xml`
 		<div
@@ -17,7 +19,28 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 			<div
 				class="note-entry__content"
 			>
-				NoteEntryPhotoComponent
+				<div class="note-entry__photo__thumbnail__wrapper">
+					<div
+						class="note-entry__photo__thumbnail"
+					>
+						<img src="${PhotoOffIcon}" />
+					</div>
+				</div>
+				<div class="note-entry__photo__data">
+					<button
+						class="note-entry__photo__button note-entry__photo__open-camera"
+						t-on-click.stop.prevent="onClickOpenCamera"
+					>
+						Ouvrir la caméra
+					</button>
+					<button
+						class="note-entry__photo__button note-entry__photo__open-photo"
+						t-if="props.params.path"
+						t-on-click.stop.prevent="onClickOpenVideo"
+					>
+						Ouvrir la photo
+					</button>
+				</div>
 			</div>
 			<NoteEntryDragComponent editMode="props.editMode" />
 		</div>
