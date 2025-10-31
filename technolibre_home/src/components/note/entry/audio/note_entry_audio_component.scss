@@ -1,10 +1,11 @@
 @use "../../../../css/mixins.scss";
 
-.note-entry-audio-component .note-entry__content {
+.note-entry-audio-component .note-entry__wrapper {
 	background-color: #262626;
 	border-radius: 1.25rem;
 	padding: 0.5rem;
 	transition: background-color 150ms ease-in-out;
+	width: 100%;
 	&.recording {
 		background-color: #300808;
 	}

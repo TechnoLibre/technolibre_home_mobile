@@ -9,65 +9,47 @@ import { EnhancedComponent } from "../../../../js/enhancedComponent";
 import { ErrorMessages } from "../../../../js/errors";
 import { events } from "../../../../js/events";
 
-import { NoteEntryDeleteComponent } from "../delete/note_entry_delete_component";
-import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
-
 import PlayIcon from "../../../../assets/icon/play.svg";
 import RecordIcon from "../../../../assets/icon/mic.svg";
 import StopIcon from "../../../../assets/icon/stop.svg";
 
 export class NoteEntryAudioComponent extends EnhancedComponent {
 	static template = xml`
-		<div
-			class="note-entry-component note-entry-audio-component"
-			t-att-data-id="props.id"
-		>
-			<NoteEntryDeleteComponent id="props.id" editMode="props.editMode" deleteEntry.bind="props.deleteEntry" />
-			<div
-				class="note-entry__content"
-				t-att-class="{
-					'playing': state.isPlaying,
-					'recording': state.isRecording
-				}"
+		<div class="note-entry__wrapper">
+			<button
+				type="button"
+				class="note-entry--audio__control note-entry--audio__stop-recording"
+				t-if="!state.isPlaying and state.isRecording"
+				t-on-click.stop.prevent="stopRecording"
 			>
-				<button
-					type="button"
-					class="note-entry--audio__control note-entry--audio__stop-recording"
-					t-if="!state.isPlaying and state.isRecording"
-					t-on-click.stop.prevent="stopRecording"
-				>
-					<img src="${StopIcon}" />
-				</button>
-				<button
-					type="button"
-					class="note-entry--audio__control note-entry--audio__stop-playback"
-					t-if="state.isPlaying and !state.isRecording"
-					t-on-click.stop.prevent="stopPlayback"
-				>
-					<img src="${StopIcon}" />
-				</button>
-				<button
-					type="button"
-					class="note-entry--audio__control note-entry--audio__record"
-					t-if="!state.isPlaying and !state.isRecording and props.params.path === ''"
-					t-on-click.stop.prevent="startRecording"
-				>
-					<img src="${RecordIcon}" />
-				</button>
-				<button
-					type="button"
-					class="note-entry--audio__control note-entry--audio__play"
-					t-if="!state.isPlaying and !state.isRecording and props.params.path !== ''"
-					t-on-click.stop.prevent="playAudio"
-				>
-					<img src="${PlayIcon}" />
-				</button>
-			</div>
-			<NoteEntryDragComponent editMode="props.editMode" />
+				<img src="${StopIcon}" />
+			</button>
+			<button
+				type="button"
+				class="note-entry--audio__control note-entry--audio__stop-playback"
+				t-if="state.isPlaying and !state.isRecording"
+				t-on-click.stop.prevent="stopPlayback"
+			>
+				<img src="${StopIcon}" />
+			</button>
+			<button
+				type="button"
+				class="note-entry--audio__control note-entry--audio__record"
+				t-if="!state.isPlaying and !state.isRecording and props.params.path === ''"
+				t-on-click.stop.prevent="startRecording"
+			>
+				<img src="${RecordIcon}" />
+			</button>
+			<button
+				type="button"
+				class="note-entry--audio__control note-entry--audio__play"
+				t-if="!state.isPlaying and !state.isRecording and props.params.path !== ''"
+				t-on-click.stop.prevent="playAudio"
+			>
+				<img src="${PlayIcon}" />
+			</button>
 		</div>
 	`;
-
-	static components = { NoteEntryDeleteComponent, NoteEntryDragComponent };
 
 	setup() {
 		this.state = useState({ isRecording: false, isPlaying: false, audioRef: undefined });
