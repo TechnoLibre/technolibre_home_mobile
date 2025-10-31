@@ -12,41 +12,27 @@ import VideoOffIcon from "../../../../assets/icon/video_off.svg";
 
 export class NoteEntryVideoComponent extends EnhancedComponent {
 	static template = xml`
-		<div
-			class="note-entry-component note-entry-video-component"
-			t-att-data-id="props.id"
-			t-att-class="{
-				'not-empty': props.params.path
-			}"
-		>
-			<NoteEntryDeleteComponent id="props.id" editMode="props.editMode" deleteEntry.bind="props.deleteEntry" />
+		<div class="note-entry__video__thumbnail__wrapper">
 			<div
-				class="note-entry__content"
+				class="note-entry__video__thumbnail"
 			>
-				<div class="note-entry__video__thumbnail__wrapper">
-					<div
-						class="note-entry__video__thumbnail"
-					>
-						<img src="${VideoOffIcon}" />
-					</div>
-				</div>
-				<div class="note-entry__video__data">
-					<button
-						class="note-entry__video__button note-entry__video__open-camera"
-						t-on-click.stop.prevent="onClickOpenCamera"
-					>
-						Ouvrir la caméra
-					</button>
-					<button
-						class="note-entry__video__button note-entry__video__open-video"
-						t-if="props.params.path"
-						t-on-click.stop.prevent="onClickOpenVideo"
-					>
-						Ouvrir la vidéo
-					</button>
-				</div>
+				<img src="${VideoOffIcon}" />
 			</div>
-			<NoteEntryDragComponent editMode="props.editMode" />
+		</div>
+		<div class="note-entry__video__data">
+			<button
+				class="note-entry__video__button note-entry__video__open-camera"
+				t-on-click.stop.prevent="onClickOpenCamera"
+			>
+				Ouvrir la caméra
+			</button>
+			<button
+				class="note-entry__video__button note-entry__video__open-video"
+				t-if="props.params.path"
+				t-on-click.stop.prevent="onClickOpenVideo"
+			>
+				Ouvrir la vidéo
+			</button>
 		</div>
 	`;
 
