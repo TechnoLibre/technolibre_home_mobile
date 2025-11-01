@@ -1,7 +1,7 @@
 import { useState, xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../js/enhancedComponent";
-import { events } from "../../js/events";
+import { Events } from "../../constants/events";
 import { WebViewUtils } from "../../utils/webViewUtils";
 
 // @ts-ignore
@@ -59,6 +59,6 @@ export class HomeComponent extends EnhancedComponent {
 	}
 
 	onNotesClick() {
-		this.eventBus.trigger(events.ROUTER_NAVIGATION, { url: "/notes" });
+		this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: "/notes" });
 	}
 }

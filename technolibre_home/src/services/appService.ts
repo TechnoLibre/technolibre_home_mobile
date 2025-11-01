@@ -1,6 +1,6 @@
 import { Application, ApplicationID } from "../models/application";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
-import { Constants } from "../js/constants";
+import { StorageConstants } from "../constants/storage";
 import { AppAlreadyExistsError, AppKeyNotFoundError, NoAppMatchError, UndefinedAppListError } from "../js/errors";
 
 export interface GetAppListResult {
@@ -232,7 +232,7 @@ export class AppService {
 	 */
 	private async getAppsFromStorage(): Promise<Array<Application>> {
 		const storageGetResult: StorageGetResult<Array<Application>> = await StorageUtils.getValueByKey<Array<Application>>(
-			Constants.APPLICATIONS_STORAGE_KEY
+			StorageConstants.APPLICATIONS_STORAGE_KEY
 		);
 
 		if (!storageGetResult.keyExists) {
@@ -254,7 +254,7 @@ export class AppService {
 	 * @returns True if the save succeeded, otherwise false
 	 */
 	private async saveAppListToStorage(appList: Array<Application>): Promise<{ value: boolean }> {
-		return StorageUtils.setKeyValuePair(Constants.APPLICATIONS_STORAGE_KEY, appList);
+		return StorageUtils.setKeyValuePair(StorageConstants.APPLICATIONS_STORAGE_KEY, appList);
 	}
 
 	/**

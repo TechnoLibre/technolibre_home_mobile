@@ -1,3 +1,5 @@
+import { ErrorMessages } from "../constants/errorMessages";
+
 export class AppKeyNotFoundError extends Error {
 	constructor(message?: string) {
 		const errorMessage = message || ErrorMessages.APP_KEY_NOT_FOUND;
@@ -68,40 +70,4 @@ export class VideoNotSupportedOnWebError extends Error {
 		super(errorMessage);
 		this.name = "VideoNotSupportedOnWebError";
 	}
-}
-
-export class ErrorMessages {
-	public static APP_KEY_NOT_FOUND: string = "Échec de la récupération des applications du stockage local.";
-
-	public static NOTE_KEY_NOT_FOUND: string = "Échec de la récupération des notes du stockage local.";
-
-	public static UNDEFINED_APP_LIST: string = "Liste d'applications non existante dans le stockage local.";
-
-	public static UNDEFINED_NOTE_LIST: string = "Liste de notes non existante dans le stockage local.";
-
-	public static NO_APP_MATCH: string = "Aucune application ne correspond aux données saisies.";
-
-	public static NO_NOTE_MATCH: string = "Aucune note ne correspond aux données saisies.";
-
-	public static NO_NOTE_ENTRY_MATCH: string = "Aucune entrée de note ne correspond aux données saisies.";
-
-	public static APP_ALREADY_EXISTS: string = "Une application avec cet identifiant existe déjà.";
-
-	public static BIOMETRIC_AUTH: string = "Échec de l'authentification biométrique.";
-
-	public static APP_DELETE: string = "Échec de la suppression de l'application du stockage local.";
-
-	public static NOTE_DELETE: string = "Échec de la suppression de la note du stockage local.";
-
-	public static APP_SAVE: string = "Échec de la sauvegarde de l'application dans le stockage local.";
-
-	public static EMPTY_FIELDS: string = "Tous les champs de texte doivent être remplis.";
-
-	public static VOICE_RECORDING_INCOMPATIBLE: string = "Appareil incompatible pour l'enregistrement de messages vocaux.";
-
-	public static VOICE_RECORDING_PERMISSIONS: string = "Permissions manquantes pour enregistrer un message vocal.";
-
-	public static VOICE_RECORDING_GENERIC: string = "Échec de la tentative d'enregistrement de message vocal.";
-
-	public static VIDEO_RECORDING_WEB: string = "Les enregistrements vidéo ne sont pas supportés sur la version web.";
 }

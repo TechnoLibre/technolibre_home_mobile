@@ -4,8 +4,9 @@ import { Dialog } from "@capacitor/dialog";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
 
 import { EnhancedComponent } from "../../js/enhancedComponent";
-import { ErrorMessages, NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
-import { events } from "../../js/events";
+import { ErrorMessages } from "../../constants/errorMessages";
+import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
+import { Events } from "../../constants/events";
 import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryVideoParams } from "../../models/note";
 
 import { DatePickerComponent } from "./date_picker/date_picker_component";
@@ -151,7 +152,7 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	onTagsClick() {
-		this.eventBus.trigger(events.TAG_MANAGER);
+		this.eventBus.trigger(Events.TAG_MANAGER);
 	}
 
 	onArchiveClick() {
@@ -234,12 +235,12 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	private listenForEvents() {
-		this.eventBus.addEventListener(events.SET_AUDIO_RECORDING, this.setAudioRecording.bind(this));
-		this.eventBus.addEventListener(events.SET_VIDEO_RECORDING, this.setVideoRecording.bind(this));
+		this.eventBus.addEventListener(Events.SET_AUDIO_RECORDING, this.setAudioRecording.bind(this));
+		this.eventBus.addEventListener(Events.SET_VIDEO_RECORDING, this.setVideoRecording.bind(this));
 	}
 
 	private focusLastEntry() {
-		this.eventBus.trigger(events.FOCUS_LAST_ENTRY);
+		this.eventBus.trigger(Events.FOCUS_LAST_ENTRY);
 	}
 
 	private getEntry(entryId: string): NoteEntry {

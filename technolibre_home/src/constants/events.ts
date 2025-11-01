@@ -1,4 +1,4 @@
-export const events = {
+export const Events: Record<string, string> = {
 	ROUTER_NAVIGATION: "routernav",
 	TAG_MANAGER: "tag_manager",
 	DATE_PICKER: "date_picker",

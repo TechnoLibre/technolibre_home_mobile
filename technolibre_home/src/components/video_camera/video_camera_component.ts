@@ -6,7 +6,7 @@ import { SafeArea } from "capacitor-plugin-safe-area";
 import { VideoRecorder, VideoRecorderCamera, VideoRecorderPreviewFrame, VideoRecorderQuality } from "@capacitor-community/video-recorder";
 
 import { EnhancedComponent } from "../../js/enhancedComponent";
-import { events } from "../../js/events";
+import { Events } from "../../constants/events";
 import { VideoNotSupportedOnWebError } from "../../js/errors";
 
 import CloseIcon from "../../assets/icon/close.svg";
@@ -65,7 +65,7 @@ export class VideoCameraComponent extends EnhancedComponent {
 	private async stopRecording() {
 		const result = await VideoRecorder.stopRecording();
 		
-		this.eventBus.trigger(events.SET_VIDEO_RECORDING, {
+		this.eventBus.trigger(Events.SET_VIDEO_RECORDING, {
 			entryId: this.state.entryId,
 			path: result.videoUrl
 		});
@@ -73,11 +73,11 @@ export class VideoCameraComponent extends EnhancedComponent {
 
 	async closeCamera() {
 		await VideoRecorder.destroy();
-		this.eventBus.trigger(events.CLOSE_CAMERA, { entryId: this.state.entryId });
+		this.eventBus.trigger(Events.CLOSE_CAMERA, { entryId: this.state.entryId });
 	}
 
 	private listenForEvents() {
-		this.eventBus.addEventListener(events.OPEN_CAMERA, this.openCamera.bind(this));
+		this.eventBus.addEventListener(Events.OPEN_CAMERA, this.openCamera.bind(this));
 		window.addEventListener("orientationchange", this.handleResize.bind(this));
 	}
 

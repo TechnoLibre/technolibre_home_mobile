@@ -3,8 +3,8 @@ import { useState, xml } from "@odoo/owl";
 import { ConfirmResult, Dialog } from "@capacitor/dialog";
 
 import { BiometryUtils } from "../../../utils/biometryUtils";
-import { Constants } from "../../../js/constants";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { StorageConstants } from "../../../constants/storage";
 import { StorageGetResult, StorageUtils } from "../../../utils/storageUtils";
 
 export class OptionsToggleBiometryComponent extends EnhancedComponent {
@@ -88,7 +88,7 @@ export class OptionsToggleBiometryComponent extends EnhancedComponent {
 			return;
 		}
 
-		await StorageUtils.setKeyValuePair(Constants.BIOMETRY_ENABLED_STORAGE_KEY, newIsBiometryEnabledValue);
+		await StorageUtils.setKeyValuePair(StorageConstants.BIOMETRY_ENABLED_STORAGE_KEY, newIsBiometryEnabledValue);
 
 		this.state.hasUserEnabledBiometry = await this.checkHasUserEnabledBiometry();
 
@@ -99,7 +99,7 @@ export class OptionsToggleBiometryComponent extends EnhancedComponent {
 	}
 
 	private async checkHasUserEnabledBiometry(): Promise<boolean> {
-		const result: StorageGetResult = await StorageUtils.getValueByKey<boolean>(Constants.BIOMETRY_ENABLED_STORAGE_KEY);
+		const result: StorageGetResult = await StorageUtils.getValueByKey<boolean>(StorageConstants.BIOMETRY_ENABLED_STORAGE_KEY);
 
 		return result.isValid && result.value;
 	}

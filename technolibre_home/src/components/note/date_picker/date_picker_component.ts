@@ -6,7 +6,7 @@ import { DatetimePicker, PresentResult } from "@capawesome-team/capacitor-dateti
 import "air-datepicker/air-datepicker.css"
 import localeFr from "air-datepicker/locale/fr"
 
-import { events } from "../../../js/events";
+import { Events } from "../../../constants/events";
 import { WebViewUtils } from "../../../utils/webViewUtils";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
@@ -42,7 +42,7 @@ export class DatePickerComponent extends EnhancedComponent {
 	}
 
 	private onMounted() {
-    this.eventBus.addEventListener(events.DATE_PICKER, this.openDatePicker.bind(this));
+    this.eventBus.addEventListener(Events.DATE_PICKER, this.openDatePicker.bind(this));
 		this.datePickerPopover.el?.addEventListener("toggle", this.onPopoverToggle.bind(this));
 	}
 

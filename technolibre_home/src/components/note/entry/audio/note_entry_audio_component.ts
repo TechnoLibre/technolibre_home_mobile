@@ -6,8 +6,8 @@ import { Directory, Filesystem } from "@capacitor/filesystem"
 import { VoiceRecorder } from "capacitor-voice-recorder";
 
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
-import { ErrorMessages } from "../../../../js/errors";
-import { events } from "../../../../js/events";
+import { ErrorMessages } from "../../../../constants/errorMessages";
+import { Events } from "../../../../constants/events";
 
 import PlayIcon from "../../../../assets/icon/play.svg";
 import RecordIcon from "../../../../assets/icon/mic.svg";
@@ -105,7 +105,7 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 		const recording = await VoiceRecorder.stopRecording();
 
 		if (recording.value.path) {
-			this.eventBus.trigger(events.SET_AUDIO_RECORDING, {
+			this.eventBus.trigger(Events.SET_AUDIO_RECORDING, {
 				entryId: this.props.id,
 				path: recording.value.path
 			});

@@ -4,7 +4,7 @@ import { Dialog } from "@capacitor/dialog";
 
 import { BiometryUtils } from "../../../utils/biometryUtils";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
-import { ErrorMessages } from "../../../js/errors";
+import { ErrorMessages } from "../../../constants/errorMessages";
 
 import { HeadingComponent } from "../../heading/heading_component";
 

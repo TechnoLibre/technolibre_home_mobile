@@ -1,7 +1,7 @@
 import { onMounted, useRef, useState, xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
-import { events } from "../../../js/events";
+import { Events } from "../../../constants/events";
 
 export class TagManagerComponent extends EnhancedComponent {
 	static template = xml`
@@ -74,7 +74,7 @@ export class TagManagerComponent extends EnhancedComponent {
 	setup() {
 		this.state = useState({ search: "", tags: new Array<string>() });
 		onMounted(() => {
-			this.eventBus.addEventListener(events.TAG_MANAGER, this.showPopover.bind(this));
+			this.eventBus.addEventListener(Events.TAG_MANAGER, this.showPopover.bind(this));
 		});
 	}
 
