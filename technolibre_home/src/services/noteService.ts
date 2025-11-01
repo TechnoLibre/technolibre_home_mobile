@@ -1,8 +1,8 @@
 import { v4 as uuidv4, validate, version } from "uuid";
 import { Note, NoteEntry } from "../models/note";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
-import { Constants } from "./constants";
-import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "./errors";
+import { Constants } from "../js/constants";
+import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../js/errors";
 
 export interface GetNoteListResult {
 	noteList: Array<Note>;
