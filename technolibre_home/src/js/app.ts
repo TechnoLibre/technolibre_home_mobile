@@ -1,8 +1,8 @@
 import { RootComponent } from "../components/root/root_component";
 import { EventBus, mount } from "@odoo/owl";
 import { SimpleRouter } from "./router";
-import { AppService } from "./appService";
-import { NoteService } from "./noteService";
+import { AppService } from "../services/appService";
+import { NoteService } from "../services/noteService";
 import { events } from "./events";
 
 const eventBus = new EventBus();
