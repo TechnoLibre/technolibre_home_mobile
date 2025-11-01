@@ -6,7 +6,7 @@ import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation"
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages, NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { events } from "../../js/events";
-import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryVideoParams } from "../note_list/types";
+import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryVideoParams } from "../../models/note";
 
 import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";

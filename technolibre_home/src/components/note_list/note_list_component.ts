@@ -5,7 +5,7 @@ import { Dialog } from "@capacitor/dialog";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../js/errors";
 import { events } from "../../js/events";
-import { Note } from "./types";
+import { Note } from "../../models/note";
 
 import { HeadingComponent } from "../heading/heading_component";
 import { NotesItemComponent } from "./item/note_list_item_component";

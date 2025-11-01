@@ -4,7 +4,7 @@ import { Sortable } from "sortablejs";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { events } from "../../../js/events";
-import { NoteEntry } from "../types";
+import { NoteEntry } from "../../../models/note";
 
 import { NoteEntryComponent } from "../entry/note_entry_component";
 

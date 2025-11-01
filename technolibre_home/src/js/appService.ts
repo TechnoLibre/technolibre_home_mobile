@@ -1,4 +1,4 @@
-import { Application, ApplicationID } from "../components/applications/types";
+import { Application, ApplicationID } from "../models/application";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
 import { Constants } from "./constants";
 import { AppAlreadyExistsError, AppKeyNotFoundError, NoAppMatchError, UndefinedAppListError } from "./errors";
