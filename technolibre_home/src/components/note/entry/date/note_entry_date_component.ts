@@ -1,7 +1,7 @@
 import { xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
-import { events } from "../../../../js/events";
+import { Events } from "../../../../constants/events";
 import { helpers } from "../../../../js/helpers";
 
 export class NoteEntryDateComponent extends EnhancedComponent {
@@ -19,7 +19,7 @@ export class NoteEntryDateComponent extends EnhancedComponent {
 	}
 
 	onDateButtonClick() {
-		this.eventBus.trigger(events.DATE_PICKER, {
+		this.eventBus.trigger(Events.DATE_PICKER, {
 			entryId: this.props.id
 		});
 	}

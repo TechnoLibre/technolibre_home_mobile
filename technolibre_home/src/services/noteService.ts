@@ -1,7 +1,7 @@
 import { v4 as uuidv4, validate, version } from "uuid";
 import { Note, NoteEntry } from "../models/note";
+import { StorageConstants } from "../constants/storage";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
-import { Constants } from "../js/constants";
 import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../js/errors";
 
 export interface GetNoteListResult {
@@ -340,7 +340,7 @@ export class NoteService {
 	 */
 	private async getNotesFromStorage(): Promise<Array<Note>> {
 		const storageGetResult: StorageGetResult<Array<Note>> = await StorageUtils.getValueByKey<Array<Note>>(
-			Constants.NOTES_STORAGE_KEY
+			StorageConstants.NOTES_STORAGE_KEY
 		);
 
 		if (!storageGetResult.keyExists) {
@@ -362,7 +362,7 @@ export class NoteService {
 	 * @returns True if the save succeeded, otherwise false
 	 */
 	private async saveNoteListToStorage(noteList: Array<Note>): Promise<{ value: boolean }> {
-		return StorageUtils.setKeyValuePair(Constants.NOTES_STORAGE_KEY, noteList);
+		return StorageUtils.setKeyValuePair(StorageConstants.NOTES_STORAGE_KEY, noteList);
 	}
 
 	/**

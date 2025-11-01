@@ -5,8 +5,8 @@ import { Dialog } from "@capacitor/dialog";
 import { Application, ApplicationID } from "../../models/application";
 import { BiometryUtils } from "../../utils/biometryUtils";
 import { EnhancedComponent } from "../../js/enhancedComponent";
-import { ErrorMessages } from "../../js/errors";
-import { events } from "../../js/events";
+import { ErrorMessages } from "../../constants/errorMessages";
+import { Events } from "../../constants/events";
 import { WebViewUtils } from "../../utils/webViewUtils";
 
 import { ApplicationsItemComponent } from "./item/applications_item_component";
@@ -54,7 +54,7 @@ export class ApplicationsComponent extends EnhancedComponent {
 	onAppAddClick(event) {
 		event.preventDefault();
 
-		this.eventBus.trigger(events.ROUTER_NAVIGATION, { url: "/applications/add" });
+		this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: "/applications/add" });
 	}
 
 	async openApplication(appID: ApplicationID) {
@@ -115,7 +115,7 @@ export class ApplicationsComponent extends EnhancedComponent {
 	async editApplication(appID: ApplicationID) {
 		const encodedURL = encodeURIComponent(appID.url);
 		const encodedUsername = encodeURIComponent(appID.username);
-		this.eventBus.trigger(events.ROUTER_NAVIGATION, {
+		this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
 			url: `/applications/edit/${encodedURL}/${encodedUsername}`
 		});
 	}

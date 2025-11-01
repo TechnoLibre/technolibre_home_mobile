@@ -3,7 +3,7 @@ import { useState, xml } from "@odoo/owl";
 import { CapacitorVideoPlayer } from "@chrismclarke/capacitor-video-player";
 
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
-import { events } from "../../../../js/events";
+import { Events } from "../../../../constants/events";
 
 import { NoteEntryDeleteComponent } from "../delete/note_entry_delete_component";
 import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
@@ -45,7 +45,7 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 	}
 
 	async onClickOpenCamera() {
-		this.eventBus.trigger(events.OPEN_CAMERA, {
+		this.eventBus.trigger(Events.OPEN_CAMERA, {
 			entryId: this.props.id
 		});
 	}
