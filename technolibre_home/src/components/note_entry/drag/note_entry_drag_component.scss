@@ -1,4 +1,4 @@
-@use "../../../../css/mixins.scss";
+@use "../../../css/mixins.scss";
 
 .note-entry-drag-component {
 	@include mixins.flex--center;

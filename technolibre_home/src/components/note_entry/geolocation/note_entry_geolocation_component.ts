@@ -1,9 +1,9 @@
 import { useRef, xml } from "@odoo/owl";
 
-import { EnhancedComponent } from "../../../../js/enhancedComponent";
-import { Events } from "../../../../constants/events";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { Events } from "../../../constants/events";
 
-import { helpers } from "../../../../js/helpers";
+import { helpers } from "../../../js/helpers";
 
 export class NoteEntryGeolocationComponent extends EnhancedComponent {
 	static template = xml`

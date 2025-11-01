@@ -5,13 +5,13 @@ import { Dialog } from "@capacitor/dialog";
 import { Directory, Filesystem } from "@capacitor/filesystem"
 import { VoiceRecorder } from "capacitor-voice-recorder";
 
-import { EnhancedComponent } from "../../../../js/enhancedComponent";
-import { ErrorMessages } from "../../../../constants/errorMessages";
-import { Events } from "../../../../constants/events";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { ErrorMessages } from "../../../constants/errorMessages";
+import { Events } from "../../../constants/events";
 
-import PlayIcon from "../../../../assets/icon/play.svg";
-import RecordIcon from "../../../../assets/icon/mic.svg";
-import StopIcon from "../../../../assets/icon/stop.svg";
+import PlayIcon from "../../../assets/icon/play.svg";
+import RecordIcon from "../../../assets/icon/mic.svg";
+import StopIcon from "../../../assets/icon/stop.svg";
 
 export class NoteEntryAudioComponent extends EnhancedComponent {
 	static template = xml`

@@ -1,6 +1,6 @@
 import { xml } from "@odoo/owl";
 
-import { EnhancedComponent } from "../../../../js/enhancedComponent";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
 
 export class NoteEntryTextComponent extends EnhancedComponent {
 	static template = xml`
