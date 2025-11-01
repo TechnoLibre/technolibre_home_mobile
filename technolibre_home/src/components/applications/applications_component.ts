@@ -2,7 +2,7 @@ import { useState, xml } from "@odoo/owl";
 
 import { Dialog } from "@capacitor/dialog";
 
-import { Application, ApplicationID } from "./types";
+import { Application, ApplicationID } from "../../models/application";
 import { BiometryUtils } from "../../utils/biometryUtils";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../js/errors";
