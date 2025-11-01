@@ -1,6 +1,6 @@
 import { xml } from "@odoo/owl";
 
-import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { EnhancedComponent } from "../../js/enhancedComponent";
 
 import { NoteEntryAudioComponent } from "./audio/note_entry_audio_component";
 import { NoteEntryDateComponent } from "./date/note_entry_date_component";

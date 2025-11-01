@@ -1,9 +1,9 @@
 import { xml } from "@odoo/owl";
 
 import { ConfirmResult, Dialog } from "@capacitor/dialog";
-import { EnhancedComponent } from "../../../../js/enhancedComponent";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
 
-import DeleteIcon from "../../../../assets/icon/delete.svg";
+import DeleteIcon from "../../../assets/icon/delete.svg";
 
 export class NoteEntryDeleteComponent extends EnhancedComponent {
 	static template = xml`

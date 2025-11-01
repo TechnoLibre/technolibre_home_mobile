@@ -6,7 +6,7 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { Events } from "../../../constants/events";
 import { NoteEntry } from "../../../models/note";
 
-import { NoteEntryComponent } from "../entry/note_entry_component";
+import { NoteEntryComponent } from "../../note_entry/note_entry_component";
 
 export class NoteContentComponent extends EnhancedComponent {
 	static template = xml`

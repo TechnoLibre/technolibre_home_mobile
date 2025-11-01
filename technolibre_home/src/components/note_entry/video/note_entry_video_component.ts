@@ -1,14 +1,11 @@
-import { useState, xml } from "@odoo/owl";
+import { xml } from "@odoo/owl";
 
 import { CapacitorVideoPlayer } from "@chrismclarke/capacitor-video-player";
 
-import { EnhancedComponent } from "../../../../js/enhancedComponent";
-import { Events } from "../../../../constants/events";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { Events } from "../../../constants/events";
 
-import { NoteEntryDeleteComponent } from "../delete/note_entry_delete_component";
-import { NoteEntryDragComponent } from "../drag/note_entry_drag_component";
-
-import VideoOffIcon from "../../../../assets/icon/video_off.svg";
+import VideoOffIcon from "../../../assets/icon/video_off.svg";
 
 export class NoteEntryVideoComponent extends EnhancedComponent {
 	static template = xml`
@@ -35,14 +32,6 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 			</button>
 		</div>
 	`;
-
-	static components = { NoteEntryDeleteComponent, NoteEntryDragComponent };
-
-	state: any = undefined;
-
-	setup() {
-		this.state = useState({});
-	}
 
 	async onClickOpenCamera() {
 		this.eventBus.trigger(Events.OPEN_CAMERA, {

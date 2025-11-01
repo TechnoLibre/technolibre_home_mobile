@@ -1,8 +1,8 @@
 import { xml } from "@odoo/owl";
 
-import { EnhancedComponent } from "../../../../js/enhancedComponent";
-import { Events } from "../../../../constants/events";
-import { helpers } from "../../../../js/helpers";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { Events } from "../../../constants/events";
+import { helpers } from "../../../js/helpers";
 
 export class NoteEntryDateComponent extends EnhancedComponent {
 	static template = xml`
