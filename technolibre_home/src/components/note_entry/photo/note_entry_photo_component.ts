@@ -8,7 +8,9 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 	static template = xml`
 		<div
 			class="note-entry__wrapper"
-			
+			t-att-class="{
+				'not-empty': props.params.path
+			}"
 		>
 			<div class="note-entry__photo__thumbnail__wrapper">
 				<div

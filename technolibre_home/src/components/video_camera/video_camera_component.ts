@@ -36,12 +36,8 @@ export class VideoCameraComponent extends EnhancedComponent {
 		</div>
 	`;
 
-	static components = {};
-
-	state: any = undefined;
-
 	setup() {
-		this.state = useState({ entryId: undefined, isRecording: false });
+		this.state = useState({ isRecording: false });
 		this.initializeVideoRecorder();
 		this.listenForEvents();
 	}
@@ -66,23 +62,18 @@ export class VideoCameraComponent extends EnhancedComponent {
 		const result = await VideoRecorder.stopRecording();
 		
 		this.eventBus.trigger(Events.SET_VIDEO_RECORDING, {
-			entryId: this.state.entryId,
+			entryId: this.props.entryId,
 			path: result.videoUrl
 		});
 	}
 
 	async closeCamera() {
 		await VideoRecorder.destroy();
-		this.eventBus.trigger(Events.CLOSE_CAMERA, { entryId: this.state.entryId });
+		this.eventBus.trigger(Events.CLOSE_CAMERA, { entryId: this.props.entryId });
 	}
 
 	private listenForEvents() {
-		this.eventBus.addEventListener(Events.OPEN_CAMERA, this.openCamera.bind(this));
 		window.addEventListener("orientationchange", this.handleResize.bind(this));
-	}
-
-	private openCamera(event: any) {
-		this.state.entryId = event?.detail?.entryId;
 	}
 
 	private async handleResize() {
