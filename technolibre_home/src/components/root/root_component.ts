@@ -28,6 +28,7 @@ export class RootComponent extends EnhancedComponent {
     </main>
 		<VideoCameraComponent
 			t-if="state.isCameraOpen"
+			entryId="state.videoEntryId"
 		/>
 		<div id="video-player__wrapper"></div>
   `;
@@ -35,7 +36,7 @@ export class RootComponent extends EnhancedComponent {
 	static components = { ContentComponent, NavbarComponent, VideoCameraComponent };
 
 	setup() {
-		this.state = useState({ title: "This is my title", isCameraOpen: false });
+		this.state = useState({ title: "This is my title", isCameraOpen: false, videoEntryId: undefined });
 		onMounted(() => {
 			SplashScreen.hide();
 		});
@@ -94,11 +95,13 @@ export class RootComponent extends EnhancedComponent {
 		this.eventBus.addEventListener(Events.CLOSE_CAMERA, this.hideCamera.bind(this));
 	}
 
-	private showCamera(_event: any) {
+	private showCamera(event: any) {
 		this.state.isCameraOpen = true;
+		this.state.videoEntryId = event?.detail?.entryId;
 	}
 
 	private hideCamera(_event: any) {
 		this.state.isCameraOpen = false;
+		this.state.videoEntryId = undefined;
 	}
 }

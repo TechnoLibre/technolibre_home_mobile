@@ -1,7 +1,7 @@
 @use "sass:math";
 @use "../../../css/mixins.scss";
 
-.note-entry-photo-component .note-entry__content {
+.note-entry-photo-component .note-entry__wrapper {
 	background-color: #262626;
 	border-radius: 0.5rem;
 	display: grid;
@@ -10,6 +10,7 @@
 	grid-template-columns: 1fr;
 	grid-template-rows: auto 1fr;
 	padding: 0.5rem;
+	width: 100%;
 	@media only screen and (min-width: 36rem) {
 		grid-template-areas: "thumbnail data";
 		grid-template-columns: auto 1fr;
@@ -63,6 +64,6 @@
 	width: 100%;
 }
 
-.note-entry-photo-component:not(.not-empty) .note-entry__photo__open-photo {
+.note-entry-photo-component .note-entry__wrapper:not(.not-empty) .note-entry__photo__open-photo {
 	display: none;
 }
