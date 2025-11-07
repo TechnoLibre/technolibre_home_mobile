@@ -3,6 +3,7 @@ import { useState, xml } from "@odoo/owl";
 import { Dialog } from "@capacitor/dialog";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
 
+import { BiometryUtils } from "../../utils/biometryUtils";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
@@ -130,7 +131,14 @@ export class NoteComponent extends EnhancedComponent {
 		this.focusLastEntry();
 	}
 
-	deleteEntry(entryId: string) {
+	async deleteEntry(entryId: string) {
+		const isBiometricAuthSuccessful: boolean = await BiometryUtils.authenticateIfAvailable();
+
+		if (!isBiometricAuthSuccessful) {
+			Dialog.alert({ message: ErrorMessages.BIOMETRIC_AUTH });
+			return;
+		}
+
 		const entries: Array<NoteEntry> = this.state.note.entries;
 		const entryIndex = entries.findIndex(entry => entry.id === entryId);
 
