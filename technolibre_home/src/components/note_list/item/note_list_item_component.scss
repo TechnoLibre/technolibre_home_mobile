@@ -1,0 +1,102 @@
+@use "sass:color";
+
+#note-list-component .notes-item {
+	align-items: center;
+	border: 2px solid var(--section-border-color);
+	border-radius: 0.5em;
+	background-color: #151515;
+	cursor: pointer;
+	display: grid;
+	grid-template-areas: "tags tags" "data actions";
+	grid-template-columns: 1fr auto;
+	justify-content: flex-start;
+	overflow: hidden;
+	transition: background-color 150ms ease-in-out;
+	&:hover {
+		background-color: #1a1a1a;
+	}
+	& + .notes-item {
+		margin-top: 0.75rem;
+	}
+	&__tags {
+		background-color: #000;
+		display: flex;
+		grid-area: tags;
+		padding: 0.5rem;
+	}
+	&__tag {
+		background-color: #1e2e93;
+		border-radius: 0.25rem;
+		font-size: 0.75rem;
+		padding: 0.35rem 0.75rem;
+		&:hover {
+			background-color: color.scale(#1e2e93, $lightness: -5%);
+		}
+	}
+	&__tag + .notes-item__tag {
+		margin-left: 0.5rem;
+	}
+	&__data {
+		align-items: center;
+		display: flex;
+		flex-grow: 1;
+		grid-area: data;
+		justify-content: space-between;
+		margin: 0.75rem 0.75rem 0.75rem 1rem;
+		min-width: 0;
+	}
+	&--done .notes-item__title,
+	&--done .notes-item__date {
+		color: var(--text-greyed-out);
+	}
+	&__title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	&__date {
+		margin: 0.75rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		&.no-date {
+			color: var(--text-greyed-out);
+		}
+	}
+	&__actions {
+		display: flex;
+		gap: 0.5rem;
+		grid-area: actions;
+		margin: 0.75rem 0.75rem 0.75rem 0;
+	}
+	&__action {
+		border: none;
+		border-radius: 0.25rem;
+		color: var(--text);
+		cursor: pointer;
+		outline: none;
+		padding: 0.75rem;
+		transition: background-color 150ms ease-in-out;
+		& img {
+			display: block;
+			height: 1.75em;
+			margin: 0 auto;
+			pointer-events: none;
+			width: 1.75em;
+		}
+	}
+	&__delete {
+		background-color: var(--btn-red-color);
+		grid-area: delete;
+		&:hover {
+			background-color: var(--btn-red-hover-color);
+		}
+	}
+	&__edit {
+		background-color: var(--btn-blue-color);
+		grid-area: edit;
+		&:hover {
+			background-color: var(--btn-blue-hover-color);
+		}
+	}
+}

@@ -1,0 +1,20 @@
+#note__top-controls__wrapper #note__top-controls {
+	grid-template-areas: "audio date text";
+	grid-template-columns: repeat(3, 1fr);
+}
+
+#note__control__audio {
+	grid-area: audio;
+	pointer-events: none;
+	& .greyed-out {
+		color: grey;
+	}
+}
+
+#note__control__text {
+	grid-area: text;
+}
+
+#note-component #note__control__date {
+	grid-area: date;
+}

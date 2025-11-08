@@ -1,0 +1,28 @@
+#note__bottom-controls__wrapper #note__bottom-controls {
+	grid-template-areas: "tags archive" "pin done" "edit option";
+	grid-template-columns: repeat(2, 1fr);
+}
+
+#note__control__edit {
+	grid-area: edit;
+}
+
+#note__control__option {
+	grid-area: option;
+}
+
+#note-component #note__control__tags {
+	grid-area: tags;
+}
+
+#note-component #note__control__archive {
+	grid-area: archive;
+}
+
+#note-component #note__control__pin {
+	grid-area: pin;
+}
+
+#note-component #note__control__done {
+	grid-area: done;
+}

@@ -1,17 +1,18 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
 import { Dialog } from "@capacitor/dialog";
 
 import { Application, ApplicationID } from "./types";
 import { BiometryUtils } from "../../utils/biometryUtils";
 import { Constants } from "../../js/constants";
+import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../js/errors";
 import { WebViewUtils } from "../../utils/webViewUtils";
 
 import { ApplicationsItemComponent } from "./item/applications_item_component";
 import { HeadingComponent } from "../heading/heading_component";
 
-export class ApplicationsComponent extends Component {
+export class ApplicationsComponent extends EnhancedComponent {
 	static template = xml`
       <div id="applications-component">
         <HeadingComponent title="'Applications'" />
@@ -44,18 +45,16 @@ export class ApplicationsComponent extends Component {
 
 	static components = { HeadingComponent, ApplicationsItemComponent };
 
-	state: any = undefined;
-
 	async setup() {
 		this.state = useState({ applications: new Array<Application>() });
 
-		this.state.applications = await this.env.appService.getApps();
+		this.state.applications = await this.appService.getApps();
 	}
 
 	onAppAddClick(event) {
 		event.preventDefault();
 
-		this.env.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: "/applications/add" });
+		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: "/applications/add" });
 	}
 
 	async openApplication(appID: ApplicationID) {
@@ -69,7 +68,7 @@ export class ApplicationsComponent extends Component {
 		let matchingApp: Application | undefined;
 
 		try {
-			matchingApp = await this.env.appService.getMatch(appID);
+			matchingApp = await this.appService.getMatch(appID);
 		} catch (error: unknown) {
 			if (error instanceof Error) {
 				Dialog.alert({ message: error.message });
@@ -104,7 +103,9 @@ export class ApplicationsComponent extends Component {
 				title: matchingApp.url,
 				isPresentAfterPageLoad: true,
 				preShowScript: loginScript,
-				enabledSafeBottomMargin: true
+				enabledSafeBottomMargin: true,
+				useTopInset: true,
+				activeNativeNavigationForWebview: true,
 			});
 		} else {
 			WebViewUtils.openWebViewDesktop(url_rewrite_odoo, loginScript);
@@ -114,7 +115,7 @@ export class ApplicationsComponent extends Component {
 	async editApplication(appID: ApplicationID) {
 		const encodedURL = encodeURIComponent(appID.url);
 		const encodedUsername = encodeURIComponent(appID.username);
-		this.env.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
+		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
 			url: `/applications/edit/${encodedURL}/${encodedUsername}`
 		});
 	}
@@ -135,13 +136,13 @@ export class ApplicationsComponent extends Component {
 			return;
 		}
 
-		const deleteSucceeded: boolean = await this.env.appService.delete(appID);
+		const deleteSucceeded: boolean = await this.appService.delete(appID);
 
 		if (!deleteSucceeded) {
 			Dialog.alert({ message: ErrorMessages.APP_DELETE });
 			return;
 		}
 
-		this.state.applications = await this.env.appService.getApps();
+		this.state.applications = await this.appService.getApps();
 	}
 }

@@ -1,12 +1,13 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
 import { ConfirmResult, Dialog } from "@capacitor/dialog";
 
 import { BiometryUtils } from "../../../utils/biometryUtils";
 import { Constants } from "../../../js/constants";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { StorageGetResult, StorageUtils } from "../../../utils/storageUtils";
 
-export class OptionsToggleBiometryComponent extends Component {
+export class OptionsToggleBiometryComponent extends EnhancedComponent {
 	static template = xml`
     <li class="options-list__item" t-if="state.isBiometryActivated">
       <a
@@ -25,8 +26,6 @@ export class OptionsToggleBiometryComponent extends Component {
       </a>
     </li>
   `;
-
-	state: any = undefined;
 
 	async setup() {
 		this.state = useState({

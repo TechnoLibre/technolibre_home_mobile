@@ -1,0 +1,71 @@
+@use "sass:color";
+
+#note-component {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+	height: 100%;
+	padding: 0.75rem 0;
+	width: 100%;
+}
+
+#note-component #note__top-controls__wrapper,
+#note-component #note__bottom-controls__wrapper {
+	margin: 0 auto;
+	max-width: 48rem;
+	width: 100%;
+}
+
+#note-component #note__top-controls,
+#note-component #note__bottom-controls {
+	align-items: center;
+	border-radius: 0.5rem;
+	display: grid;
+	gap: 0.75rem;
+	margin: 0 1rem;
+	@media only screen and (min-width: 48rem) {
+		display: flex;
+		justify-content: flex-end;
+	}
+}
+
+#note-component .note__control {
+	align-items: center;
+	background-color: #222;
+	border-radius: 0.5rem;
+	color: var(--text);
+	display: flex;
+	gap: 0.5rem;
+	padding: 0.75rem;
+	text-decoration: none;
+	transition: background-color 150ms ease-in-out;
+	& img {
+		pointer-events: none;
+		width: 1.25rem;
+		height: 1.25rem;
+	}
+	&:hover {
+		background-color: #333;
+	}
+}
+
+#note-component .note__control__archive--active {
+	background-color: #ad6704;
+	&:hover {
+		background-color: color.scale(#ad6704, $lightness: -5%);
+	}
+}
+
+#note-component .note__control__done--active {
+	background-color: #0aad04;
+	&:hover {
+		background-color: color.scale(#0aad04, $lightness: -5%);
+	}
+}
+
+#note-component .note__control__pin--active {
+	background-color: #931a07;
+	&:hover {
+		background-color: color.scale(#931a07, $lightness: -5%);
+	}
+}
