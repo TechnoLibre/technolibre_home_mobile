@@ -81,18 +81,16 @@ export class ApplicationsComponent extends EnhancedComponent {
 			return;
 		}
 
-		// TODO FIX Infinite loop.
-		// The page submits, but if the login information is incorrect, it keeps executing the script.
-		// This results in an infinite loop of the page having the fields filled and the form submitting.
 		/* const loginScriptLoop = `const inputUsername = document.getElementById(\"login\"); const inputPassword = document.getElementById(\"password\"); const inputSubmit = document.querySelector(\"button[type='submit']\"); if (!inputUsername || !inputPassword || !inputSubmit) { return; } inputUsername.value = \"${matchingApp.username}\"; inputPassword.value = \"${matchingApp.password}\"; inputSubmit.click();`; */
 
+		// This script support auto-login and fix infinite loop
 		const loginScript = `
-(() => {
-  // ==== Helpers ====
+(async () => {
+  // ==== Helpers généraux ====
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
   function getElementByXPath(xpath, context = document) {
-    const result = document.evaluate(
-      xpath, context, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
-    );
+    const result = document.evaluate(xpath, context, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
     return result.singleNodeValue || null;
   }
 
@@ -111,10 +109,7 @@ export class ApplicationsComponent extends EnhancedComponent {
         }
       });
 
-      observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true
-      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
 
       setTimeout(() => {
         if (settled) return;
@@ -124,56 +119,112 @@ export class ApplicationsComponent extends EnhancedComponent {
     });
   }
 
-  // Affecte proprement la valeur d'un input (déclenche les events usuels)
   function setInputValue(el, value) {
     try {
       const proto = Object.getPrototypeOf(el);
       const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-      if (descriptor && descriptor.set) {
-        descriptor.set.call(el, value);
-      } else {
-        el.value = value;
-      }
+      if (descriptor && descriptor.set) descriptor.set.call(el, value);
+      else el.value = value;
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-    } catch (e) {
+    } catch {
       el.value = value;
     }
   }
 
-  // ==== XPaths ciblés (Odoo: ids "login" et "password") ====
-  const USER_XPATH = "//*[@id='login']";
-  const PASS_XPATH = "//*[@id='password']";
-  // Bouton: type submit ou texte courant (FR/EN)
+  // ==== Détection d'erreur avec délai ====
+  const ERROR_ALERT_SEL = '.alert.alert-danger';
+
+  // version synchrone (instantanée)
+  function hasErrorAlertSync() {
+    return !!document.querySelector(ERROR_ALERT_SEL);
+  }
+
+  // attend 'ms' millisecondes avant de tester
+  async function hasErrorAlertAfter(ms = 300) {
+    await sleep(ms);
+    return hasErrorAlertSync();
+  }
+
+  // garantit une "fenêtre sans erreur" : on échantillonne pendant 'windowMs'
+  // toutes les 'pollMs'; si une alerte apparaît, on échoue.
+  async function waitNoErrorWindow(windowMs = 1200, pollMs = 150) {
+    const start = Date.now();
+    while (Date.now() - start < windowMs) {
+      if (hasErrorAlertSync()) return false;
+      await sleep(pollMs);
+    }
+    return true;
+  }
+
+  // ==== XPaths ciblés (Odoo) ====
+  const USER_XPATH   = "//*[@id='login']";
+  const PASS_XPATH   = "//*[@id='password']";
   const SUBMIT_XPATH = "//button[@type='submit' or contains(normalize-space(.), 'Log in') or contains(normalize-space(.), 'Se connecter')]";
 
-  // ==== Flow ====
-  Promise.all([
-    waitForXPathWithObserver(USER_XPATH, { timeout: 15000 }),
-    waitForXPathWithObserver(PASS_XPATH, { timeout: 15000 })
-  ])
-  .then(([userEl, passEl]) => {
+  // ==== Anti-boucle (flag global) ====
+  if (window.__autoLoginSubmitted) return;
+
+  // petit délai initial avant toute lecture du DOM (la page peut animer/flash)
+  if (await hasErrorAlertAfter(400)) {
+    console.warn('[loginScript] Alerte présente au démarrage → on n\\'agit pas.');
+    return;
+  }
+
+  try {
+    const [userEl, passEl] = await Promise.all([
+      waitForXPathWithObserver(USER_XPATH, { timeout: 15000 }),
+      waitForXPathWithObserver(PASS_XPATH, { timeout: 15000 })
+    ]);
+
     setInputValue(userEl, "${matchingApp.username}");
     setInputValue(passEl, "${matchingApp.password}");
 
-    // (Optionnel) Cliquer sur le bouton submit s'il apparaît rapidement
-    return waitForXPathWithObserver(SUBMIT_XPATH, { timeout: 5000 })
-      .then(btn => {
-        btn.scrollIntoView({ block: 'center', inline: 'center' });
-        // petit rafraîchissement de layout avant le click
-        requestAnimationFrame(() => {
-          btn.click();
-          console.log('[loginScript] Submit cliqué via XPath');
-        });
-      })
-      .catch(() => {
-        // Pas de bouton trouvé: on laisse l'utilisateur soumettre manuellement
-        console.log('[loginScript] Bouton submit non trouvé dans le délai, champs pré-remplis.');
-      });
-  })
-  .catch(err => {
+    // petite pause pour laisser les validations côté client se déclencher
+    await sleep(250);
+
+    // si une erreur apparaît juste après remplissage, on stoppe
+    if (!(await waitNoErrorWindow(1000, 200))) {
+      console.warn('[loginScript] Alerte détectée après remplissage → pas de submit.');
+      return;
+    }
+
+    const btn = await waitForXPathWithObserver(SUBMIT_XPATH, { timeout: 5000 }).catch(() => null);
+    if (!btn) {
+      console.log('[loginScript] Pas de bouton submit rapidement; on s\\'arrête après pré-remplissage.');
+      return;
+    }
+
+    // dernière vérif avec "fenêtre sans erreur" juste avant de cliquer
+    if (await hasErrorAlertAfter(200)) {
+      console.warn('[loginScript] Alerte présente juste avant le clic → on annule.');
+      return;
+    }
+
+    if (!(await waitNoErrorWindow(600, 150))) {
+      console.warn('[loginScript] Alerte sur la fenêtre de stabilité → on annule.');
+      return;
+    }
+
+    window.__autoLoginSubmitted = true;
+    btn.scrollIntoView({ block: 'center', inline: 'center' });
+    await new Promise(r => requestAnimationFrame(r));
+    btn.click();
+    console.log('[loginScript] Submit cliqué via XPath');
+
+  } catch (err) {
     console.error('[loginScript] Erreur:', err);
+  }
+
+  // observer pour geler tout automatisme si une alerte apparaît après coup
+  const errObserver = new MutationObserver(() => {
+    if (hasErrorAlertSync()) {
+      window.__autoLoginSubmitted = true;
+      errObserver.disconnect();
+      console.warn('[loginScript] Alerte détectée (observer) → désactivation auto-login.');
+    }
   });
+  errObserver.observe(document.documentElement, { childList: true, subtree: true });
 })();
 `;
 
