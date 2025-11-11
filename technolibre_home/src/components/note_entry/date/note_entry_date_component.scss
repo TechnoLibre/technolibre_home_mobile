@@ -1,0 +1,5 @@
+@use "../../../css/mixins.scss";
+
+.note-entry-date-component .note-entry__date__button {
+	@include mixins.button()
+}

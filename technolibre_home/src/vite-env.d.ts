@@ -1,19 +1,19 @@
-declare module '*.png' {
+declare module "*.png" {
     const value: string;
     export default value;
 }
 
-declare module '*.jpg' {
+declare module "*.jpg" {
     const value: string;
     export default value;
 }
 
-declare module '*.jpeg' {
+declare module "*.jpeg" {
     const value: string;
     export default value;
 }
 
-declare module '*.svg' {
+declare module "*.svg" {
     const value: string;
     export default value;
 }
@@ -21,17 +21,18 @@ declare module '*.svg' {
 /// <reference types="vite/client" />
 
 interface ViteTypeOptions {
-  // By adding this line, you can make the type of ImportMetaEnv strict
-  // to disallow unknown keys.
-  // strictImportMetaEnv: unknown
+    // By adding this line, you can make the type of ImportMetaEnv strict
+    // to disallow unknown keys.
+    // strictImportMetaEnv: unknown
 }
 
 interface ImportMetaEnv {
-  readonly VITE_TITLE: string
-  readonly VITE_WEBSITE_URL: string
-  // more env variables...
+    readonly VITE_TITLE: string;
+    readonly VITE_WEBSITE_URL: string;
+    readonly VITE_DEBUG_DEV: string;
+    // more env variables...
 }
 
 interface ImportMeta {
-  readonly env: ImportMetaEnv
+    readonly env: ImportMetaEnv;
 }

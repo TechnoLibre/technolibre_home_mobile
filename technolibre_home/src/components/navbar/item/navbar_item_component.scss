@@ -1,15 +1,15 @@
+@use "../../../css/mixins.scss";
+
 $numberOfNavItems: 3;
 
 .nav-list__item {
-	-webkit-tap-highlight-color: transparent;
-	align-items: center;
+	@include mixins.button-clear;
+	@include mixins.flex--center;
 	background-color: var(--nav-background-color);
 	border-radius: 0.5rem;
 	color: var(--nav-text-color);
 	cursor: pointer;
-	display: flex;
 	font-weight: 400;
-	justify-content: center;
 	list-style: none;
 	padding: 1rem 1.25rem;
 	user-select: none;

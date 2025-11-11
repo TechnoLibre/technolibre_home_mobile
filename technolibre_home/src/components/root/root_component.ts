@@ -1,30 +1,42 @@
 import { onMounted, useState, xml } from "@odoo/owl";
 
-import { SplashScreen } from "@capacitor/splash-screen";
 import { App } from "@capacitor/app";
+import { Capacitor } from "@capacitor/core";
 import { EdgeToEdge } from "@capawesome/capacitor-android-edge-to-edge-support";
+import { SplashScreen } from "@capacitor/splash-screen";
 import { StatusBar, Style } from "@capacitor/status-bar";
 
-import { Constants } from "../../js/constants";
 import { EnhancedComponent } from "../../js/enhancedComponent";
+import { StorageConstants } from "../../constants/storage";
 import { StorageGetResult, StorageUtils } from "../../utils/storageUtils";
 
 import { ContentComponent } from "../content/content_component";
 import { NavbarComponent } from "../navbar/navbar_component";
-import { Capacitor } from "@capacitor/core";
+import { VideoCameraComponent } from "../video_camera/video_camera_component";
+import { Events } from "../../constants/events";
 
 export class RootComponent extends EnhancedComponent {
 	static template = xml`
-    <main id="main">
+    <main
+			id="main"
+			t-att-class="{
+				'hidden': state.isCameraOpen
+			}"
+		>
       <ContentComponent />
       <NavbarComponent />
     </main>
+		<VideoCameraComponent
+			t-if="state.isCameraOpen"
+			entryId="state.videoEntryId"
+		/>
+		<div id="video-player__wrapper"></div>
   `;
 
-	static components = { ContentComponent, NavbarComponent };
+	static components = { ContentComponent, NavbarComponent, VideoCameraComponent };
 
 	setup() {
-		this.state = useState({ title: "This is my title" });
+		this.state = useState({ title: "This is my title", isCameraOpen: false, videoEntryId: undefined });
 		onMounted(() => {
 			SplashScreen.hide();
 		});
@@ -33,6 +45,7 @@ export class RootComponent extends EnhancedComponent {
 		this.setDefaultBiometryStorageValue();
 		this.setDefaultAppStorageValue();
 		this.setDefaultNoteStorageValue();
+		this.listenForEvents();
 	}
 
 	private async enableEdgeToEdge() {
@@ -54,26 +67,41 @@ export class RootComponent extends EnhancedComponent {
 	}
 
 	private async setDefaultBiometryStorageValue() {
-		const getResult: StorageGetResult = await StorageUtils.getValueByKey(Constants.BIOMETRY_ENABLED_STORAGE_KEY);
+		const getResult: StorageGetResult = await StorageUtils.getValueByKey(StorageConstants.BIOMETRY_ENABLED_STORAGE_KEY);
 
 		if (!getResult.keyExists) {
-			await StorageUtils.setKeyValuePair(Constants.BIOMETRY_ENABLED_STORAGE_KEY, false);
+			await StorageUtils.setKeyValuePair(StorageConstants.BIOMETRY_ENABLED_STORAGE_KEY, false);
 		}
 	}
 
 	private async setDefaultAppStorageValue() {
-		const getResult: StorageGetResult = await StorageUtils.getValueByKey(Constants.APPLICATIONS_STORAGE_KEY);
+		const getResult: StorageGetResult = await StorageUtils.getValueByKey(StorageConstants.APPLICATIONS_STORAGE_KEY);
 
 		if (!getResult.keyExists) {
-			await StorageUtils.setKeyValuePair(Constants.APPLICATIONS_STORAGE_KEY, []);
+			await StorageUtils.setKeyValuePair(StorageConstants.APPLICATIONS_STORAGE_KEY, []);
 		}
 	}
 
 	private async setDefaultNoteStorageValue() {
-		const getResult: StorageGetResult = await StorageUtils.getValueByKey(Constants.NOTES_STORAGE_KEY);
+		const getResult: StorageGetResult = await StorageUtils.getValueByKey(StorageConstants.NOTES_STORAGE_KEY);
 
 		if (!getResult.keyExists) {
-			await StorageUtils.setKeyValuePair(Constants.NOTES_STORAGE_KEY, []);
+			await StorageUtils.setKeyValuePair(StorageConstants.NOTES_STORAGE_KEY, []);
 		}
+	}
+
+	private listenForEvents() {
+		this.eventBus.addEventListener(Events.OPEN_CAMERA, this.showCamera.bind(this));
+		this.eventBus.addEventListener(Events.CLOSE_CAMERA, this.hideCamera.bind(this));
+	}
+
+	private showCamera(event: any) {
+		this.state.isCameraOpen = true;
+		this.state.videoEntryId = event?.detail?.entryId;
+	}
+
+	private hideCamera(_event: any) {
+		this.state.isCameraOpen = false;
+		this.state.videoEntryId = undefined;
 	}
 }

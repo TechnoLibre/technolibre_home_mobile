@@ -1,3 +1,5 @@
+@use "../../../css/mixins.scss";
+
 #applications-component .app-list__item {
 	align-items: center;
 	border: 2px solid var(--section-border-color);
@@ -24,18 +26,15 @@
 		max-width: 12rem;
 	}
 	&__url {
+		@include mixins.ellipsis;
 		background-color: #000;
 		border-bottom: 2px solid #202020;
 		font-weight: 600;
-		overflow: hidden;
 		padding: 1rem;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 		width: 100%;
 	}
 	&__user {
-		align-items: center;
-		display: flex;
+		@include mixins.flex(center);
 		grid-area: user;
 		padding: 1rem;
 		min-width: 0;
@@ -46,10 +45,8 @@
 		}
 	}
 	&__username {
-		overflow: hidden;
+		@include mixins.ellipsis;
 		padding: 0 0 0 0.5rem;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 		width: 100%;
 	}
 	&__action {

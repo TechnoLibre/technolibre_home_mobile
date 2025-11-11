@@ -1,10 +1,21 @@
 import { onMounted, useRef, useState, xml } from "@odoo/owl";
 
-import { EnhancedComponent } from "../../../js/enhancedComponent";
-import { WebViewUtils } from "../../../utils/webViewUtils";
-import { Constants } from "../../../js/constants";
-import { WcDatepicker } from "wc-datepicker/dist/components/wc-datepicker";
+import AirDatepicker, { AirDatepickerButton } from "air-datepicker";
 import { DatetimePicker, PresentResult } from "@capawesome-team/capacitor-datetime-picker";
+
+import "air-datepicker/air-datepicker.css"
+import localeFr from "air-datepicker/locale/fr"
+
+import { Events } from "../../../constants/events";
+import { WebViewUtils } from "../../../utils/webViewUtils";
+
+import { EnhancedComponent } from "../../../js/enhancedComponent";
+
+export interface DateSelectEvent {
+  date: Date | Date[],
+  formattedDate: string | string[],
+  datepicker: AirDatepicker<HTMLElement>
+}
 
 export class DatePickerComponent extends EnhancedComponent {
 	static template = xml`
@@ -13,52 +24,59 @@ export class DatePickerComponent extends EnhancedComponent {
 			popover=""
 			t-if="!state.isMobile"
 			t-ref="datepicker-popover"
-			t-on-click.stop.prevent="onWcDatePickerPopoverClick"
+			t-on-click.stop.prevent="onPopoverClick"
 		>
 			<div id="datepicker__wrapper" t-on-click.stop.prevent="">
-				<wc-datepicker
-					t-att-start-date="this.getStartDate()"
-					id="datepicker"
-					t-ref="datepicker"
-					t-on-selectDate="onWcDatePickerSelect"
-				></wc-datepicker>
+        <div id="datepicker">
+        </div>
 			</div>
 		</div>
 	`;
 
-	wcDatePickerPopover = useRef("datepicker-popover");
-	wcDatePicker = useRef("datepicker");
+	datePickerPopover = useRef("datepicker-popover");
+  airDatePicker: AirDatepicker<HTMLElement> | undefined;
 
 	setup() {
-		this.state = useState({});
+		this.state = useState({ entryId: "" });
 		onMounted(this.onMounted.bind(this));
 	}
 
 	private onMounted() {
-		if (!customElements.get("wc-datepicker")) {
-			customElements.define("wc-datepicker", WcDatepicker);
-		}
-		this.eventBus.addEventListener(Constants.DATE_PICKER_EVENT_NAME, this.openDatePicker.bind(this));
+    this.eventBus.addEventListener(Events.DATE_PICKER, this.openDatePicker.bind(this));
+		this.datePickerPopover.el?.addEventListener("toggle", this.onPopoverToggle.bind(this));
 	}
 
-	openDatePicker() {
+	private onPopoverToggle(event: ToggleEvent) {
+		if (event.newState !== "closed") {
+			return;
+		}
+
+		this.airDatePicker?.destroy();
+	}
+
+  private onDatePickerConfirm(dpInstance: AirDatepicker) {
+    if (!this.datePickerPopover.el) {
+      return;
+    }
+
+    const selectedDate: Date = dpInstance?.selectedDates?.[0];
+
+    this.setDate(selectedDate.toISOString());
+
+    this.datePickerPopover.el.hidePopover();
+  }
+
+	openDatePicker(event: any) {
+    this.state.entryId = event?.detail?.entryId;
 		WebViewUtils.isMobile() ? this.setDateMobile() : this.setDateWeb();
 	}
 
-	onWcDatePickerPopoverClick() {
-		if (!this.wcDatePickerPopover.el) {
-			return;
+	onPopoverClick() {
+		if (!this.datePickerPopover.el) {
+      return;
 		}
-		this.wcDatePickerPopover.el.hidePopover();
-	}
-
-	onWcDatePickerSelect() {
-		if (!this.wcDatePickerPopover.el || !this.wcDatePicker.el) {
-			return;
-		}
-		const date = new Date((this.wcDatePicker.el as any)?.value);
-		this.setDate(date.toISOString());
-		this.wcDatePickerPopover.el.hidePopover();
+    
+		this.datePickerPopover.el.hidePopover();
 	}
 
 	getStartDate() {
@@ -66,24 +84,45 @@ export class DatePickerComponent extends EnhancedComponent {
 		return date.toISOString().split("T")[0];
 	}
 
+  private getNewDatePicker(): AirDatepicker<HTMLElement> {
+    const startDate: Date = new Date();
+    startDate.setHours(0, 0, 0, 0);
+
+    const confirmButton: AirDatepickerButton = {
+      content: "Confirmer",
+      onClick: this.onDatePickerConfirm.bind(this)
+    };
+
+    return new AirDatepicker("#datepicker", {
+      locale: localeFr,
+      timepicker: true,
+      minutesStep: 5,
+      startDate,
+      buttons: [ confirmButton ]
+    });
+  }
+
 	private async setDateMobile() {
 		const presentResult: PresentResult = await DatetimePicker.present({
-			mode: "date"
+			mode: "datetime"
 		});
 		const date = new Date(presentResult.value);
-		date.setHours(0, 0, 0, 0);
 		this.setDate(date.toISOString());
 	}
 
 	private setDateWeb() {
-		if (!this.wcDatePickerPopover.el) {
+		if (!this.datePickerPopover.el) {
 			return;
 		}
 
-		this.wcDatePickerPopover.el.showPopover();
+    this.airDatePicker = this.getNewDatePicker();
+		this.datePickerPopover.el.showPopover();
 	}
 
 	private setDate(date: string) {
-		this.props.setNoteDate(date);
+    const entryId: string = this.state.entryId;
+    this.state.entryId = "";
+
+		this.props.setEntryDate(entryId, date);
 	}
 }

@@ -1,5 +1,7 @@
+@use "../../css/mixins.scss";
+
 .note-entry-component {
-	display: flex;
+	@include mixins.flex();
 	min-height: 3rem;
 	& + .note-entry-component {
 		margin-top: 1rem;
@@ -10,8 +12,7 @@
 }
 
 .note-entry__content {
-	align-items: center;
-	display: flex;
+	@include mixins.flex(center);
 	flex-grow: 1;
 	min-width: 0;
 }

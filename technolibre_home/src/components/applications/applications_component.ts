@@ -1,19 +1,32 @@
-import { useState, xml } from "@odoo/owl";
+import {useState, xml} from "@odoo/owl";
 
-import { Dialog } from "@capacitor/dialog";
+import {Dialog} from "@capacitor/dialog";
 
-import { Application, ApplicationID } from "./types";
-import { BiometryUtils } from "../../utils/biometryUtils";
-import { Constants } from "../../js/constants";
-import { EnhancedComponent } from "../../js/enhancedComponent";
-import { ErrorMessages } from "../../js/errors";
-import { WebViewUtils } from "../../utils/webViewUtils";
+import {Application, ApplicationID} from "../../models/application";
+import {BiometryUtils} from "../../utils/biometryUtils";
+import {EnhancedComponent} from "../../js/enhancedComponent";
+import {ErrorMessages} from "../../constants/errorMessages";
+import {Events} from "../../constants/events";
+import {WebViewUtils} from "../../utils/webViewUtils";
 
-import { ApplicationsItemComponent } from "./item/applications_item_component";
-import { HeadingComponent } from "../heading/heading_component";
+import {ApplicationsItemComponent} from "./item/applications_item_component";
+import {HeadingComponent} from "../heading/heading_component";
+
+const ENV = {
+    // @ts-ignore
+    TITLE: import.meta.env.VITE_TITLE ?? "TITLE",
+    // @ts-ignore
+    BUTTON_LABEL: import.meta.env.VITE_BUTTON_LABEL ?? "Connexion",
+    // @ts-ignore
+    LOGO_KEY: import.meta.env.VITE_LOGO_KEY ?? "techno",
+    // @ts-ignore
+    WEBSITE_URL: import.meta.env.VITE_WEBSITE_URL ?? "https://erplibre.ca",
+    // @ts-ignore
+    DEBUG_DEV: import.meta.env.VITE_DEBUG_DEV === "true",
+};
 
 export class ApplicationsComponent extends EnhancedComponent {
-	static template = xml`
+    static template = xml`
       <div id="applications-component">
         <HeadingComponent title="'Applications'" />
         <section id="applications">
@@ -43,106 +56,242 @@ export class ApplicationsComponent extends EnhancedComponent {
       </div>
     `;
 
-	static components = { HeadingComponent, ApplicationsItemComponent };
+    static components = {HeadingComponent, ApplicationsItemComponent};
 
-	async setup() {
-		this.state = useState({ applications: new Array<Application>() });
+    async setup() {
+        this.state = useState({applications: new Array<Application>()});
 
-		this.state.applications = await this.appService.getApps();
-	}
+        this.state.applications = await this.appService.getApps();
 
-	onAppAddClick(event) {
-		event.preventDefault();
+        this.state.debug = ENV.DEBUG_DEV;
+    }
 
-		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: "/applications/add" });
-	}
+    onAppAddClick(event) {
+        event.preventDefault();
 
-	async openApplication(appID: ApplicationID) {
-		const isBiometricAuthSuccessful = await BiometryUtils.authenticateIfAvailable();
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/applications/add"});
+    }
 
-		if (!isBiometricAuthSuccessful) {
-			Dialog.alert({ message: ErrorMessages.BIOMETRIC_AUTH });
-			return;
-		}
+    async openApplication(appID: ApplicationID) {
+        const isBiometricAuthSuccessful = await BiometryUtils.authenticateIfAvailable();
 
-		let matchingApp: Application | undefined;
+        if (!isBiometricAuthSuccessful) {
+            Dialog.alert({message: ErrorMessages.BIOMETRIC_AUTH});
+            return;
+        }
 
-		try {
-			matchingApp = await this.appService.getMatch(appID);
-		} catch (error: unknown) {
-			if (error instanceof Error) {
-				Dialog.alert({ message: error.message });
-				return;
-			}
-		}
+        let matchingApp: Application | undefined;
 
-		if (!matchingApp) {
-			Dialog.alert({ message: ErrorMessages.NO_APP_MATCH });
-			return;
-		}
+        try {
+            matchingApp = await this.appService.getMatch(appID);
+        } catch (error: unknown) {
+            if (error instanceof Error) {
+                Dialog.alert({message: error.message});
+                return;
+            }
+        }
 
-		// TODO FIX Infinite loop.
-		// The page submits, but if the login information is incorrect, it keeps executing the script.
-		// This results in an infinite loop of the page having the fields filled and the form submitting.
-		/* const loginScriptLoop = `const inputUsername = document.getElementById(\"login\"); const inputPassword = document.getElementById(\"password\"); const inputSubmit = document.querySelector(\"button[type='submit']\"); if (!inputUsername || !inputPassword || !inputSubmit) { return; } inputUsername.value = \"${matchingApp.username}\"; inputPassword.value = \"${matchingApp.password}\"; inputSubmit.click();`; */
+        if (!matchingApp) {
+            Dialog.alert({message: ErrorMessages.NO_APP_MATCH});
+            return;
+        }
 
-		const loginScript = `
-        const inputUsername = document.getElementById(\"login\");
-        const inputPassword = document.getElementById(\"password\");
-        if (!inputUsername || !inputPassword) { return; };
-        inputUsername.value = \"${matchingApp.username}\";
-        inputPassword.value = \"${matchingApp.password}\";
-      `;
+        /* const loginScriptLoop = `const inputUsername = document.getElementById(\"login\"); const inputPassword = document.getElementById(\"password\"); const inputSubmit = document.querySelector(\"button[type='submit']\"); if (!inputUsername || !inputPassword || !inputSubmit) { return; } inputUsername.value = \"${matchingApp.username}\"; inputPassword.value = \"${matchingApp.password}\"; inputSubmit.click();`; */
 
-		let url_rewrite_odoo = "https://" + matchingApp.url + "/web/login";
+        // This script support auto-login and fix infinite loop
+        const loginScript = `
+(async () => {
+  // ==== Helpers généraux ====
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-		if (WebViewUtils.isMobile()) {
-			// TODO how catch error
-			WebViewUtils.openWebViewMobile({
-				url: url_rewrite_odoo,
-				title: matchingApp.url,
-				isPresentAfterPageLoad: true,
-				preShowScript: loginScript,
-				enabledSafeBottomMargin: true,
-				useTopInset: true,
-				activeNativeNavigationForWebview: true,
-			});
-		} else {
-			WebViewUtils.openWebViewDesktop(url_rewrite_odoo, loginScript);
-		}
-	}
+  function getElementByXPath(xpath, context = document) {
+    const result = document.evaluate(xpath, context, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+    return result.singleNodeValue || null;
+  }
 
-	async editApplication(appID: ApplicationID) {
-		const encodedURL = encodeURIComponent(appID.url);
-		const encodedUsername = encodeURIComponent(appID.username);
-		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
-			url: `/applications/edit/${encodedURL}/${encodedUsername}`
-		});
-	}
+  function waitForXPathWithObserver(xpath, { timeout = 10000 } = {}) {
+    return new Promise((resolve, reject) => {
+      const found = getElementByXPath(xpath);
+      if (found) return resolve(found);
 
-	async deleteApplication(appID: ApplicationID) {
-		const deleteConfirmed = confirm(
-			`Voulez-vous vraiment supprimer l'application ${appID.url} pour le compte ${appID.username}?`
-		);
+      let settled = false;
+      const observer = new MutationObserver(() => {
+        const el = getElementByXPath(xpath);
+        if (el) {
+          settled = true;
+          observer.disconnect();
+          resolve(el);
+        }
+      });
 
-		if (!deleteConfirmed) {
-			return;
-		}
+      observer.observe(document.documentElement, { childList: true, subtree: true });
 
-		const isBiometricAuthSuccessful: boolean = await BiometryUtils.authenticateIfAvailable();
+      setTimeout(() => {
+        if (settled) return;
+        observer.disconnect();
+        reject(new Error("Timeout en attendant l'élément XPath: " + xpath));
+      }, timeout);
+    });
+  }
 
-		if (!isBiometricAuthSuccessful) {
-			Dialog.alert({ message: ErrorMessages.BIOMETRIC_AUTH });
-			return;
-		}
+  function setInputValue(el, value) {
+    try {
+      const proto = Object.getPrototypeOf(el);
+      const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (descriptor && descriptor.set) descriptor.set.call(el, value);
+      else el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch {
+      el.value = value;
+    }
+  }
 
-		const deleteSucceeded: boolean = await this.appService.delete(appID);
+  // ==== Détection d'erreur avec délai ====
+  const ERROR_ALERT_SEL = '.alert.alert-danger';
 
-		if (!deleteSucceeded) {
-			Dialog.alert({ message: ErrorMessages.APP_DELETE });
-			return;
-		}
+  // version synchrone (instantanée)
+  function hasErrorAlertSync() {
+    return !!document.querySelector(ERROR_ALERT_SEL);
+  }
 
-		this.state.applications = await this.appService.getApps();
-	}
+  // attend 'ms' millisecondes avant de tester
+  async function hasErrorAlertAfter(ms = 300) {
+    await sleep(ms);
+    return hasErrorAlertSync();
+  }
+
+  // garantit une "fenêtre sans erreur" : on échantillonne pendant 'windowMs'
+  // toutes les 'pollMs'; si une alerte apparaît, on échoue.
+  async function waitNoErrorWindow(windowMs = 1200, pollMs = 150) {
+    const start = Date.now();
+    while (Date.now() - start < windowMs) {
+      if (hasErrorAlertSync()) return false;
+      await sleep(pollMs);
+    }
+    return true;
+  }
+
+  // ==== XPaths ciblés (Odoo) ====
+  const USER_XPATH   = "//*[@id='login']";
+  const PASS_XPATH   = "//*[@id='password']";
+  const SUBMIT_XPATH = "//button[@type='submit' and (contains(normalize-space(.), 'Log in') or contains(normalize-space(.), 'Se connecter') or contains(normalize-space(.), 'Connexion'))]";
+
+  // ==== Anti-boucle (flag global) ====
+  if (window.__autoLoginSubmitted) return;
+
+  // petit délai initial avant toute lecture du DOM (la page peut animer/flash)
+  if (await hasErrorAlertAfter(400)) {
+    console.warn('[loginScript] Alerte présente au démarrage → on n\\'agit pas.');
+    return;
+  }
+
+  try {
+    const [userEl, passEl] = await Promise.all([
+      waitForXPathWithObserver(USER_XPATH, { timeout: 15000 }),
+      waitForXPathWithObserver(PASS_XPATH, { timeout: 15000 })
+    ]);
+
+    setInputValue(userEl, "${matchingApp.username}");
+    setInputValue(passEl, "${matchingApp.password}");
+
+    // petite pause pour laisser les validations côté client se déclencher
+    await sleep(250);
+
+    // si une erreur apparaît juste après remplissage, on stoppe
+    if (!(await waitNoErrorWindow(1000, 200))) {
+      console.warn('[loginScript] Alerte détectée après remplissage → pas de submit.');
+      return;
+    }
+
+    const btn = await waitForXPathWithObserver(SUBMIT_XPATH, { timeout: 5000 }).catch(() => null);
+    if (!btn) {
+      console.log('[loginScript] Pas de bouton submit rapidement; on s\\'arrête après pré-remplissage.');
+      return;
+    }
+
+    // dernière vérif avec "fenêtre sans erreur" juste avant de cliquer
+    if (await hasErrorAlertAfter(200)) {
+      console.warn('[loginScript] Alerte présente juste avant le clic → on annule.');
+      return;
+    }
+
+    if (!(await waitNoErrorWindow(600, 150))) {
+      console.warn('[loginScript] Alerte sur la fenêtre de stabilité → on annule.');
+      return;
+    }
+
+    window.__autoLoginSubmitted = true;
+    btn.scrollIntoView({ block: 'center', inline: 'center' });
+    await new Promise(r => requestAnimationFrame(r));
+    btn.click();
+    console.log('[loginScript] Submit cliqué via XPath');
+
+  } catch (err) {
+    console.error('[loginScript] Erreur:', err);
+  }
+
+  // observer pour geler tout automatisme si une alerte apparaît après coup
+  const errObserver = new MutationObserver(() => {
+    if (hasErrorAlertSync()) {
+      window.__autoLoginSubmitted = true;
+      errObserver.disconnect();
+      console.warn('[loginScript] Alerte détectée (observer) → désactivation auto-login.');
+    }
+  });
+  errObserver.observe(document.documentElement, { childList: true, subtree: true });
+})();
+`;
+
+        let url_rewrite_odoo = "https://" + matchingApp.url + "/web/login";
+
+        if (WebViewUtils.isMobile()) {
+            // TODO how catch error
+            WebViewUtils.openWebViewMobile({
+                url: url_rewrite_odoo,
+                title: matchingApp.url,
+                isPresentAfterPageLoad: true,
+                preShowScript: loginScript,
+                enabledSafeBottomMargin: true,
+                // useTopInset: true,
+                activeNativeNavigationForWebview: true,
+            });
+        } else {
+            WebViewUtils.openWebViewDesktop(url_rewrite_odoo, loginScript);
+        }
+    }
+
+    async editApplication(appID: ApplicationID) {
+        const encodedURL = encodeURIComponent(appID.url);
+        const encodedUsername = encodeURIComponent(appID.username);
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
+            url: `/applications/edit/${encodedURL}/${encodedUsername}`,
+        });
+    }
+
+    async deleteApplication(appID: ApplicationID) {
+        const deleteConfirmed = confirm(
+            `Voulez-vous vraiment supprimer l'application ${appID.url} pour le compte ${appID.username}?`
+        );
+
+        if (!deleteConfirmed) {
+            return;
+        }
+
+        const isBiometricAuthSuccessful: boolean = await BiometryUtils.authenticateIfAvailable();
+
+        if (!isBiometricAuthSuccessful) {
+            Dialog.alert({message: ErrorMessages.BIOMETRIC_AUTH});
+            return;
+        }
+
+        const deleteSucceeded: boolean = await this.appService.delete(appID);
+
+        if (!deleteSucceeded) {
+            Dialog.alert({message: ErrorMessages.APP_DELETE});
+            return;
+        }
+
+        this.state.applications = await this.appService.getApps();
+    }
 }

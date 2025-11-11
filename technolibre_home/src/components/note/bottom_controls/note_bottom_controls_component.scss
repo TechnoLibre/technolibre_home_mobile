@@ -1,28 +1,35 @@
 #note__bottom-controls__wrapper #note__bottom-controls {
-	grid-template-areas: "tags archive" "pin done" "edit option";
-	grid-template-columns: repeat(2, 1fr);
+	grid-template-areas: "geolocation geolocation date date text text" "photo photo video video audio audio";
+	grid-template-columns: repeat(6, 1fr);
+	grid-template-rows: repeat(2, 1fr);
+	@media only screen and (min-width: 48rem) {
+		grid-template-areas: "geolocation photo video audio date text";
+		grid-template-columns: repeat(6, auto);
+		grid-template-rows: 1fr;
+		justify-content: flex-end;
+	}
 }
 
-#note__control__edit {
-	grid-area: edit;
+#note__control__audio {
+	grid-area: audio;
 }
 
-#note__control__option {
-	grid-area: option;
+#note__control__text {
+	grid-area: text;
 }
 
-#note-component #note__control__tags {
-	grid-area: tags;
+#note__control__date {
+	grid-area: date;
 }
 
-#note-component #note__control__archive {
-	grid-area: archive;
+#note__control__location {
+	grid-area: geolocation;
 }
 
-#note-component #note__control__pin {
-	grid-area: pin;
+#note__control__video {
+	grid-area: video;
 }
 
-#note-component #note__control__done {
-	grid-area: done;
+#note__control__photo {
+	grid-area: photo;
 }

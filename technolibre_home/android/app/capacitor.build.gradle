@@ -10,15 +10,22 @@ android {
 apply from: "../capacitor-cordova-android-plugins/cordova.variables.gradle"
 dependencies {
     implementation project(':aparajita-capacitor-biometric-auth')
+    implementation project(':capacitor-community-video-recorder')
     implementation project(':capacitor-app')
     implementation project(':capacitor-camera')
     implementation project(':capacitor-dialog')
+    implementation project(':capacitor-filesystem')
+    implementation project(':capacitor-geolocation')
+    implementation project(':capacitor-screen-orientation')
     implementation project(':capacitor-splash-screen')
     implementation project(':capacitor-status-bar')
     implementation project(':capawesome-team-capacitor-datetime-picker')
     implementation project(':capawesome-capacitor-android-edge-to-edge-support')
     implementation project(':capgo-inappbrowser')
+    implementation project(':chrismclarke-capacitor-video-player')
+    implementation project(':capacitor-plugin-safe-area')
     implementation project(':capacitor-secure-storage-plugin')
+    implementation project(':capacitor-voice-recorder')
 
 }
 

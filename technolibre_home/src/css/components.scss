@@ -3,21 +3,33 @@
 @use "../components/navbar/navbar_component.scss";
 @use "../components/navbar/item/navbar_item_component.scss";
 @use "../components/home/home_component.scss";
+
 @use "../components/applications/applications_component.scss";
 @use "../components/applications/item/applications_item_component.scss";
 @use "../components/applications/add/applications_add_component.scss";
 @use "../components/applications/edit/applications_edit_component.scss";
+
 @use "../components/note/content/note_content_component.scss";
 @use "../components/note/date_picker/date_picker_component.scss";
-@use "../components/note/entry/note_entry_component.scss";
-@use "../components/note/entry/audio/note_entry_audio_component.scss";
-@use "../components/note/entry/drag/note_entry_drag_component.scss";
-@use "../components/note/entry/text/note_entry_text_component.scss";
+
+@use "../components/note_entry/note_entry_component.scss";
+@use "../components/note_entry/audio/note_entry_audio_component.scss";
+@use "../components/note_entry/date/note_entry_date_component.scss";
+@use "../components/note_entry/delete/note_entry_delete_component.scss";
+@use "../components/note_entry/drag/note_entry_drag_component.scss";
+@use "../components/note_entry/geolocation/note_entry_geolocation_component.scss";
+@use "../components/note_entry/photo/note_entry_photo_component.scss";
+@use "../components/note_entry/text/note_entry_text_component.scss";
+@use "../components/note_entry/video/note_entry_video_component.scss";
+
 @use "../components/note/tag_manager/tag_manager_component.scss";
 @use "../components/note/bottom_controls/note_bottom_controls_component.scss";
 @use "../components/note/top_controls/note_top_controls_component.scss";
 @use "../components/note/note_component.scss";
+
 @use "../components/note_list/item/note_list_item_component.scss";
 @use "../components/note_list/note_list_component.scss";
+
 @use "../components/options/options_component.scss";
 @use "../components/heading/heading_component.scss";
+@use "../components/video_camera/video_camera_component.scss";

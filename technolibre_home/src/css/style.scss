@@ -7,6 +7,10 @@
 	src: url("./../assets/fonts/OpenSansVariable.ttf");
 }
 
+ion-content {
+  --background: transparent;
+}
+
 *,
 *::before,
 *::after {
@@ -34,4 +38,7 @@ body {
 	overflow: hidden;
 	position: relative;
 	width: 100%;
+	&.transparent {
+		background-color: transparent;
+	}
 }

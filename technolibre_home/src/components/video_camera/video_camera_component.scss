@@ -1,0 +1,82 @@
+@use "sass:math";
+@use "../../css/mixins.scss";
+
+#video-camera-component {
+	@include mixins.flex(normal, space-between);
+	height: 100%;
+	left: 0;
+	flex-direction: column;
+	position: absolute;
+	top: 0;
+	width: 100%;
+}
+
+#video-camera-component #video-camera__top-controls {
+	background-color: rgba(#000, 0.75);
+	backdrop-filter: blur(8px);
+	height: 3rem;
+	width: 100%;
+}
+
+#video-camera-component #video-camera__bottom-controls {
+	@include mixins.flex(center, space-between);
+	background-color: rgba(#000, 0.75);
+	backdrop-filter: blur(8px);
+	height: 5rem;
+	padding: 0 1rem;
+	width: 100%;
+}
+
+#video-camera-component #video-camera__record {
+	$baseBackgroundColor: #800000;
+	@include mixins.button-clear;
+	@include mixins.flex--center;
+	background-color: $baseBackgroundColor;
+	border: none;
+	border-radius: 50%;
+	cursor: pointer;
+	height: 3.5rem;
+	outline: none;
+	overflow: hidden;
+	transition: background-color 100ms ease-in-out;
+	width: 3.5rem;
+	&:active,
+	&:active::after {
+		background-color: #700000;
+	}
+	&::after {
+		background-color: $baseBackgroundColor;
+		border-radius: 0.25rem;
+		content: '';
+		display: block;
+		height: 1rem;
+		pointer-events: none;
+		transition: background-color 150ms ease-in-out, height 150ms ease-in-out, width 150ms ease-in-out;
+		width: 1rem;
+	}
+	&.recording::after {
+		background-color: #600000;
+		height: 1.5rem;
+		width: 1.5rem;
+	}
+}
+
+#video-camera-component #video-camera__close-camera {
+	@include mixins.button-clear;
+	@include mixins.flex();
+	background-color: transparent;
+	& img {
+		height: 2rem;
+		width: 2rem;
+	}
+}
+
+#video-camera-component #video-camera__flip-camera {
+	@include mixins.button-clear;
+	@include mixins.flex();
+	background-color: transparent;
+	& img {
+		height: 2rem;
+		width: 2rem;
+	}
+}

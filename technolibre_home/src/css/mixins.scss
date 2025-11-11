@@ -1,0 +1,64 @@
+@mixin button($color: blue) {
+	@include button-clear;
+	@include ellipsis;
+	background-color: var(--btn-#{$color}-color);
+	border-radius: 0.5rem;
+	color: var(--text);
+	cursor: pointer;
+	padding: 0.75rem 1rem;
+	&:hover {
+		background-color: var(--btn-#{$color}-hover-color);
+	}
+}
+
+@mixin button-clear {
+	-webkit-tap-highlight-color: transparent;
+	border: none;
+	outline: none;
+}
+
+@mixin flex--center {
+	align-items: center;
+	display: flex;
+	justify-content: center;
+}
+
+@mixin ellipsis {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+@mixin flex($align-items: normal, $justify-content: normal) {
+	display: flex;
+	align-items: $align-items;
+	justify-content: $justify-content;
+}
+
+@mixin popover {
+  background-color: rgba(0, 0, 0, 0.35);
+	border: none;
+	height: 100%;
+	margin: auto;
+	width: 100%;
+}
+
+@mixin popover__content__wrapper {
+	height: 100%;
+	margin: 0 auto;
+	max-width: 48rem;
+	padding: 2rem;
+	pointer-events: none;
+	width: 100%;
+}
+
+@mixin popover__content {
+	background-color: rgba(#222, 0.95);
+	border-radius: 0.25rem;
+	color: var(--text);
+	height: 100%;
+	max-height: 30rem;
+	padding: 1rem;
+	pointer-events: auto;
+	width: 100%;
+}

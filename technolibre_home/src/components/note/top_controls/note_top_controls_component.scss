@@ -1,20 +1,47 @@
 #note__top-controls__wrapper #note__top-controls {
-	grid-template-areas: "audio date text";
-	grid-template-columns: repeat(3, 1fr);
-}
-
-#note__control__audio {
-	grid-area: audio;
-	pointer-events: none;
-	& .greyed-out {
-		color: grey;
+	grid-template-areas: "edit option";
+	grid-template-columns: repeat(2, 1fr);
+	&.options--active {
+		grid-template-areas: "edit option" "tags archive" "pin done";
+		grid-template-columns: repeat(2, 1fr);
+	}
+	@media only screen and (min-width: 32rem) {
+		&.options--active {
+			grid-template-areas: "edit edit option option" "tags archive pin done";
+			grid-template-columns: repeat(4, 1fr);
+		}
+	}
+	@media only screen and (min-width: 48rem) {
+		grid-template-areas: "edit option";
+		grid-template-columns: repeat(2, auto);
+		justify-content: flex-end;
+		&.options--active {
+			grid-template-areas: "tags archive pin done edit option";
+			grid-template-columns: repeat(4, auto);
+		}
 	}
 }
 
-#note__control__text {
-	grid-area: text;
+#note__control__edit {
+	grid-area: edit;
 }
 
-#note-component #note__control__date {
-	grid-area: date;
+#note__control__option {
+	grid-area: option;
+}
+
+#note-component #note__control__tags {
+	grid-area: tags;
+}
+
+#note-component #note__control__archive {
+	grid-area: archive;
+}
+
+#note-component #note__control__pin {
+	grid-area: pin;
+}
+
+#note-component #note__control__done {
+	grid-area: done;
 }

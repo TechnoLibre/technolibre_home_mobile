@@ -1,8 +1,8 @@
 import { xml } from "@odoo/owl";
 
-import { EnhancedComponent } from "../../../../js/enhancedComponent";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
 
-import DragIcon from "../../../../assets/icon/drag.svg";
+import DragIcon from "../../../assets/icon/drag.svg";
 
 export class NoteEntryDragComponent extends EnhancedComponent {
 	static template = xml`

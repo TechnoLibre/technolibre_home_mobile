@@ -1,8 +1,8 @@
 import { v4 as uuidv4, validate, version } from "uuid";
-import { Note, NoteEntry } from "../components/note_list/types";
+import { Note, NoteEntry } from "../models/note";
+import { StorageConstants } from "../constants/storage";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
-import { Constants } from "./constants";
-import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "./errors";
+import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../js/errors";
 
 export interface GetNoteListResult {
 	noteList: Array<Note>;
@@ -63,7 +63,7 @@ export class NoteService {
 	 * Clears the list of notes.
 	 */
 	public async clear() {
-		const newNoteList = [];
+		const newNoteList: Note[] = [];
 
 		const saveResult = await this.saveNoteListToStorage(newNoteList);
 
@@ -252,14 +252,68 @@ export class NoteService {
 		};
 	}
 
+	public getNewAudioEntry(): NoteEntry {
+		return {
+			id: this.getNewId(),
+			type: "audio",
+			params: {
+				path: ""
+			}
+		}
+	}
+
+	public getNewDateEntry(): NoteEntry {
+		return {
+			id: this.getNewId(),
+			type: "date",
+			params: {
+				date: ""
+			}
+		}
+	}
+
+	public getNewPhotoEntry(): NoteEntry {
+		return {
+			id: this.getNewId(),
+			type: "photo",
+			params: {
+				path: ""
+			}
+		}
+	}
+
 	public getNewTextEntry(): NoteEntry {
 		return {
 			id: this.getNewId(),
 			type: "text",
 			params: {
-				text: ""
+				text: "",
+				readonly: false
 			}
 		};
+	}
+
+	public getNewVideoEntry(): NoteEntry {
+		return {
+			id: this.getNewId(),
+			type: "video",
+			params: {
+				path: ""
+			}
+		};
+	}
+
+	public getNewGeolocationEntry(): NoteEntry {
+		return {
+			id: this.getNewId(),
+			type: "geolocation",
+			params: {
+				text: "",
+				latitude: 0.0,
+				longitude: 0.0,
+				timestamp: 0
+			}
+		}
 	}
 
 	/**
@@ -286,7 +340,7 @@ export class NoteService {
 	 */
 	private async getNotesFromStorage(): Promise<Array<Note>> {
 		const storageGetResult: StorageGetResult<Array<Note>> = await StorageUtils.getValueByKey<Array<Note>>(
-			Constants.NOTES_STORAGE_KEY
+			StorageConstants.NOTES_STORAGE_KEY
 		);
 
 		if (!storageGetResult.keyExists) {
@@ -308,7 +362,7 @@ export class NoteService {
 	 * @returns True if the save succeeded, otherwise false
 	 */
 	private async saveNoteListToStorage(noteList: Array<Note>): Promise<{ value: boolean }> {
-		return StorageUtils.setKeyValuePair(Constants.NOTES_STORAGE_KEY, noteList);
+		return StorageUtils.setKeyValuePair(StorageConstants.NOTES_STORAGE_KEY, noteList);
 	}
 
 	/**

@@ -1,5 +1,5 @@
-import { Component } from "@odoo/owl";
-import { routes } from "./routes";
+import {Component} from "@odoo/owl";
+import {routes} from "./routes";
 
 export interface GetComponentResult {
 	component: Component | undefined;
@@ -7,22 +7,27 @@ export interface GetComponentResult {
 
 export class SimpleRouter {
 	public getComponent(route: string): GetComponentResult {
-		const nonWildcardRoutes = routes.filter(route => route.pathname !== "*");
+		const nonWildcardRoutes = routes.filter((route) => route.pathname !== "*");
 
 		for (let savedRoute of nonWildcardRoutes) {
 			const routeMatchResult = this.doRoutesMatch(route, savedRoute.pathname);
 
 			if (routeMatchResult) {
-				return { component: savedRoute.component };
+				return {component: savedRoute.component};
 			}
 		}
 
-		const wildcard = routes.filter(route => route.pathname === "*")?.[0];
-		return { component: wildcard?.component };
+		const wildcard = routes.filter((route) => route.pathname === "*")?.[0];
+		return {component: wildcard?.component};
 	}
 
 	public splitRoute(route: string): string[] {
-		return route.split("/").filter(routeSegment => routeSegment !== "");
+		// garde uniquement la partie chemin, sans query ni hash
+		const pathOnly = route.split(/[?#]/)[0] || "";
+		return pathOnly
+			.replace(/(^\/+|\/+$)/g, "")
+			.split("/")
+			.filter(Boolean);
 	}
 
 	public doRoutesMatch(incomingRoute: string, routeToMatch: string): boolean {
@@ -50,7 +55,6 @@ export class SimpleRouter {
 
 	public getRouteParams(incomingRoute: string, routeWithParams?: string): Map<string, string> {
 		const paramRoute = routeWithParams || this.getMatchingRoute(incomingRoute);
-
 		const routeParams: Map<string, string> = new Map();
 
 		if (!paramRoute) {
@@ -64,7 +68,10 @@ export class SimpleRouter {
 
 		for (let i = 0; i < numIterations; i++) {
 			if (this.isParamSegment(splitParamRoute[i])) {
-				routeParams[splitParamRoute[i].slice(1)] = splitIncomingRoute[i];
+				const key = splitParamRoute[i].slice(1); // ex: ':url' → 'url'
+				const rawValue = splitIncomingRoute[i];
+				const decodedValue = safeDecodeURIComponent(rawValue);
+				routeParams.set(key, decodedValue);
 			}
 		}
 
@@ -72,7 +79,7 @@ export class SimpleRouter {
 	}
 
 	getMatchingRoute(route: string): string | undefined {
-		const nonWildcardRoutes = routes.filter(route => route.pathname !== "*");
+		const nonWildcardRoutes = routes.filter((route) => route.pathname !== "*");
 
 		for (let savedRoute of nonWildcardRoutes) {
 			if (this.doRoutesMatch(route, savedRoute.pathname)) {
@@ -80,8 +87,8 @@ export class SimpleRouter {
 			}
 		}
 
-		const wildcard = routes.filter(route => route.pathname === "*")?.[0];
-		return wildcard.pathname;
+		const wildcard = routes.filter((route) => route.pathname === "*")?.[0];
+		return wildcard?.pathname;
 	}
 
 	private isParamSegment(segment: string): boolean {
@@ -93,6 +100,14 @@ export class SimpleRouter {
 	}
 
 	private hasWildcardSegment(splitRoute: string[]): boolean {
-		return splitRoute.filter(segment => segment === "*").length > 0;
+		return splitRoute.filter((segment) => segment === "*").length > 0;
+	}
+}
+
+function safeDecodeURIComponent(value: string): string {
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		return value;
 	}
 }

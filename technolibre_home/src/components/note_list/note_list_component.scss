@@ -1,7 +1,7 @@
+@use "../../css/mixins.scss";
+
 #note-list-component #notes-header {
-	align-items: center;
-	display: flex;
-	justify-content: center;
+	@include mixins.flex--center;
 	margin: 0 auto;
 	max-width: 48rem;
 	padding: 1rem 1.25rem;
@@ -12,13 +12,13 @@
 }
 
 #note-list-component #notes-add {
+	@include mixins.flex();
 	background-color: var(--btn-blue-color);
 	border: none;
 	border-radius: 0.5rem;
 	box-shadow: 0px 4px 4px 0 rgba(0, 0, 0, 0.35);
 	color: var(--text);
 	cursor: pointer;
-	display: flex;
 	outline: none;
 	padding: 1rem;
 	text-decoration: none;
@@ -42,16 +42,15 @@
 	margin: 0 auto;
 	padding: 0 1rem;
 	@media only screen and (min-width: 48rem) {
-		display: flex;
-		justify-content: flex-end;
+		@include mixins.flex(center, flex-end);
 	}
 }
 
 #note-list-component .notes__control {
+	@include mixins.flex(center, space-between);
 	background-color: #222;
 	border-radius: 0.5rem;
 	color: var(--text);
-	display: flex;
 	gap: 0.5rem;
 	padding: 0.75rem;
 	text-decoration: none;
@@ -62,6 +61,31 @@
 
 #note-list-component .notes__control__show-archived {
 	grid-area: archived;
+}
+
+#note-list-component #notes__control__show-archived__indicator {
+	$indicatorWidth: 2rem;
+	$pillMargin: 0.125rem;
+	$pillWidth: 1rem;
+	background-color: red;
+	border-radius: 0.25rem;
+	overflow: hidden;
+	width: $indicatorWidth;
+	& .pill {
+		background-color: darkred;
+		border-radius: 0.125rem;
+		height: 0.75rem;
+		margin: $pillMargin;
+		transition: transform 150ms ease-in-out;
+		width: $pillWidth;
+	}
+	&.active {
+		background-color: green;
+		& .pill {
+			background-color: darkgreen;
+			transform: translateX(calc($indicatorWidth - $pillWidth - 2 * $pillMargin));
+		}
+	}
 }
 
 #note-list-component #notes {
@@ -89,10 +113,8 @@
 }
 
 #note-list-component #notes-empty {
-	align-items: center;
+	@include mixins.flex--center;
 	background-color: #1a1a1a;
-	display: flex;
-	justify-content: center;
 	padding: 1em;
 	text-align: center;
 	& p {

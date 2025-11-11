@@ -1,14 +1,22 @@
 import { RootComponent } from "../components/root/root_component";
 import { EventBus, mount } from "@odoo/owl";
-import { Constants } from "./constants";
 import { SimpleRouter } from "./router";
-import { AppService } from "./appService";
-import { NoteService } from "./noteService";
+import { AppService } from "../services/appService";
+import { NoteService } from "../services/noteService";
+import { Events } from "../constants/events";
 
 const eventBus = new EventBus();
 
-eventBus.addEventListener(Constants.ROUTER_NAVIGATION_EVENT_NAME, (event: any) => {
+eventBus.addEventListener(Events.ROUTER_NAVIGATION, (event: any) => {
 	window.history.pushState({}, "", event?.detail?.url);
+});
+
+eventBus.addEventListener(Events.OPEN_CAMERA, (_event: any) => {
+	document.body.classList.add("transparent");
+});
+
+eventBus.addEventListener(Events.CLOSE_CAMERA, (_event: any) => {
+	document.body.classList.remove("transparent");
 });
 
 const router = new SimpleRouter();

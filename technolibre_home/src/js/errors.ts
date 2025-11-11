@@ -1,3 +1,5 @@
+import { ErrorMessages } from "../constants/errorMessages";
+
 export class AppKeyNotFoundError extends Error {
 	constructor(message?: string) {
 		const errorMessage = message || ErrorMessages.APP_KEY_NOT_FOUND;
@@ -46,6 +48,14 @@ export class NoNoteMatchError extends Error {
 	}
 }
 
+export class NoNoteEntryMatchError extends Error {
+	constructor(message?: string) {
+		const errorMessage = message || ErrorMessages.NO_NOTE_ENTRY_MATCH;
+		super(errorMessage);
+		this.name = "NoNoteEntryMatchError";
+	}
+}
+
 export class AppAlreadyExistsError extends Error {
 	constructor(message?: string) {
 		const errorMessage = message || ErrorMessages.APP_ALREADY_EXISTS;
@@ -54,28 +64,10 @@ export class AppAlreadyExistsError extends Error {
 	}
 }
 
-export class ErrorMessages {
-	public static APP_KEY_NOT_FOUND: string = "Échec de la récupération des applications du stockage local.";
-
-	public static NOTE_KEY_NOT_FOUND: string = "Échec de la récupération des notes du stockage local.";
-
-	public static UNDEFINED_APP_LIST: string = "Liste d'applications non existante dans le stockage local.";
-
-	public static UNDEFINED_NOTE_LIST: string = "Liste de notes non existante dans le stockage local.";
-
-	public static NO_APP_MATCH: string = "Aucune application ne correspond aux données saisies.";
-
-	public static NO_NOTE_MATCH: string = "Aucune note ne correspond aux données saisies.";
-
-	public static APP_ALREADY_EXISTS: string = "Une application avec cet identifiant existe déjà.";
-
-	public static BIOMETRIC_AUTH: string = "Échec de l'authentification biométrique.";
-
-	public static APP_DELETE: string = "Échec de la suppression de l'application du stockage local.";
-
-	public static NOTE_DELETE: string = "Échec de la suppression de la note du stockage local.";
-
-	public static APP_SAVE: string = "Échec de la sauvegarde de l'application dans le stockage local.";
-
-	public static EMPTY_FIELDS: string = "Tous les champs de texte doivent être remplis.";
+export class VideoNotSupportedOnWebError extends Error {
+	constructor(message?: string) {
+		const errorMessage = message || ErrorMessages.VIDEO_RECORDING_WEB;
+		super(errorMessage);
+		this.name = "VideoNotSupportedOnWebError";
+	}
 }

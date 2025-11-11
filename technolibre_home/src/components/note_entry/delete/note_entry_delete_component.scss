@@ -1,0 +1,35 @@
+@use "../../../css/mixins.scss";
+
+$deleteButtonWidth: 2rem;
+
+.note-entry-delete-component {
+	@include mixins.flex--center;
+	flex-shrink: 0;
+	margin-right: 0;
+	overflow: hidden;
+	transition: margin 100ms ease-in-out, width 100ms ease-in-out;
+	width: 0;
+	&.active {
+		margin-right: 0.75rem;
+		width: $deleteButtonWidth;
+	}
+}
+
+.note-entry-delete-component .note-entry__delete {
+	@include mixins.flex--center;
+	background-color: var(--btn-red-color);
+	border: none;
+	border-radius: 0.25rem;
+	cursor: pointer;
+	height: $deleteButtonWidth;
+	outline: none;
+	width: $deleteButtonWidth;
+	&:hover {
+		background-color: var(--btn-red-hover-color);
+	}
+	& img {
+		height: 1rem;
+		pointer-events: none;
+		width: 1rem;
+	}
+}

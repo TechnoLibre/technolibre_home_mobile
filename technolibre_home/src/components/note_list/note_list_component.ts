@@ -1,18 +1,16 @@
 import { useState, xml } from "@odoo/owl";
 
 import { BiometryUtils } from "../../utils/biometryUtils";
-import { Constants } from "../../js/constants";
 import { Dialog } from "@capacitor/dialog";
 import { EnhancedComponent } from "../../js/enhancedComponent";
-import { ErrorMessages } from "../../js/errors";
-import { Note } from "./types";
+import { ErrorMessages } from "../../constants/errorMessages";
+import { Events } from "../../constants/events";
+import { Note } from "../../models/note";
 
 import { HeadingComponent } from "../heading/heading_component";
 import { NotesItemComponent } from "./item/note_list_item_component";
 
 import NoteAddIcon from "../../assets/icon/note_add.svg";
-import ToggleOffIcon from "../../assets/icon/toggle_off.svg";
-import ToggleOnIcon from "../../assets/icon/toggle_on.svg";
 
 export class NoteListComponent extends EnhancedComponent {
 	static template = xml`
@@ -37,8 +35,14 @@ export class NoteListComponent extends EnhancedComponent {
 					t-on-click.stop.prevent="onToggleNoteListClick"
 				>
 					<p>Montrer les notes archivées</p>
-					<img src="${ToggleOnIcon}" t-if="state.showArchivedNotes" />
-					<img src="${ToggleOffIcon}" t-else="" />
+					<div
+						id="notes__control__show-archived__indicator"
+						t-att-class="{
+							active: state.showArchivedNotes
+						}"
+					>
+						<div class="pill"></div>
+					</div>
 				</a>
 			</section>
 			<section id="notes">
@@ -105,7 +109,7 @@ export class NoteListComponent extends EnhancedComponent {
 
 	onNoteAddClick() {
 		const newId = this.noteService.getNewId();
-		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, { url: `/note/${newId}` });
+		this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: `/note/${newId}` });
 	}
 
 	onToggleNoteListClick() {
@@ -130,14 +134,14 @@ export class NoteListComponent extends EnhancedComponent {
 
 	openNote(noteId: string) {
 		const encodedId = encodeURIComponent(noteId);
-		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
+		this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
 			url: `/note/${encodedId}`
 		});
 	}
 
 	editNote(noteId: string) {
 		const encodedId = encodeURIComponent(noteId);
-		this.eventBus.trigger(Constants.ROUTER_NAVIGATION_EVENT_NAME, {
+		this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
 			url: `/notes/edit/${encodedId}`
 		});
 	}

@@ -1,6 +1,6 @@
 import { BiometricAuth, CheckBiometryResult } from "@aparajita/capacitor-biometric-auth";
+import { StorageConstants } from "../constants/storage";
 import { StorageGetResult, StorageUtils } from "./storageUtils";
-import { Constants } from "./../js/constants";
 import { AlertOptions, Dialog } from "@capacitor/dialog";
 
 export class BiometryUtils {
@@ -17,7 +17,7 @@ export class BiometryUtils {
 		}
 
 		const storageGetResult: StorageGetResult = await StorageUtils.getValueByKey<boolean>(
-			Constants.BIOMETRY_ENABLED_STORAGE_KEY
+			StorageConstants.BIOMETRY_ENABLED_STORAGE_KEY
 		);
 
 		if (storageGetResult.keyExists && !storageGetResult.value) {
