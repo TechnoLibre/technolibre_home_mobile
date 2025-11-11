@@ -87,12 +87,95 @@ export class ApplicationsComponent extends EnhancedComponent {
 		/* const loginScriptLoop = `const inputUsername = document.getElementById(\"login\"); const inputPassword = document.getElementById(\"password\"); const inputSubmit = document.querySelector(\"button[type='submit']\"); if (!inputUsername || !inputPassword || !inputSubmit) { return; } inputUsername.value = \"${matchingApp.username}\"; inputPassword.value = \"${matchingApp.password}\"; inputSubmit.click();`; */
 
 		const loginScript = `
-        const inputUsername = document.getElementById(\"login\");
-        const inputPassword = document.getElementById(\"password\");
-        if (!inputUsername || !inputPassword) { return; };
-        inputUsername.value = \"${matchingApp.username}\";
-        inputPassword.value = \"${matchingApp.password}\";
-      `;
+(() => {
+  // ==== Helpers ====
+  function getElementByXPath(xpath, context = document) {
+    const result = document.evaluate(
+      xpath, context, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
+    );
+    return result.singleNodeValue || null;
+  }
+
+  function waitForXPathWithObserver(xpath, { timeout = 10000 } = {}) {
+    return new Promise((resolve, reject) => {
+      const found = getElementByXPath(xpath);
+      if (found) return resolve(found);
+
+      let settled = false;
+      const observer = new MutationObserver(() => {
+        const el = getElementByXPath(xpath);
+        if (el) {
+          settled = true;
+          observer.disconnect();
+          resolve(el);
+        }
+      });
+
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+      });
+
+      setTimeout(() => {
+        if (settled) return;
+        observer.disconnect();
+        reject(new Error("Timeout en attendant l'élément XPath: " + xpath));
+      }, timeout);
+    });
+  }
+
+  // Affecte proprement la valeur d'un input (déclenche les events usuels)
+  function setInputValue(el, value) {
+    try {
+      const proto = Object.getPrototypeOf(el);
+      const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (descriptor && descriptor.set) {
+        descriptor.set.call(el, value);
+      } else {
+        el.value = value;
+      }
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (e) {
+      el.value = value;
+    }
+  }
+
+  // ==== XPaths ciblés (Odoo: ids "login" et "password") ====
+  const USER_XPATH = "//*[@id='login']";
+  const PASS_XPATH = "//*[@id='password']";
+  // Bouton: type submit ou texte courant (FR/EN)
+  const SUBMIT_XPATH = "//button[@type='submit' or contains(normalize-space(.), 'Log in') or contains(normalize-space(.), 'Se connecter')]";
+
+  // ==== Flow ====
+  Promise.all([
+    waitForXPathWithObserver(USER_XPATH, { timeout: 15000 }),
+    waitForXPathWithObserver(PASS_XPATH, { timeout: 15000 })
+  ])
+  .then(([userEl, passEl]) => {
+    setInputValue(userEl, "${matchingApp.username}");
+    setInputValue(passEl, "${matchingApp.password}");
+
+    // (Optionnel) Cliquer sur le bouton submit s'il apparaît rapidement
+    return waitForXPathWithObserver(SUBMIT_XPATH, { timeout: 5000 })
+      .then(btn => {
+        btn.scrollIntoView({ block: 'center', inline: 'center' });
+        // petit rafraîchissement de layout avant le click
+        requestAnimationFrame(() => {
+          btn.click();
+          console.log('[loginScript] Submit cliqué via XPath');
+        });
+      })
+      .catch(() => {
+        // Pas de bouton trouvé: on laisse l'utilisateur soumettre manuellement
+        console.log('[loginScript] Bouton submit non trouvé dans le délai, champs pré-remplis.');
+      });
+  })
+  .catch(err => {
+    console.error('[loginScript] Erreur:', err);
+  });
+})();
+`;
 
 		let url_rewrite_odoo = "https://" + matchingApp.url + "/web/login";
 
@@ -104,7 +187,7 @@ export class ApplicationsComponent extends EnhancedComponent {
 				isPresentAfterPageLoad: true,
 				preShowScript: loginScript,
 				enabledSafeBottomMargin: true,
-				useTopInset: true,
+				// useTopInset: true,
 				activeNativeNavigationForWebview: true,
 			});
 		} else {
