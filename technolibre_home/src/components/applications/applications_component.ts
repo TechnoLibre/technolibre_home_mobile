@@ -1,19 +1,32 @@
-import { useState, xml } from "@odoo/owl";
+import {useState, xml} from "@odoo/owl";
 
-import { Dialog } from "@capacitor/dialog";
+import {Dialog} from "@capacitor/dialog";
 
-import { Application, ApplicationID } from "../../models/application";
-import { BiometryUtils } from "../../utils/biometryUtils";
-import { EnhancedComponent } from "../../js/enhancedComponent";
-import { ErrorMessages } from "../../constants/errorMessages";
-import { Events } from "../../constants/events";
-import { WebViewUtils } from "../../utils/webViewUtils";
+import {Application, ApplicationID} from "../../models/application";
+import {BiometryUtils} from "../../utils/biometryUtils";
+import {EnhancedComponent} from "../../js/enhancedComponent";
+import {ErrorMessages} from "../../constants/errorMessages";
+import {Events} from "../../constants/events";
+import {WebViewUtils} from "../../utils/webViewUtils";
 
-import { ApplicationsItemComponent } from "./item/applications_item_component";
-import { HeadingComponent } from "../heading/heading_component";
+import {ApplicationsItemComponent} from "./item/applications_item_component";
+import {HeadingComponent} from "../heading/heading_component";
+
+const ENV = {
+    // @ts-ignore
+    TITLE: import.meta.env.VITE_TITLE ?? "TITLE",
+    // @ts-ignore
+    BUTTON_LABEL: import.meta.env.VITE_BUTTON_LABEL ?? "Connexion",
+    // @ts-ignore
+    LOGO_KEY: import.meta.env.VITE_LOGO_KEY ?? "techno",
+    // @ts-ignore
+    WEBSITE_URL: import.meta.env.VITE_WEBSITE_URL ?? "https://erplibre.ca",
+    // @ts-ignore
+    DEBUG_DEV: import.meta.env.VITE_DEBUG_DEV === "true",
+};
 
 export class ApplicationsComponent extends EnhancedComponent {
-	static template = xml`
+    static template = xml`
       <div id="applications-component">
         <HeadingComponent title="'Applications'" />
         <section id="applications">
@@ -43,48 +56,50 @@ export class ApplicationsComponent extends EnhancedComponent {
       </div>
     `;
 
-	static components = { HeadingComponent, ApplicationsItemComponent };
+    static components = {HeadingComponent, ApplicationsItemComponent};
 
-	async setup() {
-		this.state = useState({ applications: new Array<Application>() });
+    async setup() {
+        this.state = useState({applications: new Array<Application>()});
 
-		this.state.applications = await this.appService.getApps();
-	}
+        this.state.applications = await this.appService.getApps();
 
-	onAppAddClick(event) {
-		event.preventDefault();
+        this.state.debug = ENV.DEBUG_DEV;
+    }
 
-		this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: "/applications/add" });
-	}
+    onAppAddClick(event) {
+        event.preventDefault();
 
-	async openApplication(appID: ApplicationID) {
-		const isBiometricAuthSuccessful = await BiometryUtils.authenticateIfAvailable();
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/applications/add"});
+    }
 
-		if (!isBiometricAuthSuccessful) {
-			Dialog.alert({ message: ErrorMessages.BIOMETRIC_AUTH });
-			return;
-		}
+    async openApplication(appID: ApplicationID) {
+        const isBiometricAuthSuccessful = await BiometryUtils.authenticateIfAvailable();
 
-		let matchingApp: Application | undefined;
+        if (!isBiometricAuthSuccessful) {
+            Dialog.alert({message: ErrorMessages.BIOMETRIC_AUTH});
+            return;
+        }
 
-		try {
-			matchingApp = await this.appService.getMatch(appID);
-		} catch (error: unknown) {
-			if (error instanceof Error) {
-				Dialog.alert({ message: error.message });
-				return;
-			}
-		}
+        let matchingApp: Application | undefined;
 
-		if (!matchingApp) {
-			Dialog.alert({ message: ErrorMessages.NO_APP_MATCH });
-			return;
-		}
+        try {
+            matchingApp = await this.appService.getMatch(appID);
+        } catch (error: unknown) {
+            if (error instanceof Error) {
+                Dialog.alert({message: error.message});
+                return;
+            }
+        }
 
-		/* const loginScriptLoop = `const inputUsername = document.getElementById(\"login\"); const inputPassword = document.getElementById(\"password\"); const inputSubmit = document.querySelector(\"button[type='submit']\"); if (!inputUsername || !inputPassword || !inputSubmit) { return; } inputUsername.value = \"${matchingApp.username}\"; inputPassword.value = \"${matchingApp.password}\"; inputSubmit.click();`; */
+        if (!matchingApp) {
+            Dialog.alert({message: ErrorMessages.NO_APP_MATCH});
+            return;
+        }
 
-		// This script support auto-login and fix infinite loop
-		const loginScript = `
+        /* const loginScriptLoop = `const inputUsername = document.getElementById(\"login\"); const inputPassword = document.getElementById(\"password\"); const inputSubmit = document.querySelector(\"button[type='submit']\"); if (!inputUsername || !inputPassword || !inputSubmit) { return; } inputUsername.value = \"${matchingApp.username}\"; inputPassword.value = \"${matchingApp.password}\"; inputSubmit.click();`; */
+
+        // This script support auto-login and fix infinite loop
+        const loginScript = `
 (async () => {
   // ==== Helpers généraux ====
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -228,55 +243,55 @@ export class ApplicationsComponent extends EnhancedComponent {
 })();
 `;
 
-		let url_rewrite_odoo = "https://" + matchingApp.url + "/web/login";
+        let url_rewrite_odoo = "https://" + matchingApp.url + "/web/login";
 
-		if (WebViewUtils.isMobile()) {
-			// TODO how catch error
-			WebViewUtils.openWebViewMobile({
-				url: url_rewrite_odoo,
-				title: matchingApp.url,
-				isPresentAfterPageLoad: true,
-				preShowScript: loginScript,
-				enabledSafeBottomMargin: true,
-				// useTopInset: true,
-				activeNativeNavigationForWebview: true,
-			});
-		} else {
-			WebViewUtils.openWebViewDesktop(url_rewrite_odoo, loginScript);
-		}
-	}
+        if (WebViewUtils.isMobile()) {
+            // TODO how catch error
+            WebViewUtils.openWebViewMobile({
+                url: url_rewrite_odoo,
+                title: matchingApp.url,
+                isPresentAfterPageLoad: true,
+                preShowScript: loginScript,
+                enabledSafeBottomMargin: true,
+                // useTopInset: true,
+                activeNativeNavigationForWebview: true,
+            });
+        } else {
+            WebViewUtils.openWebViewDesktop(url_rewrite_odoo, loginScript);
+        }
+    }
 
-	async editApplication(appID: ApplicationID) {
-		const encodedURL = encodeURIComponent(appID.url);
-		const encodedUsername = encodeURIComponent(appID.username);
-		this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
-			url: `/applications/edit/${encodedURL}/${encodedUsername}`
-		});
-	}
+    async editApplication(appID: ApplicationID) {
+        const encodedURL = encodeURIComponent(appID.url);
+        const encodedUsername = encodeURIComponent(appID.username);
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
+            url: `/applications/edit/${encodedURL}/${encodedUsername}`,
+        });
+    }
 
-	async deleteApplication(appID: ApplicationID) {
-		const deleteConfirmed = confirm(
-			`Voulez-vous vraiment supprimer l'application ${appID.url} pour le compte ${appID.username}?`
-		);
+    async deleteApplication(appID: ApplicationID) {
+        const deleteConfirmed = confirm(
+            `Voulez-vous vraiment supprimer l'application ${appID.url} pour le compte ${appID.username}?`
+        );
 
-		if (!deleteConfirmed) {
-			return;
-		}
+        if (!deleteConfirmed) {
+            return;
+        }
 
-		const isBiometricAuthSuccessful: boolean = await BiometryUtils.authenticateIfAvailable();
+        const isBiometricAuthSuccessful: boolean = await BiometryUtils.authenticateIfAvailable();
 
-		if (!isBiometricAuthSuccessful) {
-			Dialog.alert({ message: ErrorMessages.BIOMETRIC_AUTH });
-			return;
-		}
+        if (!isBiometricAuthSuccessful) {
+            Dialog.alert({message: ErrorMessages.BIOMETRIC_AUTH});
+            return;
+        }
 
-		const deleteSucceeded: boolean = await this.appService.delete(appID);
+        const deleteSucceeded: boolean = await this.appService.delete(appID);
 
-		if (!deleteSucceeded) {
-			Dialog.alert({ message: ErrorMessages.APP_DELETE });
-			return;
-		}
+        if (!deleteSucceeded) {
+            Dialog.alert({message: ErrorMessages.APP_DELETE});
+            return;
+        }
 
-		this.state.applications = await this.appService.getApps();
-	}
+        this.state.applications = await this.appService.getApps();
+    }
 }
