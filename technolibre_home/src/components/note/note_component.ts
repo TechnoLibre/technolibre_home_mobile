@@ -19,12 +19,14 @@ export class NoteComponent extends EnhancedComponent {
 	static template = xml`
 		<div id="note-component">
 			<NoteTopControlsComponent
-				addAudio.bind="addAudio"
-				addLocation.bind="addLocation"
-				addText.bind="addText"
-				addDateEntry.bind="addDateEntry"
-				addPhoto.bind="addPhoto"
-				addVideo.bind="addVideo"
+				note="state.note"
+				toggleEditMode.bind="toggleEditMode"
+				onTagsClick.bind="onTagsClick"
+				onArchiveClick.bind="onArchiveClick"
+				onPinClick.bind="onPinClick"
+				toggleDone.bind="toggleDone"
+				toggleOptionMode.bind="toggleOptionMode"
+				optionMode="state.optionMode"
 			/>
 			<NoteContentComponent
 				note="state.note"
@@ -34,14 +36,12 @@ export class NoteComponent extends EnhancedComponent {
 				deleteEntry.bind="deleteEntry"
 			/>
 			<NoteBottomControlsComponent
-				note="state.note"
-				toggleEditMode.bind="toggleEditMode"
-				onTagsClick.bind="onTagsClick"
-				onArchiveClick.bind="onArchiveClick"
-				onPinClick.bind="onPinClick"
-				toggleDone.bind="toggleDone"
-				toggleOptionMode.bind="toggleOptionMode"
-				optionMode="state.optionMode"
+				addAudio.bind="addAudio"
+				addLocation.bind="addLocation"
+				addText.bind="addText"
+				addDateEntry.bind="addDateEntry"
+				addPhoto.bind="addPhoto"
+				addVideo.bind="addVideo"
 			/>
 		</div>
 		<DatePickerComponent
