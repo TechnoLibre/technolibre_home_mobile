@@ -175,7 +175,7 @@ export class ApplicationsComponent extends EnhancedComponent {
   // ==== XPaths ciblés (Odoo) ====
   const USER_XPATH   = "//*[@id='login']";
   const PASS_XPATH   = "//*[@id='password']";
-  const SUBMIT_XPATH = "//button[@type='submit' or contains(normalize-space(.), 'Log in') or contains(normalize-space(.), 'Se connecter')]";
+  const SUBMIT_XPATH = "//button[@type='submit' and (contains(normalize-space(.), 'Log in') or contains(normalize-space(.), 'Se connecter') or contains(normalize-space(.), 'Connexion'))]";
 
   // ==== Anti-boucle (flag global) ====
   if (window.__autoLoginSubmitted) return;
