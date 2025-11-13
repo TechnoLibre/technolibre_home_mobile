@@ -34,6 +34,23 @@ export class NoteService {
 	}
 
 	/**
+	 * Sets the note list.
+	 * 
+	 * @param newNotes - The new note list
+	 */
+	public async setNotes(newNotes: Array<Note>): Promise<boolean> {
+		const result = await this.saveNoteListToStorage(newNotes);
+
+		if (!result.value) {
+			return false;
+		}
+
+		this._notes = await this.getNotesFromStorage();
+
+		return true;
+	}
+
+	/**
 	 * Adds a note.
 	 *
 	 * @param note - The note to add

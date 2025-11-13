@@ -1,4 +1,6 @@
-import { useState, xml } from "@odoo/owl";
+import { onMounted, useRef, useState, xml } from "@odoo/owl";
+
+import { Sortable } from "sortablejs";
 
 import { BiometryUtils } from "../../utils/biometryUtils";
 import { Dialog } from "@capacitor/dialog";
@@ -9,6 +11,7 @@ import { Note } from "../../models/note";
 
 import { HeadingComponent } from "../heading/heading_component";
 import { NotesItemComponent } from "./item/note_list_item_component";
+import { NoteListControlsComponent } from "./controls/note_list_controls_component";
 
 import NoteAddIcon from "../../assets/icon/note_add.svg";
 
@@ -24,56 +27,55 @@ export class NoteListComponent extends EnhancedComponent {
 					<img src="${NoteAddIcon}" />
 				</a>
 			</header>
-			<section id="notes__controls">
-				<a
-					class="notes__control notes__control__show-archived"
-					t-att-class="{
-						'notes__control__show-archived--true': state.showArchivedNotes,
-						'notes__control__show-archived--false': !state.showArchivedNotes
-					}"
-					href="#"
-					t-on-click.stop.prevent="onToggleNoteListClick"
-				>
-					<p>Montrer les notes archivées</p>
-					<div
-						id="notes__control__show-archived__indicator"
-						t-att-class="{
-							active: state.showArchivedNotes
-						}"
-					>
-						<div class="pill"></div>
-					</div>
-				</a>
-			</section>
-			<section id="notes">
+			<NoteListControlsComponent
+				editMode="state.editMode"
+				showArchivedNotes="state.showArchivedNotes"
+				onToggleNoteListClick.bind="onToggleNoteListClick"
+				onToggleEditModeClick.bind="onToggleEditModeClick"
+			/>
+			<section id="notes" t-ref="notes">
 				<t t-set="currentNoteList" t-value="getCurrentNoteList()"></t>
 				<t t-set="pinned" t-value="getPinned(currentNoteList)"></t>
 				<t t-set="unpinned" t-value="getUnpinned(currentNoteList)"></t>
-				<div id="notes__pinned" t-if="pinned.length !== 0">
+				<div
+					id="notes__pinned"
+					t-att-class="{
+						'active': pinned.length !== 0
+					}"
+				>
 					<h3>Notes épinglées</h3>
-					<ul class="notes-list">
+					<ul class="notes-list" t-ref="pinned">
 						<NotesItemComponent
 							t-foreach="pinned"
 							t-as="noteItem"
 							t-key="noteItem.id"
 							note="noteItem"
+							editMode="state.editMode"
 							openNote.bind="openNote"
 							editNote.bind="editNote"
 							deleteNote.bind="deleteNote"
+							onSort.bind="onSort"
 						/>
 					</ul>
 				</div>
-				<div id="notes__unpinned" t-if="unpinned.length !== 0">
+				<div
+					id="notes__unpinned"
+					t-att-class="{
+						'active': unpinned.length !== 0
+					}"
+				>
 					<h3>Notes non épinglées</h3>
-					<ul class="notes-list">
+					<ul class="notes-list" t-ref="unpinned">
 						<NotesItemComponent
 							t-foreach="unpinned"
 							t-as="noteItem"
 							t-key="noteItem.id"
 							note="noteItem"
+							editMode="state.editMode"
 							openNote.bind="openNote"
 							editNote.bind="editNote"
 							deleteNote.bind="deleteNote"
+							onSort.bind="onSort"
 						/>
 					</ul>
 				</div>
@@ -87,14 +89,44 @@ export class NoteListComponent extends EnhancedComponent {
 		</div>
 	`;
 
-	static components = { HeadingComponent, NotesItemComponent };
+	static components = { HeadingComponent, NotesItemComponent, NoteListControlsComponent };
+
+	pinnedSortable: any = undefined;
+	unpinnedSortable: any = undefined;
+
+	pinnedRef = useRef("pinned");
+	unpinnedRef = useRef("unpinned");
 
 	setup() {
 		this.state = useState({
 			notes: new Array<Note>(),
-			showArchivedNotes: false
+			showArchivedNotes: false,
+			editMode: false
 		});
+		onMounted(this.onMounted.bind(this));
 		this.getNotes();
+	}
+
+	private onMounted() {
+		this.pinnedSortable = Sortable.create(this.pinnedRef.el, {
+			animation: 150,
+			easing: "cubic-bezier(0.37, 0, 0.63, 1)",
+			ghostClass: "sortable-ghost",
+			handle: ".notes-item-handle-component",
+			onSort: this.onSort.bind(this, this.pinnedRef)
+		});
+
+		this.unpinnedSortable = Sortable.create(this.unpinnedRef.el, {
+			animation: 150,
+			easing: "cubic-bezier(0.37, 0, 0.63, 1)",
+			ghostClass: "sortable-ghost",
+			handle: ".notes-item-handle-component",
+			onSort: this.onSort.bind(this, this.unpinnedRef)
+		});
+	}
+
+	onSort(ref: { el: HTMLElement | null }) {
+		this.reorderNotes(ref);
 	}
 
 	async getNotes() {
@@ -112,15 +144,19 @@ export class NoteListComponent extends EnhancedComponent {
 		this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: `/note/${newId}` });
 	}
 
+	onToggleEditModeClick() {
+		this.state.editMode = !this.state.editMode;
+	}
+
 	onToggleNoteListClick() {
 		this.state.showArchivedNotes = !this.state.showArchivedNotes;
 	}
 
 	getCurrentNoteList(): Array<Note> {
 		if (this.state.showArchivedNotes) {
-			return this.state.notes.filter(note => note.archived);
+			return this.state.notes.filter((note: Note) => note.archived);
 		} else {
-			return this.state.notes.filter(note => !note.archived);
+			return this.state.notes.filter((note: Note) => !note.archived);
 		}
 	}
 
@@ -175,5 +211,55 @@ export class NoteListComponent extends EnhancedComponent {
 		}
 
 		this.getNotes();
+	}
+
+	private get notes(): Array<Note> {
+		return this.state.notes;
+	}
+
+	private reorderNotes(ref: { el: HTMLElement | null }) {
+		const noteList = ref?.el;
+
+		if (!noteList) {
+			return;
+		}
+
+		const noteItems = Array.from(noteList.getElementsByClassName("notes-item"));
+		const ids = noteItems.map(item => { return (item as HTMLElement).dataset.id });
+
+		const stateNoteEnumeration = this.notes
+			.filter((note: Note) => ids.includes(note.id))
+			.map((note: Note) => this.locateNote(note));
+		
+		const notesCopy = [...this.notes];
+
+		let i = 0;
+		for (const enumeration of stateNoteEnumeration) {
+			const note = this.getNoteFromList(ids[i], notesCopy);
+
+			if (!note) {
+				return;
+			}
+
+			this.notes[enumeration.index] = note;
+
+			i++;
+		}
+
+		this.noteService.setNotes(this.notes);
+	}
+
+	private locateNote(note: Note): { index: number, id: string } {
+		const index = this.notes.findIndex((currentNote: Note) => {
+			return currentNote.id === note.id
+		});
+		
+		return { index, id: note.id };
+	}
+
+	private getNoteFromList(id: string | undefined, noteList: Array<Note>): Note | undefined {
+		return noteList
+			.filter((note: Note) => note.id === id)
+			?.[0];
 	}
 }

@@ -33,61 +33,6 @@
 	}
 }
 
-#note-list-component #notes__controls {
-	align-items: center;
-	display: grid;
-	grid-template-areas: "archived";
-	max-width: 48rem;
-	min-height: 2rem;
-	margin: 0 auto;
-	padding: 0 1rem;
-	@media only screen and (min-width: 48rem) {
-		@include mixins.flex(center, flex-end);
-	}
-}
-
-#note-list-component .notes__control {
-	@include mixins.flex(center, space-between);
-	background-color: #222;
-	border-radius: 0.5rem;
-	color: var(--text);
-	gap: 0.5rem;
-	padding: 0.75rem;
-	text-decoration: none;
-	&:hover {
-		background-color: #333;
-	}
-}
-
-#note-list-component .notes__control__show-archived {
-	grid-area: archived;
-}
-
-#note-list-component #notes__control__show-archived__indicator {
-	$indicatorWidth: 2rem;
-	$pillMargin: 0.125rem;
-	$pillWidth: 1rem;
-	background-color: red;
-	border-radius: 0.25rem;
-	overflow: hidden;
-	width: $indicatorWidth;
-	& .pill {
-		background-color: darkred;
-		border-radius: 0.125rem;
-		height: 0.75rem;
-		margin: $pillMargin;
-		transition: transform 150ms ease-in-out;
-		width: $pillWidth;
-	}
-	&.active {
-		background-color: green;
-		& .pill {
-			background-color: darkgreen;
-			transform: translateX(calc($indicatorWidth - $pillWidth - 2 * $pillMargin));
-		}
-	}
-}
-
 #note-list-component #notes {
 	border: none;
 	border-radius: 0.25rem;
@@ -99,6 +44,10 @@
 #note-list-component #notes__pinned,
 #note-list-component #notes__unpinned {
 	margin-top: 1rem;
+	display: none;
+	&.active {
+		display: block;
+	}
 }
 
 #note-list-component .notes-list,

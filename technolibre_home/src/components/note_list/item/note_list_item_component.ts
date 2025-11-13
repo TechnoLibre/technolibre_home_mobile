@@ -1,6 +1,7 @@
 import { xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { NoteListItemHandleComponent } from "./handle/note_list_item_handle_component";
 
 import DeleteIcon from "../../../assets/icon/delete.svg";
 
@@ -8,11 +9,16 @@ export class NotesItemComponent extends EnhancedComponent {
 	static template = xml`
 		<li
 			class="notes-item"
+			t-att-data-id="props.note.id"
 			t-att-class="{
-				'notes-item--done': props.note.done
+				'notes-item--done': props.note.done,
+				'has-tags': props.note.tags.length !== 0
 			}"
 			t-on-click="() => this.props.openNote(props.note.id)"
 		>
+			<NoteListItemHandleComponent
+				editMode="props.editMode"
+			/>
 			<div
 				class="notes-item__tags"
 				t-if="props.note.tags.length !== 0"
@@ -41,7 +47,12 @@ export class NotesItemComponent extends EnhancedComponent {
 					<t t-else="" t-esc="'Sans date'"></t>
 				</p>
 			</div>
-			<div class="notes-item__actions">
+			<div
+				class="notes-item__actions"
+				t-att-class="{
+					'active': props.editMode
+				}"
+			>
 				<button
 					type="button"
 					class="notes-item__action notes-item__delete"
@@ -52,6 +63,8 @@ export class NotesItemComponent extends EnhancedComponent {
 			</div>
 		</li>
 	`;
+
+	static components = { NoteListItemHandleComponent };
 
 	formatDate(date: Date) {
 		return new Date(date).toLocaleDateString();
