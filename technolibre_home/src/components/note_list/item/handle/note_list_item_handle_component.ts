@@ -1,17 +1,18 @@
-import { Component, useState, xml } from "@odoo/owl";
+import { xml } from "@odoo/owl";
+import { EnhancedComponent } from "../../../../js/enhancedComponent";
 
-export class NoteListItemHandleComponent extends Component {
+import DragIcon from "../../../../assets/icon/drag.svg";
+
+export class NoteListItemHandleComponent extends EnhancedComponent {
 	static template = xml`
-		<div id="note-list-item-handle-component">
-			<h1>NoteListItemHandle</h1>
+		<div
+			class="notes-item-handle-component"
+			t-att-class="{
+				'active': props.editMode
+			}"
+			t-on-click.stop.prevent="() => {}"
+		>
+			<img src="${DragIcon}" />
 		</div>
 	`;
-
-	static components = {};
-
-	state: any = undefined;
-
-	setup() {
-		this.state = useState({});
-	}
 }
