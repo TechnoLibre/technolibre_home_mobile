@@ -11,6 +11,7 @@
 
 @use "../components/intent/intent_component.scss";
 
+@use "../components/intent-handler/note/image/note_image_intent_handler_component.scss";
 @use "../components/intent-handler/note/text/note_text_intent_handler_component.scss";
 
 @use "../components/note/content/note_content_component.scss";
