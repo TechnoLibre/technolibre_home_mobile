@@ -44,6 +44,9 @@ project(':capgo-inappbrowser').projectDir = new File('../node_modules/@capgo/ina
 include ':chrismclarke-capacitor-video-player'
 project(':chrismclarke-capacitor-video-player').projectDir = new File('../node_modules/@chrismclarke/capacitor-video-player/android')
 
+include ':supernotes-capacitor-send-intent'
+project(':supernotes-capacitor-send-intent').projectDir = new File('../node_modules/@supernotes/capacitor-send-intent/android')
+
 include ':capacitor-plugin-safe-area'
 project(':capacitor-plugin-safe-area').projectDir = new File('../node_modules/capacitor-plugin-safe-area/android')
 
