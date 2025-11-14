@@ -36,6 +36,7 @@
     "@chrismclarke/capacitor-video-player": "^7.0.0",
     "@odoo/owl": "^2.8.1",
     "@popperjs/core": "^2.11.8",
+    "@supernotes/capacitor-send-intent": "^7.0.0",
     "air-datepicker": "^3.6.0",
     "capacitor-plugin-safe-area": "^4.0.2",
     "capacitor-secure-storage-plugin": "^0.12.0",
