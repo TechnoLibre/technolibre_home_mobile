@@ -357,6 +357,30 @@ export class NoteService {
 	}
 
 	/**
+	 * Creates a new note with a photo entry.
+	 * 
+	 * @param intent - The image intent
+	 */
+	public async newNoteWithImage(intent: ImageIntent) {
+		if (!this._notes) {
+			return;
+		}
+
+		const note = this.getNewNote(this.getNewId());
+		const entry = this.getNewPhotoEntry();
+		const params = entry.params as NoteEntryPhotoParams;
+
+		note.title = "Nouvelle note";
+		params.path = intent.url;
+
+		note.entries.push(entry);
+		this._notes.push(note);
+
+		await this.saveNoteListToStorage(this._notes);
+		this.eventBus.trigger(Events.RELOAD_NOTES);
+	}
+
+	/**
 	 * Adds an image entry to a note
 	 * 
 	 * @param id - The note's id

@@ -1,7 +1,6 @@
 import { Capacitor } from "@capacitor/core";
 import { useState, xml } from "@odoo/owl";
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
-import { Events } from "../../../../constants/events";
 import { ImageIntent } from "../../../../models/intent";
 
 export class NoteImageIntentHandlerComponent extends EnhancedComponent {
@@ -25,7 +24,12 @@ export class NoteImageIntentHandlerComponent extends EnhancedComponent {
 					t-att-data-id="note.id"
 					t-on-click.stop.prevent="event => this.addImageToNote(event)"
 				>
-					<t t-esc="note.title"></t>
+					<p class="intent__item__title" t-if="note.title">
+						<t t-esc="note.title"></t>
+					</p>
+					<p class="intent__item__title--empty" t-else="">
+						Sans titre
+					</p>
 				</li>
 			</ul>
 		</div>
@@ -42,7 +46,14 @@ export class NoteImageIntentHandlerComponent extends EnhancedComponent {
 	}
 
 	newNoteWithImage() {
-		this.eventBus.trigger(Events.NEW_NOTE_WITH_IMAGE, { intent: this.props.intent });
+		const intent = this.props.intent;
+
+		if (!intent || !(intent instanceof ImageIntent)) {
+			return;
+		}
+
+		this.noteService.newNoteWithImage(intent);
+		this.props.hidePopover();
 	}
 
 	addImageToNote(event: Event) {
