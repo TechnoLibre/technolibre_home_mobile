@@ -1,9 +1,9 @@
 import { v4 as uuidv4, validate, version } from "uuid";
-import { Note, NoteEntry, NoteEntryPhotoParams } from "../models/note";
+import { Note, NoteEntry, NoteEntryPhotoParams, NoteEntryVideoParams } from "../models/note";
 import { StorageConstants } from "../constants/storage";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
 import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../js/errors";
-import { ImageIntent } from "../models/intent";
+import { ImageIntent, VideoIntent } from "../models/intent";
 import { EventBus } from "@odoo/owl";
 import { Events } from "../constants/events";
 
@@ -381,7 +381,7 @@ export class NoteService {
 	}
 
 	/**
-	 * Adds an image entry to a note
+	 * Adds an image entry to a note.
 	 * 
 	 * @param id - The note's id
 	 * 
@@ -397,6 +397,54 @@ export class NoteService {
 		const entry = this.getNewPhotoEntry();
 
 		const params = entry.params as NoteEntryPhotoParams;
+		params.path = intent.url;
+		matchingNote.entries.push(entry);
+
+		await this.saveNoteListToStorage(this._notes);
+		this.eventBus.trigger(Events.RELOAD_NOTES);
+	}
+
+	/**
+	 * Creates a new note with a video entry.
+	 * 
+	 * @param intent - The video intent
+	 */
+	public async newNoteWithVideo(intent: VideoIntent) {
+		if (!this._notes) {
+			return;
+		}
+
+		const note = this.getNewNote(this.getNewId());
+		const entry = this.getNewVideoEntry();
+		const params = entry.params as NoteEntryVideoParams;
+
+		note.title = "Nouvelle note";
+		params.path = intent.url;
+
+		note.entries.push(entry);
+		this._notes.push(note);
+
+		await this.saveNoteListToStorage(this._notes);
+		this.eventBus.trigger(Events.RELOAD_NOTES);
+	}
+
+	/**
+	 * Adds a video entry to a note.
+	 * 
+	 * @param id - The note's id
+	 * 
+	 * @param intent - The video intent
+	 */
+	public async addVideoToNote(id: string, intent: VideoIntent) {
+		if (!this._notes) {
+			return;
+		}
+
+		let matchingNote = await this.getMatch(id);
+
+		const entry = this.getNewVideoEntry();
+
+		const params = entry.params as NoteEntryVideoParams;
 		params.path = intent.url;
 		matchingNote.entries.push(entry);
 
