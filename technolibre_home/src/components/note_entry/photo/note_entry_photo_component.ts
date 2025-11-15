@@ -1,5 +1,7 @@
 import { xml } from "@odoo/owl";
 
+import { Capacitor } from "@capacitor/core";
+
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 
 import PhotoOffIcon from "../../../assets/icon/photo_off.svg";
@@ -13,11 +15,19 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 			}"
 		>
 			<div class="note-entry__photo__thumbnail__wrapper">
-				<div
-					class="note-entry__photo__thumbnail"
-				>
-					<img src="${PhotoOffIcon}" />
-				</div>
+				<t t-if="props.params.path">
+					<img
+						class="note-entry__photo__thumbnail"
+						t-att-src="image"
+					/>
+				</t>
+				<t t-else="">
+					<div
+						class="note-entry__photo__thumbnail--empty"
+					>
+						<img src="${PhotoOffIcon}" />
+					</div>
+				</t>
 			</div>
 			<div class="note-entry__photo__data">
 				<button
@@ -36,4 +46,9 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 			</div>
 		</div>
 	`;
+
+	public get image() {
+		return Capacitor.convertFileSrc(this.props.params.path);
+	}
+
 }

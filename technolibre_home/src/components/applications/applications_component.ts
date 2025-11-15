@@ -51,7 +51,7 @@ export class ApplicationsComponent extends EnhancedComponent {
 		this.state.applications = await this.appService.getApps();
 	}
 
-	onAppAddClick(event) {
+	onAppAddClick(event: Event) {
 		event.preventDefault();
 
 		this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: "/applications/add" });

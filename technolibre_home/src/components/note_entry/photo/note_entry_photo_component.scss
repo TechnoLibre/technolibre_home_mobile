@@ -27,6 +27,14 @@
 }
 
 .note-entry-photo-component .note-entry__photo__thumbnail {
+	border-radius: 0.25rem;
+	height: 12rem;
+	object-fit: cover;
+	object-position: center;
+	width: 100%;
+}
+
+.note-entry-photo-component .note-entry__photo__thumbnail--empty {
 	@include mixins.flex--center;
 	$aspectRatio: math.div(16, 9);
 	$maxWidth: 16rem;

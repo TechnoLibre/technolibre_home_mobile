@@ -1,8 +1,11 @@
 import { v4 as uuidv4, validate, version } from "uuid";
-import { Note, NoteEntry } from "../models/note";
+import { Note, NoteEntry, NoteEntryPhotoParams } from "../models/note";
 import { StorageConstants } from "../constants/storage";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
 import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../js/errors";
+import { ImageIntent } from "../models/intent";
+import { EventBus } from "@odoo/owl";
+import { Events } from "../constants/events";
 
 export interface GetNoteListResult {
 	noteList: Array<Note>;
@@ -14,6 +17,15 @@ export interface GetMatchesResult extends GetNoteListResult {
 
 export class NoteService {
 	private _notes?: Array<Note>;
+	private _eventBus: EventBus;
+
+	constructor(newEventBus: EventBus) {
+		this._eventBus = newEventBus;
+	}
+
+	public get eventBus(): EventBus {
+		return this._eventBus;
+	}
 
 	/**
 	 * Returns all of the current notes.
@@ -342,6 +354,30 @@ export class NoteService {
 	 */
 	public isValidId(noteId: string): boolean {
 		return validate(noteId) && version(noteId) === 4;
+	}
+
+	/**
+	 * Adds an image entry to a note
+	 * 
+	 * @param id - The note's id
+	 * 
+	 * @param intent - The image intent
+	 */
+	public async addImageToNote(id: string, intent: ImageIntent) {
+		if (!this._notes) {
+			return;
+		}
+
+		let matchingNote = await this.getMatch(id);
+
+		const entry = this.getNewPhotoEntry();
+
+		const params = entry.params as NoteEntryPhotoParams;
+		params.path = intent.url;
+		matchingNote.entries.push(entry);
+
+		await this.saveNoteListToStorage(this._notes);
+		this.eventBus.trigger(Events.RELOAD_NOTES);
 	}
 
 	/**
