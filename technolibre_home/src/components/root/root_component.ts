@@ -7,13 +7,14 @@ import { SplashScreen } from "@capacitor/splash-screen";
 import { StatusBar, Style } from "@capacitor/status-bar";
 
 import { EnhancedComponent } from "../../js/enhancedComponent";
+import { Events } from "../../constants/events";
 import { StorageConstants } from "../../constants/storage";
 import { StorageGetResult, StorageUtils } from "../../utils/storageUtils";
 
 import { ContentComponent } from "../content/content_component";
+import { IntentComponent } from "../intent/intent_component";
 import { NavbarComponent } from "../navbar/navbar_component";
 import { VideoCameraComponent } from "../video_camera/video_camera_component";
-import { Events } from "../../constants/events";
 
 export class RootComponent extends EnhancedComponent {
 	static template = xml`
@@ -26,6 +27,7 @@ export class RootComponent extends EnhancedComponent {
       <ContentComponent />
       <NavbarComponent />
     </main>
+		<IntentComponent />
 		<VideoCameraComponent
 			t-if="state.isCameraOpen"
 			entryId="state.videoEntryId"
@@ -33,7 +35,7 @@ export class RootComponent extends EnhancedComponent {
 		<div id="video-player__wrapper"></div>
   `;
 
-	static components = { ContentComponent, NavbarComponent, VideoCameraComponent };
+	static components = { ContentComponent, IntentComponent, NavbarComponent, VideoCameraComponent };
 
 	setup() {
 		this.state = useState({ title: "This is my title", isCameraOpen: false, videoEntryId: undefined });

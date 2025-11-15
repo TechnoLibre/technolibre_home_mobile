@@ -66,7 +66,7 @@ export class ApplicationsComponent extends EnhancedComponent {
         this.state.debug = ENV.DEBUG_DEV;
     }
 
-    onAppAddClick(event) {
+    onAppAddClick(event: Event) {
         event.preventDefault();
 
         this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/applications/add"});
