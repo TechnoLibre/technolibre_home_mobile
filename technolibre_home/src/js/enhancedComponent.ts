@@ -1,7 +1,7 @@
 import { Component, EventBus } from "@odoo/owl";
 import { SimpleRouter } from "./router";
 import { AppService } from "../services/appService";
-import { NoteService } from "../services/noteService";
+import { NoteService } from "../services/note/noteService";
 import { IntentService } from "../services/intentService";
 
 export abstract class EnhancedComponent extends Component {

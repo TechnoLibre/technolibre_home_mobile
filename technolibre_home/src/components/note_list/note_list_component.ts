@@ -199,7 +199,7 @@ export class NoteListComponent extends EnhancedComponent {
 		let deleteSucceeded: boolean = false;
 
 		try {
-			deleteSucceeded = await this.noteService.delete(noteId);
+			deleteSucceeded = await this.noteService.crud.delete(noteId);
 		} catch (error: unknown) {
 			Dialog.alert({ message: ErrorMessages.NOTE_DELETE });
 			return;
