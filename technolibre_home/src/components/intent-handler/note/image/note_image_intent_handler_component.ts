@@ -52,7 +52,7 @@ export class NoteImageIntentHandlerComponent extends EnhancedComponent {
 			return;
 		}
 
-		this.noteService.newNoteWithImage(intent);
+		this.noteService.intent.newNoteWithImage(intent);
 		this.props.hidePopover();
 	}
 
@@ -64,7 +64,7 @@ export class NoteImageIntentHandlerComponent extends EnhancedComponent {
 			return;
 		}
 
-		this.noteService.addImageToNote(id, intent);
+		this.noteService.intent.addImageToNote(id, intent);
 		this.props.hidePopover();
 	}
 

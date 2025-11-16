@@ -54,7 +54,7 @@ export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 			return;
 		}
 
-		this.noteService.newNoteWithVideo(intent);
+		this.noteService.intent.newNoteWithVideo(intent);
 		this.props.hidePopover();
 	}
 
@@ -66,7 +66,7 @@ export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 			return;
 		}
 
-		this.noteService.addVideoToNote(id, intent);
+		this.noteService.intent.addVideoToNote(id, intent);
 		this.props.hidePopover();
 	}
 

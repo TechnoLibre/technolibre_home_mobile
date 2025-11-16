@@ -54,7 +54,7 @@ export class NoteTextIntentHandlerComponent extends EnhancedComponent {
 			return;
 		}
 
-		this.noteService.newNoteWithText(intent);
+		this.noteService.intent.newNoteWithText(intent);
 		this.props.hidePopover();
 	}
 
@@ -66,7 +66,7 @@ export class NoteTextIntentHandlerComponent extends EnhancedComponent {
 			return;
 		}
 
-		this.noteService.addTextToNote(id, intent);
+		this.noteService.intent.addTextToNote(id, intent);
 		this.props.hidePopover();
 	}
 

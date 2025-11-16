@@ -3,9 +3,8 @@ import { EventBus, mount } from "@odoo/owl";
 import { SimpleRouter } from "./router";
 import { AppService } from "../services/appService";
 import { IntentService } from "../services/intentService";
-import { NoteService } from "../services/noteService";
+import { NoteService } from "../services/note/noteService";
 import { Events } from "../constants/events";
-import { SendIntent } from "@supernotes/capacitor-send-intent";
 
 const eventBus = new EventBus();
 
@@ -24,7 +23,7 @@ eventBus.addEventListener(Events.CLOSE_CAMERA, (_event: any) => {
 const router = new SimpleRouter();
 
 const appService = new AppService();
-const noteService = new NoteService();
+const noteService = new NoteService(eventBus);
 const intentService = new IntentService(eventBus);
 
 const env = { eventBus, router, appService, noteService, intentService };
