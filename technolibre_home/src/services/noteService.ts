@@ -1,9 +1,9 @@
 import { v4 as uuidv4, validate, version } from "uuid";
-import { Note, NoteEntry, NoteEntryPhotoParams, NoteEntryVideoParams } from "../models/note";
+import { Note, NoteEntry, NoteEntryPhotoParams, NoteEntryTextParams, NoteEntryVideoParams } from "../models/note";
 import { StorageConstants } from "../constants/storage";
 import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
 import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../js/errors";
-import { ImageIntent, VideoIntent } from "../models/intent";
+import { ImageIntent, TextIntent, VideoIntent } from "../models/intent";
 import { EventBus } from "@odoo/owl";
 import { Events } from "../constants/events";
 
@@ -354,6 +354,54 @@ export class NoteService {
 	 */
 	public isValidId(noteId: string): boolean {
 		return validate(noteId) && version(noteId) === 4;
+	}
+
+	/**
+	 * Creates a new note with a text entry.
+	 * 
+	 * @param intent - The text intent
+	 */
+	public async newNoteWithText(intent: TextIntent) {
+		if (!this._notes) {
+			return;
+		}
+
+		const note = this.getNewNote(this.getNewId());
+		const entry = this.getNewTextEntry();
+		const params = entry.params as NoteEntryTextParams;
+
+		note.title = "Nouvelle note";
+		params.text = intent.text;
+
+		note.entries.push(entry);
+		this._notes.push(note);
+
+		await this.saveNoteListToStorage(this._notes);
+		this.eventBus.trigger(Events.RELOAD_NOTES);
+	}
+
+	/**
+	 * Adds a text entry to a note.
+	 * 
+	 * @param id - The note's id
+	 * 
+	 * @param intent - The text intent
+	 */
+	public async addTextToNote(id: string, intent: TextIntent) {
+		if (!this._notes) {
+			return;
+		}
+
+		let matchingNote = await this.getMatch(id);
+
+		const entry = this.getNewTextEntry();
+
+		const params = entry.params as NoteEntryTextParams;
+		params.text = intent.text;
+		matchingNote.entries.push(entry);
+
+		await this.saveNoteListToStorage(this._notes);
+		this.eventBus.trigger(Events.RELOAD_NOTES);
 	}
 
 	/**
