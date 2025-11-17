@@ -1,13 +1,7 @@
 @use "../../css/mixins.scss";
 
 #intent-component {
-	@include mixins.popover;
-}
-
-#intent-component #intent__wrapper {
-	@include mixins.popover__content__wrapper;
-}
-
-#intent-component #intent {
-	@include mixins.popover__content;
+	margin: 0 auto;
+	max-width: 48rem;
+	padding: 1rem 1.25rem;
 }

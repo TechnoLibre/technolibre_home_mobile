@@ -8,14 +8,13 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { Events } from "../../constants/events";
-import { Note, NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryVideoParams } from "../../models/note";
+import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryVideoParams } from "../../models/note";
 
 import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
 import { NoteContentComponent } from "./content/note_content_component";
 import { NoteTopControlsComponent } from "./top_controls/note_top_controls_component";
 import { TagManagerComponent } from "./tag_manager/tag_manager_component";
-import { ImageIntent } from "../../models/intent";
 
 export class NoteComponent extends EnhancedComponent {
 	static template = xml`

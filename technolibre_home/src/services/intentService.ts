@@ -1,10 +1,11 @@
 import { EventBus } from "@odoo/owl";
 import { Intent, SendIntent } from "@supernotes/capacitor-send-intent";
 import { Events } from "../constants/events";
-import { ImageIntent, IntentType, TextIntent, VideoIntent } from "../models/intent";
+import { ImageIntent, ImplicitIntent, IntentType, TextIntent, VideoIntent } from "../models/intent";
 
 export class IntentService {
   private _eventBus: EventBus;
+  private _intent?: ImplicitIntent;
 
   constructor(newEventBus: EventBus) {
     this._eventBus = newEventBus;
@@ -13,6 +14,18 @@ export class IntentService {
 
   public get eventBus(): EventBus {
     return this._eventBus;
+  }
+
+  public get intent(): ImplicitIntent | undefined {
+    return this._intent;
+  }
+
+  public set intent(newIntent: ImplicitIntent) {
+    this._intent = newIntent;
+  }
+
+  public clearIntent() {
+    this._intent = undefined;
   }
 
   public getBroadType(exactType?: string): string | undefined {
@@ -55,6 +68,14 @@ export class IntentService {
     }
   }
 
+  public isIntentType(broadType?: string): broadType is IntentType {
+    if (!broadType) {
+      return false;
+    }
+
+    return ["text", "image", "video"].includes(broadType);
+  }
+
   private async listenForIntents(): Promise<void> {
     const value: Intent = await SendIntent.checkSendIntentReceived();
 
@@ -62,14 +83,13 @@ export class IntentService {
       return;
     }
 
-    this.eventBus.trigger(Events.RECEIVE_INTENT, { intent: value });
-  }
+    const intent = this.from(value);
 
-  private isIntentType(broadType?: string): broadType is IntentType {
-    if (!broadType) {
-      return false;
+    if (!intent) {
+      return;
     }
 
-    return ["text", "image", "video"].includes(broadType);
+    this._intent = intent;
+    this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: `/intent/${intent.type}` });
   }
 }

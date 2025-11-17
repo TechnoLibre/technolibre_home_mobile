@@ -11,7 +11,7 @@ export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 				<source t-att-src="state.videoUri"></source>
 			</video>
 			<h3 class="intent__notes__title">Notes</h3>
-			<ul class="intent__notes" t-if="state.notes.length !== 0">
+			<ul class="intent__notes">
 				<li
 					class="intent__item intent__item--new"
 					t-on-click.stop.prevent="newNoteWithVideo"
@@ -55,7 +55,7 @@ export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 		}
 
 		this.noteService.intent.newNoteWithVideo(intent);
-		this.props.hidePopover();
+		this.props.goHome();
 	}
 
 	addVideoToNote(event: Event) {
@@ -67,7 +67,7 @@ export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 		}
 
 		this.noteService.intent.addVideoToNote(id, intent);
-		this.props.hidePopover();
+		this.props.goHome();
 	}
 
 	public async getVideoUri() {

@@ -5,12 +5,12 @@ import { Events } from "../../constants/events";
 
 export class ContentComponent extends EnhancedComponent {
 	static template = xml`
-        <div id="content-component">
-            <section id="content">
-                <t t-component="getRouteComponent()" />
-            </section>
-        </div>
-    `;
+		<div id="content-component">
+			<section id="content">
+				<t t-component="getRouteComponent()" />
+			</section>
+		</div>
+	`;
 
 	setup() {
 		this.state = useState({ currentRoute: window.location.pathname, params: {} });

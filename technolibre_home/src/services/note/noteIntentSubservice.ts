@@ -25,6 +25,7 @@ export class NoteIntentSubservice {
 		const params = entry.params as NoteEntryTextParams;
 
 		note.title = "Nouvelle note";
+		note.date = (new Date()).toISOString();
 		params.text = intent.text;
 
 		note.entries.push(entry);
@@ -73,6 +74,7 @@ export class NoteIntentSubservice {
 		const params = entry.params as NoteEntryPhotoParams;
 
 		note.title = "Nouvelle note";
+		note.date = (new Date()).toISOString();
 		params.path = intent.url;
 
 		note.entries.push(entry);
@@ -121,6 +123,7 @@ export class NoteIntentSubservice {
 		const params = entry.params as NoteEntryVideoParams;
 
 		note.title = "Nouvelle note";
+		note.date = (new Date()).toISOString();
 		params.path = intent.url;
 
 		note.entries.push(entry);
