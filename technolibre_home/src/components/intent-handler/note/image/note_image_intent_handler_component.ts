@@ -125,5 +125,4 @@ export class NoteImageIntentHandlerComponent extends EnhancedComponent {
 		return { orientation, aspectRatio };
 	};
 
-
 }

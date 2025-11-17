@@ -1,13 +1,21 @@
-import { useState, xml } from "@odoo/owl";
-import { VideoIntent } from "../../../../models/intent";
-import { EnhancedComponent } from "../../../../js/enhancedComponent";
+import { onMounted, useRef, useState, xml } from "@odoo/owl";
+
 import { Capacitor } from "@capacitor/core";
+
+import { EnhancedComponent } from "../../../../js/enhancedComponent";
+import { VideoIntent } from "../../../../models/intent";
 
 export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 	static template = xml`
 		<div id="note-video-intent-handler-component">
 			<h1 class="intent__title">Ajouter une video</h1>
-			<video class="intent__thumbnail">
+			<video
+				class="intent__thumbnail"
+				t-att-style="videoDataStyle"
+				t-att-data-orientation="state.orientation"
+				t-ref="video"
+				controls=""
+			>
 				<source t-att-src="state.videoUri"></source>
 			</video>
 			<h3 class="intent__notes__title">Notes</h3>
@@ -41,8 +49,16 @@ export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 
 	state: any = undefined;
 
+	videoRef = useRef("video");
+
 	setup() {
-		this.state = useState({ videoUri: "", notes: [] });
+		onMounted(this.onMounted.bind(this));
+		this.state = useState({
+			videoUri: "",
+			orientation: "landscape",
+			aspectRatio: 16 / 9,
+			notes: []
+		});
 		this.getVideoUri();
 		this.getNotes();
 	}
@@ -77,10 +93,42 @@ export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 
 		const result = Capacitor.convertFileSrc(this.props.intent.url);
 
-		this.state.imageUri = result;
+		this.state.videoUri = result;
 	}
 
 	public async getNotes() {
 		this.state.notes = await this.noteService.getNotes();
+	}
+
+	public get videoDataStyle(): string {
+		return `--aspect-ratio: ${this.state.aspectRatio}`;
+	}
+
+	public setVideoData() {
+		if (!this.videoRef.el) {
+			return;
+		}
+
+		const video = this.videoRef.el as HTMLVideoElement;
+		const width = video.videoWidth;
+		const height = video.videoHeight;
+
+		console.log(`${width}x${height}`);
+
+		if (width > height) {
+			this.state.orientation = "landscape";
+			this.state.aspectRatio = width / height;
+		} else {
+			this.state.orientation = "portrait";
+			this.state.aspectRatio = height / width;
+		}
+	};
+
+	private onMounted() {
+		if (!this.videoRef.el) {
+			return;
+		}
+
+		this.videoRef.el.addEventListener("loadedmetadata", this.setVideoData.bind(this))
 	}
 }
