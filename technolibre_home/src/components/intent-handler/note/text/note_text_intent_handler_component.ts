@@ -11,7 +11,7 @@ export class NoteTextIntentHandlerComponent extends EnhancedComponent {
 				<t t-esc="state.text"></t>
 			</p>
 			<h3 class="intent__notes__title">Notes</h3>
-			<ul class="intent__notes" t-if="state.notes.length !== 0">
+			<ul class="intent__notes">
 				<li
 					class="intent__item intent__item--new"
 					t-on-click.stop.prevent="newNoteWithText"
@@ -55,7 +55,7 @@ export class NoteTextIntentHandlerComponent extends EnhancedComponent {
 		}
 
 		this.noteService.intent.newNoteWithText(intent);
-		this.props.hidePopover();
+		this.props.goHome();
 	}
 
 	addTextToNote(event: Event) {
@@ -67,7 +67,7 @@ export class NoteTextIntentHandlerComponent extends EnhancedComponent {
 		}
 
 		this.noteService.intent.addTextToNote(id, intent);
-		this.props.hidePopover();
+		this.props.goHome();
 	}
 
 	public async getText() {

@@ -8,6 +8,6 @@ export const Events: Record<string, string> = {
 	CLOSE_CAMERA: "close_camera",
 	SET_AUDIO_RECORDING: "set_audio_recording",
 	SET_VIDEO_RECORDING: "set_video_recording",
-	RECEIVE_INTENT: "receive_intent",
-	RELOAD_NOTES: "reload_notes"
+	RELOAD_NOTES: "reload_notes",
+	SET_INTENT: "set_intent"
 }
