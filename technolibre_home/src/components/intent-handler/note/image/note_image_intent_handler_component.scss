@@ -1,0 +1,23 @@
+@use "../../../../css/mixins.scss";
+
+#note-image-intent-handler-component {
+	& .intent__title {
+		font-size: 1.5rem;
+		margin-bottom: 1rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	& .intent__thumbnail {
+    @include mixins.intent__thumbnail;
+	}
+	& .intent__notes__title {
+		margin: 0.5rem 0;
+	}
+	& .intent__notes {
+		list-style: none;
+	}
+	& .intent__item {
+		@include mixins.intent__item;
+	}
+}

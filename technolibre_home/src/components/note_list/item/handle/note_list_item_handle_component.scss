@@ -1,0 +1,19 @@
+@use "../../../../css/mixins.scss";
+
+.notes-item-handle-component {
+	@include mixins.flex--center;
+	cursor: move;
+	flex-shrink: 0;
+	height: 100%;
+	overflow: hidden;
+	transition: margin 100ms ease-in-out, width 100ms ease-in-out;
+	margin-left: 0;
+	width: 0;
+	& img {
+		pointer-events: none;
+	}
+	&.active {
+		margin-left: 0.5rem;
+		width: 3rem;
+	}
+}

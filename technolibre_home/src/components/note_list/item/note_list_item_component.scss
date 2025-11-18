@@ -8,13 +8,16 @@
 	background-color: #151515;
 	cursor: pointer;
 	display: grid;
-	grid-template-areas: "tags tags" "data actions";
-	grid-template-columns: 1fr auto;
+	grid-template-areas: "handle data actions";
+	grid-template-columns: auto 1fr auto;
 	justify-content: flex-start;
 	overflow: hidden;
 	transition: background-color 150ms ease-in-out;
 	&:hover {
 		background-color: #1a1a1a;
+	}
+	&.has-tags {
+		grid-template-areas: "tags tags tags" "handle data actions";
 	}
 	& + .notes-item {
 		margin-top: 0.75rem;
@@ -59,10 +62,17 @@
 		}
 	}
 	&__actions {
+		$spacing: 0.75rem;
 		@include mixins.flex();
 		gap: 0.5rem;
 		grid-area: actions;
-		margin: 0.75rem 0.75rem 0.75rem 0;
+		margin: $spacing 0;
+		overflow: hidden;
+		transition: width 150ms ease-in-out;
+		width: 0;
+		&.active {
+			width: calc(3rem + $spacing);
+		}
 	}
 	&__action {
 		border: none;

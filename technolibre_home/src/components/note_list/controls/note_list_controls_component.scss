@@ -1,0 +1,69 @@
+@use "../../../css/mixins.scss";
+
+#notes__controls {
+	align-items: center;
+	display: grid;
+	gap: 0.5rem;
+	grid-template-areas: "edit" "archived";
+	grid-template-columns: 1fr;
+	grid-template-rows: repeat(2, 1fr);
+	max-width: 48rem;
+	min-height: 2rem;
+	margin: 0 auto;
+	padding: 0 1rem;
+	@media only screen and (min-width: 48rem) {
+		grid-template-areas: "edit archived";
+		grid-template-columns: repeat(2, 1fr);
+		grid-template-rows: 1fr;
+	}
+}
+
+#notes__controls .notes__control {
+	@include mixins.flex(center, space-between);
+	background-color: #222;
+	border-radius: 0.5rem;
+	color: var(--text);
+	gap: 0.5rem;
+	min-width: 0;
+	padding: 0.75rem;
+	text-decoration: none;
+	&:hover {
+		background-color: #333;
+	}
+	& p {
+		@include mixins.ellipsis;
+	}
+}
+
+#notes__controls .notes__control__edit-mode {
+	grid-area: edit;
+}
+
+#notes__controls .notes__control__show-archived {
+	grid-area: archived;
+}
+
+#notes__controls #notes__control__show-archived__indicator {
+	$indicatorWidth: 2rem;
+	$pillMargin: 0.125rem;
+	$pillWidth: 1rem;
+	background-color: red;
+	border-radius: 0.25rem;
+	overflow: hidden;
+	width: $indicatorWidth;
+	& .pill {
+		background-color: darkred;
+		border-radius: 0.125rem;
+		height: 0.75rem;
+		margin: $pillMargin;
+		transition: transform 150ms ease-in-out;
+		width: $pillWidth;
+	}
+	&.active {
+		background-color: green;
+		& .pill {
+			background-color: darkgreen;
+			transform: translateX(calc($indicatorWidth - $pillWidth - 2 * $pillMargin));
+		}
+	}
+}

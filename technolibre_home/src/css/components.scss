@@ -9,6 +9,12 @@
 @use "../components/applications/add/applications_add_component.scss";
 @use "../components/applications/edit/applications_edit_component.scss";
 
+@use "../components/intent/intent_component.scss";
+
+@use "../components/intent-handler/note/image/note_image_intent_handler_component.scss";
+@use "../components/intent-handler/note/text/note_text_intent_handler_component.scss";
+@use "../components/intent-handler/note/video/note_video_intent_handler_component.scss";
+
 @use "../components/note/content/note_content_component.scss";
 @use "../components/note/date_picker/date_picker_component.scss";
 
@@ -27,6 +33,8 @@
 @use "../components/note/top_controls/note_top_controls_component.scss";
 @use "../components/note/note_component.scss";
 
+@use "../components/note_list/controls/note_list_controls_component.scss";
+@use "../components/note_list/item/handle/note_list_item_handle_component.scss";
 @use "../components/note_list/item/note_list_item_component.scss";
 @use "../components/note_list/note_list_component.scss";
 

@@ -3,6 +3,7 @@ import { ApplicationsComponent } from "../components/applications/applications_c
 import { OptionsComponent } from "../components/options/options_component";
 import { ApplicationsAddComponent } from "../components/applications/add/applications_add_component";
 import { ApplicationsEditComponent } from "../components/applications/edit/applications_edit_component";
+import { IntentComponent } from "../components/intent/intent_component";
 import { NoteListComponent } from "../components/note_list/note_list_component";
 import { NoteComponent } from "../components/note/note_component";
 
@@ -19,6 +20,7 @@ export const routes: Route[] = [
 	{ pathname: "/notes", component: NoteListComponent },
 	{ pathname: "/notes/edit/:id", component: NoteListComponent },
 	{ pathname: "/note/:id", component: NoteComponent },
+	{ pathname: "/intent/:type", component: IntentComponent },
 	{ pathname: "/options", component: OptionsComponent },
 	{ pathname: "*", component: HomeComponent }
 ];

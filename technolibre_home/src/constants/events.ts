@@ -7,5 +7,7 @@ export const Events: Record<string, string> = {
 	OPEN_CAMERA: "open_camera",
 	CLOSE_CAMERA: "close_camera",
 	SET_AUDIO_RECORDING: "set_audio_recording",
-	SET_VIDEO_RECORDING: "set_video_recording"
+	SET_VIDEO_RECORDING: "set_video_recording",
+	RELOAD_NOTES: "reload_notes",
+	SET_INTENT: "set_intent"
 }

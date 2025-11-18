@@ -3,6 +3,7 @@ import { useState, xml } from "@odoo/owl";
 import { Dialog } from "@capacitor/dialog";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
 
+import { BiometryUtils } from "../../utils/biometryUtils";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
@@ -73,13 +74,13 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	addAudio() {
-		const newEntry = this.noteService.getNewAudioEntry();
+		const newEntry = this.noteService.entry.getNewAudioEntry();
 		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
 	}
 
 	addDateEntry() {
-		const newEntry = this.noteService.getNewDateEntry();
+		const newEntry = this.noteService.entry.getNewDateEntry();
 
 		const params = newEntry.params as NoteEntryDateParams;
 
@@ -99,7 +100,7 @@ export class NoteComponent extends EnhancedComponent {
 		}
 
 		const currentPosition: Position = await Geolocation.getCurrentPosition();
-		const newEntry = this.noteService.getNewGeolocationEntry();
+		const newEntry = this.noteService.entry.getNewGeolocationEntry();
 
 		newEntry.params = {
 			text: "Données de géolocalisation",
@@ -113,24 +114,31 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	addPhoto() {
-		this.state.note.entries.push(this.noteService.getNewPhotoEntry());
+		this.state.note.entries.push(this.noteService.entry.getNewPhotoEntry());
 		this.saveNoteData();
 		this.focusLastEntry();
 	}
 
 	addText() {
-		this.state.note.entries.push(this.noteService.getNewTextEntry());
+		this.state.note.entries.push(this.noteService.entry.getNewTextEntry());
 		this.saveNoteData();
 		this.focusLastEntry();
 	}
 
 	addVideo() {
-		this.state.note.entries.push(this.noteService.getNewVideoEntry());
+		this.state.note.entries.push(this.noteService.entry.getNewVideoEntry());
 		this.saveNoteData();
 		this.focusLastEntry();
 	}
 
-	deleteEntry(entryId: string) {
+	async deleteEntry(entryId: string) {
+		const isBiometricAuthSuccessful: boolean = await BiometryUtils.authenticateIfAvailable();
+
+		if (!isBiometricAuthSuccessful) {
+			Dialog.alert({ message: ErrorMessages.BIOMETRIC_AUTH });
+			return;
+		}
+
 		const entries: Array<NoteEntry> = this.state.note.entries;
 		const entryIndex = entries.findIndex(entry => entry.id === entryId);
 
@@ -200,11 +208,11 @@ export class NoteComponent extends EnhancedComponent {
 	async saveNoteData() {
 		try {
 			if (this.state.newNote) {
-				await this.noteService.add(this.state.note);
+				await this.noteService.crud.add(this.state.note);
 				this.state.newNote = false;
 			} else {
 
-				await this.noteService.edit(this.state.noteId, this.state.note);
+				await this.noteService.crud.edit(this.state.noteId, this.state.note);
 			}
 		} catch (error: unknown) {
 			if (error instanceof Error) {
