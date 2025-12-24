@@ -1,4 +1,4 @@
-import { onMounted, useState, xml } from "@odoo/owl";
+import { onMounted, onWillUnmount, useState, xml } from "@odoo/owl";
 
 import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
@@ -34,6 +34,13 @@ export class RootComponent extends EnhancedComponent {
       <ContentComponent />
       <NavbarComponent />
     </main>
+    <t t-if="state.isLoadingApps or state.isSaving">
+      <div class="app-status-overlay">
+        <div class="app-status-spinner"></div>
+        <t t-if="state.isLoadingApps">Loading…</t>
+        <t t-elif="state.isSaving">Saving…</t>
+      </div>
+    </t>
 		<IntentComponent />
 		<VideoCameraComponent
 			t-if="state.isCameraOpen"
@@ -45,10 +52,28 @@ export class RootComponent extends EnhancedComponent {
 	static components = { ContentComponent, IntentComponent, NavbarComponent, VideoCameraComponent };
 
 	setup() {
-		this.state = useState({ title: "This is my title", isCameraOpen: false, videoEntryId: undefined });
+    this.state = useState({
+      title: "This is my title",
+      isCameraOpen: false,
+      videoEntryId: undefined,
+      isSaving: false,
+      isLoadingApps: false,
+    });
+
 		onMounted(() => {
 			SplashScreen.hide();
+
+      // écoute les changements loading/saving
+      this.env.appService.setStateListener((s) => {
+        this.state.isSaving = s.isSaving;
+        this.state.isLoadingApps = s.isLoadingApps;
+      });
 		});
+
+    onWillUnmount(() => {
+      this.env.appService.setStateListener(undefined);
+    });
+
 		this.enableEdgeToEdge();
 		this.setupAndroidBackButton();
 		this.setDefaultBiometryStorageValue();
