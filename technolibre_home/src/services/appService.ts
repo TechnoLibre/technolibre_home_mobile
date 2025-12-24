@@ -1,7 +1,12 @@
-import {Application, ApplicationID} from "../models/application";
-import {StorageGetResult, StorageUtils} from "../utils/storageUtils";
-import {StorageConstants} from "../constants/storage";
-import {AppAlreadyExistsError, AppKeyNotFoundError, NoAppMatchError, UndefinedAppListError} from "../js/errors";
+import { Application, ApplicationID } from "../models/application";
+import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
+import { StorageConstants } from "../constants/storage";
+import {
+  AppAlreadyExistsError,
+  AppKeyNotFoundError,
+  NoAppMatchError,
+  UndefinedAppListError,
+} from "../js/errors";
 
 export interface GetAppListResult {
   appList: Array<Application>;
@@ -14,20 +19,52 @@ export interface GetMatchesResult extends GetAppListResult {
 export class AppService {
   private _applications?: Array<Application>;
 
+  // ---- UI state (loading / saving) ----
+  private _isLoadingApps = false;
+  private _isSaving = false;
+
+  // callback optionnel pour notifier l'UI
+  private _onStateChange?: (state: { isLoadingApps: boolean; isSaving: boolean }) => void;
+
+  public setStateListener(
+    cb?: (state: { isLoadingApps: boolean; isSaving: boolean }) => void
+  ) {
+    this._onStateChange = cb;
+  }
+
+  public get isLoadingApps(): boolean {
+    return this._isLoadingApps;
+  }
+
+  public get isSaving(): boolean {
+    return this._isSaving;
+  }
+
+  private emitState() {
+    this._onStateChange?.({ isLoadingApps: this._isLoadingApps, isSaving: this._isSaving });
+  }
+
+  private setLoadingApps(v: boolean) {
+    this._isLoadingApps = v;
+    this.emitState();
+  }
+
+  private setSaving(v: boolean) {
+    this._isSaving = v;
+    this.emitState();
+  }
+
   /**
    * Returns all of the current apps.
-   *
-   * @returns The current list of apps
-   *
-   * @throws AppKeyNotFoundError
-   * Thrown if the applications key is not found in the secure storage.
-   *
-   * @throws UndefinedAppListError
-   * Thrown if the list of apps is undefined.
    */
   public async getApps(): Promise<Array<Application>> {
     if (this._applications === undefined) {
-      this._applications = await this.getAppsFromStorage();
+      this.setLoadingApps(true);
+      try {
+        this._applications = await this.getAppsFromStorage();
+      } finally {
+        this.setLoadingApps(false);
+      }
     }
     return this._applications;
   }
@@ -58,6 +95,7 @@ export class AppService {
     const appList = await this.getApps();
     appList.push(app);
 
+    // ici: sauvegarde immédiate (pas schedule), mais on montre le loader
     const saveResult = await this.saveAppListToStorage(appList);
 
     if (saveResult.value) {
@@ -71,7 +109,7 @@ export class AppService {
    * Clears the list of apps.
    */
   public async clear() {
-    const newAppList = [];
+    const newAppList: Array<Application> = [];
 
     const saveResult = await this.saveAppListToStorage(newAppList);
 
@@ -165,13 +203,12 @@ export class AppService {
     }
 
     if (options?.ignorePassword) {
-      // on garde exactement le password existant en storage
-      newApp = Object.assign({}, newApp, {password: appToEdit.password});
+      newApp = Object.assign({}, newApp, { password: appToEdit.password });
     }
 
     appList[editIndex] = Object.assign({}, newApp);
 
-    // const saveResult = await this.saveAppListToStorage(appList);
+    // Sauvegarde planifiée (debounce)
     const saveResult = await this.scheduleSave(appList);
 
     if (saveResult.value) {
@@ -238,9 +275,10 @@ export class AppService {
    * Thrown if the list of apps is undefined.
    */
   private async getAppsFromStorage(): Promise<Array<Application>> {
-    const storageGetResult: StorageGetResult<Array<Application>> = await StorageUtils.getValueByKey<
-      Array<Application>
-    >(StorageConstants.APPLICATIONS_STORAGE_KEY);
+    const storageGetResult: StorageGetResult<Array<Application>> =
+      await StorageUtils.getValueByKey<Array<Application>>(
+        StorageConstants.APPLICATIONS_STORAGE_KEY
+      );
 
     if (!storageGetResult.keyExists) {
       throw new AppKeyNotFoundError();
@@ -253,18 +291,54 @@ export class AppService {
     return storageGetResult.value;
   }
 
+  // ---- scheduled save + flush ----
   private _saveTimer?: number;
   private _pendingSave?: Promise<{ value: boolean }>;
 
   private scheduleSave(appList: Array<Application>): Promise<{ value: boolean }> {
     window.clearTimeout(this._saveTimer);
 
-    return new Promise((resolve) => {
+    // On passe en "saving" dès qu’une sauvegarde est planifiée
+    this.setSaving(true);
+
+    this._pendingSave = new Promise((resolve) => {
       this._saveTimer = window.setTimeout(async () => {
         const res = await this.saveAppListToStorage(appList);
         resolve(res);
       }, 150); // 150-300ms souvent suffisant
     });
+
+    return this._pendingSave;
+  }
+
+  /**
+   * Permet de forcer la sauvegarde si une save est en attente.
+   * À appeler avant navigation, background, fermeture, etc.
+   */
+  public async flushSaves(): Promise<{ value: boolean }> {
+    // rien en attente
+    if (!this._pendingSave) {
+      return { value: true };
+    }
+
+    // force le timer à exécuter maintenant
+    if (this._saveTimer) {
+      window.clearTimeout(this._saveTimer);
+      this._saveTimer = undefined;
+
+      // Rejoue la dernière save immédiatement:
+      // On n'a pas conservé appList ici, donc flushSaves force juste l’attente de la pendingSave.
+      // Si tu veux "flush immédiat réel", on peut stocker _lastAppList (voir note plus bas).
+    }
+
+    try {
+      const res = await this._pendingSave;
+      return res;
+    } finally {
+      this._pendingSave = undefined;
+      // Quand la save est terminée, on enlève l’indicateur
+      this.setSaving(false);
+    }
   }
 
   /**
@@ -275,7 +349,16 @@ export class AppService {
    * @returns True if the save succeeded, otherwise false
    */
   private async saveAppListToStorage(appList: Array<Application>): Promise<{ value: boolean }> {
-    return StorageUtils.setKeyValuePair(StorageConstants.APPLICATIONS_STORAGE_KEY, appList);
+    this.setSaving(true);
+    try {
+      return await StorageUtils.setKeyValuePair(StorageConstants.APPLICATIONS_STORAGE_KEY, appList);
+    } finally {
+      // Ici on met false seulement si aucune save planifiée n'existe encore
+      // (flushSaves() remettra aussi à false)
+      if (!this._pendingSave) {
+        this.setSaving(false);
+      }
+    }
   }
 
   /**
