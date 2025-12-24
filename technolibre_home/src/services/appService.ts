@@ -171,7 +171,8 @@ export class AppService {
 
         appList[editIndex] = Object.assign({}, newApp);
 
-        const saveResult = await this.saveAppListToStorage(appList);
+        // const saveResult = await this.saveAppListToStorage(appList);
+        const saveResult = await this.scheduleSave(appList);
 
         if (saveResult.value) {
             this._applications = appList;
@@ -194,7 +195,7 @@ export class AppService {
      * Thrown if the list of apps is undefined.
      */
     public async matches(appID: ApplicationID): Promise<Array<Application>> {
-        const appList: Array<Application> = await this.getAppsFromStorage();
+        const appList: Array<Application> = await this.getApps();
 
         return appList.filter((app) => this.matchesID(appID, app));
     }
@@ -250,6 +251,20 @@ export class AppService {
         }
 
         return storageGetResult.value;
+    }
+
+    private _saveTimer?: number;
+    private _pendingSave?: Promise<{value: boolean}>;
+
+    private scheduleSave(appList: Array<Application>): Promise<{value: boolean}> {
+      window.clearTimeout(this._saveTimer);
+
+      return new Promise((resolve) => {
+        this._saveTimer = window.setTimeout(async () => {
+          const res = await this.saveAppListToStorage(appList);
+          resolve(res);
+        }, 150); // 150-300ms souvent suffisant
+      });
     }
 
     /**
