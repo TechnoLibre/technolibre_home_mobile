@@ -53,17 +53,20 @@ find "$ANDROID_DIR" -type f \
 OLD_PATH="$(echo "$OLD_ID" | tr '.' '/')"
 NEW_PATH="$(echo "$NEW_ID" | tr '.' '/')"
 FALLBACK_PATH="ca/technolibre/home"
-FALLBACK_FILE_PATH="android/app/src/main/java/$FALLBACK_PATH/MainActivity.java"
+FALLBACK_FILE_PATH="android/app/src/main/java/$FALLBACK_PATH"
+FALLBACK_FILE_PATH_JAVA_FILE="$FALLBACK_FILE_PATH/MainActivity.java"
 
 if [[ ! -f "$OLD_PATH" ]]; then
   echo "Ancien path : $OLD_PATH NOT EXIST!"
-  if git ls-tree -r --name-only HEAD | grep -qx "$FALLBACK_FILE_PATH"; then
-    git checkout -- "$FALLBACK_FILE_PATH"
+  if git ls-tree -r --name-only HEAD | grep -qx "$FALLBACK_FILE_PATH_JAVA_FILE"; then
+    echo "Checkout $FALLBACK_FILE_PATH_JAVA_FILE"
+    git restore --staged "$FALLBACK_FILE_PATH_JAVA_FILE"
+    git checkout -- "$FALLBACK_FILE_PATH_JAVA_FILE"
     OLD_PATH="$FALLBACK_PATH"
     echo "OLD_PATH mis à jour -> $OLD_PATH"
   else
-    echo "Erreur: $FALLBACK_PATH n'existe pas dans git"
-    exit 1
+    echo "Erreur: $FALLBACK_FILE_PATH_JAVA_FILE n'existe pas dans git"
+#    exit 1
   fi
   echo "Force change ancien path : $OLD_PATH"
 else
@@ -74,9 +77,15 @@ echo "Nouveau path: $NEW_PATH"
 
 SRC_MAIN="$ANDROID_DIR/app/src/main"
 OLD_PKG="$OLD_ID"
+OLD_PKG_FALLBACK="$(echo "$FALLBACK_PATH" | tr '/' '.')"
 NEW_PKG="$NEW_ID"
 
+echo "OLD PKG: $OLD_PKG"
+echo "OLD PKG FALLBACK: $OLD_PKG_FALLBACK"
+echo "NEW PKG: $NEW_PKG"
+
 for LANG_DIR in "$SRC_MAIN/java" "$SRC_MAIN/kotlin"; do
+  echo $LANG_DIR
   if [[ -d "$LANG_DIR/$OLD_PATH" ]]; then
     echo "Déplacement des sources dans $LANG_DIR"
     mkdir -p "$LANG_DIR/$NEW_PATH"
@@ -92,6 +101,10 @@ for LANG_DIR in "$SRC_MAIN/java" "$SRC_MAIN/kotlin"; do
       | xargs -0 perl -i -pe '
           s/^(\s*package\s+)\Q'"$OLD_PKG"'\E(\s*;?\s*)$/$1'"$NEW_PKG"'$2/m;
         '
+    find "$LANG_DIR/$NEW_PATH" -type f \( -name "*.java" -o -name "*.kt" \) -print0 \
+      | xargs -0 perl -i -pe '
+          s/^(\s*package\s+)\Q'"$OLD_PKG_FALLBACK"'\E(\s*;?\s*)$/$1'"$NEW_PKG"'$2/m;
+        '
 
     # Nettoie les dossiers vides parents (monte du bas vers le haut)
     DIR="$LANG_DIR/$(dirname "$OLD_PATH")"
@@ -101,5 +114,20 @@ for LANG_DIR in "$SRC_MAIN/java" "$SRC_MAIN/kotlin"; do
     done
   fi
 done
+#echo "reverse"
+#for LANG_DIR in "$SRC_MAIN/java" "$SRC_MAIN/kotlin"; do
+#  echo $LANG_DIR
+#  if [[ -d "$LANG_DIR/$NEW_PKG" ]]; then
+#    echo "Modifier les fichiers destinations $LANG_DIR"
+#
+#    # Renomme la déclaration de package dans les fichiers déplacés
+#    # Java:   package ca.technolibre.home;
+#    # Kotlin: package ca.technolibre.home
+#    find "$LANG_DIR/$NEW_PATH" -type f \( -name "*.java" -o -name "*.kt" \) -print0 \
+#      | xargs -0 perl -i -pe '
+#          s/^(\s*package\s+)\Q'"$OLD_PKG_FALLBACK"'\E(\s*;?\s*)$/$1'"$NEW_PKG"'$2/m;
+#        '
+#  fi
+#done
 
 echo "OK. Pense à lancer: npx cap sync android"
