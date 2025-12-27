@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8' ?>
 <resources>
-    <string name="app_name">TechnolibreHome</string>
-    <string name="title_activity_main">TechnolibreHome</string>
+    <string name="app_name">ERPLibre</string>
+    <string name="title_activity_main">ERPLibre</string>
     <string name="package_name">ca.technolibre.home</string>
     <string name="custom_url_scheme">ca.technolibre.home</string>
 </resources>

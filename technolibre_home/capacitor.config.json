@@ -1,6 +1,6 @@
 {
   "appId": "ca.technolibre.home",
-  "appName": "TechnolibreHome",
+  "appName": "ERPLibre",
   "backgroundColor": "#00000000",
   "webDir": "dist",
   "plugins": {
