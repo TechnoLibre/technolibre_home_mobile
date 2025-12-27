@@ -73,16 +73,27 @@ fi
 echo "Nouveau path: $NEW_PATH"
 
 SRC_MAIN="$ANDROID_DIR/app/src/main"
+OLD_PKG="$OLD_ID"
+NEW_PKG="$NEW_ID"
+
 for LANG_DIR in "$SRC_MAIN/java" "$SRC_MAIN/kotlin"; do
   if [[ -d "$LANG_DIR/$OLD_PATH" ]]; then
     echo "Déplacement des sources dans $LANG_DIR"
     mkdir -p "$LANG_DIR/$NEW_PATH"
+
     # Déplace tout le contenu de l'ancien package vers le nouveau
     rsync -a "$LANG_DIR/$OLD_PATH/" "$LANG_DIR/$NEW_PATH/"
     rm -rf "$LANG_DIR/$OLD_PATH"
 
-    # Nettoie les dossiers vides parents
-    # (monte du bas vers le haut)
+    # Renomme la déclaration de package dans les fichiers déplacés
+    # Java:   package ca.technolibre.home;
+    # Kotlin: package ca.technolibre.home
+    find "$LANG_DIR/$NEW_PATH" -type f \( -name "*.java" -o -name "*.kt" \) -print0 \
+      | xargs -0 perl -i -pe '
+          s/^(\s*package\s+)\Q'"$OLD_PKG"'\E(\s*;?\s*)$/$1'"$NEW_PKG"'$2/m;
+        '
+
+    # Nettoie les dossiers vides parents (monte du bas vers le haut)
     DIR="$LANG_DIR/$(dirname "$OLD_PATH")"
     while [[ "$DIR" != "$LANG_DIR" ]]; do
       rmdir "$DIR" 2>/dev/null || break
