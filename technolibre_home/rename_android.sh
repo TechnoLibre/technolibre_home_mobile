@@ -56,8 +56,8 @@ FALLBACK_PATH="ca/technolibre/home"
 FALLBACK_FILE_PATH="android/app/src/main/java/$FALLBACK_PATH"
 FALLBACK_FILE_PATH_JAVA_FILE="$FALLBACK_FILE_PATH/MainActivity.java"
 
-if [[ ! -f "$OLD_PATH" ]]; then
-  echo "Ancien path : $OLD_PATH NOT EXIST!"
+if [[ ! -f "$FALLBACK_FILE_PATH_JAVA_FILE" ]]; then
+  echo "Ancien path : $FALLBACK_FILE_PATH_JAVA_FILE NOT EXIST!"
   if git ls-tree -r --name-only HEAD | grep -qx "$FALLBACK_FILE_PATH_JAVA_FILE"; then
     echo "Checkout $FALLBACK_FILE_PATH_JAVA_FILE"
     git restore --staged "$FALLBACK_FILE_PATH_JAVA_FILE"
@@ -84,15 +84,24 @@ echo "OLD PKG: $OLD_PKG"
 echo "OLD PKG FALLBACK: $OLD_PKG_FALLBACK"
 echo "NEW PKG: $NEW_PKG"
 
-for LANG_DIR in "$SRC_MAIN/java" "$SRC_MAIN/kotlin"; do
-  echo $LANG_DIR
-  if [[ -d "$LANG_DIR/$OLD_PATH" ]]; then
-    echo "Déplacement des sources dans $LANG_DIR"
-    mkdir -p "$LANG_DIR/$NEW_PATH"
+if [[ "$OLD_PATH" != "$NEW_PATH" ]] ; then
+  for LANG_DIR in "$SRC_MAIN/java" "$SRC_MAIN/kotlin"; do
+    echo $LANG_DIR
+    if [[ -d "$LANG_DIR/$OLD_PATH" ]]; then
+      echo "Déplacement des sources dans $LANG_DIR"
+      mkdir -p "$LANG_DIR/$NEW_PATH"
 
-    # Déplace tout le contenu de l'ancien package vers le nouveau
-    rsync -a "$LANG_DIR/$OLD_PATH/" "$LANG_DIR/$NEW_PATH/"
-    rm -rf "$LANG_DIR/$OLD_PATH"
+      # Déplace tout le contenu de l'ancien package vers le nouveau
+      rsync -a "$LANG_DIR/$OLD_PATH/" "$LANG_DIR/$NEW_PATH/"
+      rm -rf "$LANG_DIR/$OLD_PATH"
+
+      # Nettoie les dossiers vides parents (monte du bas vers le haut)
+      DIR="$LANG_DIR/$(dirname "$OLD_PATH")"
+      while [[ "$DIR" != "$LANG_DIR" ]]; do
+        rmdir "$DIR" 2>/dev/null || break
+        DIR="$(dirname "$DIR")"
+      done
+    fi
 
     # Renomme la déclaration de package dans les fichiers déplacés
     # Java:   package ca.technolibre.home;
@@ -105,29 +114,7 @@ for LANG_DIR in "$SRC_MAIN/java" "$SRC_MAIN/kotlin"; do
       | xargs -0 perl -i -pe '
           s/^(\s*package\s+)\Q'"$OLD_PKG_FALLBACK"'\E(\s*;?\s*)$/$1'"$NEW_PKG"'$2/m;
         '
-
-    # Nettoie les dossiers vides parents (monte du bas vers le haut)
-    DIR="$LANG_DIR/$(dirname "$OLD_PATH")"
-    while [[ "$DIR" != "$LANG_DIR" ]]; do
-      rmdir "$DIR" 2>/dev/null || break
-      DIR="$(dirname "$DIR")"
-    done
-  fi
-done
-#echo "reverse"
-#for LANG_DIR in "$SRC_MAIN/java" "$SRC_MAIN/kotlin"; do
-#  echo $LANG_DIR
-#  if [[ -d "$LANG_DIR/$NEW_PKG" ]]; then
-#    echo "Modifier les fichiers destinations $LANG_DIR"
-#
-#    # Renomme la déclaration de package dans les fichiers déplacés
-#    # Java:   package ca.technolibre.home;
-#    # Kotlin: package ca.technolibre.home
-#    find "$LANG_DIR/$NEW_PATH" -type f \( -name "*.java" -o -name "*.kt" \) -print0 \
-#      | xargs -0 perl -i -pe '
-#          s/^(\s*package\s+)\Q'"$OLD_PKG_FALLBACK"'\E(\s*;?\s*)$/$1'"$NEW_PKG"'$2/m;
-#        '
-#  fi
-#done
+  done
+fi
 
 echo "OK. Pense à lancer: npx cap sync android"
