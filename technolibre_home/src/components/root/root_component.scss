@@ -12,32 +12,3 @@ main#main {
 #main #video-player__wrapper {
 	display: none;
 }
-
-.app-status-overlay {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  z-index: 99999;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(8px);
-  color: white;
-  font-size: 0.9rem;
-}
-
-.app-status-spinner {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: rgba(255, 255, 255, 1);
-  animation: appStatusSpin 0.8s linear infinite;
-}
-
-@keyframes appStatusSpin {
-  to { transform: rotate(360deg); }
-}

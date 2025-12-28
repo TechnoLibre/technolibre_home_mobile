@@ -8,14 +8,6 @@ import { Events } from "../constants/events";
 
 const eventBus = new EventBus();
 
-eventBus.addEventListener(Events.ROUTER_NAVIGATION, async (event: any) => {
-  try {
-    await appService.flushSaves();
-  } finally {
-    window.history.pushState({}, "", event?.detail?.url);
-  }
-});
-
 eventBus.addEventListener(Events.ROUTER_NAVIGATION, (event: any) => {
 	window.history.pushState({}, "", event?.detail?.url);
 });

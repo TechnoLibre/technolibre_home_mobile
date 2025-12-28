@@ -1,4 +1,4 @@
-import { onMounted, onWillUnmount, useState, xml } from "@odoo/owl";
+import { onMounted, useState, xml } from "@odoo/owl";
 
 import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
@@ -52,28 +52,10 @@ export class RootComponent extends EnhancedComponent {
 	static components = { ContentComponent, IntentComponent, NavbarComponent, VideoCameraComponent };
 
 	setup() {
-    this.state = useState({
-      title: "This is my title",
-      isCameraOpen: false,
-      videoEntryId: undefined,
-      isSaving: false,
-      isLoadingApps: false,
-    });
-
+		this.state = useState({ title: "This is my title", isCameraOpen: false, videoEntryId: undefined });
 		onMounted(() => {
 			SplashScreen.hide();
-
-      // écoute les changements loading/saving
-      this.env.appService.setStateListener((s) => {
-        this.state.isSaving = s.isSaving;
-        this.state.isLoadingApps = s.isLoadingApps;
-      });
 		});
-
-    onWillUnmount(() => {
-      this.env.appService.setStateListener(undefined);
-    });
-
 		this.enableEdgeToEdge();
 		this.setupAndroidBackButton();
 		this.setDefaultBiometryStorageValue();
