@@ -1,0 +1,21 @@
+{
+  "appId": "ca.erplibre.home",
+  "appName": "ERPLibre",
+  "backgroundColor": "#00000000",
+  "webDir": "dist",
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": false
+    }
+  },
+  "android": {
+    "buildOptions": {
+      "releaseType": "APK",
+      "keystorePath": "./../../debug.keystore",
+      "keystorePassword": "android",
+      "keystoreAlias": "android",
+      "keystoreAliasPassword": "android"
+    },
+    "backgroundColor": "#00000000"
+  }
+}

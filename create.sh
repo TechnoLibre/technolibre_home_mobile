@@ -9,14 +9,7 @@ fi
 red="\033[0;31m"
 clear="\033[0m"
 
-PROJET_PATH="project-path.txt"
-# Change directory to project-path
-project_path_content=$(cat $PROJET_PATH) || {
-  echo -e "${red}Error: Could not open file PROJET_PATH${clear}"
-  exit 1
-}
-
-if [ ! -d "$project_path_content" ]; then {
+if [ ! -d "$PLATFORM" ]; then {
   echo npm init @capacitor/app@latest
   printf "\n"
   npm init @capacitor/app@latest
@@ -25,11 +18,6 @@ if [ ! -d "$project_path_content" ]; then {
     exit 1
   }
 fi
-
-cd "$project_path_content" || {
-  echo -e "${red}Error: Could not change to directory $directory${clear}"
-  exit 1
-}
 
 printf "\n"
 echo npm i @capacitor/$PLATFORM

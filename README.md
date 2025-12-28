@@ -12,9 +12,6 @@ To install the npm dependencies required for the development of the web app, run
 npm install
 ```
 
-> [!IMPORTANT]  
-> This command must be executed from the `technolibre_home` folder to install the correct packages.
-
 ## Running the app
 
 These commands run the application on android, but it can also be done with ios if the platform is installed properly.
@@ -30,16 +27,13 @@ npx cap run android
 npx cap run ios
 ```
 
-> [!IMPORTANT]  
-> These commands must be executed from the `technolibre_home` folder.
-
 For a more convenient way of building, syncing and running the application, check out the [BSR Script](#bsr-script) section.
 
 ## Deleting node_modules
 
 Sometimes, you might want to remove the node_modules folder and reinstall the npm packages to solve issues.
 
-> [!CAUTION]  
+> [!CAUTION]
 > When deleting `node_modules`, you are preventing the npm packages, such as `@odoo/owl` or `@capacitor/app` from working until they are reinstalled.
 
 ```bash
@@ -50,9 +44,6 @@ rm -rf node_modules
 npm install
 ```
 
-> [!IMPORTANT]  
-> These commands must be executed from the `technolibre_home` folder.
-
 ## Pruning
 
 To only uninstall packages that aren't actual depencencies from node_modules, you can run the prune command.
@@ -61,15 +52,7 @@ To only uninstall packages that aren't actual depencencies from node_modules, yo
 npm prune
 ```
 
-> [!IMPORTANT]  
-> These commands must be executed from the `technolibre_home` folder.
-
 ## BSR Script
-
-> [!IMPORTANT]  
-> The BSR script must be executed from the `technolibre_home` folder.
-
-This section provides details about the BSR scripts that can be executed from the root of the `technolibre_home` folder.
 
 BSR means _Build_, _Sync_ and _Run_, common actions during development. Since you'll often need to build the application and launch it on specific devices, this script was built to make this workflow faster.
 
@@ -85,17 +68,14 @@ Here are the commands
 
 ## GenComp Script
 
-> [!IMPORTANT]  
-> The GenComp script must be executed from the `technolibre_home` folder.
-
 This section provices details on the GenComp script.
 
 GenComp means _Generate Component_. The Script allows you to generate a boilerplate Owl component so you can start programming component features faster.
 
 ### Commands
 
-`npm run gencomp <name>`: Generates the component in the `components` folder  
-`npm run gencomp <name> <path>`: Generates the component in the provided folder  
+`npm run gencomp <name>`: Generates the component in the `components` folder
+`npm run gencomp <name> <path>`: Generates the component in the provided folder
 `npm run gencomp <name> <path> <add-css>`: Generates the component in the provided folder, and omits the CSS file if add-css is set to `false`.
 
 ### Parameters
