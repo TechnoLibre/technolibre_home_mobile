@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "ca.technolibre.home"
+    namespace "ca.erplibre.home"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "ca.technolibre.home"
+        applicationId "ca.erplibre.home"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

@@ -1,4 +1,4 @@
-package ca.technolibre.home;
+package ca.erplibre.home;
 
 import android.os.Bundle;
 

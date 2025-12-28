@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">ERPLibre</string>
     <string name="title_activity_main">ERPLibre</string>
-    <string name="package_name">ca.technolibre.home</string>
-    <string name="custom_url_scheme">ca.technolibre.home</string>
+    <string name="package_name">ca.erplibre.home</string>
+    <string name="custom_url_scheme">ca.erplibre.home</string>
 </resources>

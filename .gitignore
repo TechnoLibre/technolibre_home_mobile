@@ -181,6 +181,13 @@ Thumbs.db
 .idea
 
 # Formatting config files
-technolibre_home/src/.editorconfig
-technolibre_home/src/.prettierrc
+src/.editorconfig
+src/.prettierrc
 
+.idea/
+node_modules/
+.vscode/
+*.map
+.DS_Store
+.sourcemaps
+dist/
