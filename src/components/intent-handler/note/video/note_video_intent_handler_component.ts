@@ -5,6 +5,19 @@ import { Capacitor } from "@capacitor/core";
 import { EnhancedComponent } from "../../../../js/enhancedComponent";
 import { VideoIntent } from "../../../../models/intent";
 
+const ENV = {
+    // @ts-ignore
+    TITLE: import.meta.env.VITE_TITLE ?? "TITLE",
+    // @ts-ignore
+    LABEL_NOTE: import.meta.env.VITE_LABEL_NOTE ?? "Note",
+    // @ts-ignore
+    LOGO_KEY: import.meta.env.VITE_LOGO_KEY ?? "techno",
+    // @ts-ignore
+    WEBSITE_URL: import.meta.env.VITE_WEBSITE_URL ?? "https://erplibre.ca",
+    // @ts-ignore
+    DEBUG_DEV: import.meta.env.VITE_DEBUG_DEV === "true",
+};
+
 export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 	static template = xml`
 		<div id="note-video-intent-handler-component">
@@ -16,15 +29,15 @@ export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 				t-ref="video"
 				controls=""
 			>
-				<source t-att-src="state.videoUri"></source>
+				<source t-att-src="state.videoUri"/>
 			</video>
-			<h3 class="intent__notes__title">Notes</h3>
+			<h3 class="intent__notes__title">${ENV.LABEL_NOTE}s</h3>
 			<ul class="intent__notes">
 				<li
 					class="intent__item intent__item--new"
 					t-on-click.stop.prevent="newNoteWithVideo"
 				>
-					Nouvelle note avec cette video
+					Nouvelle ${ENV.LABEL_NOTE} avec cette video
 				</li>
 				<li
 					class="intent__item"

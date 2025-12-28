@@ -29,6 +29,7 @@ interface ViteTypeOptions {
 interface ImportMetaEnv {
     readonly VITE_TITLE: string;
     readonly VITE_WEBSITE_URL: string;
+    readonly LABEL_NOTE: string;
     readonly VITE_DEBUG_DEV: string;
     // more env variables...
 }

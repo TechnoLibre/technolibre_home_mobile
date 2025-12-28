@@ -11,7 +11,7 @@ const ENV = {
     // @ts-ignore
     TITLE: import.meta.env.VITE_TITLE ?? "TITLE",
     // @ts-ignore
-    BUTTON_LABEL: import.meta.env.VITE_BUTTON_LABEL ?? "Connexion",
+    LABEL_NOTE: import.meta.env.VITE_LABEL_NOTE ?? "Note",
     // @ts-ignore
     LOGO_KEY: import.meta.env.VITE_LOGO_KEY ?? "techno",
     // @ts-ignore
@@ -27,7 +27,7 @@ export class HomeComponent extends EnhancedComponent {
         <img id="logo" src="${CompanyLogo}" alt="Logo TechnoLibre" t-on-click="onOpenSocietyClick"/>
         <h3 id="title" t-esc="state.title" t-on-click="onOpenSocietyClick" />
         <section id="buttons">
-          <button id="notes" class="buttons-primary" t-on-click.stop.prevent="onNotesClick">Notes</button>
+          <button id="notes" class="buttons-primary" t-on-click.stop.prevent="onNotesClick">${ENV.LABEL_NOTE}s</button>
         </section>
       </div>
     </div>

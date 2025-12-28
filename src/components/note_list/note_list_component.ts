@@ -13,13 +13,27 @@ import { HeadingComponent } from "../heading/heading_component";
 import { NotesItemComponent } from "./item/note_list_item_component";
 import { NoteListControlsComponent } from "./controls/note_list_controls_component";
 
+// @ts-ignore
 import NoteAddIcon from "../../assets/icon/note_add.svg";
+
+const ENV = {
+    // @ts-ignore
+    TITLE: import.meta.env.VITE_TITLE ?? "TITLE",
+    // @ts-ignore
+    LABEL_NOTE: import.meta.env.VITE_LABEL_NOTE ?? "Note",
+    // @ts-ignore
+    LOGO_KEY: import.meta.env.VITE_LOGO_KEY ?? "techno",
+    // @ts-ignore
+    WEBSITE_URL: import.meta.env.VITE_WEBSITE_URL ?? "https://erplibre.ca",
+    // @ts-ignore
+    DEBUG_DEV: import.meta.env.VITE_DEBUG_DEV === "true",
+};
 
 export class NoteListComponent extends EnhancedComponent {
 	static template = xml`
 		<div id="note-list-component">
 			<header id="notes-header">
-				<h1 id="notes-heading">Notes</h1>
+				<h1 id="notes-heading">${ENV.LABEL_NOTE}s</h1>
 				<a
 					id="notes-add"
 					t-on-click.stop.prevent="onNoteAddClick"
@@ -80,9 +94,9 @@ export class NoteListComponent extends EnhancedComponent {
 					</ul>
 				</div>
 				<div id="notes-empty" t-if="currentNoteList.length === 0">
-					<p t-if="state.showArchivedNotes">Aucune note archivée.</p>
+					<p t-if="state.showArchivedNotes">Aucune ${ENV.LABEL_NOTE} archivée.</p>
 					<p t-else="">
-						<a id="notes-add" t-on-click.stop.prevent="onNoteAddClick">Ajoutez une note 🤖</a>
+						<a id="notes-add" t-on-click.stop.prevent="onNoteAddClick">Ajoutez une ${ENV.LABEL_NOTE} 🤖</a>
 					</p>
 				</div>
 			</section>
