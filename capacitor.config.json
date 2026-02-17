@@ -1,11 +1,14 @@
 {
-  "appId": "ca.erplibre.home",
-  "appName": "ERPLibre",
+  "appId": "ca.oiseau.quebec",
+  "appName": "oiseau",
   "backgroundColor": "#00000000",
   "webDir": "dist",
   "plugins": {
     "SplashScreen": {
       "launchAutoHide": false
+    },
+    "CapacitorSQLite": {
+      "androidIsEncryption": true
     }
   },
   "android": {
