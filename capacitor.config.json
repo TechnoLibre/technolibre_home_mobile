@@ -1,6 +1,6 @@
 {
-  "appId": "ca.oiseau.quebec",
-  "appName": "oiseau",
+  "appId": "ca.erplibre.home",
+  "appName": "ERPLibre",
   "backgroundColor": "#00000000",
   "webDir": "dist",
   "plugins": {
