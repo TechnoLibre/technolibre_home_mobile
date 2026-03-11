@@ -10,6 +10,7 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { Events } from "../../constants/events";
 import { StorageConstants } from "../../constants/storage";
 import { StorageGetResult, StorageUtils } from "../../utils/storageUtils";
+import { DatabaseService } from "../../services/databaseService";
 
 import { ContentComponent } from "../content/content_component";
 import { IntentComponent } from "../intent/intent_component";
@@ -59,8 +60,7 @@ export class RootComponent extends EnhancedComponent {
 		this.enableEdgeToEdge();
 		this.setupAndroidBackButton();
 		this.setDefaultBiometryStorageValue();
-		this.setDefaultAppStorageValue();
-		this.setDefaultNoteStorageValue();
+		this.initializeDatabase();
 		this.listenForEvents();
 	}
 
@@ -90,19 +90,12 @@ export class RootComponent extends EnhancedComponent {
 		}
 	}
 
-	private async setDefaultAppStorageValue() {
-		const getResult: StorageGetResult = await StorageUtils.getValueByKey(StorageConstants.APPLICATIONS_STORAGE_KEY);
-
-		if (!getResult.keyExists) {
-			await StorageUtils.setKeyValuePair(StorageConstants.APPLICATIONS_STORAGE_KEY, []);
-		}
-	}
-
-	private async setDefaultNoteStorageValue() {
-		const getResult: StorageGetResult = await StorageUtils.getValueByKey(StorageConstants.NOTES_STORAGE_KEY);
-
-		if (!getResult.keyExists) {
-			await StorageUtils.setKeyValuePair(StorageConstants.NOTES_STORAGE_KEY, []);
+	private async initializeDatabase() {
+		try {
+			const db = DatabaseService.getInstance();
+			await db.initialize();
+		} catch (error) {
+			console.error("Failed to initialize database:", error);
 		}
 	}
 
