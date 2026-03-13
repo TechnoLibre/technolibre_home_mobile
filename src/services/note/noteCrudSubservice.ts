@@ -3,13 +3,13 @@ import { Note } from "../../models/note";
 import { NoteService } from "./noteService";
 
 export class NoteCrudSubservice {
-  private _noteService: NoteService;
+	private _noteService: NoteService;
 
-  constructor(newNoteService: NoteService) {
-    this._noteService = newNoteService;
-  }
+	constructor(newNoteService: NoteService) {
+		this._noteService = newNoteService;
+	}
 
-  	/**
+	/**
 	 * Adds a note.
 	 *
 	 * @param note - The note to add

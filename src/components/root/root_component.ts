@@ -18,36 +18,36 @@ import { VideoCameraComponent } from "../video_camera/video_camera_component";
 
 export class RootComponent extends EnhancedComponent {
 	static template = xml`
-    <t t-if="state.isLoadingApps or state.isSaving">
-      <div class="app-status-overlay">
-        <div class="app-status-spinner"></div>
-        <t t-if="state.isLoadingApps">Loading…</t>
-        <t t-elif="state.isSaving">Saving…</t>
-      </div>
-    </t>
-    <main
+		<t t-if="state.isLoadingApps or state.isSaving">
+			<div class="app-status-overlay">
+				<div class="app-status-spinner"></div>
+				<t t-if="state.isLoadingApps">Loading…</t>
+				<t t-elif="state.isSaving">Saving…</t>
+			</div>
+		</t>
+		<main
 			id="main"
 			t-att-class="{
 				'hidden': state.isCameraOpen
 			}"
 		>
-      <ContentComponent />
-      <NavbarComponent />
-    </main>
-    <t t-if="state.isLoadingApps or state.isSaving">
-      <div class="app-status-overlay">
-        <div class="app-status-spinner"></div>
-        <t t-if="state.isLoadingApps">Loading…</t>
-        <t t-elif="state.isSaving">Saving…</t>
-      </div>
-    </t>
+			<ContentComponent />
+			<NavbarComponent />
+		</main>
+		<t t-if="state.isLoadingApps or state.isSaving">
+			<div class="app-status-overlay">
+				<div class="app-status-spinner"></div>
+				<t t-if="state.isLoadingApps">Loading…</t>
+				<t t-elif="state.isSaving">Saving…</t>
+			</div>
+		</t>
 		<IntentComponent />
 		<VideoCameraComponent
 			t-if="state.isCameraOpen"
 			entryId="state.videoEntryId"
 		/>
 		<div id="video-player__wrapper"></div>
-  `;
+	`;
 
 	static components = { ContentComponent, IntentComponent, NavbarComponent, VideoCameraComponent };
 

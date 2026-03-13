@@ -1,7 +1,7 @@
-import {Application, ApplicationID} from "../models/application";
-import {StorageGetResult, StorageUtils} from "../utils/storageUtils";
-import {StorageConstants} from "../constants/storage";
-import {AppAlreadyExistsError, AppKeyNotFoundError, NoAppMatchError, UndefinedAppListError} from "../js/errors";
+import { Application, ApplicationID } from "../models/application";
+import { StorageGetResult, StorageUtils } from "../utils/storageUtils";
+import { StorageConstants } from "../constants/storage";
+import { AppAlreadyExistsError, AppKeyNotFoundError, NoAppMatchError, UndefinedAppListError } from "../js/errors";
 
 export interface GetAppListResult {
   appList: Array<Application>;

@@ -74,7 +74,7 @@ export class NoteService {
 
 	/**
 	 * Sets the note list.
-	 * 
+	 *
 	 * @param newNotes - The new note list
 	 */
 	public async setNotes(newNotes: Array<Note>): Promise<boolean> {
