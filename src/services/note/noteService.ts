@@ -1,12 +1,11 @@
 import { v4 as uuidv4, validate, version } from "uuid";
 import { Note } from "../../models/note";
-import { StorageConstants } from "../../constants/storage";
-import { StorageGetResult, StorageUtils } from "../../utils/storageUtils";
-import { NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
+import { NoNoteMatchError } from "../../js/errors";
 import { EventBus } from "@odoo/owl";
 import { NoteIntentSubservice } from "./noteIntentSubservice";
 import { NoteEntrySubservice } from "./noteEntrySubservice";
 import { NoteCrudSubservice } from "./noteCrudSubservice";
+import { DatabaseService } from "../databaseService";
 
 export interface GetNoteListResult {
 	noteList: Array<Note>;
@@ -17,25 +16,22 @@ export interface GetMatchesResult extends GetNoteListResult {
 }
 
 export class NoteService {
-	private _notes?: Array<Note>;
+	private _db: DatabaseService;
 	private _eventBus: EventBus;
 	private _intent: NoteIntentSubservice;
 	private _entry: NoteEntrySubservice;
 	private _crud: NoteCrudSubservice;
 
-	constructor(newEventBus: EventBus) {
+	constructor(newEventBus: EventBus, db: DatabaseService) {
+		this._db = db;
 		this._eventBus = newEventBus;
 		this._intent = new NoteIntentSubservice(this);
 		this._entry = new NoteEntrySubservice(this);
 		this._crud = new NoteCrudSubservice(this);
 	}
 
-	public get notes(): Array<Note> | undefined {
-		return this._notes;
-	}
-
-	public set notes(newNotes: Array<Note>) {
-		this._notes = newNotes;
+	public get db(): DatabaseService {
+		return this._db;
 	}
 
 	public get eventBus(): EventBus {
@@ -58,18 +54,9 @@ export class NoteService {
 	 * Returns all of the current notes.
 	 *
 	 * @returns The current list of notes
-	 *
-	 * @throws NoteKeyNotFoundError
-	 * Thrown if the notes key is not found in the secure storage.
-	 *
-	 * @throws UndefinedNoteListError
-	 * Thrown if the list of notes is undefined.
 	 */
 	public async getNotes(): Promise<Array<Note>> {
-		if (this._notes === undefined) {
-			this._notes = await this.getNotesFromStorage();
-		}
-		return this._notes;
+		return this._db.getAllNotes();
 	}
 
 	/**
@@ -78,14 +65,13 @@ export class NoteService {
 	 * @param newNotes - The new note list
 	 */
 	public async setNotes(newNotes: Array<Note>): Promise<boolean> {
-		const result = await this.saveNoteListToStorage(newNotes);
-
-		if (!result.value) {
-			return false;
+		const existing = await this._db.getAllNotes();
+		for (const note of existing) {
+			await this._db.deleteNote(note.id);
 		}
-
-		this._notes = await this.getNotesFromStorage();
-
+		for (const note of newNotes) {
+			await this._db.addNote(note);
+		}
 		return true;
 	}
 
@@ -95,17 +81,10 @@ export class NoteService {
 	 * @param noteId - The id of the target note
 	 *
 	 * @returns The list of notes that match the provided note id
-	 *
-	 * @throws NoteKeyNotFoundError
-	 * Thrown if the notes key is not found in the secure storage.
-	 *
-	 * @throws UndefinedNoteListError
-	 * Thrown if the list of notes is undefined.
 	 */
 	public async matches(noteId: string): Promise<Array<Note>> {
-		this._notes = await this.getNotesFromStorage();
-
-		return this._notes.filter(note => noteId === note.id);
+		const notes = await this._db.getAllNotes();
+		return notes.filter(note => noteId === note.id);
 	}
 
 	/**
@@ -117,12 +96,6 @@ export class NoteService {
 	 *
 	 * @throws NoNoteMatchError
 	 * Thrown if the list of matches is empty.
-	 *
-	 * @throws NoteKeyNotFoundError
-	 * Thrown if the notes key is not found in the secure storage.
-	 *
-	 * @throws UndefinedNoteListError
-	 * Thrown if the list of notes is undefined.
 	 */
 	public async getMatch(noteId: string): Promise<Note> {
 		const matches = await this.matches(noteId);
@@ -138,12 +111,6 @@ export class NoteService {
 	 * Returns all tags.
 	 *
 	 * @returns The list of all tags
-	 *
-	 * @throws NoteKeyNotFoundError
-	 * Thrown if the notes key is not found in the secure storage.
-	 *
-	 * @throws UndefinedNoteListError
-	 * Thrown if the list of notes is undefined.
 	 */
 	public async getTags(): Promise<Array<string>> {
 		const tags: Set<string> = new Set<string>();
@@ -193,43 +160,5 @@ export class NoteService {
 	 */
 	public isValidId(noteId: string): boolean {
 		return validate(noteId) && version(noteId) === 4;
-	}
-
-	/**
-	 * Returns all the notes from the local storage.
-	 *
-	 * @returns The list of notes from the device's secure storage
-	 *
-	 * @throws NoteKeyNotFoundError
-	 * Thrown if the notes key is not found in the secure storage.
-	 *
-	 * @throws UndefinedNoteListError
-	 * Thrown if the list of notes is undefined.
-	 */
-	private async getNotesFromStorage(): Promise<Array<Note>> {
-		const storageGetResult: StorageGetResult<Array<Note>> = await StorageUtils.getValueByKey<Array<Note>>(
-			StorageConstants.NOTES_STORAGE_KEY
-		);
-
-		if (!storageGetResult.keyExists) {
-			throw new NoteKeyNotFoundError();
-		}
-
-		if (storageGetResult.value === undefined) {
-			throw new UndefinedNoteListError();
-		}
-
-		return storageGetResult.value;
-	}
-
-	/**
-	 * Saves the provided note list to the local storage.
-	 *
-	 * @param noteList - The list of notes to save to the device's secure storage
-	 *
-	 * @returns True if the save succeeded, otherwise false
-	 */
-	public async saveNoteListToStorage(noteList: Array<Note>): Promise<{ value: boolean }> {
-		return StorageUtils.setKeyValuePair(StorageConstants.NOTES_STORAGE_KEY, noteList);
 	}
 }

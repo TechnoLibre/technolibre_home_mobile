@@ -29,10 +29,6 @@ export class NoteIntentSubservice {
 	 * @param intent - The text intent
 	 */
 	public async newNoteWithText(intent: TextIntent) {
-		if (!this._noteService.notes) {
-			return;
-		}
-
 		const note = this._noteService.getNewNote(this._noteService.getNewId());
 		const entry = this._noteService.entry.getNewTextEntry();
 		const params = entry.params as NoteEntryTextParams;
@@ -42,9 +38,8 @@ export class NoteIntentSubservice {
 		params.text = intent.text;
 
 		note.entries.push(entry);
-		this._noteService.notes.push(note);
 
-		await this._noteService.saveNoteListToStorage(this._noteService.notes);
+		await this._noteService.db.addNote(note);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
 	}
 
@@ -56,10 +51,6 @@ export class NoteIntentSubservice {
 	 * @param intent - The text intent
 	 */
 	public async addTextToNote(id: string, intent: TextIntent) {
-		if (!this._noteService.notes) {
-			return;
-		}
-
 		let matchingNote = await this._noteService.getMatch(id);
 
 		const entry = this._noteService.entry.getNewTextEntry();
@@ -68,7 +59,7 @@ export class NoteIntentSubservice {
 		params.text = intent.text;
 		matchingNote.entries.push(entry);
 
-		await this._noteService.saveNoteListToStorage(this._noteService.notes);
+		await this._noteService.db.updateNote(id, matchingNote);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
 	}
 
@@ -78,10 +69,6 @@ export class NoteIntentSubservice {
 	 * @param intent - The image intent
 	 */
 	public async newNoteWithImage(intent: ImageIntent) {
-		if (!this._noteService.notes) {
-			return;
-		}
-
 		const note = this._noteService.getNewNote(this._noteService.getNewId());
 		const entry = this._noteService.entry.getNewPhotoEntry();
 		const params = entry.params as NoteEntryPhotoParams;
@@ -91,9 +78,8 @@ export class NoteIntentSubservice {
 		params.path = intent.url;
 
 		note.entries.push(entry);
-		this._noteService.notes.push(note);
 
-		await this._noteService.saveNoteListToStorage(this._noteService.notes);
+		await this._noteService.db.addNote(note);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
 	}
 
@@ -105,10 +91,6 @@ export class NoteIntentSubservice {
 	 * @param intent - The image intent
 	 */
 	public async addImageToNote(id: string, intent: ImageIntent) {
-		if (!this._noteService.notes) {
-			return;
-		}
-
 		let matchingNote = await this._noteService.getMatch(id);
 
 		const entry = this._noteService.entry.getNewPhotoEntry();
@@ -117,7 +99,7 @@ export class NoteIntentSubservice {
 		params.path = intent.url;
 		matchingNote.entries.push(entry);
 
-		await this._noteService.saveNoteListToStorage(this._noteService.notes);
+		await this._noteService.db.updateNote(id, matchingNote);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
 	}
 
@@ -127,10 +109,6 @@ export class NoteIntentSubservice {
 	 * @param intent - The video intent
 	 */
 	public async newNoteWithVideo(intent: VideoIntent) {
-		if (!this._noteService.notes) {
-			return;
-		}
-
 		const note = this._noteService.getNewNote(this._noteService.getNewId());
 		const entry = this._noteService.entry.getNewVideoEntry();
 		const params = entry.params as NoteEntryVideoParams;
@@ -140,9 +118,8 @@ export class NoteIntentSubservice {
 		params.path = intent.url;
 
 		note.entries.push(entry);
-		this._noteService.notes.push(note);
 
-		await this._noteService.saveNoteListToStorage(this._noteService.notes);
+		await this._noteService.db.addNote(note);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
 	}
 
@@ -154,10 +131,6 @@ export class NoteIntentSubservice {
 	 * @param intent - The video intent
 	 */
 	public async addVideoToNote(id: string, intent: VideoIntent) {
-		if (!this._noteService.notes) {
-			return;
-		}
-
 		let matchingNote = await this._noteService.getMatch(id);
 
 		const entry = this._noteService.entry.getNewVideoEntry();
@@ -166,7 +139,7 @@ export class NoteIntentSubservice {
 		params.path = intent.url;
 		matchingNote.entries.push(entry);
 
-		await this._noteService.saveNoteListToStorage(this._noteService.notes);
+		await this._noteService.db.updateNote(id, matchingNote);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
 	}
 }

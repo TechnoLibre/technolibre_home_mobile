@@ -15,39 +15,21 @@ export class NoteCrudSubservice {
 	 * @param note - The note to add
 	 *
 	 * @returns True if the addition succeeded, otherwise false
-	 *
-	 * @throws NoteKeyNotFoundError
-	 * Thrown if the notes key is not found in the secure storage.
-	 *
-	 * @throws UndefinedNoteListError
-	 * Thrown if the list of notes is undefined.
 	 */
 	public async add(note: Note): Promise<boolean> {
-		const noteList = await this._noteService.getNotes();
-		noteList.push(note);
-
-		const saveResult = await this._noteService.saveNoteListToStorage(noteList);
-
-		if (saveResult.value) {
-			this._noteService.notes = noteList;
-		}
-
-		return saveResult.value;
+		await this._noteService.db.addNote(note);
+		return true;
 	}
 
 	/**
 	 * Clears the list of notes.
 	 */
-	public async clear() {
-		const newNoteList: Note[] = [];
-
-		const saveResult = await this._noteService.saveNoteListToStorage(newNoteList);
-
-		if (saveResult.value) {
-			this._noteService.notes = newNoteList;
+	public async clear(): Promise<boolean> {
+		const notes = await this._noteService.getNotes();
+		for (const note of notes) {
+			await this._noteService.db.deleteNote(note.id);
 		}
-
-		return saveResult.value;
+		return true;
 	}
 
 	/**
@@ -59,12 +41,6 @@ export class NoteCrudSubservice {
 	 *
 	 * @throws NoNoteMatchError
 	 * Thrown if the list of matches is empty.
-	 *
-	 * @throws NoteKeyNotFoundError
-	 * Thrown if the notes key is not found in the secure storage.
-	 *
-	 * @throws UndefinedNoteListError
-	 * Thrown if the list of notes is undefined.
 	 */
 	public async delete(noteId: string): Promise<boolean> {
 		const matches: Array<Note> = await this._noteService.matches(noteId);
@@ -75,17 +51,8 @@ export class NoteCrudSubservice {
 			throw new NoNoteMatchError();
 		}
 
-		const noteList: Array<Note> = await this._noteService.getNotes();
-
-		const newNoteList = noteList.filter(note => note.id !== matchingNote.id);
-
-		const saveResult = await this._noteService.saveNoteListToStorage(newNoteList);
-
-		if (saveResult.value) {
-			this._noteService.notes = newNoteList;
-		}
-
-		return saveResult.value;
+		await this._noteService.db.deleteNote(matchingNote.id);
+		return true;
 	}
 
 	/**
@@ -99,70 +66,17 @@ export class NoteCrudSubservice {
 	 *
 	 * @throws NoNoteMatchError
 	 * Thrown if the list of matches is empty.
-	 *
-	 * @throws NoteKeyNotFoundError
-	 * Thrown if the notes key is not found in the secure storage.
-	 *
-	 * @throws UndefinedNoteListError
-	 * Thrown if the list of notes is undefined.
 	 */
 	public async edit(noteId: string, newNote: Note): Promise<boolean> {
-		const noteIDMatches: Array<Note> = await this._noteService.matches(noteId);
+		const matches: Array<Note> = await this._noteService.matches(noteId);
 
-		const noteToEdit = noteIDMatches?.[0];
+		const noteToEdit = matches?.[0];
 
 		if (!noteToEdit) {
 			throw new NoNoteMatchError();
 		}
 
-		const noteList = await this._noteService.getNotes();
-		const editIndex = this.indexOf(noteList, noteToEdit);
-
-		if (editIndex === -1) {
-			throw new NoNoteMatchError();
-		}
-
-		noteList[editIndex] = Object.assign({}, newNote);
-
-		const saveResult = await this._noteService.saveNoteListToStorage(noteList);
-
-		if (saveResult.value) {
-			this._noteService.notes = noteList;
-		}
-
-		return saveResult.value;
-	}
-
-	/**
-	 * Determines the equality of two notes.
-	 *
-	 * @param noteOne - The first note to compare
-	 *
-	 * @param noteTwo - The second note to compare
-	 *
-	 * @returns True if the two notes are equal, otherwise false
-	 */
-	private equals(noteOne: Note, noteTwo: Note): boolean {
-		return noteOne.id === noteTwo.id && noteOne.title === noteTwo.title && noteOne.date === noteTwo.date;
-	}
-
-	/**
-	 * Returns the index of the matching note in the note list.
-	 * If no match is found, returns -1.
-	 *
-	 * @param noteList - The list of notes to search
-	 *
-	 * @param note - The note to look for
-	 *
-	 * @returns The index of the note in the list
-	 */
-	private indexOf(noteList: Array<Note>, note: Note): number {
-		for (let i = 0; i < noteList.length; i++) {
-			if (this.equals(noteList[i], note)) {
-				return i;
-			}
-		}
-
-		return -1;
+		await this._noteService.db.updateNote(noteId, Object.assign({}, newNote));
+		return true;
 	}
 }
