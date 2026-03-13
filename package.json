@@ -15,7 +15,8 @@
     "build:prod": "vite build --mode production",
     "preview": "vite preview",
     "bsr": "node ./scripts/bsr.js",
-    "gencomp": "node ./scripts/generateComponent.js"
+    "gencomp": "node ./scripts/generateComponent.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "@aparajita/capacitor-biometric-auth": "^9.0.0",
@@ -50,7 +51,8 @@
   "devDependencies": {
     "@capacitor/cli": "^7.4.3",
     "sass-embedded": "^1.93.2",
-    "vite": "^5.4.2"
+    "vite": "^5.4.2",
+    "vitest": "^3.2.1"
   },
   "author": "TechnoLibre",
   "license": "AGPLv3"
