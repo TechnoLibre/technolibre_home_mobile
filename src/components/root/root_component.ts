@@ -10,7 +10,6 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { Events } from "../../constants/events";
 import { StorageConstants } from "../../constants/storage";
 import { StorageGetResult, StorageUtils } from "../../utils/storageUtils";
-import { DatabaseService } from "../../services/databaseService";
 
 import { ContentComponent } from "../content/content_component";
 import { IntentComponent } from "../intent/intent_component";
@@ -60,7 +59,6 @@ export class RootComponent extends EnhancedComponent {
 		this.enableEdgeToEdge();
 		this.setupAndroidBackButton();
 		this.setDefaultBiometryStorageValue();
-		this.initializeDatabase();
 		this.listenForEvents();
 	}
 
@@ -88,11 +86,6 @@ export class RootComponent extends EnhancedComponent {
 		if (!getResult.keyExists) {
 			await StorageUtils.setKeyValuePair(StorageConstants.BIOMETRY_ENABLED_STORAGE_KEY, false);
 		}
-	}
-
-	private async initializeDatabase() {
-		const db = new DatabaseService();
-		await db.initialize();
 	}
 
 	private listenForEvents() {

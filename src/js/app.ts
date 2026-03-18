@@ -4,6 +4,8 @@ import { SimpleRouter } from "./router";
 import { AppService } from "../services/appService";
 import { IntentService } from "../services/intentService";
 import { NoteService } from "../services/note/noteService";
+import { DatabaseService } from "../services/databaseService";
+import { migrateFromSecureStorage } from "../services/dataMigration";
 import { Events } from "../constants/events";
 
 const eventBus = new EventBus();
@@ -20,12 +22,22 @@ eventBus.addEventListener(Events.CLOSE_CAMERA, (_event: any) => {
 	document.body.classList.remove("transparent");
 });
 
-const router = new SimpleRouter();
+async function startApp() {
+	const router = new SimpleRouter();
+	const appService = new AppService();
 
-const appService = new AppService();
-const noteService = new NoteService(eventBus);
-const intentService = new IntentService(eventBus);
+	const db = new DatabaseService();
+	await db.initialize();
+	await migrateFromSecureStorage(db);
 
-const env = { eventBus, router, appService, noteService, intentService };
+	const noteService = new NoteService(eventBus, db);
+	const intentService = new IntentService(eventBus);
 
-mount(RootComponent, document.body, { env });
+	const env = { eventBus, router, appService, noteService, intentService };
+
+	await mount(RootComponent, document.body, { env });
+}
+
+startApp().catch((error) => {
+	console.error("Failed to start app:", error);
+});
