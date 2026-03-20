@@ -1,4 +1,5 @@
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
+import { Dialog } from "@capacitor/dialog";
 import { DatabaseService } from "./databaseService";
 
 const SCHEMA_VERSION_KEY = "schema_version";
@@ -48,5 +49,12 @@ export async function runMigrations(
       console.error(`Migration v${migration.version} failed:`, error);
       throw error;
     }
+  }
+
+  if (pending.length > 0) {
+    await Dialog.alert({
+      title: "Mise à jour",
+      message: "La migration des données est terminée.",
+    });
   }
 }
