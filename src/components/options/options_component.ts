@@ -5,6 +5,7 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { HeadingComponent } from "../heading/heading_component";
 import { OptionsClearCacheComponent } from "./clear_cache/options_clear_cache_component";
 import { OptionsToggleBiometryComponent } from "./options_toggle_biometry_component.ts/options_toggle_biometry_component";
+import { OptionsChangelogComponent } from "./changelog/options_changelog_component";
 
 export class OptionsComponent extends EnhancedComponent {
 	static template = xml`
@@ -13,9 +14,10 @@ export class OptionsComponent extends EnhancedComponent {
       <ul id="options-list">
         <OptionsClearCacheComponent />
         <OptionsToggleBiometryComponent />
+        <OptionsChangelogComponent />
       </ul>
     </div>
   `;
 
-	static components = { HeadingComponent, OptionsClearCacheComponent, OptionsToggleBiometryComponent };
+	static components = { HeadingComponent, OptionsClearCacheComponent, OptionsToggleBiometryComponent, OptionsChangelogComponent };
 }
