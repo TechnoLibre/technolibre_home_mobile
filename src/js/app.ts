@@ -5,6 +5,7 @@ import { AppService } from "../services/appService";
 import { IntentService } from "../services/intentService";
 import { NoteService } from "../services/note/noteService";
 import { DatabaseService } from "../services/databaseService";
+import { runMigrations } from "../services/migrationService";
 import { migrateFromSecureStorage } from "../services/dataMigration";
 import { Events } from "../constants/events";
 
@@ -28,7 +29,9 @@ async function startApp() {
 
 	const db = new DatabaseService();
 	await db.initialize();
-	await migrateFromSecureStorage(db);
+	await runMigrations(db, [
+		{ version: 20260318, run: migrateFromSecureStorage },
+	]);
 
 	const noteService = new NoteService(eventBus, db);
 	const intentService = new IntentService(eventBus);
