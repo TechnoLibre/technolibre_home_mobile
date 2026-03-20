@@ -19,6 +19,10 @@ export default defineConfig({
         __dirname,
         "src/__mocks__/@capacitor-community/sqlite.ts"
       ),
+      "@capacitor/dialog": resolve(
+        __dirname,
+        "src/__mocks__/@capacitor/dialog.ts"
+      ),
     },
   },
 });
