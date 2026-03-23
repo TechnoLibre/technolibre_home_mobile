@@ -15,6 +15,40 @@
 | `npm run build:staging` | Build staging |
 | `npm run bsr` | Build + Capacitor sync + run Android |
 | `npm run gencomp <nom>` | Générer un nouveau composant Owl |
+| `npm test` | Lancer les tests unitaires (Vitest) |
+
+## Tests
+
+### Lancer les tests
+
+Depuis la racine du dépôt :
+
+```bash
+./mobile/run_tests.sh
+```
+
+Ou directement depuis `erplibre_home_mobile` :
+
+```bash
+npm test
+```
+
+### Fichiers de test
+
+Situés dans `src/__tests__/` :
+
+| Fichier | Couverture |
+|---------|-----------|
+| `appService.test.ts` | CRUD applications, régression initialisation |
+| `databaseService.test.ts` | Opérations SQLite |
+| `dataMigration.test.ts` | Migration SecureStorage → SQLite |
+| `migrationService.test.ts` | Runner de migrations, versionnage |
+| `migrationPopup.test.ts` | Dialog de notification post-migration |
+| `noteService.test.ts` | CRUD notes, tags, intents |
+
+### Mocks Capacitor
+
+Les plugins natifs sont mockés dans `src/__mocks__/` (SQLite en mémoire via `sql.js`, SecureStorage comme dictionnaire en mémoire).
 
 ## Script principal
 

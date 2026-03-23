@@ -52,6 +52,49 @@ To only uninstall packages that aren't actual depencencies from node_modules, yo
 npm prune
 ```
 
+## Tests
+
+The project uses [Vitest](https://vitest.dev/) for unit testing.
+
+### Running tests
+
+From the repository root:
+
+```bash
+./mobile/run_tests.sh
+```
+
+Or directly from inside `erplibre_home_mobile`:
+
+```bash
+npm test
+```
+
+### Test files
+
+Test files are located in `src/__tests__/`:
+
+| File | Coverage |
+|------|----------|
+| `appService.test.ts` | CRUD applications, initialization regression |
+| `databaseService.test.ts` | SQLite operations (applications, notes) |
+| `dataMigration.test.ts` | SecureStorage → SQLite migration |
+| `migrationService.test.ts` | Migration runner, version storage |
+| `migrationPopup.test.ts` | Migration notification dialog |
+| `noteService.test.ts` | CRUD notes, tags, intents |
+
+### Mocks
+
+Capacitor plugins are mocked under `src/__mocks__/`:
+
+| Mock | Purpose |
+|------|---------|
+| `capacitor-secure-storage-plugin.ts` | In-memory key/value store |
+| `@capacitor/dialog.ts` | Stubbed alert/confirm |
+| `@capacitor/core.ts` | Stubbed Capacitor core |
+| `@capacitor-community/sqlite.ts` | In-memory SQLite via `sql.js` |
+| `@odoo/owl.ts` | Stubbed Owl EventBus |
+
 ## BSR Script
 
 BSR means _Build_, _Sync_ and _Run_, common actions during development. Since you'll often need to build the application and launch it on specific devices, this script was built to make this workflow faster.
