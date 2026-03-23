@@ -25,7 +25,6 @@ eventBus.addEventListener(Events.CLOSE_CAMERA, (_event: any) => {
 
 async function startApp() {
 	const router = new SimpleRouter();
-	const appService = new AppService();
 
 	const db = new DatabaseService();
 	await db.initialize();
@@ -37,6 +36,7 @@ async function startApp() {
 		},
 	]);
 
+	const appService = new AppService(db);
 	const noteService = new NoteService(eventBus, db);
 	const intentService = new IntentService(eventBus);
 

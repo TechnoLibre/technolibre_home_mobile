@@ -4,6 +4,30 @@ import { DatabaseService } from "../services/databaseService";
 import { Application } from "../models/application";
 import { NoAppMatchError } from "../js/errors";
 
+describe("AppService — initialization", () => {
+  const app: Application = {
+    url: "https://erp.example.com",
+    username: "admin",
+    password: "secret",
+  };
+
+  it("should throw when constructed without a DatabaseService (regression: app.ts called new AppService() before db was initialized)", async () => {
+    // Reproduces the bug in app.ts where AppService was instantiated
+    // before DatabaseService, leaving this._db as undefined.
+    const broken = new AppService(undefined as any);
+    await expect(broken.add(app)).rejects.toThrow(
+      /Cannot read properties of undefined/
+    );
+  });
+
+  it("should throw when constructed without a DatabaseService (getApps)", async () => {
+    const broken = new AppService(undefined as any);
+    await expect(broken.getApps()).rejects.toThrow(
+      /Cannot read properties of undefined/
+    );
+  });
+});
+
 describe("AppService with SQLite", () => {
   let appService: AppService;
   let db: DatabaseService;
