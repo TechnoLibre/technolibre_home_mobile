@@ -3,6 +3,7 @@ import { SimpleRouter } from "./router";
 import { AppService } from "../services/appService";
 import { NoteService } from "../services/note/noteService";
 import { IntentService } from "../services/intentService";
+import { DatabaseService } from "../services/databaseService";
 
 export abstract class EnhancedComponent extends Component {
 	public state: any = undefined;
@@ -25,5 +26,9 @@ export abstract class EnhancedComponent extends Component {
 
 	public get noteService(): NoteService {
 		return this.env.noteService;
+	}
+
+	public get databaseService(): DatabaseService {
+		return this.env.databaseService;
 	}
 }

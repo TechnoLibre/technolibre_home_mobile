@@ -127,6 +127,13 @@ export class DatabaseService {
     );
   }
 
+  async getTableNames(): Promise<string[]> {
+    const result = await this.db.query(
+      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    );
+    return (result.values || []).map((row: any) => row.name);
+  }
+
   private rowToNote(row: any): Note {
     return {
       id: row.id,

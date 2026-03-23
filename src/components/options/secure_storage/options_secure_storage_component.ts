@@ -1,0 +1,36 @@
+import { xml } from "@odoo/owl";
+import { Dialog } from "@capacitor/dialog";
+import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
+import { EnhancedComponent } from "../../../js/enhancedComponent";
+
+export class OptionsSecureStorageComponent extends EnhancedComponent {
+	static template = xml`
+    <li class="options-list__item">
+      <a href="#" t-on-click.stop.prevent="onShowKeysClick">
+        Clés SecureStorage
+      </a>
+    </li>
+  `;
+
+	async onShowKeysClick() {
+		let message: string;
+
+		try {
+			const result = await SecureStoragePlugin.keys();
+			const keys: string[] = result.value;
+
+			if (keys.length === 0) {
+				message = "Aucune clé présente dans le SecureStorage.";
+			} else {
+				message = keys.map((key, i) => `${i + 1}. ${key}`).join("\n");
+			}
+		} catch (error: unknown) {
+			message = `Erreur lors de la lecture du SecureStorage:\n${error}`;
+		}
+
+		await Dialog.alert({
+			title: "SecureStorage — Clés",
+			message,
+		});
+	}
+}

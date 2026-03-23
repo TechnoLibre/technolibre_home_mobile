@@ -6,6 +6,8 @@ import { HeadingComponent } from "../heading/heading_component";
 import { OptionsClearCacheComponent } from "./clear_cache/options_clear_cache_component";
 import { OptionsToggleBiometryComponent } from "./options_toggle_biometry_component.ts/options_toggle_biometry_component";
 import { OptionsChangelogComponent } from "./changelog/options_changelog_component";
+import { OptionsSecureStorageComponent } from "./secure_storage/options_secure_storage_component";
+import { OptionsSQLiteTablesComponent } from "./sqlite_tables/options_sqlite_tables_component";
 
 export class OptionsComponent extends EnhancedComponent {
 	static template = xml`
@@ -15,9 +17,11 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsClearCacheComponent />
         <OptionsToggleBiometryComponent />
         <OptionsChangelogComponent />
+        <OptionsSecureStorageComponent />
+        <OptionsSQLiteTablesComponent />
       </ul>
     </div>
   `;
 
-	static components = { HeadingComponent, OptionsClearCacheComponent, OptionsToggleBiometryComponent, OptionsChangelogComponent };
+	static components = { HeadingComponent, OptionsClearCacheComponent, OptionsToggleBiometryComponent, OptionsChangelogComponent, OptionsSecureStorageComponent, OptionsSQLiteTablesComponent };
 }

@@ -36,7 +36,7 @@ async function startApp() {
 	const noteService = new NoteService(eventBus, db);
 	const intentService = new IntentService(eventBus);
 
-	const env = { eventBus, router, appService, noteService, intentService };
+	const env = { eventBus, router, appService, noteService, intentService, databaseService: db };
 
 	await mount(RootComponent, document.body, { env });
 }
