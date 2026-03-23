@@ -11,6 +11,7 @@ import { OptionsSQLiteTablesComponent } from "./sqlite_tables/options_sqlite_tab
 import { OptionsDeviceInfoComponent } from "./device_info/options_device_info_component";
 import { OptionsDbSizeComponent } from "./db_size/options_db_size_component";
 import { OptionsPermissionsComponent } from "./permissions/options_permissions_component";
+import { OptionsMigrationHistoryComponent } from "./migration_history/options_migration_history_component";
 
 export class OptionsComponent extends EnhancedComponent {
 	static template = xml`
@@ -25,9 +26,10 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsDbSizeComponent />
         <OptionsPermissionsComponent />
         <OptionsDeviceInfoComponent />
+        <OptionsMigrationHistoryComponent />
       </ul>
     </div>
   `;
 
-	static components = { HeadingComponent, OptionsClearCacheComponent, OptionsToggleBiometryComponent, OptionsChangelogComponent, OptionsSecureStorageComponent, OptionsSQLiteTablesComponent, OptionsDeviceInfoComponent, OptionsDbSizeComponent, OptionsPermissionsComponent };
+	static components = { HeadingComponent, OptionsClearCacheComponent, OptionsToggleBiometryComponent, OptionsChangelogComponent, OptionsSecureStorageComponent, OptionsSQLiteTablesComponent, OptionsDeviceInfoComponent, OptionsDbSizeComponent, OptionsPermissionsComponent, OptionsMigrationHistoryComponent };
 }

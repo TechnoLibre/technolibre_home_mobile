@@ -2,6 +2,7 @@ import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "./databaseService";
 import { Application } from "../models/application";
 import { Note } from "../models/note";
+import { MigrationResult, MigrationEntityCount } from "./migrationService";
 
 /**
  * Migrates data from SecureStorage (old format) to SQLite (new format).
@@ -15,49 +16,69 @@ import { Note } from "../models/note";
  */
 export async function migrateFromSecureStorage(
   db: DatabaseService
-): Promise<void> {
-  await migrateApplications(db);
-  await migrateNotes(db);
+): Promise<MigrationResult> {
+  const [applications, notes] = await Promise.all([
+    migrateApplications(db),
+    migrateNotes(db),
+  ]);
+
+  return {
+    counts: { applications, notes },
+  };
 }
 
-async function migrateApplications(db: DatabaseService): Promise<void> {
+async function migrateApplications(db: DatabaseService): Promise<MigrationEntityCount> {
   let apps: Application[];
   try {
     const result = await SecureStoragePlugin.get({ key: "applications" });
     apps = JSON.parse(result.value);
   } catch {
-    return;
+    return { migrated: 0, skipped: 0 };
   }
 
+  let migrated = 0;
+  let skipped = 0;
+
+  const existing = await db.getAllApplications();
   for (const app of apps) {
-    const existing = await db.getAllApplications();
     const alreadyExists = existing.some(
       (a) => a.url === app.url && a.username === app.username
     );
-    if (!alreadyExists) {
+    if (alreadyExists) {
+      skipped++;
+    } else {
       await db.addApplication(app);
+      migrated++;
     }
   }
 
   await SecureStoragePlugin.remove({ key: "applications" });
+  return { migrated, skipped };
 }
 
-async function migrateNotes(db: DatabaseService): Promise<void> {
+async function migrateNotes(db: DatabaseService): Promise<MigrationEntityCount> {
   let notes: Note[];
   try {
     const result = await SecureStoragePlugin.get({ key: "notes" });
     notes = JSON.parse(result.value);
   } catch {
-    return;
+    return { migrated: 0, skipped: 0 };
   }
 
+  let migrated = 0;
+  let skipped = 0;
+
+  const existing = await db.getAllNotes();
   for (const note of notes) {
-    const existing = await db.getAllNotes();
     const alreadyExists = existing.some((n) => n.id === note.id);
-    if (!alreadyExists) {
+    if (alreadyExists) {
+      skipped++;
+    } else {
       await db.addNote(note);
+      migrated++;
     }
   }
 
   await SecureStoragePlugin.remove({ key: "notes" });
+  return { migrated, skipped };
 }

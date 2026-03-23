@@ -30,7 +30,11 @@ async function startApp() {
 	const db = new DatabaseService();
 	await db.initialize();
 	await runMigrations(db, [
-		{ version: 20260318, run: migrateFromSecureStorage },
+		{
+			version: 20260318,
+			description: "Migration de SecureStorage vers SQLite",
+			run: migrateFromSecureStorage,
+		},
 	]);
 
 	const noteService = new NoteService(eventBus, db);
