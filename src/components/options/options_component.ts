@@ -8,6 +8,9 @@ import { OptionsToggleBiometryComponent } from "./options_toggle_biometry_compon
 import { OptionsChangelogComponent } from "./changelog/options_changelog_component";
 import { OptionsSecureStorageComponent } from "./secure_storage/options_secure_storage_component";
 import { OptionsSQLiteTablesComponent } from "./sqlite_tables/options_sqlite_tables_component";
+import { OptionsDeviceInfoComponent } from "./device_info/options_device_info_component";
+import { OptionsDbSizeComponent } from "./db_size/options_db_size_component";
+import { OptionsPermissionsComponent } from "./permissions/options_permissions_component";
 
 export class OptionsComponent extends EnhancedComponent {
 	static template = xml`
@@ -19,9 +22,12 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsChangelogComponent />
         <OptionsSecureStorageComponent />
         <OptionsSQLiteTablesComponent />
+        <OptionsDbSizeComponent />
+        <OptionsPermissionsComponent />
+        <OptionsDeviceInfoComponent />
       </ul>
     </div>
   `;
 
-	static components = { HeadingComponent, OptionsClearCacheComponent, OptionsToggleBiometryComponent, OptionsChangelogComponent, OptionsSecureStorageComponent, OptionsSQLiteTablesComponent };
+	static components = { HeadingComponent, OptionsClearCacheComponent, OptionsToggleBiometryComponent, OptionsChangelogComponent, OptionsSecureStorageComponent, OptionsSQLiteTablesComponent, OptionsDeviceInfoComponent, OptionsDbSizeComponent, OptionsPermissionsComponent };
 }

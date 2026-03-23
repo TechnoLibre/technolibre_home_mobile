@@ -22,7 +22,17 @@ export class OptionsSecureStorageComponent extends EnhancedComponent {
 			if (keys.length === 0) {
 				message = "Aucune clé présente dans le SecureStorage.";
 			} else {
-				message = keys.map((key, i) => `${i + 1}. ${key}`).join("\n");
+				const entries = await Promise.all(
+					keys.map(async (key, i) => {
+						try {
+							const { value } = await SecureStoragePlugin.get({ key });
+							return `${i + 1}. ${key} → ${value}`;
+						} catch {
+							return `${i + 1}. ${key} → (erreur de lecture)`;
+						}
+					})
+				);
+				message = entries.join("\n");
 			}
 		} catch (error: unknown) {
 			message = `Erreur lors de la lecture du SecureStorage:\n${error}`;

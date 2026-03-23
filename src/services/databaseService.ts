@@ -127,11 +127,31 @@ export class DatabaseService {
     );
   }
 
-  async getTableNames(): Promise<string[]> {
+  async getDbSize(): Promise<{ pageCount: number; pageSize: number; totalBytes: number }> {
+    const [pcResult, psResult] = await Promise.all([
+      this.db.query("PRAGMA page_count"),
+      this.db.query("PRAGMA page_size"),
+    ]);
+    const pageCount: number = pcResult.values?.[0]?.page_count ?? 0;
+    const pageSize: number = psResult.values?.[0]?.page_size ?? 0;
+    return { pageCount, pageSize, totalBytes: pageCount * pageSize };
+  }
+
+  async getTablesInfo(): Promise<{ name: string; count: number }[]> {
     const result = await this.db.query(
       "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     );
-    return (result.values || []).map((row: any) => row.name);
+    const tables: string[] = (result.values || []).map((row: any) => row.name);
+
+    return Promise.all(
+      tables.map(async (name) => {
+        const countResult = await this.db.query(
+          `SELECT COUNT(*) as count FROM "${name}"`
+        );
+        const count = countResult.values?.[0]?.count ?? 0;
+        return { name, count };
+      })
+    );
   }
 
   private rowToNote(row: any): Note {
