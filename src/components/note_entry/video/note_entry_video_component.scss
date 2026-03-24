@@ -68,6 +68,13 @@
 	display: none;
 }
 
+.note-entry-video-component .note-entry__video__thumbnail__img {
+	border-radius: 0.25rem;
+	height: 100%;
+	object-fit: cover;
+	width: 100%;
+}
+
 .note-entry__video__overlay {
 	position: fixed;
 	inset: 0;

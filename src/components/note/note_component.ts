@@ -1,9 +1,12 @@
 import { useState, xml } from "@odoo/owl";
 
+import { Capacitor } from "@capacitor/core";
 import { Dialog } from "@capacitor/dialog";
+import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
 
 import { BiometryUtils } from "../../utils/biometryUtils";
+import { generateVideoThumbnail } from "../../utils/videoThumbnailUtils";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
@@ -361,8 +364,25 @@ export class NoteComponent extends EnhancedComponent {
 		const params = entry.params as NoteEntryVideoParams;
 
 		params.path = details.path;
+		params.thumbnailPath = await this.generateThumbnail(details.path);
 
 		await this.saveNoteData();
 		await this.getNote();
+	}
+
+	private async generateThumbnail(videoPath: string): Promise<string | undefined> {
+		try {
+			const webUrl = Capacitor.convertFileSrc(videoPath);
+			const base64 = await generateVideoThumbnail(webUrl);
+			const filename = (videoPath.split("/").pop() ?? "video.mp4").replace(/\.[^.]+$/, ".jpg");
+			const result = await Filesystem.writeFile({
+				path: filename,
+				data: base64,
+				directory: Directory.External,
+			});
+			return result.uri;
+		} catch {
+			return undefined;
+		}
 	}
 }

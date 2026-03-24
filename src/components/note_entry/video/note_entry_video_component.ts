@@ -1,6 +1,7 @@
 import { onMounted, useState, xml } from "@odoo/owl";
 
 import { Capacitor } from "@capacitor/core";
+import { NoteEntryVideoParams } from "../../../models/note";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { Events } from "../../../constants/events";
@@ -17,10 +18,13 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 			}"
 		>
 			<div class="note-entry__video__thumbnail__wrapper">
-				<div
-					class="note-entry__video__thumbnail"
-				>
-					<img src="${VideoOffIcon}" />
+				<div class="note-entry__video__thumbnail">
+					<img
+						t-if="getThumbnailSrc()"
+						t-att-src="getThumbnailSrc()"
+						class="note-entry__video__thumbnail__img"
+					/>
+					<img t-else="" src="${VideoOffIcon}" />
 				</div>
 			</div>
 			<div class="note-entry__video__data">
@@ -78,13 +82,9 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 		this.state.videoSrc = "";
 	}
 
-	getNativePath(rawUrl: string): string {
-		if (!rawUrl) return rawUrl;
-		if (rawUrl.startsWith("file://")) return rawUrl;
-		if (rawUrl.startsWith("https://localhost/_capacitor_file_/")) {
-			return rawUrl.replace("https://localhost/_capacitor_file_/", "file:///");
-		}
-		if (rawUrl.startsWith("/")) return `file://${rawUrl}`;
-		return rawUrl;
+	getThumbnailSrc(): string | undefined {
+		const params = this.props.params as NoteEntryVideoParams;
+		if (!params.thumbnailPath) return undefined;
+		return Capacitor.convertFileSrc(params.thumbnailPath);
 	}
 }

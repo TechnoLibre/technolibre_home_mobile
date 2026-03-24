@@ -28,7 +28,8 @@ export interface NoteEntryTextParams {
 }
 
 export interface NoteEntryVideoParams {
-	path: string
+	path: string;
+	thumbnailPath?: string;
 }
 
 export interface NoteEntryGeolocationParams {
