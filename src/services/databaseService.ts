@@ -26,8 +26,12 @@ export class DatabaseService {
     step("Lecture clé SecureStorage…");
     const encryptionKey = await this.getOrCreateEncryptionKey();
 
-    step("setEncryptionSecret…");
-    await this.sqlite.setEncryptionSecret(encryptionKey);
+    if (encryptionKey.isNew) {
+      step("setEncryptionSecret…");
+      await this.sqlite.setEncryptionSecret(encryptionKey.key);
+    } else {
+      step("setEncryptionSecret ignoré (clé existante)…");
+    }
 
     step("checkConnectionsConsistency…");
     await this.sqlite.checkConnectionsConsistency();
@@ -59,12 +63,12 @@ export class DatabaseService {
     step("initialize() terminé ✓");
   }
 
-  private async getOrCreateEncryptionKey(): Promise<string> {
+  private async getOrCreateEncryptionKey(): Promise<{ key: string; isNew: boolean }> {
     try {
       const result = await SecureStoragePlugin.get({
         key: StorageConstants.DB_ENCRYPTION_KEY,
       });
-      return result.value;
+      return { key: result.value, isNew: false };
     } catch {
       const bytes = new Uint8Array(32);
       globalThis.crypto.getRandomValues(bytes);
@@ -75,7 +79,7 @@ export class DatabaseService {
         key: StorageConstants.DB_ENCRYPTION_KEY,
         value: key,
       });
-      return key;
+      return { key, isNew: true };
     }
   }
 
