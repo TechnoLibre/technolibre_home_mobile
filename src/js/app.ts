@@ -8,6 +8,7 @@ import { NoteService } from "../services/note/noteService";
 import { DatabaseService } from "../services/databaseService";
 import { runMigrations } from "../services/migrationService";
 import { migrateFromSecureStorage } from "../services/dataMigration";
+import { migrateVideoThumbnails } from "../services/migrations/migrateVideoThumbnails";
 import { BiometryUtils } from "../utils/biometryUtils";
 import { Events } from "../constants/events";
 
@@ -59,6 +60,11 @@ async function startApp() {
 			version: 2026031801,
 			description: "Migration de SecureStorage vers SQLite",
 			run: migrateFromSecureStorage,
+		},
+		{
+			version: 2026032401,
+			description: "Génération des thumbnails vidéo manquants",
+			run: migrateVideoThumbnails,
 		},
 	]);
 
