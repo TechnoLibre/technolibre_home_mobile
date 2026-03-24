@@ -11,7 +11,7 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { Events } from "../../constants/events";
-import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryVideoParams } from "../../models/note";
+import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryVideoParams } from "../../models/note";
 
 import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
@@ -126,9 +126,10 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	addPhoto() {
-		this.state.note.entries.push(this.noteService.entry.getNewPhotoEntry());
+		const newEntry = this.noteService.entry.getNewPhotoEntry();
+		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
-		this.focusLastEntry();
+		this.eventBus.trigger(Events.OPEN_PHOTO_CAMERA, { entryId: newEntry.id });
 	}
 
 	addText() {
@@ -258,12 +259,44 @@ export class NoteComponent extends EnhancedComponent {
 	private listenForEvents() {
 		const onAudio = this.setAudioRecording.bind(this);
 		const onVideo = this.setVideoRecording.bind(this);
+		const onPhoto = this.setPhoto.bind(this);
 		this.eventBus.addEventListener(Events.SET_AUDIO_RECORDING, onAudio);
 		this.eventBus.addEventListener(Events.SET_VIDEO_RECORDING, onVideo);
+		this.eventBus.addEventListener(Events.SET_PHOTO, onPhoto);
 		onWillDestroy(() => {
 			this.eventBus.removeEventListener(Events.SET_AUDIO_RECORDING, onAudio);
 			this.eventBus.removeEventListener(Events.SET_VIDEO_RECORDING, onVideo);
+			this.eventBus.removeEventListener(Events.SET_PHOTO, onPhoto);
 		});
+	}
+
+	private async setPhoto(event: any) {
+		const details = event?.detail;
+
+		if (!details?.entryId || !details?.path) {
+			return;
+		}
+
+		let entry: NoteEntry | undefined;
+
+		try {
+			entry = this.getEntry(details.entryId);
+		} catch (error: unknown) {
+			if (error instanceof Error) {
+				Dialog.alert({ message: error.message });
+				return;
+			}
+		}
+
+		if (!entry || entry.type !== "photo") {
+			return;
+		}
+
+		const params = entry.params as NoteEntryPhotoParams;
+		params.path = details.path;
+
+		await this.saveNoteData();
+		await this.getNote();
 	}
 
 	private focusLastEntry() {

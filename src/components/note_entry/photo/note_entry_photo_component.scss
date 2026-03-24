@@ -75,3 +75,36 @@
 .note-entry-photo-component .note-entry__wrapper:not(.not-empty) .note-entry__photo__open-photo {
 	display: none;
 }
+
+.note-entry__photo__overlay {
+	position: fixed;
+	inset: 0;
+	background: #000;
+	z-index: 9999;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.note-entry__photo__overlay__close {
+	position: absolute;
+	top: 1rem;
+	right: 1rem;
+	background: rgba(0, 0, 0, 0.6);
+	border: none;
+	border-radius: 50%;
+	cursor: pointer;
+	padding: 0.5rem;
+	z-index: 10000;
+	& img {
+		display: block;
+		width: 1.5rem;
+		height: 1.5rem;
+	}
+}
+
+.note-entry__photo__overlay__img {
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+}

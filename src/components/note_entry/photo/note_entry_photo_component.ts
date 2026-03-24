@@ -1,10 +1,14 @@
-import { xml } from "@odoo/owl";
+import { onWillDestroy, useState, xml } from "@odoo/owl";
 
 import { Capacitor } from "@capacitor/core";
+import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
+import { Dialog } from "@capacitor/dialog";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { Events } from "../../../constants/events";
 
 import PhotoOffIcon from "../../../assets/icon/photo_off.svg";
+import CloseIcon from "../../../assets/icon/close.svg";
 
 export class NoteEntryPhotoComponent extends EnhancedComponent {
 	static template = xml`
@@ -22,9 +26,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 					/>
 				</t>
 				<t t-else="">
-					<div
-						class="note-entry__photo__thumbnail--empty"
-					>
+					<div class="note-entry__photo__thumbnail--empty">
 						<img src="${PhotoOffIcon}" />
 					</div>
 				</t>
@@ -39,16 +41,74 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 				<button
 					class="note-entry__photo__button note-entry__photo__open-photo"
 					t-if="props.params.path"
-					t-on-click.stop.prevent="onClickOpenVideo"
+					t-on-click.stop.prevent="onClickOpenPhoto"
 				>
 					Ouvrir la photo
 				</button>
 			</div>
 		</div>
+		<div t-if="state.showPhoto" class="note-entry__photo__overlay">
+			<button class="note-entry__photo__overlay__close" t-on-click.stop.prevent="onClickClosePhoto">
+				<img src="${CloseIcon}" />
+			</button>
+			<img
+				class="note-entry__photo__overlay__img"
+				t-att-src="image"
+			/>
+		</div>
 	`;
 
-	public get image() {
-		return Capacitor.convertFileSrc(this.props.params.path);
+	setup() {
+		this.state = useState({ showPhoto: false });
+
+		const onOpenCamera = (event: any) => {
+			if (event?.detail?.entryId === this.props.id) {
+				this.onClickOpenCamera();
+			}
+		};
+		this.eventBus.addEventListener(Events.OPEN_PHOTO_CAMERA, onOpenCamera);
+		onWillDestroy(() => {
+			this.eventBus.removeEventListener(Events.OPEN_PHOTO_CAMERA, onOpenCamera);
+		});
 	}
 
+	async onClickOpenCamera() {
+		try {
+			const { camera } = await Camera.requestPermissions({ permissions: ["camera"] });
+			if (camera !== "granted") {
+				Dialog.alert({ message: "Permission caméra refusée." });
+				return;
+			}
+
+			const photo = await Camera.getPhoto({
+				quality: 90,
+				allowEditing: false,
+				resultType: CameraResultType.Uri,
+				source: CameraSource.Camera,
+			});
+
+			if (!photo.path) {
+				return;
+			}
+
+			this.eventBus.trigger(Events.SET_PHOTO, {
+				entryId: this.props.id,
+				path: photo.path,
+			});
+		} catch (error: unknown) {
+			// User cancelled — no alert needed
+		}
+	}
+
+	onClickOpenPhoto() {
+		this.state.showPhoto = true;
+	}
+
+	onClickClosePhoto() {
+		this.state.showPhoto = false;
+	}
+
+	get image(): string {
+		return Capacitor.convertFileSrc(this.props.params.path);
+	}
 }
