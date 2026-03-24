@@ -19,6 +19,11 @@ import { TagManagerComponent } from "./tag_manager/tag_manager_component";
 export class NoteComponent extends EnhancedComponent {
 	static template = xml`
 		<div id="note-component">
+			<nav class="breadcrumb">
+				<a href="#" t-on-click.stop.prevent="onBackToNotesClick">Notes</a>
+				<span class="breadcrumb__sep">›</span>
+				<span class="breadcrumb__current" t-esc="state.note.title or 'Nouvelle note'"/>
+			</nav>
 			<NoteTopControlsComponent
 				note="state.note"
 				toggleEditMode.bind="toggleEditMode"
@@ -71,6 +76,10 @@ export class NoteComponent extends EnhancedComponent {
 		this.setParams();
 		this.getNote();
 		this.listenForEvents();
+	}
+
+	onBackToNotesClick() {
+		this.navigate("/notes");
 	}
 
 	addAudio() {
