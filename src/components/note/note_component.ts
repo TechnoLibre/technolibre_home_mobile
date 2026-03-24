@@ -90,6 +90,7 @@ export class NoteComponent extends EnhancedComponent {
 		const newEntry = this.noteService.entry.getNewAudioEntry();
 		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
+		this.scrollToLastEntry();
 	}
 
 	addDateEntry() {
@@ -100,9 +101,10 @@ export class NoteComponent extends EnhancedComponent {
 		params.date = (new Date()).toISOString();
 
 		const entries: Array<NoteEntry> = this.state.note.entries;
-		
+
 		entries.push(newEntry);
 		this.saveNoteData();
+		this.scrollToLastEntry();
 	}
 
 	async addLocation() {
@@ -124,12 +126,14 @@ export class NoteComponent extends EnhancedComponent {
 
 		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
+		this.scrollToLastEntry();
 	}
 
 	async addPhoto() {
 		const newEntry = this.noteService.entry.getNewPhotoEntry();
 		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
+		this.scrollToLastEntry();
 		await this.takePhoto(newEntry.id);
 	}
 
@@ -143,6 +147,7 @@ export class NoteComponent extends EnhancedComponent {
 		const newEntry = this.noteService.entry.getNewVideoEntry();
 		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
+		this.scrollToLastEntry();
 		this.eventBus.trigger(Events.OPEN_CAMERA, { entryId: newEntry.id });
 	}
 
@@ -302,6 +307,10 @@ export class NoteComponent extends EnhancedComponent {
 
 	private focusLastEntry() {
 		this.eventBus.trigger(Events.FOCUS_LAST_ENTRY);
+	}
+
+	private scrollToLastEntry() {
+		this.eventBus.trigger(Events.SCROLL_TO_LAST_ENTRY);
 	}
 
 	private getEntry(entryId: string): NoteEntry {

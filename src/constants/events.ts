@@ -10,5 +10,6 @@ export const Events: Record<string, string> = {
 	SET_VIDEO_RECORDING: "set_video_recording",
 	SET_PHOTO: "set_photo",
 	RELOAD_NOTES: "reload_notes",
-	SET_INTENT: "set_intent"
+	SET_INTENT: "set_intent",
+	SCROLL_TO_LAST_ENTRY: "scroll_to_last_entry"
 }
