@@ -2,8 +2,10 @@ import {
   CapacitorSQLite,
   SQLiteConnection,
 } from "@capacitor-community/sqlite";
+import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { Application } from "../models/application";
 import { Note, NoteEntry } from "../models/note";
+import { StorageConstants } from "../constants/storage";
 
 const DB_NAME = "erplibre_mobile";
 
@@ -16,15 +18,38 @@ export class DatabaseService {
   }
 
   async initialize(): Promise<void> {
+    const encryptionKey = await this.getOrCreateEncryptionKey();
+    await this.sqlite.setEncryptionSecret(encryptionKey);
+
     this.db = await this.sqlite.createConnection(
       DB_NAME,
-      false,
-      "no-encryption",
+      true,
+      "secret",
       1,
       false
     );
     await this.db.open();
     await this.createTables();
+  }
+
+  private async getOrCreateEncryptionKey(): Promise<string> {
+    try {
+      const result = await SecureStoragePlugin.get({
+        key: StorageConstants.DB_ENCRYPTION_KEY,
+      });
+      return result.value;
+    } catch {
+      const bytes = new Uint8Array(32);
+      globalThis.crypto.getRandomValues(bytes);
+      const key = Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      await SecureStoragePlugin.set({
+        key: StorageConstants.DB_ENCRYPTION_KEY,
+        value: key,
+      });
+      return key;
+    }
   }
 
   private async createTables(): Promise<void> {

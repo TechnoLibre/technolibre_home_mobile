@@ -35,5 +35,9 @@ export const SecureStoragePlugin = {
     return { value: true };
   },
 
+  async keys(): Promise<{ value: string[] }> {
+    return { value: Array.from(_store.keys()) };
+  },
+
   _store,
 };

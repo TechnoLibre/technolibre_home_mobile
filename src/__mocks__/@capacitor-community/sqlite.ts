@@ -126,6 +126,10 @@ class MockDBConnection {
 export class SQLiteConnection {
   constructor(_capacitorSQLite: any) {}
 
+  async setEncryptionSecret(_secret: string) {
+    return {};
+  }
+
   async createConnection(
     _database: string,
     _encrypted: boolean,

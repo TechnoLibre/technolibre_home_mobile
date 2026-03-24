@@ -2,13 +2,58 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { DatabaseService } from "../services/databaseService";
 import { Application } from "../models/application";
 import { Note } from "../models/note";
+import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
+import { StorageConstants } from "../constants/storage";
 
 describe("DatabaseService", () => {
   let db: DatabaseService;
 
   beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
     db = new DatabaseService();
     await db.initialize();
+  });
+
+  // ── Encryption ──
+
+  describe("encryption", () => {
+    it("should generate and store a 64-char hex encryption key on first initialize", async () => {
+      const stored = await SecureStoragePlugin.get({
+        key: StorageConstants.DB_ENCRYPTION_KEY,
+      });
+      expect(stored.value).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it("should reuse the same encryption key on subsequent initializes", async () => {
+      const key1 = await SecureStoragePlugin.get({
+        key: StorageConstants.DB_ENCRYPTION_KEY,
+      });
+
+      const db2 = new DatabaseService();
+      await db2.initialize();
+
+      const key2 = await SecureStoragePlugin.get({
+        key: StorageConstants.DB_ENCRYPTION_KEY,
+      });
+
+      expect(key1.value).toBe(key2.value);
+    });
+
+    it("should generate a different key for each fresh install", async () => {
+      const key1 = await SecureStoragePlugin.get({
+        key: StorageConstants.DB_ENCRYPTION_KEY,
+      });
+
+      SecureStoragePlugin._store.clear();
+      const db2 = new DatabaseService();
+      await db2.initialize();
+
+      const key2 = await SecureStoragePlugin.get({
+        key: StorageConstants.DB_ENCRYPTION_KEY,
+      });
+
+      expect(key1.value).not.toBe(key2.value);
+    });
   });
 
   // ── Initialization ──
