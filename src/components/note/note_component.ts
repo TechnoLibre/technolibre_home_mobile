@@ -74,7 +74,7 @@ export class NoteComponent extends EnhancedComponent {
 			noteId: undefined,
 			note: this.noteService.getNewNote(),
 			newNote: false,
-			editMode: true,
+			editMode: false,
 			optionMode: false
 		});
 		this.setParams();
