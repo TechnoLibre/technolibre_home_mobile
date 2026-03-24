@@ -183,14 +183,53 @@ export class DatabaseService {
     );
   }
 
-  async getDbSize(): Promise<{ pageCount: number; pageSize: number; totalBytes: number }> {
-    const [pcResult, psResult] = await Promise.all([
-      this.db.query("PRAGMA page_count"),
-      this.db.query("PRAGMA page_size"),
-    ]);
-    const pageCount: number = pcResult.values?.[0]?.page_count ?? 0;
-    const pageSize: number = psResult.values?.[0]?.page_size ?? 0;
-    return { pageCount, pageSize, totalBytes: pageCount * pageSize };
+  async getDbSize(): Promise<{ pageCount: number; pageSize: number; totalBytes: number; diagnostics: string[] }> {
+    const diagnostics: string[] = [];
+    let pageCount = 0;
+    let pageSize = 0;
+    let totalBytes = 0;
+
+    // Try dbstat virtual table first (most accurate, per-table breakdown)
+    try {
+      const result = await this.db.query(
+        "SELECT name, SUM(pgsize) as bytes FROM dbstat GROUP BY name ORDER BY bytes DESC"
+      );
+      const rows: { name: string; bytes: number }[] = result.values ?? [];
+      if (rows.length > 0) {
+        const dbstatTotal = rows.reduce((sum, r) => sum + Number(r.bytes), 0);
+        totalBytes = dbstatTotal;
+        diagnostics.push(`dbstat total : ${dbstatTotal} octets`);
+        for (const row of rows) {
+          diagnostics.push(`  ${row.name} : ${Number(row.bytes)} octets`);
+        }
+      } else {
+        diagnostics.push(`dbstat : 0 lignes (table vide ou indisponible)`);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      diagnostics.push(`✗ dbstat : ${msg}`);
+    }
+
+    // PRAGMA page_count * page_size as cross-check
+    try {
+      const [pcResult, psResult] = await Promise.all([
+        this.db.query("PRAGMA page_count"),
+        this.db.query("PRAGMA page_size"),
+      ]);
+      // Column name varies across SQLCipher builds — check both forms
+      const pcRow = pcResult.values?.[0] ?? {};
+      const psRow = psResult.values?.[0] ?? {};
+      pageCount = pcRow.page_count ?? pcRow["page_count"] ?? Number(Object.values(pcRow)[0]) ?? 0;
+      pageSize = psRow.page_size ?? psRow["page_size"] ?? Number(Object.values(psRow)[0]) ?? 0;
+      const pragmaBytes = pageCount * pageSize;
+      if (totalBytes === 0 && pragmaBytes > 0) totalBytes = pragmaBytes;
+      diagnostics.push(`PRAGMA page_count=${pageCount}, page_size=${pageSize} → ${pragmaBytes} octets`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      diagnostics.push(`✗ PRAGMA : ${msg}`);
+    }
+
+    return { pageCount, pageSize, totalBytes, diagnostics };
   }
 
   async getTablesInfo(): Promise<{ name: string; count: number }[]> {

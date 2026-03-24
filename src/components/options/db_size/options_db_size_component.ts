@@ -15,19 +15,22 @@ export class OptionsDbSizeComponent extends EnhancedComponent {
 		let message: string;
 
 		try {
-			const { pageCount, pageSize, totalBytes } =
+			const { pageCount, pageSize, totalBytes, diagnostics } =
 				await this.databaseService.getDbSize();
 
 			const kb = (totalBytes / 1024).toFixed(1);
-			const mb = (totalBytes / 1024 / 1024).toFixed(3);
+			const mb = (totalBytes / 1024 / 1024).toFixed(2);
 
-			message = [
-				`Pages : ${pageCount}`,
-				`Taille page : ${pageSize} octets`,
-				`Total : ${totalBytes} octets`,
-				`       ${kb} Ko`,
-				`       ${mb} Mo`,
-			].join("\n");
+			const lines = [
+				`Total : ${totalBytes.toLocaleString()} octets`,
+				`        ${kb} Ko`,
+				`        ${mb} Mo`,
+			];
+			if (pageCount > 0) {
+				lines.push(``, `Pages : ${pageCount}`, `Taille page : ${pageSize} octets`);
+			}
+			lines.push(``, `--- Diagnostics ---`, ...diagnostics);
+			message = lines.join("\n");
 		} catch (error: unknown) {
 			message = `Erreur lors de la lecture de la taille:\n${error}`;
 		}
