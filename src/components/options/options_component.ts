@@ -1,5 +1,8 @@
 import { xml } from "@odoo/owl";
 
+// @ts-ignore
+const IS_DEBUG = import.meta.env.VITE_DEBUG_DEV === "true";
+
 import { EnhancedComponent } from "../../js/enhancedComponent";
 
 import { HeadingComponent } from "../heading/heading_component";
@@ -17,7 +20,7 @@ export class OptionsComponent extends EnhancedComponent {
       <ul id="options-list">
         <OptionsClearCacheComponent />
         <OptionsToggleBiometryComponent />
-        <li class="options-list__item">
+        <li class="options-list__item" t-if="isDebug">
           <a href="#" t-on-click.stop.prevent="onDatabaseClick">
             Base de données ›
           </a>
@@ -29,6 +32,10 @@ export class OptionsComponent extends EnhancedComponent {
       </ul>
     </div>
   `;
+
+	get isDebug() {
+		return IS_DEBUG;
+	}
 
 	onDatabaseClick() {
 		this.navigate("/options/database");
