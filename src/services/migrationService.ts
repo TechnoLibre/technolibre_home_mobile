@@ -14,16 +14,27 @@ const MIGRATION_HISTORY_KEY = "migration_history";
  */
 
 /**
- * Converts a YYYYMMDDNN version number to a human-readable string.
+ * Converts a version number to a human-readable string.
+ * Handles both legacy YYYYMMDD (8 digits) and current YYYYMMDDNN (10 digits).
+ *
  * 2026031801 → "2026.03.18"
  * 2026031802 → "2026.03.18-2"
+ * 20260318   → "2026.03.18"  (legacy, treated as sequence 01)
+ * 0          → "0000.00.00"
  */
 export function versionToDisplay(version: number): string {
-  const s = String(version).padStart(10, "0");
-  const year = s.slice(0, 4);
-  const month = s.slice(4, 6);
-  const day = s.slice(6, 8);
-  const seq = parseInt(s.slice(8, 10), 10);
+  if (version === 0) return "0000.00.00";
+  const s = String(version);
+  if (s.length === 8) {
+    // Legacy YYYYMMDD format
+    return `${s.slice(0, 4)}.${s.slice(4, 6)}.${s.slice(6, 8)}`;
+  }
+  // Current YYYYMMDDNN format (10 digits)
+  const padded = s.padStart(10, "0");
+  const year = padded.slice(0, 4);
+  const month = padded.slice(4, 6);
+  const day = padded.slice(6, 8);
+  const seq = parseInt(padded.slice(8, 10), 10);
   return seq > 1 ? `${year}.${month}.${day}-${seq}` : `${year}.${month}.${day}`;
 }
 
@@ -54,7 +65,16 @@ export type Migration = {
 export async function getSchemaVersion(): Promise<number> {
   try {
     const result = await SecureStoragePlugin.get({ key: SCHEMA_VERSION_KEY });
-    return parseInt(result.value, 10);
+    const stored = parseInt(result.value, 10);
+    // Auto-upgrade legacy 8-digit YYYYMMDD format to 10-digit YYYYMMDDNN.
+    // 20260318 → 2026031801 (appended sequence "01").
+    // This prevents re-running migrations on existing installs after the format change.
+    if (String(stored).length === 8) {
+      const upgraded = stored * 100 + 1;
+      await setSchemaVersion(upgraded);
+      return upgraded;
+    }
+    return stored;
   } catch {
     return 0;
   }

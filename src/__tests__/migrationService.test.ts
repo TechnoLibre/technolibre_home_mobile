@@ -13,8 +13,40 @@ describe("MigrationService — versionToDisplay", () => {
     expect(versionToDisplay(2026031899)).toBe("2026.03.18-99");
   });
 
+  it("handles legacy 8-digit YYYYMMDD format", () => {
+    expect(versionToDisplay(20260318)).toBe("2026.03.18");
+  });
+
   it("handles version 0 (initial state) gracefully", () => {
     expect(versionToDisplay(0)).toBe("0000.00.00");
+  });
+});
+
+describe("MigrationService — legacy version upgrade", () => {
+  beforeEach(() => {
+    SecureStoragePlugin._store.clear();
+  });
+
+  it("auto-upgrades 8-digit stored version to 10-digit on read", async () => {
+    await SecureStoragePlugin.set({ key: "schema_version", value: "20260318" });
+    const version = await getSchemaVersion();
+    expect(version).toBe(2026031801);
+  });
+
+  it("persists the upgraded version so subsequent reads return the new format", async () => {
+    await SecureStoragePlugin.set({ key: "schema_version", value: "20260318" });
+    await getSchemaVersion();
+    const stored = (await SecureStoragePlugin.get({ key: "schema_version" })).value;
+    expect(stored).toBe("2026031801");
+  });
+
+  it("does not re-run migration after upgrade if version matches", async () => {
+    await SecureStoragePlugin.set({ key: "schema_version", value: "20260318" });
+    const db = new DatabaseService();
+    await db.initialize();
+    const calls: number[] = [];
+    await runMigrations(db, [{ version: 2026031801, run: async () => { calls.push(1); } }]);
+    expect(calls).toEqual([]);
   });
 });
 
