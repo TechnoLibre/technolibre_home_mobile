@@ -4,6 +4,7 @@ import { AppService } from "../services/appService";
 import { NoteService } from "../services/note/noteService";
 import { IntentService } from "../services/intentService";
 import { DatabaseService } from "../services/databaseService";
+import { Events } from "../constants/events";
 
 export abstract class EnhancedComponent extends Component {
 	public state: any = undefined;
@@ -30,5 +31,11 @@ export abstract class EnhancedComponent extends Component {
 
 	public get databaseService(): DatabaseService {
 		return this.env.databaseService;
+	}
+
+	public navigate(url: string): void {
+		this.eventBus.dispatchEvent(
+			new CustomEvent(Events.ROUTER_NAVIGATION, { detail: { url } })
+		);
 	}
 }

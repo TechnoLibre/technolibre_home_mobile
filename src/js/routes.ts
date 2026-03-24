@@ -1,6 +1,7 @@
 import { HomeComponent } from "../components/home/home_component";
 import { ApplicationsComponent } from "../components/applications/applications_component";
 import { OptionsComponent } from "../components/options/options_component";
+import { OptionsDatabaseComponent } from "../components/options/database/options_database_component";
 import { ApplicationsAddComponent } from "../components/applications/add/applications_add_component";
 import { ApplicationsEditComponent } from "../components/applications/edit/applications_edit_component";
 import { IntentComponent } from "../components/intent/intent_component";
@@ -21,6 +22,7 @@ export const routes: Route[] = [
 	{ pathname: "/notes/edit/:id", component: NoteListComponent },
 	{ pathname: "/note/:id", component: NoteComponent },
 	{ pathname: "/intent/:type", component: IntentComponent },
+	{ pathname: "/options/database", component: OptionsDatabaseComponent },
 	{ pathname: "/options", component: OptionsComponent },
 	{ pathname: "*", component: HomeComponent }
 ];
