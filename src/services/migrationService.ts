@@ -34,8 +34,8 @@ export function versionToDisplay(version: number): string {
   const year = padded.slice(0, 4);
   const month = padded.slice(4, 6);
   const day = padded.slice(6, 8);
-  const seq = parseInt(padded.slice(8, 10), 10);
-  return seq > 1 ? `${year}.${month}.${day}-${seq}` : `${year}.${month}.${day}`;
+  const seq = padded.slice(8, 10);
+  return `${year}.${month}.${day}.${seq}`;
 }
 
 export interface MigrationEntityCount {

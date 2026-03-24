@@ -4,13 +4,10 @@ import { DatabaseService } from "../services/databaseService";
 import { getSchemaVersion, setSchemaVersion, runMigrations, versionToDisplay } from "../services/migrationService";
 
 describe("MigrationService — versionToDisplay", () => {
-  it("shows YYYY.MM.DD for sequence 01", () => {
-    expect(versionToDisplay(2026031801)).toBe("2026.03.18");
-  });
-
-  it("appends -N for sequence > 1", () => {
-    expect(versionToDisplay(2026031802)).toBe("2026.03.18-2");
-    expect(versionToDisplay(2026031899)).toBe("2026.03.18-99");
+  it("shows YYYY.MM.DD.NN format", () => {
+    expect(versionToDisplay(2026031801)).toBe("2026.03.18.01");
+    expect(versionToDisplay(2026031802)).toBe("2026.03.18.02");
+    expect(versionToDisplay(2026031899)).toBe("2026.03.18.99");
   });
 
   it("handles legacy 8-digit YYYYMMDD format", () => {

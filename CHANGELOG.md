@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [2026.03.18] - 2026-03-20
+## [2026.03.18.01] - 2026-03-20
 
 ### Added
 - SQLite database backend with AES-256 encryption (replaces SecureStorage)
@@ -33,7 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Video camera auto-opening on all note views instead of only on new entries
 - Race condition when opening photo camera before component was mounted
 
-## [2025.12.28] - 2025-12-28
+## [2025.12.28.01] - 2025-12-28
 
 ### Added
 - Application management: add, edit, and delete Odoo instances
