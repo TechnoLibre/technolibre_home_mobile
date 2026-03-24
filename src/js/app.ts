@@ -56,7 +56,7 @@ async function startApp() {
 	setBootStep("Vérification migrations…");
 	await runMigrations(db, [
 		{
-			version: 20260318,
+			version: 2026031801,
 			description: "Migration de SecureStorage vers SQLite",
 			run: migrateFromSecureStorage,
 		},

@@ -6,9 +6,26 @@ const SCHEMA_VERSION_KEY = "schema_version";
 const MIGRATION_HISTORY_KEY = "migration_history";
 
 /**
- * Version format: YYYYMMDD (e.g. 20260320 for March 20, 2026).
- * Versions are compared numerically, so they must always increase over time.
+ * Version format: YYYYMMDDNN (10 digits).
+ * YYYY = year, MM = month, DD = day, NN = sequence (01-99).
+ * Example: 2026031801 = first migration of March 18, 2026.
+ *          2026031802 = second migration of the same day.
+ * Versions are compared numerically, so they always increase.
  */
+
+/**
+ * Converts a YYYYMMDDNN version number to a human-readable string.
+ * 2026031801 → "2026.03.18"
+ * 2026031802 → "2026.03.18-2"
+ */
+export function versionToDisplay(version: number): string {
+  const s = String(version).padStart(10, "0");
+  const year = s.slice(0, 4);
+  const month = s.slice(4, 6);
+  const day = s.slice(6, 8);
+  const seq = parseInt(s.slice(8, 10), 10);
+  return seq > 1 ? `${year}.${month}.${day}-${seq}` : `${year}.${month}.${day}`;
+}
 
 export interface MigrationEntityCount {
   migrated: number;
@@ -115,7 +132,7 @@ export async function runMigrations(
 
     for (const entry of executedEntries) {
       if (lines.length > 0) lines.push("");
-      lines.push(`v${entry.fromVersion} → v${entry.version}`);
+      lines.push(`v${versionToDisplay(entry.fromVersion)} → v${versionToDisplay(entry.version)}`);
       if (entry.description) lines.push(entry.description);
       lines.push(`Durée : ${entry.durationMs} ms`);
 

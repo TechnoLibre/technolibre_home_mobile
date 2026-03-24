@@ -1,7 +1,22 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
-import { getSchemaVersion, setSchemaVersion, runMigrations } from "../services/migrationService";
+import { getSchemaVersion, setSchemaVersion, runMigrations, versionToDisplay } from "../services/migrationService";
+
+describe("MigrationService — versionToDisplay", () => {
+  it("shows YYYY.MM.DD for sequence 01", () => {
+    expect(versionToDisplay(2026031801)).toBe("2026.03.18");
+  });
+
+  it("appends -N for sequence > 1", () => {
+    expect(versionToDisplay(2026031802)).toBe("2026.03.18-2");
+    expect(versionToDisplay(2026031899)).toBe("2026.03.18-99");
+  });
+
+  it("handles version 0 (initial state) gracefully", () => {
+    expect(versionToDisplay(0)).toBe("0000.00.00");
+  });
+});
 
 describe("MigrationService — version storage", () => {
   beforeEach(() => {

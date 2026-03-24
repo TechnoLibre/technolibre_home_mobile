@@ -13,15 +13,15 @@ describe("Migration popup", () => {
   it("should show a popup when at least one migration runs", async () => {
     const db = new DatabaseService();
     await db.initialize();
-    await runMigrations(db, [{ version: 20260318, run: async () => {} }]);
+    await runMigrations(db, [{ version: 2026031801, run: async () => {} }]);
     expect(Dialog.alert).toHaveBeenCalledOnce();
   });
 
   it("should not show a popup when no migration runs", async () => {
-    await SecureStoragePlugin.set({ key: "schema_version", value: "20260318" });
+    await SecureStoragePlugin.set({ key: "schema_version", value: "2026031801" });
     const db = new DatabaseService();
     await db.initialize();
-    await runMigrations(db, [{ version: 20260318, run: async () => {} }]);
+    await runMigrations(db, [{ version: 2026031801, run: async () => {} }]);
     expect(Dialog.alert).not.toHaveBeenCalled();
   });
 });
