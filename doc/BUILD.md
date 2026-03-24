@@ -40,7 +40,8 @@ Situés dans `src/__tests__/` :
 | Fichier | Couverture |
 |---------|-----------|
 | `appService.test.ts` | CRUD applications, régression initialisation |
-| `databaseService.test.ts` | Opérations SQLite |
+| `databaseService.test.ts` | Opérations SQLite, chiffrement (génération clé, réutilisation, unicité) |
+| `biometryUtils.test.ts` | Gate biométrique — 5 cas (désactivé, non défini, capteur absent, succès, échec) |
 | `dataMigration.test.ts` | Migration SecureStorage → SQLite |
 | `migrationService.test.ts` | Runner de migrations, versionnage |
 | `migrationPopup.test.ts` | Dialog de notification post-migration |
@@ -48,7 +49,16 @@ Situés dans `src/__tests__/` :
 
 ### Mocks Capacitor
 
-Les plugins natifs sont mockés dans `src/__mocks__/` (SQLite en mémoire via `sql.js`, SecureStorage comme dictionnaire en mémoire).
+Les plugins natifs sont mockés dans `src/__mocks__/` :
+
+| Mock | Implémentation |
+|------|----------------|
+| `@capacitor-community/sqlite` | DB en mémoire (Map), gestion des connexions |
+| `capacitor-secure-storage-plugin` | Dictionnaire en mémoire, expose `_store` pour les tests |
+| `@aparajita/capacitor-biometric-auth` | Contrôlable via `_setShouldSucceed()` / `_setAvailable()` / `_reset()` |
+| `@capacitor/dialog` | No-op |
+| `@capacitor/core` | No-op |
+| `@odoo/owl` | Stubs minimalistes |
 
 ## Script principal
 

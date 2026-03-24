@@ -41,13 +41,47 @@ erplibre_home_mobile/
 
 ## Bootstrap de l'application (`src/js/app.ts`)
 
-Au démarrage :
+Au démarrage, un écran de boot statique (HTML pur) affiche chaque étape en temps réel avant que le framework Owl soit monté :
 
-1. Initialisation de l'`EventBus` Owl
-2. Création des services : `AppService`, `NoteService`, `IntentService`
-3. Initialisation de la base SQLite et exécution des migrations
-4. Montage du `RootComponent` sur le DOM
-5. Écoute des événements de navigation et de caméra
+1. Masquage du splash screen natif Capacitor
+2. **Vérification biométrique** — si activée par l'utilisateur, prompt natif avant tout accès aux données
+3. Récupération / génération de la clé d'encryption SQLite (SecureStorage)
+4. Initialisation de la base SQLite chiffrée
+5. Exécution des migrations de données
+6. Création des services : `AppService`, `NoteService`, `IntentService`
+7. Montage du `RootComponent` sur le DOM — l'écran de boot est retiré
+8. Écoute des événements de navigation et de caméra
+
+Si la biométrie échoue ou qu'une erreur survient, le message s'affiche sur l'écran de boot sans bloquer l'utilisateur dans un état invisble.
+
+## Sécurité des données
+
+### Chiffrement SQLite
+
+La base de données locale est chiffrée avec **SQLCipher (AES-256)** via `@capacitor-community/sqlite`.
+
+| Étape | Détail |
+|-------|--------|
+| 1re installation | Clé aléatoire 256 bits (Web Crypto API) générée et stockée dans SecureStorage |
+| Démarrages suivants | Clé récupérée depuis SecureStorage ; `setEncryptionSecret` n'est appelé qu'à la 1re installation |
+| Ouverture de la DB | `createConnection(db, encrypted=true, mode="secret")` |
+
+La clé est stockée dans **Android Keystore / iOS Keychain** via `capacitor-secure-storage-plugin`, protégée par le matériel sécurisé de l'appareil (TEE/StrongBox).
+
+### Protection biométrique (opt-in)
+
+Activable par l'utilisateur depuis **Options → Activer biométrie**.
+
+Quand activée, une authentification biométrique (empreinte ou reconnaissance faciale) est requise **avant** la récupération de la clé SQLite. Si le capteur est absent, l'étape est silencieusement ignorée.
+
+```
+Démarrage
+  └── biométrie activée ?
+        ├── non  → récupère la clé directement
+        └── oui  → prompt natif
+              ├── succès → récupère la clé → ouvre la DB
+              └── échec  → arrêt sur l'écran de boot
+```
 
 ## Capacitor — pont Web/Natif
 
@@ -55,12 +89,13 @@ Capacitor synchronise les fichiers web compilés (`dist/`) vers le projet Androi
 
 | Plugin | Usage |
 |--------|-------|
-| `@capacitor-community/sqlite` | Base de données locale |
+| `@capacitor-community/sqlite` | Base de données locale chiffrée (SQLCipher AES-256) |
+| `capacitor-secure-storage-plugin` | Stockage sécurisé (Android Keystore / iOS Keychain) |
+| `@aparajita/capacitor-biometric-auth` | Biométrie (empreinte / reconnaissance faciale) |
 | `@capacitor/geolocation` | GPS |
 | `@capacitor/camera` | Photo |
 | `capacitor-voice-recorder` | Audio |
 | `@capacitor-community/video-recorder` | Vidéo |
-| `@aparajita/capacitor-biometric-auth` | Biométrie (empreinte/face) |
 | `@supernotes/capacitor-send-intent` | Intents Android (partage) |
 
 ## Permissions Android
