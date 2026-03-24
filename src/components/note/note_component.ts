@@ -297,7 +297,7 @@ export class NoteComponent extends EnhancedComponent {
 		return permissions;
 	}
 
-	private setAudioRecording(event: any) {
+	private async setAudioRecording(event: any) {
 		const details = event?.detail;
 		
 		if (!details?.entryId || !details?.path) {
@@ -327,10 +327,11 @@ export class NoteComponent extends EnhancedComponent {
 		const params = entry.params as NoteEntryAudioParams;
 
 		params.path = details.path;
-		this.saveNoteData();
+		await this.saveNoteData();
+		await this.getNote();
 	}
 
-	private setVideoRecording(event: any) {
+	private async setVideoRecording(event: any) {
 		const details = event?.detail;
 
 		if (!details?.entryId || !details?.path) {
@@ -361,6 +362,7 @@ export class NoteComponent extends EnhancedComponent {
 
 		params.path = details.path;
 
-		this.saveNoteData();
+		await this.saveNoteData();
+		await this.getNote();
 	}
 }
