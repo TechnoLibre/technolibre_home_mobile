@@ -1,4 +1,4 @@
-import { onMounted, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
 import { Capacitor } from "@capacitor/core";
 import { NoteEntryVideoParams } from "../../../models/note";
@@ -59,11 +59,6 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 
 	setup() {
 		this.state = useState({ showVideo: false, videoSrc: "" });
-		onMounted(() => {
-			if (!this.props.params.path) {
-				this.onClickOpenCamera();
-			}
-		});
 	}
 
 	async onClickOpenCamera() {

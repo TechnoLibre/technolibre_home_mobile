@@ -138,9 +138,10 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	addVideo() {
-		this.state.note.entries.push(this.noteService.entry.getNewVideoEntry());
+		const newEntry = this.noteService.entry.getNewVideoEntry();
+		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
-		this.focusLastEntry();
+		this.eventBus.trigger(Events.OPEN_CAMERA, { entryId: newEntry.id });
 	}
 
 	async deleteEntry(entryId: string) {
