@@ -16,8 +16,8 @@
 	@include mixins.popover__content;
 	display: grid;
 	gap: 0.75rem;
-	grid-template-areas: "heading" "content";
-	grid-template-rows: auto 1fr;
+	grid-template-areas: "heading" "content" "actions";
+	grid-template-rows: auto 1fr auto;
 }
 
 .geolocation-display__heading {
@@ -29,4 +29,13 @@
 	flex-direction: column;
 	gap: 0.5rem;
 	grid-area: content;
+}
+
+.geolocation-display__actions {
+	grid-area: actions;
+}
+
+.geolocation-display__open-map {
+	@include mixins.button();
+	width: 100%;
 }

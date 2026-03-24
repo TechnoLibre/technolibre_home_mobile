@@ -1,4 +1,4 @@
-import { useRef, xml } from "@odoo/owl";
+import { onWillDestroy, useRef, xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { Events } from "../../../constants/events";
@@ -36,6 +36,15 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 							<b>Date:</b>&#160;<t t-esc="formatGeolocationTimestamp(props.params.timestamp)"></t>
 						</p>
 					</section>
+					<section class="geolocation-display__actions">
+						<button
+							type="button"
+							class="geolocation-display__open-map"
+							t-on-click.stop.prevent="openMap"
+						>
+							Ouvrir la carte
+						</button>
+					</section>
 				</div>
 			</div>
 		</div>
@@ -44,7 +53,11 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 	geolocationPopover = useRef("geolocation-popover");
 
 	setup() {
-		this.eventBus.addEventListener(Events.GEOLOCATION, this.showPopover.bind(this));
+		const onGeolocation = this.showPopover.bind(this);
+		this.eventBus.addEventListener(Events.GEOLOCATION, onGeolocation);
+		onWillDestroy(() => {
+			this.eventBus.removeEventListener(Events.GEOLOCATION, onGeolocation);
+		});
 	}
 
 	showPopover() {
@@ -61,6 +74,11 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 		}
 
 		this.geolocationPopover.el.hidePopover();
+	}
+
+	openMap() {
+		const { latitude, longitude } = this.props.params;
+		window.open(`https://maps.google.com/?q=${latitude},${longitude}`, "_system");
 	}
 
 	formatGeolocationTimestamp(timestamp: number) {
