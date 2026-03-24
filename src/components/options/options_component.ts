@@ -18,7 +18,7 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsClearCacheComponent />
         <OptionsToggleBiometryComponent />
         <li class="options-list__item">
-          <a href="#" t-on-click.stop.prevent="() => navigate('/options/database')">
+          <a href="#" t-on-click.stop.prevent="onDatabaseClick">
             Base de données ›
           </a>
         </li>
@@ -29,6 +29,10 @@ export class OptionsComponent extends EnhancedComponent {
       </ul>
     </div>
   `;
+
+	onDatabaseClick() {
+		this.navigate("/options/database");
+	}
 
 	static components = {
 		HeadingComponent,
