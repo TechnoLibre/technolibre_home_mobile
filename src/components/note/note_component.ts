@@ -1,4 +1,4 @@
-import { useState, xml } from "@odoo/owl";
+import { onWillDestroy, useState, xml } from "@odoo/owl";
 
 import { Capacitor } from "@capacitor/core";
 import { Dialog } from "@capacitor/dialog";
@@ -255,8 +255,14 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	private listenForEvents() {
-		this.eventBus.addEventListener(Events.SET_AUDIO_RECORDING, this.setAudioRecording.bind(this));
-		this.eventBus.addEventListener(Events.SET_VIDEO_RECORDING, this.setVideoRecording.bind(this));
+		const onAudio = this.setAudioRecording.bind(this);
+		const onVideo = this.setVideoRecording.bind(this);
+		this.eventBus.addEventListener(Events.SET_AUDIO_RECORDING, onAudio);
+		this.eventBus.addEventListener(Events.SET_VIDEO_RECORDING, onVideo);
+		onWillDestroy(() => {
+			this.eventBus.removeEventListener(Events.SET_AUDIO_RECORDING, onAudio);
+			this.eventBus.removeEventListener(Events.SET_VIDEO_RECORDING, onVideo);
+		});
 	}
 
 	private focusLastEntry() {
