@@ -1,9 +1,8 @@
-import { onMounted, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
 import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { EdgeToEdge } from "@capawesome/capacitor-android-edge-to-edge-support";
-import { SplashScreen } from "@capacitor/splash-screen";
 import { StatusBar, Style } from "@capacitor/status-bar";
 
 import { EnhancedComponent } from "../../js/enhancedComponent";
@@ -53,9 +52,6 @@ export class RootComponent extends EnhancedComponent {
 
 	setup() {
 		this.state = useState({ title: "This is my title", isCameraOpen: false, videoEntryId: undefined });
-		onMounted(() => {
-			SplashScreen.hide();
-		});
 		this.enableEdgeToEdge();
 		this.setupAndroidBackButton();
 		this.setDefaultBiometryStorageValue();

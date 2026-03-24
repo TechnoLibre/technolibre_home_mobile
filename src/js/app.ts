@@ -1,5 +1,6 @@
 import { RootComponent } from "../components/root/root_component";
 import { EventBus, mount } from "@odoo/owl";
+import { SplashScreen } from "@capacitor/splash-screen";
 import { SimpleRouter } from "./router";
 import { AppService } from "../services/appService";
 import { IntentService } from "../services/intentService";
@@ -35,6 +36,8 @@ function hideBootScreen() {
 }
 
 async function startApp() {
+	await SplashScreen.hide();
+
 	const router = new SimpleRouter();
 
 	setBootStep("Lecture clé de chiffrement…");
