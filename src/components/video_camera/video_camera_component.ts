@@ -47,12 +47,16 @@ export class VideoCameraComponent extends EnhancedComponent {
 		await VideoRecorder.flipCamera();
 	}
 
-	onRecordButtonClick() {
+	async onRecordButtonClick() {
 		const isRecording = this.state.isRecording;
 
 		this.state.isRecording = !isRecording;
 
-		!isRecording ? this.startRecording() : this.stopRecording();
+		if (!isRecording) {
+			this.startRecording();
+		} else {
+			await this.stopRecording();
+		}
 	}
 
 	private async startRecording() {
@@ -61,11 +65,13 @@ export class VideoCameraComponent extends EnhancedComponent {
 
 	private async stopRecording() {
 		const result = await VideoRecorder.stopRecording();
-		
+
 		this.eventBus.trigger(Events.SET_VIDEO_RECORDING, {
 			entryId: this.props.entryId,
 			path: result.videoUrl
 		});
+
+		await this.closeCamera();
 	}
 
 	async closeCamera() {

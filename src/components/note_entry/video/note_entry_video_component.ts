@@ -1,11 +1,12 @@
-import { xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
-import { CapacitorVideoPlayer } from "@chrismclarke/capacitor-video-player";
+import { Capacitor } from "@capacitor/core";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { Events } from "../../../constants/events";
 
 import VideoOffIcon from "../../../assets/icon/video_off.svg";
+import CloseIcon from "../../../assets/icon/close.svg";
 
 export class NoteEntryVideoComponent extends EnhancedComponent {
 	static template = xml`
@@ -38,7 +39,23 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 				</button>
 			</div>
 		</div>
+		<div t-if="state.showVideo" class="note-entry__video__overlay">
+			<button class="note-entry__video__overlay__close" t-on-click.stop.prevent="onClickCloseVideo">
+				<img src="${CloseIcon}" />
+			</button>
+			<video
+				class="note-entry__video__overlay__player"
+				t-att-src="state.videoSrc"
+				autoplay="true"
+				controls="true"
+				playsinline="true"
+			/>
+		</div>
 	`;
+
+	setup() {
+		this.state = useState({ showVideo: false, videoSrc: "" });
+	}
 
 	async onClickOpenCamera() {
 		this.eventBus.trigger(Events.OPEN_CAMERA, {
@@ -46,22 +63,23 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 		});
 	}
 
-	async onClickOpenVideo() {
-		await CapacitorVideoPlayer.initPlayer({
-			url: this.getNativePath(this.props.params.path),
-			playerId: this.getPlayerId(),
-			mode: "fullscreen",
-			componentTag: "video-player__wrapper"
-		});
-
-		await CapacitorVideoPlayer.play({ playerId: this.getPlayerId() });
+	onClickOpenVideo() {
+		this.state.videoSrc = Capacitor.convertFileSrc(this.props.params.path);
+		this.state.showVideo = true;
 	}
 
-	getPlayerId() {
-		return `${this.props.id}-player`;
+	onClickCloseVideo() {
+		this.state.showVideo = false;
+		this.state.videoSrc = "";
 	}
 
-	getNativePath(capacitorUrl: string) {
-		return capacitorUrl.replace("https://localhost/_capacitor_file_/", "file:///");
+	getNativePath(rawUrl: string): string {
+		if (!rawUrl) return rawUrl;
+		if (rawUrl.startsWith("file://")) return rawUrl;
+		if (rawUrl.startsWith("https://localhost/_capacitor_file_/")) {
+			return rawUrl.replace("https://localhost/_capacitor_file_/", "file:///");
+		}
+		if (rawUrl.startsWith("/")) return `file://${rawUrl}`;
+		return rawUrl;
 	}
 }
