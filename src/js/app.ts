@@ -23,11 +23,26 @@ eventBus.addEventListener(Events.CLOSE_CAMERA, (_event: any) => {
 	document.body.classList.remove("transparent");
 });
 
+function setBootStep(msg: string) {
+	console.log(`[boot] ${msg}`);
+	const el = document.getElementById("boot-step");
+	if (el) el.textContent = msg;
+}
+
+function hideBootScreen() {
+	const el = document.getElementById("boot-screen");
+	if (el) el.remove();
+}
+
 async function startApp() {
 	const router = new SimpleRouter();
 
+	setBootStep("Lecture clé de chiffrement…");
 	const db = new DatabaseService();
-	await db.initialize();
+
+	await db.initialize(setBootStep);
+
+	setBootStep("Vérification migrations…");
 	await runMigrations(db, [
 		{
 			version: 20260318,
@@ -36,15 +51,19 @@ async function startApp() {
 		},
 	]);
 
+	setBootStep("Initialisation des services…");
 	const appService = new AppService(db);
 	const noteService = new NoteService(eventBus, db);
 	const intentService = new IntentService(eventBus);
 
 	const env = { eventBus, router, appService, noteService, intentService, databaseService: db };
 
+	setBootStep("Montage de l'interface…");
 	await mount(RootComponent, document.body, { env });
+	hideBootScreen();
 }
 
 startApp().catch((error) => {
 	console.error("Failed to start app:", error);
+	setBootStep(`Erreur : ${error?.message ?? error}`);
 });

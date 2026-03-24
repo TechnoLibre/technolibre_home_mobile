@@ -17,16 +17,30 @@ export class DatabaseService {
     this.sqlite = new SQLiteConnection(CapacitorSQLite);
   }
 
-  async initialize(): Promise<void> {
+  async initialize(onStep?: (msg: string) => void): Promise<void> {
+    const step = (msg: string) => {
+      console.log(`[db] ${msg}`);
+      onStep?.(msg);
+    };
+
+    step("Lecture clé SecureStorage…");
     const encryptionKey = await this.getOrCreateEncryptionKey();
+
+    step("setEncryptionSecret…");
     await this.sqlite.setEncryptionSecret(encryptionKey);
 
+    step("checkConnectionsConsistency…");
     await this.sqlite.checkConnectionsConsistency();
 
+    step("isConnection…");
     const isConn = (await this.sqlite.isConnection(DB_NAME, false)).result;
+    step(`isConn = ${isConn}`);
+
     if (isConn) {
+      step("retrieveConnection…");
       this.db = await this.sqlite.retrieveConnection(DB_NAME, false);
     } else {
+      step("createConnection…");
       this.db = await this.sqlite.createConnection(
         DB_NAME,
         true,
@@ -36,8 +50,13 @@ export class DatabaseService {
       );
     }
 
+    step("db.open…");
     await this.db.open();
+
+    step("createTables…");
     await this.createTables();
+
+    step("initialize() terminé ✓");
   }
 
   private async getOrCreateEncryptionKey(): Promise<string> {
