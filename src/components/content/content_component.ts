@@ -7,7 +7,7 @@ export class ContentComponent extends EnhancedComponent {
 	static template = xml`
 		<div id="content-component">
 			<section id="content">
-				<t t-component="getRouteComponent()" />
+				<t t-component="getRouteComponent()" t-key="state.currentRoute" />
 			</section>
 		</div>
 	`;

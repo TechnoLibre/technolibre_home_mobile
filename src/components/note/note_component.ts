@@ -27,6 +27,20 @@ export class NoteComponent extends EnhancedComponent {
 				<a href="#" t-on-click.stop.prevent="onBackToNotesClick">Notes</a>
 				<span class="breadcrumb__sep">›</span>
 				<span class="breadcrumb__current" t-esc="state.note.title or 'Nouvelle note'"/>
+				<div class="breadcrumb__note-nav">
+					<button
+						type="button"
+						class="breadcrumb__note-nav-btn"
+						t-att-disabled="!hasPrevious"
+						t-on-click.stop.prevent="navigatePrevious"
+					>‹</button>
+					<button
+						type="button"
+						class="breadcrumb__note-nav-btn"
+						t-att-disabled="!hasNext"
+						t-on-click.stop.prevent="navigateNext"
+					>›</button>
+				</div>
 			</nav>
 			<NoteTopControlsComponent
 				note="state.note"
@@ -75,11 +89,38 @@ export class NoteComponent extends EnhancedComponent {
 			note: this.noteService.getNewNote(),
 			newNote: false,
 			editMode: false,
-			optionMode: false
+			optionMode: false,
+			allNoteIds: [] as string[],
 		});
 		this.setParams();
 		this.getNote();
+		this.loadAllNoteIds();
 		this.listenForEvents();
+	}
+
+	get currentIndex(): number {
+		return this.state.allNoteIds.indexOf(this.state.noteId);
+	}
+
+	get hasPrevious(): boolean {
+		return this.currentIndex > 0;
+	}
+
+	get hasNext(): boolean {
+		const idx = this.currentIndex;
+		return idx !== -1 && idx < this.state.allNoteIds.length - 1;
+	}
+
+	navigatePrevious() {
+		if (!this.hasPrevious) return;
+		const prevId = this.state.allNoteIds[this.currentIndex - 1];
+		this.navigate(`/note/${encodeURIComponent(prevId)}`);
+	}
+
+	navigateNext() {
+		if (!this.hasNext) return;
+		const nextId = this.state.allNoteIds[this.currentIndex + 1];
+		this.navigate(`/note/${encodeURIComponent(nextId)}`);
 	}
 
 	onBackToNotesClick() {
@@ -240,6 +281,11 @@ export class NoteComponent extends EnhancedComponent {
 				return;
 			}
 		}
+	}
+
+	private async loadAllNoteIds() {
+		const notes = await this.noteService.getNotes();
+		this.state.allNoteIds = notes.map(n => n.id);
 	}
 
 	private setParams() {
