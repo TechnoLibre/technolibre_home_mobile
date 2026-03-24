@@ -1,4 +1,4 @@
-import { onWillDestroy, useState, xml } from "@odoo/owl";
+import { useState, xml } from "@odoo/owl";
 
 import { Capacitor } from "@capacitor/core";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
@@ -60,16 +60,6 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 
 	setup() {
 		this.state = useState({ showPhoto: false });
-
-		const onOpenCamera = (event: any) => {
-			if (event?.detail?.entryId === this.props.id) {
-				this.onClickOpenCamera();
-			}
-		};
-		this.eventBus.addEventListener(Events.OPEN_PHOTO_CAMERA, onOpenCamera);
-		onWillDestroy(() => {
-			this.eventBus.removeEventListener(Events.OPEN_PHOTO_CAMERA, onOpenCamera);
-		});
 	}
 
 	async onClickOpenCamera() {
@@ -87,15 +77,13 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 				source: CameraSource.Camera,
 			});
 
-			if (!photo.path) {
-				return;
-			}
+			if (!photo.path) return;
 
 			this.eventBus.trigger(Events.SET_PHOTO, {
 				entryId: this.props.id,
 				path: photo.path,
 			});
-		} catch (error: unknown) {
+		} catch {
 			// User cancelled — no alert needed
 		}
 	}

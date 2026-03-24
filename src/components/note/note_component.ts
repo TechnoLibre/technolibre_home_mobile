@@ -1,6 +1,7 @@
 import { onWillDestroy, useState, xml } from "@odoo/owl";
 
 import { Capacitor } from "@capacitor/core";
+import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Dialog } from "@capacitor/dialog";
 import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
@@ -125,11 +126,11 @@ export class NoteComponent extends EnhancedComponent {
 		this.saveNoteData();
 	}
 
-	addPhoto() {
+	async addPhoto() {
 		const newEntry = this.noteService.entry.getNewPhotoEntry();
 		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
-		this.eventBus.trigger(Events.OPEN_PHOTO_CAMERA, { entryId: newEntry.id });
+		await this.takePhoto(newEntry.id);
 	}
 
 	addText() {
@@ -408,6 +409,29 @@ export class NoteComponent extends EnhancedComponent {
 
 		await this.saveNoteData();
 		await this.getNote();
+	}
+
+	async takePhoto(entryId: string) {
+		try {
+			const { camera } = await Camera.requestPermissions({ permissions: ["camera"] });
+			if (camera !== "granted") {
+				Dialog.alert({ message: "Permission caméra refusée." });
+				return;
+			}
+
+			const photo = await Camera.getPhoto({
+				quality: 90,
+				allowEditing: false,
+				resultType: CameraResultType.Uri,
+				source: CameraSource.Camera,
+			});
+
+			if (!photo.path) return;
+
+			this.eventBus.trigger(Events.SET_PHOTO, { entryId, path: photo.path });
+		} catch {
+			// User cancelled — nothing to do
+		}
 	}
 
 	private async generateThumbnail(videoPath: string): Promise<string | undefined> {
