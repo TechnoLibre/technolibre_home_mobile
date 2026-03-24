@@ -23,6 +23,10 @@ export default defineConfig({
         __dirname,
         "src/__mocks__/@capacitor/dialog.ts"
       ),
+      "@aparajita/capacitor-biometric-auth": resolve(
+        __dirname,
+        "src/__mocks__/@aparajita/capacitor-biometric-auth.ts"
+      ),
     },
   },
 });

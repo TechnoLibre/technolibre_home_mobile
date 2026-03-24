@@ -8,6 +8,7 @@ import { NoteService } from "../services/note/noteService";
 import { DatabaseService } from "../services/databaseService";
 import { runMigrations } from "../services/migrationService";
 import { migrateFromSecureStorage } from "../services/dataMigration";
+import { BiometryUtils } from "../utils/biometryUtils";
 import { Events } from "../constants/events";
 
 const eventBus = new EventBus();
@@ -39,6 +40,13 @@ async function startApp() {
 	await SplashScreen.hide();
 
 	const router = new SimpleRouter();
+
+	setBootStep("Vérification biométrique…");
+	const authenticated = await BiometryUtils.authenticateForDatabase();
+	if (!authenticated) {
+		setBootStep("Authentification biométrique échouée. Relancez l'application.");
+		return;
+	}
 
 	setBootStep("Lecture clé de chiffrement…");
 	const db = new DatabaseService();
