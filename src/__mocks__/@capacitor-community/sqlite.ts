@@ -124,23 +124,40 @@ class MockDBConnection {
 }
 
 export class SQLiteConnection {
+  private connections: Map<string, MockDBConnection> = new Map();
+
   constructor(_capacitorSQLite: any) {}
 
   async setEncryptionSecret(_secret: string) {
     return {};
   }
 
+  async checkConnectionsConsistency() {
+    return { result: true };
+  }
+
+  async isConnection(database: string, _readonly: boolean) {
+    return { result: this.connections.has(database) };
+  }
+
+  async retrieveConnection(database: string, _readonly: boolean) {
+    return this.connections.get(database) ?? new MockDBConnection();
+  }
+
   async createConnection(
-    _database: string,
+    database: string,
     _encrypted: boolean,
     _mode: string,
     _version: number,
     _isReadOnly: boolean
   ) {
-    return new MockDBConnection();
+    const conn = new MockDBConnection();
+    this.connections.set(database, conn);
+    return conn;
   }
 
-  async closeConnection(_database: string, _isReadOnly: boolean) {
+  async closeConnection(database: string, _isReadOnly: boolean) {
+    this.connections.delete(database);
     return {};
   }
 }

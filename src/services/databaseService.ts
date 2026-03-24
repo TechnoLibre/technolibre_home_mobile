@@ -21,13 +21,21 @@ export class DatabaseService {
     const encryptionKey = await this.getOrCreateEncryptionKey();
     await this.sqlite.setEncryptionSecret(encryptionKey);
 
-    this.db = await this.sqlite.createConnection(
-      DB_NAME,
-      true,
-      "secret",
-      1,
-      false
-    );
+    await this.sqlite.checkConnectionsConsistency();
+
+    const isConn = (await this.sqlite.isConnection(DB_NAME, false)).result;
+    if (isConn) {
+      this.db = await this.sqlite.retrieveConnection(DB_NAME, false);
+    } else {
+      this.db = await this.sqlite.createConnection(
+        DB_NAME,
+        true,
+        "secret",
+        1,
+        false
+      );
+    }
+
     await this.db.open();
     await this.createTables();
   }
