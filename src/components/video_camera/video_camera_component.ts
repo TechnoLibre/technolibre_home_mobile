@@ -1,6 +1,7 @@
 import { useState, xml } from "@odoo/owl";
 
 import { Capacitor } from "@capacitor/core";
+import { Camera } from "@capacitor/camera";
 import { ScreenOrientation } from "@capacitor/screen-orientation";
 import { SafeArea } from "capacitor-plugin-safe-area";
 import { VideoRecorder, VideoRecorderCamera, VideoRecorderPreviewFrame, VideoRecorderQuality } from "@capacitor-community/video-recorder";
@@ -84,6 +85,15 @@ export class VideoCameraComponent extends EnhancedComponent {
 	async initializeVideoRecorder() {
 		if (Capacitor.getPlatform() === "web") {
 			throw new VideoNotSupportedOnWebError();
+		}
+
+		// Request permissions BEFORE initializing the recorder.
+		// If initialize() runs while the permission dialog is still open,
+		// Android cannot attach the camera to the preview surface → black screen.
+		const { camera } = await Camera.requestPermissions({ permissions: ["camera"] });
+		if (camera !== "granted") {
+			await this.closeCamera();
+			return;
 		}
 
 		const previewFrames: Array<VideoRecorderPreviewFrame> = await this.getPreviewFrames();
