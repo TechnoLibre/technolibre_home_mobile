@@ -15,15 +15,18 @@
     "build:prod": "vite build --mode production",
     "preview": "vite preview",
     "bsr": "node ./scripts/bsr.js",
-    "gencomp": "node ./scripts/generateComponent.js"
+    "gencomp": "node ./scripts/generateComponent.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "@aparajita/capacitor-biometric-auth": "^9.0.0",
+    "@capacitor-community/sqlite": "^7.0.2",
     "@capacitor-community/video-recorder": "^7.5.0",
     "@capacitor/android": "^7.4.4",
     "@capacitor/app": "^7.1.0",
     "@capacitor/camera": "^7.0.2",
     "@capacitor/core": "^7.4.3",
+    "@capacitor/device": "^7.0.4",
     "@capacitor/dialog": "^7.0.2",
     "@capacitor/filesystem": "^7.1.4",
     "@capacitor/geolocation": "^7.1.5",
@@ -50,7 +53,8 @@
   "devDependencies": {
     "@capacitor/cli": "^7.4.3",
     "sass-embedded": "^1.93.2",
-    "vite": "^5.4.2"
+    "vite": "^5.4.2",
+    "vitest": "^3.2.1"
   },
   "author": "TechnoLibre",
   "license": "AGPLv3"

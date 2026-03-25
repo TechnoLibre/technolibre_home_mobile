@@ -9,3 +9,30 @@
 	max-width: 48rem;
 	padding: 1rem 1.25rem;
 }
+
+.breadcrumb {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.35em;
+	max-width: 48rem;
+	padding: 0.5rem 1.25rem 0;
+	width: 100%;
+	font-size: 0.8rem;
+
+	a {
+		color: #31d53d;
+		text-decoration: none;
+		&:hover {
+			text-decoration: underline;
+		}
+	}
+
+	.breadcrumb__sep {
+		color: var(--text-greyed-out);
+	}
+
+	.breadcrumb__current {
+		color: var(--text-greyed-out);
+	}
+}

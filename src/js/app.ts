@@ -1,9 +1,15 @@
 import { RootComponent } from "../components/root/root_component";
 import { EventBus, mount } from "@odoo/owl";
+import { SplashScreen } from "@capacitor/splash-screen";
 import { SimpleRouter } from "./router";
 import { AppService } from "../services/appService";
 import { IntentService } from "../services/intentService";
 import { NoteService } from "../services/note/noteService";
+import { DatabaseService } from "../services/databaseService";
+import { runMigrations } from "../services/migrationService";
+import { migrateFromSecureStorage } from "../services/dataMigration";
+import { migrateVideoThumbnails } from "../services/migrations/migrateVideoThumbnails";
+import { BiometryUtils } from "../utils/biometryUtils";
 import { Events } from "../constants/events";
 
 const eventBus = new EventBus();
@@ -20,12 +26,61 @@ eventBus.addEventListener(Events.CLOSE_CAMERA, (_event: any) => {
 	document.body.classList.remove("transparent");
 });
 
-const router = new SimpleRouter();
+function setBootStep(msg: string) {
+	console.log(`[boot] ${msg}`);
+	const el = document.getElementById("boot-step");
+	if (el) el.textContent = msg;
+}
 
-const appService = new AppService();
-const noteService = new NoteService(eventBus);
-const intentService = new IntentService(eventBus);
+function hideBootScreen() {
+	const el = document.getElementById("boot-screen");
+	if (el) el.remove();
+}
 
-const env = { eventBus, router, appService, noteService, intentService };
+async function startApp() {
+	await SplashScreen.hide();
 
-mount(RootComponent, document.body, { env });
+	const router = new SimpleRouter();
+
+	setBootStep("Vérification biométrique…");
+	const authenticated = await BiometryUtils.authenticateForDatabase();
+	if (!authenticated) {
+		setBootStep("Authentification biométrique échouée. Relancez l'application.");
+		return;
+	}
+
+	setBootStep("Lecture clé de chiffrement…");
+	const db = new DatabaseService();
+
+	await db.initialize(setBootStep);
+
+	setBootStep("Vérification migrations…");
+	await runMigrations(db, [
+		{
+			version: 2026031801,
+			description: "Migration de SecureStorage vers SQLite",
+			run: migrateFromSecureStorage,
+		},
+		{
+			version: 2026032401,
+			description: "Génération des thumbnails vidéo manquants",
+			run: migrateVideoThumbnails,
+		},
+	]);
+
+	setBootStep("Initialisation des services…");
+	const appService = new AppService(db);
+	const noteService = new NoteService(eventBus, db);
+	const intentService = new IntentService(eventBus);
+
+	const env = { eventBus, router, appService, noteService, intentService, databaseService: db };
+
+	setBootStep("Montage de l'interface…");
+	await mount(RootComponent, document.body, { env });
+	hideBootScreen();
+}
+
+startApp().catch((error) => {
+	console.error("Failed to start app:", error);
+	setBootStep(`Erreur : ${error?.message ?? error}`);
+});

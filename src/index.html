@@ -25,6 +25,54 @@
     <meta name="theme-color" content="#31d53d" />
   </head>
   <body>
+    <style>
+      @keyframes boot-spin   { to { transform: rotate(360deg); } }
+      @keyframes logo-rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      #boot-logo { transition: transform 0.1s; cursor: pointer; user-select: none; }
+      #boot-logo.spinning { animation: logo-rotate 0.6s ease-in-out forwards; }
+    </style>
+    <div id="boot-screen" style="
+      position: fixed; inset: 0;
+      background: #000;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: sans-serif;
+      font-size: 14px;
+      gap: 16px;
+      z-index: 9999;
+    ">
+      <img
+        id="boot-logo"
+        src="./assets/imgs/logo.png"
+        style="width: 120px; height: 120px; object-fit: contain;"
+      />
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div style="
+          width: 20px; height: 20px; flex-shrink: 0;
+          border: 2px solid #444;
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: boot-spin 0.8s linear infinite;
+        "></div>
+        <span id="boot-step">Démarrage…</span>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var logo = document.getElementById('boot-logo');
+        logo.addEventListener('click', function () {
+          logo.classList.remove('spinning');
+          void logo.offsetWidth;
+          logo.classList.add('spinning');
+          logo.addEventListener('animationend', function () {
+            logo.classList.remove('spinning');
+          }, { once: true });
+        });
+      })();
+    </script>
     <script type="module" src="./js/app.ts"></script>
   </body>
 </html>

@@ -75,8 +75,9 @@ export class ApplicationsEditComponent extends EnhancedComponent {
                        required="true" t-model="state.app.password"/>
             </div>
         </t>
-        <div class="app-edit__form-group">
+        <div class="app-edit__form-group app-edit__form-actions">
             <input type="submit" id="app-edit__submit" value="Modifier"/>
+            <button type="button" id="app-edit__cancel" t-on-click="onCancelClick">Annuler</button>
         </div>
     </form>
 </div>
@@ -139,6 +140,11 @@ export class ApplicationsEditComponent extends EnhancedComponent {
             return;
         }
 
+        this.clearFormFields();
+        window.history.back();
+    }
+
+    onCancelClick(): void {
         this.clearFormFields();
         window.history.back();
     }

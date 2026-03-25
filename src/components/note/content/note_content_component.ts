@@ -93,6 +93,7 @@ export class NoteContentComponent extends EnhancedComponent {
 			onSort: this.onSort.bind(this)
 		});
 		this.eventBus.addEventListener(Events.FOCUS_LAST_ENTRY, this.focusLastEntry.bind(this));
+		this.eventBus.addEventListener(Events.SCROLL_TO_LAST_ENTRY, this.scrollToLastEntry.bind(this));
 	}
 
 	private onSort() {
@@ -127,6 +128,29 @@ export class NoteContentComponent extends EnhancedComponent {
 		}
 
 		return indexOne - indexTwo;
+	}
+
+	private scrollToLastEntry() {
+		if (!this.entries.el) return;
+		const lastEntry: NoteEntry | undefined = this.props.note.entries.at(-1);
+		if (!lastEntry) return;
+
+		const selector = `.note-entry-component[data-id='${lastEntry.id}']`;
+		const existing = this.entries.el.querySelector(selector);
+		if (existing) {
+			existing.scrollIntoView({ behavior: "smooth", block: "nearest" });
+			return;
+		}
+
+		const observer = new MutationObserver((_mutations, obs) => {
+			if (!this.entries.el) { obs.disconnect(); return; }
+			const el = this.entries.el.querySelector(selector);
+			if (el) {
+				el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+				obs.disconnect();
+			}
+		});
+		observer.observe(this.entries.el, { childList: true });
 	}
 
 	private focusLastEntry() {

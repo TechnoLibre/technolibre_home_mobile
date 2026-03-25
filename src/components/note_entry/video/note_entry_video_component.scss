@@ -67,3 +67,43 @@
 .note-entry-video-component .note-entry__wrapper:not(.not-empty) .note-entry__video__open-video {
 	display: none;
 }
+
+.note-entry-video-component .note-entry__video__thumbnail__img {
+	border-radius: 0.25rem;
+	height: 100%;
+	object-fit: cover;
+	width: 100%;
+}
+
+.note-entry__video__overlay {
+	position: fixed;
+	inset: 0;
+	background: #000;
+	z-index: 9999;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.note-entry__video__overlay__close {
+	position: absolute;
+	top: 1rem;
+	right: 1rem;
+	background: rgba(0, 0, 0, 0.6);
+	border: none;
+	border-radius: 50%;
+	cursor: pointer;
+	padding: 0.5rem;
+	z-index: 10000;
+	& img {
+		display: block;
+		width: 1.5rem;
+		height: 1.5rem;
+	}
+}
+
+.note-entry__video__overlay__player {
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+}

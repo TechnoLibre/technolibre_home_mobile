@@ -28,8 +28,9 @@ export class ApplicationsAddComponent extends EnhancedComponent {
           <label for="app-add__password">Mot de passe</label>
           <input type="password" name="password" id="app-add__password" autocomplete="off" placeholder="mot_de_passe" required="true" t-model="state.app.password" />
         </div>
-        <div class="app-add__form-group">
+        <div class="app-add__form-group app-add__form-actions">
           <input type="submit" id="app-add__submit" value="Ajouter" />
+          <button type="button" id="app-add__cancel" t-on-click="onCancelClick">Annuler</button>
         </div>
       </form>
     </div>
@@ -79,6 +80,11 @@ export class ApplicationsAddComponent extends EnhancedComponent {
 			return;
 		}
 
+		this.clearFormFields();
+		window.history.back();
+	}
+
+	onCancelClick(): void {
 		this.clearFormFields();
 		window.history.back();
 	}

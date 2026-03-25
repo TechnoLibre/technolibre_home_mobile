@@ -4,6 +4,40 @@ import { StorageGetResult, StorageUtils } from "./storageUtils";
 import { AlertOptions, Dialog } from "@capacitor/dialog";
 
 export class BiometryUtils {
+	/**
+	 * Returns true only when the user has explicitly enabled biometry
+	 * (BIOMETRY_ENABLED_STORAGE_KEY is stored and set to true).
+	 */
+	public static async isEnabledByUser(): Promise<boolean> {
+		const result: StorageGetResult = await StorageUtils.getValueByKey<boolean>(
+			StorageConstants.BIOMETRY_ENABLED_STORAGE_KEY
+		);
+		return result.isValid && result.value === true;
+	}
+
+	/**
+	 * Prompts for biometric authentication only when the user has enabled it
+	 * AND the device supports it. Returns true if the app should proceed.
+	 * Used to gate access to the SQLite encryption key at startup.
+	 */
+	public static async authenticateForDatabase(): Promise<boolean> {
+		const enabled = await this.isEnabledByUser();
+		if (!enabled) {
+			return true;
+		}
+
+		const available = await this.isBiometryAvailable();
+		if (!available) {
+			return true;
+		}
+
+		return await this.authenticate({
+			title: "Authentification requise",
+			message: "Veuillez vous authentifier pour accéder à vos données.",
+		});
+	}
+
+
 	public static async isBiometryAvailable(): Promise<boolean> {
 		const checkBiometryResult: CheckBiometryResult = await BiometricAuth.checkBiometry();
 		return checkBiometryResult.isAvailable;

@@ -1,14 +1,18 @@
-import { useState, xml } from "@odoo/owl";
+import { onWillDestroy, useState, xml } from "@odoo/owl";
 
+import { Capacitor } from "@capacitor/core";
+import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Dialog } from "@capacitor/dialog";
+import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
 
 import { BiometryUtils } from "../../utils/biometryUtils";
+import { generateVideoThumbnail } from "../../utils/videoThumbnailUtils";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { Events } from "../../constants/events";
-import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryVideoParams } from "../../models/note";
+import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryVideoParams } from "../../models/note";
 
 import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
@@ -19,6 +23,25 @@ import { TagManagerComponent } from "./tag_manager/tag_manager_component";
 export class NoteComponent extends EnhancedComponent {
 	static template = xml`
 		<div id="note-component">
+			<nav class="breadcrumb">
+				<a href="#" t-on-click.stop.prevent="onBackToNotesClick">Notes</a>
+				<span class="breadcrumb__sep">›</span>
+				<span class="breadcrumb__current" t-esc="state.note.title or 'Nouvelle note'"/>
+				<div class="breadcrumb__note-nav">
+					<button
+						type="button"
+						class="breadcrumb__note-nav-btn"
+						t-att-disabled="!hasPrevious"
+						t-on-click.stop.prevent="navigatePrevious"
+					>‹</button>
+					<button
+						type="button"
+						class="breadcrumb__note-nav-btn"
+						t-att-disabled="!hasNext"
+						t-on-click.stop.prevent="navigateNext"
+					>›</button>
+				</div>
+			</nav>
 			<NoteTopControlsComponent
 				note="state.note"
 				toggleEditMode.bind="toggleEditMode"
@@ -65,18 +88,50 @@ export class NoteComponent extends EnhancedComponent {
 			noteId: undefined,
 			note: this.noteService.getNewNote(),
 			newNote: false,
-			editMode: true,
-			optionMode: false
+			editMode: false,
+			optionMode: false,
+			allNoteIds: [] as string[],
 		});
 		this.setParams();
 		this.getNote();
+		this.loadAllNoteIds();
 		this.listenForEvents();
+	}
+
+	get currentIndex(): number {
+		return this.state.allNoteIds.indexOf(this.state.noteId);
+	}
+
+	get hasPrevious(): boolean {
+		return this.currentIndex > 0;
+	}
+
+	get hasNext(): boolean {
+		const idx = this.currentIndex;
+		return idx !== -1 && idx < this.state.allNoteIds.length - 1;
+	}
+
+	navigatePrevious() {
+		if (!this.hasPrevious) return;
+		const prevId = this.state.allNoteIds[this.currentIndex - 1];
+		this.navigate(`/note/${encodeURIComponent(prevId)}`);
+	}
+
+	navigateNext() {
+		if (!this.hasNext) return;
+		const nextId = this.state.allNoteIds[this.currentIndex + 1];
+		this.navigate(`/note/${encodeURIComponent(nextId)}`);
+	}
+
+	onBackToNotesClick() {
+		this.navigate("/notes");
 	}
 
 	addAudio() {
 		const newEntry = this.noteService.entry.getNewAudioEntry();
 		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
+		this.scrollToLastEntry();
 	}
 
 	addDateEntry() {
@@ -87,9 +142,10 @@ export class NoteComponent extends EnhancedComponent {
 		params.date = (new Date()).toISOString();
 
 		const entries: Array<NoteEntry> = this.state.note.entries;
-		
+
 		entries.push(newEntry);
 		this.saveNoteData();
+		this.scrollToLastEntry();
 	}
 
 	async addLocation() {
@@ -111,12 +167,15 @@ export class NoteComponent extends EnhancedComponent {
 
 		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
+		this.scrollToLastEntry();
 	}
 
-	addPhoto() {
-		this.state.note.entries.push(this.noteService.entry.getNewPhotoEntry());
+	async addPhoto() {
+		const newEntry = this.noteService.entry.getNewPhotoEntry();
+		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
-		this.focusLastEntry();
+		this.scrollToLastEntry();
+		await this.takePhoto(newEntry.id);
 	}
 
 	addText() {
@@ -126,9 +185,11 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	addVideo() {
-		this.state.note.entries.push(this.noteService.entry.getNewVideoEntry());
+		const newEntry = this.noteService.entry.getNewVideoEntry();
+		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
-		this.focusLastEntry();
+		this.scrollToLastEntry();
+		this.eventBus.trigger(Events.OPEN_CAMERA, { entryId: newEntry.id });
 	}
 
 	async deleteEntry(entryId: string) {
@@ -222,6 +283,11 @@ export class NoteComponent extends EnhancedComponent {
 		}
 	}
 
+	private async loadAllNoteIds() {
+		const notes = await this.noteService.getNotes();
+		this.state.allNoteIds = notes.map(n => n.id);
+	}
+
 	private setParams() {
 		const params = this.router.getRouteParams(window.location.pathname);
 		this.state.noteId = decodeURIComponent(params?.get("id") || "");
@@ -243,12 +309,54 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	private listenForEvents() {
-		this.eventBus.addEventListener(Events.SET_AUDIO_RECORDING, this.setAudioRecording.bind(this));
-		this.eventBus.addEventListener(Events.SET_VIDEO_RECORDING, this.setVideoRecording.bind(this));
+		const onAudio = this.setAudioRecording.bind(this);
+		const onVideo = this.setVideoRecording.bind(this);
+		const onPhoto = this.setPhoto.bind(this);
+		this.eventBus.addEventListener(Events.SET_AUDIO_RECORDING, onAudio);
+		this.eventBus.addEventListener(Events.SET_VIDEO_RECORDING, onVideo);
+		this.eventBus.addEventListener(Events.SET_PHOTO, onPhoto);
+		onWillDestroy(() => {
+			this.eventBus.removeEventListener(Events.SET_AUDIO_RECORDING, onAudio);
+			this.eventBus.removeEventListener(Events.SET_VIDEO_RECORDING, onVideo);
+			this.eventBus.removeEventListener(Events.SET_PHOTO, onPhoto);
+		});
+	}
+
+	private async setPhoto(event: any) {
+		const details = event?.detail;
+
+		if (!details?.entryId || !details?.path) {
+			return;
+		}
+
+		let entry: NoteEntry | undefined;
+
+		try {
+			entry = this.getEntry(details.entryId);
+		} catch (error: unknown) {
+			if (error instanceof Error) {
+				Dialog.alert({ message: error.message });
+				return;
+			}
+		}
+
+		if (!entry || entry.type !== "photo") {
+			return;
+		}
+
+		const params = entry.params as NoteEntryPhotoParams;
+		params.path = details.path;
+
+		await this.saveNoteData();
+		await this.getNote();
 	}
 
 	private focusLastEntry() {
 		this.eventBus.trigger(Events.FOCUS_LAST_ENTRY);
+	}
+
+	private scrollToLastEntry() {
+		this.eventBus.trigger(Events.SCROLL_TO_LAST_ENTRY);
 	}
 
 	private getEntry(entryId: string): NoteEntry {
@@ -288,7 +396,7 @@ export class NoteComponent extends EnhancedComponent {
 		return permissions;
 	}
 
-	private setAudioRecording(event: any) {
+	private async setAudioRecording(event: any) {
 		const details = event?.detail;
 		
 		if (!details?.entryId || !details?.path) {
@@ -318,10 +426,11 @@ export class NoteComponent extends EnhancedComponent {
 		const params = entry.params as NoteEntryAudioParams;
 
 		params.path = details.path;
-		this.saveNoteData();
+		await this.saveNoteData();
+		await this.getNote();
 	}
 
-	private setVideoRecording(event: any) {
+	private async setVideoRecording(event: any) {
 		const details = event?.detail;
 
 		if (!details?.entryId || !details?.path) {
@@ -351,7 +460,48 @@ export class NoteComponent extends EnhancedComponent {
 		const params = entry.params as NoteEntryVideoParams;
 
 		params.path = details.path;
+		params.thumbnailPath = await this.generateThumbnail(details.path);
 
-		this.saveNoteData();
+		await this.saveNoteData();
+		await this.getNote();
+	}
+
+	async takePhoto(entryId: string) {
+		try {
+			const { camera } = await Camera.requestPermissions({ permissions: ["camera"] });
+			if (camera !== "granted") {
+				Dialog.alert({ message: "Permission caméra refusée." });
+				return;
+			}
+
+			const photo = await Camera.getPhoto({
+				quality: 90,
+				allowEditing: false,
+				resultType: CameraResultType.Uri,
+				source: CameraSource.Camera,
+			});
+
+			if (!photo.path) return;
+
+			this.eventBus.trigger(Events.SET_PHOTO, { entryId, path: photo.path });
+		} catch {
+			// User cancelled — nothing to do
+		}
+	}
+
+	private async generateThumbnail(videoPath: string): Promise<string | undefined> {
+		try {
+			const webUrl = Capacitor.convertFileSrc(videoPath);
+			const base64 = await generateVideoThumbnail(webUrl);
+			const filename = (videoPath.split("/").pop() ?? "video.mp4").replace(/\.[^.]+$/, ".jpg");
+			const result = await Filesystem.writeFile({
+				path: filename,
+				data: base64,
+				directory: Directory.External,
+			});
+			return result.uri;
+		} catch {
+			return undefined;
+		}
 	}
 }

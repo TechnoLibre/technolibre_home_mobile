@@ -71,6 +71,26 @@
 	}
 }
 
+.breadcrumb__note-nav {
+	display: flex;
+	gap: 0.25rem;
+	margin-left: auto;
+}
+
+.breadcrumb__note-nav-btn {
+	background: none;
+	border: none;
+	color: #31d53d;
+	cursor: pointer;
+	font-size: 1.1rem;
+	line-height: 1;
+	padding: 0 0.25rem;
+	&:disabled {
+		color: var(--text-greyed-out);
+		cursor: default;
+	}
+}
+
 #note-component .note__control__pin--active {
 	background-color: #931a07;
 	&:hover {
