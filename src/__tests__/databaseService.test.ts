@@ -223,4 +223,80 @@ describe("DatabaseService", () => {
       expect(notes[0].date).toBeUndefined();
     });
   });
+
+  // ── Sync columns ──
+
+  describe("sync columns", () => {
+    beforeEach(async () => {
+      await db.addSyncColumnsToNotes();
+    });
+
+    it("addSyncColumnsToNotes is idempotent — calling twice does not throw", async () => {
+      await expect(db.addSyncColumnsToNotes()).resolves.not.toThrow();
+    });
+
+    it("getNoteSyncInfo returns defaults for a fresh note", async () => {
+      await db.addNote({ id: "n1", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      const info = await db.getNoteSyncInfo("n1");
+      expect(info.odooId).toBeNull();
+      expect(info.odooUrl).toBeNull();
+      expect(info.syncStatus).toBe("local");
+      expect(info.lastSyncedAt).toBeNull();
+    });
+
+    it("getNoteSyncInfo returns defaults for unknown note id", async () => {
+      const info = await db.getNoteSyncInfo("ghost");
+      expect(info.odooId).toBeNull();
+      expect(info.syncStatus).toBe("local");
+    });
+
+    it("setNoteSyncInfo persists odooId and odooUrl", async () => {
+      await db.addNote({ id: "n2", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      await db.setNoteSyncInfo("n2", { odooId: 55, odooUrl: "https://erp.example.com" });
+      const info = await db.getNoteSyncInfo("n2");
+      expect(info.odooId).toBe(55);
+      expect(info.odooUrl).toBe("https://erp.example.com");
+    });
+
+    it("setNoteSyncInfo persists syncStatus", async () => {
+      await db.addNote({ id: "n3", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      await db.setNoteSyncInfo("n3", { syncStatus: "synced" });
+      const info = await db.getNoteSyncInfo("n3");
+      expect(info.syncStatus).toBe("synced");
+    });
+
+    it("setNoteSyncInfo does a partial update — untouched fields are preserved", async () => {
+      await db.addNote({ id: "n4", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      await db.setNoteSyncInfo("n4", { odooId: 7, odooUrl: "https://erp.example.com", syncStatus: "synced" });
+      await db.setNoteSyncInfo("n4", { syncStatus: "error" });
+      const info = await db.getNoteSyncInfo("n4");
+      expect(info.odooId).toBe(7);
+      expect(info.syncStatus).toBe("error");
+    });
+
+    it("getNoteById returns the note", async () => {
+      await db.addNote({ id: "n5", title: "Find me", done: true, archived: false, pinned: false, tags: [], entries: [] });
+      const note = await db.getNoteById("n5");
+      expect(note).not.toBeNull();
+      expect(note!.title).toBe("Find me");
+      expect(note!.done).toBe(true);
+    });
+
+    it("getNoteById returns null for unknown id", async () => {
+      const note = await db.getNoteById("nonexistent");
+      expect(note).toBeNull();
+    });
+
+    it("getNotesByOdooUrl returns notes matching the odoo url", async () => {
+      const url = "https://erp.example.com";
+      await db.addNote({ id: "na", title: "A", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      await db.addNote({ id: "nb", title: "B", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      await db.setNoteSyncInfo("na", { odooId: 1, odooUrl: url, syncStatus: "synced" });
+      // nb has no odooUrl — should not appear
+      const notes = await db.getNotesByOdooUrl(url);
+      expect(notes).toHaveLength(1);
+      expect(notes[0].id).toBe("na");
+      expect(notes[0].syncInfo.odooId).toBe(1);
+    });
+  });
 });

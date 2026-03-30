@@ -12,6 +12,7 @@ import { OptionsChangelogComponent } from "./changelog/options_changelog_compone
 import { OptionsDeviceInfoComponent } from "./device_info/options_device_info_component";
 import { OptionsPermissionsComponent } from "./permissions/options_permissions_component";
 import { OptionsMigrationHistoryComponent } from "./migration_history/options_migration_history_component";
+import { OptionsSyncComponent } from "./sync/options_sync_component";
 
 export class OptionsComponent extends EnhancedComponent {
 	static template = xml`
@@ -28,6 +29,7 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsPermissionsComponent />
         <OptionsDeviceInfoComponent />
         <OptionsMigrationHistoryComponent />
+        <OptionsSyncComponent />
         <OptionsChangelogComponent />
       </ul>
     </div>
@@ -49,5 +51,6 @@ export class OptionsComponent extends EnhancedComponent {
 		OptionsDeviceInfoComponent,
 		OptionsPermissionsComponent,
 		OptionsMigrationHistoryComponent,
+		OptionsSyncComponent,
 	};
 }

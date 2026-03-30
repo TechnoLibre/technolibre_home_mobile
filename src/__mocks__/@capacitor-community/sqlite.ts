@@ -33,6 +33,20 @@ class MockDBConnection {
         this.columns.set(table, colDefs);
       }
     }
+
+    const alterMatch = sql.match(/ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(\w+)/i);
+    if (alterMatch) {
+      const table = alterMatch[1];
+      const col = alterMatch[2];
+      const cols = this.columns.get(table) ?? [];
+      if (!cols.includes(col)) {
+        cols.push(col);
+        this.columns.set(table, cols);
+        const rows = this.tables.get(table) ?? [];
+        rows.forEach((row) => { if (!(col in row)) row[col] = null; });
+      }
+    }
+
     return { changes: { changes: 0 } };
   }
 
@@ -103,22 +117,47 @@ class MockDBConnection {
   }
 
   async query(sql: string, values?: any[]) {
+    // PRAGMA table_info(tableName)
+    const pragmaMatch = sql.match(/PRAGMA\s+table_info\((\w+)\)/i);
+    if (pragmaMatch) {
+      const table = pragmaMatch[1];
+      const cols = this.columns.get(table) ?? [];
+      return { values: cols.map((name) => ({ name })) };
+    }
+
+    // SELECT [* | col1, col2, ...] FROM table [WHERE ...]
     const selectMatch = sql.match(
-      /SELECT\s+\*\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?/i
+      /SELECT\s+(.+?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?/i
     );
     if (selectMatch) {
-      const table = selectMatch[1];
-      let rows = this.tables.get(table) || [];
-      if (selectMatch[2] && values) {
-        const whereCols = selectMatch[2]
+      const colList = selectMatch[1].trim();
+      const table = selectMatch[2];
+      let rows = this.tables.get(table) ?? [];
+
+      if (selectMatch[3] && values) {
+        const whereCols = selectMatch[3]
           .split(/\s+AND\s+/i)
-          .map((c) => c.trim().split(/\s*=\s*/)[0]);
+          .map((c) => c.trim().split(/\s*=\s*\?/)[0].trim());
         rows = rows.filter((row) =>
           whereCols.every((col, i) => row[col] === values[i])
         );
       }
-      return { values: rows };
+
+      if (colList === "*") {
+        return { values: rows };
+      }
+
+      // Project specific columns
+      const requestedCols = colList.split(",").map((c) => c.trim());
+      return {
+        values: rows.map((row) => {
+          const r: Row = {};
+          requestedCols.forEach((col) => { r[col] = row[col] ?? null; });
+          return r;
+        }),
+      };
     }
+
     return { values: [] };
   }
 }

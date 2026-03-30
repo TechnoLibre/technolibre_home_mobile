@@ -7,6 +7,15 @@ import { Application } from "../models/application";
 import { Note, NoteEntry } from "../models/note";
 import { StorageConstants } from "../constants/storage";
 
+export type SyncStatus = "local" | "pending" | "synced" | "conflict" | "error";
+
+export interface NoteSyncInfo {
+  odooId: number | null;
+  odooUrl: string | null;
+  syncStatus: SyncStatus;
+  lastSyncedAt: string | null;
+}
+
 const DB_NAME = "erplibre_mobile";
 
 export class DatabaseService {
@@ -230,6 +239,73 @@ export class DatabaseService {
     }
 
     return { pageCount, pageSize, totalBytes, diagnostics };
+  }
+
+  // Sync
+
+  async addSyncColumnsToNotes(): Promise<void> {
+    const columns = ["odoo_id", "odoo_url", "sync_status", "last_synced_at"];
+    const existing = await this.db.query("PRAGMA table_info(notes)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    for (const col of columns) {
+      if (existingNames.includes(col)) continue;
+      if (col === "odoo_id") {
+        await this.db.execute(`ALTER TABLE notes ADD COLUMN odoo_id INTEGER`);
+      } else if (col === "sync_status") {
+        await this.db.execute(`ALTER TABLE notes ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'local'`);
+      } else {
+        await this.db.execute(`ALTER TABLE notes ADD COLUMN ${col} TEXT`);
+      }
+    }
+  }
+
+  async getNoteSyncInfo(noteId: string): Promise<NoteSyncInfo> {
+    const result = await this.db.query(
+      "SELECT odoo_id, odoo_url, sync_status, last_synced_at FROM notes WHERE id = ?",
+      [noteId]
+    );
+    const row = result.values?.[0];
+    if (!row) return { odooId: null, odooUrl: null, syncStatus: "local", lastSyncedAt: null };
+    return {
+      odooId: row.odoo_id ?? null,
+      odooUrl: row.odoo_url ?? null,
+      syncStatus: (row.sync_status as SyncStatus) ?? "local",
+      lastSyncedAt: row.last_synced_at ?? null,
+    };
+  }
+
+  async setNoteSyncInfo(noteId: string, info: Partial<NoteSyncInfo>): Promise<void> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    if (info.odooId !== undefined) { fields.push("odoo_id = ?"); values.push(info.odooId); }
+    if (info.odooUrl !== undefined) { fields.push("odoo_url = ?"); values.push(info.odooUrl); }
+    if (info.syncStatus !== undefined) { fields.push("sync_status = ?"); values.push(info.syncStatus); }
+    if (info.lastSyncedAt !== undefined) { fields.push("last_synced_at = ?"); values.push(info.lastSyncedAt); }
+    if (fields.length === 0) return;
+    values.push(noteId);
+    await this.db.run(`UPDATE notes SET ${fields.join(", ")} WHERE id = ?`, values);
+  }
+
+  async getNoteById(id: string): Promise<Note | null> {
+    const result = await this.db.query("SELECT * FROM notes WHERE id = ?", [id]);
+    const row = result.values?.[0];
+    return row ? this.rowToNote(row) : null;
+  }
+
+  async getNotesByOdooUrl(odooUrl: string): Promise<Array<Note & { syncInfo: NoteSyncInfo }>> {
+    const result = await this.db.query(
+      "SELECT * FROM notes WHERE odoo_url = ?",
+      [odooUrl]
+    );
+    return (result.values ?? []).map((row: any) => ({
+      ...this.rowToNote(row),
+      syncInfo: {
+        odooId: row.odoo_id ?? null,
+        odooUrl: row.odoo_url ?? null,
+        syncStatus: (row.sync_status as SyncStatus) ?? "local",
+        lastSyncedAt: row.last_synced_at ?? null,
+      },
+    }));
   }
 
   async getTablesInfo(): Promise<{ name: string; count: number }[]> {

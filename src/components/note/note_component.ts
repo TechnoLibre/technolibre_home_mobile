@@ -1,10 +1,11 @@
-import { onWillDestroy, useState, xml } from "@odoo/owl";
+import { onMounted, onWillDestroy, useState, xml } from "@odoo/owl";
 
 import { Capacitor } from "@capacitor/core";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Dialog } from "@capacitor/dialog";
 import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
+import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 
 import { BiometryUtils } from "../../utils/biometryUtils";
 import { generateVideoThumbnail } from "../../utils/videoThumbnailUtils";
@@ -13,6 +14,9 @@ import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { Events } from "../../constants/events";
 import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryVideoParams } from "../../models/note";
+import { StorageConstants } from "../../constants/storage";
+import { SyncCredentials } from "../../services/syncService";
+import { SyncConfig } from "../options/sync/options_sync_component";
 
 import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
@@ -40,6 +44,14 @@ export class NoteComponent extends EnhancedComponent {
 						t-att-disabled="!hasNext"
 						t-on-click.stop.prevent="navigateNext"
 					>›</button>
+					<button
+						type="button"
+						t-att-class="'breadcrumb__sync-btn breadcrumb__sync-btn--' + state.syncStatus"
+						t-att-disabled="state.isSyncing or state.newNote"
+						t-att-title="syncTitle"
+						t-on-click.stop.prevent="pushToOdoo"
+						t-esc="syncIcon"
+					/>
 				</div>
 			</nav>
 			<NoteTopControlsComponent
@@ -91,11 +103,80 @@ export class NoteComponent extends EnhancedComponent {
 			editMode: false,
 			optionMode: false,
 			allNoteIds: [] as string[],
+			syncStatus: "local" as string,
+			isSyncing: false,
 		});
 		this.setParams();
 		this.getNote();
 		this.loadAllNoteIds();
 		this.listenForEvents();
+		onMounted(() => this.loadSyncStatus());
+	}
+
+	get syncIcon(): string {
+		if (this.state.isSyncing) return "⟳";
+		switch (this.state.syncStatus) {
+			case "synced":  return "✓☁";
+			case "error":   return "✗☁";
+			case "pending": return "☁!";
+			default:        return "☁";
+		}
+	}
+
+	get syncTitle(): string {
+		if (this.state.isSyncing) return "Sync en cours…";
+		switch (this.state.syncStatus) {
+			case "synced":  return "Synchronisé";
+			case "error":   return "Erreur de sync";
+			case "pending": return "Modifications en attente";
+			default:        return "Pousser vers Odoo";
+		}
+	}
+
+	async pushToOdoo() {
+		if (this.state.isSyncing || this.state.newNote) return;
+
+		// If offline, queue for later and show pending state
+		if (!navigator.onLine) {
+			await this.databaseService.setNoteSyncInfo(this.state.noteId, { syncStatus: "pending" });
+			this.state.syncStatus = "pending";
+			return;
+		}
+
+		let config: SyncConfig | null = null;
+		try {
+			const stored = await SecureStoragePlugin.get({ key: StorageConstants.SYNC_CONFIG_KEY });
+			config = JSON.parse(stored.value) as SyncConfig;
+		} catch {
+			await Dialog.alert({ message: "Configurez la synchronisation dans les options." });
+			return;
+		}
+		if (!config.appUrl || !config.database) {
+			await Dialog.alert({ message: "Configurez la synchronisation dans les options." });
+			return;
+		}
+		const apps = await this.appService.getApps();
+		const app = apps.find((a) => a.url === config!.appUrl && a.username === config!.appUsername);
+		if (!app) {
+			await Dialog.alert({ message: "Application Odoo introuvable." });
+			return;
+		}
+		this.state.isSyncing = true;
+		try {
+			const creds: SyncCredentials = {
+				odooUrl: config.appUrl,
+				username: app.username,
+				password: app.password,
+				database: config.database,
+			};
+			await this.syncService.pushNote(creds, this.state.noteId);
+			this.state.syncStatus = "synced";
+		} catch (e: unknown) {
+			this.state.syncStatus = "error";
+			await Dialog.alert({ message: `Erreur sync : ${e instanceof Error ? e.message : String(e)}` });
+		} finally {
+			this.state.isSyncing = false;
+		}
 	}
 
 	get currentIndex(): number {
@@ -281,6 +362,12 @@ export class NoteComponent extends EnhancedComponent {
 				return;
 			}
 		}
+	}
+
+	private async loadSyncStatus() {
+		if (!this.state.noteId) return;
+		const info = await this.databaseService.getNoteSyncInfo(this.state.noteId);
+		this.state.syncStatus = info.syncStatus;
 	}
 
 	private async loadAllNoteIds() {

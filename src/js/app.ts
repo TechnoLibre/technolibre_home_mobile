@@ -9,6 +9,9 @@ import { DatabaseService } from "../services/databaseService";
 import { runMigrations } from "../services/migrationService";
 import { migrateFromSecureStorage } from "../services/dataMigration";
 import { migrateVideoThumbnails } from "../services/migrations/migrateVideoThumbnails";
+import { addSyncColumns } from "../services/migrations/addSyncColumns";
+import { SyncService } from "../services/syncService";
+import { NotificationService } from "../services/notificationService";
 import { BiometryUtils } from "../utils/biometryUtils";
 import { Events } from "../constants/events";
 
@@ -66,14 +69,22 @@ async function startApp() {
 			description: "Génération des thumbnails vidéo manquants",
 			run: migrateVideoThumbnails,
 		},
+		{
+			version: 2026033001,
+			description: "Ajout des colonnes de synchronisation Odoo",
+			run: addSyncColumns,
+		},
 	]);
 
 	setBootStep("Initialisation des services…");
 	const appService = new AppService(db);
 	const noteService = new NoteService(eventBus, db);
 	const intentService = new IntentService(eventBus);
+	const syncService = new SyncService(db);
+	const notificationService = new NotificationService(syncService, appService, eventBus);
+	notificationService.start();
 
-	const env = { eventBus, router, appService, noteService, intentService, databaseService: db };
+	const env = { eventBus, router, appService, noteService, intentService, databaseService: db, syncService, notificationService };
 
 	setBootStep("Montage de l'interface…");
 	await mount(RootComponent, document.body, { env });
