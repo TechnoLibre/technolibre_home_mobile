@@ -12,6 +12,7 @@ import { migrateVideoThumbnails } from "../services/migrations/migrateVideoThumb
 import { addSyncColumns } from "../services/migrations/addSyncColumns";
 import { SyncService } from "../services/syncService";
 import { NotificationService } from "../services/notificationService";
+import { ReminderService } from "../services/reminderService";
 import { BiometryUtils } from "../utils/biometryUtils";
 import { Events } from "../constants/events";
 
@@ -81,8 +82,14 @@ async function startApp() {
 	const noteService = new NoteService(eventBus, db);
 	const intentService = new IntentService(eventBus);
 	const syncService = new SyncService(db);
+	const reminderService = new ReminderService(db);
 	const notificationService = new NotificationService(syncService, appService, eventBus);
 	notificationService.start();
+
+	// Re-schedule any reminders whose notification batch is expiring
+	reminderService.rebatchExpiring().catch((e) =>
+		console.warn("[boot] rebatchExpiring failed:", e)
+	);
 
 	const env = { eventBus, router, appService, noteService, intentService, databaseService: db, syncService, notificationService };
 

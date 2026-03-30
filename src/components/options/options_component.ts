@@ -13,6 +13,7 @@ import { OptionsDeviceInfoComponent } from "./device_info/options_device_info_co
 import { OptionsPermissionsComponent } from "./permissions/options_permissions_component";
 import { OptionsMigrationHistoryComponent } from "./migration_history/options_migration_history_component";
 import { OptionsSyncComponent } from "./sync/options_sync_component";
+import { OptionsRemindersComponent } from "./reminders/options_reminders_component";
 
 export class OptionsComponent extends EnhancedComponent {
 	static template = xml`
@@ -30,6 +31,7 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsDeviceInfoComponent />
         <OptionsMigrationHistoryComponent />
         <OptionsSyncComponent />
+        <OptionsRemindersComponent />
         <OptionsChangelogComponent />
       </ul>
     </div>
@@ -52,5 +54,6 @@ export class OptionsComponent extends EnhancedComponent {
 		OptionsPermissionsComponent,
 		OptionsMigrationHistoryComponent,
 		OptionsSyncComponent,
+		OptionsRemindersComponent,
 	};
 }

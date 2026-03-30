@@ -51,6 +51,24 @@ class MockDBConnection {
   }
 
   async run(sql: string, values?: any[]) {
+    const insertOrReplaceMatch = sql.match(
+      /INSERT OR REPLACE INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i
+    );
+    if (insertOrReplaceMatch && values) {
+      const table = insertOrReplaceMatch[1];
+      const cols = insertOrReplaceMatch[2].split(",").map((c) => c.trim());
+      const pkCol = cols[0]; // assume first column is primary key
+      const pkValue = values[0];
+      const rows = (this.tables.get(table) || []).filter(
+        (r) => r[pkCol] !== pkValue
+      );
+      const row: Row = {};
+      cols.forEach((col, i) => { row[col] = values[i]; });
+      rows.push(row);
+      this.tables.set(table, rows);
+      return { changes: { changes: 1 } };
+    }
+
     const insertMatch = sql.match(
       /INSERT INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i
     );

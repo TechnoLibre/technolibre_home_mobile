@@ -5,6 +5,7 @@ import {
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { Application } from "../models/application";
 import { Note, NoteEntry } from "../models/note";
+import { Reminder } from "../models/reminder";
 import { StorageConstants } from "../constants/storage";
 
 export type SyncStatus = "local" | "pending" | "synced" | "conflict" | "error";
@@ -112,6 +113,17 @@ export class DatabaseService {
         pinned INTEGER NOT NULL DEFAULT 0,
         tags TEXT NOT NULL DEFAULT '[]',
         entries TEXT NOT NULL DEFAULT '[]'
+      )
+    `);
+
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS reminders (
+        id TEXT PRIMARY KEY NOT NULL,
+        message TEXT NOT NULL,
+        interval_minutes INTEGER NOT NULL,
+        active INTEGER NOT NULL DEFAULT 0,
+        scheduled_ids TEXT NOT NULL DEFAULT '[]',
+        batch_ends_at TEXT
       )
     `);
   }
@@ -323,6 +335,47 @@ export class DatabaseService {
         return { name, count };
       })
     );
+  }
+
+  // Reminders
+
+  async getAllReminders(): Promise<Reminder[]> {
+    const result = await this.db.query("SELECT * FROM reminders");
+    return (result.values ?? []).map((row: any) => this.rowToReminder(row));
+  }
+
+  async upsertReminder(reminder: Reminder): Promise<void> {
+    await this.db.run(
+      `INSERT OR REPLACE INTO reminders
+        (id, message, interval_minutes, active, scheduled_ids, batch_ends_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        reminder.id,
+        reminder.message,
+        reminder.intervalMinutes,
+        reminder.active ? 1 : 0,
+        JSON.stringify(reminder.scheduledIds),
+        reminder.batchEndsAt ?? null,
+      ]
+    );
+  }
+
+  async deleteReminder(id: string): Promise<void> {
+    await this.db.run("DELETE FROM reminders WHERE id = ?", [id]);
+  }
+
+  private rowToReminder(row: any): Reminder {
+    return {
+      id: row.id,
+      message: row.message,
+      intervalMinutes: row.interval_minutes,
+      active: row.active === 1 || row.active === true,
+      scheduledIds:
+        typeof row.scheduled_ids === "string"
+          ? JSON.parse(row.scheduled_ids)
+          : (row.scheduled_ids ?? []),
+      batchEndsAt: row.batch_ends_at ?? null,
+    };
   }
 
   private rowToNote(row: any): Note {
