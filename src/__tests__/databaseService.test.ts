@@ -72,6 +72,11 @@ describe("DatabaseService", () => {
       url: "https://erp.example.com",
       username: "admin",
       password: "secret",
+      database: "",
+      autoSync: false,
+      pollIntervalMinutes: 5,
+      ntfyUrl: "",
+      ntfyTopic: "",
     };
 
     it("should return an empty list initially", async () => {
@@ -91,6 +96,11 @@ describe("DatabaseService", () => {
         url: "https://erp2.example.com",
         username: "user",
         password: "pass",
+        database: "",
+        autoSync: false,
+        pollIntervalMinutes: 5,
+        ntfyUrl: "",
+        ntfyTopic: "",
       };
       await db.addApplication(app);
       await db.addApplication(app2);
@@ -110,6 +120,11 @@ describe("DatabaseService", () => {
         url: "https://erp2.example.com",
         username: "user",
         password: "pass",
+        database: "",
+        autoSync: false,
+        pollIntervalMinutes: 5,
+        ntfyUrl: "",
+        ntfyTopic: "",
       };
       await db.addApplication(app);
       await db.addApplication(app2);
@@ -125,6 +140,11 @@ describe("DatabaseService", () => {
         url: app.url,
         username: app.username,
         password: "newpassword",
+        database: "",
+        autoSync: false,
+        pollIntervalMinutes: 5,
+        ntfyUrl: "",
+        ntfyTopic: "",
       };
       await db.updateApplication(app.url, app.username, updated);
       const apps = await db.getAllApplications();

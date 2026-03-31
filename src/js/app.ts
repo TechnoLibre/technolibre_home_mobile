@@ -10,6 +10,9 @@ import { runMigrations } from "../services/migrationService";
 import { migrateFromSecureStorage } from "../services/dataMigration";
 import { migrateVideoThumbnails } from "../services/migrations/migrateVideoThumbnails";
 import { addSyncColumns } from "../services/migrations/addSyncColumns";
+import { addSyncConfigId } from "../services/migrations/addSyncConfigId";
+import { addReminderCreatedAt } from "../services/migrations/addReminderCreatedAt";
+import { addApplicationSyncFields } from "../services/migrations/addApplicationSyncFields";
 import { SyncService } from "../services/syncService";
 import { NotificationService } from "../services/notificationService";
 import { ReminderService } from "../services/reminderService";
@@ -74,6 +77,21 @@ async function startApp() {
 			version: 2026033001,
 			description: "Ajout des colonnes de synchronisation Odoo",
 			run: addSyncColumns,
+		},
+		{
+			version: 2026033101,
+			description: "Ajout sync_config_id sur les notes",
+			run: addSyncConfigId,
+		},
+		{
+			version: 2026033102,
+			description: "Ajout created_at sur les rappels",
+			run: addReminderCreatedAt,
+		},
+		{
+			version: 2026040801,
+			description: "Ajout des champs de synchronisation sur les applications",
+			run: addApplicationSyncFields,
 		},
 	]);
 

@@ -5,6 +5,7 @@ import {EnhancedComponent} from "../../../js/enhancedComponent";
 import ArchiveNoteIcon from "../../../assets/icon/note_archive.svg";
 import CheckBoxIcon from "../../../assets/icon/check_box.svg";
 import CheckBoxBlankIcon from "../../../assets/icon/check_box_blank.svg";
+import CloudSyncIcon from "../../../assets/icon/cloud_sync.svg";
 import EditNoteIcon from "../../../assets/icon/note_edit.svg";
 import OptionNoteIcon from "../../../assets/icon/options-vertical-svgrepo-com.svg";
 import PinNoteIcon from "../../../assets/icon/pin.svg";
@@ -26,6 +27,16 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 		>
 			<img src="${EditNoteIcon}" />
 			<p>Edit Mode</p>
+		</a>
+		<a
+			id="note__control__sync"
+			t-att-class="'note__control note__control__sync--' + props.syncStatus"
+			href="#"
+			t-att-aria-disabled="props.isSyncing or props.newNote"
+			t-on-click.stop.prevent="props.onSyncClick"
+		>
+			<img src="${CloudSyncIcon}" />
+			<p t-esc="props.syncLabel" />
 		</a>
 		<a
 			id="note__control__option"

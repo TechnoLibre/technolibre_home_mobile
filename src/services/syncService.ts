@@ -374,14 +374,16 @@ export class SyncService {
   // ─── Sync all ────────────────────────────────────────────────────────────
 
   /**
-   * Full bidirectional sync:
-   * 1. Push all notes marked as 'pending' for this Odoo URL
+   * Full bidirectional sync for a given config:
+   * 1. Push all notes marked as 'pending' for this syncConfigId (or odooUrl fallback)
    * 2. Pull all tasks modified since the oldest local sync
    */
-  async syncAll(creds: SyncCredentials): Promise<SyncResult> {
+  async syncAll(creds: SyncCredentials, syncConfigId?: string): Promise<SyncResult> {
     const result: SyncResult = { pushed: 0, pulled: 0, errors: [] };
 
-    const localNotes = await this.db.getNotesByOdooUrl(creds.odooUrl);
+    const localNotes = syncConfigId
+      ? await this.db.getNotesBySyncConfigId(syncConfigId)
+      : await this.db.getNotesByOdooUrl(creds.odooUrl);
     const pending = localNotes.filter((n) => n.syncInfo.syncStatus === "pending");
 
     for (const note of pending) {

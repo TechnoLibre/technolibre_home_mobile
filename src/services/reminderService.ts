@@ -55,6 +55,7 @@ export class ReminderService {
       active: false,
       scheduledIds: [],
       batchEndsAt: null,
+      createdAt: new Date().toISOString(),
     };
   }
 

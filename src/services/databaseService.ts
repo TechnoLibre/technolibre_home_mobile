@@ -15,6 +15,7 @@ export interface NoteSyncInfo {
   odooUrl: string | null;
   syncStatus: SyncStatus;
   lastSyncedAt: string | null;
+  syncConfigId: string | null;
 }
 
 const DB_NAME = "erplibre_mobile";
@@ -130,15 +131,36 @@ export class DatabaseService {
 
   // Applications
 
+  async addSyncFieldsToApplications(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(applications)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    const columns: [string, string][] = [
+      ["database",              "TEXT NOT NULL DEFAULT ''"],
+      ["auto_sync",             "INTEGER NOT NULL DEFAULT 0"],
+      ["poll_interval_minutes", "INTEGER NOT NULL DEFAULT 5"],
+      ["ntfy_url",              "TEXT NOT NULL DEFAULT ''"],
+      ["ntfy_topic",            "TEXT NOT NULL DEFAULT ''"],
+    ];
+    for (const [col, def] of columns) {
+      if (!existingNames.includes(col)) {
+        await this.db.execute(`ALTER TABLE applications ADD COLUMN ${col} ${def}`);
+      }
+    }
+  }
+
   async getAllApplications(): Promise<Application[]> {
     const result = await this.db.query("SELECT * FROM applications");
-    return result.values || [];
+    return (result.values ?? []).map((row: any) => this.rowToApplication(row));
   }
 
   async addApplication(app: Application): Promise<void> {
     await this.db.run(
-      "INSERT INTO applications (url, username, password) VALUES (?, ?, ?)",
-      [app.url, app.username, app.password]
+      `INSERT INTO applications
+        (url, username, password, database, auto_sync, poll_interval_minutes, ntfy_url, ntfy_topic)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [app.url, app.username, app.password,
+       app.database ?? "", app.autoSync ? 1 : 0,
+       app.pollIntervalMinutes ?? 5, app.ntfyUrl ?? "", app.ntfyTopic ?? ""]
     );
   }
 
@@ -155,9 +177,25 @@ export class DatabaseService {
     app: Application
   ): Promise<void> {
     await this.db.run(
-      "UPDATE applications SET url = ?, username = ?, password = ? WHERE url = ? AND username = ?",
-      [app.url, app.username, app.password, url, username]
+      "UPDATE applications SET url = ?, username = ?, password = ?, database = ?, auto_sync = ?, poll_interval_minutes = ?, ntfy_url = ?, ntfy_topic = ? WHERE url = ? AND username = ?",
+      [app.url, app.username, app.password,
+       app.database ?? "", app.autoSync ? 1 : 0,
+       app.pollIntervalMinutes ?? 5, app.ntfyUrl ?? "", app.ntfyTopic ?? "",
+       url, username]
     );
+  }
+
+  private rowToApplication(row: any): Application {
+    return {
+      url: row.url,
+      username: row.username,
+      password: row.password,
+      database: row.database ?? "",
+      autoSync: row.auto_sync === 1 || row.auto_sync === true,
+      pollIntervalMinutes: row.poll_interval_minutes ?? 5,
+      ntfyUrl: row.ntfy_url ?? "",
+      ntfyTopic: row.ntfy_topic ?? "",
+    };
   }
 
   // Notes
@@ -271,18 +309,35 @@ export class DatabaseService {
     }
   }
 
+  async addSyncConfigIdColumn(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(notes)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!existingNames.includes("sync_config_id")) {
+      await this.db.execute(`ALTER TABLE notes ADD COLUMN sync_config_id TEXT`);
+    }
+  }
+
+  async addCreatedAtToReminders(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(reminders)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!existingNames.includes("created_at")) {
+      await this.db.execute(`ALTER TABLE reminders ADD COLUMN created_at TEXT`);
+    }
+  }
+
   async getNoteSyncInfo(noteId: string): Promise<NoteSyncInfo> {
     const result = await this.db.query(
-      "SELECT odoo_id, odoo_url, sync_status, last_synced_at FROM notes WHERE id = ?",
+      "SELECT odoo_id, odoo_url, sync_status, last_synced_at, sync_config_id FROM notes WHERE id = ?",
       [noteId]
     );
     const row = result.values?.[0];
-    if (!row) return { odooId: null, odooUrl: null, syncStatus: "local", lastSyncedAt: null };
+    if (!row) return { odooId: null, odooUrl: null, syncStatus: "local", lastSyncedAt: null, syncConfigId: null };
     return {
       odooId: row.odoo_id ?? null,
       odooUrl: row.odoo_url ?? null,
       syncStatus: (row.sync_status as SyncStatus) ?? "local",
       lastSyncedAt: row.last_synced_at ?? null,
+      syncConfigId: row.sync_config_id ?? null,
     };
   }
 
@@ -293,9 +348,21 @@ export class DatabaseService {
     if (info.odooUrl !== undefined) { fields.push("odoo_url = ?"); values.push(info.odooUrl); }
     if (info.syncStatus !== undefined) { fields.push("sync_status = ?"); values.push(info.syncStatus); }
     if (info.lastSyncedAt !== undefined) { fields.push("last_synced_at = ?"); values.push(info.lastSyncedAt); }
+    if (info.syncConfigId !== undefined) { fields.push("sync_config_id = ?"); values.push(info.syncConfigId); }
     if (fields.length === 0) return;
     values.push(noteId);
     await this.db.run(`UPDATE notes SET ${fields.join(", ")} WHERE id = ?`, values);
+  }
+
+  async getNotesBySyncConfigId(syncConfigId: string): Promise<Array<Note & { syncInfo: NoteSyncInfo }>> {
+    const result = await this.db.query(
+      "SELECT * FROM notes WHERE sync_config_id = ?",
+      [syncConfigId]
+    );
+    return (result.values ?? []).map((row: any) => ({
+      ...this.rowToNote(row),
+      syncInfo: this.rowToSyncInfo(row),
+    }));
   }
 
   async getNoteById(id: string): Promise<Note | null> {
@@ -311,13 +378,18 @@ export class DatabaseService {
     );
     return (result.values ?? []).map((row: any) => ({
       ...this.rowToNote(row),
-      syncInfo: {
-        odooId: row.odoo_id ?? null,
-        odooUrl: row.odoo_url ?? null,
-        syncStatus: (row.sync_status as SyncStatus) ?? "local",
-        lastSyncedAt: row.last_synced_at ?? null,
-      },
+      syncInfo: this.rowToSyncInfo(row),
     }));
+  }
+
+  private rowToSyncInfo(row: any): NoteSyncInfo {
+    return {
+      odooId: row.odoo_id ?? null,
+      odooUrl: row.odoo_url ?? null,
+      syncStatus: (row.sync_status as SyncStatus) ?? "local",
+      lastSyncedAt: row.last_synced_at ?? null,
+      syncConfigId: row.sync_config_id ?? null,
+    };
   }
 
   async getTablesInfo(): Promise<{ name: string; count: number }[]> {
@@ -347,8 +419,8 @@ export class DatabaseService {
   async upsertReminder(reminder: Reminder): Promise<void> {
     await this.db.run(
       `INSERT OR REPLACE INTO reminders
-        (id, message, interval_minutes, active, scheduled_ids, batch_ends_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+        (id, message, interval_minutes, active, scheduled_ids, batch_ends_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         reminder.id,
         reminder.message,
@@ -356,6 +428,7 @@ export class DatabaseService {
         reminder.active ? 1 : 0,
         JSON.stringify(reminder.scheduledIds),
         reminder.batchEndsAt ?? null,
+        reminder.createdAt,
       ]
     );
   }
@@ -375,6 +448,7 @@ export class DatabaseService {
           ? JSON.parse(row.scheduled_ids)
           : (row.scheduled_ids ?? []),
       batchEndsAt: row.batch_ends_at ?? null,
+      createdAt: row.created_at ?? new Date().toISOString(),
     };
   }
 

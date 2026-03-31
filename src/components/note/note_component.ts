@@ -5,8 +5,6 @@ import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Dialog } from "@capacitor/dialog";
 import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
-import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
-
 import { BiometryUtils } from "../../utils/biometryUtils";
 import { generateVideoThumbnail } from "../../utils/videoThumbnailUtils";
 import { EnhancedComponent } from "../../js/enhancedComponent";
@@ -14,9 +12,9 @@ import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { Events } from "../../constants/events";
 import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryVideoParams } from "../../models/note";
-import { StorageConstants } from "../../constants/storage";
 import { SyncCredentials } from "../../services/syncService";
-import { SyncConfig } from "../options/sync/options_sync_component";
+import type { SyncConfig } from "../../models/syncConfig";
+import { loadSyncConfigs } from "../../models/syncConfig";
 
 import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
@@ -44,14 +42,32 @@ export class NoteComponent extends EnhancedComponent {
 						t-att-disabled="!hasNext"
 						t-on-click.stop.prevent="navigateNext"
 					>›</button>
-					<button
-						type="button"
-						t-att-class="'breadcrumb__sync-btn breadcrumb__sync-btn--' + state.syncStatus"
-						t-att-disabled="state.isSyncing or state.newNote"
-						t-att-title="syncTitle"
-						t-on-click.stop.prevent="pushToOdoo"
-						t-esc="syncIcon"
-					/>
+					<div class="breadcrumb__sync-wrap">
+						<button
+							type="button"
+							t-att-class="'breadcrumb__sync-btn breadcrumb__sync-btn--' + state.syncStatus"
+							t-att-disabled="state.isSyncing or state.newNote"
+							t-att-title="syncTitle"
+							t-on-click.stop.prevent="pushToOdoo"
+							t-esc="syncIcon"
+						/>
+						<div t-if="state.showConfigPicker" class="breadcrumb__config-picker">
+							<p class="breadcrumb__config-picker-label">Choisir un serveur :</p>
+							<t t-foreach="state.syncConfigs" t-as="cfg" t-key="cfg.id">
+								<button
+									type="button"
+									class="breadcrumb__config-option"
+									t-on-click.stop.prevent="() => selectConfigAndPush(cfg)"
+									t-esc="cfg.name or cfg.appUrl"
+								/>
+							</t>
+							<button
+								type="button"
+								class="breadcrumb__config-cancel"
+								t-on-click.stop.prevent="cancelConfigPick"
+							>Annuler</button>
+						</div>
+					</div>
 				</div>
 			</nav>
 			<NoteTopControlsComponent
@@ -63,6 +79,11 @@ export class NoteComponent extends EnhancedComponent {
 				toggleDone.bind="toggleDone"
 				toggleOptionMode.bind="toggleOptionMode"
 				optionMode="state.optionMode"
+				syncStatus="state.syncStatus"
+				syncLabel="syncLabel"
+				isSyncing="state.isSyncing"
+				newNote="state.newNote"
+				onSyncClick.bind="pushToOdoo"
 			/>
 			<NoteContentComponent
 				note="state.note"
@@ -104,7 +125,10 @@ export class NoteComponent extends EnhancedComponent {
 			optionMode: false,
 			allNoteIds: [] as string[],
 			syncStatus: "local" as string,
+			syncConfigId: null as string | null,
 			isSyncing: false,
+			syncConfigs: [] as SyncConfig[],
+			showConfigPicker: false,
 		});
 		this.setParams();
 		this.getNote();
@@ -125,38 +149,72 @@ export class NoteComponent extends EnhancedComponent {
 
 	get syncTitle(): string {
 		if (this.state.isSyncing) return "Sync en cours…";
+		const cfg = this.state.syncConfigs.find((c) => c.id === this.state.syncConfigId);
+		const server = cfg ? ` — ${cfg.name || cfg.appUrl}` : "";
 		switch (this.state.syncStatus) {
-			case "synced":  return "Synchronisé";
-			case "error":   return "Erreur de sync";
+			case "synced":  return `Synchronisé${server}`;
+			case "error":   return `Erreur de sync${server}`;
 			case "pending": return "Modifications en attente";
 			default:        return "Pousser vers Odoo";
+		}
+	}
+
+	get syncLabel(): string {
+		if (this.state.isSyncing) return "Sync…";
+		const cfg = this.state.syncConfigs.find((c) => c.id === this.state.syncConfigId);
+		switch (this.state.syncStatus) {
+			case "synced":  return cfg?.name || cfg?.appUrl || "Synchronisé";
+			case "error":   return "Erreur";
+			case "pending": return "En attente";
+			default:        return "Synchroniser";
 		}
 	}
 
 	async pushToOdoo() {
 		if (this.state.isSyncing || this.state.newNote) return;
 
-		// If offline, queue for later and show pending state
 		if (!navigator.onLine) {
 			await this.databaseService.setNoteSyncInfo(this.state.noteId, { syncStatus: "pending" });
 			this.state.syncStatus = "pending";
 			return;
 		}
 
-		let config: SyncConfig | null = null;
-		try {
-			const stored = await SecureStoragePlugin.get({ key: StorageConstants.SYNC_CONFIG_KEY });
-			config = JSON.parse(stored.value) as SyncConfig;
-		} catch {
+		const configs = await loadSyncConfigs(this.appService);
+		this.state.syncConfigs = configs;
+
+		if (configs.length === 0) {
 			await Dialog.alert({ message: "Configurez la synchronisation dans les options." });
 			return;
 		}
-		if (!config.appUrl || !config.database) {
-			await Dialog.alert({ message: "Configurez la synchronisation dans les options." });
+
+		// Note already linked to a config → use it directly
+		if (this.state.syncConfigId) {
+			const cfg = configs.find((c) => c.id === this.state.syncConfigId);
+			if (cfg) { await this.doPush(cfg); return; }
+		}
+
+		// Single config → auto-select
+		if (configs.length === 1) {
+			await this.doPush(configs[0]);
 			return;
 		}
+
+		// Multiple configs → show picker
+		this.state.showConfigPicker = true;
+	}
+
+	async selectConfigAndPush(cfg: SyncConfig) {
+		this.state.showConfigPicker = false;
+		await this.doPush(cfg);
+	}
+
+	cancelConfigPick() {
+		this.state.showConfigPicker = false;
+	}
+
+	private async doPush(cfg: SyncConfig) {
 		const apps = await this.appService.getApps();
-		const app = apps.find((a) => a.url === config!.appUrl && a.username === config!.appUsername);
+		const app = apps.find((a) => a.url === cfg.appUrl && a.username === cfg.appUsername);
 		if (!app) {
 			await Dialog.alert({ message: "Application Odoo introuvable." });
 			return;
@@ -164,12 +222,14 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.isSyncing = true;
 		try {
 			const creds: SyncCredentials = {
-				odooUrl: config.appUrl,
+				odooUrl: cfg.appUrl,
 				username: app.username,
 				password: app.password,
-				database: config.database,
+				database: cfg.database,
 			};
 			await this.syncService.pushNote(creds, this.state.noteId);
+			await this.databaseService.setNoteSyncInfo(this.state.noteId, { syncConfigId: cfg.id });
+			this.state.syncConfigId = cfg.id;
 			this.state.syncStatus = "synced";
 		} catch (e: unknown) {
 			this.state.syncStatus = "error";
@@ -368,6 +428,8 @@ export class NoteComponent extends EnhancedComponent {
 		if (!this.state.noteId) return;
 		const info = await this.databaseService.getNoteSyncInfo(this.state.noteId);
 		this.state.syncStatus = info.syncStatus;
+		this.state.syncConfigId = info.syncConfigId;
+		this.state.syncConfigs = await loadSyncConfigs(this.appService);
 	}
 
 	private async loadAllNoteIds() {

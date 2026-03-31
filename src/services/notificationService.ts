@@ -1,34 +1,31 @@
 import { App } from "@capacitor/app";
 import { EventBus } from "@odoo/owl";
-import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 
 import { Events } from "../constants/events";
-import { StorageConstants } from "../constants/storage";
 import { SyncService, SyncCredentials } from "./syncService";
 import { AppService } from "./appService";
 import { NtfyService } from "./ntfyService";
-import { SyncConfig } from "../components/options/sync/options_sync_component";
+import { Application } from "../models/application";
 
 /**
  * Polls Odoo periodically for changes while the app is in the foreground.
+ * Reads sync configuration directly from the Application list — each app
+ * with autoSync=true and a configured database gets its own polling timer.
+ *
  * Emits SYNC_CHANGES_DETECTED via the event bus when modified task IDs
  * are found. Pauses automatically when the app goes to background.
  *
  * Also:
  * - Syncs pending notes when network connectivity is restored.
- * - Subscribes to a NTFY topic (SSE) for real-time push from Odoo.
- *
- * Background polling requires @capacitor/background-runner (not installed).
- * Install and wire it here in v2 if needed.
- * For background NTFY notifications, the user should install the NTFY
- * Android app and subscribe to the same topic.
+ * - Subscribes to a NTFY topic (SSE) for real-time push from Odoo
+ *   (uses the first app with ntfyUrl/ntfyTopic configured).
  */
 export class NotificationService {
   private syncService: SyncService;
   private appService: AppService;
   private eventBus: EventBus;
   private ntfyService: NtfyService;
-  private timerId: ReturnType<typeof setInterval> | null = null;
+  private timers: ReturnType<typeof setInterval>[] = [];
   private lastPoll: Date = new Date(0);
 
   constructor(syncService: SyncService, appService: AppService, eventBus: EventBus) {
@@ -54,7 +51,6 @@ export class NotificationService {
       }
     });
 
-    // Network restore → flush pending queue
     window.addEventListener("online", () => this.onNetworkRestore());
 
     // Start immediately (app is active at boot)
@@ -63,46 +59,40 @@ export class NotificationService {
   }
 
   /**
-   * Reads current SyncConfig and starts the interval if autoSync is enabled.
+   * Reads all apps and starts one timer per app with autoSync enabled.
    */
   private async startPolling(): Promise<void> {
     this.stopPolling();
-    const config = await this.loadConfig();
-    if (!config || !config.autoSync || config.pollIntervalMinutes <= 0) return;
-    if (!config.appUrl || !config.database) return;
-
-    const intervalMs = config.pollIntervalMinutes * 60 * 1000;
-    this.timerId = setInterval(() => this.poll(), intervalMs);
-  }
-
-  private stopPolling(): void {
-    if (this.timerId !== null) {
-      clearInterval(this.timerId);
-      this.timerId = null;
+    const apps = await this.appService.getApps();
+    for (const app of apps) {
+      if (!app.autoSync || !app.database || app.pollIntervalMinutes <= 0) continue;
+      const intervalMs = app.pollIntervalMinutes * 60 * 1000;
+      this.timers.push(setInterval(() => this.pollApp(app), intervalMs));
     }
   }
 
-  /**
-   * Opens the NTFY SSE connection based on current config.
-   */
-  private async startNtfy(): Promise<void> {
-    this.ntfyService.disconnect();
-    const config = await this.loadConfig();
-    if (!config?.ntfyUrl || !config.ntfyTopic) return;
-
-    this.ntfyService.connect(config.ntfyUrl, config.ntfyTopic, (_title) => {
-      this.onNtfyMessage(config);
-    });
+  private stopPolling(): void {
+    for (const t of this.timers) clearInterval(t);
+    this.timers = [];
   }
 
   /**
-   * Called when a NTFY message is received. Triggers a poll immediately.
+   * Opens the NTFY SSE connection for the first app with NTFY configured.
    */
-  private async onNtfyMessage(config: SyncConfig): Promise<void> {
-    if (!config.appUrl || !config.database) return;
-    const creds = await this.buildCreds(config);
-    if (!creds) return;
+  private async startNtfy(): Promise<void> {
+    this.ntfyService.disconnect();
+    const apps = await this.appService.getApps();
+    const ntfyApp = apps.find((a) => a.ntfyUrl && a.ntfyTopic);
+    if (!ntfyApp) return;
 
+    this.ntfyService.connect(ntfyApp.ntfyUrl, ntfyApp.ntfyTopic, (_title) => {
+      this.onNtfyMessage(ntfyApp);
+    });
+  }
+
+  private async onNtfyMessage(app: Application): Promise<void> {
+    if (!app.database) return;
+    const creds = this.appToCreds(app);
     try {
       const since = this.lastPoll;
       this.lastPoll = new Date();
@@ -119,36 +109,23 @@ export class NotificationService {
     }
   }
 
-  /**
-   * Called when network connectivity is restored.
-   * Syncs all notes marked as 'pending' for the configured Odoo instance.
-   */
   private async onNetworkRestore(): Promise<void> {
-    const config = await this.loadConfig();
-    if (!config?.appUrl || !config.database) return;
-    const creds = await this.buildCreds(config);
-    if (!creds) return;
-
-    try {
-      await this.syncService.syncAll(creds);
-      this.eventBus.trigger(Events.RELOAD_NOTES);
-    } catch (e) {
-      console.warn("[NotificationService] reconnect sync failed:", e);
+    const apps = await this.appService.getApps();
+    for (const app of apps) {
+      if (!app.database) continue;
+      try {
+        await this.syncService.syncAll(this.appToCreds(app));
+      } catch (e) {
+        console.warn("[NotificationService] reconnect sync failed:", e);
+      }
     }
-
-    // Re-open NTFY connection after network restored
+    this.eventBus.trigger(Events.RELOAD_NOTES);
     this.startNtfy();
   }
 
-  /**
-   * Performs a lightweight poll and emits an event if changes are found.
-   */
-  private async poll(): Promise<void> {
-    const config = await this.loadConfig();
-    if (!config?.appUrl || !config.database) return;
-    const creds = await this.buildCreds(config);
-    if (!creds) return;
-
+  private async pollApp(app: Application): Promise<void> {
+    if (!app.database) return;
+    const creds = this.appToCreds(app);
     try {
       const since = this.lastPoll;
       this.lastPoll = new Date();
@@ -174,28 +151,12 @@ export class NotificationService {
     await this.startNtfy();
   }
 
-  private async buildCreds(config: SyncConfig): Promise<SyncCredentials | null> {
-    const apps = await this.appService.getApps();
-    const app = apps.find(
-      (a) => a.url === config.appUrl && a.username === config.appUsername
-    );
-    if (!app) return null;
+  private appToCreds(app: Application): SyncCredentials {
     return {
-      odooUrl: config.appUrl,
+      odooUrl: app.url,
       username: app.username,
       password: app.password,
-      database: config.database,
+      database: app.database,
     };
-  }
-
-  private async loadConfig(): Promise<SyncConfig | null> {
-    try {
-      const result = await SecureStoragePlugin.get({
-        key: StorageConstants.SYNC_CONFIG_KEY,
-      });
-      return JSON.parse(result.value) as SyncConfig;
-    } catch {
-      return null;
-    }
   }
 }

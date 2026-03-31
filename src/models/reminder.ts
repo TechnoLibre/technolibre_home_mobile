@@ -5,6 +5,7 @@ export interface Reminder {
   active: boolean;
   scheduledIds: number[];
   batchEndsAt: string | null;
+  createdAt: string;
 }
 
 export const INTERVAL_OPTIONS = [

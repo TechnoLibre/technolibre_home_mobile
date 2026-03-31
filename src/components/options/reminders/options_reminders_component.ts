@@ -64,6 +64,9 @@ export class OptionsRemindersComponent extends EnhancedComponent {
                   <t t-esc="reminder.active ? 'actif' : 'pausé'" />
                 </span>
               </span>
+              <span class="options-reminders__item-date">
+                Créé le <t t-esc="formatDate(reminder.createdAt)" />
+              </span>
             </div>
             <div class="options-reminders__item-actions">
               <button
@@ -115,6 +118,15 @@ export class OptionsRemindersComponent extends EnhancedComponent {
   intervalLabel(minutes: number): string {
     return INTERVAL_OPTIONS.find((o) => o.minutes === minutes)?.label
       ?? `${minutes} min`;
+  }
+
+  formatDate(iso: string): string {
+    if (!iso) return "—";
+    return new Date(iso).toLocaleDateString("fr-CA", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
   }
 
   toggleExpanded() {
