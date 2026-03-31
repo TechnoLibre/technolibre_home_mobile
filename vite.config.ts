@@ -7,4 +7,11 @@ export default defineConfig({
     minify: false,
     emptyOutDir: true,
   },
+  css: {
+    preprocessorOptions: {
+      scss: {
+        api: 'modern',
+      },
+    },
+  },
 });

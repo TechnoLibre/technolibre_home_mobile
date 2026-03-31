@@ -1,8 +1,10 @@
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { DatabaseService } from "./databaseService";
-import { Reminder, INTERVAL_OPTIONS } from "../models/reminder";
+import type { Reminder } from "../models/reminder";
+import { INTERVAL_OPTIONS } from "../models/reminder";
 
-export { Reminder, INTERVAL_OPTIONS };
+export type { Reminder };
+export { INTERVAL_OPTIONS };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

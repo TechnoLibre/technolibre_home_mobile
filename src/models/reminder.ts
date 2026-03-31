@@ -3,13 +3,11 @@ export interface Reminder {
   message: string;
   intervalMinutes: number;
   active: boolean;
-  /** Capacitor LocalNotification IDs in the current batch. */
   scheduledIds: number[];
-  /** ISO date of the last notification in the current batch. */
   batchEndsAt: string | null;
 }
 
-export const INTERVAL_OPTIONS: { label: string; minutes: number }[] = [
+export const INTERVAL_OPTIONS = [
   { label: "5 minutes", minutes: 5 },
   { label: "15 minutes", minutes: 15 },
   { label: "30 minutes", minutes: 30 },
