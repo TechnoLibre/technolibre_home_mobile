@@ -77,6 +77,88 @@
 	margin-left: auto;
 }
 
+.breadcrumb__sync-wrap {
+	position: relative;
+}
+
+.breadcrumb__config-picker {
+	background: #1e1e1e;
+	border: 1px solid #444;
+	border-radius: 0.5rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	min-width: 14rem;
+	padding: 0.5rem;
+	position: absolute;
+	right: 0;
+	top: calc(100% + 0.25rem);
+	z-index: 200;
+}
+
+.breadcrumb__config-picker-label {
+	color: var(--text-greyed-out);
+	font-size: 0.75rem;
+	margin: 0 0 0.25rem;
+}
+
+.breadcrumb__config-option {
+	align-items: center;
+	background: #2a2a2a;
+	border: none;
+	border-radius: 0.375rem;
+	color: var(--text);
+	cursor: pointer;
+	display: flex;
+	font-size: 0.9rem;
+	gap: 0.625rem;
+	padding: 0.75rem 1rem;
+	text-align: left;
+	width: 100%;
+	&:active {
+		background: #3a3a3a;
+	}
+	input[type="checkbox"] {
+		accent-color: #31d53d;
+		flex-shrink: 0;
+		height: 1.1rem;
+		width: 1.1rem;
+	}
+}
+
+.breadcrumb__config-confirm {
+	background: rgba(49, 213, 61, 0.12);
+	border: 1px solid #31d53d;
+	border-radius: 0.375rem;
+	color: #31d53d;
+	cursor: pointer;
+	font-size: 0.9rem;
+	padding: 0.75rem 1rem;
+	width: 100%;
+	&:disabled {
+		cursor: default;
+		opacity: 0.35;
+	}
+	&:active:not(:disabled) {
+		background: rgba(49, 213, 61, 0.22);
+	}
+}
+
+.breadcrumb__config-cancel {
+	background: none;
+	border: 1px solid #444;
+	border-radius: 0.375rem;
+	color: var(--text-greyed-out);
+	cursor: pointer;
+	font-size: 0.85rem;
+	margin-top: 0.25rem;
+	padding: 0.5rem 1rem;
+	width: 100%;
+	&:active {
+		background: #2a2a2a;
+	}
+}
+
 .breadcrumb__note-nav-btn {
 	background: none;
 	border: none;
@@ -99,6 +181,7 @@
 	line-height: 1;
 	padding: 0 0.25rem;
 	transition: opacity 150ms ease-in-out;
+	user-select: none;
 	&:disabled {
 		cursor: default;
 		opacity: 0.4;
@@ -108,6 +191,14 @@
 	&--synced  { color: #31d53d; }
 	&--error   { color: #e03030; }
 	&--conflict { color: #e06020; }
+	&--pressing {
+		animation: longpress-color 3s linear forwards;
+	}
+}
+
+@keyframes longpress-color {
+	0%   { color: var(--text-greyed-out); }
+	100% { color: #31d53d; filter: drop-shadow(0 0 3px #31d53d); }
 }
 
 #note-component .note__control__pin--active {
