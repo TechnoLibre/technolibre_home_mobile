@@ -1,3 +1,4 @@
+import { CapacitorHttp } from "@capacitor/core";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "./databaseService";
 import { Application } from "../models/application";
@@ -24,6 +25,11 @@ export interface SyncResult {
   errors: string[];
 }
 
+interface StoredSession {
+  sessionId: string;
+  odooMajorVersion: number;
+}
+
 // ─── SyncService ──────────────────────────────────────────────────────────────
 
 export class SyncService {
@@ -40,10 +46,12 @@ export class SyncService {
    * SecureStorage. Returns the session ID.
    */
   async authenticate(creds: SyncCredentials): Promise<string> {
-    const response = await fetch(`${creds.odooUrl}/web/session/authenticate`, {
-      method: "POST",
+    const baseUrl = this.normalizeUrl(creds.odooUrl);
+    const endpoint = `${baseUrl}/web/session/authenticate`;
+    const resp = await CapacitorHttp.post({
+      url: endpoint,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      data: JSON.stringify({
         jsonrpc: "2.0",
         method: "call",
         id: 1,
@@ -55,27 +63,29 @@ export class SyncService {
       }),
     });
 
-    const json = await response.json();
+    const json = this.parseNativeResponse(resp, endpoint);
     if (json.error) throw new Error(`Odoo auth error: ${json.error.data?.message ?? json.error.message}`);
 
     const uid = json.result?.uid;
     if (!uid) throw new Error("Authentication failed — invalid credentials");
 
     const sessionId: string = json.result?.session_id ?? "";
-    await SecureStoragePlugin.set({
-      key: this.sessionKey(creds),
-      value: sessionId,
-    });
-    return sessionId;
+    const odooMajorVersion: number = json.result?.server_version_info?.[0] ?? 18;
+    const stored: StoredSession = { sessionId, odooMajorVersion };
+    await SecureStoragePlugin.set({ key: this.sessionKey(creds), value: JSON.stringify(stored) });
+    return stored;
   }
 
   /**
-   * Retrieves the stored session ID, re-authenticates if missing or expired.
+   * Returns the stored session. If missing or in the old plain-string format,
+   * re-authenticates so the Odoo version is also captured.
    */
-  private async getSession(creds: SyncCredentials): Promise<string> {
+  private async getSession(creds: SyncCredentials): Promise<StoredSession> {
     try {
       const result = await SecureStoragePlugin.get({ key: this.sessionKey(creds) });
-      return result.value;
+      const parsed = JSON.parse(result.value);
+      if (parsed?.sessionId && parsed?.odooMajorVersion) return parsed as StoredSession;
+      throw new Error("stale format");
     } catch {
       return this.authenticate(creds);
     }
@@ -83,20 +93,21 @@ export class SyncService {
 
   /**
    * Wraps a JSON-RPC call with automatic re-auth on session expiry.
+   * Passes both the session ID and the detected Odoo major version to fn.
    * Retries once after re-authenticating.
    */
   private async callWithAuth<T>(
     creds: SyncCredentials,
-    fn: (sessionId: string) => Promise<T>
+    fn: (sessionId: string, odooVersion: number) => Promise<T>
   ): Promise<T> {
-    const sessionId = await this.getSession(creds);
+    const { sessionId, odooMajorVersion } = await this.getSession(creds);
     try {
-      return await fn(sessionId);
+      return await fn(sessionId, odooMajorVersion);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("session") || msg.includes("100") || msg.includes("401")) {
-        const newSession = await this.authenticate(creds);
-        return fn(newSession);
+        const renewed = await this.authenticate(creds);
+        return fn(renewed.sessionId, renewed.odooMajorVersion);
       }
       throw e;
     }
@@ -112,13 +123,15 @@ export class SyncService {
     args: any[],
     kwargs: Record<string, any> = {}
   ): Promise<any> {
-    const response = await fetch(`${odooUrl}/web/dataset/call_kw`, {
-      method: "POST",
+    const baseUrl = this.normalizeUrl(odooUrl);
+    const endpoint = `${baseUrl}/web/dataset/call_kw`;
+    const resp = await CapacitorHttp.post({
+      url: endpoint,
       headers: {
         "Content-Type": "application/json",
         Cookie: `session_id=${sessionId}`,
       },
-      body: JSON.stringify({
+      data: JSON.stringify({
         jsonrpc: "2.0",
         method: "call",
         id: Date.now(),
@@ -126,7 +139,7 @@ export class SyncService {
       }),
     });
 
-    const json = await response.json();
+    const json = this.parseNativeResponse(resp, endpoint);
     if (json.error) {
       const errMsg = json.error.data?.message ?? json.error.message ?? "Unknown RPC error";
       if (json.error.code === 100) throw new Error(`session_expired: ${errMsg}`);
@@ -248,20 +261,9 @@ export class SyncService {
 
     const syncInfo = await this.db.getNoteSyncInfo(noteId);
 
-    await this.callWithAuth(creds, async (sessionId) => {
+    await this.callWithAuth(creds, async (sessionId, odooVersion) => {
       const tagIds = await this.resolveTags(creds, sessionId, note.tags);
-
-      const payload: Record<string, any> = {
-        name: note.title,
-        description: this.buildHtml(note.entries),
-        project_id: false,
-        priority: note.pinned ? "1" : "0",
-        active: !note.archived,
-        state: note.done ? "done" : "01_in_progress",
-        tag_ids: [[6, 0, tagIds]],
-        date_deadline: this.getFirstDate(note.entries),
-        geo_task_point: this.buildGeoMultiPoint(note.entries),
-      };
+      const payload = this.buildTaskPayload(note, tagIds, odooVersion);
 
       if (syncInfo.odooId) {
         await this.jsonRpc(creds.odooUrl, sessionId, "project.task", "write", [
@@ -293,7 +295,7 @@ export class SyncService {
    * Returns Odoo IDs of changed tasks.
    */
   async pollForChanges(creds: SyncCredentials, lastSync: Date): Promise<number[]> {
-    return this.callWithAuth(creds, async (sessionId) => {
+    return this.callWithAuth(creds, async (sessionId, _odooVersion) => {
       const results: { id: number; write_date: string }[] = await this.jsonRpc(
         creds.odooUrl, sessionId, "project.task", "search_read",
         [],
@@ -321,7 +323,13 @@ export class SyncService {
    * mobile is the primary author of content.
    */
   async pullNotes(creds: SyncCredentials, lastSync: Date): Promise<number> {
-    return this.callWithAuth(creds, async (sessionId) => {
+    return this.callWithAuth(creds, async (sessionId, odooVersion) => {
+      const fields = [
+        "id", "name", "priority", "active",
+        "tag_ids", "date_deadline", "write_date",
+        ...(odooVersion >= 17 ? ["state"] : []),
+      ];
+
       const tasks: any[] = await this.jsonRpc(
         creds.odooUrl, sessionId, "project.task", "search_read",
         [],
@@ -330,10 +338,7 @@ export class SyncService {
             ["project_id", "=", false],
             ["write_date", ">", lastSync.toISOString()],
           ],
-          fields: [
-            "id", "name", "priority", "active", "state",
-            "tag_ids", "date_deadline", "write_date",
-          ],
+          fields,
           limit: 100,
           order: "write_date asc",
         }
@@ -351,13 +356,12 @@ export class SyncService {
         const local = localByOdooId.get(task.id);
         if (!local) continue;
 
-        // Update metadata — preserve mobile entries
         const updatedNote = {
           ...local,
           title: task.name,
           pinned: task.priority === "1",
           archived: !task.active,
-          done: task.state === "done",
+          ...(odooVersion >= 17 ? { done: task.state === "done" } : {}),
         };
 
         await this.db.updateNote(local.id, updatedNote);
@@ -413,10 +417,69 @@ export class SyncService {
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
+  /** Ensures the URL has an http(s) scheme; defaults to https. */
+  private normalizeUrl(url: string): string {
+    const trimmed = url.trim().replace(/\/+$/, "");
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
+  }
+
+  /**
+   * Validates a CapacitorHttp response and returns its parsed JSON data.
+   * Throws a descriptive error for non-2xx status or non-object data.
+   */
+  private parseNativeResponse(resp: { status: number; data: any }, url: string): any {
+    const ok = resp.status >= 200 && resp.status < 300;
+    if (!ok) {
+      const preview = (typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data))
+        .slice(0, 200).replace(/\s+/g, " ");
+      throw new Error(`HTTP ${resp.status} depuis ${url} — ${preview}`);
+    }
+    if (typeof resp.data !== "object" || resp.data === null) {
+      const preview = String(resp.data).slice(0, 200).replace(/\s+/g, " ");
+      throw new Error(`Réponse non-JSON (HTTP ${resp.status}) de ${url} : ${preview}`);
+    }
+    return resp.data;
+  }
+
+  /**
+   * Builds the project.task payload for create/write.
+   * Excludes fields not available in older Odoo versions.
+   */
+  private buildTaskPayload(
+    note: Note,
+    tagIds: number[],
+    odooVersion: number
+  ): Record<string, any> {
+    const payload: Record<string, any> = {
+      name: note.title,
+      description: this.buildHtml(note.entries),
+      project_id: false,
+      priority: note.pinned ? "1" : "0",
+      active: !note.archived,
+      tag_ids: [[6, 0, tagIds]],
+      date_deadline: this.getFirstDate(note.entries),
+    };
+
+    // state field introduced in Odoo 17
+    if (odooVersion >= 17) {
+      payload.state = note.done ? "done" : "01_in_progress";
+    }
+
+    // geo_task_point is ERPLibre-specific; only send when there is data
+    const geoPoint = this.buildGeoMultiPoint(note.entries);
+    if (geoPoint !== null) {
+      payload.geo_task_point = geoPoint;
+    }
+
+    return payload;
+  }
+
   /** Derives a stable SecureStorage key from the credentials. */
   private sessionKey(creds: SyncCredentials): string {
     return StorageConstants.SYNC_SESSION_PREFIX + btoa(`${creds.odooUrl}|${creds.username}`);
   }
+
 
   /** Minimal HTML escaping for user-generated text. */
   private escapeHtml(text: string): string {

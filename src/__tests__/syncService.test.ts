@@ -28,10 +28,14 @@ function makeNote(overrides: Partial<Note> = {}): Note {
 }
 
 function mockFetch(responseBody: object, status = 200) {
+  // The CapacitorHttp mock in @capacitor/core delegates to fetch,
+  // then parses the body as JSON. So we still mock global.fetch here.
+  const bodyText = JSON.stringify(responseBody);
   return vi.fn().mockResolvedValue({
+    ok: status >= 200 && status < 300,
     status,
-    json: async () => responseBody,
-  } as Response);
+    text: async () => bodyText,
+  } as unknown as Response);
 }
 
 // ─── buildHtml ────────────────────────────────────────────────────────────────
@@ -221,16 +225,14 @@ describe("SyncService.authenticate", () => {
   it("stores session ID in SecureStorage on success", async () => {
     vi.stubGlobal(
       "fetch",
-      mockFetch({ result: { uid: 1, session_id: "sess-abc123" } })
+      mockFetch({ result: { uid: 1, session_id: "sess-abc123", server_version_info: [18, 0] } })
     );
-    const sessionId = await svc.authenticate(CREDS);
-    expect(sessionId).toBe("sess-abc123");
-    const stored = await SecureStoragePlugin.get({
-      key: `${SecureStoragePlugin._store.keys().next().value}`,
-    });
-    // Session stored somewhere in SecureStorage
-    const allValues = Array.from(SecureStoragePlugin._store.values());
-    expect(allValues).toContain("sess-abc123");
+    const stored = await svc.authenticate(CREDS);
+    expect(stored.sessionId).toBe("sess-abc123");
+    expect(stored.odooMajorVersion).toBe(18);
+    // Session stored as JSON in SecureStorage
+    const allValues = Array.from(SecureStoragePlugin._store.values()) as string[];
+    expect(allValues.some((v) => v.includes("sess-abc123"))).toBe(true);
   });
 
   it("throws when uid is falsy (wrong credentials)", async () => {
@@ -265,7 +267,7 @@ describe("SyncService.pushNote", () => {
     // Pre-store a session so authenticate is not called
     await SecureStoragePlugin.set({
       key: `odoo_sync_session_${btoa(`${CREDS.odooUrl}|${CREDS.username}`)}`,
-      value: "fake-session",
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 18 }),
     });
   });
 
@@ -369,7 +371,7 @@ describe("SyncService.pollForChanges", () => {
     svc = new SyncService(db);
     await SecureStoragePlugin.set({
       key: `odoo_sync_session_${btoa(`${CREDS.odooUrl}|${CREDS.username}`)}`,
-      value: "fake-session",
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 18 }),
     });
   });
 
@@ -388,5 +390,181 @@ describe("SyncService.pollForChanges", () => {
     );
     const ids = await svc.pollForChanges(CREDS, new Date("2026-03-29"));
     expect(ids).toEqual([10, 20]);
+  });
+});
+
+// ─── SyncService — pullNotes ──────────────────────────────────────────────────
+
+describe("SyncService.pullNotes", () => {
+  let svc: SyncService;
+  let db: DatabaseService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await db.addSyncColumnsToNotes();
+    svc = new SyncService(db);
+    await SecureStoragePlugin.set({
+      key: `odoo_sync_session_${btoa(`${CREDS.odooUrl}|${CREDS.username}`)}`,
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 18 }),
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("updates title and pinned from Odoo task", async () => {
+    const note = makeNote({ id: "pull-1", title: "Old Title", pinned: false });
+    await db.addNote(note);
+    await db.setNoteSyncInfo("pull-1", { odooId: 10, odooUrl: CREDS.odooUrl, syncStatus: "synced" });
+
+    vi.stubGlobal("fetch", mockFetch({
+      result: [{ id: 10, name: "New Title", priority: "1", active: true, tag_ids: [], date_deadline: null, write_date: "2026-04-10" }],
+    }));
+
+    const updated = await svc.pullNotes(CREDS, new Date(0));
+    expect(updated).toBe(1);
+
+    const refreshed = await db.getNoteById("pull-1");
+    expect(refreshed!.title).toBe("New Title");
+    expect(refreshed!.pinned).toBe(true);
+  });
+
+  it("skips tasks not matched by odoo_id", async () => {
+    const note = makeNote({ id: "pull-2", title: "Local" });
+    await db.addNote(note);
+    await db.setNoteSyncInfo("pull-2", { odooId: 99, odooUrl: CREDS.odooUrl });
+
+    vi.stubGlobal("fetch", mockFetch({
+      result: [{ id: 55, name: "Remote Only", priority: "0", active: true, tag_ids: [], write_date: "2026-04-10" }],
+    }));
+
+    const updated = await svc.pullNotes(CREDS, new Date(0));
+    expect(updated).toBe(0);
+
+    const refreshed = await db.getNoteById("pull-2");
+    expect(refreshed!.title).toBe("Local");
+  });
+
+  it("maps archived state from active=false", async () => {
+    const note = makeNote({ id: "pull-3", archived: false });
+    await db.addNote(note);
+    await db.setNoteSyncInfo("pull-3", { odooId: 20, odooUrl: CREDS.odooUrl });
+
+    vi.stubGlobal("fetch", mockFetch({
+      result: [{ id: 20, name: "Test note", priority: "0", active: false, tag_ids: [], write_date: "2026-04-10" }],
+    }));
+
+    await svc.pullNotes(CREDS, new Date(0));
+    const refreshed = await db.getNoteById("pull-3");
+    expect(refreshed!.archived).toBe(true);
+  });
+
+  it("sets done from state=done on Odoo 17+", async () => {
+    SecureStoragePlugin._store.clear();
+    await SecureStoragePlugin.set({
+      key: `odoo_sync_session_${btoa(`${CREDS.odooUrl}|${CREDS.username}`)}`,
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 17 }),
+    });
+
+    const note = makeNote({ id: "pull-4", done: false });
+    await db.addNote(note);
+    await db.setNoteSyncInfo("pull-4", { odooId: 30, odooUrl: CREDS.odooUrl });
+
+    vi.stubGlobal("fetch", mockFetch({
+      result: [{ id: 30, name: "Test note", priority: "0", active: true, state: "done", tag_ids: [], write_date: "2026-04-10" }],
+    }));
+
+    await svc.pullNotes(CREDS, new Date(0));
+    const refreshed = await db.getNoteById("pull-4");
+    expect(refreshed!.done).toBe(true);
+  });
+
+  it("returns 0 when Odoo returns no changes", async () => {
+    vi.stubGlobal("fetch", mockFetch({ result: [] }));
+    const updated = await svc.pullNotes(CREDS, new Date());
+    expect(updated).toBe(0);
+  });
+});
+
+// ─── SyncService — syncAll ────────────────────────────────────────────────────
+
+describe("SyncService.syncAll", () => {
+  let svc: SyncService;
+  let db: DatabaseService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await db.addSyncColumnsToNotes();
+    await db.addSyncConfigIdColumn();
+    svc = new SyncService(db);
+    await SecureStoragePlugin.set({
+      key: `odoo_sync_session_${btoa(`${CREDS.odooUrl}|${CREDS.username}`)}`,
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 18 }),
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("pushes pending notes and returns pushed count", async () => {
+    const note = makeNote({ id: "sa-1", title: "Pending" });
+    await db.addNote(note);
+    await db.setNoteSyncInfo("sa-1", { syncStatus: "pending", odooUrl: CREDS.odooUrl });
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ result: 7 }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ result: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await svc.syncAll(CREDS);
+    expect(result.pushed).toBe(1);
+    expect(result.pulled).toBe(0);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("does not push notes with status other than pending", async () => {
+    const note = makeNote({ id: "sa-2" });
+    await db.addNote(note);
+    await db.setNoteSyncInfo("sa-2", { syncStatus: "synced", odooUrl: CREDS.odooUrl });
+
+    vi.stubGlobal("fetch", mockFetch({ result: [] }));
+
+    const result = await svc.syncAll(CREDS);
+    expect(result.pushed).toBe(0);
+  });
+
+  it("records error when a push fails and continues", async () => {
+    await db.addNote(makeNote({ id: "sa-3", title: "Fail" }));
+    await db.setNoteSyncInfo("sa-3", { syncStatus: "pending", odooUrl: CREDS.odooUrl });
+    await db.addNote(makeNote({ id: "sa-4", title: "Ok" }));
+    await db.setNoteSyncInfo("sa-4", { syncStatus: "pending", odooUrl: CREDS.odooUrl });
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ error: { message: "boom", data: { message: "Server exploded" } } }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ result: 9 }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ result: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await svc.syncAll(CREDS);
+    expect(result.pushed).toBe(1);
+    expect(result.errors).toHaveLength(1);
+  });
+
+  it("uses syncConfigId to filter notes when provided", async () => {
+    const configId = `${CREDS.odooUrl}|${CREDS.username}`;
+    await db.addNote(makeNote({ id: "sa-5" }));
+    await db.setNoteSyncInfo("sa-5", { syncStatus: "pending", syncConfigId: configId });
+    await db.addNote(makeNote({ id: "sa-6" }));
+    await db.setNoteSyncInfo("sa-6", { syncStatus: "pending", odooUrl: CREDS.odooUrl });
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ result: 5 }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ result: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await svc.syncAll(CREDS, configId);
+    expect(result.pushed).toBe(1);
   });
 });
