@@ -16,6 +16,7 @@ export interface NoteSyncInfo {
   syncStatus: SyncStatus;
   lastSyncedAt: string | null;
   syncConfigId: string | null;
+  selectedSyncConfigIds: string[] | null;
 }
 
 const DB_NAME = "erplibre_mobile";
@@ -343,6 +344,14 @@ export class DatabaseService {
     }
   }
 
+  async addSelectedSyncConfigIdsColumn(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(notes)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!existingNames.includes("selected_sync_config_ids")) {
+      await this.db.execute(`ALTER TABLE notes ADD COLUMN selected_sync_config_ids TEXT`);
+    }
+  }
+
   async addCreatedAtToReminders(): Promise<void> {
     const existing = await this.db.query("PRAGMA table_info(reminders)");
     const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
@@ -353,17 +362,22 @@ export class DatabaseService {
 
   async getNoteSyncInfo(noteId: string): Promise<NoteSyncInfo> {
     const result = await this.db.query(
-      "SELECT odoo_id, odoo_url, sync_status, last_synced_at, sync_config_id FROM notes WHERE id = ?",
+      "SELECT odoo_id, odoo_url, sync_status, last_synced_at, sync_config_id, selected_sync_config_ids FROM notes WHERE id = ?",
       [noteId]
     );
     const row = result.values?.[0];
-    if (!row) return { odooId: null, odooUrl: null, syncStatus: "local", lastSyncedAt: null, syncConfigId: null };
+    if (!row) return { odooId: null, odooUrl: null, syncStatus: "local", lastSyncedAt: null, syncConfigId: null, selectedSyncConfigIds: null };
+    let selectedSyncConfigIds: string[] | null = null;
+    if (row.selected_sync_config_ids) {
+      try { selectedSyncConfigIds = JSON.parse(row.selected_sync_config_ids); } catch { /* ignore */ }
+    }
     return {
       odooId: row.odoo_id ?? null,
       odooUrl: row.odoo_url ?? null,
       syncStatus: (row.sync_status as SyncStatus) ?? "local",
       lastSyncedAt: row.last_synced_at ?? null,
       syncConfigId: row.sync_config_id ?? null,
+      selectedSyncConfigIds,
     };
   }
 
@@ -375,6 +389,10 @@ export class DatabaseService {
     if (info.syncStatus !== undefined) { fields.push("sync_status = ?"); values.push(info.syncStatus); }
     if (info.lastSyncedAt !== undefined) { fields.push("last_synced_at = ?"); values.push(info.lastSyncedAt); }
     if (info.syncConfigId !== undefined) { fields.push("sync_config_id = ?"); values.push(info.syncConfigId); }
+    if (info.selectedSyncConfigIds !== undefined) {
+      fields.push("selected_sync_config_ids = ?");
+      values.push(info.selectedSyncConfigIds !== null ? JSON.stringify(info.selectedSyncConfigIds) : null);
+    }
     if (fields.length === 0) return;
     values.push(noteId);
     await this.db.run(`UPDATE notes SET ${fields.join(", ")} WHERE id = ?`, values);

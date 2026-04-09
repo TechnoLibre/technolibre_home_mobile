@@ -356,4 +356,52 @@ describe("DatabaseService", () => {
       expect(await db.getUserGraphicPref("fontSizeScale")).toBe("0.9");
     });
   });
+
+  // ── syncConfigId and selectedSyncConfigIds ──
+
+  describe("syncConfigId and selectedSyncConfigIds", () => {
+    beforeEach(async () => {
+      await db.addSyncColumnsToNotes();
+      await db.addSyncConfigIdColumn();
+      await db.addSelectedSyncConfigIdsColumn();
+    });
+
+    it("addSyncConfigIdColumn is idempotent", async () => {
+      await expect(db.addSyncConfigIdColumn()).resolves.not.toThrow();
+    });
+
+    it("addSelectedSyncConfigIdsColumn is idempotent", async () => {
+      await expect(db.addSelectedSyncConfigIdsColumn()).resolves.not.toThrow();
+    });
+
+    it("setNoteSyncInfo persists syncConfigId", async () => {
+      await db.addNote({ id: "nc1", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      await db.setNoteSyncInfo("nc1", { syncConfigId: "https://erp.example.com|admin" });
+      const info = await db.getNoteSyncInfo("nc1");
+      expect(info.syncConfigId).toBe("https://erp.example.com|admin");
+    });
+
+    it("setNoteSyncInfo persists and retrieves selectedSyncConfigIds", async () => {
+      await db.addNote({ id: "nc2", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      await db.setNoteSyncInfo("nc2", { selectedSyncConfigIds: ["cfg1", "cfg2"] });
+      const info = await db.getNoteSyncInfo("nc2");
+      expect(info.selectedSyncConfigIds).toEqual(["cfg1", "cfg2"]);
+    });
+
+    it("getNoteSyncInfo returns null selectedSyncConfigIds when unset", async () => {
+      await db.addNote({ id: "nc3", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      const info = await db.getNoteSyncInfo("nc3");
+      expect(info.selectedSyncConfigIds).toBeNull();
+    });
+
+    it("getNotesBySyncConfigId returns notes matching the config id", async () => {
+      const configId = "https://erp.example.com|admin";
+      await db.addNote({ id: "ncc1", title: "Synced note", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      await db.addNote({ id: "ncc2", title: "Other note", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      await db.setNoteSyncInfo("ncc1", { syncConfigId: configId });
+      const notes = await db.getNotesBySyncConfigId(configId);
+      expect(notes).toHaveLength(1);
+      expect(notes[0].id).toBe("ncc1");
+    });
+  });
 });

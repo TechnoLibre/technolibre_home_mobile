@@ -14,6 +14,7 @@ import { addSyncConfigId } from "../services/migrations/addSyncConfigId";
 import { addReminderCreatedAt } from "../services/migrations/addReminderCreatedAt";
 import { addApplicationSyncFields } from "../services/migrations/addApplicationSyncFields";
 import { addUserGraphicPrefs } from "../services/migrations/addUserGraphicPrefs";
+import { addSelectedSyncConfigIds } from "../services/migrations/addSelectedSyncConfigIds";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
 import type { FontFamily } from "../models/graphicPrefs";
 import { SyncService } from "../services/syncService";
@@ -100,6 +101,11 @@ async function startApp() {
 			version: 2026040802,
 			description: "Création de la table des préférences graphiques utilisateur",
 			run: addUserGraphicPrefs,
+		},
+		{
+			version: 2026040803,
+			description: "Ajout selected_sync_config_ids sur les notes",
+			run: addSelectedSyncConfigIds,
 		},
 	]);
 

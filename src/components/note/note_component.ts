@@ -274,6 +274,7 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.showConfigPicker = false;
 		const selected = this.state.syncConfigs.filter((c) => this.state.selectedConfigIds.includes(c.id));
 		if (selected.length === 0) return;
+		await this.saveSyncSelection(this.state.selectedConfigIds);
 		await this.doPushSelected(selected);
 	}
 
@@ -521,12 +522,20 @@ export class NoteComponent extends EnhancedComponent {
 		}
 	}
 
+	private async saveSyncSelection(ids: string[]): Promise<void> {
+		await this.databaseService.setNoteSyncInfo(this.state.noteId, { selectedSyncConfigIds: ids });
+	}
+
 	private async loadSyncStatus() {
 		if (!this.state.noteId) return;
 		const info = await this.databaseService.getNoteSyncInfo(this.state.noteId);
 		this.state.syncStatus = info.syncStatus;
 		this.state.syncConfigId = info.syncConfigId;
 		this.state.syncConfigs = await loadSyncConfigs(this.appService);
+		if (info.selectedSyncConfigIds && info.selectedSyncConfigIds.length > 0) {
+			const validIds = info.selectedSyncConfigIds.filter((id) => this.state.syncConfigs.some((c) => c.id === id));
+			if (validIds.length > 0) this.state.selectedConfigIds = validIds;
+		}
 	}
 
 	private async loadAllNoteIds() {
