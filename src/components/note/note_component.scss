@@ -180,7 +180,10 @@
 	font-size: 1rem;
 	line-height: 1;
 	padding: 0 0.25rem;
+	touch-action: none;
 	transition: opacity 150ms ease-in-out;
+	-webkit-touch-callout: none;
+	-webkit-user-select: none;
 	user-select: none;
 	&:disabled {
 		cursor: default;
@@ -199,6 +202,22 @@
 @keyframes longpress-color {
 	0%   { color: var(--text-greyed-out); }
 	100% { color: #31d53d; filter: drop-shadow(0 0 3px #31d53d); }
+}
+
+#note-component #note__control__sync {
+	touch-action: none;
+	-webkit-touch-callout: none;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+#note-component .note__control__sync--pressing {
+	animation: longpress-bg 1s linear forwards;
+}
+
+@keyframes longpress-bg {
+	0%   { background-color: #222; }
+	100% { background-color: #1a4d1e; box-shadow: 0 0 6px #31d53d; }
 }
 
 #note-component .note__control__pin--active {

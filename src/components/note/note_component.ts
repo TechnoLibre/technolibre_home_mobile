@@ -51,7 +51,6 @@ export class NoteComponent extends EnhancedComponent {
 							t-on-pointerdown="onSyncPointerDown"
 							t-on-pointerup="onSyncPointerUp"
 							t-on-pointercancel="onSyncPointerCancel"
-							t-on-pointerleave="onSyncPointerCancel"
 							t-esc="syncIcon"
 						/>
 						<div t-if="state.showConfigPicker" class="breadcrumb__config-picker">
@@ -95,6 +94,7 @@ export class NoteComponent extends EnhancedComponent {
 				isSyncing="state.isSyncing"
 				newNote="state.newNote"
 				onSyncClick.bind="pushToOdoo"
+			onSyncLongPress.bind="openSyncPicker"
 			/>
 			<NoteContentComponent
 				note="state.note"
@@ -189,13 +189,14 @@ export class NoteComponent extends EnhancedComponent {
 	onSyncPointerDown(ev: PointerEvent) {
 		if (this.state.isSyncing || this.state.newNote) return;
 		ev.preventDefault();
+		(ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId);
 		this.state.isPressing = true;
 		this._pressTriggered = false;
 		this._pressTimer = setTimeout(async () => {
 			this._pressTriggered = true;
 			this.state.isPressing = false;
 			await this.openSyncPicker();
-		}, 3000);
+		}, 1000);
 	}
 
 	onSyncPointerUp() {
@@ -210,7 +211,7 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.isPressing = false;
 	}
 
-	private async openSyncPicker() {
+	async openSyncPicker() {
 		const configs = await loadSyncConfigs(this.appService);
 		this.state.syncConfigs = configs;
 		if (configs.length === 0) {

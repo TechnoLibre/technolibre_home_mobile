@@ -2,7 +2,6 @@ import { onWillDestroy, useState, xml } from "@odoo/owl";
 
 import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
-import { EdgeToEdge } from "@capawesome/capacitor-android-edge-to-edge-support";
 import { StatusBar, Style } from "@capacitor/status-bar";
 
 import { EnhancedComponent } from "../../js/enhancedComponent";
@@ -87,8 +86,6 @@ export class RootComponent extends EnhancedComponent {
 
 	private async enableEdgeToEdge() {
 		if (Capacitor.getPlatform() === "android") {
-			await EdgeToEdge.enable();
-			await EdgeToEdge.setBackgroundColor({ color: "#000000" });
 			StatusBar.setStyle({ style: Style.Dark });
 		}
 	}

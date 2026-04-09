@@ -18,6 +18,10 @@
 		padding: 1em;
 		text-decoration: none;
 	}
+	// Uniform height for accordion-style headers (div as first child)
+	& > div:first-child {
+		padding: 1em;
+	}
 	& + .options-list__item {
 		margin-top: 0.5em;
 	}
