@@ -13,6 +13,9 @@ import { addSyncColumns } from "../services/migrations/addSyncColumns";
 import { addSyncConfigId } from "../services/migrations/addSyncConfigId";
 import { addReminderCreatedAt } from "../services/migrations/addReminderCreatedAt";
 import { addApplicationSyncFields } from "../services/migrations/addApplicationSyncFields";
+import { addUserGraphicPrefs } from "../services/migrations/addUserGraphicPrefs";
+import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
+import type { FontFamily } from "../models/graphicPrefs";
 import { SyncService } from "../services/syncService";
 import { NotificationService } from "../services/notificationService";
 import { ReminderService } from "../services/reminderService";
@@ -93,7 +96,22 @@ async function startApp() {
 			description: "Ajout des champs de synchronisation sur les applications",
 			run: addApplicationSyncFields,
 		},
+		{
+			version: 2026040802,
+			description: "Création de la table des préférences graphiques utilisateur",
+			run: addUserGraphicPrefs,
+		},
 	]);
+
+	setBootStep("Chargement des préférences graphiques…");
+	{
+		const fontFamily = await db.getUserGraphicPref("font_family") as FontFamily | null;
+		const fontSizeScale = await db.getUserGraphicPref("font_size_scale");
+		applyGraphicPrefs({
+			fontFamily: fontFamily ?? DEFAULT_GRAPHIC_PREFS.fontFamily,
+			fontSizeScale: fontSizeScale ? parseFloat(fontSizeScale) : DEFAULT_GRAPHIC_PREFS.fontSizeScale,
+		});
+	}
 
 	setBootStep("Initialisation des services…");
 	const appService = new AppService(db);

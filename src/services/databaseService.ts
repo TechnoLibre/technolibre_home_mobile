@@ -129,6 +129,32 @@ export class DatabaseService {
     `);
   }
 
+  // User Graphic Preferences
+
+  async createUserGraphicPrefsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS user_graphic_prefs (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `);
+  }
+
+  async getUserGraphicPref(key: string): Promise<string | null> {
+    const result = await this.db.query(
+      "SELECT value FROM user_graphic_prefs WHERE key = ?",
+      [key]
+    );
+    return (result.values?.[0] as any)?.value ?? null;
+  }
+
+  async setUserGraphicPref(key: string, value: string): Promise<void> {
+    await this.db.run(
+      "INSERT OR REPLACE INTO user_graphic_prefs (key, value) VALUES (?, ?)",
+      [key, value]
+    );
+  }
+
   // Applications
 
   async addSyncFieldsToApplications(): Promise<void> {

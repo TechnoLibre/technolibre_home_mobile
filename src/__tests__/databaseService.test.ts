@@ -319,4 +319,41 @@ describe("DatabaseService", () => {
       expect(notes[0].syncInfo.odooId).toBe(1);
     });
   });
+
+  // ── user graphic preferences ──
+
+  describe("user graphic preferences", () => {
+    beforeEach(async () => {
+      await db.createUserGraphicPrefsTable();
+    });
+
+    it("createUserGraphicPrefsTable is idempotent", async () => {
+      await expect(db.createUserGraphicPrefsTable()).resolves.not.toThrow();
+    });
+
+    it("getUserGraphicPref returns null for a missing key", async () => {
+      const val = await db.getUserGraphicPref("fontFamily");
+      expect(val).toBeNull();
+    });
+
+    it("setUserGraphicPref and getUserGraphicPref round-trip correctly", async () => {
+      await db.setUserGraphicPref("fontFamily", "mono");
+      const val = await db.getUserGraphicPref("fontFamily");
+      expect(val).toBe("mono");
+    });
+
+    it("setUserGraphicPref overwrites an existing value", async () => {
+      await db.setUserGraphicPref("fontSizeScale", "1");
+      await db.setUserGraphicPref("fontSizeScale", "1.3");
+      const val = await db.getUserGraphicPref("fontSizeScale");
+      expect(val).toBe("1.3");
+    });
+
+    it("stores multiple independent keys", async () => {
+      await db.setUserGraphicPref("fontFamily", "serif");
+      await db.setUserGraphicPref("fontSizeScale", "0.9");
+      expect(await db.getUserGraphicPref("fontFamily")).toBe("serif");
+      expect(await db.getUserGraphicPref("fontSizeScale")).toBe("0.9");
+    });
+  });
 });
