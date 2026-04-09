@@ -1,4 +1,4 @@
-import { CapacitorHttp } from "@capacitor/core";
+import { CapacitorCookies, CapacitorHttp } from "@capacitor/core";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "./databaseService";
 import { Application } from "../models/application";
@@ -45,12 +45,15 @@ export class SyncService {
    * Authenticates with an Odoo instance and stores the session ID in
    * SecureStorage. Returns the session ID.
    */
-  async authenticate(creds: SyncCredentials): Promise<string> {
+  async authenticate(creds: SyncCredentials): Promise<StoredSession> {
     const baseUrl = this.normalizeUrl(creds.odooUrl);
     const endpoint = `${baseUrl}/web/session/authenticate`;
+    const diag: string[] = [`→ POST ${endpoint}`];
+
     const resp = await CapacitorHttp.post({
       url: endpoint,
       headers: { "Content-Type": "application/json" },
+      responseType: "json",
       data: JSON.stringify({
         jsonrpc: "2.0",
         method: "call",
@@ -63,13 +66,72 @@ export class SyncService {
       }),
     });
 
+    diag.push(`← HTTP ${resp.status}`);
+    const headerKeys = Object.keys(resp.headers as object);
+    diag.push(`  En-têtes: [${headerKeys.join(", ") || "aucun"}]`);
+
     const json = this.parseNativeResponse(resp, endpoint);
     if (json.error) throw new Error(`Odoo auth error: ${json.error.data?.message ?? json.error.message}`);
 
     const uid = json.result?.uid;
     if (!uid) throw new Error("Authentication failed — invalid credentials");
+    diag.push(`  uid: ${uid}`);
 
-    const sessionId: string = json.result?.session_id ?? "";
+    // Try 1: Set-Cookie header — Odoo 17+ rotates the session ID after login;
+    // the real cookie is ONLY in Set-Cookie while json.result.session_id may be
+    // the pre-rotation (expired) ID. Always prefer the cookie header.
+    let sessionId: string = "";
+    const headers = resp.headers as Record<string, string | string[]>;
+    let setCookieRaw = "";
+    for (const [key, val] of Object.entries(headers)) {
+      if (key.toLowerCase() === "set-cookie") {
+        setCookieRaw = Array.isArray(val) ? val.join("; ") : String(val);
+        const match = setCookieRaw.match(/session_id=([^;,\s]+)/i);
+        if (match) {
+          sessionId = match[1];
+          diag.push(`  [1] Set-Cookie → session_id: ${sessionId.slice(0, 8)}…`);
+        } else {
+          diag.push(`  [1] Set-Cookie présent, pas de session_id: ${setCookieRaw.slice(0, 120)}`);
+        }
+        break;
+      }
+    }
+    if (!setCookieRaw) diag.push(`  [1] Set-Cookie: absent`);
+
+    // Try 2: Android CookieManager store — for plain HTTP requests Android may
+    // consume the Set-Cookie header internally, making it invisible in resp.headers.
+    // CapacitorCookies.getCookies() reads directly from the WebView cookie store.
+    if (!sessionId) {
+      try {
+        const cookies = await CapacitorCookies.getCookies({ url: baseUrl });
+        const cookieKeys = Object.keys(cookies as object);
+        diag.push(`  [2] CapacitorCookies: [${cookieKeys.join(", ") || "aucun"}]`);
+        const fromCookies = (cookies as Record<string, string>)["session_id"] || "";
+        if (fromCookies) {
+          sessionId = fromCookies;
+          diag.push(`  [2] session_id via CookieStore: ${sessionId.slice(0, 8)}…`);
+        }
+      } catch (e) {
+        diag.push(`  [2] CapacitorCookies erreur: ${e}`);
+      }
+    }
+
+    // Try 3: session_id in JSON body (Odoo 16, or when neither header path worked)
+    if (!sessionId) {
+      const fromJson = json.result?.session_id || "";
+      diag.push(`  [3] JSON result.session_id: ${fromJson ? fromJson.slice(0, 8) + "…" : "absent"}`);
+      sessionId = fromJson;
+    }
+
+    if (!sessionId) {
+      const resultKeys = Object.keys(json.result || {}).slice(0, 20).join(", ");
+      diag.push(`  Champs result: [${resultKeys}]`);
+      const msg = diag.join("\n");
+      console.warn("[sync] authenticate failed:\n" + msg);
+      throw new Error(`session_id introuvable\n${msg}`);
+    }
+
+    console.log("[sync] authenticate OK\n" + diag.join("\n"));
     const odooMajorVersion: number = json.result?.server_version_info?.[0] ?? 18;
     const stored: StoredSession = { sessionId, odooMajorVersion };
     await SecureStoragePlugin.set({ key: this.sessionKey(creds), value: JSON.stringify(stored) });
@@ -100,13 +162,18 @@ export class SyncService {
     creds: SyncCredentials,
     fn: (sessionId: string, odooVersion: number) => Promise<T>
   ): Promise<T> {
-    const { sessionId, odooMajorVersion } = await this.getSession(creds);
+    const session = await this.getSession(creds);
+    console.log(`[sync] callWithAuth — session: ${session.sessionId.slice(0, 8)}… odoo${session.odooMajorVersion}`);
     try {
-      return await fn(sessionId, odooMajorVersion);
+      return await fn(session.sessionId, session.odooMajorVersion);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("session") || msg.includes("100") || msg.includes("401")) {
+        console.log(`[sync] callWithAuth — session expirée, re-auth…`);
+        // Invalidate stale cached session before re-authenticating
+        await SecureStoragePlugin.remove({ key: this.sessionKey(creds) }).catch(() => {});
         const renewed = await this.authenticate(creds);
+        console.log(`[sync] callWithAuth — re-auth OK, session: ${renewed.sessionId.slice(0, 8)}…`);
         return fn(renewed.sessionId, renewed.odooMajorVersion);
       }
       throw e;
@@ -131,6 +198,7 @@ export class SyncService {
         "Content-Type": "application/json",
         Cookie: `session_id=${sessionId}`,
       },
+      responseType: "json",
       data: JSON.stringify({
         jsonrpc: "2.0",
         method: "call",
@@ -139,9 +207,12 @@ export class SyncService {
       }),
     });
 
+    console.log(`[sync] jsonRpc → ${model}.${method} (HTTP ${resp.status})`);
     const json = this.parseNativeResponse(resp, endpoint);
     if (json.error) {
       const errMsg = json.error.data?.message ?? json.error.message ?? "Unknown RPC error";
+      const errCode = json.error.code ?? "?";
+      console.warn(`[sync] jsonRpc error code=${errCode}: ${errMsg}`);
       if (json.error.code === 100) throw new Error(`session_expired: ${errMsg}`);
       throw new Error(`RPC error on ${model}.${method}: ${errMsg}`);
     }
@@ -415,6 +486,49 @@ export class SyncService {
     return result;
   }
 
+  // ─── Database discovery ───────────────────────────────────────────────────
+
+  /**
+   * Fetches the list of available databases from a public Odoo endpoint.
+   * Returns an empty array if the server does not expose the list.
+   */
+  async listDatabases(url: string): Promise<string[]> {
+    const baseUrl = this.normalizeUrl(url);
+    const endpoint = `${baseUrl}/web/database/list`;
+    const resp = await CapacitorHttp.post({
+      url: endpoint,
+      headers: { "Content-Type": "application/json" },
+      responseType: "json",
+      data: JSON.stringify({ jsonrpc: "2.0", method: "call", id: 1, params: {} }),
+    });
+    const json = this.parseNativeResponse(resp, endpoint);
+    if (json.error) throw new Error(json.error.data?.message ?? json.error.message ?? "Unknown error");
+    if (!Array.isArray(json.result)) return [];
+    return json.result as string[];
+  }
+
+  /**
+   * Returns the Odoo server version string (e.g. "17.0+e") from the public
+   * /web/webclient/version_info endpoint. Returns null if unavailable.
+   */
+  async getServerVersion(url: string): Promise<string | null> {
+    const baseUrl = this.normalizeUrl(url);
+    const endpoint = `${baseUrl}/web/webclient/version_info`;
+    try {
+      const resp = await CapacitorHttp.post({
+        url: endpoint,
+        headers: { "Content-Type": "application/json" },
+        responseType: "json",
+        data: JSON.stringify({ jsonrpc: "2.0", method: "call", id: 1, params: {} }),
+      });
+      const json = this.parseNativeResponse(resp, endpoint);
+      if (json.error || !json.result) return null;
+      return (json.result.server_version as string) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
   /** Ensures the URL has an http(s) scheme; defaults to https. */
@@ -435,11 +549,18 @@ export class SyncService {
         .slice(0, 200).replace(/\s+/g, " ");
       throw new Error(`HTTP ${resp.status} depuis ${url} — ${preview}`);
     }
-    if (typeof resp.data !== "object" || resp.data === null) {
-      const preview = String(resp.data).slice(0, 200).replace(/\s+/g, " ");
-      throw new Error(`Réponse non-JSON (HTTP ${resp.status}) de ${url} : ${preview}`);
+    // CapacitorHttp may return data as a string even with responseType:'json' in some
+    // Android configurations. Attempt to parse if so.
+    let data = resp.data;
+    if (typeof data === "string") {
+      try { data = JSON.parse(data); } catch {
+        throw new Error(`Réponse non-JSON (HTTP ${resp.status}) de ${url} : ${data.slice(0, 200)}`);
+      }
     }
-    return resp.data;
+    if (typeof data !== "object" || data === null) {
+      throw new Error(`Réponse non-JSON (HTTP ${resp.status}) de ${url} : ${String(data).slice(0, 200)}`);
+    }
+    return data;
   }
 
   /**

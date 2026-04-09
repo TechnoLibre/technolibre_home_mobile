@@ -487,6 +487,89 @@ describe("SyncService.pullNotes", () => {
   });
 });
 
+// ─── SyncService — listDatabases ─────────────────────────────────────────────
+
+describe("SyncService.listDatabases", () => {
+  let svc: SyncService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    const db = new DatabaseService();
+    await db.initialize();
+    svc = new SyncService(db);
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns an array of database names on success", async () => {
+    vi.stubGlobal("fetch", mockFetch({ result: ["mydb", "testdb"] }));
+    const dbs = await svc.listDatabases(CREDS.odooUrl);
+    expect(dbs).toEqual(["mydb", "testdb"]);
+  });
+
+  it("returns an empty array when result is not an array", async () => {
+    vi.stubGlobal("fetch", mockFetch({ result: null }));
+    const dbs = await svc.listDatabases(CREDS.odooUrl);
+    expect(dbs).toEqual([]);
+  });
+
+  it("returns an empty array when result is missing", async () => {
+    vi.stubGlobal("fetch", mockFetch({}));
+    const dbs = await svc.listDatabases(CREDS.odooUrl);
+    expect(dbs).toEqual([]);
+  });
+
+  it("throws when server returns a JSON-RPC error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch({ error: { message: "Access denied", data: { message: "Not allowed" } } })
+    );
+    await expect(svc.listDatabases(CREDS.odooUrl)).rejects.toThrow(/Not allowed/);
+  });
+});
+
+// ─── SyncService — getServerVersion ──────────────────────────────────────────
+
+describe("SyncService.getServerVersion", () => {
+  let svc: SyncService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    const db = new DatabaseService();
+    await db.initialize();
+    svc = new SyncService(db);
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns the version string on success", async () => {
+    vi.stubGlobal("fetch", mockFetch({ result: { server_version: "17.0+e" } }));
+    const version = await svc.getServerVersion(CREDS.odooUrl);
+    expect(version).toBe("17.0+e");
+  });
+
+  it("returns null when result is missing server_version", async () => {
+    vi.stubGlobal("fetch", mockFetch({ result: {} }));
+    const version = await svc.getServerVersion(CREDS.odooUrl);
+    expect(version).toBeNull();
+  });
+
+  it("returns null when the response has an error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch({ error: { message: "Not found", data: { message: "404" } } })
+    );
+    const version = await svc.getServerVersion(CREDS.odooUrl);
+    expect(version).toBeNull();
+  });
+
+  it("returns null on network error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Network error")));
+    const version = await svc.getServerVersion(CREDS.odooUrl);
+    expect(version).toBeNull();
+  });
+});
+
 // ─── SyncService — syncAll ────────────────────────────────────────────────────
 
 describe("SyncService.syncAll", () => {

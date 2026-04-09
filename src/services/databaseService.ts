@@ -175,6 +175,14 @@ export class DatabaseService {
     }
   }
 
+  async addOdooVersionToApplications(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(applications)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!existingNames.includes("odoo_version")) {
+      await this.db.execute("ALTER TABLE applications ADD COLUMN odoo_version TEXT NOT NULL DEFAULT ''");
+    }
+  }
+
   async getAllApplications(): Promise<Application[]> {
     const result = await this.db.query("SELECT * FROM applications");
     return (result.values ?? []).map((row: any) => this.rowToApplication(row));
@@ -183,10 +191,11 @@ export class DatabaseService {
   async addApplication(app: Application): Promise<void> {
     await this.db.run(
       `INSERT INTO applications
-        (url, username, password, database, auto_sync, poll_interval_minutes, ntfy_url, ntfy_topic)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (url, username, password, database, odoo_version, auto_sync, poll_interval_minutes, ntfy_url, ntfy_topic)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [app.url, app.username, app.password,
-       app.database ?? "", app.autoSync ? 1 : 0,
+       app.database ?? "", app.odooVersion ?? "",
+       app.autoSync ? 1 : 0,
        app.pollIntervalMinutes ?? 5, app.ntfyUrl ?? "", app.ntfyTopic ?? ""]
     );
   }
@@ -204,9 +213,10 @@ export class DatabaseService {
     app: Application
   ): Promise<void> {
     await this.db.run(
-      "UPDATE applications SET url = ?, username = ?, password = ?, database = ?, auto_sync = ?, poll_interval_minutes = ?, ntfy_url = ?, ntfy_topic = ? WHERE url = ? AND username = ?",
+      "UPDATE applications SET url = ?, username = ?, password = ?, database = ?, odoo_version = ?, auto_sync = ?, poll_interval_minutes = ?, ntfy_url = ?, ntfy_topic = ? WHERE url = ? AND username = ?",
       [app.url, app.username, app.password,
-       app.database ?? "", app.autoSync ? 1 : 0,
+       app.database ?? "", app.odooVersion ?? "",
+       app.autoSync ? 1 : 0,
        app.pollIntervalMinutes ?? 5, app.ntfyUrl ?? "", app.ntfyTopic ?? "",
        url, username]
     );
@@ -218,6 +228,7 @@ export class DatabaseService {
       username: row.username,
       password: row.password,
       database: row.database ?? "",
+      odooVersion: row.odoo_version ?? "",
       autoSync: row.auto_sync === 1 || row.auto_sync === true,
       pollIntervalMinutes: row.poll_interval_minutes ?? 5,
       ntfyUrl: row.ntfy_url ?? "",

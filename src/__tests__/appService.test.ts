@@ -9,6 +9,7 @@ const baseApp = (overrides: Partial<Application> = {}): Application => ({
   username: "admin",
   password: "secret",
   database: "",
+  odooVersion: "",
   autoSync: false,
   pollIntervalMinutes: 5,
   ntfyUrl: "",

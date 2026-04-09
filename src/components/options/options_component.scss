@@ -26,3 +26,25 @@
 		margin-top: 0.5em;
 	}
 }
+
+// ── Dev-mode unlock button ────────────────────────────────────────────────────
+#options-component .options-list__item--dev-unlock {
+	cursor: pointer;
+	display: block;
+	padding: 1em;
+	text-align: center;
+	transition: background-color 0.2s, color 0.2s;
+
+	&.dev-unlock--counting {
+		background-color: #3a3000;
+		color: #ffd54f;
+	}
+	&.dev-unlock--warning {
+		background-color: #4a1800;
+		color: #ff8a00;
+	}
+	&.dev-unlock--imminent {
+		background-color: #5a0000;
+		color: #ff3d00;
+	}
+}

@@ -243,7 +243,8 @@ export class ApplicationsComponent extends EnhancedComponent {
 })();
 `;
 
-        let url_rewrite_odoo = "https://" + matchingApp.url + "/web/login";
+        const baseUrl = /^https?:\/\//i.test(matchingApp.url) ? matchingApp.url : "https://" + matchingApp.url;
+        let url_rewrite_odoo = baseUrl + "/web/login";
 
         if (WebViewUtils.isMobile()) {
             // TODO how catch error

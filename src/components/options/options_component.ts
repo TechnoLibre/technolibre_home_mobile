@@ -1,9 +1,11 @@
-import { xml } from "@odoo/owl";
+import { onMounted, onWillDestroy, useState, xml } from "@odoo/owl";
+import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
+import { EnhancedComponent } from "../../js/enhancedComponent";
+import { Events } from "../../constants/events";
+import { StorageConstants } from "../../constants/storage";
 
 // @ts-ignore
-const IS_DEBUG = import.meta.env.VITE_DEBUG_DEV === "true";
-
-import { EnhancedComponent } from "../../js/enhancedComponent";
+const IS_DEBUG_BUILD = import.meta.env.VITE_DEBUG_DEV === "true";
 
 import { HeadingComponent } from "../heading/heading_component";
 import { OptionsClearCacheComponent } from "./clear_cache/options_clear_cache_component";
@@ -23,7 +25,7 @@ export class OptionsComponent extends EnhancedComponent {
       <ul id="options-list">
         <OptionsClearCacheComponent />
         <OptionsToggleBiometryComponent />
-        <li class="options-list__item" t-if="isDebug">
+        <li class="options-list__item" t-if="state.isDebug">
           <a href="#" t-on-click.stop.prevent="onDatabaseClick">
             Base de données ›
           </a>
@@ -39,9 +41,29 @@ export class OptionsComponent extends EnhancedComponent {
     </div>
   `;
 
-	get isDebug() {
-		return IS_DEBUG;
+	setup() {
+		this.state = useState({ isDebug: IS_DEBUG_BUILD });
+
+		onMounted(async () => {
+			if (!IS_DEBUG_BUILD) {
+				try {
+					const stored = await SecureStoragePlugin.get({ key: StorageConstants.DEV_MODE_UNLOCKED_KEY });
+					if (stored.value === "true") this.state.isDebug = true;
+				} catch {
+					// not unlocked yet
+				}
+			}
+			this.eventBus.addEventListener(Events.DEV_MODE_UNLOCKED, this._onDevModeUnlocked);
+		});
+
+		onWillDestroy(() => {
+			this.eventBus.removeEventListener(Events.DEV_MODE_UNLOCKED, this._onDevModeUnlocked);
+		});
 	}
+
+	_onDevModeUnlocked = () => {
+		this.state.isDebug = true;
+	};
 
 	onDatabaseClick() {
 		this.navigate("/options/database");

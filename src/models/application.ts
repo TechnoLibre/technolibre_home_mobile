@@ -4,6 +4,7 @@ export interface Application {
 	password: string;
 	// Sync configuration
 	database: string;
+	odooVersion: string;
 	autoSync: boolean;
 	pollIntervalMinutes: number;
 	ntfyUrl: string;

@@ -73,6 +73,7 @@ describe("DatabaseService", () => {
       username: "admin",
       password: "secret",
       database: "",
+      odooVersion: "",
       autoSync: false,
       pollIntervalMinutes: 5,
       ntfyUrl: "",
@@ -97,6 +98,7 @@ describe("DatabaseService", () => {
         username: "user",
         password: "pass",
         database: "",
+        odooVersion: "",
         autoSync: false,
         pollIntervalMinutes: 5,
         ntfyUrl: "",
@@ -121,6 +123,7 @@ describe("DatabaseService", () => {
         username: "user",
         password: "pass",
         database: "",
+        odooVersion: "",
         autoSync: false,
         pollIntervalMinutes: 5,
         ntfyUrl: "",
@@ -141,6 +144,7 @@ describe("DatabaseService", () => {
         username: app.username,
         password: "newpassword",
         database: "",
+        odooVersion: "",
         autoSync: false,
         pollIntervalMinutes: 5,
         ntfyUrl: "",
@@ -402,6 +406,41 @@ describe("DatabaseService", () => {
       const notes = await db.getNotesBySyncConfigId(configId);
       expect(notes).toHaveLength(1);
       expect(notes[0].id).toBe("ncc1");
+    });
+  });
+
+  // ── Odoo version on applications ──
+
+  describe("odoo version on applications", () => {
+    const app: Application = {
+      url: "https://erp.example.com",
+      username: "admin",
+      password: "secret",
+      database: "mydb",
+      odooVersion: "",
+      autoSync: false,
+      pollIntervalMinutes: 5,
+      ntfyUrl: "",
+      ntfyTopic: "",
+    };
+
+    it("addOdooVersionToApplications is idempotent", async () => {
+      await expect(db.addOdooVersionToApplications()).resolves.not.toThrow();
+      await expect(db.addOdooVersionToApplications()).resolves.not.toThrow();
+    });
+
+    it("setApplicationOdooVersion persists the version string", async () => {
+      await db.addOdooVersionToApplications();
+      await db.addApplication(app);
+      await db.setApplicationOdooVersion(app.url, app.username, "17.0+e");
+      const apps = await db.getAllApplications();
+      expect(apps[0].odooVersion).toBe("17.0+e");
+    });
+
+    it("addApplication stores initial odooVersion", async () => {
+      await db.addApplication({ ...app, odooVersion: "18.0" });
+      const apps = await db.getAllApplications();
+      expect(apps[0].odooVersion).toBe("18.0");
     });
   });
 });

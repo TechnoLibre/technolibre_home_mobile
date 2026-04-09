@@ -6,4 +6,5 @@ export const StorageConstants: Record<string, string> = {
 	SYNC_SESSION_PREFIX: "odoo_sync_session_",   // + base64(url+username)
 	SYNC_CONFIG_KEY: "odoo_sync_config",
 	SYNC_CONFIGS_KEY: "odoo_sync_configs",
+	DEV_MODE_UNLOCKED_KEY: "dev_mode_unlocked",
 };

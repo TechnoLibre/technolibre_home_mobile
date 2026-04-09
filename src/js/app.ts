@@ -15,6 +15,7 @@ import { addReminderCreatedAt } from "../services/migrations/addReminderCreatedA
 import { addApplicationSyncFields } from "../services/migrations/addApplicationSyncFields";
 import { addUserGraphicPrefs } from "../services/migrations/addUserGraphicPrefs";
 import { addSelectedSyncConfigIds } from "../services/migrations/addSelectedSyncConfigIds";
+import { addOdooVersionToApplications } from "../services/migrations/addOdooVersionToApplications";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
 import type { FontFamily } from "../models/graphicPrefs";
 import { SyncService } from "../services/syncService";
@@ -106,6 +107,11 @@ async function startApp() {
 			version: 2026040803,
 			description: "Ajout selected_sync_config_ids sur les notes",
 			run: addSelectedSyncConfigIds,
+		},
+		{
+			version: 2026040901,
+			description: "Ajout de la version Odoo détectée sur les applications",
+			run: addOdooVersionToApplications,
 		},
 	]);
 
