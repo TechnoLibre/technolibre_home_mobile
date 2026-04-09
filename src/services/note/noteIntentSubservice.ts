@@ -28,7 +28,7 @@ export class NoteIntentSubservice {
 	 *
 	 * @param intent - The text intent
 	 */
-	public async newNoteWithText(intent: TextIntent) {
+	public async newNoteWithText(intent: TextIntent): Promise<string> {
 		const note = this._noteService.getNewNote(this._noteService.getNewId());
 		const entry = this._noteService.entry.getNewTextEntry();
 		const params = entry.params as NoteEntryTextParams;
@@ -41,6 +41,7 @@ export class NoteIntentSubservice {
 
 		await this._noteService.db.addNote(note);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
+		return note.id;
 	}
 
 	/**
@@ -50,7 +51,7 @@ export class NoteIntentSubservice {
 	 *
 	 * @param intent - The text intent
 	 */
-	public async addTextToNote(id: string, intent: TextIntent) {
+	public async addTextToNote(id: string, intent: TextIntent): Promise<string> {
 		let matchingNote = await this._noteService.getMatch(id);
 
 		const entry = this._noteService.entry.getNewTextEntry();
@@ -61,6 +62,7 @@ export class NoteIntentSubservice {
 
 		await this._noteService.db.updateNote(id, matchingNote);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
+		return id;
 	}
 
 	/**
@@ -68,7 +70,7 @@ export class NoteIntentSubservice {
 	 *
 	 * @param intent - The image intent
 	 */
-	public async newNoteWithImage(intent: ImageIntent) {
+	public async newNoteWithImage(intent: ImageIntent): Promise<string> {
 		const note = this._noteService.getNewNote(this._noteService.getNewId());
 		const entry = this._noteService.entry.getNewPhotoEntry();
 		const params = entry.params as NoteEntryPhotoParams;
@@ -81,6 +83,7 @@ export class NoteIntentSubservice {
 
 		await this._noteService.db.addNote(note);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
+		return note.id;
 	}
 
 	/**
@@ -90,7 +93,7 @@ export class NoteIntentSubservice {
 	 *
 	 * @param intent - The image intent
 	 */
-	public async addImageToNote(id: string, intent: ImageIntent) {
+	public async addImageToNote(id: string, intent: ImageIntent): Promise<string> {
 		let matchingNote = await this._noteService.getMatch(id);
 
 		const entry = this._noteService.entry.getNewPhotoEntry();
@@ -101,6 +104,7 @@ export class NoteIntentSubservice {
 
 		await this._noteService.db.updateNote(id, matchingNote);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
+		return id;
 	}
 
 	/**
@@ -108,7 +112,7 @@ export class NoteIntentSubservice {
 	 *
 	 * @param intent - The video intent
 	 */
-	public async newNoteWithVideo(intent: VideoIntent) {
+	public async newNoteWithVideo(intent: VideoIntent): Promise<string> {
 		const note = this._noteService.getNewNote(this._noteService.getNewId());
 		const entry = this._noteService.entry.getNewVideoEntry();
 		const params = entry.params as NoteEntryVideoParams;
@@ -121,6 +125,7 @@ export class NoteIntentSubservice {
 
 		await this._noteService.db.addNote(note);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
+		return note.id;
 	}
 
 	/**
@@ -130,7 +135,7 @@ export class NoteIntentSubservice {
 	 *
 	 * @param intent - The video intent
 	 */
-	public async addVideoToNote(id: string, intent: VideoIntent) {
+	public async addVideoToNote(id: string, intent: VideoIntent): Promise<string> {
 		let matchingNote = await this._noteService.getMatch(id);
 
 		const entry = this._noteService.entry.getNewVideoEntry();
@@ -141,5 +146,6 @@ export class NoteIntentSubservice {
 
 		await this._noteService.db.updateNote(id, matchingNote);
 		this._noteService.eventBus.trigger(Events.RELOAD_NOTES);
+		return id;
 	}
 }

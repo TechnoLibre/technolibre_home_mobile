@@ -200,6 +200,13 @@ export class DatabaseService {
     );
   }
 
+  async setApplicationOdooVersion(url: string, username: string, version: string): Promise<void> {
+    await this.db.run(
+      "UPDATE applications SET odoo_version = ? WHERE url = ? AND username = ?",
+      [version, url, username]
+    );
+  }
+
   async deleteApplication(url: string, username: string): Promise<void> {
     await this.db.run(
       "DELETE FROM applications WHERE url = ? AND username = ?",

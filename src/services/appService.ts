@@ -50,6 +50,10 @@ export class AppService {
   /**
    * Clears the list of apps.
    */
+  public async setOdooVersion(appID: ApplicationID, version: string): Promise<void> {
+    await this._db.setApplicationOdooVersion(appID.url, appID.username, version);
+  }
+
   public async clear(): Promise<boolean> {
     const apps = await this.getApps();
     for (const app of apps) {

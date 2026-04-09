@@ -76,27 +76,29 @@ export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 		this.getNotes();
 	}
 
-	newNoteWithVideo() {
+	async newNoteWithVideo() {
 		const intent = this.props.intent;
 
 		if (!intent || !(intent instanceof VideoIntent)) {
 			return;
 		}
 
-		this.noteService.intent.newNoteWithVideo(intent);
-		this.props.goHome();
+		const noteId = await this.noteService.intent.newNoteWithVideo(intent);
+		this.props.goToNote(noteId);
 	}
 
-	addVideoToNote(event: Event) {
-		const id = (event.target as HTMLElement).dataset.id;
+	async addVideoToNote(event: Event) {
+		const id = (event.target as HTMLElement).closest("[data-id]")
+			? (event.target as HTMLElement).closest("[data-id]")!.getAttribute("data-id")
+			: (event.target as HTMLElement).dataset.id;
 		const intent = this.props.intent;
 
 		if (!id || !intent || !(intent instanceof VideoIntent)) {
 			return;
 		}
 
-		this.noteService.intent.addVideoToNote(id, intent);
-		this.props.goHome();
+		const noteId = await this.noteService.intent.addVideoToNote(id, intent);
+		this.props.goToNote(noteId);
 	}
 
 	public async getVideoUri() {

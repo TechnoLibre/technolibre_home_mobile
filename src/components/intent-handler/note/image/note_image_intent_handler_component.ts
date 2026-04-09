@@ -73,27 +73,29 @@ export class NoteImageIntentHandlerComponent extends EnhancedComponent {
 		this.getNotes();
 	}
 
-	newNoteWithImage() {
+	async newNoteWithImage() {
 		const intent = this.props.intent;
 
 		if (!intent || !(intent instanceof ImageIntent)) {
 			return;
 		}
 
-		this.noteService.intent.newNoteWithImage(intent);
-		this.props.goHome();
+		const noteId = await this.noteService.intent.newNoteWithImage(intent);
+		this.props.goToNote(noteId);
 	}
 
-	addImageToNote(event: Event) {
-		const id = (event.target as HTMLElement).dataset.id;
+	async addImageToNote(event: Event) {
+		const id = (event.target as HTMLElement).closest("[data-id]")
+			? (event.target as HTMLElement).closest("[data-id]")!.getAttribute("data-id")
+			: (event.target as HTMLElement).dataset.id;
 		const intent = this.props.intent;
 
 		if (!id || !intent || !(intent instanceof ImageIntent)) {
 			return;
 		}
 
-		this.noteService.intent.addImageToNote(id, intent);
-		this.props.goHome();
+		const noteId = await this.noteService.intent.addImageToNote(id, intent);
+		this.props.goToNote(noteId);
 	}
 
 	public async getImageUri() {

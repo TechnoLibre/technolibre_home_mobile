@@ -1,4 +1,5 @@
-import { CapacitorCookies, CapacitorHttp } from "@capacitor/core";
+import { CapacitorCookies } from "@capacitor/core";
+import { RawHttp } from "../plugins/rawHttpPlugin";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "./databaseService";
 import { Application } from "../models/application";
@@ -34,6 +35,8 @@ interface StoredSession {
 
 export class SyncService {
   private db: DatabaseService;
+  /** Diagnostic trail of the last authenticate() call — shown in retry errors. */
+  private _lastAuthDiag: string = "";
 
   constructor(db: DatabaseService) {
     this.db = db;
@@ -50,20 +53,9 @@ export class SyncService {
     const endpoint = `${baseUrl}/web/session/authenticate`;
     const diag: string[] = [`→ POST ${endpoint}`];
 
-    const resp = await CapacitorHttp.post({
-      url: endpoint,
-      headers: { "Content-Type": "application/json" },
-      responseType: "json",
-      data: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "call",
-        id: 1,
-        params: {
-          db: creds.database,
-          login: creds.username,
-          password: creds.password,
-        },
-      }),
+    const resp = await this.rawPost(endpoint, { "Content-Type": "application/json" }, {
+      jsonrpc: "2.0", method: "call", id: 1,
+      params: { db: creds.database, login: creds.username, password: creds.password },
     });
 
     diag.push(`← HTTP ${resp.status}`);
@@ -77,26 +69,36 @@ export class SyncService {
     if (!uid) throw new Error("Authentication failed — invalid credentials");
     diag.push(`  uid: ${uid}`);
 
-    // Try 1: Set-Cookie header — Odoo 17+ rotates the session ID after login;
-    // the real cookie is ONLY in Set-Cookie while json.result.session_id may be
-    // the pre-rotation (expired) ID. Always prefer the cookie header.
+    // Try 1: Set-Cookie header — Odoo 17+ rotates the session after login and
+    // sends TWO Set-Cookie directives: first the old session with Max-Age=0
+    // (deletion), then the new session. We must process each directive
+    // separately and skip any that are being deleted (Max-Age=0 or past Expires).
+    // Joining all directives with "; " and taking the first match would give the
+    // OLD (already deleted) session_id.
     let sessionId: string = "";
     const headers = resp.headers as Record<string, string | string[]>;
-    let setCookieRaw = "";
     for (const [key, val] of Object.entries(headers)) {
       if (key.toLowerCase() === "set-cookie") {
-        setCookieRaw = Array.isArray(val) ? val.join("; ") : String(val);
-        const match = setCookieRaw.match(/session_id=([^;,\s]+)/i);
-        if (match) {
-          sessionId = match[1];
-          diag.push(`  [1] Set-Cookie → session_id: ${sessionId.slice(0, 8)}…`);
-        } else {
-          diag.push(`  [1] Set-Cookie présent, pas de session_id: ${setCookieRaw.slice(0, 120)}`);
+        const directives = Array.isArray(val) ? val : [String(val)];
+        diag.push(`  [1] Set-Cookie directives (${directives.length}):`);
+        for (const directive of directives) {
+          const match = directive.match(/session_id=([^;,\s]+)/i);
+          if (!match) continue;
+          const candidate = match[1];
+          const isDeleting =
+            /Max-Age\s*=\s*0/i.test(directive) ||
+            /Expires\s*=\s*Thu,\s*01\s*Jan\s*1970/i.test(directive);
+          if (isDeleting) {
+            diag.push(`    - ${candidate.slice(0, 8)}… (Max-Age=0, ignoré)`);
+          } else {
+            sessionId = candidate;
+            diag.push(`    - ${candidate.slice(0, 8)}… ✓ (valide)`);
+          }
         }
         break;
       }
     }
-    if (!setCookieRaw) diag.push(`  [1] Set-Cookie: absent`);
+    if (!sessionId) diag.push(`  [1] Set-Cookie: absent ou aucun session_id valide`);
 
     // Try 2: Android CookieManager store — for plain HTTP requests Android may
     // consume the Set-Cookie header internally, making it invisible in resp.headers.
@@ -131,7 +133,36 @@ export class SyncService {
       throw new Error(`session_id introuvable\n${msg}`);
     }
 
-    console.log("[sync] authenticate OK\n" + diag.join("\n"));
+    // Persist in WebKit store (port-stripped URL — WebKit ignores port for cookies).
+    const cookieUrl = this.cookieUrl(baseUrl);
+    try {
+      await CapacitorCookies.setCookie({ url: cookieUrl, key: "session_id", value: sessionId });
+      const verify = await CapacitorCookies.getCookies({ url: cookieUrl });
+      const stored2 = (verify as Record<string, string>)["session_id"] || "";
+      diag.push(`  [cookie-store] cookieUrl=${cookieUrl} stored=${stored2 ? stored2.slice(0, 8) + "…" : "(vide)"}`);
+    } catch (e) {
+      diag.push(`  [cookie-store] err: ${e}`);
+    }
+
+    // Verify the session is immediately usable by Odoo via a lightweight call.
+    // This tells us whether the Cookie header we send reaches Odoo correctly.
+    try {
+      const infoResp = await this.rawPost(
+        `${baseUrl}/web/session/get_session_info`,
+        { "Content-Type": "application/json", Cookie: `session_id=${sessionId}` },
+        { jsonrpc: "2.0", method: "call", id: 99, params: {} }
+      );
+      const infoJson = this.parseNativeResponse(infoResp, "/web/session/get_session_info");
+      if (infoJson.error) {
+        diag.push(`  [verify] get_session_info ÉCHEC: code=${infoJson.error.code} msg=${infoJson.error.data?.message ?? infoJson.error.message}`);
+      } else {
+        diag.push(`  [verify] get_session_info OK: uid=${infoJson.result?.uid} session=${String(infoJson.result?.session_id ?? "").slice(0, 8)}…`);
+      }
+    } catch (e) {
+      diag.push(`  [verify] get_session_info ERREUR: ${e}`);
+    }
+
+    this._lastAuthDiag = diag.join("\n");
     const odooMajorVersion: number = json.result?.server_version_info?.[0] ?? 18;
     const stored: StoredSession = { sessionId, odooMajorVersion };
     await SecureStoragePlugin.set({ key: this.sessionKey(creds), value: JSON.stringify(stored) });
@@ -163,20 +194,32 @@ export class SyncService {
     fn: (sessionId: string, odooVersion: number) => Promise<T>
   ): Promise<T> {
     const session = await this.getSession(creds);
-    console.log(`[sync] callWithAuth — session: ${session.sessionId.slice(0, 8)}… odoo${session.odooMajorVersion}`);
+    const sid = session.sessionId.slice(0, 8);
     try {
       return await fn(session.sessionId, session.odooMajorVersion);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("session") || msg.includes("100") || msg.includes("401")) {
-        console.log(`[sync] callWithAuth — session expirée, re-auth…`);
         // Invalidate stale cached session before re-authenticating
         await SecureStoragePlugin.remove({ key: this.sessionKey(creds) }).catch(() => {});
-        const renewed = await this.authenticate(creds);
-        console.log(`[sync] callWithAuth — re-auth OK, session: ${renewed.sessionId.slice(0, 8)}…`);
-        return fn(renewed.sessionId, renewed.odooMajorVersion);
+        let renewed: StoredSession;
+        try {
+          renewed = await this.authenticate(creds);
+        } catch (authErr: unknown) {
+          const authMsg = authErr instanceof Error ? authErr.message : String(authErr);
+          throw new Error(`session expirée (${sid}…) puis re-auth échouée:\n${authMsg}`);
+        }
+        try {
+          return await fn(renewed.sessionId, renewed.odooMajorVersion);
+        } catch (retryErr: unknown) {
+          const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          throw new Error(
+            `re-auth OK (${renewed.sessionId.slice(0, 8)}…) mais appel échoué:\n${retryMsg}\n\n` +
+            `Diag auth:\n${this._lastAuthDiag}`
+          );
+        }
       }
-      throw e;
+      throw new Error(`erreur (session ${sid}…): ${msg}`);
     }
   }
 
@@ -192,29 +235,20 @@ export class SyncService {
   ): Promise<any> {
     const baseUrl = this.normalizeUrl(odooUrl);
     const endpoint = `${baseUrl}/web/dataset/call_kw`;
-    const resp = await CapacitorHttp.post({
-      url: endpoint,
-      headers: {
-        "Content-Type": "application/json",
-        Cookie: `session_id=${sessionId}`,
-      },
-      responseType: "json",
-      data: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "call",
-        id: Date.now(),
-        params: { model, method, args, kwargs },
-      }),
-    });
 
-    console.log(`[sync] jsonRpc → ${model}.${method} (HTTP ${resp.status})`);
+    // RawHttp bypasses Android's CookieHandler so the Cookie header reaches Odoo.
+    const resp = await this.rawPost(
+      endpoint,
+      { "Content-Type": "application/json", Cookie: `session_id=${sessionId}` },
+      { jsonrpc: "2.0", method: "call", id: Date.now(), params: { model, method, args, kwargs } }
+    );
+
     const json = this.parseNativeResponse(resp, endpoint);
     if (json.error) {
       const errMsg = json.error.data?.message ?? json.error.message ?? "Unknown RPC error";
       const errCode = json.error.code ?? "?";
-      console.warn(`[sync] jsonRpc error code=${errCode}: ${errMsg}`);
-      if (json.error.code === 100) throw new Error(`session_expired: ${errMsg}`);
-      throw new Error(`RPC error on ${model}.${method}: ${errMsg}`);
+      if (json.error.code === 100) throw new Error(`session_expired (code ${errCode}): ${errMsg}`);
+      throw new Error(`RPC ${model}.${method} (HTTP ${resp.status}, code ${errCode}): ${errMsg}`);
     }
     return json.result;
   }
@@ -495,12 +529,8 @@ export class SyncService {
   async listDatabases(url: string): Promise<string[]> {
     const baseUrl = this.normalizeUrl(url);
     const endpoint = `${baseUrl}/web/database/list`;
-    const resp = await CapacitorHttp.post({
-      url: endpoint,
-      headers: { "Content-Type": "application/json" },
-      responseType: "json",
-      data: JSON.stringify({ jsonrpc: "2.0", method: "call", id: 1, params: {} }),
-    });
+    const resp = await this.rawPost(endpoint, { "Content-Type": "application/json" },
+      { jsonrpc: "2.0", method: "call", id: 1, params: {} });
     const json = this.parseNativeResponse(resp, endpoint);
     if (json.error) throw new Error(json.error.data?.message ?? json.error.message ?? "Unknown error");
     if (!Array.isArray(json.result)) return [];
@@ -515,12 +545,8 @@ export class SyncService {
     const baseUrl = this.normalizeUrl(url);
     const endpoint = `${baseUrl}/web/webclient/version_info`;
     try {
-      const resp = await CapacitorHttp.post({
-        url: endpoint,
-        headers: { "Content-Type": "application/json" },
-        responseType: "json",
-        data: JSON.stringify({ jsonrpc: "2.0", method: "call", id: 1, params: {} }),
-      });
+      const resp = await this.rawPost(endpoint, { "Content-Type": "application/json" },
+        { jsonrpc: "2.0", method: "call", id: 1, params: {} });
       const json = this.parseNativeResponse(resp, endpoint);
       if (json.error || !json.result) return null;
       return (json.result.server_version as string) ?? null;
@@ -531,11 +557,34 @@ export class SyncService {
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
+  /**
+   * Makes a POST request via the RawHttp native plugin, which bypasses
+   * Android's CookieHandler so manually-set Cookie headers are preserved.
+   * Returns a response shape compatible with parseNativeResponse().
+   */
+  private async rawPost(
+    url: string,
+    headers: Record<string, string>,
+    body: object
+  ): Promise<{ status: number; headers: Record<string, string | string[]>; data: any }> {
+    const resp = await RawHttp.post({ url, headers, body: JSON.stringify(body) });
+    return { status: resp.status, headers: resp.headers, data: resp.data };
+  }
+
   /** Ensures the URL has an http(s) scheme; defaults to https. */
   private normalizeUrl(url: string): string {
     const trimmed = url.trim().replace(/\/+$/, "");
     if (/^https?:\/\//i.test(trimmed)) return trimmed;
     return `https://${trimmed}`;
+  }
+
+  /**
+   * Returns the URL without a port suffix, for use with Android's WebKit
+   * CookieManager. WebKit stores cookies by domain (ignoring port), so
+   * setCookie/getCookies for http://host:8069 must use http://host to work.
+   */
+  private cookieUrl(url: string): string {
+    return this.normalizeUrl(url).replace(/:\d+$/, "");
   }
 
   /**

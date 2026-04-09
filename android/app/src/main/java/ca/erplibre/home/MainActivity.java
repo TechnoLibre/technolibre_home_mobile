@@ -13,7 +13,9 @@ import com.google.android.gms.cast.framework.CastContext;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
-    protected void on(Bundle savedInstanceState) {
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(RawHttpPlugin.class);
         super.onCreate(savedInstanceState);
         CastContext.getSharedInstance(this);
     }

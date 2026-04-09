@@ -146,6 +146,8 @@ export class ApplicationsEditComponent extends EnhancedComponent {
             if (version) {
                 this.state.app.odooVersion = version;
                 this.state.detectedVersion = `Odoo ${version}`;
+                // Persist immediately so it shows on next open without re-running Autocomplete
+                await this.appService.setOdooVersion(this.state.originalAppID, version);
             }
             if (databases.length === 0) {
                 Dialog.alert({ message: "Aucune base de données trouvée sur ce serveur." });

@@ -312,7 +312,9 @@ export class NoteComponent extends EnhancedComponent {
 			this.state.syncStatus = "synced";
 		} catch (e: unknown) {
 			this.state.syncStatus = "error";
-			await Dialog.alert({ message: `Erreur sync : ${e instanceof Error ? e.message : String(e)}` });
+			const msg = e instanceof Error ? e.message : String(e);
+			try { await navigator.clipboard.writeText(msg); } catch { /* clipboard unavailable */ }
+			await Dialog.alert({ message: `Erreur sync :\n${msg}\n\n(texte copié dans le presse-papier)` });
 		} finally {
 			this.state.isSyncing = false;
 		}
@@ -331,7 +333,9 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.isSyncing = false;
 		if (errors.length > 0) {
 			this.state.syncStatus = "error";
-			await Dialog.alert({ message: `Erreurs sync :\n${errors.join("\n")}` });
+			const msg = errors.join("\n");
+			try { await navigator.clipboard.writeText(msg); } catch { /* clipboard unavailable */ }
+			await Dialog.alert({ message: `Erreurs sync :\n${msg}\n\n(texte copié dans le presse-papier)` });
 		} else {
 			this.state.syncStatus = "synced";
 		}
