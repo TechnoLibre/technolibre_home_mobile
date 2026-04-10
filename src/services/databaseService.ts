@@ -503,6 +503,16 @@ export class DatabaseService {
     );
   }
 
+  async getNoteRawData(noteId: string): Promise<Record<string, any> | null> {
+    const result = await this.db.query("SELECT * FROM notes WHERE id = ?", [noteId]);
+    return result.values?.[0] ?? null;
+  }
+
+  async getTableColumns(tableName: string): Promise<{ cid: number; name: string; type: string; notnull: number; dflt_value: any; pk: number }[]> {
+    const result = await this.db.query(`PRAGMA table_info("${tableName}")`);
+    return result.values ?? [];
+  }
+
   async getTablesInfo(): Promise<{ name: string; count: number }[]> {
     const result = await this.db.query(
       "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"

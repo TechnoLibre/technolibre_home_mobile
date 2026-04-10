@@ -28,6 +28,7 @@ export class HomeComponent extends EnhancedComponent {
         <h3 id="title" t-esc="state.title" t-on-click="onOpenSocietyClick" />
         <section id="buttons">
           <button id="notes" class="buttons-primary" t-on-click.stop.prevent="onNotesClick">${ENV.LABEL_NOTE}s</button>
+          <button id="notes-new" class="buttons-primary" t-on-click.stop.prevent="onNoteNewClick">Ajout ${ENV.LABEL_NOTE}s</button>
         </section>
       </div>
     </div>
@@ -43,7 +44,10 @@ export class HomeComponent extends EnhancedComponent {
                 url: this.getWebsiteURL(),
                 title: ENV.WEBSITE_URL,
                 isPresentAfterPageLoad: true,
+                preShowScript: WebViewUtils.safeAreaScript(),
                 enabledSafeBottomMargin: true,
+                toolbarColor: "#1a1a1a",
+                toolbarTextColor: "#ffffff",
                 // useTopInset: true,
                 activeNativeNavigationForWebview: true,
             });
@@ -62,5 +66,10 @@ export class HomeComponent extends EnhancedComponent {
 
     onNotesClick() {
         this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/notes"});
+    }
+
+    onNoteNewClick() {
+        const newId = this.noteService.getNewId();
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: `/note/${newId}`});
     }
 }

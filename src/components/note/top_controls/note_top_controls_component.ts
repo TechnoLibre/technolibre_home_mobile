@@ -131,6 +131,15 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			<img src="${CheckBoxBlankIcon}" t-else="" />
 			<p>Done</p>
 		</a>
+		<a
+			id="note__control__open-in-app"
+			class="note__control"
+			href="#"
+			t-on-click.stop.prevent="props.onOpenInAppClick"
+			t-if="props.optionMode"
+		>
+			<p>Ouvrir dans app</p>
+		</a>
 	</section>
 </div>
 	`;

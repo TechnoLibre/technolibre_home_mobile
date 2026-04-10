@@ -570,6 +570,108 @@ describe("SyncService.getServerVersion", () => {
   });
 });
 
+// ─── SyncService — getOdooExplorer ───────────────────────────────────────────
+
+describe("SyncService.getOdooExplorer", () => {
+  let svc: SyncService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    const db = new DatabaseService();
+    await db.initialize();
+    svc = new SyncService(db);
+    await SecureStoragePlugin.set({
+      key: `odoo_sync_session_${btoa(`${CREDS.odooUrl}|${CREDS.username}`)}`,
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 18 }),
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns version string and model list", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch({
+        result: [
+          { name: "Task", model: "project.task" },
+          { name: "Contact", model: "res.partner" },
+        ],
+      })
+    );
+    const explorer = await svc.getOdooExplorer(CREDS);
+    expect(explorer.version).toBe("Odoo 18");
+    expect(explorer.models).toHaveLength(2);
+    expect(explorer.models[0].model).toBe("project.task");
+  });
+
+  it("returns empty model list when RPC returns empty array", async () => {
+    vi.stubGlobal("fetch", mockFetch({ result: [] }));
+    const explorer = await svc.getOdooExplorer(CREDS);
+    expect(explorer.models).toHaveLength(0);
+  });
+});
+
+// ─── SyncService — getOdooModelInfo ──────────────────────────────────────────
+
+describe("SyncService.getOdooModelInfo", () => {
+  let svc: SyncService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    const db = new DatabaseService();
+    await db.initialize();
+    svc = new SyncService(db);
+    await SecureStoragePlugin.set({
+      key: `odoo_sync_session_${btoa(`${CREDS.odooUrl}|${CREDS.username}`)}`,
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 18 }),
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns field definitions and record count", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true, status: 200,
+        text: async () => JSON.stringify({
+          result: [
+            { name: "name", field_description: "Task Title", ttype: "char" },
+            { name: "state", field_description: "State", ttype: "selection" },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true, status: 200,
+        text: async () => JSON.stringify({ result: 42 }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const info = await svc.getOdooModelInfo(CREDS, "project.task");
+    expect(info.count).toBe(42);
+    expect(info.fields).toHaveLength(2);
+    expect(info.fields[0].name).toBe("name");
+    expect(info.fields[0].fieldDescription).toBe("Task Title");
+    expect(info.fields[0].ttype).toBe("char");
+  });
+
+  it("returns count=-1 when search_count fails", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true, status: 200,
+        text: async () => JSON.stringify({ result: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true, status: 200,
+        text: async () => JSON.stringify({ error: { message: "forbidden", data: { message: "no access" } } }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const info = await svc.getOdooModelInfo(CREDS, "private.model");
+    expect(info.count).toBe(-1);
+    expect(info.fields).toHaveLength(0);
+  });
+});
+
 // ─── SyncService — syncAll ────────────────────────────────────────────────────
 
 describe("SyncService.syncAll", () => {

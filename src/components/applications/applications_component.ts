@@ -252,8 +252,10 @@ export class ApplicationsComponent extends EnhancedComponent {
                 url: url_rewrite_odoo,
                 title: matchingApp.url,
                 isPresentAfterPageLoad: true,
-                preShowScript: loginScript,
+                preShowScript: WebViewUtils.safeAreaScript() + "\n" + loginScript,
                 enabledSafeBottomMargin: true,
+                toolbarColor: "#1a1a1a",
+                toolbarTextColor: "#ffffff",
                 // useTopInset: true,
                 activeNativeNavigationForWebview: true,
             });

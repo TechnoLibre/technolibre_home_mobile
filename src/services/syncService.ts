@@ -543,6 +543,59 @@ export class SyncService {
     return json.result as string[];
   }
 
+  // ─── Odoo explorer ───────────────────────────────────────────────────────
+
+  /**
+   * Fetches the Odoo major version and the full list of installed models.
+   */
+  async getOdooExplorer(creds: SyncCredentials): Promise<{
+    version: string;
+    models: Array<{ name: string; model: string }>;
+  }> {
+    return this.callWithAuth(creds, async (sessionId, odooVersion) => {
+      const rows: Array<{ name: string; model: string }> = await this.jsonRpc(
+        creds.odooUrl, sessionId, "ir.model", "search_read",
+        [],
+        { domain: [], fields: ["name", "model"], order: "model asc", limit: 500 }
+      );
+      return {
+        version: `Odoo ${odooVersion}`,
+        models: rows.map((r) => ({ name: r.name, model: r.model })),
+      };
+    });
+  }
+
+  /**
+   * Fetches field definitions and record count for one Odoo model.
+   */
+  async getOdooModelInfo(
+    creds: SyncCredentials,
+    modelName: string
+  ): Promise<{
+    count: number;
+    fields: Array<{ name: string; fieldDescription: string; ttype: string }>;
+  }> {
+    return this.callWithAuth(creds, async (sessionId) => {
+      const [rawFields, count] = await Promise.all([
+        this.jsonRpc(
+          creds.odooUrl, sessionId, "ir.model.fields", "search_read",
+          [],
+          { domain: [["model", "=", modelName]], fields: ["name", "field_description", "ttype"], order: "name asc", limit: 500 }
+        ) as Promise<Array<{ name: string; field_description: string; ttype: string }>>,
+        (this.jsonRpc(creds.odooUrl, sessionId, modelName, "search_count", [[]]) as Promise<number>)
+          .catch(() => -1),
+      ]);
+      return {
+        count,
+        fields: rawFields.map((f) => ({
+          name: f.name,
+          fieldDescription: f.field_description,
+          ttype: f.ttype,
+        })),
+      };
+    });
+  }
+
   /**
    * Returns the Odoo server version string (e.g. "17.0+e") from the public
    * /web/webclient/version_info endpoint. Returns null if unavailable.

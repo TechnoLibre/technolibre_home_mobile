@@ -6,12 +6,13 @@ import { Dialog } from "@capacitor/dialog";
 import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
 import { BiometryUtils } from "../../utils/biometryUtils";
+import { WebViewUtils } from "../../utils/webViewUtils";
 import { generateVideoThumbnail } from "../../utils/videoThumbnailUtils";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { Events } from "../../constants/events";
-import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryVideoParams } from "../../models/note";
+import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryTextParams, NoteEntryVideoParams } from "../../models/note";
 import { SyncCredentials } from "../../services/syncService";
 import type { SyncConfig } from "../../models/syncConfig";
 import { loadSyncConfigs } from "../../models/syncConfig";
@@ -78,6 +79,13 @@ export class NoteComponent extends EnhancedComponent {
 							>Annuler</button>
 						</div>
 					</div>
+					<button
+						type="button"
+						class="breadcrumb__meta-btn"
+						t-att-disabled="state.newNote"
+						title="Métadonnées SQL"
+						t-on-click.stop.prevent="onMetadataClick"
+					>ℹ</button>
 				</div>
 			</nav>
 			<NoteTopControlsComponent
@@ -95,6 +103,7 @@ export class NoteComponent extends EnhancedComponent {
 				newNote="state.newNote"
 				onSyncClick.bind="pushToOdoo"
 			onSyncLongPress.bind="openSyncPicker"
+			onOpenInAppClick.bind="onOpenInAppClick"
 			/>
 			<NoteContentComponent
 				note="state.note"
@@ -117,6 +126,29 @@ export class NoteComponent extends EnhancedComponent {
 			setEntryDate.bind="setEntryDate"
 		/>
 		<TagManagerComponent />
+		<div t-if="state.openInApp.visible" class="error-dialog-overlay" t-on-click.stop.prevent="closeOpenInApp">
+			<div class="error-dialog" t-on-click.stop="">
+				<p class="open-in-app__title">Ouvrir dans application</p>
+				<div class="error-dialog__actions">
+					<t t-foreach="state.openInApp.apps" t-as="appItem" t-key="appItem.appUrl + '|' + appItem.username">
+						<button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="() => this.openInAppForConfig(appItem)">
+							<t t-esc="appItem.label" />
+						</button>
+					</t>
+					<button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeOpenInApp">Annuler</button>
+				</div>
+			</div>
+		</div>
+		<div t-if="state.errorDialog.visible" class="error-dialog-overlay" t-on-click.stop.prevent="closeErrorDialog">
+			<div class="error-dialog" t-on-click.stop="">
+				<pre class="error-dialog__message" t-esc="state.errorDialog.message" />
+				<div class="error-dialog__actions">
+					<button type="button" class="error-dialog__btn error-dialog__btn--copy" t-on-click.stop.prevent="copyErrorMessage">📋 Copier</button>
+					<button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="createErrorNote">📝 Créer note</button>
+					<button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeErrorDialog">Fermer</button>
+				</div>
+			</div>
+		</div>
 	`;
 
 	static components = {
@@ -142,6 +174,8 @@ export class NoteComponent extends EnhancedComponent {
 			syncConfigs: [] as SyncConfig[],
 			selectedConfigIds: [] as string[],
 			showConfigPicker: false,
+			errorDialog: { visible: false, message: "" },
+			openInApp: { visible: false, apps: [] as Array<{ label: string; appUrl: string; username: string; password: string; odooId: number }> },
 		});
 		this.setParams();
 		this.getNote();
@@ -314,8 +348,7 @@ export class NoteComponent extends EnhancedComponent {
 			this.state.syncStatus = "error";
 			await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
 			const msg = e instanceof Error ? e.message : String(e);
-			try { await navigator.clipboard.writeText(msg); } catch { /* clipboard unavailable */ }
-			await Dialog.alert({ message: `Erreur sync :\n${msg}\n\n(texte copié dans le presse-papier)` });
+			this.showErrorDialog(`Erreur sync :\n${msg}`);
 		} finally {
 			this.state.isSyncing = false;
 		}
@@ -336,10 +369,203 @@ export class NoteComponent extends EnhancedComponent {
 		if (errors.length > 0) {
 			this.state.syncStatus = "error";
 			const msg = errors.join("\n");
-			try { await navigator.clipboard.writeText(msg); } catch { /* clipboard unavailable */ }
-			await Dialog.alert({ message: `Erreurs sync :\n${msg}\n\n(texte copié dans le presse-papier)` });
+			this.showErrorDialog(`Erreurs sync :\n${msg}`);
 		} else {
 			this.state.syncStatus = "synced";
+		}
+	}
+
+	// ── Error dialog ────────────────────────────────────────────────────────
+
+	showErrorDialog(message: string) {
+		this.state.errorDialog.visible = true;
+		this.state.errorDialog.message = message;
+	}
+
+	closeErrorDialog() {
+		this.state.errorDialog.visible = false;
+		this.state.errorDialog.message = "";
+	}
+
+	async copyErrorMessage() {
+		try { await navigator.clipboard.writeText(this.state.errorDialog.message); } catch { /* unavailable */ }
+	}
+
+	async createErrorNote() {
+		const note = this.noteService.getNewNote(this.noteService.getNewId());
+		note.title = "Erreur d'exécution";
+		const entry = this.noteService.entry.getNewTextEntry();
+		(entry.params as NoteEntryTextParams).text = this.state.errorDialog.message;
+		note.entries = [entry];
+		await this.noteService.crud.add(note);
+		this.closeErrorDialog();
+		this.navigate(`/note/${encodeURIComponent(note.id)}`);
+	}
+
+	async onMetadataClick() {
+		try {
+			const row = await this.databaseService.getNoteRawData(this.state.noteId);
+			if (!row) {
+				await Dialog.alert({ title: "Métadonnées", message: "Note introuvable en base." });
+				return;
+			}
+			const fmt = (v: any) => {
+				if (v === null || v === undefined) return "(null)";
+				if (typeof v === "string" && v.length > 80) return v.slice(0, 80) + "…";
+				return String(v);
+			};
+			const lines = [
+				"── Note ──",
+				`id:                      ${fmt(row.id)}`,
+				`title:                   ${fmt(row.title)}`,
+				`date:                    ${fmt(row.date)}`,
+				`done:                    ${fmt(row.done)}`,
+				`archived:                ${fmt(row.archived)}`,
+				`pinned:                  ${fmt(row.pinned)}`,
+				`tags:                    ${fmt(row.tags)}`,
+				`entries:                 ${fmt(row.entries)}`,
+				"",
+				"── Synchronisation ──",
+				`odoo_id:                 ${fmt(row.odoo_id)}`,
+				`odoo_url:                ${fmt(row.odoo_url)}`,
+				`sync_status:             ${fmt(row.sync_status)}`,
+				`last_synced_at:          ${fmt(row.last_synced_at)}`,
+				`sync_config_id:          ${fmt(row.sync_config_id)}`,
+				`selected_sync_config_ids:${fmt(row.selected_sync_config_ids)}`,
+				`sync_per_server_status:  ${fmt(row.sync_per_server_status)}`,
+			];
+			const message = lines.join("\n");
+			try { await navigator.clipboard.writeText(message); } catch { /* clipboard unavailable */ }
+			await Dialog.alert({ title: "Métadonnées SQL", message });
+		} catch (e: unknown) {
+			await Dialog.alert({ title: "Métadonnées", message: String(e) });
+		}
+	}
+
+	// ── Open in app ─────────────────────────────────────────────────────────
+
+	closeOpenInApp() {
+		this.state.openInApp.visible = false;
+	}
+
+	async onOpenInAppClick() {
+		const row = await this.databaseService.getNoteRawData(this.state.noteId);
+		if (!row || !row.odoo_id) {
+			await Dialog.alert({ message: "Cette note n'a pas encore été synchronisée avec une application." });
+			return;
+		}
+
+		let perServerStatus: Record<string, string> = {};
+		try {
+			if (row.sync_per_server_status) {
+				perServerStatus = JSON.parse(row.sync_per_server_status);
+			}
+		} catch { /* ignore */ }
+
+		const syncedConfigIds = Object.entries(perServerStatus)
+			.filter(([, status]) => status === "synced")
+			.map(([id]) => id);
+
+		if (syncedConfigIds.length === 0) {
+			await Dialog.alert({ message: "Aucune application n'a synchronisé cette note avec succès." });
+			return;
+		}
+
+		const apps = await this.appService.getApps();
+		const appItems = syncedConfigIds.flatMap((configId) => {
+			const sepIdx = configId.lastIndexOf("|");
+			if (sepIdx === -1) return [];
+			const url = configId.slice(0, sepIdx);
+			const username = configId.slice(sepIdx + 1);
+			const app = apps.find((a) => a.url === url && a.username === username);
+			if (!app) return [];
+			return [{ label: app.url, appUrl: app.url, username: app.username, password: app.password, odooId: row.odoo_id as number }];
+		});
+
+		if (appItems.length === 0) {
+			await Dialog.alert({ message: "Applications introuvables dans la liste." });
+			return;
+		}
+
+		if (appItems.length === 1) {
+			await this.openInAppForConfig(appItems[0]);
+			return;
+		}
+
+		this.state.openInApp.apps = appItems;
+		this.state.openInApp.visible = true;
+	}
+
+	async openInAppForConfig(app: { label: string; appUrl: string; username: string; password: string; odooId: number }) {
+		this.state.openInApp.visible = false;
+		const baseUrl = /^https?:\/\//i.test(app.appUrl) ? app.appUrl : "https://" + app.appUrl;
+		const taskUrl = `${baseUrl}/web#id=${app.odooId}&model=project.task&view_type=form`;
+
+		const username = app.username.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+		const password = app.password.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+		const loginScript = `(async () => {
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  function getElementByXPath(xpath) {
+    return document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue || null;
+  }
+  function waitForXPathWithObserver(xpath, timeout = 15000) {
+    return new Promise((resolve, reject) => {
+      const found = getElementByXPath(xpath);
+      if (found) return resolve(found);
+      let settled = false;
+      const obs = new MutationObserver(() => {
+        const el = getElementByXPath(xpath);
+        if (el) { settled = true; obs.disconnect(); resolve(el); }
+      });
+      obs.observe(document.documentElement, { childList: true, subtree: true });
+      setTimeout(() => { if (!settled) { obs.disconnect(); reject(new Error('Timeout: ' + xpath)); } }, timeout);
+    });
+  }
+  function setInputValue(el, value) {
+    try {
+      const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+      if (d && d.set) d.set.call(el, value); else el.value = value;
+    } catch { el.value = value; }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  const ERR_SEL = '.alert.alert-danger';
+  async function hasErrAfter(ms) { await sleep(ms); return !!document.querySelector(ERR_SEL); }
+  if (window.__autoLoginSubmitted) return;
+  if (await hasErrAfter(400)) return;
+  try {
+    const SUBMIT = "//button[@type='submit' and (contains(normalize-space(.), 'Log in') or contains(normalize-space(.), 'Se connecter') or contains(normalize-space(.), 'Connexion'))]";
+    const [userEl, passEl] = await Promise.all([
+      waitForXPathWithObserver("//*[@id='login']"),
+      waitForXPathWithObserver("//*[@id='password']")
+    ]);
+    setInputValue(userEl, "${username}");
+    setInputValue(passEl, "${password}");
+    await sleep(250);
+    if (!!document.querySelector(ERR_SEL)) return;
+    const btn = await waitForXPathWithObserver(SUBMIT, 5000).catch(() => null);
+    if (!btn || !!document.querySelector(ERR_SEL)) return;
+    window.__autoLoginSubmitted = true;
+    btn.scrollIntoView({ block: 'center' });
+    await new Promise(r => requestAnimationFrame(r));
+    btn.click();
+  } catch(e) { console.error('[loginScript]', e); }
+})();`;
+
+		if (WebViewUtils.isMobile()) {
+			WebViewUtils.openWebViewMobile({
+				url: taskUrl,
+				title: app.label,
+				isPresentAfterPageLoad: true,
+				preShowScript: WebViewUtils.safeAreaScript() + "\n" + loginScript,
+				enabledSafeBottomMargin: true,
+				toolbarColor: "#1a1a1a",
+				toolbarTextColor: "#ffffff",
+				activeNativeNavigationForWebview: true,
+			});
+		} else {
+			WebViewUtils.openWebViewDesktop(taskUrl, loginScript);
 		}
 	}
 
