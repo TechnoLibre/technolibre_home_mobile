@@ -370,6 +370,14 @@ export class DatabaseService {
     }
   }
 
+  async addSyncPerServerStatusColumn(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(notes)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!existingNames.includes("sync_per_server_status")) {
+      await this.db.execute(`ALTER TABLE notes ADD COLUMN sync_per_server_status TEXT`);
+    }
+  }
+
   async addCreatedAtToReminders(): Promise<void> {
     const existing = await this.db.query("PRAGMA table_info(reminders)");
     const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
@@ -452,6 +460,47 @@ export class DatabaseService {
       lastSyncedAt: row.last_synced_at ?? null,
       syncConfigId: row.sync_config_id ?? null,
     };
+  }
+
+  async getNoteSyncCounts(): Promise<Record<string, { synced: number; error: number }>> {
+    const result = await this.db.query(
+      "SELECT id, sync_per_server_status FROM notes WHERE sync_per_server_status IS NOT NULL"
+    );
+    const counts: Record<string, { synced: number; error: number }> = {};
+    for (const row of result.values ?? []) {
+      if (!row.sync_per_server_status) continue;
+      try {
+        const perServer: Record<string, string> = JSON.parse(row.sync_per_server_status);
+        let synced = 0, error = 0;
+        for (const status of Object.values(perServer)) {
+          if (status === "synced") synced++;
+          else if (status === "error") error++;
+        }
+        if (synced > 0 || error > 0) counts[row.id] = { synced, error };
+      } catch { /* ignore */ }
+    }
+    return counts;
+  }
+
+  async setNotePerServerStatus(
+    noteId: string,
+    syncConfigId: string,
+    status: "synced" | "error"
+  ): Promise<void> {
+    const result = await this.db.query(
+      "SELECT sync_per_server_status FROM notes WHERE id = ?",
+      [noteId]
+    );
+    const row = result.values?.[0];
+    let perServer: Record<string, string> = {};
+    if (row?.sync_per_server_status) {
+      try { perServer = JSON.parse(row.sync_per_server_status); } catch { /* ignore */ }
+    }
+    perServer[syncConfigId] = status;
+    await this.db.run(
+      "UPDATE notes SET sync_per_server_status = ? WHERE id = ?",
+      [JSON.stringify(perServer), noteId]
+    );
   }
 
   async getTablesInfo(): Promise<{ name: string; count: number }[]> {

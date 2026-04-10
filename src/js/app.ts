@@ -16,6 +16,7 @@ import { addApplicationSyncFields } from "../services/migrations/addApplicationS
 import { addUserGraphicPrefs } from "../services/migrations/addUserGraphicPrefs";
 import { addSelectedSyncConfigIds } from "../services/migrations/addSelectedSyncConfigIds";
 import { addOdooVersionToApplications } from "../services/migrations/addOdooVersionToApplications";
+import { addSyncPerServerStatus } from "../services/migrations/addSyncPerServerStatus";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
 import type { FontFamily } from "../models/graphicPrefs";
 import { SyncService } from "../services/syncService";
@@ -112,6 +113,11 @@ async function startApp() {
 			version: 2026040901,
 			description: "Ajout de la version Odoo détectée sur les applications",
 			run: addOdooVersionToApplications,
+		},
+		{
+			version: 2026041001,
+			description: "Ajout du statut de synchronisation par serveur sur les notes",
+			run: addSyncPerServerStatus,
 		},
 	]);
 

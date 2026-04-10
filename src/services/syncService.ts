@@ -390,6 +390,8 @@ export class SyncService {
         syncStatus: "synced",
         lastSyncedAt: new Date().toISOString(),
       });
+      const configId = creds.odooUrl + "|" + creds.username;
+      await this.db.setNotePerServerStatus(noteId, configId, "synced");
     });
   }
 
@@ -474,6 +476,8 @@ export class SyncService {
           syncStatus: "synced",
           lastSyncedAt: new Date().toISOString(),
         });
+        const configId = creds.odooUrl + "|" + creds.username;
+        await this.db.setNotePerServerStatus(local.id, configId, "synced");
         updated++;
       }
       return updated;
@@ -501,6 +505,8 @@ export class SyncService {
         result.pushed++;
       } catch (e: unknown) {
         result.errors.push(`Push ${note.id}: ${e instanceof Error ? e.message : String(e)}`);
+        const configId = syncConfigId ?? (creds.odooUrl + "|" + creds.username);
+        await this.db.setNotePerServerStatus(note.id, configId, "error").catch(() => {});
       }
     }
 

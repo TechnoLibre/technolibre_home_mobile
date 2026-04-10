@@ -312,6 +312,7 @@ export class NoteComponent extends EnhancedComponent {
 			this.state.syncStatus = "synced";
 		} catch (e: unknown) {
 			this.state.syncStatus = "error";
+			await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
 			const msg = e instanceof Error ? e.message : String(e);
 			try { await navigator.clipboard.writeText(msg); } catch { /* clipboard unavailable */ }
 			await Dialog.alert({ message: `Erreur sync :\n${msg}\n\n(texte copié dans le presse-papier)` });
@@ -327,6 +328,7 @@ export class NoteComponent extends EnhancedComponent {
 			try {
 				await this.doPushCore(cfg);
 			} catch (e: unknown) {
+				await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
 				errors.push(`${cfg.name || cfg.appUrl}: ${e instanceof Error ? e.message : String(e)}`);
 			}
 		}
