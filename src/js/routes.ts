@@ -7,6 +7,9 @@ import { ApplicationsEditComponent } from "../components/applications/edit/appli
 import { IntentComponent } from "../components/intent/intent_component";
 import { NoteListComponent } from "../components/note_list/note_list_component";
 import { NoteComponent } from "../components/note/note_component";
+import { ServersAddComponent } from "../components/servers/add/servers_add_component";
+import { ServersEditComponent } from "../components/servers/edit/servers_edit_component";
+import { ServersDeployComponent } from "../components/servers/deploy/servers_deploy_component";
 
 export interface Route {
 	pathname: string;
@@ -18,6 +21,9 @@ export const routes: Route[] = [
 	{ pathname: "/applications/edit/:url/:username", component: ApplicationsEditComponent },
 	{ pathname: "/applications/add", component: ApplicationsAddComponent },
 	{ pathname: "/applications", component: ApplicationsComponent },
+	{ pathname: "/servers/edit/:host/:username", component: ServersEditComponent },
+	{ pathname: "/servers/add", component: ServersAddComponent },
+	{ pathname: "/servers/deploy/:host/:username", component: ServersDeployComponent },
 	{ pathname: "/notes", component: NoteListComponent },
 	{ pathname: "/notes/edit/:id", component: NoteListComponent },
 	{ pathname: "/note/:id", component: NoteComponent },

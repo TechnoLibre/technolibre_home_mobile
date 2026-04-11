@@ -6,6 +6,7 @@ import { IntentService } from "../services/intentService";
 import { DatabaseService } from "../services/databaseService";
 import { SyncService } from "../services/syncService";
 import { NotificationService } from "../services/notificationService";
+import { ServerService } from "../services/serverService";
 import { Events } from "../constants/events";
 
 export abstract class EnhancedComponent extends Component {
@@ -41,6 +42,10 @@ export abstract class EnhancedComponent extends Component {
 
 	public get notificationService(): NotificationService {
 		return this.env.notificationService;
+	}
+
+	public get serverService(): ServerService {
+		return this.env.serverService;
 	}
 
 	public navigate(url: string): void {

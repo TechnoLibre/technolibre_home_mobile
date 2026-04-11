@@ -17,6 +17,8 @@ import { addUserGraphicPrefs } from "../services/migrations/addUserGraphicPrefs"
 import { addSelectedSyncConfigIds } from "../services/migrations/addSelectedSyncConfigIds";
 import { addOdooVersionToApplications } from "../services/migrations/addOdooVersionToApplications";
 import { addSyncPerServerStatus } from "../services/migrations/addSyncPerServerStatus";
+import { addServersTable } from "../services/migrations/addServersTable";
+import { ServerService } from "../services/serverService";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
 import type { FontFamily } from "../models/graphicPrefs";
 import { SyncService } from "../services/syncService";
@@ -119,6 +121,11 @@ async function startApp() {
 			description: "Ajout du statut de synchronisation par serveur sur les notes",
 			run: addSyncPerServerStatus,
 		},
+		{
+			version: 2026041101,
+			description: "Création de la table des serveurs SSH",
+			run: addServersTable,
+		},
 	]);
 
 	setBootStep("Chargement des préférences graphiques…");
@@ -138,6 +145,7 @@ async function startApp() {
 	const syncService = new SyncService(db);
 	const reminderService = new ReminderService(db);
 	const notificationService = new NotificationService(syncService, appService, eventBus);
+	const serverService = new ServerService(db);
 	notificationService.start();
 
 	// Re-schedule any reminders whose notification batch is expiring
@@ -145,7 +153,7 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, noteService, intentService, databaseService: db, syncService, notificationService };
+	const env = { eventBus, router, appService, noteService, intentService, databaseService: db, syncService, notificationService, serverService };
 
 	setBootStep("Montage de l'interface…");
 	await mount(RootComponent, document.body, { env });

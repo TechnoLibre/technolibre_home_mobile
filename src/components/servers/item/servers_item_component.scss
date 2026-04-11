@@ -1,0 +1,73 @@
+@use "../../../css/mixins.scss";
+
+#applications-component .servers-item {
+    align-items: stretch;
+    border: 2px solid var(--section-border-color);
+    border-radius: 0.5em;
+    background-color: #151515;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: background-color 150ms ease-in-out;
+
+    & + .servers-item {
+        margin-top: 0.75em;
+    }
+
+    &__info {
+        display: flex;
+        flex-direction: column;
+        padding: 0.75rem 1rem;
+        gap: 0.2rem;
+    }
+
+    &__label {
+        font-weight: 600;
+        font-size: 1rem;
+    }
+
+    &__address {
+        color: var(--text-greyed-out);
+        font-family: monospace;
+        font-size: 0.85rem;
+    }
+
+    &__path {
+        color: var(--text-greyed-out);
+        font-size: 0.8rem;
+    }
+
+    &__actions {
+        display: flex;
+        gap: 0.5rem;
+        padding: 0 0.75rem 0.75rem;
+    }
+
+    &__btn {
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 0.85rem;
+        outline: none;
+        padding: 0.6rem 0.9rem;
+        transition: background-color 150ms ease-in-out;
+
+        &--delete {
+            background-color: var(--btn-red-color);
+            &:hover { background-color: var(--btn-red-hover-color); }
+        }
+
+        &--edit {
+            background-color: var(--btn-blue-color);
+            &:hover { background-color: var(--btn-blue-hover-color); }
+        }
+
+        &--deploy {
+            background-color: #2e7d32;
+            flex: 1;
+            font-weight: 600;
+            &:hover { background-color: #388e3c; }
+        }
+    }
+}

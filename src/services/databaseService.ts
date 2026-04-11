@@ -6,6 +6,7 @@ import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { Application } from "../models/application";
 import { Note, NoteEntry } from "../models/note";
 import { Reminder } from "../models/reminder";
+import { Server } from "../models/server";
 import { StorageConstants } from "../constants/storage";
 
 export type SyncStatus = "local" | "pending" | "synced" | "conflict" | "error";
@@ -128,6 +129,92 @@ export class DatabaseService {
         batch_ends_at TEXT
       )
     `);
+  }
+
+  // Servers
+
+  async createServersTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS servers (
+        host         TEXT NOT NULL,
+        port         INTEGER NOT NULL DEFAULT 22,
+        username     TEXT NOT NULL,
+        auth_type    TEXT NOT NULL DEFAULT 'password',
+        password     TEXT NOT NULL DEFAULT '',
+        private_key  TEXT NOT NULL DEFAULT '',
+        passphrase   TEXT NOT NULL DEFAULT '',
+        label        TEXT NOT NULL DEFAULT '',
+        deploy_path  TEXT NOT NULL DEFAULT '~/erplibre',
+        PRIMARY KEY (host, username)
+      )
+    `);
+  }
+
+  async getAllServers(): Promise<Server[]> {
+    const result = await this.db.query("SELECT * FROM servers");
+    return (result.values ?? []).map((row: any) => this.rowToServer(row));
+  }
+
+  async addServer(server: Server): Promise<void> {
+    await this.db.run(
+      `INSERT INTO servers
+        (host, port, username, auth_type, password, private_key, passphrase, label, deploy_path)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        server.host,
+        server.port ?? 22,
+        server.username,
+        server.authType ?? "password",
+        server.password ?? "",
+        server.privateKey ?? "",
+        server.passphrase ?? "",
+        server.label ?? "",
+        server.deployPath ?? "~/erplibre",
+      ]
+    );
+  }
+
+  async deleteServer(host: string, username: string): Promise<void> {
+    await this.db.run(
+      "DELETE FROM servers WHERE host = ? AND username = ?",
+      [host, username]
+    );
+  }
+
+  async updateServer(host: string, username: string, server: Server): Promise<void> {
+    await this.db.run(
+      `UPDATE servers SET
+        host = ?, port = ?, username = ?, auth_type = ?,
+        password = ?, private_key = ?, passphrase = ?, label = ?, deploy_path = ?
+       WHERE host = ? AND username = ?`,
+      [
+        server.host,
+        server.port ?? 22,
+        server.username,
+        server.authType ?? "password",
+        server.password ?? "",
+        server.privateKey ?? "",
+        server.passphrase ?? "",
+        server.label ?? "",
+        server.deployPath ?? "~/erplibre",
+        host,
+        username,
+      ]
+    );
+  }
+
+  private rowToServer(row: any): Server {
+    return {
+      host: row.host,
+      port: row.port ?? 22,
+      username: row.username,
+      authType: row.auth_type === "key" ? "key" : "password",
+      password: row.password ?? "",
+      privateKey: row.private_key ?? "",
+      passphrase: row.passphrase ?? "",
+      label: row.label ?? "",
+      deployPath: row.deploy_path ?? "~/erplibre",
+    };
   }
 
   // User Graphic Preferences
