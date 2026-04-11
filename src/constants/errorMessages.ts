@@ -28,5 +28,11 @@ export const ErrorMessages: Record<string, string> = {
 	VOICE_RECORDING_INCOMPATIBLE: "Appareil incompatible pour l'enregistrement de messages vocaux.",
 	VOICE_RECORDING_PERMISSIONS: "Permissions manquantes pour enregistrer un message vocal.",
 	VOICE_RECORDING_GENERIC: "Échec de la tentative d'enregistrement de message vocal.",
-	VIDEO_RECORDING_WEB: "Les enregistrements vidéo ne sont pas supportés sur la version web."
+	VIDEO_RECORDING_WEB: "Les enregistrements vidéo ne sont pas supportés sur la version web.",
+	SERVER_ALREADY_EXISTS: "Un serveur avec cet identifiant existe déjà.",
+	NO_SERVER_MATCH: "Aucun serveur ne correspond aux données saisies.",
+	SERVER_DELETE: "Échec de la suppression du serveur du stockage local.",
+	SERVER_SAVE: "Échec de la sauvegarde du serveur dans le stockage local.",
+	SSH_CONNECT_FAILED: "Impossible de se connecter au serveur SSH.",
+	SSH_COMMAND_FAILED: "La commande SSH a échoué.",
 }

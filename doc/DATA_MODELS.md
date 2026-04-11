@@ -24,16 +24,30 @@ Clé primaire composite : `(url, username)`
 
 ```typescript
 interface Note {
-  id: string        // UUID v4
+  id: string           // UUID v4
   title: string
-  date?: string     // Format ISO 8601
+  date?: string        // Format ISO 8601
   done: boolean
   archived: boolean
   pinned: boolean
+  priority?: 1 | 2 | 3 | 4  // Matrice d'Eisenhower (optionnel)
   tags: string[]
   entries: NoteEntry[]
 }
 ```
+
+### Priorité Eisenhower
+
+Le champ `priority` représente les quatre quadrants de la matrice d'Eisenhower :
+
+| Valeur | Quadrant |
+|--------|----------|
+| `1` | Urgent + Important |
+| `2` | Non urgent + Important |
+| `3` | Urgent + Non important |
+| `4` | Non urgent + Non important |
+
+La valeur est `undefined` si aucune priorité n'est assignée.
 
 ---
 
@@ -140,6 +154,76 @@ interface NoteEntryDate {
 
 ---
 
+## Server
+
+Configuration d'un serveur SSH pour le déploiement et la supervision.
+
+```typescript
+interface Server {
+  host: string                   // Nom d'hôte ou adresse IP
+  port: number                   // Port SSH (défaut 22)
+  username: string               // Utilisateur SSH
+  authType: "password" | "key"  // Mode d'authentification
+  password: string               // Mot de passe (si authType="password")
+  privateKey: string             // Clé privée PEM (si authType="key")
+  passphrase: string             // Passphrase de la clé (optionnel)
+  label: string                  // Nom d'affichage
+  deployPath: string             // Répertoire de déploiement (défaut ~/erplibre)
+}
+
+type ServerID = Pick<Server, "host" | "username">
+```
+
+Clé primaire composite : `(host, username)`
+
+---
+
+## Workspace
+
+Répertoire de travail ERPLibre déployé sur un serveur.
+
+```typescript
+interface Workspace {
+  host: string      // Hôte du serveur parent
+  username: string  // Utilisateur SSH
+  path: string      // Chemin absolu sur le serveur
+}
+```
+
+Clé primaire composite : `(host, username, path)`
+
+---
+
+## DeployStep / ActiveDeployment
+
+État d'un déploiement en cours ou terminé, stocké dans `DeploymentService`.
+
+```typescript
+type StepStatus = "pending" | "running" | "success" | "warning" | "error"
+
+interface DeployStep {
+  label: string
+  status: StepStatus
+  durationMs: number | null
+  errorMessage: string | null
+  logs: string[]
+  autoScroll: boolean
+}
+
+interface ActiveDeployment {
+  host: string
+  username: string
+  path: string
+  server: Server
+  steps: DeployStep[]
+  done: boolean
+  failedStepIndex: number | null
+  startedAt: number    // Date.now() timestamp
+}
+```
+
+---
+
 ## Intents Android
 
 ```typescript
@@ -202,6 +286,28 @@ CREATE TABLE notes (
 CREATE TABLE user_graphic_prefs (
   key   TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
+);
+
+-- Serveurs SSH
+CREATE TABLE servers (
+  host         TEXT NOT NULL,
+  port         INTEGER NOT NULL DEFAULT 22,
+  username     TEXT NOT NULL,
+  auth_type    TEXT NOT NULL DEFAULT 'password',
+  password     TEXT NOT NULL DEFAULT '',
+  private_key  TEXT NOT NULL DEFAULT '',
+  passphrase   TEXT NOT NULL DEFAULT '',
+  label        TEXT NOT NULL DEFAULT '',
+  deploy_path  TEXT NOT NULL DEFAULT '~/erplibre',
+  PRIMARY KEY (host, username)
+);
+
+-- Répertoires de travail déployés
+CREATE TABLE server_workspaces (
+  host     TEXT NOT NULL,
+  username TEXT NOT NULL,
+  path     TEXT NOT NULL,
+  PRIMARY KEY (host, username, path)
 );
 
 -- Rappels

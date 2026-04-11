@@ -17,6 +17,7 @@ import { OptionsMigrationHistoryComponent } from "./migration_history/options_mi
 import { OptionsSyncComponent } from "./sync/options_sync_component";
 import { OptionsRemindersComponent } from "./reminders/options_reminders_component";
 import { OptionsGraphicComponent } from "./graphic/options_graphic_component";
+import { OptionsErplibreComponent } from "./erplibre/options_erplibre_component";
 
 export class OptionsComponent extends EnhancedComponent {
 	static template = xml`
@@ -27,7 +28,7 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsToggleBiometryComponent />
         <li class="options-list__item" t-if="state.isDebug">
           <a href="#" t-on-click.stop.prevent="onDatabaseClick">
-            Base de données ›
+            🗄️ Base de données ›
           </a>
         </li>
         <OptionsPermissionsComponent />
@@ -37,6 +38,11 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsRemindersComponent />
         <OptionsGraphicComponent />
         <OptionsChangelogComponent />
+        <li class="options-list__item">
+          <a href="#" t-on-click.stop.prevent="onErplibreClick">
+            🏠 ERPLibre ›
+          </a>
+        </li>
       </ul>
     </div>
   `;
@@ -69,6 +75,10 @@ export class OptionsComponent extends EnhancedComponent {
 		this.navigate("/options/database");
 	}
 
+	onErplibreClick() {
+		this.navigate("/options/erplibre");
+	}
+
 	static components = {
 		HeadingComponent,
 		OptionsClearCacheComponent,
@@ -80,5 +90,6 @@ export class OptionsComponent extends EnhancedComponent {
 		OptionsSyncComponent,
 		OptionsRemindersComponent,
 		OptionsGraphicComponent,
+		OptionsErplibreComponent,
 	};
 }

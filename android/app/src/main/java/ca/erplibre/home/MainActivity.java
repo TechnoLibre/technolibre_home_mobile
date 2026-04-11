@@ -16,6 +16,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(RawHttpPlugin.class);
+        registerPlugin(SshPlugin.class);
         super.onCreate(savedInstanceState);
         CastContext.getSharedInstance(this);
     }
@@ -27,6 +28,21 @@ public class MainActivity extends BridgeActivity {
         // method that shifts the WebView up by the keyboard height. Override it here
         // (after Capacitor plugin init) with a listener that only applies system bar
         // insets, so the keyboard appears as an overlay without moving the layout.
+        applyKeyboardOverlayInsetsListener();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // Re-apply the override every time the activity becomes active. When the app
+        // is launched via a share intent, SendIntentActivity sits on top of
+        // MainActivity; when it finishes, only onResume() is called (not onStart()).
+        // Without this, the EdgeToEdge IME listener installed during the intent flow
+        // can persist and shift the WebView off-screen when the keyboard opens.
+        applyKeyboardOverlayInsetsListener();
+    }
+
+    private void applyKeyboardOverlayInsetsListener() {
         View webView = getBridge().getWebView();
         ViewCompat.setOnApplyWindowInsetsListener(webView, (v, windowInsets) -> {
             Insets systemBarsInsets = windowInsets.getInsets(

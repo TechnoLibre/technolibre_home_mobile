@@ -51,6 +51,27 @@ class MockDBConnection {
   }
 
   async run(sql: string, values?: any[]) {
+    const insertOrIgnoreMatch = sql.match(
+      /INSERT OR IGNORE INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i
+    );
+    if (insertOrIgnoreMatch && values) {
+      const table = insertOrIgnoreMatch[1];
+      const cols = insertOrIgnoreMatch[2].split(",").map((c) => c.trim());
+      const rows = this.tables.get(table) || [];
+      // Ignore if a row with matching first-column value exists (PK check)
+      const pkCol = cols[0];
+      const pkValue = values[0];
+      const exists = rows.some((r) => r[pkCol] === pkValue);
+      if (!exists) {
+        const row: Row = {};
+        cols.forEach((col, i) => { row[col] = values[i]; });
+        rows.push(row);
+        this.tables.set(table, rows);
+        return { changes: { changes: 1 } };
+      }
+      return { changes: { changes: 0 } };
+    }
+
     const insertOrReplaceMatch = sql.match(
       /INSERT OR REPLACE INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i
     );
@@ -103,7 +124,7 @@ class MockDBConnection {
     }
 
     const updateMatch = sql.match(
-      /UPDATE\s+(\w+)\s+SET\s+(.+)\s+WHERE\s+(.+)/i
+      /UPDATE\s+(\w+)\s+SET\s+([\s\S]+?)\s+WHERE\s+([\s\S]+)/i
     );
     if (updateMatch && values) {
       const table = updateMatch[1];

@@ -3,6 +3,7 @@ import {useState, xml} from "@odoo/owl";
 import {Dialog} from "@capacitor/dialog";
 
 import {Application, ApplicationID} from "../../models/application";
+import {Server, ServerID} from "../../models/server";
 import {BiometryUtils} from "../../utils/biometryUtils";
 import {EnhancedComponent} from "../../js/enhancedComponent";
 import {ErrorMessages} from "../../constants/errorMessages";
@@ -10,6 +11,7 @@ import {Events} from "../../constants/events";
 import {WebViewUtils} from "../../utils/webViewUtils";
 
 import {ApplicationsItemComponent} from "./item/applications_item_component";
+import {ServersItemComponent} from "../servers/item/servers_item_component";
 import {HeadingComponent} from "../heading/heading_component";
 
 const ENV = {
@@ -31,45 +33,113 @@ export class ApplicationsComponent extends EnhancedComponent {
         <HeadingComponent title="'Applications'" />
         <section id="applications">
           <div id="applications-options">
+            <button class="section__btn-toggle"
+                    t-on-click="() => this.state.showApps = !this.state.showApps">
+              <t t-if="state.showApps">Masquer (<t t-esc="state.applications.length" />)</t>
+              <t t-else="">Afficher (<t t-esc="state.applications.length" />)</t>
+            </button>
             <a
               id="applications-add"
               t-on-click="event => this.onAppAddClick(event)"
             >
-              Ajouter
+              Ajouter une application
             </a>
           </div>
-          <ul id="applications-list" t-if="state.applications.length != 0">
-            <ApplicationsItemComponent
-              t-foreach="state.applications"
-              t-as="app"
-              t-key="app.url + ':' + app.username"
-              app="app"
-              openApp.bind="openApplication"
-              editApp.bind="editApplication"
-              deleteApp.bind="deleteApplication"
-            />
-          </ul>
-          <div id="applications-empty" t-else="">
-            <p>Il n'y a pas d'application dans le stockage local.</p>
+          <t t-if="state.showApps">
+            <ul id="applications-list" t-if="state.applications.length != 0">
+              <ApplicationsItemComponent
+                t-foreach="state.applications"
+                t-as="app"
+                t-key="app.url + ':' + app.username"
+                app="app"
+                openApp.bind="openApplication"
+                editApp.bind="editApplication"
+                deleteApp.bind="deleteApplication"
+              />
+            </ul>
+            <div id="applications-empty" t-else="">
+              <p>Il n'y a pas d'application dans le stockage local.</p>
+            </div>
+          </t>
+        </section>
+
+        <HeadingComponent title="'Serveurs'" />
+        <section id="servers">
+          <div id="servers-options">
+            <button class="section__btn-toggle"
+                    t-on-click="() => this.state.showServers = !this.state.showServers">
+              <t t-if="state.showServers">Masquer (<t t-esc="state.servers.length" />)</t>
+              <t t-else="">Afficher (<t t-esc="state.servers.length" />)</t>
+            </button>
+            <a
+              id="servers-add"
+              t-on-click="event => this.onServerAddClick(event)"
+            >
+              Ajouter un serveur
+            </a>
           </div>
+          <t t-if="state.showServers">
+            <ul id="servers-list" t-if="state.servers.length != 0">
+              <ServersItemComponent
+                t-foreach="state.servers"
+                t-as="server"
+                t-key="server.host + ':' + server.username"
+                server="server"
+                deleteServer.bind="deleteServer"
+                editServer.bind="editServer"
+              />
+            </ul>
+            <div id="servers-empty" t-else="">
+              <p>Il n'y a pas de serveur dans le stockage local.</p>
+            </div>
+          </t>
         </section>
       </div>
     `;
 
-    static components = {HeadingComponent, ApplicationsItemComponent};
+    static components = {HeadingComponent, ApplicationsItemComponent, ServersItemComponent};
 
     async setup() {
-        this.state = useState({applications: new Array<Application>()});
+        this.state = useState({
+            applications: new Array<Application>(),
+            servers: new Array<Server>(),
+            showApps: false,
+            showServers: false,
+        });
 
         this.state.applications = await this.appService.getApps();
+        this.state.servers = await this.serverService.getServers();
 
         this.state.debug = ENV.DEBUG_DEV;
     }
 
     onAppAddClick(event: Event) {
         event.preventDefault();
-
         this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/applications/add"});
+    }
+
+    onServerAddClick(event: Event) {
+        event.preventDefault();
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/servers/add"});
+    }
+
+    async editServer(serverID: ServerID) {
+        const encodedHost = encodeURIComponent(serverID.host);
+        const encodedUsername = encodeURIComponent(serverID.username);
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
+            url: `/servers/edit/${encodedHost}/${encodedUsername}`,
+        });
+    }
+
+    async deleteServer(serverID: ServerID) {
+        const deleteSucceeded = await this.serverService.delete(serverID).catch((error: unknown) => {
+            Dialog.alert({message: error instanceof Error ? error.message : ErrorMessages.SERVER_DELETE});
+            return false;
+        });
+
+        if (deleteSucceeded) {
+            this.state.servers = await this.serverService.getServers();
+        }
     }
 
     async openApplication(appID: ApplicationID) {

@@ -15,7 +15,7 @@ export class OptionsMigrationHistoryComponent extends EnhancedComponent {
   static template = xml`
     <li class="options-list__item">
       <a href="#" t-on-click.stop.prevent="onShowHistoryClick">
-        Historique migrations
+        🗃️ Historique migrations
       </a>
     </li>
   `;

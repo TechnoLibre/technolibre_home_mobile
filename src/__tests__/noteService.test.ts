@@ -201,4 +201,52 @@ describe("NoteService with SQLite", () => {
       expect(notes[0].entries[0].type).toBe("video");
     });
   });
+
+  // ── Eisenhower Matrix priority ─────────────────────────────────────────────
+
+  describe("Eisenhower Matrix priority (Note.priority field)", () => {
+    it("getNewNote returns note without priority set", () => {
+      const note = noteService.getNewNote("test-id");
+      expect(note.priority).toBeUndefined();
+    });
+
+    it("persists priority when adding a note", async () => {
+      await noteService.crud.add(makeNote({ priority: 1 }));
+      const notes = await noteService.getNotes();
+      expect(notes[0].priority).toBe(1);
+    });
+
+    it("persists all four quadrant values (1–4)", async () => {
+      for (const p of [1, 2, 3, 4] as const) {
+        await noteService.crud.add(makeNote({ id: `note-${p}`, priority: p }));
+      }
+      const notes = await noteService.getNotes();
+      const priorities = notes.map((n) => n.priority).sort();
+      expect(priorities).toEqual([1, 2, 3, 4]);
+    });
+
+    it("updates priority via crud.edit", async () => {
+      await noteService.crud.add(makeNote({ priority: 1 }));
+      await noteService.crud.edit("note-1", makeNote({ priority: 3 }));
+      const notes = await noteService.getNotes();
+      expect(notes[0].priority).toBe(3);
+    });
+
+    it("clears priority by editing to undefined", async () => {
+      await noteService.crud.add(makeNote({ priority: 2 }));
+      const updated = makeNote();
+      delete updated.priority;
+      await noteService.crud.edit("note-1", updated);
+      const notes = await noteService.getNotes();
+      expect(notes[0].priority).toBeUndefined();
+    });
+
+    it("notes without priority coexist with prioritised notes", async () => {
+      await noteService.crud.add(makeNote({ id: "n1", priority: 1 }));
+      await noteService.crud.add(makeNote({ id: "n2" }));
+      const notes = await noteService.getNotes();
+      expect(notes.find((n) => n.id === "n1")!.priority).toBe(1);
+      expect(notes.find((n) => n.id === "n2")!.priority).toBeUndefined();
+    });
+  });
 });

@@ -47,6 +47,21 @@ export class NoteListControlsComponent extends EnhancedComponent {
 					<div class="pill"></div>
 				</div>
 			</a>
+			<a
+				class="notes__control notes__control__sort-priority"
+				href="#"
+				t-on-click.stop.prevent="props.onToggleSortClick"
+			>
+				<p>Trier par priorité</p>
+				<div
+					class="notes__control__sort-priority__indicator"
+					t-att-class="{
+						active: props.sortByPriority
+					}"
+				>
+					<div class="pill"></div>
+				</div>
+			</a>
 		</section>
 	`;
 }

@@ -15,14 +15,14 @@ export class OptionsToggleBiometryComponent extends EnhancedComponent {
         t-on-click.stop.prevent="onEnableBiometryClick"
         t-if="state.hasUserEnabledBiometry === false"
       >
-        Activer biométrie
+        👆 Activer biométrie
       </a>
       <a
         href="#"
         t-on-click.stop.prevent="onDisableBiometryClick"
         t-if="state.hasUserEnabledBiometry === true"
       >
-        Désactiver biométrie
+        👆 Désactiver biométrie
       </a>
     </li>
   `;

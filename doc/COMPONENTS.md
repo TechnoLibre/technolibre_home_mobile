@@ -87,6 +87,67 @@ Permet de créer une nouvelle note ou d'ajouter le contenu à une note existante
 
 ---
 
+### ServersComponent — `/servers`
+
+Liste et gestion des serveurs SSH.
+
+Sous-composants :
+- **ServersAddComponent** — formulaire d'ajout (`/servers/add`)
+- **ServersEditComponent** — formulaire d'édition (`/servers/edit/:host/:username`)
+- **ServersItemComponent** — carte individuelle d'un serveur avec badge de déploiement
+
+---
+
+### ServersSettingsComponent — `/servers/:host/:username`
+
+Page de détail d'un serveur. Affiche les workspaces découverts et offre un accès aux sous-pages.
+
+Fonctionnalités :
+- **Lancement du déploiement** — démarre un déploiement ERPLibre via SSH
+- **Gestion des workspaces** — liste et suppression des workspaces persistés
+- **Navigation** vers le terminal SSH et le moniteur de ressources
+- **Badge de déploiement en cours** — indicateur visuel si un déploiement est actif
+
+---
+
+### ServersWorkspaceComponent — `/servers/:host/:username/workspace/:path`
+
+Terminal SSH intégré et logs de déploiement pour un workspace donné.
+
+Fonctionnalités :
+- **Terminal SSH interactif** — envoi de commandes via `SshPlugin`
+- **Logs de déploiement** — affichage des étapes avec statut coloré et durée
+- **Reprise de déploiement** — bouton pour relancer depuis l'étape en échec
+- **Auto-scroll** — suivi automatique des dernières lignes, désactivable manuellement
+- **Navigation haut/bas** — raccourcis pour atteindre le début/fin des logs
+- **Breadcrumbs** — fil d'Ariane vers la liste des serveurs
+
+---
+
+### ServersDeployComponent — `/servers/:host/:username/deploy`
+
+Vue de progression du déploiement en cours sur un serveur.
+
+---
+
+### ServersResourcesComponent — `/servers/:host/:username/resources`
+
+Moniteur de ressources système en temps réel, alimenté via SSH.
+
+Métriques affichées :
+- **CPU** — barre d'utilisation (user + sy + io) et charge moyenne (1/5/15 min)
+- **RAM** — barre double segment (vert = utilisé, jaune = cache/buffers) + métriques détaillées
+- **Swap** — barre d'utilisation et taille
+- **Températures** — capteurs lm-sensors, groupés par puce, colorés selon les seuils high/crit
+- **Disques** — partitions `df -hP`, badge 🔒 pour LUKS et LVM-over-LUKS
+- **Réseau** — vitesse RX/TX instantanée (delta sur 1 s via `/proc/net/dev`)
+- **Uptime** — durée de fonctionnement
+- **Utilisateurs** — sessions actives avec comptage par nom
+
+Les fonctions de parsing SSH sont extraites dans `src/utils/serverResourceParsers.ts` et couvertes par des tests unitaires.
+
+---
+
 ### OptionsComponent — `/options`
 Paramètres de l'application.
 
@@ -99,6 +160,8 @@ Fonctionnalités :
 - Voir le changelog
 - Vider le cache
 - Historique des migrations de données
+- **Page ERPLibre** (`/options/erplibre`) — informations sur le projet, logo, liens officiels
+- **Boutons d'erreur dans le dialogue d'application** — copier le message d'erreur dans le presse-papier, ouvrir un ticket GitHub pré-rempli
 
 ## Classe de base `EnhancedComponent`
 

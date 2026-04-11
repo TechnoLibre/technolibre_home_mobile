@@ -15,14 +15,14 @@ export class OptionsDeviceInfoComponent extends EnhancedComponent {
     <t>
       <li class="options-list__item">
         <a href="#" t-on-click.stop.prevent="onShowDeviceInfoClick">
-          Infos appareil
+          📱 Infos appareil
         </a>
       </li>
       <li t-if="!state.devModeEnabled"
           class="options-list__item options-list__item--dev-unlock"
           t-att-class="devUnlockClass"
           t-on-click="onDevModeClick">
-        <t t-if="state.clicks === 0">Activer mode dev</t>
+        <t t-if="state.clicks === 0">🔧 Activer mode dev</t>
         <t t-else=""><t t-esc="CLICKS_REQUIRED - state.clicks" /></t>
       </li>
     </t>

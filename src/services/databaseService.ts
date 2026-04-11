@@ -6,6 +6,8 @@ import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { Application } from "../models/application";
 import { Note, NoteEntry } from "../models/note";
 import { Reminder } from "../models/reminder";
+import { Server } from "../models/server";
+import { Workspace } from "../models/workspace";
 import { StorageConstants } from "../constants/storage";
 
 export type SyncStatus = "local" | "pending" | "synced" | "conflict" | "error";
@@ -128,6 +130,139 @@ export class DatabaseService {
         batch_ends_at TEXT
       )
     `);
+  }
+
+  // Servers
+
+  async createServersTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS servers (
+        host         TEXT NOT NULL,
+        port         INTEGER NOT NULL DEFAULT 22,
+        username     TEXT NOT NULL,
+        auth_type    TEXT NOT NULL DEFAULT 'password',
+        password     TEXT NOT NULL DEFAULT '',
+        private_key  TEXT NOT NULL DEFAULT '',
+        passphrase   TEXT NOT NULL DEFAULT '',
+        label        TEXT NOT NULL DEFAULT '',
+        deploy_path  TEXT NOT NULL DEFAULT '~/erplibre',
+        PRIMARY KEY (host, username)
+      )
+    `);
+  }
+
+  async getAllServers(): Promise<Server[]> {
+    const result = await this.db.query("SELECT * FROM servers");
+    return (result.values ?? []).map((row: any) => this.rowToServer(row));
+  }
+
+  async addServer(server: Server): Promise<void> {
+    await this.db.run(
+      `INSERT INTO servers
+        (host, port, username, auth_type, password, private_key, passphrase, label, deploy_path)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        server.host,
+        server.port ?? 22,
+        server.username,
+        server.authType ?? "password",
+        server.password ?? "",
+        server.privateKey ?? "",
+        server.passphrase ?? "",
+        server.label ?? "",
+        server.deployPath ?? "~/erplibre",
+      ]
+    );
+  }
+
+  async deleteServer(host: string, username: string): Promise<void> {
+    await this.db.run(
+      "DELETE FROM servers WHERE host = ? AND username = ?",
+      [host, username]
+    );
+  }
+
+  async updateServer(host: string, username: string, server: Server): Promise<void> {
+    await this.db.run(
+      `UPDATE servers SET
+        host = ?, port = ?, username = ?, auth_type = ?,
+        password = ?, private_key = ?, passphrase = ?, label = ?, deploy_path = ?
+       WHERE host = ? AND username = ?`,
+      [
+        server.host,
+        server.port ?? 22,
+        server.username,
+        server.authType ?? "password",
+        server.password ?? "",
+        server.privateKey ?? "",
+        server.passphrase ?? "",
+        server.label ?? "",
+        server.deployPath ?? "~/erplibre",
+        host,
+        username,
+      ]
+    );
+  }
+
+  private rowToServer(row: any): Server {
+    return {
+      host: row.host,
+      port: row.port ?? 22,
+      username: row.username,
+      authType: row.auth_type === "key" ? "key" : "password",
+      password: row.password ?? "",
+      privateKey: row.private_key ?? "",
+      passphrase: row.passphrase ?? "",
+      label: row.label ?? "",
+      deployPath: row.deploy_path ?? "~/erplibre",
+    };
+  }
+
+  // Workspaces
+
+  async createServerWorkspacesTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS server_workspaces (
+        host     TEXT NOT NULL,
+        username TEXT NOT NULL,
+        path     TEXT NOT NULL,
+        PRIMARY KEY (host, username, path)
+      )
+    `);
+  }
+
+  async getWorkspacesForServer(host: string, username: string): Promise<Workspace[]> {
+    const result = await this.db.query(
+      "SELECT * FROM server_workspaces WHERE host = ? AND username = ? ORDER BY path",
+      [host, username]
+    );
+    return (result.values ?? []).map((row: any) => ({
+      host: row.host,
+      username: row.username,
+      path: row.path,
+    }));
+  }
+
+  async addWorkspace(workspace: Workspace): Promise<void> {
+    await this.db.run(
+      "INSERT OR IGNORE INTO server_workspaces (host, username, path) VALUES (?, ?, ?)",
+      [workspace.host, workspace.username, workspace.path]
+    );
+  }
+
+  async deleteWorkspace(workspace: Workspace): Promise<void> {
+    await this.db.run(
+      "DELETE FROM server_workspaces WHERE host = ? AND username = ? AND path = ?",
+      [workspace.host, workspace.username, workspace.path]
+    );
+  }
+
+  async workspaceExists(workspace: Workspace): Promise<boolean> {
+    const result = await this.db.query(
+      "SELECT 1 FROM server_workspaces WHERE host = ? AND username = ? AND path = ?",
+      [workspace.host, workspace.username, workspace.path]
+    );
+    return (result.values ?? []).length > 0;
   }
 
   // User Graphic Preferences
@@ -253,7 +388,7 @@ export class DatabaseService {
 
   async addNote(note: Note): Promise<void> {
     await this.db.run(
-      "INSERT INTO notes (id, title, date, done, archived, pinned, tags, entries) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO notes (id, title, date, done, archived, pinned, tags, entries, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         note.id,
         note.title,
@@ -263,6 +398,7 @@ export class DatabaseService {
         note.pinned ? 1 : 0,
         JSON.stringify(note.tags),
         JSON.stringify(note.entries),
+        note.priority ?? null,
       ]
     );
   }
@@ -273,7 +409,7 @@ export class DatabaseService {
 
   async updateNote(id: string, note: Note): Promise<void> {
     await this.db.run(
-      "UPDATE notes SET title = ?, date = ?, done = ?, archived = ?, pinned = ?, tags = ?, entries = ? WHERE id = ?",
+      "UPDATE notes SET title = ?, date = ?, done = ?, archived = ?, pinned = ?, tags = ?, entries = ?, priority = ? WHERE id = ?",
       [
         note.title,
         note.date ?? null,
@@ -282,6 +418,7 @@ export class DatabaseService {
         note.pinned ? 1 : 0,
         JSON.stringify(note.tags),
         JSON.stringify(note.entries),
+        note.priority ?? null,
         id,
       ]
     );
@@ -383,6 +520,14 @@ export class DatabaseService {
     const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
     if (!existingNames.includes("created_at")) {
       await this.db.execute(`ALTER TABLE reminders ADD COLUMN created_at TEXT`);
+    }
+  }
+
+  async addPriorityToNotes(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(notes)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!existingNames.includes("priority")) {
+      await this.db.execute(`ALTER TABLE notes ADD COLUMN priority INTEGER`);
     }
   }
 
@@ -581,6 +726,7 @@ export class DatabaseService {
       done: row.done === 1 || row.done === true,
       archived: row.archived === 1 || row.archived === true,
       pinned: row.pinned === 1 || row.pinned === true,
+      priority: row.priority != null ? (row.priority as 1 | 2 | 3 | 4) : undefined,
       tags: typeof row.tags === "string" ? JSON.parse(row.tags) : row.tags,
       entries:
         typeof row.entries === "string"

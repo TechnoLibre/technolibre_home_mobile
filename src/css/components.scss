@@ -9,6 +9,14 @@
 @use "../components/applications/add/applications_add_component.scss";
 @use "../components/applications/edit/applications_edit_component.scss";
 
+@use "../components/servers/item/servers_item_component.scss";
+@use "../components/servers/add/servers_add_component.scss";
+@use "../components/servers/edit/servers_edit_component.scss";
+@use "../components/servers/settings/servers_settings_component.scss";
+@use "../components/servers/workspace/servers_workspace_component.scss";
+@use "../components/servers/deploy/servers_deploy_component.scss";
+@use "../components/servers/resources/servers_resources_component.scss";
+
 @use "../components/intent/intent_component.scss";
 
 @use "../components/intent-handler/note/image/note_image_intent_handler_component.scss";
@@ -39,6 +47,7 @@
 @use "../components/note_list/note_list_component.scss";
 
 @use "../components/options/options_component.scss";
+@use "../components/options/erplibre/options_erplibre_component.scss";
 @use "../components/options/reminders/options_reminders_component.scss";
 @use "../components/options/graphic/options_graphic_component.scss";
 @use "../components/options/sqlite_tables/options_sqlite_tables_component.scss";

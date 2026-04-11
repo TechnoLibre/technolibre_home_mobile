@@ -71,3 +71,19 @@ export class VideoNotSupportedOnWebError extends Error {
 		this.name = "VideoNotSupportedOnWebError";
 	}
 }
+
+export class ServerAlreadyExistsError extends Error {
+	constructor(message?: string) {
+		const errorMessage = message || ErrorMessages.SERVER_ALREADY_EXISTS;
+		super(errorMessage);
+		this.name = "ServerAlreadyExistsError";
+	}
+}
+
+export class NoServerMatchError extends Error {
+	constructor(message?: string) {
+		const errorMessage = message || ErrorMessages.NO_SERVER_MATCH;
+		super(errorMessage);
+		this.name = "NoServerMatchError";
+	}
+}

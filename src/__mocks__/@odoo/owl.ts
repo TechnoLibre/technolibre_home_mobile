@@ -1,10 +1,18 @@
 /**
  * Minimal mock of @odoo/owl.
  *
- * Only EventBus is needed for service tests.
+ * Only EventBus and reactive are needed for service tests.
  */
 export class EventBus extends EventTarget {
   trigger(name: string, detail?: any) {
     this.dispatchEvent(new CustomEvent(name, { detail }));
   }
 }
+
+/** Identity function — plain objects suffice for service-layer tests. */
+export function reactive<T extends object>(obj: T): T {
+  return obj;
+}
+
+export const useState = reactive;
+export function xml(_strings: TemplateStringsArray, ..._values: any[]): string { return ""; }

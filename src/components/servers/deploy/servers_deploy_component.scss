@@ -1,0 +1,337 @@
+@use "../../../css/mixins.scss";
+
+#servers-deploy-component {
+    padding: 0 1rem;
+
+    // ── Wizard ───────────────────────────────────────────────────────────────
+
+    .deploy__wizard {
+        background-color: #151515;
+        border: 1px solid #333;
+        border-radius: 0.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+        margin: 0 auto;
+        max-width: 40rem;
+        padding: 1.5rem;
+    }
+
+    .deploy__wizard-server {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+    }
+
+    .deploy__wizard-form {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+
+        & label {
+            font-weight: 500;
+        }
+
+        & input[type="text"] {
+            background-color: #202020;
+            border: 2px solid #404040;
+            border-radius: 0.25em;
+            color: var(--text);
+            font-family: monospace;
+            font-size: 1em;
+            outline: none;
+            padding: 0.75em;
+            width: 100%;
+            &:focus { border-color: #666; }
+        }
+    }
+
+    .deploy__wizard-actions {
+        display: flex;
+        gap: 0.75rem;
+    }
+
+    .deploy__btn-start {
+        background-color: #2e7d32;
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        flex: 1;
+        font-size: 1rem;
+        font-weight: 600;
+        outline: none;
+        padding: 0.85rem 1.5rem;
+        transition: background-color 150ms ease-in-out;
+        &:hover:not(:disabled) { background-color: #388e3c; }
+        &:disabled { cursor: default; opacity: 0.5; }
+    }
+
+    .deploy__btn-cancel {
+        background-color: var(--btn-grey-color);
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 1rem;
+        outline: none;
+        padding: 0.85rem 1.25rem;
+        transition: background-color 150ms ease-in-out;
+        &:hover { background-color: var(--btn-grey-hover-color); }
+    }
+
+    // ── Server info header ────────────────────────────────────────────────────
+
+    .deploy__server-info {
+        background-color: #111;
+        border: 1px solid #333;
+        border-radius: 0.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        margin: 0 auto 1.5rem;
+        max-width: 48rem;
+        padding: 0.75rem 1rem;
+    }
+
+    .deploy__server-label {
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    .deploy__server-address {
+        color: var(--text-greyed-out);
+        font-family: monospace;
+        font-size: 0.85rem;
+    }
+
+    .deploy__server-path {
+        color: var(--text-greyed-out);
+        font-family: monospace;
+        font-size: 0.8rem;
+    }
+
+    // ── Steps list ────────────────────────────────────────────────────────────
+
+    .deploy__steps {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        list-style: none;
+        margin: 0 auto;
+        max-width: 48rem;
+        padding: 0;
+    }
+
+    .deploy__step {
+        border: 2px solid #333;
+        border-radius: 0.5rem;
+        overflow: hidden;
+        transition: border-color 300ms ease;
+
+        &--pending  { border-color: #333; opacity: 0.6; }
+        &--running  { border-color: #1976d2; opacity: 1; }
+        &--success  { border-color: #388e3c; }
+        &--warning  { border-color: #f57c00; }
+        &--error    { border-color: #d32f2f; }
+    }
+
+    .deploy__step-header {
+        align-items: center;
+        display: flex;
+        gap: 0.75rem;
+        padding: 0.9rem 1rem;
+    }
+
+    .deploy__step-icon {
+        font-size: 1.2rem;
+        line-height: 1;
+        min-width: 1.5rem;
+        text-align: center;
+
+        .deploy__step--pending & { color: #666; }
+        .deploy__step--running & { color: #1976d2; }
+        .deploy__step--success & { color: #4caf50; }
+        .deploy__step--warning & { color: #ffa726; }
+        .deploy__step--error   & { color: #ef5350; }
+    }
+
+    .deploy__step-label {
+        flex: 1;
+        font-weight: 500;
+
+        .deploy__step--success & { color: #81c784; }
+        .deploy__step--warning & { color: #ffcc80; }
+        .deploy__step--error   & { color: #ef9a9a; }
+    }
+
+    .deploy__step-duration {
+        color: var(--text-greyed-out);
+        font-family: monospace;
+        font-size: 0.85rem;
+    }
+
+    .deploy__step-error {
+        background-color: #1a0000;
+        border-top: 1px solid #d32f2f;
+        color: #ef9a9a;
+        font-family: monospace;
+        font-size: 0.85rem;
+        padding: 0.5rem 1rem;
+    }
+
+    .deploy__step-warning {
+        background-color: #1a1100;
+        border-top: 1px solid #f57c00;
+        color: #ffcc80;
+        font-family: monospace;
+        font-size: 0.85rem;
+        padding: 0.5rem 1rem;
+    }
+
+    // ── Logs ──────────────────────────────────────────────────────────────────
+
+    .deploy__step-logs {
+        border-top: 1px solid #2a2a2a;
+
+        & > summary {
+            align-items: center;
+            background-color: #1a1a1a;
+            color: var(--text-greyed-out);
+            cursor: pointer;
+            display: flex;
+            font-size: 0.8rem;
+            gap: 0.5rem;
+            padding: 0.4rem 1rem;
+            user-select: none;
+            &::-webkit-details-marker { display: none; }
+            &:hover { background-color: #222; }
+        }
+    }
+
+    .deploy__log-lock-indicator {
+        color: #42a5f5;
+        font-size: 0.72rem;
+        margin-left: auto;
+    }
+
+    .deploy__log-toolbar {
+        align-items: center;
+        background-color: #141414;
+        border-bottom: 1px solid #2a2a2a;
+        display: flex;
+        gap: 0.4rem;
+        justify-content: space-between;
+        padding: 0.25rem 0.75rem;
+    }
+
+    .deploy__log-nav-btn {
+        background-color: #1e2a3a;
+        border: 1px solid #2a3a4a;
+        border-radius: 0.2rem;
+        color: #90caf9;
+        cursor: pointer;
+        font-size: 0.75rem;
+        outline: none;
+        padding: 0.2rem 0.6rem;
+        transition: background-color 100ms ease-in-out;
+        &:hover { background-color: #263a4a; }
+
+        &--bottom {
+            margin-left: auto;
+        }
+    }
+
+    .deploy__log-output {
+        background-color: #0a0a0a;
+        color: #a0a0a0;
+        font-family: monospace;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        margin: 0;
+        max-height: 14rem;
+        overflow-y: auto;
+        padding: 0.5rem 1rem;
+        scroll-behavior: smooth;
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+
+    // ── Per-step retry button ─────────────────────────────────────────────────
+
+    .deploy__btn-retry-step {
+        background-color: #1a2a3a;
+        border: none;
+        border-top: 1px solid #2a3a4a;
+        color: #90caf9;
+        cursor: pointer;
+        font-size: 0.85rem;
+        outline: none;
+        padding: 0.5rem 1rem;
+        text-align: left;
+        transition: background-color 150ms ease-in-out;
+        width: 100%;
+        &:hover { background-color: #1e3a5a; }
+    }
+
+    // ── Global actions ────────────────────────────────────────────────────────
+
+    .deploy__actions {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: center;
+        margin: 1.5rem auto 0;
+        max-width: 48rem;
+    }
+
+    .deploy__btn-back {
+        background-color: var(--btn-grey-color);
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 1rem;
+        outline: none;
+        padding: 0.75rem 1.5rem;
+        transition: background-color 150ms ease-in-out;
+        &:hover { background-color: var(--btn-grey-hover-color); }
+    }
+
+    .deploy__btn-retry {
+        background-color: var(--btn-blue-color);
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 1rem;
+        outline: none;
+        padding: 0.75rem 1.5rem;
+        transition: background-color 150ms ease-in-out;
+        &:hover { background-color: var(--btn-blue-hover-color); }
+    }
+
+    .deploy__btn-dismiss {
+        background-color: var(--btn-grey-color);
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 1rem;
+        outline: none;
+        padding: 0.75rem 1.25rem;
+        transition: background-color 150ms ease-in-out;
+        &:hover { background-color: var(--btn-grey-hover-color); }
+    }
+}
+
+// ── Spinner animation ─────────────────────────────────────────────────────────
+
+.deploy__spinner {
+    animation: deploy-spin 1s linear infinite;
+    display: inline-block;
+}
+
+@keyframes deploy-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}

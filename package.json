@@ -54,8 +54,11 @@
   "devDependencies": {
     "@capacitor/cli": "^8.0.0",
     "sass-embedded": "^1.93.2",
-    "vite": "^5.4.2",
+    "vite": "^6.4.2",
     "vitest": "^3.2.1"
+  },
+  "overrides": {
+    "@babel/runtime": "^7.29.2"
   },
   "author": "TechnoLibre",
   "license": "AGPLv3"

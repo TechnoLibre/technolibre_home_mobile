@@ -6,7 +6,7 @@ export class OptionsSyncComponent extends EnhancedComponent {
   static template = xml`
     <li class="options-list__item options-sync">
       <div class="options-sync__header" t-on-click="toggleExpanded">
-        <span>Synchronisation Odoo</span>
+        <span>☁️ Synchronisation Odoo</span>
         <span t-esc="state.expanded ? '▲' : '▼'" />
       </div>
       <div t-if="state.expanded" class="options-sync__body">

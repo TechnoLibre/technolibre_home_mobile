@@ -140,6 +140,24 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 		>
 			<p>Ouvrir dans app</p>
 		</a>
+		<a
+			id="note__control__priority"
+			class="note__control"
+			t-att-class="{
+				'note__control__priority--1': props.note.priority === 1,
+				'note__control__priority--2': props.note.priority === 2,
+				'note__control__priority--3': props.note.priority === 3,
+				'note__control__priority--4': props.note.priority === 4,
+			}"
+			href="#"
+			t-on-click.stop.prevent="props.onPriorityClick"
+			t-if="props.optionMode"
+		>
+			<p>
+				Priorité
+				<t t-if="props.note.priority"> (P<t t-esc="props.note.priority"/>)</t>
+			</p>
+		</a>
 	</section>
 </div>
 	`;

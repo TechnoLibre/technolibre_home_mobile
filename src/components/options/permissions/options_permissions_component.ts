@@ -19,7 +19,7 @@ export class OptionsPermissionsComponent extends EnhancedComponent {
 	static template = xml`
     <li class="options-list__item">
       <a href="#" t-on-click.stop.prevent="onShowPermissionsClick">
-        Permissions
+        🛡️ Permissions
       </a>
     </li>
   `;
