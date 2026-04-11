@@ -14,7 +14,11 @@ export class NotesItemComponent extends EnhancedComponent {
 			t-att-data-id="props.note.id"
 			t-att-class="{
 				'notes-item--done': props.note.done,
-				'has-tags': props.note.tags.length !== 0
+				'has-tags': props.note.tags.length !== 0,
+				'notes-item--priority-1': props.note.priority === 1,
+				'notes-item--priority-2': props.note.priority === 2,
+				'notes-item--priority-3': props.note.priority === 3,
+				'notes-item--priority-4': props.note.priority === 4,
 			}"
 			t-on-click="() => this.props.openNote(props.note.id)"
 		>

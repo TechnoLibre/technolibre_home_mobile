@@ -19,6 +19,7 @@ import { addOdooVersionToApplications } from "../services/migrations/addOdooVers
 import { addSyncPerServerStatus } from "../services/migrations/addSyncPerServerStatus";
 import { addServersTable } from "../services/migrations/addServersTable";
 import { addServerWorkspacesTable } from "../services/migrations/addServerWorkspacesTable";
+import { addNotePriority } from "../services/migrations/addNotePriority";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
@@ -132,6 +133,11 @@ async function startApp() {
 			version: 2026041102,
 			description: "Création de la table des workspaces par serveur",
 			run: addServerWorkspacesTable,
+		},
+		{
+			version: 2026041103,
+			description: "Ajout de la priorité (matrice d'Eisenhower) sur les notes",
+			run: addNotePriority,
 		},
 	]);
 

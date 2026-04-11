@@ -44,8 +44,10 @@ export class NoteListComponent extends EnhancedComponent {
 			<NoteListControlsComponent
 				editMode="state.editMode"
 				showArchivedNotes="state.showArchivedNotes"
+				sortByPriority="state.sortByPriority"
 				onToggleNoteListClick.bind="onToggleNoteListClick"
 				onToggleEditModeClick.bind="onToggleEditModeClick"
+				onToggleSortClick.bind="onToggleSortClick"
 			/>
 			<section id="notes" t-ref="notes">
 				<t t-set="currentNoteList" t-value="getCurrentNoteList()"></t>
@@ -120,6 +122,7 @@ export class NoteListComponent extends EnhancedComponent {
 			notes: new Array<Note>(),
 			showArchivedNotes: false,
 			editMode: false,
+			sortByPriority: false,
 			syncCounts: {} as Record<string, { synced: number; error: number }>,
 		});
 		onMounted(this.onMounted.bind(this));
@@ -178,6 +181,10 @@ export class NoteListComponent extends EnhancedComponent {
 		this.state.showArchivedNotes = !this.state.showArchivedNotes;
 	}
 
+	onToggleSortClick() {
+		this.state.sortByPriority = !this.state.sortByPriority;
+	}
+
 	getCurrentNoteList(): Array<Note> {
 		if (this.state.showArchivedNotes) {
 			return this.state.notes.filter((note: Note) => note.archived);
@@ -187,11 +194,18 @@ export class NoteListComponent extends EnhancedComponent {
 	}
 
 	getPinned(noteList: Array<Note>): Array<Note> {
-		return noteList.filter(note => note.pinned);
+		const filtered = noteList.filter(note => note.pinned);
+		return this.state.sortByPriority ? this.sortNotesByPriority(filtered) : filtered;
 	}
 
 	getUnpinned(noteList: Array<Note>): Array<Note> {
-		return noteList.filter(note => !note.pinned);
+		const filtered = noteList.filter(note => !note.pinned);
+		return this.state.sortByPriority ? this.sortNotesByPriority(filtered) : filtered;
+	}
+
+	private sortNotesByPriority(notes: Array<Note>): Array<Note> {
+		const order = (p: number | undefined) => p ?? 5;
+		return [...notes].sort((a, b) => order(a.priority) - order(b.priority));
 	}
 
 	openNote(noteId: string) {

@@ -104,6 +104,7 @@ export class NoteComponent extends EnhancedComponent {
 				onSyncClick.bind="pushToOdoo"
 			onSyncLongPress.bind="openSyncPicker"
 			onOpenInAppClick.bind="onOpenInAppClick"
+			onPriorityClick.bind="onPriorityClick"
 			/>
 			<NoteContentComponent
 				note="state.note"
@@ -137,6 +138,31 @@ export class NoteComponent extends EnhancedComponent {
 					</t>
 					<button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeOpenInApp">Annuler</button>
 				</div>
+			</div>
+		</div>
+		<div t-if="state.priorityPicker.visible" class="priority-picker-overlay" t-on-click.stop.prevent="closePriorityPicker">
+			<div class="priority-picker" t-on-click.stop="">
+				<p class="priority-picker__title">Priorité (Matrice d'Eisenhower)</p>
+				<div class="priority-picker__grid">
+					<button type="button" class="priority-picker__btn priority-picker__btn--1" t-on-click.stop="() => this.setPriority(1)">
+						<span class="priority-picker__label">Urgent &amp; Important</span>
+						<span class="priority-picker__desc">Faire maintenant</span>
+					</button>
+					<button type="button" class="priority-picker__btn priority-picker__btn--2" t-on-click.stop="() => this.setPriority(2)">
+						<span class="priority-picker__label">Important, pas urgent</span>
+						<span class="priority-picker__desc">Planifier</span>
+					</button>
+					<button type="button" class="priority-picker__btn priority-picker__btn--3" t-on-click.stop="() => this.setPriority(3)">
+						<span class="priority-picker__label">Urgent, pas important</span>
+						<span class="priority-picker__desc">Déléguer</span>
+					</button>
+					<button type="button" class="priority-picker__btn priority-picker__btn--4" t-on-click.stop="() => this.setPriority(4)">
+						<span class="priority-picker__label">Ni urgent ni important</span>
+						<span class="priority-picker__desc">Éliminer</span>
+					</button>
+				</div>
+				<button type="button" class="priority-picker__clear" t-on-click.stop="() => this.setPriority(undefined)">Retirer la priorité</button>
+				<button type="button" class="priority-picker__cancel" t-on-click.stop="closePriorityPicker">Annuler</button>
 			</div>
 		</div>
 		<div t-if="state.errorDialog.visible" class="error-dialog-overlay" t-on-click.stop.prevent="closeErrorDialog">
@@ -176,6 +202,7 @@ export class NoteComponent extends EnhancedComponent {
 			showConfigPicker: false,
 			errorDialog: { visible: false, message: "" },
 			openInApp: { visible: false, apps: [] as Array<{ label: string; appUrl: string; username: string; password: string; odooId: number }> },
+			priorityPicker: { visible: false },
 		});
 		this.setParams();
 		this.getNote();
@@ -440,6 +467,22 @@ export class NoteComponent extends EnhancedComponent {
 		} catch (e: unknown) {
 			await Dialog.alert({ title: "Métadonnées", message: String(e) });
 		}
+	}
+
+	// ── Priority picker ──────────────────────────────────────────────────────
+
+	onPriorityClick() {
+		this.state.priorityPicker.visible = true;
+	}
+
+	closePriorityPicker() {
+		this.state.priorityPicker.visible = false;
+	}
+
+	async setPriority(p: 1 | 2 | 3 | 4 | undefined) {
+		this.state.note.priority = p;
+		this.state.priorityPicker.visible = false;
+		await this.saveNoteData();
 	}
 
 	// ── Open in app ─────────────────────────────────────────────────────────

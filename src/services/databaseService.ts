@@ -388,7 +388,7 @@ export class DatabaseService {
 
   async addNote(note: Note): Promise<void> {
     await this.db.run(
-      "INSERT INTO notes (id, title, date, done, archived, pinned, tags, entries) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO notes (id, title, date, done, archived, pinned, tags, entries, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         note.id,
         note.title,
@@ -398,6 +398,7 @@ export class DatabaseService {
         note.pinned ? 1 : 0,
         JSON.stringify(note.tags),
         JSON.stringify(note.entries),
+        note.priority ?? null,
       ]
     );
   }
@@ -408,7 +409,7 @@ export class DatabaseService {
 
   async updateNote(id: string, note: Note): Promise<void> {
     await this.db.run(
-      "UPDATE notes SET title = ?, date = ?, done = ?, archived = ?, pinned = ?, tags = ?, entries = ? WHERE id = ?",
+      "UPDATE notes SET title = ?, date = ?, done = ?, archived = ?, pinned = ?, tags = ?, entries = ?, priority = ? WHERE id = ?",
       [
         note.title,
         note.date ?? null,
@@ -417,6 +418,7 @@ export class DatabaseService {
         note.pinned ? 1 : 0,
         JSON.stringify(note.tags),
         JSON.stringify(note.entries),
+        note.priority ?? null,
         id,
       ]
     );
@@ -518,6 +520,14 @@ export class DatabaseService {
     const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
     if (!existingNames.includes("created_at")) {
       await this.db.execute(`ALTER TABLE reminders ADD COLUMN created_at TEXT`);
+    }
+  }
+
+  async addPriorityToNotes(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(notes)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!existingNames.includes("priority")) {
+      await this.db.execute(`ALTER TABLE notes ADD COLUMN priority INTEGER`);
     }
   }
 
@@ -716,6 +726,7 @@ export class DatabaseService {
       done: row.done === 1 || row.done === true,
       archived: row.archived === 1 || row.archived === true,
       pinned: row.pinned === 1 || row.pinned === true,
+      priority: row.priority != null ? (row.priority as 1 | 2 | 3 | 4) : undefined,
       tags: typeof row.tags === "string" ? JSON.parse(row.tags) : row.tags,
       entries:
         typeof row.entries === "string"

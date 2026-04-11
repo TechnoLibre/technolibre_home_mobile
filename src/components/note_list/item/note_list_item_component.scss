@@ -140,4 +140,16 @@
 			background-color: var(--btn-blue-hover-color);
 		}
 	}
+	&--priority-1 {
+		border-left: 4px solid #e03030;
+	}
+	&--priority-2 {
+		border-left: 4px solid #e0a020;
+	}
+	&--priority-3 {
+		border-left: 4px solid #2080e0;
+	}
+	&--priority-4 {
+		border-left: 4px solid #555;
+	}
 }
