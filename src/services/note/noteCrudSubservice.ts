@@ -77,6 +77,17 @@ export class NoteCrudSubservice {
 		}
 
 		await this._noteService.db.updateNote(noteId, Object.assign({}, newNote));
+
+		// If note was previously synced, mark it pending so it re-syncs on reconnect
+		try {
+			const syncInfo = await this._noteService.db.getNoteSyncInfo(noteId);
+			if (syncInfo.odooId) {
+				await this._noteService.db.setNoteSyncInfo(noteId, { syncStatus: "pending" });
+			}
+		} catch {
+			// Sync columns not yet migrated — skip
+		}
+
 		return true;
 	}
 }

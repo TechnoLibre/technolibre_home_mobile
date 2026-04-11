@@ -18,12 +18,12 @@
 	}
 	&__actions {
 		display: grid;
-		grid-template-areas: "edit open" "delete open";
-		grid-template-columns: 2fr 3fr;
+		grid-template-areas: "info edit open" "delete delete open";
+		grid-template-columns: 1fr 1fr 3fr;
 		gap: 0.5rem;
 		grid-area: actions;
 		margin: 0.5rem;
-		max-width: 12rem;
+		max-width: 14rem;
 	}
 	&__url {
 		@include mixins.ellipsis;
@@ -72,6 +72,15 @@
 			background-color: var(--btn-red-hover-color);
 		}
 	}
+	&__info {
+		background-color: #333;
+		color: var(--text);
+		font-size: 1.1rem;
+		grid-area: info;
+		&:hover {
+			background-color: #444;
+		}
+	}
 	&__edit {
 		background-color: var(--btn-blue-color);
 		grid-area: edit;
@@ -95,5 +104,236 @@
 	}
 	& + .app-list__item {
 		margin-top: 0.75em;
+	}
+}
+
+// ── Odoo info dialog ──────────────────────────────────────────────────────────
+
+.app-info-overlay {
+	align-items: center;
+	background: rgba(0, 0, 0, 0.75);
+	bottom: 0;
+	display: flex;
+	justify-content: center;
+	left: 0;
+	padding: 1rem;
+	position: fixed;
+	right: 0;
+	top: 0;
+	z-index: 600;
+}
+
+.app-info-dialog {
+	background: #1a1a1a;
+	border: 1px solid #3a3a3a;
+	border-radius: 0.5rem;
+	display: flex;
+	flex-direction: column;
+	height: 85vh;
+	max-width: 42rem;
+	overflow: hidden;
+	width: 100%;
+
+	&__header {
+		align-items: center;
+		background: #111;
+		border-bottom: 1px solid #333;
+		display: flex;
+		flex-shrink: 0;
+		gap: 0.5rem;
+		padding: 0.75rem 1rem;
+	}
+
+	&__title {
+		flex: 1;
+		font-size: 0.95rem;
+		font-weight: 600;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	&__close {
+		background: none;
+		border: none;
+		color: var(--text-greyed-out);
+		cursor: pointer;
+		font-size: 1.1rem;
+		line-height: 1;
+		padding: 0.25rem 0.5rem;
+		&:hover { color: var(--text); }
+	}
+
+	&__status {
+		color: var(--text-greyed-out);
+		font-size: 0.9rem;
+		padding: 1.5rem 1rem;
+		&--error {
+			color: #ff8080;
+			font-family: monospace;
+			font-size: 0.8rem;
+			line-height: 1.5;
+			white-space: pre-wrap;
+			word-break: break-all;
+		}
+	}
+
+	&__body {
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+		min-height: 0;
+		padding: 0.75rem 1rem 0;
+	}
+
+	&__meta {
+		align-items: center;
+		display: flex;
+		flex-shrink: 0;
+		gap: 1rem;
+		margin-bottom: 0.5rem;
+	}
+
+	&__version {
+		color: #31d53d;
+		font-size: 0.9rem;
+		font-weight: 600;
+	}
+
+	&__model-total {
+		color: var(--text-greyed-out);
+		font-size: 0.8rem;
+	}
+
+	&__filter {
+		background: #252525;
+		border: 1px solid #444;
+		border-radius: 0.375rem;
+		color: var(--text);
+		flex-shrink: 0;
+		font-size: 0.9rem;
+		margin-bottom: 0.5rem;
+		padding: 0.5rem 0.75rem;
+		width: 100%;
+		&:focus { border-color: #666; outline: none; }
+	}
+
+	&__model-list {
+		flex: 1;
+		list-style: none;
+		margin: 0;
+		overflow-y: auto;
+		padding: 0 0 0.75rem;
+	}
+
+	&__model-item {
+		border-bottom: 1px solid #2a2a2a;
+	}
+
+	&__model-btn {
+		align-items: center;
+		background: none;
+		border: none;
+		color: var(--text);
+		cursor: pointer;
+		display: flex;
+		gap: 0.5rem;
+		padding: 0.6rem 0.25rem;
+		text-align: left;
+		width: 100%;
+		&:hover { background: rgba(255, 255, 255, 0.04); }
+	}
+
+	&__model-technical {
+		color: #ccc;
+		flex-shrink: 0;
+		font-family: monospace;
+		font-size: 0.8rem;
+		min-width: 12rem;
+	}
+
+	&__model-label {
+		color: var(--text-greyed-out);
+		flex: 1;
+		font-size: 0.8rem;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	&__model-count {
+		color: #31d53d;
+		flex-shrink: 0;
+		font-size: 0.75rem;
+	}
+
+	&__model-chevron {
+		color: var(--text-greyed-out);
+		flex-shrink: 0;
+		font-size: 0.75rem;
+		margin-left: 0.25rem;
+	}
+
+	&__fields {
+		background: #111;
+		border-top: 1px solid #2a2a2a;
+		padding: 0.25rem 0 0.5rem;
+	}
+
+	&__field-loading {
+		color: var(--text-greyed-out);
+		font-size: 0.8rem;
+		padding: 0.5rem 1rem;
+	}
+
+	&__field-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+
+	&__field-row {
+		border-top: 1px solid #1e1e1e;
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+		padding: 0.35rem 0.75rem;
+		&:hover { background: rgba(255, 255, 255, 0.03); }
+	}
+
+	&__field-header {
+		align-items: center;
+		display: flex;
+		gap: 0.5rem;
+		justify-content: space-between;
+	}
+
+	&__field-name {
+		color: #aad4ff;
+		font-family: monospace;
+		font-size: 0.8rem;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	&__field-type {
+		background: rgba(224, 160, 32, 0.15);
+		border-radius: 0.25rem;
+		color: #e0a020;
+		flex-shrink: 0;
+		font-size: 0.7rem;
+		font-weight: 600;
+		padding: 0.1rem 0.35rem;
+		white-space: nowrap;
+	}
+
+	&__field-desc {
+		color: var(--text-greyed-out);
+		font-size: 0.75rem;
+		line-height: 1.3;
 	}
 }

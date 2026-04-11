@@ -4,9 +4,15 @@
 
 ```typescript
 interface Application {
-  url: string       // URL de l'instance Odoo
-  username: string  // Identifiant utilisateur
-  password: string  // Mot de passe
+  url: string              // URL de l'instance Odoo
+  username: string         // Identifiant utilisateur
+  password: string         // Mot de passe
+  database: string         // Nom de la base de données Odoo (optionnel)
+  odooVersion: string      // Version détectée du serveur (ex: "17.0+e")
+  autoSync: boolean        // Synchronisation automatique activée
+  pollIntervalMinutes: number  // Intervalle de polling en minutes
+  ntfyUrl: string          // URL du serveur ntfy (notifications push)
+  ntfyTopic: string        // Topic ntfy
 }
 ```
 
@@ -28,6 +34,45 @@ interface Note {
   entries: NoteEntry[]
 }
 ```
+
+---
+
+## NoteSyncInfo
+
+Métadonnées de synchronisation attachées à chaque note.
+
+```typescript
+interface NoteSyncInfo {
+  odooId: number | null           // ID de la tâche Odoo correspondante
+  odooUrl: string | null          // URL du serveur Odoo source
+  syncStatus: SyncStatus          // Statut global : "local" | "pending" | "synced" | "error"
+  lastSyncedAt: string | null     // Horodatage ISO 8601 de la dernière synchro
+  syncConfigId: string | null     // Identifiant de config : "${url}|${username}"
+  selectedSyncConfigIds: string[] | null  // Serveurs sélectionnés pour la synchro multi-serveurs
+}
+```
+
+Le statut par serveur est stocké séparément (colonne `sync_per_server_status`) comme un objet JSON
+`{ [syncConfigId]: "synced" | "error" }` pour afficher le badge dans la liste des notes.
+
+---
+
+## GraphicPrefs
+
+Préférences d'affichage de l'utilisateur.
+
+```typescript
+type FontFamily = "sans" | "serif" | "mono";
+
+interface GraphicPrefs {
+  fontFamily: FontFamily     // Famille de police
+  fontSizeScale: number      // Facteur d'échelle : 0.8 | 0.9 | 1 | 1.15 | 1.3
+}
+```
+
+Valeurs par défaut : `fontFamily: "sans"`, `fontSizeScale: 1`.
+
+Persistées dans la table SQLite `user_graphic_prefs` (clé/valeur texte).
 
 ---
 
@@ -77,9 +122,10 @@ interface NoteEntryAudio {
 ```typescript
 interface NoteEntryGeolocation {
   type: 'geolocation'
-  lat: number
-  lon: number
-  timestamp: string   // ISO 8601
+  latitude: number
+  longitude: number
+  timestamp: number    // Unix ms
+  text?: string        // Label optionnel
 }
 ```
 
@@ -120,23 +166,51 @@ interface VideoIntent {
 ```sql
 -- Applications Odoo
 CREATE TABLE applications (
-  url      TEXT NOT NULL,
-  username TEXT NOT NULL,
-  password TEXT NOT NULL,
+  url                  TEXT NOT NULL,
+  username             TEXT NOT NULL,
+  password             TEXT NOT NULL,
+  database             TEXT NOT NULL DEFAULT '',
+  auto_sync            INTEGER DEFAULT 0,
+  poll_interval_minutes INTEGER DEFAULT 5,
+  ntfy_url             TEXT NOT NULL DEFAULT '',
+  ntfy_topic           TEXT NOT NULL DEFAULT '',
+  odoo_version         TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (url, username)
 );
 
 -- Notes enrichies
 CREATE TABLE notes (
-  id       TEXT PRIMARY KEY NOT NULL,
-  title    TEXT NOT NULL,
-  date     TEXT,
-  done     INTEGER DEFAULT 0,
-  archived INTEGER DEFAULT 0,
-  pinned   INTEGER DEFAULT 0,
-  tags     TEXT DEFAULT '[]',
-  entries  TEXT DEFAULT '[]'
+  id                        TEXT PRIMARY KEY NOT NULL,
+  title                     TEXT NOT NULL,
+  date                      TEXT,
+  done                      INTEGER DEFAULT 0,
+  archived                  INTEGER DEFAULT 0,
+  pinned                    INTEGER DEFAULT 0,
+  tags                      TEXT DEFAULT '[]',
+  entries                   TEXT DEFAULT '[]',
+  -- Colonnes de synchronisation (ajoutées par migration)
+  odoo_id                   INTEGER,
+  odoo_url                  TEXT,
+  sync_status               TEXT DEFAULT 'local',
+  last_synced_at            TEXT,
+  sync_config_id            TEXT,
+  selected_sync_config_ids  TEXT,     -- JSON array de syncConfigId
+  sync_per_server_status    TEXT      -- JSON object { syncConfigId: "synced"|"error" }
+);
+
+-- Préférences graphiques utilisateur (clé/valeur)
+CREATE TABLE user_graphic_prefs (
+  key   TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
+);
+
+-- Rappels
+CREATE TABLE reminders (
+  id         TEXT PRIMARY KEY NOT NULL,
+  note_id    TEXT NOT NULL,
+  trigger_at TEXT NOT NULL,
+  created_at TEXT
 );
 ```
 
-> Les colonnes `tags` et `entries` stockent du JSON sérialisé. La conversion est gérée par `DatabaseService`.
+> Les colonnes `tags`, `entries`, `selected_sync_config_ids` et `sync_per_server_status` stockent du JSON sérialisé. La conversion est gérée par `DatabaseService`.

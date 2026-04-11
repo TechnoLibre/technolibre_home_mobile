@@ -1,17 +1,83 @@
-import { xml } from "@odoo/owl";
+import { onMounted, onWillDestroy, useState, xml } from "@odoo/owl";
 import { Dialog } from "@capacitor/dialog";
 import { Device } from "@capacitor/device";
 import { App } from "@capacitor/app";
+import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { Events } from "../../../constants/events";
+import { StorageConstants } from "../../../constants/storage";
+
+const CLICKS_REQUIRED = 10;
+const RESET_DELAY_MS = 2000;
 
 export class OptionsDeviceInfoComponent extends EnhancedComponent {
 	static template = xml`
-    <li class="options-list__item">
-      <a href="#" t-on-click.stop.prevent="onShowDeviceInfoClick">
-        Infos appareil
-      </a>
-    </li>
+    <t>
+      <li class="options-list__item">
+        <a href="#" t-on-click.stop.prevent="onShowDeviceInfoClick">
+          Infos appareil
+        </a>
+      </li>
+      <li t-if="!state.devModeEnabled"
+          class="options-list__item options-list__item--dev-unlock"
+          t-att-class="devUnlockClass"
+          t-on-click="onDevModeClick">
+        <t t-if="state.clicks === 0">Activer mode dev</t>
+        <t t-else=""><t t-esc="CLICKS_REQUIRED - state.clicks" /></t>
+      </li>
+    </t>
   `;
+
+	CLICKS_REQUIRED = CLICKS_REQUIRED;
+
+	state: any;
+	_resetTimer: ReturnType<typeof setTimeout> | null = null;
+
+	setup() {
+		this.state = useState({ devModeEnabled: false, clicks: 0 });
+
+		onMounted(async () => {
+			try {
+				const stored = await SecureStoragePlugin.get({ key: StorageConstants.DEV_MODE_UNLOCKED_KEY });
+				if (stored.value === "true") this.state.devModeEnabled = true;
+			} catch {
+				// not set yet
+			}
+		});
+
+		onWillDestroy(() => {
+			if (this._resetTimer) clearTimeout(this._resetTimer);
+		});
+	}
+
+	get devUnlockClass(): string {
+		const c = this.state.clicks;
+		if (c === 0) return "";
+		if (c >= CLICKS_REQUIRED - 1) return "dev-unlock--imminent";
+		if (c >= CLICKS_REQUIRED - 3) return "dev-unlock--warning";
+		return "dev-unlock--counting";
+	}
+
+	async onDevModeClick() {
+		if (this._resetTimer) clearTimeout(this._resetTimer);
+
+		this.state.clicks += 1;
+
+		if (this.state.clicks >= CLICKS_REQUIRED) {
+			this.state.clicks = 0;
+			this.state.devModeEnabled = true;
+			await SecureStoragePlugin.set({
+				key: StorageConstants.DEV_MODE_UNLOCKED_KEY,
+				value: "true",
+			});
+			this.eventBus.trigger(Events.DEV_MODE_UNLOCKED, {});
+			return;
+		}
+
+		this._resetTimer = setTimeout(() => {
+			this.state.clicks = 0;
+		}, RESET_DELAY_MS);
+	}
 
 	async onShowDeviceInfoClick() {
 		let message: string;

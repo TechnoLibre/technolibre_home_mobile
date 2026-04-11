@@ -4,18 +4,25 @@ import { DatabaseService } from "../services/databaseService";
 import { Application } from "../models/application";
 import { NoAppMatchError } from "../js/errors";
 
-describe("AppService — initialization", () => {
-  const app: Application = {
-    url: "https://erp.example.com",
-    username: "admin",
-    password: "secret",
-  };
+const baseApp = (overrides: Partial<Application> = {}): Application => ({
+  url: "https://erp.example.com",
+  username: "admin",
+  password: "secret",
+  database: "",
+  odooVersion: "",
+  autoSync: false,
+  pollIntervalMinutes: 5,
+  ntfyUrl: "",
+  ntfyTopic: "",
+  ...overrides,
+});
 
+describe("AppService — initialization", () => {
   it("should throw when constructed without a DatabaseService (regression: app.ts called new AppService() before db was initialized)", async () => {
     // Reproduces the bug in app.ts where AppService was instantiated
     // before DatabaseService, leaving this._db as undefined.
     const broken = new AppService(undefined as any);
-    await expect(broken.add(app)).rejects.toThrow(
+    await expect(broken.add(baseApp())).rejects.toThrow(
       /Cannot read properties of undefined/
     );
   });
@@ -45,11 +52,7 @@ describe("AppService with SQLite", () => {
     });
 
     it("should return apps after adding one", async () => {
-      const app: Application = {
-        url: "https://erp.example.com",
-        username: "admin",
-        password: "secret",
-      };
+      const app = baseApp();
       await appService.add(app);
       const apps = await appService.getApps();
       expect(apps).toHaveLength(1);
@@ -59,21 +62,12 @@ describe("AppService with SQLite", () => {
 
   describe("add", () => {
     it("should add an app successfully", async () => {
-      const app: Application = {
-        url: "https://erp.example.com",
-        username: "admin",
-        password: "secret",
-      };
-      const result = await appService.add(app);
+      const result = await appService.add(baseApp());
       expect(result).toBe(true);
     });
 
     it("should throw if app already exists", async () => {
-      const app: Application = {
-        url: "https://erp.example.com",
-        username: "admin",
-        password: "secret",
-      };
+      const app = baseApp();
       await appService.add(app);
       await expect(appService.add(app)).rejects.toThrow();
     });
@@ -81,11 +75,7 @@ describe("AppService with SQLite", () => {
 
   describe("delete", () => {
     it("should delete an existing app", async () => {
-      const app: Application = {
-        url: "https://erp.example.com",
-        username: "admin",
-        password: "secret",
-      };
+      const app = baseApp();
       await appService.add(app);
       const result = await appService.delete({
         url: app.url,
@@ -105,18 +95,10 @@ describe("AppService with SQLite", () => {
 
   describe("edit", () => {
     it("should edit an existing app", async () => {
-      const app: Application = {
-        url: "https://erp.example.com",
-        username: "admin",
-        password: "secret",
-      };
+      const app = baseApp();
       await appService.add(app);
 
-      const updated: Application = {
-        url: "https://erp.example.com",
-        username: "admin",
-        password: "newpass",
-      };
+      const updated = baseApp({ password: "newpass" });
       const result = await appService.edit(
         { url: app.url, username: app.username },
         updated
@@ -130,11 +112,7 @@ describe("AppService with SQLite", () => {
 
   describe("matches", () => {
     it("should find matching apps", async () => {
-      const app: Application = {
-        url: "https://erp.example.com",
-        username: "admin",
-        password: "secret",
-      };
+      const app = baseApp();
       await appService.add(app);
 
       const result = await appService.matches({
@@ -156,16 +134,8 @@ describe("AppService with SQLite", () => {
 
   describe("clear", () => {
     it("should remove all apps", async () => {
-      await appService.add({
-        url: "https://erp1.com",
-        username: "u1",
-        password: "p1",
-      });
-      await appService.add({
-        url: "https://erp2.com",
-        username: "u2",
-        password: "p2",
-      });
+      await appService.add(baseApp({ url: "https://erp1.com", username: "u1", password: "p1" }));
+      await appService.add(baseApp({ url: "https://erp2.com", username: "u2", password: "p2" }));
       const result = await appService.clear();
       expect(result).toBe(true);
       const apps = await appService.getApps();

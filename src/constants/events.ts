@@ -11,5 +11,7 @@ export const Events: Record<string, string> = {
 	SET_PHOTO: "set_photo",
 	RELOAD_NOTES: "reload_notes",
 	SET_INTENT: "set_intent",
-	SCROLL_TO_LAST_ENTRY: "scroll_to_last_entry"
+	SCROLL_TO_LAST_ENTRY: "scroll_to_last_entry",
+	SYNC_CHANGES_DETECTED: "sync_changes_detected",
+	DEV_MODE_UNLOCKED: "dev_mode_unlocked",
 }

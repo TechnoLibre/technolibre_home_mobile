@@ -15,6 +15,7 @@ export class IntentComponent extends EnhancedComponent {
 				t-component="getIntentHandlerComponent()"
 				intent="state.intent"
 				goHome.bind="goHome"
+				goToNote.bind="goToNote"
 			/>
 		</div>
 	`;
@@ -48,6 +49,10 @@ export class IntentComponent extends EnhancedComponent {
 
 	public goHome() {
 		this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: "/" });
+	}
+
+	public goToNote(noteId: string) {
+		this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: `/note/${noteId}` });
 	}
 
 	private setIntent() {

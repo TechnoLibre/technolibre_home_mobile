@@ -54,12 +54,48 @@
 	&__title {
 		@include mixins.ellipsis;
 	}
+	&__date-row {
+		@include mixins.flex(center, flex-end);
+		flex-shrink: 0;
+		gap: 0.4rem;
+		margin: 0.75rem;
+	}
 	&__date {
 		@include mixins.ellipsis;
-		margin: 0.75rem;
 		&.no-date {
 			color: var(--text-greyed-out);
 		}
+	}
+	&__sync-badge {
+		@include mixins.flex--center;
+		flex-shrink: 0;
+		position: relative;
+		& img {
+			height: 1.1rem;
+			opacity: 0.8;
+			pointer-events: none;
+			width: 1.1rem;
+		}
+	}
+	&__sync-count--synced,
+	&__sync-count--error {
+		border-radius: 0.6rem;
+		font-size: 0.6rem;
+		font-weight: 700;
+		line-height: 1;
+		min-width: 0.9rem;
+		padding: 0.1rem 0.2rem;
+		position: absolute;
+		right: -0.35rem;
+		text-align: center;
+	}
+	&__sync-count--synced {
+		background-color: var(--btn-blue-color);
+		top: -0.3rem;
+	}
+	&__sync-count--error {
+		background-color: var(--btn-red-color);
+		bottom: -0.3rem;
 	}
 	&__actions {
 		$spacing: 0.75rem;

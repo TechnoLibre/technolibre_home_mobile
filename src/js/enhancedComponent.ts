@@ -4,6 +4,8 @@ import { AppService } from "../services/appService";
 import { NoteService } from "../services/note/noteService";
 import { IntentService } from "../services/intentService";
 import { DatabaseService } from "../services/databaseService";
+import { SyncService } from "../services/syncService";
+import { NotificationService } from "../services/notificationService";
 import { Events } from "../constants/events";
 
 export abstract class EnhancedComponent extends Component {
@@ -31,6 +33,14 @@ export abstract class EnhancedComponent extends Component {
 
 	public get databaseService(): DatabaseService {
 		return this.env.databaseService;
+	}
+
+	public get syncService(): SyncService {
+		return this.env.syncService;
+	}
+
+	public get notificationService(): NotificationService {
+		return this.env.notificationService;
 	}
 
 	public navigate(url: string): void {

@@ -60,27 +60,29 @@ export class NoteTextIntentHandlerComponent extends EnhancedComponent {
 		this.getNotes();
 	}
 
-	newNoteWithText() {
+	async newNoteWithText() {
 		const intent = this.props.intent;
 
 		if (!intent || !(intent instanceof TextIntent)) {
 			return;
 		}
 
-		this.noteService.intent.newNoteWithText(intent);
-		this.props.goHome();
+		const noteId = await this.noteService.intent.newNoteWithText(intent);
+		this.props.goToNote(noteId);
 	}
 
-	addTextToNote(event: Event) {
-		const id = (event.target as HTMLElement).dataset.id;
+	async addTextToNote(event: Event) {
+		const id = (event.target as HTMLElement).closest("[data-id]")
+			? (event.target as HTMLElement).closest("[data-id]")!.getAttribute("data-id")
+			: (event.target as HTMLElement).dataset.id;
 		const intent = this.props.intent;
 
 		if (!id || !intent || !(intent instanceof TextIntent)) {
 			return;
 		}
 
-		this.noteService.intent.addTextToNote(id, intent);
-		this.props.goHome();
+		const noteId = await this.noteService.intent.addTextToNote(id, intent);
+		this.props.goToNote(noteId);
 	}
 
 	public async getText() {

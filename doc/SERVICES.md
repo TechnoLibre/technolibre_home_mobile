@@ -9,6 +9,7 @@ NoteService
   ├── NoteEntrySubservice     → Factory des entrées de note
   └── NoteIntentSubservice    → Création de note depuis un intent
 DatabaseService     → Abstraction SQLite
+SyncService         → Synchronisation bidirectionnelle Odoo
 IntentService       → Écoute et parsing des intents Android
 ```
 
@@ -47,31 +48,127 @@ La méthode accepte un callback optionnel pour reporter chaque étape (utilisé 
 
 Générée avec `crypto.getRandomValues` (256 bits / 64 hex) à la 1re installation, puis persistée dans `capacitor-secure-storage-plugin` sous la clé `db_encryption_key`. Les démarrages suivants réutilisent la clé existante sans rappeler `setEncryptionSecret`.
 
-**Tables :**
+### Méthodes principales
 
-```sql
-CREATE TABLE applications (
-  url      TEXT NOT NULL,
-  username TEXT NOT NULL,
-  password TEXT NOT NULL,
-  PRIMARY KEY (url, username)
-);
+| Méthode | Description |
+|---------|-------------|
+| `initialize()` | Initialise la connexion SQLite et crée les tables de base |
+| `getAllApplications()` | Liste toutes les applications |
+| `addApplication(app)` | Ajoute une application |
+| `updateApplication(url, username, app)` | Met à jour une application |
+| `deleteApplication(url, username)` | Supprime une application |
+| `setApplicationOdooVersion(url, username, version)` | Persiste la version Odoo détectée |
+| `getAllNotes()` | Liste toutes les notes |
+| `addNote(note)` | Ajoute une note |
+| `updateNote(id, note)` | Met à jour une note |
+| `deleteNote(id)` | Supprime une note |
+| `getNoteById(id)` | Retourne une note par ID ou `null` |
+| `getNoteSyncInfo(id)` | Retourne les métadonnées de synchro d'une note |
+| `setNoteSyncInfo(id, info)` | Met à jour partiellement les métadonnées de synchro |
+| `getNotesByOdooUrl(url)` | Notes synchronisées avec un serveur Odoo donné |
+| `getNotesBySyncConfigId(configId)` | Notes associées à une config de synchro |
+| `setNotePerServerStatus(id, configId, status)` | Statut de synchro par serveur |
+| `getNoteSyncCounts()` | Agrège les compteurs synced/error par note |
+| `getUserGraphicPref(key)` | Lit une préférence graphique |
+| `setUserGraphicPref(key, value)` | Persiste une préférence graphique |
 
-CREATE TABLE notes (
-  id       TEXT PRIMARY KEY NOT NULL,
-  title    TEXT NOT NULL,
-  date     TEXT,
-  done     INTEGER DEFAULT 0,   -- bool stocké en int
-  archived INTEGER DEFAULT 0,
-  pinned   INTEGER DEFAULT 0,
-  tags     TEXT DEFAULT '[]',   -- JSON array
-  entries  TEXT DEFAULT '[]'    -- JSON array de NoteEntry
-);
+### Migrations de schéma
+
+| Méthode | Description |
+|---------|-------------|
+| `addSyncColumnsToNotes()` | Ajoute les colonnes `odoo_id`, `odoo_url`, `sync_status`, `last_synced_at` |
+| `addSyncConfigIdColumn()` | Ajoute la colonne `sync_config_id` |
+| `addSelectedSyncConfigIdsColumn()` | Ajoute la colonne `selected_sync_config_ids` |
+| `addSyncPerServerStatusColumn()` | Ajoute la colonne `sync_per_server_status` |
+| `addOdooVersionToApplications()` | Ajoute la colonne `odoo_version` à `applications` |
+| `createUserGraphicPrefsTable()` | Crée la table `user_graphic_prefs` |
+
+Toutes les migrations sont idempotentes (ignorées si la colonne/table existe déjà).
+
+---
+
+## SyncService (`src/services/syncService.ts`)
+
+Synchronisation bidirectionnelle entre les notes locales et les tâches `project.task` d'Odoo.
+Utilise JSON-RPC via le plugin natif Android `RawHttp` (contourne le CookieHandler d'Android).
+
+### Authentification
+
+```typescript
+authenticate(creds: SyncCredentials): Promise<{ sessionId: string; odooMajorVersion: number }>
 ```
 
-**Conversions de types :**
-- `boolean` ↔ `INTEGER` (0/1)
-- Tableaux et objets ↔ `TEXT` (JSON.stringify / JSON.parse)
+- Appelle `/web/dataset/call_kw` avec `res.users.authenticate`
+- Stocke la session dans SecureStorage sous `odoo_sync_session_${btoa(url|username)}`
+- Extrait `odooMajorVersion` depuis `server_version_info[0]`
+- Lève une erreur si `uid` est falsy ou si la réponse contient un champ `error`
+
+### Push
+
+```typescript
+pushNote(creds: SyncCredentials, noteId: string): Promise<void>
+```
+
+- Recherche la note en base ; lève `"Note not found"` si absente
+- Si `odoo_id` existe déjà → `project.task.write` ; sinon → `project.task.create`
+- Converts : `pinned` → `priority` (`"1"`/`"0"`), `done` → `state` (`"done"`/`"in_progress"`)
+- Met à jour `sync_status`, `odoo_id`, `odoo_url`, `last_synced_at` après succès
+
+### Pull
+
+```typescript
+pullNotes(creds: SyncCredentials, since: Date): Promise<number>
+```
+
+- Récupère les tâches modifiées depuis `since` via `search_read`
+- Pour chaque tâche, retrouve la note locale par `odoo_id` + `odoo_url`
+- Met à jour `title`, `pinned`, `archived`, `done` (version 17+ uniquement pour `done`)
+- Retourne le nombre de notes mises à jour
+
+### Synchronisation complète
+
+```typescript
+syncAll(creds: SyncCredentials, syncConfigId?: string): Promise<{ pushed: number; pulled: number; errors: string[] }>
+```
+
+- Pousse toutes les notes `pending` (filtrées par `syncConfigId` si fourni)
+- Puis tire toutes les modifications distantes
+- Les erreurs individuelles sont capturées et n'interrompent pas la boucle
+
+### Polling
+
+```typescript
+pollForChanges(creds: SyncCredentials, since: Date): Promise<number[]>
+```
+
+- Retourne les IDs Odoo des tâches modifiées depuis `since`
+
+### Découverte du serveur
+
+| Méthode | Description |
+|---------|-------------|
+| `listDatabases(url)` | Liste les bases disponibles via `/web/database/list` |
+| `getServerVersion(url)` | Version Odoo via `/web/webclient/version_info` ; retourne `null` si indisponible |
+| `getOdooExplorer(creds)` | Retourne la version et la liste des modèles installés (`ir.model`) |
+| `getOdooModelInfo(creds, model)` | Champs et nombre d'enregistrements d'un modèle via `ir.model.fields` |
+
+### Construction HTML
+
+```typescript
+buildHtml(entries: NoteEntry[]): string
+```
+
+Convertit les entrées d'une note en HTML pour l'envoi vers Odoo :
+- `text` → `<p>` (caractères HTML échappés, entrées vides ignorées)
+- `date` → paragraphe avec emoji 📅
+- `geolocation` → paragraphe avec emoji 📍 + coordonnées
+- `audio/photo/video` → ligne emoji (🎙️/📷/🎥)
+
+```typescript
+buildGeoMultiPoint(entries: NoteEntry[]): string | null
+```
+
+Construit un GeoJSON `MultiPoint` (ordre `[longitude, latitude]`) à partir des entrées de géolocalisation. Retourne `null` si aucune.
 
 ---
 

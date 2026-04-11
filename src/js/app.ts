@@ -9,6 +9,19 @@ import { DatabaseService } from "../services/databaseService";
 import { runMigrations } from "../services/migrationService";
 import { migrateFromSecureStorage } from "../services/dataMigration";
 import { migrateVideoThumbnails } from "../services/migrations/migrateVideoThumbnails";
+import { addSyncColumns } from "../services/migrations/addSyncColumns";
+import { addSyncConfigId } from "../services/migrations/addSyncConfigId";
+import { addReminderCreatedAt } from "../services/migrations/addReminderCreatedAt";
+import { addApplicationSyncFields } from "../services/migrations/addApplicationSyncFields";
+import { addUserGraphicPrefs } from "../services/migrations/addUserGraphicPrefs";
+import { addSelectedSyncConfigIds } from "../services/migrations/addSelectedSyncConfigIds";
+import { addOdooVersionToApplications } from "../services/migrations/addOdooVersionToApplications";
+import { addSyncPerServerStatus } from "../services/migrations/addSyncPerServerStatus";
+import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
+import type { FontFamily } from "../models/graphicPrefs";
+import { SyncService } from "../services/syncService";
+import { NotificationService } from "../services/notificationService";
+import { ReminderService } from "../services/reminderService";
 import { BiometryUtils } from "../utils/biometryUtils";
 import { Events } from "../constants/events";
 
@@ -66,14 +79,73 @@ async function startApp() {
 			description: "Génération des thumbnails vidéo manquants",
 			run: migrateVideoThumbnails,
 		},
+		{
+			version: 2026033001,
+			description: "Ajout des colonnes de synchronisation Odoo",
+			run: addSyncColumns,
+		},
+		{
+			version: 2026033101,
+			description: "Ajout sync_config_id sur les notes",
+			run: addSyncConfigId,
+		},
+		{
+			version: 2026033102,
+			description: "Ajout created_at sur les rappels",
+			run: addReminderCreatedAt,
+		},
+		{
+			version: 2026040801,
+			description: "Ajout des champs de synchronisation sur les applications",
+			run: addApplicationSyncFields,
+		},
+		{
+			version: 2026040802,
+			description: "Création de la table des préférences graphiques utilisateur",
+			run: addUserGraphicPrefs,
+		},
+		{
+			version: 2026040803,
+			description: "Ajout selected_sync_config_ids sur les notes",
+			run: addSelectedSyncConfigIds,
+		},
+		{
+			version: 2026040901,
+			description: "Ajout de la version Odoo détectée sur les applications",
+			run: addOdooVersionToApplications,
+		},
+		{
+			version: 2026041001,
+			description: "Ajout du statut de synchronisation par serveur sur les notes",
+			run: addSyncPerServerStatus,
+		},
 	]);
+
+	setBootStep("Chargement des préférences graphiques…");
+	{
+		const fontFamily = await db.getUserGraphicPref("font_family") as FontFamily | null;
+		const fontSizeScale = await db.getUserGraphicPref("font_size_scale");
+		applyGraphicPrefs({
+			fontFamily: fontFamily ?? DEFAULT_GRAPHIC_PREFS.fontFamily,
+			fontSizeScale: fontSizeScale ? parseFloat(fontSizeScale) : DEFAULT_GRAPHIC_PREFS.fontSizeScale,
+		});
+	}
 
 	setBootStep("Initialisation des services…");
 	const appService = new AppService(db);
 	const noteService = new NoteService(eventBus, db);
 	const intentService = new IntentService(eventBus);
+	const syncService = new SyncService(db);
+	const reminderService = new ReminderService(db);
+	const notificationService = new NotificationService(syncService, appService, eventBus);
+	notificationService.start();
 
-	const env = { eventBus, router, appService, noteService, intentService, databaseService: db };
+	// Re-schedule any reminders whose notification batch is expiring
+	reminderService.rebatchExpiring().catch((e) =>
+		console.warn("[boot] rebatchExpiring failed:", e)
+	);
+
+	const env = { eventBus, router, appService, noteService, intentService, databaseService: db, syncService, notificationService };
 
 	setBootStep("Montage de l'interface…");
 	await mount(RootComponent, document.body, { env });

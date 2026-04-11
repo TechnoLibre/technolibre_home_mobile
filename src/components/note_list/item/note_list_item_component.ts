@@ -4,6 +4,8 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { NoteListItemHandleComponent } from "./handle/note_list_item_handle_component";
 
 import DeleteIcon from "../../../assets/icon/delete.svg";
+// @ts-ignore
+import CloudSyncIcon from "../../../assets/icon/cloud_sync.svg";
 
 export class NotesItemComponent extends EnhancedComponent {
 	static template = xml`
@@ -37,15 +39,33 @@ export class NotesItemComponent extends EnhancedComponent {
 				<p class="notes-item__title">
 					<t t-esc="props.note.title"></t>
 				</p>
-				<p
-					class="notes-item__date"
-					t-att-class="{
-						'no-date': !props.note.date
-					}"
-				>
-					<t t-if="props.note.date" t-esc="formatDate(props.note.date)"></t>
-					<t t-else="" t-esc="'Sans date'"></t>
-				</p>
+				<div class="notes-item__date-row">
+					<p
+						class="notes-item__date"
+						t-att-class="{
+							'no-date': !props.note.date
+						}"
+					>
+						<t t-if="props.note.date" t-esc="formatDate(props.note.date)"></t>
+						<t t-else="" t-esc="'Sans date'"></t>
+					</p>
+					<div
+						class="notes-item__sync-badge"
+						t-if="props.syncSynced > 0 || props.syncError > 0"
+					>
+						<img src="${CloudSyncIcon}" />
+						<span
+							t-if="props.syncSynced > 0"
+							class="notes-item__sync-count--synced"
+							t-esc="props.syncSynced"
+						/>
+						<span
+							t-if="props.syncError > 0"
+							class="notes-item__sync-count--error"
+							t-esc="props.syncError"
+						/>
+					</div>
+				</div>
 			</div>
 			<div
 				class="notes-item__actions"

@@ -65,6 +65,8 @@ export class NoteListComponent extends EnhancedComponent {
 							t-key="noteItem.id"
 							note="noteItem"
 							editMode="state.editMode"
+							syncSynced="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].synced : 0"
+							syncError="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].error : 0"
 							openNote.bind="openNote"
 							editNote.bind="editNote"
 							deleteNote.bind="deleteNote"
@@ -86,6 +88,8 @@ export class NoteListComponent extends EnhancedComponent {
 							t-key="noteItem.id"
 							note="noteItem"
 							editMode="state.editMode"
+							syncSynced="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].synced : 0"
+							syncError="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].error : 0"
 							openNote.bind="openNote"
 							editNote.bind="editNote"
 							deleteNote.bind="deleteNote"
@@ -115,10 +119,12 @@ export class NoteListComponent extends EnhancedComponent {
 		this.state = useState({
 			notes: new Array<Note>(),
 			showArchivedNotes: false,
-			editMode: false
+			editMode: false,
+			syncCounts: {} as Record<string, { synced: number; error: number }>,
 		});
 		onMounted(this.onMounted.bind(this));
 		this.getNotes();
+		this.getNoteSyncCounts();
 	}
 
 	private onMounted() {
@@ -151,6 +157,12 @@ export class NoteListComponent extends EnhancedComponent {
 				Dialog.alert({ message: error.message });
 			}
 		}
+	}
+
+	async getNoteSyncCounts() {
+		try {
+			this.state.syncCounts = await this.databaseService.getNoteSyncCounts();
+		} catch { /* sync counts are non-critical */ }
 	}
 
 	onNoteAddClick() {
