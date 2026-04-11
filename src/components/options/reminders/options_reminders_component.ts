@@ -72,13 +72,13 @@ export class OptionsRemindersComponent extends EnhancedComponent {
               <button
                 class="options-reminders__btn options-reminders__btn--toggle"
                 t-att-disabled="state.isBusy"
-                t-on-click="() => toggleReminder(reminder)"
+                t-on-click="() => this.toggleReminder(reminder)"
                 t-esc="reminder.active ? '⏸' : '▶'"
               />
               <button
                 class="options-reminders__btn options-reminders__btn--delete"
                 t-att-disabled="state.isBusy"
-                t-on-click="() => deleteReminder(reminder)"
+                t-on-click="() => this.deleteReminder(reminder)"
               >✕</button>
             </div>
           </li>
