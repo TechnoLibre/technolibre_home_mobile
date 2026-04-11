@@ -1,0 +1,213 @@
+@use "../../../css/mixins.scss";
+
+#servers-resources-component {
+    padding: 0 1rem 2rem;
+
+    // ── Toolbar ───────────────────────────────────────────────────────────────
+
+    .res__toolbar {
+        align-items: center;
+        display: flex;
+        gap: 0.75rem;
+        margin: 0 auto 1.25rem;
+        max-width: 48rem;
+    }
+
+    .res__btn-refresh {
+        background-color: #1565c0;
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 1rem;
+        font-weight: 600;
+        outline: none;
+        padding: 0.6rem 1.25rem;
+        transition: background-color 150ms ease-in-out;
+        &:hover:not(:disabled) { background-color: #1976d2; }
+        &:disabled { cursor: default; opacity: 0.6; }
+    }
+
+    .res__updated {
+        color: var(--text-greyed-out);
+        font-size: 0.8rem;
+    }
+
+    // ── Error ─────────────────────────────────────────────────────────────────
+
+    .res__error {
+        background-color: #1a0000;
+        border: 1px solid #d32f2f;
+        border-radius: 0.4rem;
+        color: #ef9a9a;
+        font-family: monospace;
+        font-size: 0.85rem;
+        margin: 0 auto;
+        max-width: 48rem;
+        padding: 0.75rem 1rem;
+    }
+
+    // ── Sections wrapper ──────────────────────────────────────────────────────
+
+    .res__sections {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        margin: 0 auto;
+        max-width: 48rem;
+    }
+
+    .res__section {
+        background-color: #151515;
+        border: 1px solid #2a2a2a;
+        border-radius: 0.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+        padding: 0.9rem 1rem;
+    }
+
+    .res__section-title {
+        color: var(--text-greyed-out);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+    }
+
+    .res__empty {
+        color: var(--text-greyed-out);
+        font-size: 0.85rem;
+        font-style: italic;
+    }
+
+    // ── Progress bar ──────────────────────────────────────────────────────────
+
+    .res__bar-row {
+        align-items: center;
+        display: flex;
+        gap: 0.6rem;
+    }
+
+    .res__bar {
+        background-color: #2a2a2a;
+        border-radius: 0.25rem;
+        flex: 1;
+        height: 0.7rem;
+        overflow: hidden;
+    }
+
+    .res__bar-fill {
+        border-radius: 0.25rem;
+        height: 100%;
+        transition: width 300ms ease-in-out;
+    }
+
+    .res__bar-pct {
+        color: var(--text);
+        font-family: monospace;
+        font-size: 0.82rem;
+        min-width: 2.8rem;
+        text-align: right;
+    }
+
+    // ── Metrics row ───────────────────────────────────────────────────────────
+
+    .res__metrics {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem 1.25rem;
+    }
+
+    .res__metric {
+        color: var(--text-greyed-out);
+        font-size: 0.78rem;
+    }
+
+    .res__val {
+        color: var(--text);
+        font-family: monospace;
+        font-weight: 600;
+        margin-left: 0.25em;
+
+        &--ok { color: #81c784; }
+    }
+
+    // ── Disk item ─────────────────────────────────────────────────────────────
+
+    .res__disk {
+        border-top: 1px solid #222;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding-top: 0.6rem;
+
+        &:first-of-type { border-top: none; padding-top: 0; }
+    }
+
+    .res__disk-header {
+        align-items: baseline;
+        display: flex;
+        gap: 0.6rem;
+    }
+
+    .res__disk-mount {
+        color: var(--text);
+        font-family: monospace;
+        font-size: 0.9rem;
+        font-weight: 600;
+    }
+
+    .res__disk-fs {
+        color: var(--text-greyed-out);
+        font-family: monospace;
+        font-size: 0.75rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    // ── Users ─────────────────────────────────────────────────────────────────
+
+    .res__users {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+    }
+
+    .res__user {
+        align-items: center;
+        display: flex;
+        gap: 0.75rem;
+        padding: 0.25rem 0;
+    }
+
+    .res__user-name {
+        color: #81c784;
+        flex: 1;
+        font-family: monospace;
+        font-size: 0.9rem;
+    }
+
+    .res__user-count {
+        background-color: #1e2a1e;
+        border-radius: 0.2rem;
+        color: #a5d6a7;
+        font-family: monospace;
+        font-size: 0.8rem;
+        font-weight: 700;
+        padding: 0.1rem 0.45rem;
+    }
+}
+
+// ── Spinner ───────────────────────────────────────────────────────────────────
+
+.res__spinner {
+    animation: res-spin 1s linear infinite;
+    display: inline-block;
+}
+
+@keyframes res-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}

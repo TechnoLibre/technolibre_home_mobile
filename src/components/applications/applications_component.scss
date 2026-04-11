@@ -7,6 +7,7 @@
 
 #applications-component #applications-options {
 	@include mixins.flex(center, flex-end);
+	gap: 0.5rem;
 }
 
 #applications-component #applications {
@@ -56,6 +57,25 @@
 	}
 }
 
+// ── Toggle button (shared for apps & servers) ─────────────────────────────────
+
+#applications-component .section__btn-toggle {
+	background-color: #2a2a2a;
+	border: 1px solid #3a3a3a;
+	border-radius: 0.25em;
+	box-shadow: 0px 4px 4px 0 rgba(0, 0, 0, 0.35);
+	color: var(--text-greyed-out);
+	cursor: pointer;
+	outline: none;
+	padding: 0.75em 1em;
+	transition: background-color 150ms ease-in-out, color 150ms ease-in-out;
+	white-space: nowrap;
+	&:hover {
+		background-color: #333;
+		color: var(--text);
+	}
+}
+
 // ── Section Serveurs ──────────────────────────────────────────────────────────
 
 #applications-component #servers {
@@ -68,6 +88,7 @@
 
 #applications-component #servers-options {
 	@include mixins.flex(center, flex-end);
+	gap: 0.5rem;
 }
 
 #applications-component #servers-add {

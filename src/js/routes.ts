@@ -12,6 +12,7 @@ import { ServersEditComponent } from "../components/servers/edit/servers_edit_co
 import { ServersDeployComponent } from "../components/servers/deploy/servers_deploy_component";
 import { ServersSettingsComponent } from "../components/servers/settings/servers_settings_component";
 import { ServersWorkspaceComponent } from "../components/servers/workspace/servers_workspace_component";
+import { ServersResourcesComponent } from "../components/servers/resources/servers_resources_component";
 
 export interface Route {
 	pathname: string;
@@ -28,6 +29,7 @@ export const routes: Route[] = [
 	{ pathname: "/servers/settings/:host/:username", component: ServersSettingsComponent },
 	{ pathname: "/servers/workspace/:host/:username", component: ServersWorkspaceComponent },
 	{ pathname: "/servers/deploy/:host/:username", component: ServersDeployComponent },
+	{ pathname: "/servers/resources/:host/:username", component: ServersResourcesComponent },
 	{ pathname: "/notes", component: NoteListComponent },
 	{ pathname: "/notes/edit/:id", component: NoteListComponent },
 	{ pathname: "/note/:id", component: NoteComponent },

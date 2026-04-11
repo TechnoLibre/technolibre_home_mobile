@@ -33,6 +33,11 @@ export class ApplicationsComponent extends EnhancedComponent {
         <HeadingComponent title="'Applications'" />
         <section id="applications">
           <div id="applications-options">
+            <button class="section__btn-toggle"
+                    t-on-click="() => this.state.showApps = !this.state.showApps">
+              <t t-if="state.showApps">Masquer (<t t-esc="state.applications.length" />)</t>
+              <t t-else="">Afficher (<t t-esc="state.applications.length" />)</t>
+            </button>
             <a
               id="applications-add"
               t-on-click="event => this.onAppAddClick(event)"
@@ -40,25 +45,32 @@ export class ApplicationsComponent extends EnhancedComponent {
               Ajouter une application
             </a>
           </div>
-          <ul id="applications-list" t-if="state.applications.length != 0">
-            <ApplicationsItemComponent
-              t-foreach="state.applications"
-              t-as="app"
-              t-key="app.url + ':' + app.username"
-              app="app"
-              openApp.bind="openApplication"
-              editApp.bind="editApplication"
-              deleteApp.bind="deleteApplication"
-            />
-          </ul>
-          <div id="applications-empty" t-else="">
-            <p>Il n'y a pas d'application dans le stockage local.</p>
-          </div>
+          <t t-if="state.showApps">
+            <ul id="applications-list" t-if="state.applications.length != 0">
+              <ApplicationsItemComponent
+                t-foreach="state.applications"
+                t-as="app"
+                t-key="app.url + ':' + app.username"
+                app="app"
+                openApp.bind="openApplication"
+                editApp.bind="editApplication"
+                deleteApp.bind="deleteApplication"
+              />
+            </ul>
+            <div id="applications-empty" t-else="">
+              <p>Il n'y a pas d'application dans le stockage local.</p>
+            </div>
+          </t>
         </section>
 
         <HeadingComponent title="'Serveurs'" />
         <section id="servers">
           <div id="servers-options">
+            <button class="section__btn-toggle"
+                    t-on-click="() => this.state.showServers = !this.state.showServers">
+              <t t-if="state.showServers">Masquer (<t t-esc="state.servers.length" />)</t>
+              <t t-else="">Afficher (<t t-esc="state.servers.length" />)</t>
+            </button>
             <a
               id="servers-add"
               t-on-click="event => this.onServerAddClick(event)"
@@ -66,19 +78,21 @@ export class ApplicationsComponent extends EnhancedComponent {
               Ajouter un serveur
             </a>
           </div>
-          <ul id="servers-list" t-if="state.servers.length != 0">
-            <ServersItemComponent
-              t-foreach="state.servers"
-              t-as="server"
-              t-key="server.host + ':' + server.username"
-              server="server"
-              deleteServer.bind="deleteServer"
-              editServer.bind="editServer"
-            />
-          </ul>
-          <div id="servers-empty" t-else="">
-            <p>Il n'y a pas de serveur dans le stockage local.</p>
-          </div>
+          <t t-if="state.showServers">
+            <ul id="servers-list" t-if="state.servers.length != 0">
+              <ServersItemComponent
+                t-foreach="state.servers"
+                t-as="server"
+                t-key="server.host + ':' + server.username"
+                server="server"
+                deleteServer.bind="deleteServer"
+                editServer.bind="editServer"
+              />
+            </ul>
+            <div id="servers-empty" t-else="">
+              <p>Il n'y a pas de serveur dans le stockage local.</p>
+            </div>
+          </t>
         </section>
       </div>
     `;
@@ -89,6 +103,8 @@ export class ApplicationsComponent extends EnhancedComponent {
         this.state = useState({
             applications: new Array<Application>(),
             servers: new Array<Server>(),
+            showApps: false,
+            showServers: false,
         });
 
         this.state.applications = await this.appService.getApps();

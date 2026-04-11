@@ -35,6 +35,10 @@ export class ServersSettingsComponent extends EnhancedComponent {
                   t-on-click="() => this.onDiscoverClick()">
             Discover
           </button>
+          <button class="settings__btn-resources"
+                  t-on-click="() => this.onResourcesClick()">
+            Ressources
+          </button>
           <button class="settings__btn-back"
                   t-on-click="() => window.history.back()">
             Retour
@@ -158,6 +162,16 @@ export class ServersSettingsComponent extends EnhancedComponent {
     }
 
     // ── Navigation ────────────────────────────────────────────────────────────
+
+    onResourcesClick(): void {
+        const server = this.state.server;
+        if (!server) return;
+        const h = encodeURIComponent(server.host);
+        const u = encodeURIComponent(server.username);
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
+            url: `/servers/resources/${h}/${u}`,
+        });
+    }
 
     onNewClick(): void {
         const server = this.state.server;
