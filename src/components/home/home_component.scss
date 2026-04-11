@@ -10,11 +10,24 @@
 	flex-direction: column;
 }
 
+@keyframes logo-spin {
+	0%   { transform: rotate(0deg)   scale(1); }
+	40%  { transform: rotate(200deg) scale(1.2); }
+	70%  { transform: rotate(330deg) scale(1.1); }
+	90%  { transform: rotate(375deg) scale(1.05); }
+	100% { transform: rotate(360deg) scale(1); }
+}
+
 #home-component #logo {
 	border-radius: 0.25em;
 	margin: 0 auto;
 	height: 100px;
 	width: 100px;
+	cursor: pointer;
+}
+
+#home-component #logo.logo--spinning {
+	animation: logo-spin 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 #home-component #title {
