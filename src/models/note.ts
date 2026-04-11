@@ -11,7 +11,9 @@ export interface Note {
 }
 
 export interface NoteEntryAudioParams {
-	path: string
+	path: string;
+	/** Text produced by Whisper transcription, stored on the entry itself. */
+	transcription?: string;
 }
 
 export interface NoteEntryDateParams {
@@ -31,6 +33,8 @@ export interface NoteEntryTextParams {
 export interface NoteEntryVideoParams {
 	path: string;
 	thumbnailPath?: string;
+	/** Text produced by Whisper transcription, stored on the entry itself. */
+	transcription?: string;
 }
 
 export interface NoteEntryGeolocationParams {

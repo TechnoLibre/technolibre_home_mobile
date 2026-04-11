@@ -1,4 +1,4 @@
-import { CapacitorCookies } from "@capacitor/core";
+import { Capacitor, CapacitorCookies } from "@capacitor/core";
 import { RawHttp } from "../plugins/rawHttpPlugin";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "./databaseService";
@@ -617,17 +617,43 @@ export class SyncService {
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
   /**
-   * Makes a POST request via the RawHttp native plugin, which bypasses
-   * Android's CookieHandler so manually-set Cookie headers are preserved.
-   * Returns a response shape compatible with parseNativeResponse().
+   * Makes a POST request.
+   *
+   * On Android native: uses the RawHttp plugin, which bypasses Android's
+   * CookieHandler so manually-set Cookie headers are preserved on plain HTTP
+   * connections to IP addresses.
+   *
+   * Fallback (web dev mode, old APK without the plugin, or any "not
+   * implemented" failure): uses fetch(), which works correctly for HTTPS and
+   * most HTTP scenarios.
    */
   private async rawPost(
     url: string,
     headers: Record<string, string>,
     body: object
   ): Promise<{ status: number; headers: Record<string, string | string[]>; data: any }> {
-    const resp = await RawHttp.post({ url, headers, body: JSON.stringify(body) });
-    return { status: resp.status, headers: resp.headers, data: resp.data };
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const resp = await RawHttp.post({ url, headers, body: JSON.stringify(body) });
+        return { status: resp.status, headers: resp.headers, data: resp.data };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // "not implemented" → native plugin absent (old APK, build not up to
+        // date). Fall through to fetch() so sync still works.
+        if (!msg.toLowerCase().includes("not implement")) throw e;
+        console.warn("[syncService] RawHttp plugin unavailable, falling back to fetch():", msg);
+      }
+    }
+    // Web / fallback path
+    const resp = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const text = await resp.text();
+    const respHeaders: Record<string, string> = {};
+    resp.headers.forEach((val, key) => { respHeaders[key] = val; });
+    return { status: resp.status, headers: respHeaders, data: text };
   }
 
   /** Ensures the URL has an http(s) scheme; defaults to https. */

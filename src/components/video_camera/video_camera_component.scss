@@ -11,11 +11,58 @@
 	width: 100%;
 }
 
+#video-camera-component #video-camera__ocr-canvas {
+	left: 0;
+	pointer-events: none;
+	position: fixed;
+	top: 0;
+	z-index: 10;
+}
+
 #video-camera-component #video-camera__top-controls {
+	@include mixins.flex(center, flex-end);
 	background-color: rgba(#000, 0.75);
 	backdrop-filter: blur(8px);
 	height: 3rem;
+	padding: 0 0.75rem;
 	width: 100%;
+	z-index: 20;
+}
+
+#video-camera-component #video-camera__ai-toggle {
+	@include mixins.button-clear;
+	@include mixins.flex(center, center);
+	border: 1.5px solid rgba(255, 255, 255, 0.35);
+	border-radius: 1rem;
+	color: rgba(255, 255, 255, 0.75);
+	cursor: pointer;
+	font-size: 0.75rem;
+	font-weight: 700;
+	gap: 0.3rem;
+	letter-spacing: 0.04em;
+	padding: 0.25rem 0.6rem;
+	transition: background-color 150ms, border-color 150ms, color 150ms;
+
+	.ai-icon {
+		font-size: 0.65rem;
+		opacity: 0.7;
+	}
+
+	&.ai-active {
+		background-color: rgba(255, 210, 0, 0.25);
+		border-color: rgba(255, 210, 0, 0.85);
+		color: #ffd700;
+
+		.ai-icon {
+			opacity: 1;
+			animation: ai-pulse 1.2s ease-in-out infinite;
+		}
+	}
+}
+
+@keyframes ai-pulse {
+	0%, 100% { opacity: 1; }
+	50%       { opacity: 0.4; }
 }
 
 #video-camera-component #video-camera__bottom-controls {

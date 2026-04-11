@@ -12,24 +12,42 @@
 
 #note__control__audio {
 	grid-area: audio;
+	background: rgba(206, 147, 216, 0.12);
+	span { color: #ce93d8; }
+	&:hover { background: rgba(206, 147, 216, 0.22); }
 }
 
 #note__control__text {
 	grid-area: text;
+	background: rgba(102, 187, 106, 0.12);
+	span { color: #66bb6a; }
+	&:hover { background: rgba(102, 187, 106, 0.22); }
 }
 
 #note__control__date {
 	grid-area: date;
+	background: rgba(66, 165, 245, 0.12);
+	span { color: #42a5f5; }
+	&:hover { background: rgba(66, 165, 245, 0.22); }
 }
 
 #note__control__location {
 	grid-area: geolocation;
+	background: rgba(77, 208, 225, 0.12);
+	span { color: #4dd0e1; }
+	&:hover { background: rgba(77, 208, 225, 0.22); }
 }
 
 #note__control__video {
 	grid-area: video;
+	background: rgba(239, 83, 80, 0.12);
+	span { color: #ef5350; }
+	&:hover { background: rgba(239, 83, 80, 0.22); }
 }
 
 #note__control__photo {
 	grid-area: photo;
+	background: rgba(255, 167, 38, 0.12);
+	span { color: #ffa726; }
+	&:hover { background: rgba(255, 167, 38, 0.22); }
 }
