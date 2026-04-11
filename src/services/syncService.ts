@@ -621,11 +621,11 @@ export class SyncService {
    *
    * On Android native: uses the RawHttp plugin, which bypasses Android's
    * CookieHandler so manually-set Cookie headers are preserved on plain HTTP
-   * connections to IP addresses.
+   * connections to IP addresses. If the plugin is absent (old APK), throws a
+   * clear error — fetch() cannot be used as a fallback on Android because the
+   * WebView blocks cross-origin requests (CORS) to Odoo servers.
    *
-   * Fallback (web dev mode, old APK without the plugin, or any "not
-   * implemented" failure): uses fetch(), which works correctly for HTTPS and
-   * most HTTP scenarios.
+   * On web (dev mode): uses fetch() directly.
    */
   private async rawPost(
     url: string,
@@ -638,13 +638,16 @@ export class SyncService {
         return { status: resp.status, headers: resp.headers, data: resp.data };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        // "not implemented" → native plugin absent (old APK, build not up to
-        // date). Fall through to fetch() so sync still works.
-        if (!msg.toLowerCase().includes("not implement")) throw e;
-        console.warn("[syncService] RawHttp plugin unavailable, falling back to fetch():", msg);
+        if (msg.toLowerCase().includes("not implement")) {
+          throw new Error(
+            "Le plugin HTTP natif (RawHttp) n'est pas disponible. " +
+            "Reconstruisez l'APK pour activer la synchronisation."
+          );
+        }
+        throw e;
       }
     }
-    // Web / fallback path
+    // Web/dev path — fetch() works here (no Android WebView CORS restriction)
     const resp = await fetch(url, {
       method: "POST",
       headers,
