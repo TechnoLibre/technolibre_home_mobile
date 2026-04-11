@@ -15,6 +15,12 @@ const ENV = {
     DEBUG_DEV: import.meta.env.VITE_DEBUG_DEV === "true",
 };
 
+const STARTUP_TIME = new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+});
+
 export class HomeComponent extends EnhancedComponent {
     static template = xml`
     <div id="home-component">
@@ -29,6 +35,7 @@ export class HomeComponent extends EnhancedComponent {
           <button id="notes-new" class="buttons-primary" t-on-click.stop.prevent="onNoteNewClick">Ajout ${ENV.LABEL_NOTE}s</button>
         </section>
       </div>
+      <p id="startup-time">Ouvert à ${STARTUP_TIME}</p>
     </div>
   `;
 

@@ -1,13 +1,25 @@
 @use "../../css/mixins.scss";
 
 #home-component {
-	@include mixins.flex--center;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
 	height: 100%;
 }
 
 #home-component #centered-content {
-	@include mixins.flex(normal, center);
+	flex: 1;
+	display: flex;
 	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+}
+
+#home-component #startup-time {
+	color: #555;
+	font-size: 0.72rem;
+	margin-bottom: 0.75rem;
+	text-align: center;
 }
 
 @keyframes logo-spin {
