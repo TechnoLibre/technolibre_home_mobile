@@ -17,7 +17,7 @@ export class NavbarComponent extends EnhancedComponent {
 					onItemClick.bind="onNavListItemClick"
 				/>
 				<NavbarItemComponent
-					displayName="'Apps'"
+					displayName="'Services'"
 					currentRoute="state.currentRoute"
 					path="'/applications'"
 					subpaths="['/applications/add', '/applications/edit/:url/:username']"
