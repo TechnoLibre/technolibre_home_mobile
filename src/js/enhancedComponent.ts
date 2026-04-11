@@ -8,6 +8,8 @@ import { SyncService } from "../services/syncService";
 import { NotificationService } from "../services/notificationService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
+import { TranscriptionService } from "../services/transcriptionService";
+import { ProcessService } from "../services/processService";
 import { Events } from "../constants/events";
 
 export abstract class EnhancedComponent extends Component {
@@ -51,6 +53,14 @@ export abstract class EnhancedComponent extends Component {
 
 	public get deploymentService(): DeploymentService {
 		return this.env.deploymentService;
+	}
+
+	public get transcriptionService(): TranscriptionService {
+		return this.env.transcriptionService;
+	}
+
+	public get processService(): ProcessService {
+		return this.env.processService;
 	}
 
 	public navigate(url: string): void {
