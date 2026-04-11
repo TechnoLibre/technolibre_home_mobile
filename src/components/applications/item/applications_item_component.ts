@@ -65,7 +65,15 @@ export class ApplicationsItemComponent extends EnhancedComponent {
 
         <div t-if="state.dialog.loading" class="app-info-dialog__status">Chargement…</div>
         <div t-elif="state.dialog.error" class="app-info-dialog__status app-info-dialog__status--error">
-          <t t-esc="state.dialog.error" />
+          <pre class="app-info-dialog__error-text" t-esc="state.dialog.error" />
+          <div class="app-info-dialog__error-actions">
+            <button type="button" class="app-info-dialog__error-btn" t-on-click.stop="() => this.copyError()">
+              📋 Copier
+            </button>
+            <button type="button" class="app-info-dialog__error-btn app-info-dialog__error-btn--issue" t-on-click.stop="() => this.openIssue()">
+              🐛 Créer un ticket
+            </button>
+          </div>
         </div>
         <div t-else="" class="app-info-dialog__body">
           <div class="app-info-dialog__meta">
@@ -177,6 +185,18 @@ export class ApplicationsItemComponent extends EnhancedComponent {
 
 	closeDialog() {
 		this.state.dialog.visible = false;
+	}
+
+	async copyError() {
+		await navigator.clipboard.writeText(this.state.dialog.error);
+	}
+
+	openIssue() {
+		const body = encodeURIComponent(
+			`**URL:** ${this.props.app.url}\n\n**Erreur:**\n\`\`\`\n${this.state.dialog.error}\n\`\`\``
+		);
+		const url = `https://github.com/TechnoLibre/technolibre_home_mobile/issues/new?labels=bug&body=${body}`;
+		window.open(url, "_blank");
 	}
 
 	async toggleModel(modelName: string) {
