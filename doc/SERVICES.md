@@ -11,6 +11,8 @@ NoteService
 DatabaseService     → Abstraction SQLite
 SyncService         → Synchronisation bidirectionnelle Odoo
 IntentService       → Écoute et parsing des intents Android
+ServerService       → CRUD serveurs SSH + workspaces
+DeploymentService   → Déploiement SSH en arrière-plan (état réactif)
 ```
 
 ## AppService (`src/services/appService.ts`)
@@ -252,6 +254,67 @@ Déclenche une navigation vers `/intent/:type` via l'`EventBus`.
 
 ---
 
+---
+
+## ServerService (`src/services/serverService.ts`)
+
+Gestion des serveurs SSH et de leurs workspaces déployés.
+
+**Méthodes :**
+
+| Méthode | Description |
+|---------|-------------|
+| `getServers()` | Liste tous les serveurs |
+| `add(server)` | Ajoute un serveur |
+| `delete(serverID)` | Supprime un serveur par `(host, username)` |
+| `edit(serverID, newServer, options?)` | Met à jour un serveur ; `ignoreCredential: true` préserve le mot de passe / la clé existante |
+| `matches(serverID)` | Retourne les serveurs correspondant à `(host, username)` |
+| `getMatch(serverID)` | Retourne le serveur correspondant ou lève `NoServerMatchError` |
+| `getWorkspaces(serverID)` | Liste les workspaces d'un serveur |
+| `addWorkspace(workspace)` | Ajoute un workspace (ignore les doublons) |
+| `deleteWorkspace(workspace)` | Supprime un workspace |
+| `workspaceExists(workspace)` | Vérifie l'existence d'un workspace |
+
+**Erreurs :**
+- `ServerAlreadyExistsError` — doublon `(host, username)`
+- `NoServerMatchError` — serveur introuvable
+
+---
+
+## DeploymentService (`src/services/deploymentService.ts`)
+
+Orchestration du déploiement ERPLibre via SSH. Maintient un registre réactif (Owl `reactive`) des déploiements en cours ou terminés, accessible depuis n'importe quel composant.
+
+### Registre réactif
+
+```typescript
+readonly deployments: ActiveDeployment[]  // liste réactive Owl
+```
+
+Les composants qui lisent `deployments` pendant le rendu se re-rendent automatiquement lors des mises à jour (ajout / suppression / progression d'étape).
+
+### Méthodes principales
+
+| Méthode | Description |
+|---------|-------------|
+| `create(server, path)` | Crée un `ActiveDeployment` réactif avec 3 étapes `pending`. Remplace un déploiement existant sur le même `(host, username, path)`. |
+| `find(host, username, path)` | Recherche un déploiement par clé composite. |
+| `getAllForServer(host, username)` | Retourne tous les déploiements d'un serveur donné. |
+| `dismiss(host, username, path)` | Supprime le déploiement du registre et retire le listener SSH actif. |
+| `run(dep, fromStep)` | Lance (ou relance depuis `fromStep`) le déploiement en arrière-plan. |
+
+### Étapes du déploiement
+
+| Index | Étape | Commande SSH |
+|-------|-------|-------------|
+| 0 | Connexion SSH | `SshPlugin.connect(...)` |
+| 1 | Clonage du dépôt | `test -d <path>` → `git clone` ou cd |
+| 2 | Installation | `make install` |
+
+Chaque étape passe par `pending → running → success/warning/error`. Les logs s'accumulent dans `step.logs[]` même sans composant monté. À la fin d'un déploiement complet sans erreur, le workspace est persisté via `ServerService.addWorkspace()`.
+
+---
+
 ## Utilitaires
 
 ### BiometryUtils (`src/utils/biometryUtils.ts`)
@@ -272,6 +335,32 @@ Déclenche une navigation vers `/intent/:type` via l'`EventBus`.
 - Stockage clé/valeur persistant via SecureStorage (Android Keystore / iOS Keychain)
 - `getValueByKey<T>(key)` — retourne `{ keyExists, value, isValid }`
 - `setKeyValuePair(key, value)` — sérialise en JSON
+
+### ServerResourceParsers (`src/utils/serverResourceParsers.ts`)
+
+Fonctions pures de formatage et de parsing des sorties SSH brutes pour le moniteur de ressources serveur. Toutes les fonctions sont exportées et couvertes par des tests unitaires.
+
+**Formatage :**
+
+| Fonction | Description |
+|----------|-------------|
+| `fmtKb(kb)` | Formate des kilo-octets → `"512 KB"`, `"128 MB"`, `"8.0 GB"` |
+| `fmtSpeed(bps)` | Formate des octets/s → `"1.5 KB/s"`, `"10.00 MB/s"` |
+| `fmtUptime(secs)` | Formate des secondes → `"2j 3h 15min"` |
+
+**Parsing :**
+
+| Fonction | Source SSH | Retour |
+|----------|-----------|--------|
+| `parseMem(lines)` | `/proc/meminfo` | `MemInfo` (total, used, cached, swap) |
+| `parseCpu(line)` | `top -bn1` | `CpuInfo` (us, sy, wa, id) ou `null` |
+| `parseLoad(line)` | `/proc/loadavg` | `{ l1, l5, l15 }` ou `null` |
+| `parseCryptMounts(lines)` | `lsblk` + `dmsetup` loop | `Set<string>` des points de montage chiffrés |
+| `parseDisk(lines, cryptMounts)` | `df -hP` | `DiskPartition[]` avec flag `encrypted` |
+| `parseNet(lines1, lines2)` | `/proc/net/dev` (×2) | `NetInfo` (rx/tx octets/s) ou `null` |
+| `parseUptime(line)` | `/proc/uptime` | Secondes (`number`) ou `null` |
+| `parseUsers(line)` | `users` | `UserCount[]` triés alphabétiquement |
+| `parseSensors(lines)` | `sensors` (lm-sensors) | `TempSensor[]` groupés par puce |
 
 ### StorageConstants
 
