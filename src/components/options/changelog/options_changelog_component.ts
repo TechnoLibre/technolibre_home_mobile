@@ -9,7 +9,7 @@ export class OptionsChangelogComponent extends EnhancedComponent {
   static template = xml`
     <li class="options-list__item">
       <a href="#" t-on-click.stop.prevent="onChangelogClick">
-        Version <t t-esc="currentVersion"/>
+        📋 Version <t t-esc="currentVersion"/>
       </a>
     </li>
   `;

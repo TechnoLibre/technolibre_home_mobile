@@ -12,7 +12,7 @@ export class OptionsClearCacheComponent extends EnhancedComponent {
         href="#"
         t-on-click.stop.prevent="onClearCacheClick"
       >
-        Réinitialiser navigateur
+        🔄 Réinitialiser navigateur
       </a>
     </li>
   `;

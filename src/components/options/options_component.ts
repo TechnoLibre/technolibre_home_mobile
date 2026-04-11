@@ -28,7 +28,7 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsToggleBiometryComponent />
         <li class="options-list__item" t-if="state.isDebug">
           <a href="#" t-on-click.stop.prevent="onDatabaseClick">
-            Base de données ›
+            🗄️ Base de données ›
           </a>
         </li>
         <OptionsPermissionsComponent />
@@ -40,7 +40,7 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsChangelogComponent />
         <li class="options-list__item">
           <a href="#" t-on-click.stop.prevent="onErplibreClick">
-            ERPLibre ›
+            🏠 ERPLibre ›
           </a>
         </li>
       </ul>
