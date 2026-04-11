@@ -1,6 +1,5 @@
 package ca.erplibre.home;
 
-import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
 
@@ -8,37 +7,29 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-import com.google.android.gms.cast.framework.CastContext;
+import app.supernotes.sendIntent.SendIntentActivity;
 
-import com.getcapacitor.BridgeActivity;
-
-public class MainActivity extends BridgeActivity {
-    @Override
-    public void onCreate(Bundle savedInstanceState) {
-        registerPlugin(RawHttpPlugin.class);
-        registerPlugin(SshPlugin.class);
-        super.onCreate(savedInstanceState);
-        CastContext.getSharedInstance(this);
-    }
+/**
+ * Extends SendIntentActivity to override the EdgeToEdge IME insets listener
+ * that ships with the @capawesome/capacitor-android-edge-to-edge-support v8
+ * plugin. Without this override, opening the keyboard inside the intent flow
+ * causes a double-shift: Android pans the window AND EdgeToEdge adds a bottom
+ * margin equal to the keyboard height, pushing all content off-screen.
+ *
+ * Combined with android:windowSoftInputMode="adjustNothing" in the manifest,
+ * the keyboard now appears as a pure overlay — no layout shift at all.
+ */
+public class CustomSendIntentActivity extends SendIntentActivity {
 
     @Override
     public void onStart() {
         super.onStart();
-        // The EdgeToEdge plugin v8 auto-installs an IME insets listener in its load()
-        // method that shifts the WebView up by the keyboard height. Override it here
-        // (after Capacitor plugin init) with a listener that only applies system bar
-        // insets, so the keyboard appears as an overlay without moving the layout.
         applyKeyboardOverlayInsetsListener();
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        // Re-apply the override every time the activity becomes active. When the app
-        // is launched via a share intent, SendIntentActivity sits on top of
-        // MainActivity; when it finishes, only onResume() is called (not onStart()).
-        // Without this, the EdgeToEdge IME listener installed during the intent flow
-        // can persist and shift the WebView off-screen when the keyboard opens.
         applyKeyboardOverlayInsetsListener();
     }
 

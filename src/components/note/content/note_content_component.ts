@@ -68,7 +68,7 @@ export class NoteContentComponent extends EnhancedComponent {
 				if (this.didAutoFocus) return;
 				const el = this.titleRef.el as HTMLTextAreaElement | null;
 				if (el && el.value.trim() === "") {
-					el.focus();
+					el.focus({ preventScroll: true });
 					this.didAutoFocus = true;
 				}
 			});

@@ -24,11 +24,18 @@ export class ContentComponent extends EnhancedComponent {
 
 	private listenForEvents() {
 		this.eventBus.addEventListener(Events.ROUTER_NAVIGATION, () => {
+			this._resetScroll();
 			this.state.currentRoute = window.location.pathname;
 		});
 
 		window.addEventListener("popstate", () => {
+			this._resetScroll();
 			this.state.currentRoute = window.location.pathname;
 		});
+	}
+
+	private _resetScroll() {
+		const el = document.getElementById("content-component");
+		if (el) el.scrollTop = 0;
 	}
 }
