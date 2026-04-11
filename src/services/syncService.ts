@@ -652,7 +652,8 @@ export class SyncService {
     });
     const text = await resp.text();
     const respHeaders: Record<string, string> = {};
-    resp.headers.forEach((val, key) => { respHeaders[key] = val; });
+    // Optional chaining: test mocks may omit headers; real fetch() always has it.
+    resp.headers?.forEach?.((val: string, key: string) => { respHeaders[key] = val; });
     return { status: resp.status, headers: respHeaders, data: text };
   }
 
