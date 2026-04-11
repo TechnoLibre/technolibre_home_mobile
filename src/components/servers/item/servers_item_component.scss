@@ -63,11 +63,11 @@
             &:hover { background-color: var(--btn-blue-hover-color); }
         }
 
-        &--deploy {
-            background-color: #2e7d32;
+        &--settings {
+            background-color: #37474f;
             flex: 1;
             font-weight: 600;
-            &:hover { background-color: #388e3c; }
+            &:hover { background-color: #455a64; }
         }
     }
 }

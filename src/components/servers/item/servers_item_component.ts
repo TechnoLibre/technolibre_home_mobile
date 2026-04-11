@@ -26,9 +26,9 @@ export class ServersItemComponent extends EnhancedComponent {
             t-on-click="() => this.onEditClick()">
             Modifier
           </button>
-          <button class="servers-item__btn servers-item__btn--deploy"
-            t-on-click="() => this.onDeployClick()">
-            Déployer
+          <button class="servers-item__btn servers-item__btn--settings"
+            t-on-click="() => this.onSettingsClick()">
+            Paramètres
           </button>
         </div>
       </li>
@@ -40,11 +40,11 @@ export class ServersItemComponent extends EnhancedComponent {
         editServer: { type: Function },
     };
 
-    onDeployClick(): void {
+    onSettingsClick(): void {
         const encodedHost = encodeURIComponent(this.props.server.host);
         const encodedUsername = encodeURIComponent(this.props.server.username);
         this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
-            url: `/servers/deploy/${encodedHost}/${encodedUsername}`,
+            url: `/servers/settings/${encodedHost}/${encodedUsername}`,
         });
     }
 

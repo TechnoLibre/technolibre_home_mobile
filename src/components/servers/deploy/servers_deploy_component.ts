@@ -1,26 +1,13 @@
 import { useState, onPatched, xml } from "@odoo/owl";
-import type { PluginListenerHandle } from "@capacitor/core";
 
-import { Server } from "../../../models/server";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { HeadingComponent } from "../../heading/heading_component";
-import { SshPlugin } from "../../../plugins/sshPlugin";
-
-type StepStatus = "pending" | "running" | "success" | "warning" | "error";
-
-interface DeployStep {
-    label: string;
-    status: StepStatus;
-    durationMs: number | null;
-    errorMessage: string | null;
-    logs: string[];
-    autoScroll: boolean;
-}
+import type { ActiveDeployment } from "../../../services/deploymentService";
 
 export class ServersDeployComponent extends EnhancedComponent {
     static template = xml`
       <div id="servers-deploy-component">
-        <HeadingComponent title="'Déploiement ERPLibre'" />
+        <HeadingComponent title="'Déploiement ERPLibre'" breadcrumbs="breadcrumbs" />
 
         <!-- ── Wizard ───────────────────────────────────────── -->
         <t t-if="state.phase === 'wizard'">
@@ -58,17 +45,17 @@ export class ServersDeployComponent extends EnhancedComponent {
         </t>
 
         <!-- ── Déploiement en cours ──────────────────────────── -->
-        <t t-if="state.phase === 'deploying'">
+        <t t-if="state.phase === 'deploying' and state.deployment">
           <div class="deploy__server-info" t-if="state.server">
             <span class="deploy__server-label" t-esc="state.server.label || state.server.host" />
             <span class="deploy__server-address">
               <t t-esc="state.server.username" />@<t t-esc="state.server.host" />:<t t-esc="state.server.port" />
             </span>
-            <span class="deploy__server-path">→ <t t-esc="state.deployPath" /></span>
+            <span class="deploy__server-path">→ <t t-esc="state.deployment.path" /></span>
           </div>
 
           <ol class="deploy__steps">
-            <t t-foreach="state.steps" t-as="step" t-key="step_index">
+            <t t-foreach="state.deployment.steps" t-as="step" t-key="step_index">
               <li t-att-class="'deploy__step deploy__step--' + step.status">
 
                 <div class="deploy__step-header">
@@ -100,7 +87,23 @@ export class ServersDeployComponent extends EnhancedComponent {
                 <details class="deploy__step-logs"
                          t-if="step.logs.length > 0"
                          t-on-toggle="(e) => this.onLogsToggle(e, step_index)">
-                  <summary>Journaux (<t t-esc="step.logs.length" /> lignes)</summary>
+                  <summary>
+                    Journaux (<t t-esc="step.logs.length" /> lignes)
+                    <span class="deploy__log-lock-indicator"
+                          t-if="step.autoScroll">⬇ suivi</span>
+                  </summary>
+                  <div class="deploy__log-toolbar">
+                    <button class="deploy__log-nav-btn"
+                            title="Aller au début"
+                            t-on-click="() => this.scrollLogToTop(step_index)">
+                      ↑ Haut
+                    </button>
+                    <button class="deploy__log-nav-btn deploy__log-nav-btn--bottom"
+                            title="Aller à la fin"
+                            t-on-click="() => this.scrollLogToBottom(step_index)">
+                      ↓ Bas
+                    </button>
+                  </div>
                   <pre
                     t-att-data-step="step_index"
                     class="deploy__log-output"
@@ -110,7 +113,7 @@ export class ServersDeployComponent extends EnhancedComponent {
                 </details>
 
                 <!-- Bouton Réessayer par étape (si erreur ou warning) -->
-                <t t-if="(step.status === 'error' or step.status === 'warning') and state.done">
+                <t t-if="(step.status === 'error' or step.status === 'warning') and state.deployment.done">
                   <button class="deploy__btn-retry-step"
                           t-on-click="() => this.retryFromStep(step_index)">
                     ↩ Réessayer depuis cette étape
@@ -121,15 +124,27 @@ export class ServersDeployComponent extends EnhancedComponent {
             </t>
           </ol>
 
-          <div class="deploy__actions" t-if="state.done">
+          <div class="deploy__actions" t-if="state.deployment.done">
             <button class="deploy__btn-back"
                     t-on-click="() => window.history.back()">
               Retour
             </button>
             <button class="deploy__btn-retry"
-                    t-if="state.failedStepIndex !== null"
-                    t-on-click="() => this.retryFromStep(state.failedStepIndex)">
+                    t-if="state.deployment.failedStepIndex !== null"
+                    t-on-click="() => this.retryFromStep(state.deployment.failedStepIndex)">
               Réessayer
+            </button>
+            <button class="deploy__btn-dismiss"
+                    t-on-click="() => this.dismissDeployment()">
+              Fermer
+            </button>
+          </div>
+
+          <!-- Running: show a back-only bar -->
+          <div class="deploy__actions" t-if="!state.deployment.done">
+            <button class="deploy__btn-back"
+                    t-on-click="() => window.history.back()">
+              ← Retour (déploiement en arrière-plan)
             </button>
           </div>
         </t>
@@ -149,15 +164,9 @@ export class ServersDeployComponent extends EnhancedComponent {
 
         this.state = useState({
             phase: "wizard" as "wizard" | "deploying",
-            server: null as Server | null,
+            server: null as any,
             deployPath: "~/erplibre",
-            steps: [
-                this.makeStep("Connexion SSH"),
-                this.makeStep("Clonage du dépôt ERPLibre"),
-                this.makeStep("Installation (make install)"),
-            ] as DeployStep[],
-            done: false,
-            failedStepIndex: null as number | null,
+            deployment: null as ActiveDeployment | null,
         });
 
         // Auto-scroll: after each render, scroll to bottom for steps with autoScroll on
@@ -165,199 +174,99 @@ export class ServersDeployComponent extends EnhancedComponent {
             this.scrollActiveLogContainers();
         });
 
+        // ?path= param lets the Settings page pre-fill the deploy path
+        const urlParams = new URLSearchParams(window.location.search);
+        const pathParam = urlParams.get("path");
+
         try {
             const server = await this.serverService.getMatch({ host, username });
             this.state.server = server;
-            this.state.deployPath = server.deployPath || "~/erplibre";
+            this.state.deployPath = pathParam
+                ? decodeURIComponent(pathParam)
+                : server.deployPath || "~/erplibre";
+
+            // Check for an in-progress / completed deployment to resume
+            const normalizedPath = this.state.deployPath
+                .replace(/^~\//, "$HOME/")
+                .replace(/^~$/, "$HOME");
+            const existing = this.deploymentService.find(host, username, normalizedPath);
+            if (existing) {
+                this.state.deployment = existing;
+                this.state.phase = "deploying";
+            }
         } catch (error: unknown) {
+            // Server not found — show an error immediately
             this.state.phase = "deploying";
-            this.state.done = true;
-            this.state.failedStepIndex = 0;
-            this.state.steps[0].status = "error";
-            this.state.steps[0].errorMessage = error instanceof Error
+            this.state.deployment = this.deploymentService.create(
+                { host, username, port: 22, authType: "password", password: "", privateKey: "", passphrase: "", label: host, deployPath: "" },
+                ""
+            );
+            this.state.deployment.done = true;
+            this.state.deployment.failedStepIndex = 0;
+            this.state.deployment.steps[0].status = "error";
+            this.state.deployment.steps[0].errorMessage = error instanceof Error
                 ? error.message
                 : "Serveur introuvable.";
         }
     }
 
-    private makeStep(label: string): DeployStep {
-        return { label, status: "pending", durationMs: null, errorMessage: null, logs: [], autoScroll: true };
+    // ── Breadcrumbs ───────────────────────────────────────────────────────────
+
+    get breadcrumbs() {
+        const crumbs: { label: string; url: string }[] = [
+            { label: "Applications", url: "/applications" },
+        ];
+        const s = this.state.server;
+        if (s) {
+            const h = encodeURIComponent(s.host);
+            const u = encodeURIComponent(s.username);
+            crumbs.push({
+                label: s.label || s.host,
+                url: `/servers/settings/${h}/${u}`,
+            });
+        }
+        return crumbs;
     }
 
     // ── Wizard ───────────────────────────────────────────────────────────────
 
     async beginDeployment(): Promise<void> {
+        const server = this.state.server;
+        if (!server) return;
+
+        // Normalize tilde: bash does NOT expand ~ inside double-quoted strings.
+        const deployPath = this.state.deployPath
+            .replace(/^~\//, "$HOME/")
+            .replace(/^~$/, "$HOME");
+
+        const dep = this.deploymentService.create(server, deployPath);
+        this.state.deployment = dep;
         this.state.phase = "deploying";
-        await this.startDeployment(0);
+        this.deploymentService.run(dep, 0);
     }
 
     // ── Retry ────────────────────────────────────────────────────────────────
 
-    async retryFromStep(fromStep: number): Promise<void> {
-        if (fromStep === null || fromStep === undefined) return;
-        await this.startDeployment(fromStep);
+    retryFromStep(fromStep: number): void {
+        const dep = this.state.deployment;
+        if (!dep || fromStep === null || fromStep === undefined) return;
+        this.deploymentService.run(dep, fromStep);
     }
 
-    // ── Main deployment logic ─────────────────────────────────────────────────
-
-    async startDeployment(fromStep: number): Promise<void> {
-        const server = this.state.server;
-        if (!server) return;
-
-        // Step 0 (SSH) always resets and reruns — it must reconnect before any step.
-        // Steps from fromStep onwards also reset.
-        for (let i = 0; i < this.state.steps.length; i++) {
-            if (i === 0 || i >= fromStep) {
-                const step = this.state.steps[i];
-                step.status = "pending";
-                step.durationMs = null;
-                step.errorMessage = null;
-                step.logs = [];
-                step.autoScroll = true;
-            }
-        }
-        this.state.done = false;
-        this.state.failedStepIndex = null;
-
-        const deployPath = this.state.deployPath;
-        let outputListener: PluginListenerHandle | null = null;
-
-        try {
-            // Step 0: SSH Connection — ALWAYS runs, regardless of fromStep
-            await this.runStep(0, async () => {
-                const credential = server.authType === "password"
-                    ? server.password
-                    : server.privateKey;
-
-                await SshPlugin.connect({
-                    host: server.host,
-                    port: server.port,
-                    username: server.username,
-                    authType: server.authType,
-                    credential,
-                    passphrase: server.passphrase || undefined,
-                });
-            });
-
-            // Attach output listener (streams to the currently-running step)
-            outputListener = await SshPlugin.addListener("sshOutput", (data) => {
-                const activeStep = this.state.steps.find((s) => s.status === "running");
-                if (activeStep) {
-                    activeStep.logs.push(`[${data.stream}] ${data.line}`);
-                }
-            });
-
-            // Step 1: git clone (or skip if repo already present)
-            if (fromStep <= 1) {
-                await this.runStepGitClone(deployPath);
-            }
-
-            // Step 2: make install
-            if (fromStep <= 2) {
-                await this.runStep(2, async () => {
-                    const result = await SshPlugin.execute({
-                        command: `cd ${deployPath} && make install`,
-                    });
-                    if (result.exitCode !== 0) {
-                        throw new Error(`make install a échoué (code ${result.exitCode})`);
-                    }
-                });
-            }
-
-        } catch (_error) {
-            // Error already recorded by runStep / runStepGitClone
-        } finally {
-            if (outputListener) {
-                await outputListener.remove();
-            }
-            try { await SshPlugin.disconnect(); } catch (_e) { /* ignore */ }
-
-            // Find the first failed step to expose on the global Réessayer button
-            const failedIdx = this.state.steps.findIndex(
-                (s) => s.status === "error"
-            );
-            this.state.failedStepIndex = failedIdx >= 0 ? failedIdx : null;
-            this.state.done = true;
-        }
-    }
-
-    // Step 1: if directory exists → cd (verify access, warning); else git clone
-    private async runStepGitClone(deployPath: string): Promise<void> {
-        const step = this.state.steps[1];
-        step.status = "running";
-        const start = Date.now();
-
-        try {
-            const checkResult = await SshPlugin.execute({
-                command: `test -d "${deployPath}"`,
-            });
-
-            if (checkResult.exitCode === 0) {
-                // Directory already exists — cd to verify access
-                const cdResult = await SshPlugin.execute({
-                    command: `cd "${deployPath}" && pwd`,
-                });
-                step.durationMs = Date.now() - start;
-                if (cdResult.exitCode !== 0) {
-                    step.status = "error";
-                    step.errorMessage = `Impossible d'accéder au répertoire ${deployPath}`;
-                    throw new Error(step.errorMessage);
-                }
-                step.status = "warning";
-                step.errorMessage = `Le répertoire ${deployPath} existe déjà — passage à l'étape suivante.`;
-                return;
-            }
-
-            // Directory absent — git clone
-            const cloneResult = await SshPlugin.execute({
-                command: `git clone https://github.com/erplibre/erplibre "${deployPath}"`,
-            });
-            step.durationMs = Date.now() - start;
-
-            if (cloneResult.exitCode !== 0) {
-                step.status = "error";
-                step.errorMessage = `git clone a échoué (code ${cloneResult.exitCode})`;
-                throw new Error(step.errorMessage);
-            }
-
-            step.status = "success";
-        } catch (error: unknown) {
-            if (step.status !== "warning" && step.status !== "error") {
-                step.durationMs = Date.now() - start;
-                step.status = "error";
-                step.errorMessage = error instanceof Error ? error.message : "Erreur inconnue.";
-            }
-            if (step.status === "error") {
-                throw error;
-            }
-        }
-    }
-
-    private async runStep(index: number, fn: () => Promise<void>): Promise<void> {
-        const step = this.state.steps[index];
-        if (!step) return;
-
-        step.status = "running";
-        const start = Date.now();
-
-        try {
-            await fn();
-            step.durationMs = Date.now() - start;
-            step.status = "success";
-        } catch (error: unknown) {
-            step.durationMs = Date.now() - start;
-            step.status = "error";
-            step.errorMessage = error instanceof Error ? error.message : "Erreur inconnue.";
-            throw error;
-        }
+    dismissDeployment(): void {
+        const dep = this.state.deployment;
+        if (!dep) return;
+        this.deploymentService.dismiss(dep.host, dep.username, dep.path);
+        window.history.back();
     }
 
     // ── Auto-scroll ───────────────────────────────────────────────────────────
 
     private scrollActiveLogContainers(): void {
-        this.state.steps.forEach((step, i) => {
+        const dep = this.state.deployment;
+        if (!dep) return;
+        dep.steps.forEach((step: any, i: number) => {
             if (!step.autoScroll) return;
-            // Find the pre element for this step by data-step attribute
             const el = document.querySelector<HTMLElement>(
                 `#servers-deploy-component .deploy__log-output[data-step="${i}"]`
             );
@@ -367,22 +276,40 @@ export class ServersDeployComponent extends EnhancedComponent {
         });
     }
 
+    scrollLogToTop(stepIndex: number): void {
+        const el = document.querySelector<HTMLElement>(
+            `#servers-deploy-component .deploy__log-output[data-step="${stepIndex}"]`
+        );
+        if (el) {
+            el.scrollTop = 0;
+            const dep = this.state.deployment;
+            if (dep) dep.steps[stepIndex].autoScroll = false;
+        }
+    }
+
+    scrollLogToBottom(stepIndex: number): void {
+        const el = document.querySelector<HTMLElement>(
+            `#servers-deploy-component .deploy__log-output[data-step="${stepIndex}"]`
+        );
+        if (el) {
+            el.scrollTop = el.scrollHeight;
+            const dep = this.state.deployment;
+            if (dep) dep.steps[stepIndex].autoScroll = true;
+        }
+    }
+
     onLogScroll(event: Event, stepIndex: number): void {
         const el = event.target as HTMLElement;
-        // If user scrolled up (not at the bottom), disable auto-scroll
         const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
-        if (!isAtBottom) {
-            this.state.steps[stepIndex].autoScroll = false;
-        } else {
-            this.state.steps[stepIndex].autoScroll = true;
-        }
+        const dep = this.state.deployment;
+        if (dep) dep.steps[stepIndex].autoScroll = isAtBottom;
     }
 
     onLogsToggle(event: Event, stepIndex: number): void {
         const details = event.target as HTMLDetailsElement;
         if (details.open) {
-            // Re-enable auto-scroll when the log section is opened
-            this.state.steps[stepIndex].autoScroll = true;
+            const dep = this.state.deployment;
+            if (dep) dep.steps[stepIndex].autoScroll = true;
         }
     }
 }

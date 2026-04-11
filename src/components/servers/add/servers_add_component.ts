@@ -9,7 +9,8 @@ import { HeadingComponent } from "../../heading/heading_component";
 export class ServersAddComponent extends EnhancedComponent {
     static template = xml`
       <div id="servers-add-component">
-        <HeadingComponent title="'Ajouter un serveur'" />
+        <HeadingComponent title="'Ajouter un serveur'"
+          breadcrumbs="[{label: 'Applications', url: '/applications'}]" />
         <form id="server-add__form" t-on-submit="event => this.onSubmit(event)">
 
           <div class="server-add__form-group">

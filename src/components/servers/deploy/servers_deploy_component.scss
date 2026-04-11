@@ -195,14 +195,50 @@
         border-top: 1px solid #2a2a2a;
 
         & > summary {
+            align-items: center;
             background-color: #1a1a1a;
             color: var(--text-greyed-out);
             cursor: pointer;
+            display: flex;
             font-size: 0.8rem;
+            gap: 0.5rem;
             padding: 0.4rem 1rem;
             user-select: none;
             &::-webkit-details-marker { display: none; }
             &:hover { background-color: #222; }
+        }
+    }
+
+    .deploy__log-lock-indicator {
+        color: #42a5f5;
+        font-size: 0.72rem;
+        margin-left: auto;
+    }
+
+    .deploy__log-toolbar {
+        align-items: center;
+        background-color: #141414;
+        border-bottom: 1px solid #2a2a2a;
+        display: flex;
+        gap: 0.4rem;
+        justify-content: space-between;
+        padding: 0.25rem 0.75rem;
+    }
+
+    .deploy__log-nav-btn {
+        background-color: #1e2a3a;
+        border: 1px solid #2a3a4a;
+        border-radius: 0.2rem;
+        color: #90caf9;
+        cursor: pointer;
+        font-size: 0.75rem;
+        outline: none;
+        padding: 0.2rem 0.6rem;
+        transition: background-color 100ms ease-in-out;
+        &:hover { background-color: #263a4a; }
+
+        &--bottom {
+            margin-left: auto;
         }
     }
 
@@ -272,6 +308,19 @@
         padding: 0.75rem 1.5rem;
         transition: background-color 150ms ease-in-out;
         &:hover { background-color: var(--btn-blue-hover-color); }
+    }
+
+    .deploy__btn-dismiss {
+        background-color: var(--btn-grey-color);
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 1rem;
+        outline: none;
+        padding: 0.75rem 1.25rem;
+        transition: background-color 150ms ease-in-out;
+        &:hover { background-color: var(--btn-grey-hover-color); }
     }
 }
 

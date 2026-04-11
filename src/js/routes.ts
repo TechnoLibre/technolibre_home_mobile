@@ -10,6 +10,8 @@ import { NoteComponent } from "../components/note/note_component";
 import { ServersAddComponent } from "../components/servers/add/servers_add_component";
 import { ServersEditComponent } from "../components/servers/edit/servers_edit_component";
 import { ServersDeployComponent } from "../components/servers/deploy/servers_deploy_component";
+import { ServersSettingsComponent } from "../components/servers/settings/servers_settings_component";
+import { ServersWorkspaceComponent } from "../components/servers/workspace/servers_workspace_component";
 
 export interface Route {
 	pathname: string;
@@ -23,6 +25,8 @@ export const routes: Route[] = [
 	{ pathname: "/applications", component: ApplicationsComponent },
 	{ pathname: "/servers/edit/:host/:username", component: ServersEditComponent },
 	{ pathname: "/servers/add", component: ServersAddComponent },
+	{ pathname: "/servers/settings/:host/:username", component: ServersSettingsComponent },
+	{ pathname: "/servers/workspace/:host/:username", component: ServersWorkspaceComponent },
 	{ pathname: "/servers/deploy/:host/:username", component: ServersDeployComponent },
 	{ pathname: "/notes", component: NoteListComponent },
 	{ pathname: "/notes/edit/:id", component: NoteListComponent },

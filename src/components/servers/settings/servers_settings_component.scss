@@ -1,0 +1,225 @@
+@use "../../../css/mixins.scss";
+
+#servers-settings-component {
+    padding: 0 1rem;
+
+    // ── Server info header ────────────────────────────────────────────────────
+
+    .settings__server-info {
+        background-color: #111;
+        border: 1px solid #333;
+        border-radius: 0.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        margin: 0 auto 1.5rem;
+        max-width: 48rem;
+        padding: 0.75rem 1rem;
+    }
+
+    .settings__server-label {
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    .settings__server-address {
+        color: var(--text-greyed-out);
+        font-family: monospace;
+        font-size: 0.85rem;
+    }
+
+    // ── Actions bar ───────────────────────────────────────────────────────────
+
+    .settings__actions {
+        display: flex;
+        gap: 0.75rem;
+        margin: 0 auto 1.5rem;
+        max-width: 48rem;
+    }
+
+    .settings__btn-new {
+        background-color: #2e7d32;
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        flex: 1;
+        font-size: 1rem;
+        font-weight: 600;
+        outline: none;
+        padding: 0.85rem 1.5rem;
+        transition: background-color 150ms ease-in-out;
+        &:hover { background-color: #388e3c; }
+    }
+
+    .settings__btn-discover {
+        background-color: #1565c0;
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 1rem;
+        font-weight: 600;
+        outline: none;
+        padding: 0.85rem 1.5rem;
+        transition: background-color 150ms ease-in-out;
+        &:disabled { cursor: default; opacity: 0.6; }
+        &:hover:not(:disabled) { background-color: #1976d2; }
+    }
+
+    .settings__btn-back {
+        background-color: var(--btn-grey-color);
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 1rem;
+        outline: none;
+        padding: 0.85rem 1.25rem;
+        transition: background-color 150ms ease-in-out;
+        &:hover { background-color: var(--btn-grey-hover-color); }
+    }
+
+    // ── Discover status ───────────────────────────────────────────────────────
+
+    .settings__discover-status {
+        color: var(--text-greyed-out);
+        font-size: 0.85rem;
+        margin: 0 auto 1rem;
+        max-width: 48rem;
+        min-height: 1.2em;
+    }
+
+    .settings__discover-status--running {
+        color: #90caf9;
+    }
+
+    .settings__discover-status--done {
+        color: #81c784;
+    }
+
+    .settings__discover-status--error {
+        color: #ef9a9a;
+    }
+
+    // ── Workspace list ────────────────────────────────────────────────────────
+
+    .settings__workspace-section {
+        margin: 0 auto;
+        max-width: 48rem;
+    }
+
+    .settings__workspace-title {
+        color: var(--text-greyed-out);
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+    }
+
+    .settings__workspace-empty {
+        color: var(--text-greyed-out);
+        font-size: 0.9rem;
+        font-style: italic;
+        padding: 0.5rem 0;
+    }
+
+    .settings__workspace-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .settings__workspace-item {
+        align-items: center;
+        background-color: #151515;
+        border: 1px solid #333;
+        border-radius: 0.4rem;
+        display: flex;
+        gap: 0.5rem;
+        overflow: hidden;
+        padding: 0.6rem 0.75rem;
+    }
+
+    .settings__workspace-path {
+        color: var(--text);
+        flex: 1;
+        font-family: monospace;
+        font-size: 0.9rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        &--link {
+            cursor: pointer;
+            text-decoration: underline;
+            text-underline-offset: 0.15em;
+            &:hover { color: #90caf9; }
+        }
+    }
+
+    .settings__workspace-btn-deploy {
+        background-color: #2e7d32;
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 0.8rem;
+        font-weight: 600;
+        outline: none;
+        padding: 0.4rem 0.75rem;
+        transition: background-color 150ms ease-in-out;
+        white-space: nowrap;
+        &:hover { background-color: #388e3c; }
+    }
+
+    .settings__workspace-btn-delete {
+        background-color: var(--btn-red-color);
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 0.8rem;
+        outline: none;
+        padding: 0.4rem 0.6rem;
+        transition: background-color 150ms ease-in-out;
+        white-space: nowrap;
+        &:hover { background-color: var(--btn-red-hover-color); }
+    }
+
+    // ── Active deployment items ───────────────────────────────────────────────
+
+    .settings__deployment-item {
+        cursor: pointer;
+        &:hover { background-color: #1e1e1e; }
+    }
+
+    .settings__deployment-status {
+        font-size: 1rem;
+        min-width: 1.4rem;
+        text-align: center;
+    }
+
+    .settings__deployment-label {
+        color: var(--text-greyed-out);
+        font-size: 0.8rem;
+        white-space: nowrap;
+    }
+}
+
+// ── Deployment spinner animation ──────────────────────────────────────────────
+
+.settings__deployment-spinner {
+    animation: settings-deploy-spin 1s linear infinite;
+    color: #42a5f5;
+    display: inline-block;
+}
+
+@keyframes settings-deploy-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}

@@ -7,6 +7,7 @@ import { Application } from "../models/application";
 import { Note, NoteEntry } from "../models/note";
 import { Reminder } from "../models/reminder";
 import { Server } from "../models/server";
+import { Workspace } from "../models/workspace";
 import { StorageConstants } from "../constants/storage";
 
 export type SyncStatus = "local" | "pending" | "synced" | "conflict" | "error";
@@ -215,6 +216,53 @@ export class DatabaseService {
       label: row.label ?? "",
       deployPath: row.deploy_path ?? "~/erplibre",
     };
+  }
+
+  // Workspaces
+
+  async createServerWorkspacesTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS server_workspaces (
+        host     TEXT NOT NULL,
+        username TEXT NOT NULL,
+        path     TEXT NOT NULL,
+        PRIMARY KEY (host, username, path)
+      )
+    `);
+  }
+
+  async getWorkspacesForServer(host: string, username: string): Promise<Workspace[]> {
+    const result = await this.db.query(
+      "SELECT * FROM server_workspaces WHERE host = ? AND username = ? ORDER BY path",
+      [host, username]
+    );
+    return (result.values ?? []).map((row: any) => ({
+      host: row.host,
+      username: row.username,
+      path: row.path,
+    }));
+  }
+
+  async addWorkspace(workspace: Workspace): Promise<void> {
+    await this.db.run(
+      "INSERT OR IGNORE INTO server_workspaces (host, username, path) VALUES (?, ?, ?)",
+      [workspace.host, workspace.username, workspace.path]
+    );
+  }
+
+  async deleteWorkspace(workspace: Workspace): Promise<void> {
+    await this.db.run(
+      "DELETE FROM server_workspaces WHERE host = ? AND username = ? AND path = ?",
+      [workspace.host, workspace.username, workspace.path]
+    );
+  }
+
+  async workspaceExists(workspace: Workspace): Promise<boolean> {
+    const result = await this.db.query(
+      "SELECT 1 FROM server_workspaces WHERE host = ? AND username = ? AND path = ?",
+      [workspace.host, workspace.username, workspace.path]
+    );
+    return (result.values ?? []).length > 0;
   }
 
   // User Graphic Preferences
