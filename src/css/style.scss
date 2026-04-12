@@ -57,6 +57,34 @@ body {
 	width: 1px;
 }
 
+// ── Skip navigation link ──────────────────────────────────────────────────────
+// Hidden until focused by keyboard — lets keyboard users bypass the navbar.
+.skip-link {
+	background: var(--accent-color, #31d53d);
+	border-radius: 0 0 0.375rem 0;
+	clip: rect(0 0 0 0);
+	clip-path: inset(50%);
+	color: #000;
+	font-weight: 700;
+	height: 1px;
+	left: 0;
+	overflow: hidden;
+	padding: 0.75rem 1.25rem;
+	position: fixed;
+	top: 0;
+	white-space: nowrap;
+	width: 1px;
+	z-index: 9999;
+	&:focus-visible {
+		clip: auto;
+		clip-path: none;
+		height: auto;
+		outline: 3px solid currentColor;
+		outline-offset: 0;
+		width: auto;
+	}
+}
+
 // ── Focus visible ─────────────────────────────────────────────────────────────
 // Keyboard-navigation outline using the current theme accent colour.
 // Applies only when the element is focused via keyboard (not mouse/touch).

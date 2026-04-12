@@ -241,6 +241,8 @@ export class NoteComponent extends EnhancedComponent {
 	private _dialogTrigger: HTMLElement | null = null;
 	/** Which dialog was open on the previous render cycle (for focus-in detection). */
 	private _prevDialog: string | null = null;
+	/** Bound escape key handler — kept for removal on destroy. */
+	private _boundEscapeHandler: ((ev: KeyboardEvent) => void) | null = null;
 
 	setup() {
 		this.state = useState({
@@ -266,7 +268,16 @@ export class NoteComponent extends EnhancedComponent {
 		this.getNote();
 		this.loadAllNoteIds();
 		this.listenForEvents();
-		onMounted(() => this.loadSyncStatus());
+		onMounted(() => {
+			this.loadSyncStatus();
+			this._boundEscapeHandler = this._onKeydownEscape.bind(this);
+			document.addEventListener("keydown", this._boundEscapeHandler);
+		});
+		onWillDestroy(() => {
+			if (this._boundEscapeHandler) {
+				document.removeEventListener("keydown", this._boundEscapeHandler);
+			}
+		});
 		onPatched(() => this._manageFocusAfterPatch());
 	}
 
@@ -369,6 +380,15 @@ export class NoteComponent extends EnhancedComponent {
 			this.state.selectedConfigIds = configs.map((c) => c.id);
 		}
 		this.state.showConfigPicker = true;
+	}
+
+	/** Close whichever overlay is open when the user presses Escape. */
+	private _onKeydownEscape(ev: KeyboardEvent) {
+		if (ev.key !== "Escape") return;
+		if (this.state.priorityPicker.visible) { ev.preventDefault(); this.closePriorityPicker(); }
+		else if (this.state.errorDialog.visible) { ev.preventDefault(); this.closeErrorDialog(); }
+		else if (this.state.openInApp.visible) { ev.preventDefault(); this.closeOpenInApp(); }
+		else if (this.state.showConfigPicker) { ev.preventDefault(); this.cancelConfigPick(); }
 	}
 
 	private announceSyncStatus(status: string) {

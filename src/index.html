@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="en" dir="ltr">
+<html lang="fr" dir="ltr">
   <head>
     <meta charset="UTF-8" />
-    <title>Awesome Capacitor App</title>
+    <title>ERPLibre Home</title>
     <meta
       name="viewport"
       content="viewport-fit=cover, width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no"
@@ -25,13 +25,15 @@
     <meta name="theme-color" content="#31d53d" />
   </head>
   <body>
+    <!-- Skip link: visible on keyboard focus, jumps to main content -->
+    <a href="#main" class="skip-link">Aller au contenu principal</a>
     <style>
       @keyframes boot-spin   { to { transform: rotate(360deg); } }
       @keyframes logo-rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       #boot-logo { transition: transform 0.1s; cursor: pointer; user-select: none; }
       #boot-logo.spinning { animation: logo-rotate 0.6s ease-in-out forwards; }
     </style>
-    <div id="boot-screen" style="
+    <div id="boot-screen" role="status" aria-live="polite" aria-label="Chargement de l'application" style="
       position: fixed; inset: 0;
       background: #000;
       color: #fff;
@@ -47,10 +49,11 @@
       <img
         id="boot-logo"
         src="./assets/imgs/logo.png"
+        alt="Logo ERPLibre"
         style="width: 120px; height: 120px; object-fit: contain;"
       />
       <div style="display:flex; align-items:center; gap:10px;">
-        <div style="
+        <div aria-hidden="true" style="
           width: 20px; height: 20px; flex-shrink: 0;
           border: 2px solid #444;
           border-top-color: #fff;
