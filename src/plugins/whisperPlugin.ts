@@ -9,6 +9,7 @@ export interface WhisperProgressEvent {
 }
 
 export interface WhisperDownloadProgressEvent {
+    model: string;
     ratio: number;
     received: number;
     total: number;
@@ -39,8 +40,9 @@ interface WhisperPlugin {
     /**
      * Cancel any in-progress download (WakeLock or Foreground Service).
      * The .partial file is kept so the next attempt can resume via Range.
+     * If model is provided, only that model's download is cancelled.
      */
-    cancelDownload(): Promise<void>;
+    cancelDownload(opts?: { model?: WhisperModel }): Promise<void>;
     transcribe(opts: { audioPath: string; lang?: string }): Promise<{ text: string }>;
     unloadModel(): Promise<void>;
     /** Delete the model file from disk, unloading it from memory first if needed. */

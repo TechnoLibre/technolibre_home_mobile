@@ -52,8 +52,6 @@ public class WhisperPlugin extends Plugin {
 
     private static final String TAG = "WhisperPlugin";
 
-    /** Notification ID for the WakeLock-mode download progress notification. */
-    private static final int    WAKELOCK_NOTIF_ID    = 9002;
     /** Broadcast action to cancel a WakeLock-mode download from the notification. */
     private static final String ACTION_CANCEL_WAKELOCK =
         "ca.erplibre.home.CANCEL_WAKELOCK_DOWNLOAD";
@@ -64,8 +62,25 @@ public class WhisperPlugin extends Plugin {
     /** Callback ID of the PluginCall saved by downloadModelForeground(). */
     static volatile String pendingForegroundCallId = null;
 
-    /** Set to true to abort an in-progress WakeLock download. */
-    private volatile boolean cancelRequested = false;
+    /** Per-model cancel flags for WakeLock downloads. */
+    private final java.util.concurrent.ConcurrentHashMap<String, Boolean> cancelSet =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    private boolean isCancelled(String model) { return cancelSet.containsKey(model); }
+    private void clearCancel(String model) { cancelSet.remove(model); }
+
+    /** Returns the notification ID to use for a given model's WakeLock download. */
+    private static int wakelockNotifId(String model) {
+        switch (model) {
+            case "tiny":             return 9002;
+            case "base":             return 9003;
+            case "small":            return 9004;
+            case "medium":           return 9005;
+            case "large-v3-turbo":   return 9006;
+            case "distil-large-v3":  return 9007;
+            default:                 return 9008;
+        }
+    }
 
     /** The currently loaded context pointer (0 = none). */
     private long contextPtr    = 0;
@@ -253,7 +268,7 @@ public class WhisperPlugin extends Plugin {
             return;
         }
 
-        cancelRequested = false;
+        clearCancel(model);
         File dest    = modelFile(model);
         File partial = partialFile(model);
         dest.getParentFile().mkdirs();
@@ -281,7 +296,7 @@ public class WhisperPlugin extends Plugin {
         BroadcastReceiver cancelReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                cancelRequested = true;
+                cancelSet.put(model, Boolean.TRUE);
             }
         };
         IntentFilter filter = new IntentFilter(ACTION_CANCEL_WAKELOCK);
@@ -291,7 +306,7 @@ public class WhisperPlugin extends Plugin {
         } else {
             getContext().registerReceiver(cancelReceiver, filter);
         }
-        nm.notify(WAKELOCK_NOTIF_ID, buildWakelockNotification(model, 0));
+        nm.notify(wakelockNotifId(model), buildWakelockNotification(model, 0));
 
         new Thread(() -> {
             HttpURLConnection conn = null;
@@ -351,11 +366,12 @@ public class WhisperPlugin extends Plugin {
                     int  n;
                     int  lastNotifPct = -1;
 
-                    while (!cancelRequested && (n = in.read(buf)) != -1) {
+                    while (!isCancelled(model) && (n = in.read(buf)) != -1) {
                         out.write(buf, 0, n);
                         received += n;
 
                         JSObject evt = new JSObject();
+                        evt.put("model",    model);
                         evt.put("ratio",    total > 0 ? (double) received / total : 0.0);
                         evt.put("received", received);
                         evt.put("total",    total);
@@ -366,13 +382,14 @@ public class WhisperPlugin extends Plugin {
                         int pct = total > 0 ? (int)(received * 100 / total) : 0;
                         if (pct != lastNotifPct) {
                             lastNotifPct = pct;
-                            nm.notify(WAKELOCK_NOTIF_ID,
+                            nm.notify(wakelockNotifId(model),
                                 buildWakelockNotification(model, pct));
                         }
                     }
                 }
 
-                if (cancelRequested) {
+                if (isCancelled(model)) {
+                    clearCancel(model);
                     // Keep .partial file — next retry can resume from here
                     Log.i(TAG, "Download of " + model + " cancelled — partial file kept for resume");
                     call.reject("Download cancelled");
@@ -401,7 +418,7 @@ public class WhisperPlugin extends Plugin {
                 // Keep .partial file — allows resume on next attempt
                 call.reject("Download failed: " + e.getMessage());
             } finally {
-                nm.cancel(WAKELOCK_NOTIF_ID);
+                nm.cancel(wakelockNotifId(model));
                 try { getContext().unregisterReceiver(cancelReceiver); }
                 catch (IllegalArgumentException ignored) { /* already unregistered */ }
                 if (conn != null) conn.disconnect();
@@ -504,18 +521,32 @@ public class WhisperPlugin extends Plugin {
 
     /**
      * Cancel any in-progress download (WakeLock or Foreground Service).
-     * For WakeLock mode: sets the cancel flag; the loop exits on next chunk.
+     * For WakeLock mode: sets the per-model cancel flag; the loop exits on next chunk.
      * For Foreground Service: sends a cancel intent to the service.
+     * If model is provided, only that model's download is cancelled.
      * The .partial file is KEPT so the next attempt can resume via Range.
      */
     @PluginMethod
     public void cancelDownload(PluginCall call) {
-        cancelRequested = true;
-        // Also stop any running foreground service
+        String model = call.getString("model", null);
+        if (model != null && !model.isEmpty()) {
+            cancelSet.put(model, Boolean.TRUE);
+            if (model.equals(WhisperDownloadService.currentModel)) {
+                sendForegroundCancelIntent();
+            }
+        } else {
+            for (String m : new String[]{"tiny", "base", "small", "medium", "large-v3-turbo", "distil-large-v3"}) {
+                cancelSet.put(m, Boolean.TRUE);
+            }
+            sendForegroundCancelIntent();
+        }
+        call.resolve();
+    }
+
+    private void sendForegroundCancelIntent() {
         Intent stopIntent = new Intent(getContext(), WhisperDownloadService.class);
         stopIntent.setAction(WhisperDownloadService.ACTION_CANCEL);
         getContext().startService(stopIntent);
-        call.resolve();
     }
 
     // ─── Callbacks from WhisperDownloadService ────────────────────────────────

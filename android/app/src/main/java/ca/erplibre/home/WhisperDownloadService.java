@@ -165,7 +165,7 @@ public class WhisperDownloadService extends Service {
 
                     int percent = total > 0 ? (int) (received * 100 / total) : 0;
                     updateNotification(model, percent);
-                    forwardProgress(received, total);
+                    forwardProgress(model, received, total);
                 }
             }
 
@@ -202,11 +202,12 @@ public class WhisperDownloadService extends Service {
 
     // ─── Plugin callbacks ─────────────────────────────────────────────────────
 
-    private void forwardProgress(long received, long total) {
+    private void forwardProgress(String model, long received, long total) {
         WhisperPlugin plugin = WhisperPlugin.instance;
         if (plugin == null) return;
         double ratio = total > 0 ? (double) received / total : 0.0;
         JSObject evt = new JSObject();
+        evt.put("model",    model);
         evt.put("ratio",    ratio);
         evt.put("received", received);
         evt.put("total",    total);

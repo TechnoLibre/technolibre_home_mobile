@@ -42,18 +42,21 @@ export const MODEL_LABELS: Record<WhisperModel, string> = {
 // ---------------------------------------------------------------------------
 
 export interface DownloadProgress {
-    model:   WhisperModel;
-    percent: number;
-    mode:    "wakelock" | "foreground";
+    model:            WhisperModel;
+    percent:          number;
+    mode:             "wakelock" | "foreground";
+    receivedBytes:    number;
+    totalBytes:       number;
+    speedBytesPerSec: number;
 }
 
 export class TranscriptionService {
     private db: DatabaseService;
     private _processService: ProcessService | null;
 
-    /** Non-null while a download is running — survives component remounts. */
-    private _activeDownload: DownloadProgress | null = null;
-    private _progressSubs = new Set<(info: DownloadProgress | null) => void>();
+    /** Per-model download progress — survives component remounts. */
+    private _activeDownloads = new Map<WhisperModel, DownloadProgress>();
+    private _progressSubs = new Set<(info: DownloadProgress | null, model?: WhisperModel) => void>();
 
     /** Audio paths currently being transcribed. */
     private _activeTranscriptions = new Set<string>();
@@ -67,23 +70,32 @@ export class TranscriptionService {
         this._processService = processService ?? null;
     }
 
-    /** Current download progress, or null if idle. */
+    /** All currently active downloads (read-only). */
+    get activeDownloads(): ReadonlyMap<WhisperModel, DownloadProgress> {
+        return this._activeDownloads;
+    }
+
+    /**
+     * Current download progress (first active download), or null if idle.
+     * Kept for backward compatibility with reconnect logic.
+     */
     get activeDownload(): DownloadProgress | null {
-        return this._activeDownload;
+        const first = this._activeDownloads.values().next();
+        return first.done ? null : first.value;
     }
 
     /**
      * Subscribe to download progress updates.
-     * The callback receives the current progress, or null when the download
-     * finishes (success or error). Returns an unsubscribe function.
+     * The callback receives the current progress (or null on finish) and the
+     * model key. Returns an unsubscribe function.
      */
-    subscribeProgress(cb: (info: DownloadProgress | null) => void): () => void {
+    subscribeProgress(cb: (info: DownloadProgress | null, model?: WhisperModel) => void): () => void {
         this._progressSubs.add(cb);
         return () => this._progressSubs.delete(cb);
     }
 
-    private _notifyProgress(info: DownloadProgress | null) {
-        this._progressSubs.forEach(cb => cb(info));
+    private _notifyProgress(info: DownloadProgress | null, model?: WhisperModel) {
+        this._progressSubs.forEach(cb => cb(info, model));
     }
 
     // ── Transcription state (for reconnection across navigation) ─────────────
@@ -179,7 +191,7 @@ export class TranscriptionService {
         // A download in progress creates the file immediately (FileOutputStream),
         // so file.exists() returns true even for an incomplete binary.
         // Treat an actively downloading model as not yet available.
-        if (this._activeDownload?.model === model) return false;
+        if (this._activeDownloads.has(model)) return false;
         if (!Capacitor.isNativePlatform()) return false;
         try {
             const { exists } = await WhisperPlugin.getModelPath({ model });
@@ -203,18 +215,36 @@ export class TranscriptionService {
         model: WhisperModel,
         mode: "wakelock" | "foreground" = "wakelock"
     ): Promise<void> {
+        if (this._activeDownloads.has(model)) return; // already downloading this model
         const url = MODEL_URLS[model];
-        this._activeDownload = { model, percent: 0, mode };
-        this._notifyProgress(this._activeDownload);
+        const initial: DownloadProgress = { model, percent: 0, mode, receivedBytes: 0, totalBytes: 0, speedBytesPerSec: 0 };
+        this._activeDownloads.set(model, initial);
+        this._notifyProgress(initial, model);
 
         const processId = this._processService?.addDownload(model, url, mode);
 
         let listener: PluginListenerHandle | null = null;
+        let lastReceived = 0;
+        let lastTime = Date.now();
+
         try {
             listener = await WhisperPlugin.addListener("downloadProgress", (data) => {
+                if (data.model !== model) return; // ignore other models' events
+                const now = Date.now();
+                const dt = (now - lastTime) / 1000;
+                const prevSpeed = this._activeDownloads.get(model)?.speedBytesPerSec ?? 0;
+                const speed = dt > 0.1 ? (data.received - lastReceived) / dt : prevSpeed;
+                lastReceived = data.received;
+                lastTime = now;
                 const percent = Math.round(data.ratio * 100);
-                this._activeDownload = { model, percent, mode };
-                this._notifyProgress(this._activeDownload);
+                const progress: DownloadProgress = {
+                    model, percent, mode,
+                    receivedBytes: data.received,
+                    totalBytes: data.total,
+                    speedBytesPerSec: Math.max(0, speed),
+                };
+                this._activeDownloads.set(model, progress);
+                this._notifyProgress(progress, model);
                 if (processId) this._processService?.updateProgress(processId, percent);
             });
             if (mode === "foreground") {
@@ -233,8 +263,8 @@ export class TranscriptionService {
             throw e;
         } finally {
             if (listener) await listener.remove();
-            this._activeDownload = null;
-            this._notifyProgress(null);
+            this._activeDownloads.delete(model);
+            this._notifyProgress(null, model);
         }
     }
 
@@ -251,7 +281,7 @@ export class TranscriptionService {
      */
     async maybeReconnectForeground(): Promise<boolean> {
         if (!Capacitor.isNativePlatform()) return false;
-        if (this._activeDownload) return true;
+        if (this._activeDownloads.size > 0) return true;
         try {
             const { downloading, model } = await WhisperPlugin.getServiceStatus();
             if (!downloading || !model || !(model in MODEL_URLS)) return false;
@@ -266,11 +296,11 @@ export class TranscriptionService {
         }
     }
 
-    /** Cancel any in-progress download (WakeLock or Foreground Service). */
-    async cancelDownload(): Promise<void> {
+    /** Cancel a specific download (or all downloads if no model given). */
+    async cancelDownload(model?: WhisperModel): Promise<void> {
         if (!Capacitor.isNativePlatform()) return;
         try {
-            await WhisperPlugin.cancelDownload();
+            await WhisperPlugin.cancelDownload(model ? { model } : undefined);
         } catch { /* ignore */ }
     }
 

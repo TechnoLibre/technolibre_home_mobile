@@ -94,12 +94,12 @@ describe("TranscriptionService", () => {
         it("returns false while the model is being downloaded (partial file on disk)", async () => {
             // Java creates the file at the start of the download (FileOutputStream),
             // so file.exists() returns true even for an incomplete binary.
-            // isModelDownloaded must return false while _activeDownload is set.
+            // isModelDownloaded must return false while _activeDownloads has the model.
             let resultDuringDownload: boolean | undefined;
 
             vi.mocked(WhisperPlugin.addListener).mockImplementationOnce(
                 async (_event: string, fn: (data: any) => void) => {
-                    fn({ ratio: 0.5, received: 50_000, total: 100_000 });
+                    fn({ model: "tiny", ratio: 0.5, received: 50_000, total: 100_000 });
                     resultDuringDownload = await service.isModelDownloaded("tiny");
                     return { remove: vi.fn().mockResolvedValue(undefined) };
                 }
@@ -107,7 +107,7 @@ describe("TranscriptionService", () => {
 
             await service.downloadModel("tiny");
             expect(resultDuringDownload).toBe(false);
-            // After completion, _activeDownload is null — back to normal behaviour.
+            // After completion, _activeDownloads is empty — back to normal behaviour.
             expect(service.activeDownload).toBeNull();
         });
     });
@@ -149,7 +149,7 @@ describe("TranscriptionService", () => {
 
             vi.mocked(WhisperPlugin.addListener).mockImplementationOnce(
                 async (_event: string, fn: (data: any) => void) => {
-                    fn({ ratio: 0.5, received: 50_000, total: 100_000 });
+                    fn({ model: "tiny", ratio: 0.5, received: 50_000, total: 100_000 });
                     return { remove: mockRemove };
                 }
             );
@@ -159,22 +159,25 @@ describe("TranscriptionService", () => {
             unsub();
 
             // Called with progress (50%) then null on completion
-            expect(sub).toHaveBeenCalledWith({ model: "tiny", percent: 50, mode: "wakelock" });
-            expect(sub).toHaveBeenLastCalledWith(null);
+            expect(sub).toHaveBeenCalledWith(
+                expect.objectContaining({ model: "tiny", percent: 50, mode: "wakelock" }),
+                "tiny"
+            );
+            expect(sub).toHaveBeenLastCalledWith(null, "tiny");
         });
 
         it("exposes activeDownload during download and clears it after", async () => {
             let capturedDuring: any = undefined;
             vi.mocked(WhisperPlugin.addListener).mockImplementationOnce(
                 async (_event: string, fn: (data: any) => void) => {
-                    fn({ ratio: 0.3, received: 30_000, total: 100_000 });
+                    fn({ model: "tiny", ratio: 0.3, received: 30_000, total: 100_000 });
                     capturedDuring = service.activeDownload;
                     return { remove: vi.fn().mockResolvedValue(undefined) };
                 }
             );
 
             await service.downloadModel("tiny");
-            expect(capturedDuring).toEqual({ model: "tiny", percent: 30, mode: "wakelock" });
+            expect(capturedDuring).toEqual(expect.objectContaining({ model: "tiny", percent: 30, mode: "wakelock" }));
             expect(service.activeDownload).toBeNull();
         });
 
