@@ -31,6 +31,12 @@ interface WhisperPlugin {
      */
     downloadModelForeground(opts: { model: WhisperModel; url: string }): Promise<{ path: string }>;
     /**
+     * Returns the foreground download service status.
+     * Used to reconnect the JS layer to a running service after Activity
+     * recreation (when _activeDownload was reset to null).
+     */
+    getServiceStatus(): Promise<{ downloading: boolean; model: string }>;
+    /**
      * Cancel any in-progress download (WakeLock or Foreground Service).
      * The .partial file is kept so the next attempt can resume via Range.
      */

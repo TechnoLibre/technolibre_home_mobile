@@ -238,6 +238,34 @@ export class TranscriptionService {
         }
     }
 
+    /**
+     * Reconnect to a foreground service download that is still running but
+     * whose JS state was lost (e.g. after Activity recreation).
+     *
+     * If the service reports an active download and _activeDownload is null,
+     * this starts a fire-and-forget downloadModel() call that re-attaches to
+     * the running service thread (Java side detects the re-attach and does NOT
+     * start a second thread).
+     *
+     * Returns true if a reconnection was initiated.
+     */
+    async maybeReconnectForeground(): Promise<boolean> {
+        if (!Capacitor.isNativePlatform()) return false;
+        if (this._activeDownload) return true;
+        try {
+            const { downloading, model } = await WhisperPlugin.getServiceStatus();
+            if (!downloading || !model || !(model in MODEL_URLS)) return false;
+            // Fire-and-forget: downloadModel sets _activeDownload synchronously
+            // before its first await, so subscribers are notified immediately.
+            this.downloadModel(model as WhisperModel, "foreground").catch(() => {
+                // Ignore — cancelled/error clears _activeDownload via finally
+            });
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     /** Cancel any in-progress download (WakeLock or Foreground Service). */
     async cancelDownload(): Promise<void> {
         if (!Capacitor.isNativePlatform()) return;

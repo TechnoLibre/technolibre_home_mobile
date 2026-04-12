@@ -364,6 +364,22 @@ public class WhisperPlugin extends Plugin {
         }).start();
     }
 
+    // ─── Service status ───────────────────────────────────────────────────────
+
+    /**
+     * Returns the current foreground download service status.
+     * Used by the JS layer to detect an in-progress download after the Activity
+     * is recreated (when _activeDownload in TypeScript was reset to null).
+     */
+    @PluginMethod
+    public void getServiceStatus(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("downloading", WhisperDownloadService.downloading);
+        String model = WhisperDownloadService.currentModel;
+        result.put("model", model != null ? model : "");
+        call.resolve(result);
+    }
+
     // ─── Download (Foreground Service) ────────────────────────────────────────
 
     /**
@@ -374,6 +390,10 @@ public class WhisperPlugin extends Plugin {
      * The PluginCall is kept alive until the service calls back via
      * onForegroundDownloadComplete() / onForegroundDownloadError() /
      * onForegroundDownloadCancelled().
+     *
+     * If the service is already running for the same model (e.g. after Activity
+     * recreation), we do NOT start a new service — we just update
+     * pendingForegroundCallId so the existing thread resolves the new call.
      */
     @PluginMethod
     public void downloadModelForeground(PluginCall call) {
@@ -383,6 +403,22 @@ public class WhisperPlugin extends Plugin {
         if (urlStr == null || urlStr.isEmpty()) {
             call.reject("Missing url parameter");
             return;
+        }
+
+        if (WhisperDownloadService.downloading) {
+            if (model.equals(WhisperDownloadService.currentModel)) {
+                // Re-attach: update pendingForegroundCallId so the running
+                // thread will resolve this new JS Promise when it finishes.
+                Log.i(TAG, "Re-attaching to running foreground download for: " + model);
+                call.setKeepAlive(true);
+                getBridge().saveCall(call);
+                pendingForegroundCallId = call.getCallbackId();
+                return;
+            } else {
+                call.reject("Another download is already in progress: "
+                    + WhisperDownloadService.currentModel);
+                return;
+            }
         }
 
         // Keep the call alive until the service resolves it

@@ -380,16 +380,9 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
         };
 
         onMounted(async () => {
-            // Subscribe and sync download state BEFORE loadSettings() so that
-            // isModelDownloaded() (called inside loadSettings) already sees
-            // isDownloading=true and skips the partial file on disk.
-            const active = this.transcriptionService.activeDownload;
-            if (active) {
-                this.state.isDownloading   = true;
-                this.state.downloadPercent = active.percent;
-                this.state.downloadMode    = active.mode;
-            }
-
+            // Set up subscriptions FIRST so that maybeReconnectForeground()
+            // (which calls downloadModel() fire-and-forget) triggers the
+            // callback synchronously before loadSettings() runs.
             unsubscribeProgress = this.transcriptionService.subscribeProgress(async (info) => {
                 if (info) {
                     this.state.isDownloading   = true;
@@ -404,6 +397,18 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
             unsubscribeProcesses = this.processService.subscribe(() => {
                 refreshDownloadHistory();
             });
+
+            // Sync download state — either from in-memory tracking or by
+            // re-attaching to a foreground service whose JS state was lost
+            // (e.g. after Activity recreation while service kept running).
+            const active = this.transcriptionService.activeDownload;
+            if (active) {
+                this.state.isDownloading   = true;
+                this.state.downloadPercent = active.percent;
+                this.state.downloadMode    = active.mode;
+            } else {
+                await this.transcriptionService.maybeReconnectForeground();
+            }
 
             await this.loadSettings();
             refreshDownloadHistory();

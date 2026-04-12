@@ -44,6 +44,11 @@ public class WhisperDownloadService extends Service {
 
     private volatile boolean cancelRequested = false;
 
+    /** True while a download thread is running — prevents duplicate threads. */
+    static volatile boolean downloading  = false;
+    /** Model currently being downloaded, or null when idle. */
+    static volatile String  currentModel = null;
+
     // ─────────────────────────────────────────────────────────────────────────
 
     @Override
@@ -64,6 +69,19 @@ public class WhisperDownloadService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+
+        // Guard: onStartCommand is called again when downloadModelForeground()
+        // is invoked while the service is already running (e.g. after Activity
+        // recreation). Do NOT start a second download thread — the existing one
+        // will complete and call back via the updated pendingForegroundCallId.
+        if (downloading) {
+            Log.i(TAG, "[FG] Already downloading '" + currentModel + "', ignoring duplicate start");
+            return START_NOT_STICKY;
+        }
+
+        cancelRequested = false;
+        currentModel    = model;
+        downloading     = true;
 
         // Show initial notification before doing any work
         startForeground(NOTIF_ID, buildNotification(model, 0, false));
@@ -175,6 +193,8 @@ public class WhisperDownloadService extends Service {
             Log.e(TAG, "[FG] Download failed", e);
             notifyError(model, e.getMessage());
         } finally {
+            downloading  = false;
+            currentModel = null;
             if (conn != null) conn.disconnect();
             stopSelf();
         }
