@@ -250,6 +250,23 @@
         margin: 0;
     }
 
+    &__goto {
+        background: transparent;
+        border: 1.5px solid var(--btn-blue-color, #3b82f6);
+        border-radius: 0.5rem;
+        color: var(--btn-blue-color, #3b82f6);
+        cursor: pointer;
+        font-size: 0.9rem;
+        font-weight: 600;
+        padding: 0.65rem;
+        transition: background 0.15s;
+        width: 100%;
+
+        &:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+    }
+
     &__close {
         background: var(--surface-btn);
         border: 1px solid var(--section-border-color);
