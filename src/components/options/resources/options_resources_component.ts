@@ -58,22 +58,25 @@ export class OptionsResourcesComponent extends EnhancedComponent {
                         <div class="devres__rate-list">
                             <button class="devres__rate-row"
                                     t-att-class="{'devres__rate-row--active': state.refreshSec === 1}"
-                                    t-on-click="() => setRefreshRate(1)">
-                                <span class="devres__rate-dot" />
+                                    data-sec="1"
+                                    t-on-click="onRateClick">
+                                <span class="devres__rate-dot"></span>
                                 <span class="devres__rate-label">1 seconde</span>
                                 <span class="devres__rate-check">✓</span>
                             </button>
                             <button class="devres__rate-row"
                                     t-att-class="{'devres__rate-row--active': state.refreshSec === 5}"
-                                    t-on-click="() => setRefreshRate(5)">
-                                <span class="devres__rate-dot" />
+                                    data-sec="5"
+                                    t-on-click="onRateClick">
+                                <span class="devres__rate-dot"></span>
                                 <span class="devres__rate-label">5 secondes</span>
                                 <span class="devres__rate-check">✓</span>
                             </button>
                             <button class="devres__rate-row"
                                     t-att-class="{'devres__rate-row--active': state.refreshSec === 30}"
-                                    t-on-click="() => setRefreshRate(30)">
-                                <span class="devres__rate-dot" />
+                                    data-sec="30"
+                                    t-on-click="onRateClick">
+                                <span class="devres__rate-dot"></span>
                                 <span class="devres__rate-label">30 secondes</span>
                                 <span class="devres__rate-check">✓</span>
                             </button>
@@ -233,6 +236,12 @@ export class OptionsResourcesComponent extends EnhancedComponent {
             clearInterval(this._timer);
             this._timer = null;
         }
+    }
+
+    onRateClick(ev: MouseEvent): void {
+        const raw = (ev.currentTarget as HTMLElement).dataset.sec;
+        const sec = parseInt(raw ?? "5", 10) as RefreshSec;
+        this.setRefreshRate(sec);
     }
 
     async setRefreshRate(sec: RefreshSec) {
