@@ -24,39 +24,53 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 				<t t-if="props.params.path">
 					<img
 						class="note-entry__photo__thumbnail"
+						alt="Aperçu de la photo"
 						t-att-src="image"
 					/>
 				</t>
 				<t t-else="">
 					<div class="note-entry__photo__thumbnail--empty">
-						<img src="${PhotoOffIcon}" />
+						<img src="${PhotoOffIcon}" alt="" aria-hidden="true" />
 					</div>
 				</t>
 			</div>
 			<div class="note-entry__photo__data">
 				<button
 					class="note-entry__photo__button note-entry__photo__open-camera"
+					aria-label="Prendre une photo"
 					t-on-click.stop.prevent="onClickOpenCamera"
 				>
-					<img src="${CameraIcon}" />
+					<img src="${CameraIcon}" alt="" aria-hidden="true" />
 					<span>Photo</span>
 				</button>
 				<button
 					class="note-entry__photo__button note-entry__photo__open-photo"
 					t-if="props.params.path"
+					aria-label="Voir la photo en plein écran"
 					t-on-click.stop.prevent="onClickOpenPhoto"
 				>
-					<img src="${OpenIcon}" />
+					<img src="${OpenIcon}" alt="" aria-hidden="true" />
 					<span>Voir</span>
 				</button>
 			</div>
 		</div>
-		<div t-if="state.showPhoto" class="note-entry__photo__overlay">
-			<button class="note-entry__photo__overlay__close" t-on-click.stop.prevent="onClickClosePhoto">
-				<img src="${CloseIcon}" />
+		<div
+			t-if="state.showPhoto"
+			class="note-entry__photo__overlay"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Photo en plein écran"
+		>
+			<button
+				class="note-entry__photo__overlay__close"
+				aria-label="Fermer la photo"
+				t-on-click.stop.prevent="onClickClosePhoto"
+			>
+				<img src="${CloseIcon}" alt="" aria-hidden="true" />
 			</button>
 			<img
 				class="note-entry__photo__overlay__img"
+				alt="Photo en plein écran"
 				t-att-src="image"
 			/>
 		</div>

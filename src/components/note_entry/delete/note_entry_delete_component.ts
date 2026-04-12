@@ -29,9 +29,10 @@ export class NoteEntryDeleteComponent extends EnhancedComponent {
 		>
 			<button
 				class="note-entry__delete"
+				aria-label="Supprimer cette entrée"
 				t-on-click.stop.prevent="onNoteEntryDeleteClick"
 			>
-				<img src="${DeleteIcon}" />
+				<img src="${DeleteIcon}" alt="" aria-hidden="true" />
 			</button>
 		</div>
 	`;
