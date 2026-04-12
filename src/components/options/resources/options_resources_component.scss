@@ -25,55 +25,55 @@
 
 .devres__toolbar {
     display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.devres__toolbar-top {
+    display: flex;
     align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
+    justify-content: space-between;
 }
 
 .devres__toolbar-label {
     font-size: 0.78rem;
-    color: var(--text-greyed-out);
-    white-space: nowrap;
-}
-
-// Segmented control — connected buttons, solid fill on active
-.devres__rate-btns {
-    display: flex;
-    border: 1.5px solid var(--section-border-color);
-    border-radius: 0.5rem;
-    overflow: hidden;
-    flex-shrink: 0;
-}
-
-.devres__rate-btn {
-    background: transparent;
-    border: none;
-    border-right: 1px solid var(--section-border-color);
-    color: var(--text-greyed-out);
-    cursor: pointer;
-    font-size: 0.82rem;
     font-weight: 600;
-    // Minimum 44 px touch target height on mobile
-    padding: 0.55rem 1rem;
-    transition: background 0.15s, color 0.15s;
-    flex: 1;
-    white-space: nowrap;
-
-    &:last-child {
-        border-right: none;
-    }
-
-    &--active {
-        background: var(--btn-blue-color);
-        color: #fff;
-    }
+    color: var(--text-greyed-out);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
 
 .devres__updated {
     font-size: 0.72rem;
     color: var(--text-greyed-out);
-    margin-left: auto;
     opacity: 0.6;
+}
+
+// Three large independent buttons — easy to tap on mobile
+.devres__rate-btns {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.devres__rate-btn {
+    flex: 1;
+    background: var(--surface-btn);
+    border: 2px solid var(--section-border-color);
+    border-radius: 0.75rem;
+    color: var(--text-greyed-out);
+    cursor: pointer;
+    font-size: 1.1rem;
+    font-weight: 700;
+    // ~56 px tall touch target
+    padding: 0.9rem 0.5rem;
+    text-align: center;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+
+    &--active {
+        background: var(--btn-blue-color);
+        border-color: var(--btn-blue-color);
+        color: #fff;
+    }
 }
 
 .devres__error {

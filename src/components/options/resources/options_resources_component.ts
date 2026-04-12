@@ -51,7 +51,10 @@ export class OptionsResourcesComponent extends EnhancedComponent {
 
                     <!-- ── Refresh rate selector ────────────────────── -->
                     <div class="devres__toolbar">
-                        <span class="devres__toolbar-label">Rafraîchissement</span>
+                        <div class="devres__toolbar-top">
+                            <span class="devres__toolbar-label">Rafraîchissement</span>
+                            <span class="devres__updated" t-if="state.updatedAt" t-esc="state.updatedAt" />
+                        </div>
                         <div class="devres__rate-btns">
                             <button class="devres__rate-btn"
                                     t-att-class="{'devres__rate-btn--active': state.refreshSec === 1}"
@@ -63,7 +66,6 @@ export class OptionsResourcesComponent extends EnhancedComponent {
                                     t-att-class="{'devres__rate-btn--active': state.refreshSec === 30}"
                                     t-on-click="() => setRefreshRate(30)">30 s</button>
                         </div>
-                        <span class="devres__updated" t-if="state.updatedAt" t-esc="state.updatedAt" />
                     </div>
 
                     <t t-if="state.error">
