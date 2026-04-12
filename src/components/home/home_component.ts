@@ -123,7 +123,7 @@ export class HomeComponent extends EnhancedComponent {
             t-as="tag"
             t-key="tag.id"
             class="home-tag-chip"
-            t-att-style="'--tag-color:' + tag.color"
+            t-att-style="'background-color:' + tag.color"
             t-on-click="() => this.onTagClick(tag.id)"
           >
             <t t-esc="tag.name" />

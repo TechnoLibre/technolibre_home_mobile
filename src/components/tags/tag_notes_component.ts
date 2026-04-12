@@ -10,6 +10,7 @@ interface TagNotesState {
     tag: Tag | null;
     childTags: Tag[];
     notes: Note[];
+    tagMap: Record<string, Tag>;
     loaded: boolean;
 }
 
@@ -28,7 +29,7 @@ export class TagNotesComponent extends EnhancedComponent {
                 <span
                     t-if="state.tag"
                     class="tag-notes__current-tag"
-                    t-att-style="'--tag-color:' + state.tag.color"
+                    t-att-style="'background-color:' + state.tag.color"
                     t-esc="state.tag.name"
                 />
             </nav>
@@ -44,7 +45,7 @@ export class TagNotesComponent extends EnhancedComponent {
                             t-as="child"
                             t-key="child.id"
                             class="tag-notes__child-chip"
-                            t-att-style="'--tag-color:' + child.color"
+                            t-att-style="'color:' + child.color + ';border-color:' + child.color"
                             t-on-click.stop.prevent="() => this.onChildTagClick(child.id)"
                         >
                             <t t-esc="child.name" />
@@ -66,6 +67,7 @@ export class TagNotesComponent extends EnhancedComponent {
                             t-key="note.id"
                             note="note"
                             editMode="false"
+                            tagMap="state.tagMap"
                             syncSynced="0"
                             syncError="0"
                             openNote.bind="openNote"
@@ -92,6 +94,7 @@ export class TagNotesComponent extends EnhancedComponent {
             tag: null,
             childTags: [],
             notes: [],
+            tagMap: {},
             loaded: false,
         });
         onMounted(() => this.load());
@@ -109,8 +112,8 @@ export class TagNotesComponent extends EnhancedComponent {
             return;
         }
 
-        // Load tags cache first (needed by NotesItemComponent)
-        await this.tagService.getAllTags();
+        const allTags = await this.tagService.getAllTags();
+        this.state.tagMap = Object.fromEntries(allTags.map((t) => [t.id, t]));
 
         const [tag, childTags, descendantIds] = await Promise.all([
             this.tagService.getTagById(tagId),

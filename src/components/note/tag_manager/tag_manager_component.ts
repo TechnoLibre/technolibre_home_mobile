@@ -41,7 +41,7 @@ export class TagManagerComponent extends EnhancedComponent {
                                 t-as="tag"
                                 t-key="tag.id"
                                 class="tag-manager__chip tag-manager__chip--applied"
-                                t-att-style="'--tag-color:' + tag.color"
+                                t-att-style="'background-color:' + tag.color + ';border-color:' + tag.color"
                                 t-on-click.stop.prevent="() => this.removeTag(tag.id)"
                             >
                                 <span t-esc="tag.name" />
@@ -68,7 +68,7 @@ export class TagManagerComponent extends EnhancedComponent {
                                 t-as="tag"
                                 t-key="tag.id"
                                 class="tag-manager__chip tag-manager__chip--available"
-                                t-att-style="'--tag-color:' + tag.color"
+                                t-att-style="'color:' + tag.color + ';border-color:' + tag.color"
                                 t-on-click.stop.prevent="() => this.applyTag(tag.id)"
                             >
                                 <span t-esc="getTagLabel(tag)" />
@@ -88,20 +88,35 @@ export class TagManagerComponent extends EnhancedComponent {
                             Créer « <t t-esc="state.search.trim()" /> »
                         </p>
                         <div class="tag-manager__create-row">
-                            <label class="tag-manager__color-label">
-                                Couleur
-                                <input
-                                    type="color"
-                                    t-model="state.newColor"
-                                    class="tag-manager__color-input"
-                                />
-                            </label>
                             <select t-model="state.newParentId" class="tag-manager__parent-select">
                                 <option value="">Aucun parent</option>
                                 <t t-foreach="state.allTags" t-as="pt" t-key="pt.id">
                                     <option t-att-value="pt.id" t-esc="pt.name" />
                                 </t>
                             </select>
+                        </div>
+                        <div class="tag-manager__color-picker">
+                            <div class="tag-manager__color-swatches">
+                                <button
+                                    t-foreach="getPresetColors()"
+                                    t-as="c"
+                                    t-key="c"
+                                    type="button"
+                                    class="tag-manager__color-swatch"
+                                    t-att-style="'background-color:' + c"
+                                    t-att-class="{ 'tag-manager__color-swatch--selected': state.newColor === c }"
+                                    t-on-click.stop.prevent="() => this.selectColor(c)"
+                                />
+                            </div>
+                            <div class="tag-manager__color-hex-row">
+                                <div class="tag-manager__color-preview" t-att-style="'background-color:' + state.newColor" />
+                                <input
+                                    type="text"
+                                    class="tag-manager__color-hex-input"
+                                    placeholder="#6b7280"
+                                    t-model="state.newColor"
+                                />
+                            </div>
                         </div>
                     </section>
 
@@ -206,6 +221,19 @@ export class TagManagerComponent extends EnhancedComponent {
         if (!tag.parentId) return tag.name;
         const parent = this.state.allTags.find((t) => t.id === tag.parentId);
         return parent ? `${parent.name} › ${tag.name}` : tag.name;
+    }
+
+    getPresetColors(): string[] {
+        return [
+            "#ef4444", "#f97316", "#eab308", "#84cc16", "#22c55e",
+            "#10b981", "#14b8a6", "#06b6d4", "#0ea5e9", "#3b82f6",
+            "#6366f1", "#8b5cf6", "#a855f7", "#d946ef", "#ec4899",
+            "#f43f5e", "#78716c", "#6b7280", "#374151", "#1e293b",
+        ];
+    }
+
+    selectColor(color: string) {
+        this.state.newColor = color;
     }
 
     canCreate(): boolean {

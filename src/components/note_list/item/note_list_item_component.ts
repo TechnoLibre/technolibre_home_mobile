@@ -36,7 +36,7 @@ export class NotesItemComponent extends EnhancedComponent {
 					t-as="rt"
 					t-key="rt.id"
 					class="notes-item__tag"
-					t-att-style="'--tag-color:' + rt.color"
+					t-att-style="'background-color:' + rt.color"
 				>
 					<t t-esc="rt.name"></t>
 				</div>
@@ -92,11 +92,11 @@ export class NotesItemComponent extends EnhancedComponent {
 
 	static components = { NoteListItemHandleComponent };
 
-	/** Resolve tag IDs to Tag objects using the in-memory cache. */
+	/** Resolve tag IDs to Tag objects using the reactive tagMap prop. */
 	resolvedTags(): Tag[] {
-		const cached = this.tagService.getCached();
+		const tagMap: Record<string, Tag> = this.props.tagMap ?? {};
 		return this.props.note.tags
-			.map((id: string) => cached.find((t) => t.id === id))
+			.map((id: string) => tagMap[id])
 			.filter((t): t is Tag => t !== undefined);
 	}
 
