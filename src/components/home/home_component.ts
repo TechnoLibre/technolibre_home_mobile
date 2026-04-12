@@ -3,6 +3,7 @@ import {onMounted, useState, xml} from "@odoo/owl";
 import {EnhancedComponent} from "../../js/enhancedComponent";
 import {Events} from "../../constants/events";
 import {Note} from "../../models/note";
+import {Tag} from "../../models/tag";
 
 // @ts-ignore
 import CompanyLogo from "../../assets/company_logo.png";
@@ -29,6 +30,7 @@ interface HomeState {
     appCount: number;
     serverCount: number;
     quickNotes: Note[];
+    rootTags: Tag[];
     loaded: boolean;
 }
 
@@ -113,6 +115,22 @@ export class HomeComponent extends EnhancedComponent {
         </div>
       </div>
 
+      <div id="home-tags" t-if="state.loaded and state.rootTags.length > 0">
+        <p class="home-tags__heading">Tags</p>
+        <div class="home-tags__list">
+          <button
+            t-foreach="state.rootTags"
+            t-as="tag"
+            t-key="tag.id"
+            class="home-tag-chip"
+            t-att-style="'--tag-color:' + tag.color"
+            t-on-click="() => this.onTagClick(tag.id)"
+          >
+            <t t-esc="tag.name" />
+          </button>
+        </div>
+      </div>
+
       <p id="startup-time">Ouvert à ${STARTUP_TIME}</p>
     </div>
   `;
@@ -125,16 +143,18 @@ export class HomeComponent extends EnhancedComponent {
             appCount: 0,
             serverCount: 0,
             quickNotes: [],
+            rootTags: [],
             loaded: false,
         });
         onMounted(() => this.loadStats());
     }
 
     async loadStats() {
-        const [notes, apps, servers] = await Promise.all([
+        const [notes, apps, servers, rootTags] = await Promise.all([
             this.noteService.getNotes(),
             this.appService.getApps(),
             this.serverService.getServers(),
+            this.tagService.getRootTags(),
         ]);
         const active = notes.filter((n) => !n.archived);
         // Priority 1 (Urgent + Important) first, then most recently created
@@ -145,6 +165,7 @@ export class HomeComponent extends EnhancedComponent {
         this.state.appCount = apps.length;
         this.state.serverCount = servers.length;
         this.state.quickNotes = quick;
+        this.state.rootTags = rootTags;
         this.state.loaded = true;
     }
 
@@ -175,6 +196,10 @@ export class HomeComponent extends EnhancedComponent {
 
     onApplicationsClick() {
         this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/applications"});
+    }
+
+    onTagClick(tagId: string) {
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: `/tags/${tagId}`});
     }
 
     formatNoteDate(date: string): string {

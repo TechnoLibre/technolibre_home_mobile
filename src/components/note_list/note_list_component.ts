@@ -128,6 +128,8 @@ export class NoteListComponent extends EnhancedComponent {
 		onMounted(this.onMounted.bind(this));
 		this.getNotes();
 		this.getNoteSyncCounts();
+		// Preload tag cache so NotesItemComponent can resolve tags synchronously
+		this.tagService.getAllTags().catch(() => {});
 	}
 
 	private onMounted() {

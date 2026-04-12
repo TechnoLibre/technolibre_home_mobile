@@ -17,6 +17,7 @@ import { ServersResourcesComponent } from "../components/servers/resources/serve
 import { OptionsTranscriptionComponent } from "../components/options/transcription/options_transcription_component";
 import { OptionsProcessesComponent } from "../components/options/processes/options_processes_component";
 import { OptionsResourcesComponent } from "../components/options/resources/options_resources_component";
+import { TagNotesComponent } from "../components/tags/tag_notes_component";
 
 export interface Route {
 	pathname: string;
@@ -34,6 +35,7 @@ export const routes: Route[] = [
 	{ pathname: "/servers/workspace/:host/:username", component: ServersWorkspaceComponent },
 	{ pathname: "/servers/deploy/:host/:username", component: ServersDeployComponent },
 	{ pathname: "/servers/resources/:host/:username", component: ServersResourcesComponent },
+	{ pathname: "/tags/:id", component: TagNotesComponent },
 	{ pathname: "/notes", component: NoteListComponent },
 	{ pathname: "/notes/edit/:id", component: NoteListComponent },
 	{ pathname: "/note/:id", component: NoteComponent },

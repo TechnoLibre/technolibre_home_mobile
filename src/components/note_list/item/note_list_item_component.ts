@@ -2,6 +2,7 @@ import { xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { NoteListItemHandleComponent } from "./handle/note_list_item_handle_component";
+import { Tag } from "../../../models/tag";
 
 import DeleteIcon from "../../../assets/icon/delete.svg";
 // @ts-ignore
@@ -31,12 +32,13 @@ export class NotesItemComponent extends EnhancedComponent {
 				t-on-click.stop.prevent=""
 			>
 				<div
-					t-foreach="props.note.tags"
-					t-as="tag"
-					t-key="tag"
+					t-foreach="resolvedTags()"
+					t-as="rt"
+					t-key="rt.id"
 					class="notes-item__tag"
+					t-att-style="'--tag-color:' + rt.color"
 				>
-					<t t-esc="tag"></t>
+					<t t-esc="rt.name"></t>
 				</div>
 			</div>
 			<div class="notes-item__data">
@@ -89,6 +91,14 @@ export class NotesItemComponent extends EnhancedComponent {
 	`;
 
 	static components = { NoteListItemHandleComponent };
+
+	/** Resolve tag IDs to Tag objects using the in-memory cache. */
+	resolvedTags(): Tag[] {
+		const cached = this.tagService.getCached();
+		return this.props.note.tags
+			.map((id: string) => cached.find((t) => t.id === id))
+			.filter((t): t is Tag => t !== undefined);
+	}
 
 	formatDate(date: Date) {
 		return new Date(date).toLocaleDateString();
