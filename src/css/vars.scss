@@ -41,6 +41,9 @@
 	--nav-active-bg: #000;
 	--nav-active-subpath-bg: #0a0a0a;
 
+	// Icon filter (white SVG icons on dark bg = correct; invert for light bg)
+	--icon-filter: none;
+
 	// Surfaces
 	--card-bg: #151515;
 	--card-hover-bg: #1e1e1e;
@@ -94,6 +97,9 @@
 	// Active nav item
 	--nav-active-bg: #080808;
 	--nav-active-subpath-bg: #0d0d0d;
+
+	// Icon filter
+	--icon-filter: none;
 
 	// Surfaces
 	--card-bg: #252525;
@@ -149,6 +155,9 @@
 	--nav-active-bg: #fde8c4;
 	--nav-active-subpath-bg: #fad5a0;
 
+	// Icon filter — invert white SVGs to dark for light background
+	--icon-filter: invert(1);
+
 	// Surfaces
 	--card-bg: #fde8c4;
 	--card-hover-bg: #fad5a0;
@@ -202,6 +211,9 @@
 	// Active nav item
 	--nav-active-bg: #d4d4d4;
 	--nav-active-subpath-bg: #dcdcdc;
+
+	// Icon filter — invert white SVGs to dark for light background
+	--icon-filter: invert(1);
 
 	// Surfaces
 	--card-bg: #e8e8e8;
