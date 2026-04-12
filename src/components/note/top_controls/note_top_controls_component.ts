@@ -54,6 +54,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			id="note__control__edit"
 			class="note__control"
 			href="#"
+			role="button"
 			aria-label="Mode édition"
 			t-on-click.stop.prevent="props.toggleEditMode"
 		>
@@ -63,6 +64,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 		<a
 			id="note__control__sync"
 			t-att-class="'note__control note__control__sync--' + props.syncStatus + (state.isPressing ? ' note__control__sync--pressing' : '')"
+			role="button"
 			t-att-aria-disabled="props.isSyncing or props.newNote"
 			t-att-aria-label="props.syncLabel"
 			t-on-pointerdown.stop.prevent="onSyncPointerDown"
@@ -77,6 +79,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			id="note__control__option"
 			class="note__control"
 			href="#"
+			role="button"
 			aria-label="Options de la note"
 			t-att-aria-expanded="props.optionMode ? 'true' : 'false'"
 			t-on-click.stop.prevent="props.toggleOptionMode"
@@ -87,6 +90,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			id="note__control__tags"
 			class="note__control"
 			href="#"
+			role="button"
 			aria-label="Tags"
 			t-on-click.stop.prevent="props.onTagsClick"
 			t-if="props.optionMode"
@@ -101,6 +105,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 				'note__control__archive--active': props.note.archived
 			}"
 			href="#"
+			role="button"
 			t-att-aria-label="props.note.archived ? 'Désarchiver' : 'Archiver'"
 			t-on-click.stop.prevent="props.onArchiveClick"
 			t-if="props.optionMode"
@@ -116,6 +121,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 				'note__control__pin--active': props.note.pinned
 			}"
 			href="#"
+			role="button"
 			t-att-aria-label="props.note.pinned ? 'Désépingler' : 'Épingler'"
 			t-on-click.stop.prevent="props.onPinClick"
 			t-if="props.optionMode"
@@ -131,6 +137,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 				'note__control__done--active': props.note.done
 			}"
 			href="#"
+			role="button"
 			t-att-aria-label="props.note.done ? 'Marquer comme non terminé' : 'Marquer comme terminé'"
 			t-on-click.stop.prevent="props.toggleDone"
 			t-if="props.optionMode"
@@ -143,6 +150,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			id="note__control__open-in-app"
 			class="note__control"
 			href="#"
+			role="button"
 			aria-label="Ouvrir dans l'application"
 			t-on-click.stop.prevent="props.onOpenInAppClick"
 			t-if="props.optionMode"
@@ -159,6 +167,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 				'note__control__priority--4': props.note.priority === 4,
 			}"
 			href="#"
+			role="button"
 			aria-label="Priorité"
 			t-on-click.stop.prevent="props.onPriorityClick"
 			t-if="props.optionMode"

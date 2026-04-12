@@ -17,6 +17,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			id="note__control__location"
 			class="note__control"
 			href="#"
+			role="button"
 			aria-label="Ajouter un lieu"
 			t-on-click.stop.prevent="props.addLocation"
 		>
@@ -27,6 +28,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			id="note__control__photo"
 			class="note__control"
 			href="#"
+			role="button"
 			aria-label="Ajouter une photo"
 			t-on-click.stop.prevent="props.addPhoto"
 		>
@@ -37,6 +39,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			id="note__control__video"
 			class="note__control"
 			href="#"
+			role="button"
 			aria-label="Ajouter une vidéo"
 			t-on-click.stop.prevent="props.addVideo"
 		>
@@ -47,6 +50,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			id="note__control__audio"
 			class="note__control"
 			href="#"
+			role="button"
 			aria-label="Ajouter un audio"
 			t-on-click.stop.prevent="props.addAudio"
 		>
@@ -57,6 +61,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			id="note__control__text"
 			class="note__control"
 			href="#"
+			role="button"
 			aria-label="Ajouter du texte"
 			t-on-click.stop.prevent="props.addText"
 		>
@@ -67,6 +72,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			id="note__control__date"
 			class="note__control"
 			href="#"
+			role="button"
 			aria-label="Ajouter une date"
 			t-on-click.stop.prevent="props.addDateEntry"
 		>

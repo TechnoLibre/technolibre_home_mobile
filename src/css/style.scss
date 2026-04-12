@@ -42,6 +42,21 @@ body {
 	}
 }
 
+// ── Screen-reader-only utility ────────────────────────────────────────────────
+// Visually hidden but still reachable by screen readers and focus.
+.sr-only {
+	border: 0;
+	clip: rect(0 0 0 0);
+	clip-path: inset(50%);
+	height: 1px;
+	margin: -1px;
+	overflow: hidden;
+	padding: 0;
+	position: absolute;
+	white-space: nowrap;
+	width: 1px;
+}
+
 // ── Focus visible ─────────────────────────────────────────────────────────────
 // Keyboard-navigation outline using the current theme accent colour.
 // Applies only when the element is focused via keyboard (not mouse/touch).
