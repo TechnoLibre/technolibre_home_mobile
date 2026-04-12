@@ -137,7 +137,7 @@ public class WhisperPlugin extends Plugin {
         File f = modelFile(model);
 
         if (!f.exists()) {
-            call.reject("Model file not found: " + f.getAbsolutePath());
+            call.reject("Fichier modèle introuvable : " + f.getAbsolutePath());
             return;
         }
 
@@ -156,7 +156,7 @@ public class WhisperPlugin extends Plugin {
             Log.i(TAG, "Loading model: " + absolutePath);
             long ptr = WhisperLib.initContext(absolutePath);
             if (ptr == 0) {
-                call.reject("Failed to initialise whisper context from: " + absolutePath);
+                call.reject("Échec d'initialisation du contexte Whisper : " + absolutePath);
             } else {
                 contextPtr  = ptr;
                 loadedModel = model;
@@ -185,11 +185,11 @@ public class WhisperPlugin extends Plugin {
         String lang      = call.getString("lang", "fr");
 
         if (audioPath == null || audioPath.isEmpty()) {
-            call.reject("Missing audioPath parameter");
+            call.reject("Paramètre audioPath manquant");
             return;
         }
         if (contextPtr == 0) {
-            call.reject("No model loaded — call loadModel() first");
+            call.reject("Aucun modèle chargé — appelez loadModel() en premier");
             return;
         }
 
@@ -215,7 +215,7 @@ public class WhisperPlugin extends Plugin {
                 : new File(getContext().getFilesDir(), audioPath);
 
         if (!audioFile.exists()) {
-            call.reject("Audio file not found: " + audioFile.getAbsolutePath());
+            call.reject("Fichier audio introuvable : " + audioFile.getAbsolutePath());
             return;
         }
 
@@ -239,7 +239,7 @@ public class WhisperPlugin extends Plugin {
 
             } catch (Exception e) {
                 Log.e(TAG, "Transcription failed", e);
-                call.reject("Transcription failed: " + e.getMessage(), e);
+                call.reject("Échec de la transcription : " + e.getMessage(), e);
             }
         }).start();
     }
@@ -264,7 +264,7 @@ public class WhisperPlugin extends Plugin {
         String urlStr = call.getString("url");
 
         if (urlStr == null || urlStr.isEmpty()) {
-            call.reject("Missing url parameter");
+            call.reject("Paramètre URL manquant");
             return;
         }
 
@@ -351,49 +351,166 @@ public class WhisperPlugin extends Plugin {
                 }
 
                 if (conn == null) {
-                    call.reject("Too many redirects");
+                    call.reject("Trop de redirections");
                     return;
                 }
 
                 long serverContent = conn.getContentLengthLong();
                 long total = serverContent > 0 ? resumeBytes + serverContent : 0;
 
-                try (InputStream     in  = conn.getInputStream();
-                     FileOutputStream out = new FileOutputStream(partial, doAppend)) {
+                // ── Multi-thread fast download ────────────────────────────────
+                // For fresh downloads with a known Content-Length, split the file
+                // into 4 parallel HTTP Range requests to saturate the connection.
+                // Falls back to single-thread for resumes or unknown sizes.
+                if (!doAppend && total > 0) {
+                    final URL  resolvedUrl = url;
+                    final long fileSize    = total;
+                    conn.disconnect();
+                    conn = null; // prevent double-disconnect in finally
 
-                    byte[] buf    = new byte[64 * 1024];
-                    long received = resumeBytes;
-                    int  n;
-                    int  lastNotifPct = -1;
+                    final int  N     = 4;
+                    final long chunk = fileSize / N;
 
-                    while (!isCancelled(model) && (n = in.read(buf)) != -1) {
-                        out.write(buf, 0, n);
-                        received += n;
+                    java.util.concurrent.ExecutorService pool =
+                        java.util.concurrent.Executors.newFixedThreadPool(N);
+                    java.util.concurrent.atomic.AtomicLong mtReceived =
+                        new java.util.concurrent.atomic.AtomicLong(0);
+                    java.util.concurrent.atomic.AtomicReference<Exception> mtError =
+                        new java.util.concurrent.atomic.AtomicReference<>(null);
+                    java.util.concurrent.CountDownLatch latch =
+                        new java.util.concurrent.CountDownLatch(N);
+                    java.util.concurrent.atomic.AtomicInteger mtNotifPct =
+                        new java.util.concurrent.atomic.AtomicInteger(-1);
 
-                        JSObject evt = new JSObject();
-                        evt.put("model",    model);
-                        evt.put("ratio",    total > 0 ? (double) received / total : 0.0);
-                        evt.put("received", received);
-                        evt.put("total",    total);
-                        notifyListeners("downloadProgress", evt);
+                    // Pre-allocate file so chunks can write at arbitrary offsets
+                    try (java.io.RandomAccessFile preallocRaf =
+                             new java.io.RandomAccessFile(partial, "rw")) {
+                        preallocRaf.setLength(fileSize);
+                    }
 
-                        // Update notification on each whole-percent change
-                        // (at most 100 updates total — avoids throttling)
-                        int pct = total > 0 ? (int)(received * 100 / total) : 0;
-                        if (pct != lastNotifPct) {
-                            lastNotifPct = pct;
-                            nm.notify(wakelockNotifId(model),
-                                buildWakelockNotification(model, pct));
+                    try (java.io.RandomAccessFile dlRaf =
+                             new java.io.RandomAccessFile(partial, "rw");
+                         java.nio.channels.FileChannel fc = dlRaf.getChannel()) {
+
+                        for (int i = 0; i < N; i++) {
+                            final long chunkStart = (long) i * chunk;
+                            final long chunkEnd   = (i == N - 1)
+                                ? fileSize - 1 : chunkStart + chunk - 1;
+
+                            pool.submit(() -> {
+                                HttpURLConnection chunkConn = null;
+                                try {
+                                    chunkConn = (HttpURLConnection)
+                                        resolvedUrl.openConnection();
+                                    chunkConn.setConnectTimeout(30_000);
+                                    chunkConn.setReadTimeout(60_000);
+                                    chunkConn.setRequestProperty(
+                                        "Range",
+                                        "bytes=" + chunkStart + "-" + chunkEnd);
+                                    chunkConn.connect();
+                                    if (chunkConn.getResponseCode()
+                                            != HttpURLConnection.HTTP_PARTIAL) {
+                                        mtError.compareAndSet(null, new Exception(
+                                            "Le serveur ne supporte pas les téléchargements multi-segments"));
+                                        return;
+                                    }
+                                    try (InputStream cin = chunkConn.getInputStream()) {
+                                        byte[] buf    = new byte[64 * 1024];
+                                        long writePos = chunkStart;
+                                        int  n;
+                                        while (!isCancelled(model)
+                                                && (n = cin.read(buf)) != -1) {
+                                            java.nio.ByteBuffer bb =
+                                                java.nio.ByteBuffer.wrap(buf, 0, n);
+                                            while (bb.hasRemaining()) {
+                                                int w = fc.write(bb, writePos);
+                                                writePos += w;
+                                            }
+                                            long tot = mtReceived.addAndGet(n);
+                                            int  pct = (int)(tot * 100 / fileSize);
+                                            int  prev = mtNotifPct.get();
+                                            if (pct != prev
+                                                    && mtNotifPct.compareAndSet(prev, pct)) {
+                                                nm.notify(wakelockNotifId(model),
+                                                    buildWakelockNotification(model, pct));
+                                                JSObject evt = new JSObject();
+                                                evt.put("model",    model);
+                                                evt.put("ratio",    (double) tot / fileSize);
+                                                evt.put("received", tot);
+                                                evt.put("total",    fileSize);
+                                                notifyListeners("downloadProgress", evt);
+                                            }
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    mtError.compareAndSet(null, e);
+                                } finally {
+                                    if (chunkConn != null) chunkConn.disconnect();
+                                    latch.countDown();
+                                }
+                            });
+                        }
+
+                        latch.await(); // wait for all 4 chunks to finish
+                    }
+                    pool.shutdown();
+
+                    if (mtError.get() != null) {
+                        // Multi-thread partial file has gaps — delete it so the
+                        // next retry starts fresh (avoids corrupt resume offset).
+                        if (partial.exists()) partial.delete();
+                        Log.e(TAG, "Téléchargement multi-segments échoué", mtError.get());
+                        call.reject("Échec du téléchargement : " + mtError.get().getMessage());
+                        return;
+                    }
+
+                    if (isCancelled(model)) {
+                        clearCancel(model);
+                        // Pre-allocated partial has data at arbitrary offsets and
+                        // cannot be resumed sequentially — delete it.
+                        if (partial.exists()) partial.delete();
+                        Log.i(TAG, "Téléchargement de " + model + " annulé");
+                        call.reject("Téléchargement annulé");
+                        return;
+                    }
+
+                } else {
+                    // ── Single-thread fallback (resume or unknown Content-Length) ──
+                    try (InputStream     in  = conn.getInputStream();
+                         FileOutputStream out = new FileOutputStream(partial, doAppend)) {
+
+                        byte[] buf    = new byte[64 * 1024];
+                        long received = resumeBytes;
+                        int  n;
+                        int  lastNotifPct = -1;
+
+                        while (!isCancelled(model) && (n = in.read(buf)) != -1) {
+                            out.write(buf, 0, n);
+                            received += n;
+
+                            JSObject evt = new JSObject();
+                            evt.put("model",    model);
+                            evt.put("ratio",    total > 0 ? (double) received / total : 0.0);
+                            evt.put("received", received);
+                            evt.put("total",    total);
+                            notifyListeners("downloadProgress", evt);
+
+                            int pct = total > 0 ? (int)(received * 100 / total) : 0;
+                            if (pct != lastNotifPct) {
+                                lastNotifPct = pct;
+                                nm.notify(wakelockNotifId(model),
+                                    buildWakelockNotification(model, pct));
+                            }
                         }
                     }
-                }
 
-                if (isCancelled(model)) {
-                    clearCancel(model);
-                    // Keep .partial file — next retry can resume from here
-                    Log.i(TAG, "Download of " + model + " cancelled — partial file kept for resume");
-                    call.reject("Download cancelled");
-                    return;
+                    if (isCancelled(model)) {
+                        clearCancel(model);
+                        Log.i(TAG, "Téléchargement de " + model
+                            + " annulé — fichier partiel conservé");
+                        call.reject("Téléchargement annulé");
+                        return;
+                    }
                 }
 
                 // Rename .partial → .bin atomically
@@ -408,7 +525,7 @@ public class WhisperPlugin extends Plugin {
                     partial.delete();
                 }
 
-                Log.i(TAG, "Model download complete: " + dest.getAbsolutePath());
+                Log.i(TAG, "Téléchargement terminé : " + dest.getAbsolutePath());
                 JSObject result = new JSObject();
                 result.put("path", dest.getAbsolutePath());
                 call.resolve(result);
@@ -416,7 +533,7 @@ public class WhisperPlugin extends Plugin {
             } catch (Exception e) {
                 Log.e(TAG, "downloadModel failed", e);
                 // Keep .partial file — allows resume on next attempt
-                call.reject("Download failed: " + e.getMessage());
+                call.reject("Échec du téléchargement : " + e.getMessage());
             } finally {
                 nm.cancel(wakelockNotifId(model));
                 try { getContext().unregisterReceiver(cancelReceiver); }
@@ -482,7 +599,7 @@ public class WhisperPlugin extends Plugin {
         String urlStr = call.getString("url");
 
         if (urlStr == null || urlStr.isEmpty()) {
-            call.reject("Missing url parameter");
+            call.reject("Paramètre URL manquant");
             return;
         }
 
@@ -496,7 +613,7 @@ public class WhisperPlugin extends Plugin {
                 pendingForegroundCallId = call.getCallbackId();
                 return;
             } else {
-                call.reject("Another download is already in progress: "
+                call.reject("Un autre téléchargement est déjà en cours : "
                     + WhisperDownloadService.currentModel);
                 return;
             }
@@ -579,7 +696,7 @@ public class WhisperPlugin extends Plugin {
             PluginCall call = getBridge().getSavedCall(callId);
             if (call == null) return;
             getBridge().releaseCall(call);
-            call.reject("Download failed: " + message);
+            call.reject("Échec du téléchargement : " + message);
         });
     }
 
@@ -591,7 +708,7 @@ public class WhisperPlugin extends Plugin {
             PluginCall call = getBridge().getSavedCall(callId);
             if (call == null) return;
             getBridge().releaseCall(call);
-            call.reject("Download cancelled");
+            call.reject("Téléchargement annulé");
         });
     }
 
@@ -611,7 +728,7 @@ public class WhisperPlugin extends Plugin {
 
         File f = modelFile(model);
         if (f.exists() && !f.delete()) {
-            call.reject("Failed to delete model file: " + f.getAbsolutePath());
+            call.reject("Impossible de supprimer le fichier modèle : " + f.getAbsolutePath());
             return;
         }
 

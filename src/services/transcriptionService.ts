@@ -216,12 +216,17 @@ export class TranscriptionService {
         mode: "wakelock" | "foreground" = "wakelock"
     ): Promise<void> {
         if (this._activeDownloads.has(model)) return; // already downloading this model
+        // If foreground mode is requested but another foreground download is already
+        // running, fall back to wakelock (Android supports only one foreground
+        // service at a time; wakelock downloads run in parallel without limit).
+        const hasForeground = [...this._activeDownloads.values()].some(d => d.mode === "foreground");
+        const effectiveMode: "wakelock" | "foreground" = (mode === "foreground" && hasForeground) ? "wakelock" : mode;
         const url = MODEL_URLS[model];
-        const initial: DownloadProgress = { model, percent: 0, mode, receivedBytes: 0, totalBytes: 0, speedBytesPerSec: 0 };
+        const initial: DownloadProgress = { model, percent: 0, mode: effectiveMode, receivedBytes: 0, totalBytes: 0, speedBytesPerSec: 0 };
         this._activeDownloads.set(model, initial);
         this._notifyProgress(initial, model);
 
-        const processId = this._processService?.addDownload(model, url, mode);
+        const processId = this._processService?.addDownload(model, url, effectiveMode);
 
         let listener: PluginListenerHandle | null = null;
         let lastReceived = 0;
@@ -238,7 +243,7 @@ export class TranscriptionService {
                 lastTime = now;
                 const percent = Math.round(data.ratio * 100);
                 const progress: DownloadProgress = {
-                    model, percent, mode,
+                    model, percent, mode: effectiveMode,
                     receivedBytes: data.received,
                     totalBytes: data.total,
                     speedBytesPerSec: Math.max(0, speed),
@@ -247,7 +252,7 @@ export class TranscriptionService {
                 this._notifyProgress(progress, model);
                 if (processId) this._processService?.updateProgress(processId, percent);
             });
-            if (mode === "foreground") {
+            if (effectiveMode === "foreground") {
                 await WhisperPlugin.downloadModelForeground({ model, url });
             } else {
                 await WhisperPlugin.downloadModel({ model, url });

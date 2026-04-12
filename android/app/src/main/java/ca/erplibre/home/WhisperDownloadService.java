@@ -145,7 +145,7 @@ public class WhisperDownloadService extends Service {
             }
 
             if (conn == null) {
-                notifyError(model, "Too many redirects");
+                notifyError(model, "Trop de redirections");
                 return;
             }
 
