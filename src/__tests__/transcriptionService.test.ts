@@ -159,7 +159,7 @@ describe("TranscriptionService", () => {
             unsub();
 
             // Called with progress (50%) then null on completion
-            expect(sub).toHaveBeenCalledWith({ model: "tiny", percent: 50 });
+            expect(sub).toHaveBeenCalledWith({ model: "tiny", percent: 50, mode: "wakelock" });
             expect(sub).toHaveBeenLastCalledWith(null);
         });
 
@@ -174,7 +174,7 @@ describe("TranscriptionService", () => {
             );
 
             await service.downloadModel("tiny");
-            expect(capturedDuring).toEqual({ model: "tiny", percent: 30 });
+            expect(capturedDuring).toEqual({ model: "tiny", percent: 30, mode: "wakelock" });
             expect(service.activeDownload).toBeNull();
         });
 

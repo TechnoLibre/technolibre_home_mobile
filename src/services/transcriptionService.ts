@@ -42,8 +42,9 @@ export const MODEL_LABELS: Record<WhisperModel, string> = {
 // ---------------------------------------------------------------------------
 
 export interface DownloadProgress {
-    model: WhisperModel;
+    model:   WhisperModel;
     percent: number;
+    mode:    "wakelock" | "foreground";
 }
 
 export class TranscriptionService {
@@ -163,6 +164,15 @@ export class TranscriptionService {
         await this.db.setUserGraphicPref("whisper_model", model);
     }
 
+    async getDownloadMode(): Promise<"wakelock" | "foreground"> {
+        const val = await this.db.getUserGraphicPref("whisper_download_mode");
+        return val === "foreground" ? "foreground" : "wakelock";
+    }
+
+    async setDownloadMode(mode: "wakelock" | "foreground"): Promise<void> {
+        await this.db.setUserGraphicPref("whisper_download_mode", mode);
+    }
+
     // ── Model management ─────────────────────────────────────────────────────
 
     async isModelDownloaded(model: WhisperModel): Promise<boolean> {
@@ -189,22 +199,29 @@ export class TranscriptionService {
      * Progress is tracked on the service itself (`activeDownload`) so that
      * components that remount mid-download can reconnect via `subscribeProgress`.
      */
-    async downloadModel(model: WhisperModel): Promise<void> {
+    async downloadModel(
+        model: WhisperModel,
+        mode: "wakelock" | "foreground" = "wakelock"
+    ): Promise<void> {
         const url = MODEL_URLS[model];
-        this._activeDownload = { model, percent: 0 };
+        this._activeDownload = { model, percent: 0, mode };
         this._notifyProgress(this._activeDownload);
 
-        const processId = this._processService?.addDownload(model, url);
+        const processId = this._processService?.addDownload(model, url, mode);
 
         let listener: PluginListenerHandle | null = null;
         try {
             listener = await WhisperPlugin.addListener("downloadProgress", (data) => {
                 const percent = Math.round(data.ratio * 100);
-                this._activeDownload = { model, percent };
+                this._activeDownload = { model, percent, mode };
                 this._notifyProgress(this._activeDownload);
                 if (processId) this._processService?.updateProgress(processId, percent);
             });
-            await WhisperPlugin.downloadModel({ model, url });
+            if (mode === "foreground") {
+                await WhisperPlugin.downloadModelForeground({ model, url });
+            } else {
+                await WhisperPlugin.downloadModel({ model, url });
+            }
             if (processId) await this._processService?.completeProcess(processId);
         } catch (e) {
             if (processId) {
@@ -219,6 +236,14 @@ export class TranscriptionService {
             this._activeDownload = null;
             this._notifyProgress(null);
         }
+    }
+
+    /** Cancel any in-progress download (WakeLock or Foreground Service). */
+    async cancelDownload(): Promise<void> {
+        if (!Capacitor.isNativePlatform()) return;
+        try {
+            await WhisperPlugin.cancelDownload();
+        } catch { /* ignore */ }
     }
 
     async deleteModel(model: WhisperModel): Promise<void> {

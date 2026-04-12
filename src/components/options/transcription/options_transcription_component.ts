@@ -3,6 +3,7 @@ import { Capacitor } from "@capacitor/core";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { HeadingComponent } from "../../heading/heading_component";
 import type { WhisperModel } from "../../../plugins/whisperPlugin";
+import type { ProcessRecord } from "../../../models/process";
 
 interface ModelDef {
     key:          WhisperModel;
@@ -221,17 +222,59 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                             </t>
                         </div>
 
+                        <!-- ── Download mode toggle ───────────────────────── -->
+                        <t t-if="!isCurrentModelDownloaded">
+                            <div class="transcription-mode">
+                                <p class="transcription-section__title">Mode de téléchargement</p>
+                                <div class="transcription-mode__options">
+                                    <button
+                                        class="transcription-mode__btn"
+                                        t-att-class="{'transcription-mode__btn--active': state.downloadMode === 'wakelock'}"
+                                        t-on-click="() => setDownloadMode('wakelock')"
+                                    >
+                                        🔋 Standard
+                                        <span class="transcription-mode__sub">WakeLock + reprise auto</span>
+                                    </button>
+                                    <button
+                                        class="transcription-mode__btn"
+                                        t-att-class="{'transcription-mode__btn--active': state.downloadMode === 'foreground'}"
+                                        t-on-click="() => setDownloadMode('foreground')"
+                                    >
+                                        📲 Service de fond
+                                        <span class="transcription-mode__sub">Recommandé ≥ 1 Go</span>
+                                    </button>
+                                </div>
+                                <p t-if="state.downloadMode === 'foreground'" class="transcription-mode__hint">
+                                    Service Android persistant avec notification + bouton Annuler. Survit même si l'écran reste éteint longtemps.
+                                </p>
+                                <p t-else="" class="transcription-mode__hint">
+                                    Le CPU et le réseau restent actifs écran éteint. Reprend automatiquement où il s'était arrêté si interrompu.
+                                </p>
+                            </div>
+                        </t>
+
                         <!-- ── Download button ─────────────────────────────── -->
                         <t t-if="!isCurrentModelDownloaded">
                             <div class="transcription-download">
-                                <button
-                                    class="transcription-download__btn"
-                                    t-att-disabled="state.isDownloading"
-                                    t-on-click="downloadModel"
-                                >
-                                    <t t-if="!state.isDownloading">⬇ Télécharger le modèle sélectionné</t>
-                                    <t t-else="">Téléchargement… <t t-esc="state.downloadPercent"/>%</t>
-                                </button>
+                                <div class="transcription-download__row">
+                                    <button
+                                        class="transcription-download__btn"
+                                        t-att-disabled="state.isDownloading"
+                                        t-on-click="downloadModel"
+                                    >
+                                        <t t-if="!state.isDownloading">⬇ Télécharger</t>
+                                        <t t-else="">
+                                            <t t-if="state.downloadMode === 'foreground'">📲</t>
+                                            <t t-else="">🔋</t>
+                                            <t t-esc="state.downloadPercent"/>%
+                                        </t>
+                                    </button>
+                                    <button t-if="state.isDownloading"
+                                            class="transcription-download__cancel-btn"
+                                            t-on-click="cancelDownload">
+                                        ✕ Annuler
+                                    </button>
+                                </div>
 
                                 <div t-if="state.isDownloading" class="transcription-progress">
                                     <div
@@ -262,6 +305,39 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                t-esc="state.deleteError" />
                         </div>
 
+                        <!-- ── Download history ────────────────────────────── -->
+                        <t t-if="state.recentDownloads.length > 0">
+                            <div class="transcription-history">
+                                <p class="transcription-section__title">Historique des téléchargements</p>
+                                <t t-foreach="state.recentDownloads" t-as="dl" t-key="dl.id">
+                                    <div class="transcription-history__item">
+                                        <span class="transcription-history__name"
+                                              t-esc="dl.model || dl.label" />
+                                        <span t-if="dl.downloadMode === 'foreground'"
+                                              class="transcription-history__mode"
+                                              title="Service de fond">📲</span>
+                                        <span t-elif="dl.downloadMode"
+                                              class="transcription-history__mode"
+                                              title="WakeLock + reprise">🔋</span>
+                                        <span
+                                            class="transcription-history__status"
+                                            t-att-class="{
+                                                'transcription-history__status--done':    dl.status === 'done',
+                                                'transcription-history__status--error':   dl.status === 'error',
+                                                'transcription-history__status--running': dl.status === 'running',
+                                            }"
+                                        >
+                                            <t t-if="dl.status === 'running'">
+                                                <t t-esc="dl.percent || 0"/>%
+                                            </t>
+                                            <t t-elif="dl.status === 'done'">✓</t>
+                                            <t t-elif="dl.status === 'error'" t-esc="dl.errorMessage || '✗'" />
+                                        </span>
+                                    </div>
+                                </t>
+                            </div>
+                        </t>
+
                     </t>
                 </t>
             </div>
@@ -286,12 +362,22 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
             } as Record<WhisperModel, boolean>,
             isDownloading:    false,
             downloadPercent:  0,
+            downloadMode:     "wakelock" as "wakelock" | "foreground",
             downloadError:    "",
             isDeleting:       false,
             deleteError:      "",
+            recentDownloads:  [] as ProcessRecord[],
         });
 
-        let unsubscribe: (() => void) | null = null;
+        let unsubscribeProgress:  (() => void) | null = null;
+        let unsubscribeProcesses: (() => void) | null = null;
+
+        const refreshDownloadHistory = () => {
+            this.state.recentDownloads = this.processService
+                .getAll()
+                .filter(p => p.type === "download")
+                .slice(0, 8);
+        };
 
         onMounted(async () => {
             // Subscribe and sync download state BEFORE loadSettings() so that
@@ -301,22 +387,32 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
             if (active) {
                 this.state.isDownloading   = true;
                 this.state.downloadPercent = active.percent;
+                this.state.downloadMode    = active.mode;
             }
 
-            unsubscribe = this.transcriptionService.subscribeProgress(async (info) => {
+            unsubscribeProgress = this.transcriptionService.subscribeProgress(async (info) => {
                 if (info) {
                     this.state.isDownloading   = true;
                     this.state.downloadPercent = info.percent;
+                    this.state.downloadMode    = info.mode;
                 } else {
                     this.state.isDownloading = false;
                     await this.refreshModelStatus();
                 }
             });
 
+            unsubscribeProcesses = this.processService.subscribe(() => {
+                refreshDownloadHistory();
+            });
+
             await this.loadSettings();
+            refreshDownloadHistory();
         });
 
-        onWillDestroy(() => { if (unsubscribe) unsubscribe(); });
+        onWillDestroy(() => {
+            if (unsubscribeProgress)  unsubscribeProgress();
+            if (unsubscribeProcesses) unsubscribeProcesses();
+        });
     }
 
     get isNative(): boolean {
@@ -338,6 +434,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
     private async loadSettings() {
         this.state.enabled       = await this.transcriptionService.isEnabled();
         this.state.selectedModel = await this.transcriptionService.getSelectedModel();
+        this.state.downloadMode  = await this.transcriptionService.getDownloadMode();
         await this.refreshModelStatus();
     }
 
@@ -377,6 +474,16 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
         }
     }
 
+    async setDownloadMode(mode: "wakelock" | "foreground") {
+        this.state.downloadMode = mode;
+        await this.transcriptionService.setDownloadMode(mode);
+    }
+
+    async cancelDownload() {
+        await this.transcriptionService.cancelDownload();
+        // isDownloading and error state are reset by the subscribeProgress callback
+    }
+
     async downloadModel() {
         this.state.isDownloading   = true;
         this.state.downloadPercent = 0;
@@ -384,10 +491,16 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
 
         try {
             // Progress updates arrive via the service subscription (see setup()).
-            await this.transcriptionService.downloadModel(this.state.selectedModel);
+            await this.transcriptionService.downloadModel(
+                this.state.selectedModel,
+                this.state.downloadMode,
+            );
         } catch (e: unknown) {
-            this.state.downloadError =
-                "Erreur : " + (e instanceof Error ? e.message : String(e));
+            // Suppress "cancelled" errors — user initiated, not an error
+            const msg = e instanceof Error ? e.message : String(e);
+            if (!msg.toLowerCase().includes("cancelled")) {
+                this.state.downloadError = "Erreur : " + msg;
+            }
             this.state.isDownloading = false;
         }
         // On success, isDownloading is reset and refreshModelStatus() is called

@@ -55,8 +55,8 @@ export class ProcessService {
         return this._add("transcription", label, { noteId });
     }
 
-    addDownload(model: string, url?: string): string {
-        return this._add("download", model, { model, result: url });
+    addDownload(model: string, url?: string, mode?: "wakelock" | "foreground"): string {
+        return this._add("download", model, { model, result: url, downloadMode: mode ?? "wakelock" });
     }
 
     /**
