@@ -25,9 +25,10 @@ import java.io.FileReader;
 public class DeviceStatsPlugin extends Plugin {
 
     // ── CPU delta state ───────────────────────────────────────────────────────
+    // static: survives plugin re-instantiation across component lifecycle
 
-    private long lastCpuTotal = 0;
-    private long lastCpuIdle  = 0;
+    private static long lastCpuTotal = 0;
+    private static long lastCpuIdle  = 0;
 
     // ── Network delta state ───────────────────────────────────────────────────
 
@@ -102,12 +103,18 @@ public class DeviceStatsPlugin extends Plugin {
 
     /**
      * Read /proc/stat and compute CPU% as the delta between two successive calls.
-     * Falls back to /proc/loadavg if /proc/stat is not readable (API >= 26 restriction).
+     *
+     * On Android 12+ /proc/stat may be SELinux-restricted; falls back to
+     * readCpuFallback() which tries CPU-frequency scaling first, then
+     * /proc/loadavg.
+     *
+     * The first call always uses the fallback so that the UI shows a
+     * meaningful value immediately instead of the usual 0 % baseline.
      */
     private double readCpuPercent() {
         try (BufferedReader br = new BufferedReader(new FileReader("/proc/stat"))) {
             String line = br.readLine();
-            if (line == null || !line.startsWith("cpu ")) return readLoadAvgAsPercent();
+            if (line == null || !line.startsWith("cpu ")) return readCpuFallback();
 
             // "cpu  user nice system idle iowait irq softirq steal guest guest_nice"
             String[] p = line.trim().split("\\s+");
@@ -118,39 +125,75 @@ public class DeviceStatsPlugin extends Plugin {
             long iowait = p.length > 5 ? Long.parseLong(p[5]) : 0;
             long irq    = p.length > 6 ? Long.parseLong(p[6]) : 0;
             long sirq   = p.length > 7 ? Long.parseLong(p[7]) : 0;
+            long steal  = p.length > 8 ? Long.parseLong(p[8]) : 0;
 
-            long total  = user + nice + system + idle + iowait + irq + sirq;
+            long total  = user + nice + system + idle + iowait + irq + sirq + steal;
             long idleT  = idle + iowait;
 
             if (lastCpuTotal == 0) {
-                // First call — store baseline, return 0
+                // First call — store baseline, use fallback for immediate display
                 lastCpuTotal = total;
                 lastCpuIdle  = idleT;
-                return 0;
+                return readCpuFallback();
             }
 
             long dTotal = total - lastCpuTotal;
             long dIdle  = idleT  - lastCpuIdle;
             lastCpuTotal = total;
             lastCpuIdle  = idleT;
-            if (dTotal <= 0) return 0;
+            if (dTotal <= 0) return readCpuFallback();
             return (double)(dTotal - dIdle) / dTotal * 100.0;
 
         } catch (Exception e) {
-            return readLoadAvgAsPercent();
+            return readCpuFallback();
         }
     }
 
-    /** Estimate CPU usage from /proc/loadavg ÷ cpu-count (always readable). */
-    private double readLoadAvgAsPercent() {
+    /**
+     * Fallback CPU estimate for Android 12+ where /proc/stat is restricted.
+     *
+     * Strategy:
+     *  1. Average CPU-frequency ratio across all cores from sysfs — responsive
+     *     to load because governors (schedutil, interactive) scale frequency
+     *     proportionally to CPU demand.
+     *  2. /proc/loadavg ÷ cpu-count — always readable, 1-min EMA approximation.
+     *  3. 0 if both sources are unavailable.
+     */
+    private double readCpuFallback() {
+        // ── 1. CPU frequency scaling ─────────────────────────────────────────
+        int cores = Runtime.getRuntime().availableProcessors();
+        double freqRatioSum = 0;
+        int freqCount = 0;
+        for (int i = 0; i < cores; i++) {
+            try {
+                String base = "/sys/devices/system/cpu/cpu" + i + "/cpufreq/";
+                long cur = readLongFromFile(base + "scaling_cur_freq");
+                long max = readLongFromFile(base + "cpuinfo_max_freq");
+                if (max > 0 && cur >= 0) {
+                    freqRatioSum += (double) cur / max;
+                    freqCount++;
+                }
+            } catch (Exception ignored) { }
+        }
+        if (freqCount > 0) {
+            return freqRatioSum / freqCount * 100.0;
+        }
+
+        // ── 2. /proc/loadavg ─────────────────────────────────────────────────
         try (BufferedReader br = new BufferedReader(new FileReader("/proc/loadavg"))) {
             String line = br.readLine();
-            if (line == null) return 0;
-            double load1 = Double.parseDouble(line.split("\\s+")[0]);
-            int cpus = Runtime.getRuntime().availableProcessors();
-            return Math.min(load1 / cpus * 100.0, 100.0);
-        } catch (Exception ignored) {
-            return 0;
+            if (line != null) {
+                double load1 = Double.parseDouble(line.split("\\s+")[0]);
+                return Math.min(load1 / cores * 100.0, 100.0);
+            }
+        } catch (Exception ignored) { }
+
+        return 0;
+    }
+
+    private long readLongFromFile(String path) throws Exception {
+        try (BufferedReader br = new BufferedReader(new FileReader(path))) {
+            return Long.parseLong(br.readLine().trim());
         }
     }
 }
