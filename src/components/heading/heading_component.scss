@@ -21,7 +21,7 @@
 	font-size: 0.8rem;
 
 	a {
-		color: #31d53d;
+		color: var(--accent-color);
 		text-decoration: none;
 		&:hover {
 			text-decoration: underline;

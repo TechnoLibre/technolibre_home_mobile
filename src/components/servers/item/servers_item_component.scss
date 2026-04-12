@@ -4,7 +4,7 @@
     align-items: stretch;
     border: 2px solid var(--section-border-color);
     border-radius: 0.5em;
-    background-color: #151515;
+    background-color: var(--card-bg);
     display: flex;
     flex-direction: column;
     overflow: hidden;

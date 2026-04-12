@@ -36,7 +36,7 @@
 
 #note-component .note__control {
 	@include mixins.flex(center);
-	background-color: #222;
+	background-color: var(--btn-back-color);
 	border-radius: 0.25rem;
 	color: var(--text);
 	gap: 0.5rem;
@@ -48,9 +48,10 @@
 		border-radius: 0.5rem;
 	}
 	&:hover {
-		background-color: #333;
+		background-color: var(--section-border-color);
 	}
 	& img {
+		filter: var(--icon-filter, none);
 		flex-shrink: 0;
 		pointer-events: none;
 		width: 1.25rem;
@@ -96,7 +97,7 @@
 .breadcrumb__sync-btn,
 .breadcrumb__meta-btn {
 	align-items: center;
-	background-color: #222;
+	background-color: var(--btn-back-color);
 	border: none;
 	border-radius: 0.25rem;
 	display: flex;
@@ -104,7 +105,7 @@
 	min-width: 2.75rem;
 	padding: 0.65rem 0.75rem;
 	transition: background-color 150ms ease-in-out;
-	&:hover:not(:disabled) { background-color: #333; }
+	&:hover:not(:disabled) { background-color: var(--btn-back-hover-color); }
 }
 
 .breadcrumb__sync-wrap {
@@ -112,8 +113,8 @@
 }
 
 .breadcrumb__config-picker {
-	background: #1e1e1e;
-	border: 1px solid #444;
+	background: var(--card-hover-bg);
+	border: 1px solid var(--surface-subtle);
 	border-radius: 0.5rem;
 	display: flex;
 	flex-direction: column;
@@ -134,7 +135,7 @@
 
 .breadcrumb__config-option {
 	align-items: center;
-	background: #2a2a2a;
+	background: var(--surface-btn);
 	border: none;
 	border-radius: 0.375rem;
 	color: var(--text);
@@ -146,10 +147,10 @@
 	text-align: left;
 	width: 100%;
 	&:active {
-		background: #3a3a3a;
+		background: var(--surface-btn-active);
 	}
 	input[type="checkbox"] {
-		accent-color: #31d53d;
+		accent-color: var(--accent-color);
 		flex-shrink: 0;
 		height: 1.1rem;
 		width: 1.1rem;
@@ -157,10 +158,10 @@
 }
 
 .breadcrumb__config-confirm {
-	background: rgba(49, 213, 61, 0.12);
-	border: 1px solid #31d53d;
+	background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+	border: 1px solid var(--accent-color);
 	border-radius: 0.375rem;
-	color: #31d53d;
+	color: var(--accent-color);
 	cursor: pointer;
 	font-size: 0.9rem;
 	padding: 0.75rem 1rem;
@@ -170,13 +171,13 @@
 		opacity: 0.35;
 	}
 	&:active:not(:disabled) {
-		background: rgba(49, 213, 61, 0.22);
+		background: color-mix(in srgb, var(--accent-color) 22%, transparent);
 	}
 }
 
 .breadcrumb__config-cancel {
 	background: none;
-	border: 1px solid #444;
+	border: 1px solid var(--surface-subtle);
 	border-radius: 0.375rem;
 	color: var(--text-greyed-out);
 	cursor: pointer;
@@ -185,12 +186,12 @@
 	padding: 0.5rem 1rem;
 	width: 100%;
 	&:active {
-		background: #2a2a2a;
+		background: var(--surface-btn);
 	}
 }
 
 .breadcrumb__note-nav-btn {
-	color: #31d53d;
+	color: var(--accent-color);
 	cursor: pointer;
 	font-size: 1.1rem;
 	line-height: 1;
@@ -214,7 +215,7 @@
 	}
 	&--local   { color: var(--text-greyed-out); }
 	&--pending { color: #e0a020; }
-	&--synced  { color: #31d53d; }
+	&--synced  { color: var(--accent-color); }
 	&--error   { color: #e03030; }
 	&--conflict { color: #e06020; }
 	&--pressing {
@@ -233,7 +234,7 @@
 
 @keyframes longpress-color {
 	0%   { color: var(--text-greyed-out); }
-	100% { color: #31d53d; filter: drop-shadow(0 0 3px #31d53d); }
+	100% { color: var(--accent-color); filter: drop-shadow(0 0 3px var(--accent-color)); }
 }
 
 #note-component #note__control__sync {
@@ -248,8 +249,8 @@
 }
 
 @keyframes longpress-bg {
-	0%   { background-color: #222; }
-	100% { background-color: #1a4d1e; box-shadow: 0 0 6px #31d53d; }
+	0%   { background-color: var(--btn-back-color); }
+	100% { background-color: color-mix(in srgb, var(--accent-color) 30%, var(--card-bg)); box-shadow: 0 0 6px var(--accent-color); }
 }
 
 #note-component .note__control__pin--active {
@@ -276,8 +277,8 @@
 }
 
 .error-dialog {
-	background: #1e1e1e;
-	border: 1px solid #444;
+	background: var(--card-hover-bg);
+	border: 1px solid var(--surface-subtle);
 	border-radius: 0.5rem;
 	display: flex;
 	flex-direction: column;
@@ -317,17 +318,17 @@
 }
 
 .error-dialog__btn--copy {
-	background: rgba(255, 255, 255, 0.08);
-	border: 1px solid #555;
+	background: color-mix(in srgb, var(--text) 8%, transparent);
+	border: 1px solid var(--surface-subtle);
 	color: var(--text);
-	&:active { background: rgba(255, 255, 255, 0.14); }
+	&:active { background: color-mix(in srgb, var(--text) 14%, transparent); }
 }
 
 .error-dialog__btn--note {
-	background: rgba(49, 213, 61, 0.1);
-	border: 1px solid #31d53d;
-	color: #31d53d;
-	&:active { background: rgba(49, 213, 61, 0.2); }
+	background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+	border: 1px solid var(--accent-color);
+	color: var(--accent-color);
+	&:active { background: color-mix(in srgb, var(--accent-color) 20%, transparent); }
 }
 
 .open-in-app__title {
@@ -338,9 +339,9 @@
 
 .error-dialog__btn--close {
 	background: none;
-	border: 1px solid #444;
+	border: 1px solid var(--surface-subtle);
 	color: var(--text-greyed-out);
-	&:active { background: rgba(255, 255, 255, 0.06); }
+	&:active { background: color-mix(in srgb, var(--text) 6%, transparent); }
 }
 
 // ── Priority picker ───────────────────────────────────────────────────────────
@@ -381,8 +382,8 @@
 }
 
 .priority-picker {
-	background: #1e1e1e;
-	border: 1px solid #444;
+	background: var(--card-hover-bg);
+	border: 1px solid var(--surface-subtle);
 	border-radius: 0.5rem;
 	display: flex;
 	flex-direction: column;
@@ -451,25 +452,25 @@
 
 	&__clear {
 		background: none;
-		border: 1px solid #555;
+		border: 1px solid var(--surface-subtle);
 		border-radius: 0.375rem;
 		color: var(--text-greyed-out);
 		cursor: pointer;
 		font-size: 0.85rem;
 		padding: 0.5rem 1rem;
 		width: 100%;
-		&:active { background: rgba(255, 255, 255, 0.06); }
+		&:active { background: color-mix(in srgb, var(--text) 6%, transparent); }
 	}
 
 	&__cancel {
 		background: none;
-		border: 1px solid #444;
+		border: 1px solid var(--surface-subtle);
 		border-radius: 0.375rem;
 		color: var(--text-greyed-out);
 		cursor: pointer;
 		font-size: 0.85rem;
 		padding: 0.5rem 1rem;
 		width: 100%;
-		&:active { background: rgba(255, 255, 255, 0.06); }
+		&:active { background: color-mix(in srgb, var(--text) 6%, transparent); }
 	}
 }

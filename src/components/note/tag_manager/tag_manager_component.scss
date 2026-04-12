@@ -56,7 +56,7 @@
 
 .tag-manager__action {
 	@include mixins.flex(center);
-	background-color: #222;
+	background-color: var(--btn-back-color);
 	border-radius: 0.5rem;
 	color: var(--text);
 	gap: 0.5rem;
@@ -69,7 +69,7 @@
 		height: 1.25rem;
 	}
 	&:hover {
-		background-color: #333;
+		background-color: var(--btn-back-hover-color);
 	}
 }
 

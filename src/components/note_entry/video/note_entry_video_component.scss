@@ -2,7 +2,7 @@
 @use "../../../css/mixins.scss";
 
 .note-entry-video-component .note-entry__wrapper {
-	background-color: #262626;
+	background-color: var(--card-bg);
 	border-radius: 0.5rem;
 	display: grid;
 	gap: 0.75rem;
@@ -20,7 +20,7 @@
 
 .note-entry-video-component .note-entry__video__thumbnail__wrapper {
 	@include mixins.flex--center;
-	background-color: #1A1A1A;
+	background-color: var(--card-bg);
 	border-radius: 0.25rem;
 	flex-direction: column;
 	grid-area: thumbnail;
@@ -31,7 +31,7 @@
 	$aspectRatio: math.div(16, 9);
 	$maxWidth: 16rem;
 	aspect-ratio: $aspectRatio;
-	background-color: #101010;
+	background-color: var(--background);
 	border-radius: 0.25rem;
 	min-height: 3.75rem;
 	max-height: math.div($maxWidth, $aspectRatio);
@@ -109,7 +109,7 @@
 }
 
 .note-entry-video-component .note-entry__video__transcription {
-	border-top: 1px solid #333;
+	border-top: 1px solid var(--section-border-color);
 	padding-top: 0.5rem;
 }
 
@@ -124,7 +124,7 @@
 
 .note-entry-video-component .note-entry__video__add-text {
 	background: transparent;
-	border: 1px solid #444;
+	border: 1px solid var(--surface-subtle);
 	border-radius: 0.75rem;
 	color: #888;
 	cursor: pointer;
@@ -140,7 +140,7 @@
 }
 
 .note-entry-video-component .note-entry__video__transcribe {
-	background: #1a3a5c;
+	background: var(--btn-blue-color);
 	border: none;
 	border-radius: 50%;
 	color: #8ab4d4;
@@ -156,7 +156,7 @@
 	width: 36px;
 
 	&:hover:not(:disabled) {
-		background: #1f4e7a;
+		background: var(--btn-blue-hover-color);
 		color: #cce0f5;
 	}
 
