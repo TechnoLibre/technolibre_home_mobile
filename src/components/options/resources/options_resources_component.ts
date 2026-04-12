@@ -50,21 +50,33 @@ export class OptionsResourcesComponent extends EnhancedComponent {
                 <t t-if="isNative">
 
                     <!-- ── Refresh rate selector ────────────────────── -->
-                    <div class="devres__toolbar">
-                        <div class="devres__toolbar-top">
-                            <span class="devres__toolbar-label">Rafraîchissement</span>
+                    <div class="devres__rate-section">
+                        <div class="devres__rate-header">
+                            <span class="devres__rate-title">Rafraîchissement</span>
                             <span class="devres__updated" t-if="state.updatedAt" t-esc="state.updatedAt" />
                         </div>
-                        <div class="devres__rate-btns">
-                            <button class="devres__rate-btn"
-                                    t-att-class="{'devres__rate-btn--active': state.refreshSec === 1}"
-                                    t-on-click="() => setRefreshRate(1)">1 s</button>
-                            <button class="devres__rate-btn"
-                                    t-att-class="{'devres__rate-btn--active': state.refreshSec === 5}"
-                                    t-on-click="() => setRefreshRate(5)">5 s</button>
-                            <button class="devres__rate-btn"
-                                    t-att-class="{'devres__rate-btn--active': state.refreshSec === 30}"
-                                    t-on-click="() => setRefreshRate(30)">30 s</button>
+                        <div class="devres__rate-list">
+                            <button class="devres__rate-row"
+                                    t-att-class="{'devres__rate-row--active': state.refreshSec === 1}"
+                                    t-on-click="() => setRefreshRate(1)">
+                                <span class="devres__rate-dot" />
+                                <span class="devres__rate-label">1 seconde</span>
+                                <span class="devres__rate-check">✓</span>
+                            </button>
+                            <button class="devres__rate-row"
+                                    t-att-class="{'devres__rate-row--active': state.refreshSec === 5}"
+                                    t-on-click="() => setRefreshRate(5)">
+                                <span class="devres__rate-dot" />
+                                <span class="devres__rate-label">5 secondes</span>
+                                <span class="devres__rate-check">✓</span>
+                            </button>
+                            <button class="devres__rate-row"
+                                    t-att-class="{'devres__rate-row--active': state.refreshSec === 30}"
+                                    t-on-click="() => setRefreshRate(30)">
+                                <span class="devres__rate-dot" />
+                                <span class="devres__rate-label">30 secondes</span>
+                                <span class="devres__rate-check">✓</span>
+                            </button>
                         </div>
                     </div>
 
