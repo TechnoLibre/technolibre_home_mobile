@@ -179,7 +179,8 @@ Construit un GeoJSON `MultiPoint` (ordre `[longitude, latitude]`) à partir des 
 Méthode privée utilisée par tous les appels réseau de `SyncService`.
 
 - **Sur Android natif** : utilise `RawHttpPlugin`, qui contourne le `CookieHandler` d'Android. Cela préserve les en-têtes `Cookie` sur les connexions HTTP plain (adresses IP locales), que le système Android supprimerait sinon.
-- **Fallback** : si `RawHttpPlugin` lance une erreur contenant `"not implement"` (APK ancien ou build non synchronisé), `rawPost` se rabat silencieusement sur `fetch()`. La synchronisation reste fonctionnelle sur HTTPS et la plupart des scénarios HTTP.
+- **Si `RawHttpPlugin` est absent** (APK ancien, build non synchronisé) : lève une erreur explicite — le fallback `fetch()` n'est pas utilisé sur natif car l'Android WebView bloque les requêtes cross-origin vers des serveurs Odoo sans en-tête CORS.
+- **Sur web (mode dev)** : `fetch()` est utilisé directement (pas de restriction CORS dans ce contexte).
 
 ---
 
