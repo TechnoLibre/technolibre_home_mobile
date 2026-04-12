@@ -1,41 +1,110 @@
-// Dark theme — WCAG AA compliant defaults
+// ─── Shared non-theme variables ───────────────────────────────────────────────
 :root {
 	--app-font-family: "VarOpenSans", system-ui, sans-serif;
 	--app-font-scale: 1;
-
-	--text: #f0f0f0;
-	--text-greyed-out: #9a9a9a;
-	--fill: #f0f0f0;
-	--background: #0d0d0d;
-	--accent-color: #4ade80;
-
-	--surface-btn: #1e1e1e;
-	--surface-btn-active: #2a2a2a;
-	--surface-subtle: #3a3a3a;
-
-	// Buttons — contrast ratios verified against #0d0d0d background
-	--btn-red-color: #ef4444;         // 5.4:1 ✓ (was #8a0000 → 2.1:1 ✗)
-	--btn-red-hover-color: #dc2626;   // 4.7:1 ✓
-	--btn-blue-color: #3b82f6;        // 4.9:1 ✓
-	--btn-blue-hover-color: #2563eb;  // 4.3:1 ✓
-	--btn-green-color: #22c55e;       // 6.1:1 ✓
-	--btn-green-hover-color: #16a34a; // 5.0:1 ✓
-	--btn-grey-color: #525252;
-	--btn-grey-hover-color: #5e5e5e;
-	--btn-back-color: #1e1e1e;
-	--btn-back-hover-color: #282828;
-
-	--section-border-color: #2a2a2a;
-	--nav-background-color: #111111;
-	--nav-text-color: #a0a0a0;
-	--nav-text-color-deselected-active: #808080;
-	--nav-text-color-selected-active: #d4d4d4;
-
-	--options__item__background-color: rgba(26, 26, 26, 0.98);
-	--options__item__color: #f0f0f0;
 }
 
-// Light theme overrides
+// ─── Nuit (dark night) — AMOLED deep black, original look ────────────────────
+:root,
+:root[data-theme="dark"] {
+	--text: #f3f3f3;
+	--text-greyed-out: #808080;
+	--fill: #f3f3f3;
+	--background: #000;
+	--accent-color: #31d53d;
+
+	--surface-btn: #2a2a2a;
+	--surface-btn-active: #3a3a3a;
+	--surface-subtle: #444;
+
+	--btn-red-color: #8a0000;
+	--btn-red-hover-color: #780000;
+	--btn-blue-color: #2151d3;
+	--btn-blue-hover-color: #1c47bd;
+	--btn-green-color: #2f920d;
+	--btn-green-hover-color: #29830b;
+	--btn-grey-color: #404040;
+	--btn-grey-hover-color: #4a4a4a;
+	--btn-back-color: #222;
+	--btn-back-hover-color: #2a2a2a;
+
+	--section-border-color: #333;
+	--nav-background-color: #1a1a1a;
+	--nav-text-color: #aaa;
+	--nav-text-color-deselected-active: #888;
+	--nav-text-color-selected-active: #ccc;
+
+	--options__item__background-color: rgba(40, 40, 40, 0.985);
+	--options__item__color: #eee;
+}
+
+// ─── Contraste (dark grey) — charcoal, vivid accents ─────────────────────────
+:root[data-theme="dark-grey"] {
+	--text: #f2f2f2;
+	--text-greyed-out: #a8a8a8;
+	--fill: #f2f2f2;
+	--background: #1e1e1e;
+	--accent-color: #60a5fa;
+
+	--surface-btn: #303030;
+	--surface-btn-active: #404040;
+	--surface-subtle: #525252;
+
+	--btn-red-color: #f87171;
+	--btn-red-hover-color: #ef4444;
+	--btn-blue-color: #60a5fa;
+	--btn-blue-hover-color: #3b82f6;
+	--btn-green-color: #4ade80;
+	--btn-green-hover-color: #22c55e;
+	--btn-grey-color: #525252;
+	--btn-grey-hover-color: #616161;
+	--btn-back-color: #2a2a2a;
+	--btn-back-hover-color: #343434;
+
+	--section-border-color: #3a3a3a;
+	--nav-background-color: #141414;
+	--nav-text-color: #b0b0b0;
+	--nav-text-color-deselected-active: #909090;
+	--nav-text-color-selected-active: #e0e0e0;
+
+	--options__item__background-color: rgba(28, 28, 28, 0.98);
+	--options__item__color: #f2f2f2;
+}
+
+// ─── Coloré (light warm) — parchment, fin d'après-midi ───────────────────────
+:root[data-theme="light-warm"] {
+	--text: #1c1207;
+	--text-greyed-out: #6b4c28;
+	--fill: #1c1207;
+	--background: #fef9f0;
+	--accent-color: #b45309;
+
+	--surface-btn: #fde8c4;
+	--surface-btn-active: #fad5a0;
+	--surface-subtle: #e8c99a;
+
+	--btn-red-color: #b91c1c;
+	--btn-red-hover-color: #991b1b;
+	--btn-blue-color: #1d4ed8;
+	--btn-blue-hover-color: #1e40af;
+	--btn-green-color: #15803d;
+	--btn-green-hover-color: #166534;
+	--btn-grey-color: #78350f;
+	--btn-grey-hover-color: #92400e;
+	--btn-back-color: #fde8c4;
+	--btn-back-hover-color: #fad5a0;
+
+	--section-border-color: #e8c99a;
+	--nav-background-color: #fffbf5;
+	--nav-text-color: #78350f;
+	--nav-text-color-deselected-active: #92400e;
+	--nav-text-color-selected-active: #1c1207;
+
+	--options__item__background-color: rgba(254, 245, 232, 0.98);
+	--options__item__color: #1c1207;
+}
+
+// ─── Clair (light clean) — white, high contrast ───────────────────────────────
 :root[data-theme="light"] {
 	--text: #111111;
 	--text-greyed-out: #555555;
@@ -47,12 +116,12 @@
 	--surface-btn-active: #d0d0d0;
 	--surface-subtle: #c0c0c0;
 
-	--btn-red-color: #dc2626;         // 5.2:1 on #f5f5f5 ✓
-	--btn-red-hover-color: #b91c1c;   // 6.3:1 ✓
-	--btn-blue-color: #2563eb;        // 4.6:1 ✓
-	--btn-blue-hover-color: #1d4ed8;  // 5.4:1 ✓
-	--btn-green-color: #16a34a;       // 5.0:1 ✓
-	--btn-green-hover-color: #15803d; // 5.8:1 ✓
+	--btn-red-color: #dc2626;
+	--btn-red-hover-color: #b91c1c;
+	--btn-blue-color: #2563eb;
+	--btn-blue-hover-color: #1d4ed8;
+	--btn-green-color: #16a34a;
+	--btn-green-hover-color: #15803d;
 	--btn-grey-color: #6b7280;
 	--btn-grey-hover-color: #4b5563;
 	--btn-back-color: #e5e5e5;

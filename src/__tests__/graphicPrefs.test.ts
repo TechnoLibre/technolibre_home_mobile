@@ -18,8 +18,10 @@ describe("GraphicPrefs constants", () => {
     expect(DEFAULT_GRAPHIC_PREFS.colorTheme).toBe("dark");
   });
 
-  it("COLOR_THEME_LABELS provides a label for dark and light", () => {
+  it("COLOR_THEME_LABELS provides a label for all four themes", () => {
     expect(COLOR_THEME_LABELS.dark).toBeTruthy();
+    expect(COLOR_THEME_LABELS["dark-grey"]).toBeTruthy();
+    expect(COLOR_THEME_LABELS["light-warm"]).toBeTruthy();
     expect(COLOR_THEME_LABELS.light).toBeTruthy();
   });
 
@@ -93,6 +95,18 @@ describe("applyGraphicPrefs", () => {
     const { dataset } = makeDocStub();
     applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark" });
     expect(dataset.theme).toBe("dark");
+  });
+
+  it("dark-grey theme sets data-theme=dark-grey", () => {
+    const { dataset } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark-grey" });
+    expect(dataset.theme).toBe("dark-grey");
+  });
+
+  it("light-warm theme sets data-theme=light-warm", () => {
+    const { dataset } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "light-warm" });
+    expect(dataset.theme).toBe("light-warm");
   });
 
   it("applies all font families without error", () => {

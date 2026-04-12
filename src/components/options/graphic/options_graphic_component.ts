@@ -16,8 +16,10 @@ const FONT_OPTIONS: { key: FontFamily; label: string; cssValue: string }[] = (
 ).map((key) => ({ key, label: FONT_LABELS[key], cssValue: FONT_CSS_VALUES[key] }));
 
 const THEME_OPTIONS: { key: ColorTheme; label: string; icon: string }[] = [
-  { key: "dark",  label: COLOR_THEME_LABELS.dark,  icon: "🌙" },
-  { key: "light", label: COLOR_THEME_LABELS.light, icon: "☀️" },
+  { key: "light",       label: COLOR_THEME_LABELS.light,        icon: "☀️"  },
+  { key: "light-warm",  label: COLOR_THEME_LABELS["light-warm"], icon: "🌅" },
+  { key: "dark-grey",   label: COLOR_THEME_LABELS["dark-grey"],  icon: "🌆" },
+  { key: "dark",        label: COLOR_THEME_LABELS.dark,          icon: "🌙" },
 ];
 
 export class OptionsGraphicComponent extends EnhancedComponent {
@@ -32,13 +34,13 @@ export class OptionsGraphicComponent extends EnhancedComponent {
 
         <div class="options-graphic__section">
           <p class="options-graphic__label">Thème</p>
-          <div class="options-graphic__theme-row">
+          <div class="options-graphic__theme-grid">
             <t t-foreach="themeOptions" t-as="opt" t-key="opt.key">
               <button
                 type="button"
                 t-att-class="'options-graphic__theme-btn' + (state.colorTheme === opt.key ? ' options-graphic__theme-btn--active' : '')"
                 t-on-click="() => this.setTheme(opt.key)"
-              ><t t-esc="opt.icon"/> <t t-esc="opt.label"/></button>
+              ><span class="options-graphic__theme-icon" t-esc="opt.icon"/><span t-esc="opt.label"/></button>
             </t>
           </div>
         </div>
@@ -116,7 +118,7 @@ export class OptionsGraphicComponent extends EnhancedComponent {
       const idx = FONT_SIZE_STEPS.indexOf(scale);
       if (idx !== -1) this.state.fontSizeStepIndex = idx;
     }
-    if (colorTheme === "dark" || colorTheme === "light") {
+    if (colorTheme === "dark" || colorTheme === "dark-grey" || colorTheme === "light-warm" || colorTheme === "light") {
       this.state.colorTheme = colorTheme;
     }
   }

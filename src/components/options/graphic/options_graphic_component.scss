@@ -30,20 +30,24 @@
 
 // ─── Theme picker ─────────────────────────────────────────────────────────────
 
-.options-graphic__theme-row {
-	display: flex;
+.options-graphic__theme-grid {
+	display: grid;
 	gap: 0.5rem;
+	grid-template-columns: 1fr 1fr;
 }
 
 .options-graphic__theme-btn {
+	align-items: center;
 	background: var(--surface-btn);
 	border: 2px solid transparent;
 	border-radius: 0.5rem;
 	color: var(--text);
 	cursor: pointer;
-	flex: 1;
-	font-size: 1rem;
-	padding: 0.75rem 0.5rem;
+	display: flex;
+	font-size: 0.95rem;
+	gap: 0.4rem;
+	justify-content: center;
+	padding: 0.65rem 0.5rem;
 	text-align: center;
 	transition: border-color 150ms ease-in-out, background 150ms ease-in-out;
 	&:active {
@@ -53,6 +57,11 @@
 		border-color: var(--accent-color);
 		background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 	}
+}
+
+.options-graphic__theme-icon {
+	font-size: 1.1rem;
+	line-height: 1;
 }
 
 // ─── Font picker ─────────────────────────────────────────────────────────────

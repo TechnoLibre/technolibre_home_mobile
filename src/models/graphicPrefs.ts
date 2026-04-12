@@ -1,5 +1,5 @@
 export type FontFamily = "sans" | "serif" | "mono";
-export type ColorTheme = "dark" | "light";
+export type ColorTheme = "dark" | "dark-grey" | "light-warm" | "light";
 
 export interface GraphicPrefs {
   fontFamily: FontFamily;
@@ -36,8 +36,10 @@ export const FONT_SIZE_LABELS: string[] = [
 ];
 
 export const COLOR_THEME_LABELS: Record<ColorTheme, string> = {
-  dark:  "Sombre",
-  light: "Clair",
+  dark:        "Nuit",
+  "dark-grey": "Contraste",
+  "light-warm": "Coloré",
+  light:       "Clair",
 };
 
 export function applyGraphicPrefs(prefs: GraphicPrefs): void {
