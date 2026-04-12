@@ -313,6 +313,56 @@
     }
 }
 
+// ── Download mode toggle ──────────────────────────────────────────────────────
+
+.transcription-mode {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+
+    &__options {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    &__btn {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.2rem;
+        padding: 0.6rem 0.5rem;
+        background: #1a1a1a;
+        border: 1.5px solid #333;
+        border-radius: 0.5rem;
+        color: #888;
+        font-size: 0.82rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: border-color 0.15s, color 0.15s, background 0.15s;
+
+        &--active {
+            border-color: var(--btn-blue-color, #3b82f6);
+            color: #fff;
+            background: rgba(59, 130, 246, 0.1);
+        }
+    }
+
+    &__sub {
+        font-size: 0.68rem;
+        font-weight: 400;
+        color: inherit;
+        opacity: 0.75;
+    }
+
+    &__hint {
+        font-size: 0.78rem;
+        color: #666;
+        line-height: 1.4;
+        margin: 0;
+    }
+}
+
 // ── Download ─────────────────────────────────────────────────────────────────
 
 .transcription-download {
@@ -360,6 +410,78 @@
 .transcription-error {
     color: #f66;
     font-size: 0.85rem;
+}
+
+// ── Download row (button + cancel side-by-side) ───────────────────────────────
+
+.transcription-download__row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+
+    .transcription-download__btn {
+        flex: 1;
+    }
+}
+
+.transcription-download__cancel-btn {
+    background: transparent;
+    color: #f66;
+    border: 1.5px solid #f66;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s;
+
+    &:hover {
+        background: rgba(255, 100, 100, 0.1);
+    }
+}
+
+// ── Download history ──────────────────────────────────────────────────────────
+
+.transcription-history {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+
+    &__item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.45rem 0.6rem;
+        background: #1a1a1a;
+        border: 1px solid #2a2a2a;
+        border-radius: 0.4rem;
+        font-size: 0.8rem;
+    }
+
+    &__name {
+        flex: 1;
+        color: #ccc;
+        font-weight: 500;
+        text-transform: capitalize;
+    }
+
+    &__mode {
+        font-size: 0.9rem;
+        flex-shrink: 0;
+    }
+
+    &__status {
+        font-size: 0.78rem;
+        font-weight: 600;
+        flex-shrink: 0;
+        min-width: 2.5rem;
+        text-align: right;
+
+        &--done    { color: #4caf50; }
+        &--error   { color: #f66;    font-size: 0.72rem; max-width: 8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        &--running { color: var(--btn-blue-color, #3b82f6); }
+    }
 }
 
 // ── Ready state ──────────────────────────────────────────────────────────────

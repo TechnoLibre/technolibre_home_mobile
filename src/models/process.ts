@@ -25,6 +25,11 @@ export interface ProcessRecord {
      */
     result?: string;
     /**
+     * Download only — which download mechanism was used.
+     * In-memory only; not persisted to the database.
+     */
+    downloadMode?: "wakelock" | "foreground";
+    /**
      * In-memory only — timestamped debug messages appended during execution.
      * Not persisted; cleared when the app restarts.
      */
