@@ -41,3 +41,34 @@ body {
 		background-color: transparent;
 	}
 }
+
+// ── Focus visible ─────────────────────────────────────────────────────────────
+// Keyboard-navigation outline using the current theme accent colour.
+// Applies only when the element is focused via keyboard (not mouse/touch).
+:focus-visible {
+	outline: 2px solid var(--accent-color);
+	outline-offset: 2px;
+	border-radius: 0.25rem;
+}
+
+// ── Reduced motion ────────────────────────────────────────────────────────────
+// Honour both the OS-level setting and the in-app toggle (data-reduce-motion).
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}
+
+[data-reduce-motion="true"] {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}

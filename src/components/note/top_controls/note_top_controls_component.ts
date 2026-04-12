@@ -45,7 +45,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 
 	static template = xml`
 <div id="note__top-controls__wrapper">
-	<section id="note__top-controls" 
+	<section id="note__top-controls"
 			t-att-class="{
 				'options--active': props.optionMode
 			}"
@@ -54,39 +54,44 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			id="note__control__edit"
 			class="note__control"
 			href="#"
+			aria-label="Mode édition"
 			t-on-click.stop.prevent="props.toggleEditMode"
 		>
-			<img src="${EditNoteIcon}" />
+			<img src="${EditNoteIcon}" alt="" aria-hidden="true"/>
 			<p>Edit Mode</p>
 		</a>
 		<a
 			id="note__control__sync"
 			t-att-class="'note__control note__control__sync--' + props.syncStatus + (state.isPressing ? ' note__control__sync--pressing' : '')"
 			t-att-aria-disabled="props.isSyncing or props.newNote"
+			t-att-aria-label="props.syncLabel"
 			t-on-pointerdown.stop.prevent="onSyncPointerDown"
 			t-on-pointerup.stop.prevent="onSyncPointerUp"
 			t-on-pointercancel="onSyncPointerCancel"
 			t-on-contextmenu.stop.prevent=""
 		>
-			<img src="${CloudSyncIcon}" />
+			<img src="${CloudSyncIcon}" alt="" aria-hidden="true"/>
 			<p t-esc="props.syncLabel" />
 		</a>
 		<a
 			id="note__control__option"
 			class="note__control"
 			href="#"
+			aria-label="Options de la note"
+			t-att-aria-expanded="props.optionMode ? 'true' : 'false'"
 			t-on-click.stop.prevent="props.toggleOptionMode"
 		>
-			<img src="${OptionNoteIcon}" />
+			<img src="${OptionNoteIcon}" alt="" aria-hidden="true"/>
 		</a>
 		<a
 			id="note__control__tags"
 			class="note__control"
 			href="#"
+			aria-label="Tags"
 			t-on-click.stop.prevent="props.onTagsClick"
 			t-if="props.optionMode"
 		>
-			<img src="${TagIcon}" />
+			<img src="${TagIcon}" alt="" aria-hidden="true"/>
 			<p>Tags</p>
 		</a>
 		<a
@@ -96,10 +101,11 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 				'note__control__archive--active': props.note.archived
 			}"
 			href="#"
+			t-att-aria-label="props.note.archived ? 'Désarchiver' : 'Archiver'"
 			t-on-click.stop.prevent="props.onArchiveClick"
 			t-if="props.optionMode"
 		>
-			<img src="${ArchiveNoteIcon}" />
+			<img src="${ArchiveNoteIcon}" alt="" aria-hidden="true"/>
 			<p t-if="props.note.archived">Unarchive</p>
 			<p t-else="">Archive</p>
 		</a>
@@ -110,10 +116,11 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 				'note__control__pin--active': props.note.pinned
 			}"
 			href="#"
+			t-att-aria-label="props.note.pinned ? 'Désépingler' : 'Épingler'"
 			t-on-click.stop.prevent="props.onPinClick"
 			t-if="props.optionMode"
 		>
-			<img src="${PinNoteIcon}" />
+			<img src="${PinNoteIcon}" alt="" aria-hidden="true"/>
 			<p t-if="props.note.pinned">Unpin</p>
 			<p t-else="">Pin</p>
 		</a>
@@ -124,17 +131,19 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 				'note__control__done--active': props.note.done
 			}"
 			href="#"
+			t-att-aria-label="props.note.done ? 'Marquer comme non terminé' : 'Marquer comme terminé'"
 			t-on-click.stop.prevent="props.toggleDone"
 			t-if="props.optionMode"
 		>
-			<img src="${CheckBoxIcon}" t-if="props.note.done" />
-			<img src="${CheckBoxBlankIcon}" t-else="" />
+			<img src="${CheckBoxIcon}" t-if="props.note.done" alt="" aria-hidden="true"/>
+			<img src="${CheckBoxBlankIcon}" t-else="" alt="" aria-hidden="true"/>
 			<p>Done</p>
 		</a>
 		<a
 			id="note__control__open-in-app"
 			class="note__control"
 			href="#"
+			aria-label="Ouvrir dans l'application"
 			t-on-click.stop.prevent="props.onOpenInAppClick"
 			t-if="props.optionMode"
 		>
@@ -150,6 +159,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 				'note__control__priority--4': props.note.priority === 4,
 			}"
 			href="#"
+			aria-label="Priorité"
 			t-on-click.stop.prevent="props.onPriorityClick"
 			t-if="props.optionMode"
 		>

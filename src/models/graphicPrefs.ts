@@ -5,12 +5,14 @@ export interface GraphicPrefs {
   fontFamily: FontFamily;
   fontSizeScale: number;
   colorTheme: ColorTheme;
+  reduceMotion: boolean;
 }
 
 export const DEFAULT_GRAPHIC_PREFS: GraphicPrefs = {
   fontFamily: "sans",
   fontSizeScale: 1,
   colorTheme: "dark",
+  reduceMotion: false,
 };
 
 export const FONT_CSS_VALUES: Record<FontFamily, string> = {
@@ -47,4 +49,5 @@ export function applyGraphicPrefs(prefs: GraphicPrefs): void {
   root.style.setProperty("--app-font-family", FONT_CSS_VALUES[prefs.fontFamily]);
   root.style.setProperty("--app-font-scale", String(prefs.fontSizeScale));
   root.dataset.theme = prefs.colorTheme;
+  root.dataset.reduceMotion = prefs.reduceMotion ? "true" : "false";
 }

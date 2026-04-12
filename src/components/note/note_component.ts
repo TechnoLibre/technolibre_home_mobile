@@ -34,12 +34,14 @@ export class NoteComponent extends EnhancedComponent {
 					<button
 						type="button"
 						class="breadcrumb__note-nav-btn"
+						aria-label="Note précédente"
 						t-att-disabled="!hasPrevious"
 						t-on-click.stop.prevent="navigatePrevious"
 					>‹</button>
 					<button
 						type="button"
 						class="breadcrumb__note-nav-btn"
+						aria-label="Note suivante"
 						t-att-disabled="!hasNext"
 						t-on-click.stop.prevent="navigateNext"
 					>›</button>
@@ -49,6 +51,7 @@ export class NoteComponent extends EnhancedComponent {
 							t-att-class="'breadcrumb__sync-btn breadcrumb__sync-btn--' + state.syncStatus + (state.isPressing ? ' breadcrumb__sync-btn--pressing' : '')"
 							t-att-disabled="state.isSyncing or state.newNote"
 							t-att-title="syncTitle"
+							t-att-aria-label="syncTitle"
 							t-on-pointerdown="onSyncPointerDown"
 							t-on-pointerup="onSyncPointerUp"
 							t-on-pointercancel="onSyncPointerCancel"
@@ -84,6 +87,7 @@ export class NoteComponent extends EnhancedComponent {
 						class="breadcrumb__meta-btn"
 						t-att-disabled="state.newNote"
 						title="Métadonnées SQL"
+						aria-label="Métadonnées SQL"
 						t-on-click.stop.prevent="onMetadataClick"
 					>ℹ</button>
 				</div>
