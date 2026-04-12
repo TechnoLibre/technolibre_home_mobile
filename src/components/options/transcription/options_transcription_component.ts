@@ -230,7 +230,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                     <button
                                         class="transcription-mode__btn"
                                         t-att-class="{'transcription-mode__btn--active': state.downloadMode === 'wakelock'}"
-                                        t-on-click="() => setDownloadMode('wakelock')"
+                                        t-on-click="onSetDownloadModeWakelock"
                                     >
                                         🔋 Standard
                                         <span class="transcription-mode__sub">WakeLock + reprise auto</span>
@@ -238,7 +238,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                     <button
                                         class="transcription-mode__btn"
                                         t-att-class="{'transcription-mode__btn--active': state.downloadMode === 'foreground'}"
-                                        t-on-click="() => setDownloadMode('foreground')"
+                                        t-on-click="onSetDownloadModeForeground"
                                     >
                                         📲 Service de fond
                                         <span class="transcription-mode__sub">Recommandé ≥ 1 Go</span>
@@ -473,6 +473,9 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
             this.state.isDeleting = false;
         }
     }
+
+    onSetDownloadModeWakelock()  { this.setDownloadMode("wakelock"); }
+    onSetDownloadModeForeground() { this.setDownloadMode("foreground"); }
 
     async setDownloadMode(mode: "wakelock" | "foreground") {
         this.state.downloadMode = mode;
