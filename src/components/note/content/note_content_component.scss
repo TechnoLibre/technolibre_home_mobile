@@ -23,16 +23,18 @@
 
 #note-component #note__tags__list {
 	@include mixins.flex(center, flex-start);
+	flex-wrap: wrap;
+	gap: 0.4rem;
 	list-style: none;
 	margin-bottom: 0.75rem;
 }
 
 #note-component .note__tag {
-	background-color: var(--tag-bg);
-	border-radius: 0.25rem;
-	color: var(--tag-color);
-	padding: 0.35rem 0.75rem;
-	font-size: 0.75rem;
+	border-radius: 999px;
+	color: #fff;
+	font-size: 0.72rem;
+	font-weight: 600;
+	padding: 0.2rem 0.6rem;
 }
 
 #note-component #note__title {

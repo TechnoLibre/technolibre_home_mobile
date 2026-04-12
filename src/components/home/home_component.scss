@@ -233,6 +233,47 @@
 .home-quick-note--priority-3 { border-left: 4px solid #2080e0; }
 .home-quick-note--priority-4 { border-left: 4px solid var(--text-greyed-out); }
 
+/* ── Tags section ──────────────────────────────────────── */
+
+#home-tags {
+	width: 100%;
+	max-width: 360px;
+	margin-bottom: 1rem;
+}
+
+.home-tags__heading {
+	color: #555;
+	font-size: 0.72rem;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	margin-bottom: 0.5rem;
+}
+
+.home-tags__list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+}
+
+.home-tag-chip {
+	align-items: center;
+	border: none;
+	border-radius: 999px;
+	color: #fff;
+	cursor: pointer;
+	display: inline-flex;
+	font-size: 0.8rem;
+	font-weight: 600;
+	outline: none;
+	padding: 0.3rem 0.75rem;
+	transition: opacity 0.15s;
+
+	&:hover,
+	&:active {
+		opacity: 0.8;
+	}
+}
+
 /* ── Footer ────────────────────────────────────────────── */
 
 #startup-time {

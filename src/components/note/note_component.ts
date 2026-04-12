@@ -735,7 +735,7 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	onTagsClick() {
-		this.eventBus.trigger(Events.TAG_MANAGER);
+		this.eventBus.trigger(Events.TAG_MANAGER, { noteId: this.state.noteId });
 	}
 
 	onArchiveClick() {
@@ -844,17 +844,24 @@ export class NoteComponent extends EnhancedComponent {
 		const onPhoto          = this.setPhoto.bind(this);
 		const onTranscription  = this.addTranscriptionText.bind(this);
 		const onSetTranscript  = this.setEntryTranscription.bind(this);
+		const onTagsUpdated    = (e: any) => {
+			if (e?.detail?.noteId === this.state.noteId) {
+				this.state.note.tags = e?.detail?.tagIds ?? [];
+			}
+		};
 		this.eventBus.addEventListener(Events.SET_AUDIO_RECORDING,    onAudio);
 		this.eventBus.addEventListener(Events.SET_VIDEO_RECORDING,    onVideo);
 		this.eventBus.addEventListener(Events.SET_PHOTO,              onPhoto);
 		this.eventBus.addEventListener(Events.ADD_TRANSCRIPTION_TEXT, onTranscription);
 		this.eventBus.addEventListener(Events.SET_ENTRY_TRANSCRIPTION, onSetTranscript);
+		this.eventBus.addEventListener(Events.NOTE_TAGS_UPDATED,       onTagsUpdated);
 		onWillDestroy(() => {
 			this.eventBus.removeEventListener(Events.SET_AUDIO_RECORDING,    onAudio);
 			this.eventBus.removeEventListener(Events.SET_VIDEO_RECORDING,    onVideo);
 			this.eventBus.removeEventListener(Events.SET_PHOTO,              onPhoto);
 			this.eventBus.removeEventListener(Events.ADD_TRANSCRIPTION_TEXT, onTranscription);
 			this.eventBus.removeEventListener(Events.SET_ENTRY_TRANSCRIPTION, onSetTranscript);
+			this.eventBus.removeEventListener(Events.NOTE_TAGS_UPDATED,       onTagsUpdated);
 		});
 	}
 

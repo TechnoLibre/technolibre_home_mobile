@@ -8,6 +8,7 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../constants/errorMessages";
 import { Events } from "../../constants/events";
 import { Note } from "../../models/note";
+import { Tag } from "../../models/tag";
 
 import { HeadingComponent } from "../heading/heading_component";
 import { NotesItemComponent } from "./item/note_list_item_component";
@@ -67,6 +68,7 @@ export class NoteListComponent extends EnhancedComponent {
 							t-key="noteItem.id"
 							note="noteItem"
 							editMode="state.editMode"
+							tagMap="state.tagMap"
 							syncSynced="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].synced : 0"
 							syncError="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].error : 0"
 							openNote.bind="openNote"
@@ -90,6 +92,7 @@ export class NoteListComponent extends EnhancedComponent {
 							t-key="noteItem.id"
 							note="noteItem"
 							editMode="state.editMode"
+							tagMap="state.tagMap"
 							syncSynced="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].synced : 0"
 							syncError="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].error : 0"
 							openNote.bind="openNote"
@@ -124,10 +127,15 @@ export class NoteListComponent extends EnhancedComponent {
 			editMode: false,
 			sortByPriority: false,
 			syncCounts: {} as Record<string, { synced: number; error: number }>,
+			tagMap: {} as Record<string, Tag>,
 		});
 		onMounted(this.onMounted.bind(this));
-		this.getNotes();
-		this.getNoteSyncCounts();
+		// Load tags first so tagMap is populated before notes render
+		this.getTags().then(() => {
+			this.getNotes();
+			this.getNoteSyncCounts();
+		});
+		this.eventBus.addEventListener(Events.TAGS_UPDATED, () => this.getTags());
 	}
 
 	private onMounted() {
@@ -160,6 +168,13 @@ export class NoteListComponent extends EnhancedComponent {
 				Dialog.alert({ message: error.message });
 			}
 		}
+	}
+
+	async getTags() {
+		try {
+			const tags = await this.tagService.getAllTags();
+			this.state.tagMap = Object.fromEntries(tags.map((t) => [t.id, t]));
+		} catch { /* tags are non-critical */ }
 	}
 
 	async getNoteSyncCounts() {

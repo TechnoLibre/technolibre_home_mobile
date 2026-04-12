@@ -23,6 +23,8 @@ import { addNotePriority } from "../services/migrations/addNotePriority";
 import { addProcessesTable } from "../services/migrations/addProcessesTable";
 import { addProcessResultColumn } from "../services/migrations/addProcessResultColumn";
 import { addProcessDebugLogColumn } from "../services/migrations/addProcessDebugLogColumn";
+import { addTagsTable } from "../services/migrations/addTagsTable";
+import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
 import { TranscriptionService } from "../services/transcriptionService";
@@ -159,6 +161,11 @@ async function startApp() {
 			description: "Ajout de la colonne debug_log sur la table des processus",
 			run: addProcessDebugLogColumn,
 		},
+		{
+			version: 2026041201,
+			description: "Création de la table des tags et migration des tags existants",
+			run: addTagsTable,
+		},
 	]);
 
 	setBootStep("Chargement des préférences graphiques…");
@@ -175,6 +182,7 @@ async function startApp() {
 
 	setBootStep("Initialisation des services…");
 	const appService = new AppService(db);
+	const tagService = new TagService(db);
 	const noteService = new NoteService(eventBus, db);
 	const intentService = new IntentService(eventBus);
 	const syncService = new SyncService(db);
@@ -192,7 +200,7 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService };
+	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService };
 
 	setBootStep("Montage de l'interface…");
 	await mount(RootComponent, document.body, { env });

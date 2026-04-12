@@ -2,6 +2,7 @@ import { xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { NoteListItemHandleComponent } from "./handle/note_list_item_handle_component";
+import { Tag } from "../../../models/tag";
 
 import DeleteIcon from "../../../assets/icon/delete.svg";
 // @ts-ignore
@@ -14,7 +15,7 @@ export class NotesItemComponent extends EnhancedComponent {
 			t-att-data-id="props.note.id"
 			t-att-class="{
 				'notes-item--done': props.note.done,
-				'has-tags': props.note.tags.length !== 0,
+				'has-tags': resolvedTags().length !== 0,
 				'notes-item--priority-1': props.note.priority === 1,
 				'notes-item--priority-2': props.note.priority === 2,
 				'notes-item--priority-3': props.note.priority === 3,
@@ -25,18 +26,20 @@ export class NotesItemComponent extends EnhancedComponent {
 			<NoteListItemHandleComponent
 				editMode="props.editMode"
 			/>
+			<t t-set="resolvedTagList" t-value="resolvedTags()" />
 			<div
 				class="notes-item__tags"
-				t-if="props.note.tags.length !== 0"
+				t-if="resolvedTagList.length !== 0"
 				t-on-click.stop.prevent=""
 			>
 				<div
-					t-foreach="props.note.tags"
-					t-as="tag"
-					t-key="tag"
+					t-foreach="resolvedTagList"
+					t-as="rt"
+					t-key="rt.id"
 					class="notes-item__tag"
+					t-att-style="'background-color:' + rt.color"
 				>
-					<t t-esc="tag"></t>
+					<t t-esc="rt.name"></t>
 				</div>
 			</div>
 			<div class="notes-item__data">
@@ -89,6 +92,14 @@ export class NotesItemComponent extends EnhancedComponent {
 	`;
 
 	static components = { NoteListItemHandleComponent };
+
+	/** Resolve tag IDs to Tag objects using the reactive tagMap prop. */
+	resolvedTags(): Tag[] {
+		const tagMap: Record<string, Tag> = this.props.tagMap ?? {};
+		return this.props.note.tags
+			.map((id: string) => tagMap[id])
+			.filter((t): t is Tag => t !== undefined);
+	}
 
 	formatDate(date: Date) {
 		return new Date(date).toLocaleDateString();

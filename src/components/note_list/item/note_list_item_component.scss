@@ -29,14 +29,11 @@
 		padding: 0.5rem;
 	}
 	&__tag {
-		background-color: var(--tag-bg);
-		border-radius: 0.25rem;
-		color: var(--tag-color);
-		font-size: 0.75rem;
-		padding: 0.35rem 0.75rem;
-		&:hover {
-			background-color: color.scale(#1e2e93, $lightness: -5%);
-		}
+		border-radius: 999px;
+		color: #fff;
+		font-size: 0.72rem;
+		font-weight: 600;
+		padding: 0.2rem 0.6rem;
 	}
 	&__tag + .notes-item__tag {
 		margin-left: 0.5rem;
