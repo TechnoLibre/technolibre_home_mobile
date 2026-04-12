@@ -28,7 +28,7 @@ import { DeploymentService } from "../services/deploymentService";
 import { TranscriptionService } from "../services/transcriptionService";
 import { ProcessService } from "../services/processService";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
-import type { FontFamily } from "../models/graphicPrefs";
+import type { FontFamily, ColorTheme } from "../models/graphicPrefs";
 import { SyncService } from "../services/syncService";
 import { NotificationService } from "../services/notificationService";
 import { ReminderService } from "../services/reminderService";
@@ -165,9 +165,11 @@ async function startApp() {
 	{
 		const fontFamily = await db.getUserGraphicPref("font_family") as FontFamily | null;
 		const fontSizeScale = await db.getUserGraphicPref("font_size_scale");
+		const colorTheme = await db.getUserGraphicPref("color_theme") as ColorTheme | null;
 		applyGraphicPrefs({
 			fontFamily: fontFamily ?? DEFAULT_GRAPHIC_PREFS.fontFamily,
 			fontSizeScale: fontSizeScale ? parseFloat(fontSizeScale) : DEFAULT_GRAPHIC_PREFS.fontSizeScale,
+			colorTheme: colorTheme ?? DEFAULT_GRAPHIC_PREFS.colorTheme,
 		});
 	}
 
