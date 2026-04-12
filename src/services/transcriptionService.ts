@@ -16,6 +16,7 @@ const MODEL_URLS: Record<WhisperModel, string> = {
     small:             `${HF}/ggml-small.bin`,
     medium:            `${HF}/ggml-medium.bin`,
     "large-v3-turbo":  `${HF}/ggml-large-v3-turbo.bin`,
+    "distil-large-v3": `${HF}/ggml-distil-large-v3.bin`,
 };
 
 export const MODEL_SIZES: Record<WhisperModel, string> = {
@@ -24,6 +25,7 @@ export const MODEL_SIZES: Record<WhisperModel, string> = {
     small:             "~244 Mo",
     medium:            "~769 Mo",
     "large-v3-turbo":  "~874 Mo",
+    "distil-large-v3": "~756 Mo",
 };
 
 export const MODEL_LABELS: Record<WhisperModel, string> = {
@@ -32,6 +34,7 @@ export const MODEL_LABELS: Record<WhisperModel, string> = {
     small:             "Small (~244 Mo) — précis",
     medium:            "Medium (~769 Mo) — très précis",
     "large-v3-turbo":  "Large-v3-turbo (~874 Mo) — meilleur",
+    "distil-large-v3": "Distil-large-v3 (~756 Mo) — anglais uniquement",
 };
 
 // ---------------------------------------------------------------------------
@@ -152,7 +155,7 @@ export class TranscriptionService {
 
     async getSelectedModel(): Promise<WhisperModel> {
         const val = await this.db.getUserGraphicPref("whisper_model");
-        const valid: WhisperModel[] = ["tiny", "base", "small", "medium", "large-v3-turbo"];
+        const valid: WhisperModel[] = ["tiny", "base", "small", "medium", "large-v3-turbo", "distil-large-v3"];
         return valid.includes(val as WhisperModel) ? (val as WhisperModel) : "tiny";
     }
 

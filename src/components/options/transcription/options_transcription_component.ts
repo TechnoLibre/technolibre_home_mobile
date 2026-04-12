@@ -16,6 +16,7 @@ interface ModelDef {
     desc:         string;
     recommended?: boolean;
     heavy?:       boolean;  // warn about RAM on low-end devices
+    englishOnly?: boolean;  // warn that model does not support French
 }
 
 const ALL_MODELS: ModelDef[] = [
@@ -77,6 +78,19 @@ const ALL_MODELS: ModelDef[] = [
         desc:         "Meilleure qualité disponible en local. Plus rapide que Medium pour une précision identique.",
         heavy:        true,
     },
+    {
+        key:          "distil-large-v3",
+        name:         "Distil-large-v3",
+        size:         "~756 Mo",
+        ram:          "~1,2 Go",
+        speedDots:    4,
+        speedLabel:   "Rapide",
+        qualityDots:  1,
+        qualityLabel: "Anglais seul",
+        desc:         "⚠ Anglais uniquement — ne transcrit pas le français. Optimisé pour l'anglais avec une vitesse élevée.",
+        heavy:        true,
+        englishOnly:  true,
+    },
 ];
 
 /** Render n filled + (max-n) empty dots. */
@@ -136,8 +150,9 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                 <div
                                     class="transcription-model"
                                     t-att-class="{
-                                        'transcription-model--active':      state.selectedModel === m.key,
-                                        'transcription-model--recommended': m.recommended,
+                                        'transcription-model--active':       state.selectedModel === m.key,
+                                        'transcription-model--recommended':  m.recommended,
+                                        'transcription-model--english-only': m.englishOnly,
                                     }"
                                     t-att-data-model-key="m.key"
                                     t-on-click="onModelCardClick"
@@ -152,6 +167,10 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                             <span t-if="m.recommended"
                                                   class="transcription-model__badge transcription-model__badge--recommended">
                                                 ★ Recommandé
+                                            </span>
+                                            <span t-if="m.englishOnly"
+                                                  class="transcription-model__badge transcription-model__badge--english-only">
+                                                🇬🇧 Anglais uniquement
                                             </span>
                                             <span class="transcription-model__size" t-esc="m.size" />
                                         </div>
@@ -258,11 +277,12 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
             enabled:          false,
             selectedModel:    "tiny" as WhisperModel,
             downloadedModels: {
-                tiny:             false,
-                base:             false,
-                small:            false,
-                medium:           false,
-                "large-v3-turbo": false,
+                tiny:              false,
+                base:              false,
+                small:             false,
+                medium:            false,
+                "large-v3-turbo":  false,
+                "distil-large-v3": false,
             } as Record<WhisperModel, boolean>,
             isDownloading:    false,
             downloadPercent:  0,
