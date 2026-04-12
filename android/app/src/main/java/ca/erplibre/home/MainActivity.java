@@ -20,6 +20,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(WhisperPlugin.class);
         registerPlugin(OcrPlugin.class);
         registerPlugin(NetworkScanPlugin.class);
+        registerPlugin(DeviceStatsPlugin.class);
         super.onCreate(savedInstanceState);
         CastContext.getSharedInstance(this);
     }

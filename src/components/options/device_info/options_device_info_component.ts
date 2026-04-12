@@ -18,6 +18,11 @@ export class OptionsDeviceInfoComponent extends EnhancedComponent {
           📱 Infos appareil
         </a>
       </li>
+      <li class="options-list__item">
+        <a href="#" t-on-click.stop.prevent="() => navigate('/options/resources')">
+          📊 Ressources système
+        </a>
+      </li>
       <li t-if="!state.devModeEnabled"
           class="options-list__item options-list__item--dev-unlock"
           t-att-class="devUnlockClass"
