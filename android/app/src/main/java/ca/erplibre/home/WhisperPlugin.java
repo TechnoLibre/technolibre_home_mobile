@@ -1,12 +1,18 @@
 package ca.erplibre.home;
 
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Build;
 import android.os.PowerManager;
 import android.util.Log;
+
+import androidx.core.app.NotificationCompat;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -45,6 +51,12 @@ import java.net.URL;
 public class WhisperPlugin extends Plugin {
 
     private static final String TAG = "WhisperPlugin";
+
+    /** Notification ID for the WakeLock-mode download progress notification. */
+    private static final int    WAKELOCK_NOTIF_ID    = 9002;
+    /** Broadcast action to cancel a WakeLock-mode download from the notification. */
+    private static final String ACTION_CANCEL_WAKELOCK =
+        "ca.erplibre.home.CANCEL_WAKELOCK_DOWNLOAD";
 
     /** Shared with WhisperDownloadService so the service can call back into JS. */
     static volatile WhisperPlugin instance = null;
@@ -260,6 +272,27 @@ public class WhisperPlugin extends Plugin {
         );
         wl.acquire(45 * 60 * 1000L); // 45-minute hard cap
 
+        // Show a progress notification so the user can monitor the download
+        // even when the app is in the background.
+        NotificationManager nm = (NotificationManager)
+            getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+
+        // BroadcastReceiver for the "Annuler" notification button
+        BroadcastReceiver cancelReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                cancelRequested = true;
+            }
+        };
+        IntentFilter filter = new IntentFilter(ACTION_CANCEL_WAKELOCK);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getContext().registerReceiver(cancelReceiver, filter,
+                Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            getContext().registerReceiver(cancelReceiver, filter);
+        }
+        nm.notify(WAKELOCK_NOTIF_ID, buildWakelockNotification(model, 0));
+
         new Thread(() -> {
             HttpURLConnection conn = null;
             long resumeBytes  = resumeFrom;
@@ -316,6 +349,7 @@ public class WhisperPlugin extends Plugin {
                     byte[] buf    = new byte[64 * 1024];
                     long received = resumeBytes;
                     int  n;
+                    int  lastNotifPct = -1;
 
                     while (!cancelRequested && (n = in.read(buf)) != -1) {
                         out.write(buf, 0, n);
@@ -326,6 +360,15 @@ public class WhisperPlugin extends Plugin {
                         evt.put("received", received);
                         evt.put("total",    total);
                         notifyListeners("downloadProgress", evt);
+
+                        // Update notification on each whole-percent change
+                        // (at most 100 updates total — avoids throttling)
+                        int pct = total > 0 ? (int)(received * 100 / total) : 0;
+                        if (pct != lastNotifPct) {
+                            lastNotifPct = pct;
+                            nm.notify(WAKELOCK_NOTIF_ID,
+                                buildWakelockNotification(model, pct));
+                        }
                     }
                 }
 
@@ -358,10 +401,31 @@ public class WhisperPlugin extends Plugin {
                 // Keep .partial file — allows resume on next attempt
                 call.reject("Download failed: " + e.getMessage());
             } finally {
+                nm.cancel(WAKELOCK_NOTIF_ID);
+                try { getContext().unregisterReceiver(cancelReceiver); }
+                catch (IllegalArgumentException ignored) { /* already unregistered */ }
                 if (conn != null) conn.disconnect();
                 wl.release();
             }
         }).start();
+    }
+
+    /** Build the progress notification for WakeLock-mode downloads. */
+    private Notification buildWakelockNotification(String model, int percent) {
+        Intent cancelIntent = new Intent(ACTION_CANCEL_WAKELOCK);
+        PendingIntent cancelPI = PendingIntent.getBroadcast(
+            getContext(), 0, cancelIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        return new NotificationCompat.Builder(getContext(), WhisperDownloadService.CHANNEL_ID)
+            .setContentTitle("Téléchargement Whisper — " + model)
+            .setContentText(percent + " %")
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setProgress(100, percent, false)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Annuler", cancelPI)
+            .setOngoing(true)
+            .setSilent(true)
+            .build();
     }
 
     // ─── Service status ───────────────────────────────────────────────────────
