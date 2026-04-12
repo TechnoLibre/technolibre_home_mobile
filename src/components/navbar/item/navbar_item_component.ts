@@ -11,6 +11,7 @@ export class NavbarItemComponent extends EnhancedComponent {
 				'active-subpath': this.subpathMatches(),
 				'held': state.isHeld
 			}"
+			t-att-aria-current="props.currentRoute === props.path ? 'page' : null"
 			t-ref="li"
 			t-on-click.stop.prevent="() => props.onItemClick(props.path)"
 		>

@@ -43,13 +43,18 @@ export class ApplicationsComponent extends EnhancedComponent {
         <section id="applications">
           <div id="applications-options">
             <button class="section__btn-toggle"
+                    t-att-aria-expanded="state.showApps ? 'true' : 'false'"
+                    aria-controls="applications-list"
                     t-on-click="() => this.state.showApps = !this.state.showApps">
               <t t-if="state.showApps">Masquer (<t t-esc="state.applications.length" />)</t>
               <t t-else="">Afficher (<t t-esc="state.applications.length" />)</t>
             </button>
             <a
               id="applications-add"
-              t-on-click="event => this.onAppAddClick(event)"
+              href="#"
+              role="button"
+              aria-label="Ajouter une application"
+              t-on-click.stop.prevent="onAppAddClick"
             >
               Ajouter une application
             </a>
@@ -76,6 +81,8 @@ export class ApplicationsComponent extends EnhancedComponent {
         <section id="servers">
           <div id="servers-options">
             <button class="section__btn-toggle"
+                    t-att-aria-expanded="state.showServers ? 'true' : 'false'"
+                    aria-controls="servers-list"
                     t-on-click="() => this.state.showServers = !this.state.showServers">
               <t t-if="state.showServers">Masquer (<t t-esc="state.servers.length" />)</t>
               <t t-else="">Afficher (<t t-esc="state.servers.length" />)</t>
@@ -83,18 +90,23 @@ export class ApplicationsComponent extends EnhancedComponent {
             <button id="servers-scan"
                     t-if="isNative"
                     t-att-disabled="state.isScanning"
+                    t-att-aria-label="state.isScanning ? 'Scan en cours…' : 'Scanner le réseau'"
                     t-on-click="onScanClick">
               <t t-if="!state.isScanning">🔍 Scan</t>
               <t t-else="">⏳ Scan…</t>
             </button>
             <button id="servers-scan-cancel"
                     t-if="state.isScanning"
+                    aria-label="Annuler le scan"
                     t-on-click="onScanCancel">
               Annuler
             </button>
             <a
               id="servers-add"
-              t-on-click="event => this.onServerAddClick(event)"
+              href="#"
+              role="button"
+              aria-label="Ajouter un serveur"
+              t-on-click.stop.prevent="onServerAddClick"
             >
               Ajouter un serveur
             </a>

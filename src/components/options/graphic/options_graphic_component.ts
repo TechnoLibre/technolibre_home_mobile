@@ -9,7 +9,7 @@ import {
   FONT_SIZE_STEPS,
   applyGraphicPrefs,
 } from "../../../models/graphicPrefs";
-import type { ColorTheme, FontFamily } from "../../../models/graphicPrefs";
+import type { ColorTheme, FontFamily, GraphicPrefs } from "../../../models/graphicPrefs";
 
 const FONT_OPTIONS: { key: FontFamily; label: string; cssValue: string }[] = (
   Object.keys(FONT_LABELS) as FontFamily[]
@@ -25,7 +25,14 @@ const THEME_OPTIONS: { key: ColorTheme; label: string; icon: string }[] = [
 export class OptionsGraphicComponent extends EnhancedComponent {
   static template = xml`
     <li class="options-list__item options-graphic">
-      <div class="options-graphic__header" t-on-click="toggleExpanded">
+      <div
+        class="options-graphic__header"
+        role="button"
+        tabindex="0"
+        t-att-aria-expanded="state.expanded ? 'true' : 'false'"
+        t-on-click="toggleExpanded"
+        t-on-keydown="(ev) => ev.key === 'Enter' || ev.key === ' ' ? toggleExpanded() : null"
+      >
         <span>🎨 Apparence</span>
         <span t-esc="state.expanded ? '▲' : '▼'"/>
       </div>
@@ -90,6 +97,18 @@ export class OptionsGraphicComponent extends EnhancedComponent {
           </div>
         </div>
 
+        <div class="options-graphic__section">
+          <label class="options-graphic__toggle-row">
+            <span class="options-graphic__label options-graphic__label--inline">Réduire les animations</span>
+            <input
+              type="checkbox"
+              class="options-graphic__toggle"
+              t-att-checked="state.reduceMotion"
+              t-on-change="(ev) => this.setReduceMotion(ev.target.checked)"
+            />
+          </label>
+        </div>
+
       </div>
     </li>
   `;
@@ -104,6 +123,7 @@ export class OptionsGraphicComponent extends EnhancedComponent {
       fontFamily: DEFAULT_GRAPHIC_PREFS.fontFamily as FontFamily,
       fontSizeStepIndex: 2, // index of 1.0 in FONT_SIZE_STEPS
       colorTheme: DEFAULT_GRAPHIC_PREFS.colorTheme as ColorTheme,
+      reduceMotion: DEFAULT_GRAPHIC_PREFS.reduceMotion,
     });
     onMounted(() => this.loadPrefs());
   }
@@ -112,6 +132,7 @@ export class OptionsGraphicComponent extends EnhancedComponent {
     const fontFamily = await this.databaseService.getUserGraphicPref("font_family");
     const fontSizeScale = await this.databaseService.getUserGraphicPref("font_size_scale");
     const colorTheme = await this.databaseService.getUserGraphicPref("color_theme");
+    const reduceMotionRaw = await this.databaseService.getUserGraphicPref("reduce_motion");
     if (fontFamily) this.state.fontFamily = fontFamily as FontFamily;
     if (fontSizeScale) {
       const scale = parseFloat(fontSizeScale);
@@ -121,32 +142,46 @@ export class OptionsGraphicComponent extends EnhancedComponent {
     if (colorTheme === "dark" || colorTheme === "dark-grey" || colorTheme === "light-warm" || colorTheme === "light") {
       this.state.colorTheme = colorTheme;
     }
+    if (reduceMotionRaw !== null) {
+      this.state.reduceMotion = reduceMotionRaw === "true";
+    }
   }
 
   toggleExpanded() {
     this.state.expanded = !this.state.expanded;
   }
 
+  private currentPrefs(): GraphicPrefs {
+    return {
+      fontFamily: this.state.fontFamily,
+      fontSizeScale: FONT_SIZE_STEPS[this.state.fontSizeStepIndex],
+      colorTheme: this.state.colorTheme,
+      reduceMotion: this.state.reduceMotion,
+    };
+  }
+
   async setTheme(key: ColorTheme) {
     this.state.colorTheme = key;
     await this.databaseService.setUserGraphicPref("color_theme", key);
-    applyGraphicPrefs({
-      fontFamily: this.state.fontFamily,
-      fontSizeScale: FONT_SIZE_STEPS[this.state.fontSizeStepIndex],
-      colorTheme: key,
-    });
+    applyGraphicPrefs({ ...this.currentPrefs(), colorTheme: key });
   }
 
   async setFont(key: FontFamily) {
     this.state.fontFamily = key;
     await this.databaseService.setUserGraphicPref("font_family", key);
-    applyGraphicPrefs({ fontFamily: key, fontSizeScale: FONT_SIZE_STEPS[this.state.fontSizeStepIndex], colorTheme: this.state.colorTheme });
+    applyGraphicPrefs({ ...this.currentPrefs(), fontFamily: key });
   }
 
   async setFontSizeStep(index: number) {
     this.state.fontSizeStepIndex = index;
     await this.databaseService.setUserGraphicPref("font_size_scale", String(FONT_SIZE_STEPS[index]));
-    applyGraphicPrefs({ fontFamily: this.state.fontFamily, fontSizeScale: FONT_SIZE_STEPS[index], colorTheme: this.state.colorTheme });
+    applyGraphicPrefs({ ...this.currentPrefs(), fontSizeScale: FONT_SIZE_STEPS[index] });
+  }
+
+  async setReduceMotion(value: boolean) {
+    this.state.reduceMotion = value;
+    await this.databaseService.setUserGraphicPref("reduce_motion", value ? "true" : "false");
+    applyGraphicPrefs({ ...this.currentPrefs(), reduceMotion: value });
   }
 
   async increaseFont() {

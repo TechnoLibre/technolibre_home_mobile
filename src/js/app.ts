@@ -173,10 +173,12 @@ async function startApp() {
 		const fontFamily = await db.getUserGraphicPref("font_family") as FontFamily | null;
 		const fontSizeScale = await db.getUserGraphicPref("font_size_scale");
 		const colorTheme = await db.getUserGraphicPref("color_theme") as ColorTheme | null;
+		const reduceMotionRaw = await db.getUserGraphicPref("reduce_motion");
 		applyGraphicPrefs({
 			fontFamily: fontFamily ?? DEFAULT_GRAPHIC_PREFS.fontFamily,
 			fontSizeScale: fontSizeScale ? parseFloat(fontSizeScale) : DEFAULT_GRAPHIC_PREFS.fontSizeScale,
 			colorTheme: colorTheme ?? DEFAULT_GRAPHIC_PREFS.colorTheme,
+			reduceMotion: reduceMotionRaw === "true",
 		});
 	}
 

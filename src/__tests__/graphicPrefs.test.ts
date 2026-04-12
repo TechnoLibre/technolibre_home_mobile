@@ -12,10 +12,11 @@ import {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 describe("GraphicPrefs constants", () => {
-  it("DEFAULT_GRAPHIC_PREFS has fontFamily=sans, fontSizeScale=1, colorTheme=dark", () => {
+  it("DEFAULT_GRAPHIC_PREFS has fontFamily=sans, fontSizeScale=1, colorTheme=dark, reduceMotion=false", () => {
     expect(DEFAULT_GRAPHIC_PREFS.fontFamily).toBe("sans");
     expect(DEFAULT_GRAPHIC_PREFS.fontSizeScale).toBe(1);
     expect(DEFAULT_GRAPHIC_PREFS.colorTheme).toBe("dark");
+    expect(DEFAULT_GRAPHIC_PREFS.reduceMotion).toBe(false);
   });
 
   it("COLOR_THEME_LABELS provides a label for all four themes", () => {
@@ -75,51 +76,63 @@ describe("applyGraphicPrefs", () => {
 
   it("sets --app-font-family CSS variable on documentElement", () => {
     const { setProperty } = makeDocStub();
-    applyGraphicPrefs({ fontFamily: "mono", fontSizeScale: 1, colorTheme: "dark" });
+    applyGraphicPrefs({ fontFamily: "mono", fontSizeScale: 1, colorTheme: "dark", reduceMotion: false });
     expect(setProperty).toHaveBeenCalledWith("--app-font-family", FONT_CSS_VALUES.mono);
   });
 
   it("sets --app-font-scale CSS variable on documentElement", () => {
     const { setProperty } = makeDocStub();
-    applyGraphicPrefs({ fontFamily: "serif", fontSizeScale: 1.3, colorTheme: "dark" });
+    applyGraphicPrefs({ fontFamily: "serif", fontSizeScale: 1.3, colorTheme: "dark", reduceMotion: false });
     expect(setProperty).toHaveBeenCalledWith("--app-font-scale", "1.3");
   });
 
   it("sets data-theme attribute on documentElement", () => {
     const { dataset } = makeDocStub();
-    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "light" });
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "light", reduceMotion: false });
     expect(dataset.theme).toBe("light");
   });
 
   it("dark theme sets data-theme=dark", () => {
     const { dataset } = makeDocStub();
-    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark" });
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark", reduceMotion: false });
     expect(dataset.theme).toBe("dark");
   });
 
   it("dark-grey theme sets data-theme=dark-grey", () => {
     const { dataset } = makeDocStub();
-    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark-grey" });
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark-grey", reduceMotion: false });
     expect(dataset.theme).toBe("dark-grey");
   });
 
   it("light-warm theme sets data-theme=light-warm", () => {
     const { dataset } = makeDocStub();
-    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "light-warm" });
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "light-warm", reduceMotion: false });
     expect(dataset.theme).toBe("light-warm");
   });
 
   it("applies all font families without error", () => {
     makeDocStub();
     for (const family of ["sans", "serif", "mono"] as const) {
-      expect(() => applyGraphicPrefs({ fontFamily: family, fontSizeScale: 1, colorTheme: "dark" })).not.toThrow();
+      expect(() => applyGraphicPrefs({ fontFamily: family, fontSizeScale: 1, colorTheme: "dark", reduceMotion: false })).not.toThrow();
     }
   });
 
   it("applies all FONT_SIZE_STEPS without error", () => {
     makeDocStub();
     for (const scale of FONT_SIZE_STEPS) {
-      expect(() => applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: scale, colorTheme: "dark" })).not.toThrow();
+      expect(() => applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: scale, colorTheme: "dark", reduceMotion: false })).not.toThrow();
     }
+  });
+
+  it("reduceMotion=true sets data-reduce-motion=true", () => {
+    const { dataset } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark", reduceMotion: true });
+    expect(dataset.reduceMotion).toBe("true");
+  });
+
+  it("reduceMotion=false sets data-reduce-motion=false", () => {
+    const { dataset } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark", reduceMotion: false });
+    expect(dataset.reduceMotion).toBe("false");
   });
 });

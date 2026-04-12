@@ -1,4 +1,4 @@
-import { onMounted, onWillDestroy, useState, xml } from "@odoo/owl";
+import { onMounted, onPatched, onWillDestroy, useState, xml } from "@odoo/owl";
 
 import { Capacitor } from "@capacitor/core";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
@@ -26,20 +26,28 @@ import { TagManagerComponent } from "./tag_manager/tag_manager_component";
 export class NoteComponent extends EnhancedComponent {
 	static template = xml`
 		<div id="note-component">
-			<nav class="breadcrumb">
-				<a href="#" t-on-click.stop.prevent="onBackToNotesClick">Notes</a>
+			<div
+				class="sr-only"
+				aria-live="polite"
+				aria-atomic="true"
+				t-esc="state.syncAnnouncement"
+			/>
+			<nav class="breadcrumb" aria-label="Fil d'ariane de la note">
+				<a href="#" role="button" aria-label="Retour à la liste des notes" t-on-click.stop.prevent="onBackToNotesClick">Notes</a>
 				<span class="breadcrumb__sep">›</span>
 				<span class="breadcrumb__current" t-esc="state.note.title or 'Nouvelle note'"/>
 				<div class="breadcrumb__note-nav">
 					<button
 						type="button"
 						class="breadcrumb__note-nav-btn"
+						aria-label="Note précédente"
 						t-att-disabled="!hasPrevious"
 						t-on-click.stop.prevent="navigatePrevious"
 					>‹</button>
 					<button
 						type="button"
 						class="breadcrumb__note-nav-btn"
+						aria-label="Note suivante"
 						t-att-disabled="!hasNext"
 						t-on-click.stop.prevent="navigateNext"
 					>›</button>
@@ -49,13 +57,22 @@ export class NoteComponent extends EnhancedComponent {
 							t-att-class="'breadcrumb__sync-btn breadcrumb__sync-btn--' + state.syncStatus + (state.isPressing ? ' breadcrumb__sync-btn--pressing' : '')"
 							t-att-disabled="state.isSyncing or state.newNote"
 							t-att-title="syncTitle"
+							t-att-aria-label="syncTitle"
+							aria-haspopup="dialog"
+							t-att-aria-expanded="state.showConfigPicker ? 'true' : 'false'"
 							t-on-pointerdown="onSyncPointerDown"
 							t-on-pointerup="onSyncPointerUp"
 							t-on-pointercancel="onSyncPointerCancel"
 							t-esc="syncIcon"
 						/>
-						<div t-if="state.showConfigPicker" class="breadcrumb__config-picker">
-							<p class="breadcrumb__config-picker-label">Synchroniser avec :</p>
+						<div
+							t-if="state.showConfigPicker"
+							class="breadcrumb__config-picker"
+							role="dialog"
+							aria-modal="true"
+							aria-labelledby="config-picker-title"
+						>
+							<p id="config-picker-title" class="breadcrumb__config-picker-label">Synchroniser avec :</p>
 							<t t-foreach="state.syncConfigs" t-as="cfg" t-key="cfg.id">
 								<label class="breadcrumb__config-option">
 									<input
@@ -84,6 +101,7 @@ export class NoteComponent extends EnhancedComponent {
 						class="breadcrumb__meta-btn"
 						t-att-disabled="state.newNote"
 						title="Métadonnées SQL"
+						aria-label="Métadonnées SQL"
 						t-on-click.stop.prevent="onMetadataClick"
 					>ℹ</button>
 				</div>
@@ -127,9 +145,20 @@ export class NoteComponent extends EnhancedComponent {
 			setEntryDate.bind="setEntryDate"
 		/>
 		<TagManagerComponent />
-		<div t-if="state.openInApp.visible" class="error-dialog-overlay" t-on-click.stop.prevent="closeOpenInApp">
-			<div class="error-dialog" t-on-click.stop="">
-				<p class="open-in-app__title">Ouvrir dans application</p>
+		<div
+			t-if="state.openInApp.visible"
+			class="error-dialog-overlay"
+			role="presentation"
+			t-on-click.stop.prevent="closeOpenInApp"
+		>
+			<div
+				class="error-dialog"
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="open-in-app-title"
+				t-on-click.stop=""
+			>
+				<p id="open-in-app-title" class="open-in-app__title">Ouvrir dans application</p>
 				<div class="error-dialog__actions">
 					<t t-foreach="state.openInApp.apps" t-as="appItem" t-key="appItem.appUrl + '|' + appItem.username">
 						<button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="() => this.openInAppForConfig(appItem)">
@@ -140,9 +169,20 @@ export class NoteComponent extends EnhancedComponent {
 				</div>
 			</div>
 		</div>
-		<div t-if="state.priorityPicker.visible" class="priority-picker-overlay" t-on-click.stop.prevent="closePriorityPicker">
-			<div class="priority-picker" t-on-click.stop="">
-				<p class="priority-picker__title">Priorité (Matrice d'Eisenhower)</p>
+		<div
+			t-if="state.priorityPicker.visible"
+			class="priority-picker-overlay"
+			role="presentation"
+			t-on-click.stop.prevent="closePriorityPicker"
+		>
+			<div
+				class="priority-picker"
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="priority-picker-title"
+				t-on-click.stop=""
+			>
+				<p id="priority-picker-title" class="priority-picker__title">Priorité (Matrice d'Eisenhower)</p>
 				<div class="priority-picker__grid">
 					<button type="button" class="priority-picker__btn priority-picker__btn--1" t-on-click.stop="() => this.setPriority(1)">
 						<span class="priority-picker__label">Urgent &amp; Important</span>
@@ -165,8 +205,20 @@ export class NoteComponent extends EnhancedComponent {
 				<button type="button" class="priority-picker__cancel" t-on-click.stop="closePriorityPicker">Annuler</button>
 			</div>
 		</div>
-		<div t-if="state.errorDialog.visible" class="error-dialog-overlay" t-on-click.stop.prevent="closeErrorDialog">
-			<div class="error-dialog" t-on-click.stop="">
+		<div
+			t-if="state.errorDialog.visible"
+			class="error-dialog-overlay"
+			role="presentation"
+			t-on-click.stop.prevent="closeErrorDialog"
+		>
+			<div
+				class="error-dialog"
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="error-dialog-title"
+				t-on-click.stop=""
+			>
+				<p id="error-dialog-title" class="sr-only">Détail de l'erreur</p>
 				<pre class="error-dialog__message" t-esc="state.errorDialog.message" />
 				<div class="error-dialog__actions">
 					<button type="button" class="error-dialog__btn error-dialog__btn--copy" t-on-click.stop.prevent="copyErrorMessage">📋 Copier</button>
@@ -184,6 +236,13 @@ export class NoteComponent extends EnhancedComponent {
 		NoteTopControlsComponent,
 		TagManagerComponent
 	};
+
+	/** Tracks which element had focus before a dialog was opened, so we can restore it on close. */
+	private _dialogTrigger: HTMLElement | null = null;
+	/** Which dialog was open on the previous render cycle (for focus-in detection). */
+	private _prevDialog: string | null = null;
+	/** Bound escape key handler — kept for removal on destroy. */
+	private _boundEscapeHandler: ((ev: KeyboardEvent) => void) | null = null;
 
 	setup() {
 		this.state = useState({
@@ -203,12 +262,50 @@ export class NoteComponent extends EnhancedComponent {
 			errorDialog: { visible: false, message: "" },
 			openInApp: { visible: false, apps: [] as Array<{ label: string; appUrl: string; username: string; password: string; odooId: number }> },
 			priorityPicker: { visible: false },
+			syncAnnouncement: "",
 		});
 		this.setParams();
 		this.getNote();
 		this.loadAllNoteIds();
 		this.listenForEvents();
-		onMounted(() => this.loadSyncStatus());
+		onMounted(() => {
+			this.loadSyncStatus();
+			this._boundEscapeHandler = this._onKeydownEscape.bind(this);
+			document.addEventListener("keydown", this._boundEscapeHandler);
+		});
+		onWillDestroy(() => {
+			if (this._boundEscapeHandler) {
+				document.removeEventListener("keydown", this._boundEscapeHandler);
+			}
+		});
+		onPatched(() => this._manageFocusAfterPatch());
+	}
+
+	/** Focus management: move focus into dialogs when they open; restore on close. */
+	private _manageFocusAfterPatch() {
+		const openDialog =
+			this.state.priorityPicker.visible ? "priority" :
+			this.state.errorDialog.visible    ? "error" :
+			this.state.openInApp.visible      ? "openInApp" :
+			this.state.showConfigPicker       ? "configPicker" :
+			null;
+
+		if (openDialog !== this._prevDialog) {
+			if (openDialog) {
+				// Dialog just opened — save trigger, focus first button inside dialog
+				this._dialogTrigger = document.activeElement as HTMLElement | null;
+				const dialogEl = document.querySelector(`[role="dialog"]`);
+				if (dialogEl) {
+					const first = dialogEl.querySelector<HTMLElement>("button, [href], input, [tabindex]");
+					first?.focus();
+				}
+			} else if (this._dialogTrigger) {
+				// Dialog just closed — restore focus to trigger
+				this._dialogTrigger.focus();
+				this._dialogTrigger = null;
+			}
+			this._prevDialog = openDialog;
+		}
 	}
 
 	get syncIcon(): string {
@@ -285,12 +382,33 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.showConfigPicker = true;
 	}
 
+	/** Close whichever overlay is open when the user presses Escape. */
+	private _onKeydownEscape(ev: KeyboardEvent) {
+		if (ev.key !== "Escape") return;
+		if (this.state.priorityPicker.visible) { ev.preventDefault(); this.closePriorityPicker(); }
+		else if (this.state.errorDialog.visible) { ev.preventDefault(); this.closeErrorDialog(); }
+		else if (this.state.openInApp.visible) { ev.preventDefault(); this.closeOpenInApp(); }
+		else if (this.state.showConfigPicker) { ev.preventDefault(); this.cancelConfigPick(); }
+	}
+
+	private announceSyncStatus(status: string) {
+		const messages: Record<string, string> = {
+			synced:  "Note synchronisée.",
+			error:   "Erreur de synchronisation.",
+			pending: "Synchronisation en attente — hors ligne.",
+		};
+		this.state.syncAnnouncement = messages[status] ?? "";
+		// Clear after screen reader has time to read it
+		setTimeout(() => { this.state.syncAnnouncement = ""; }, 3000);
+	}
+
 	async pushToOdoo() {
 		if (this.state.isSyncing || this.state.newNote) return;
 
 		if (!navigator.onLine) {
 			await this.databaseService.setNoteSyncInfo(this.state.noteId, { syncStatus: "pending" });
 			this.state.syncStatus = "pending";
+			this.announceSyncStatus("pending");
 			return;
 		}
 
@@ -371,8 +489,10 @@ export class NoteComponent extends EnhancedComponent {
 			await this.databaseService.setNoteSyncInfo(this.state.noteId, { syncConfigId: cfg.id });
 			this.state.syncConfigId = cfg.id;
 			this.state.syncStatus = "synced";
+			this.announceSyncStatus("synced");
 		} catch (e: unknown) {
 			this.state.syncStatus = "error";
+			this.announceSyncStatus("error");
 			await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
 			const msg = e instanceof Error ? e.message : String(e);
 			this.showErrorDialog(`Erreur sync :\n${msg}`);
@@ -395,10 +515,12 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.isSyncing = false;
 		if (errors.length > 0) {
 			this.state.syncStatus = "error";
+			this.announceSyncStatus("error");
 			const msg = errors.join("\n");
 			this.showErrorDialog(`Erreurs sync :\n${msg}`);
 		} else {
 			this.state.syncStatus = "synced";
+			this.announceSyncStatus("synced");
 		}
 	}
 

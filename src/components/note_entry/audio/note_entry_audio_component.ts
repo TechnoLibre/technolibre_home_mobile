@@ -16,44 +16,50 @@ import StopIcon from "../../../assets/icon/stop.svg";
 export class NoteEntryAudioComponent extends EnhancedComponent {
 	static template = xml`
 		<div class="note-entry__wrapper">
-			<div class="note-entry--audio__controls">
+			<div class="note-entry--audio__controls" role="group" aria-label="Contrôles audio">
 				<button
 					type="button"
 					class="note-entry--audio__control note-entry--audio__stop-recording"
 					t-if="!state.isPlaying and state.isRecording"
+					aria-label="Arrêter l'enregistrement"
 					t-on-click.stop.prevent="stopRecording"
 				>
-					<img src="${StopIcon}" />
+					<img src="${StopIcon}" alt="" aria-hidden="true" />
 				</button>
 				<button
 					type="button"
 					class="note-entry--audio__control note-entry--audio__stop-playback"
 					t-if="state.isPlaying and !state.isRecording"
+					aria-label="Arrêter la lecture"
 					t-on-click.stop.prevent="stopPlayback"
 				>
-					<img src="${StopIcon}" />
+					<img src="${StopIcon}" alt="" aria-hidden="true" />
 				</button>
 				<button
 					type="button"
 					class="note-entry--audio__control note-entry--audio__record"
 					t-if="!state.isPlaying and !state.isRecording and props.params.path === ''"
+					aria-label="Démarrer l'enregistrement"
 					t-on-click.stop.prevent="startRecording"
 				>
-					<img src="${RecordIcon}" />
+					<img src="${RecordIcon}" alt="" aria-hidden="true" />
 				</button>
 				<button
 					type="button"
 					class="note-entry--audio__control note-entry--audio__play"
 					t-if="!state.isPlaying and !state.isRecording and props.params.path !== ''"
+					aria-label="Lire l'enregistrement"
 					t-on-click.stop.prevent="playAudio"
 				>
-					<img src="${PlayIcon}" />
+					<img src="${PlayIcon}" alt="" aria-hidden="true" />
 				</button>
 				<button
 					type="button"
 					class="note-entry--audio__transcribe"
 					t-if="props.params.path !== '' and !state.isRecording and !state.isPlaying and state.transcriptionEnabled"
 					t-att-disabled="state.isTranscribing"
+					t-att-aria-busy="state.isTranscribing ? 'true' : 'false'"
+					t-att-aria-label="state.isTranscribing ? 'Transcription en cours…' : 'Transcrire l\'enregistrement'"
 					t-on-click.stop.prevent="transcribeAudio"
 				>
 					<t t-if="state.isTranscribing">
@@ -68,8 +74,8 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 					type="button"
 					class="note-entry--audio__processes-link"
 					t-if="state.isTranscribing or props.params.transcription"
+					aria-label="Voir les processus"
 					t-on-click.stop.prevent="goToProcesses"
-					title="Voir les processus"
 				>↗</button>
 			</div>
 			<div t-if="props.params.transcription" class="note-entry--audio__transcription">
@@ -77,8 +83,8 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 				<button
 					type="button"
 					class="note-entry--audio__add-text"
+					aria-label="Créer une entrée texte avec ce contenu"
 					t-on-click.stop.prevent="addTextEntry"
-					title="Créer une entrée texte avec ce contenu"
 				>Texte +</button>
 			</div>
 		</div>

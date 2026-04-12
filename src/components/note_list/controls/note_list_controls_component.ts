@@ -16,7 +16,7 @@ const ENV = {
 
 export class NoteListControlsComponent extends EnhancedComponent {
 	static template = xml`
-		<section id="notes__controls">
+		<section id="notes__controls" aria-label="Contrôles de la liste">
 			<a
 				class="notes__control notes__control__edit-mode"
 				t-att-class="{
@@ -24,6 +24,9 @@ export class NoteListControlsComponent extends EnhancedComponent {
 					'notes__control__show-archived--false': !props.showArchivedNotes
 				}"
 				href="#"
+				role="button"
+				aria-label="Mode édition"
+				t-att-aria-pressed="props.editMode ? 'true' : 'false'"
 				t-on-click.stop.prevent="props.onToggleEditModeClick"
 			>
 				<p>Edit mode</p>
@@ -35,11 +38,15 @@ export class NoteListControlsComponent extends EnhancedComponent {
 					'notes__control__show-archived--false': !props.showArchivedNotes
 				}"
 				href="#"
+				role="button"
+				aria-label="Afficher les notes archivées"
+				t-att-aria-pressed="props.showArchivedNotes ? 'true' : 'false'"
 				t-on-click.stop.prevent="props.onToggleNoteListClick"
 			>
 				<p>Montrer les ${ENV.LABEL_NOTE}s archivées</p>
 				<div
 					id="notes__control__show-archived__indicator"
+					aria-hidden="true"
 					t-att-class="{
 						active: props.showArchivedNotes
 					}"
@@ -50,11 +57,15 @@ export class NoteListControlsComponent extends EnhancedComponent {
 			<a
 				class="notes__control notes__control__sort-priority"
 				href="#"
+				role="button"
+				aria-label="Trier par priorité"
+				t-att-aria-pressed="props.sortByPriority ? 'true' : 'false'"
 				t-on-click.stop.prevent="props.onToggleSortClick"
 			>
 				<p>Trier par priorité</p>
 				<div
 					class="notes__control__sort-priority__indicator"
+					aria-hidden="true"
 					t-att-class="{
 						active: props.sortByPriority
 					}"

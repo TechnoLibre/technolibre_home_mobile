@@ -25,11 +25,11 @@ export class OptionsComponent extends EnhancedComponent {
 	static template = xml`
     <div id="options-component">
       <HeadingComponent title="'Options'" />
-      <ul id="options-list">
+      <ul id="options-list" aria-label="Options">
         <OptionsClearCacheComponent />
         <OptionsToggleBiometryComponent />
         <li class="options-list__item" t-if="state.isDebug">
-          <a href="#" t-on-click.stop.prevent="onDatabaseClick">
+          <a href="#" role="button" aria-label="Base de données" t-on-click.stop.prevent="onDatabaseClick">
             🗄️ Base de données ›
           </a>
         </li>
@@ -41,17 +41,17 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsGraphicComponent />
         <OptionsChangelogComponent />
         <li class="options-list__item">
-          <a href="#" t-on-click.stop.prevent="onTranscriptionClick">
+          <a href="#" role="button" aria-label="Transcription audio" t-on-click.stop.prevent="onTranscriptionClick">
             🎙️ Transcription audio ›
           </a>
         </li>
         <li class="options-list__item">
-          <a href="#" t-on-click.stop.prevent="onProcessesClick">
+          <a href="#" role="button" aria-label="Processus" t-on-click.stop.prevent="onProcessesClick">
             ⚙️ Processus ›
           </a>
         </li>
         <li class="options-list__item">
-          <a href="#" t-on-click.stop.prevent="onErplibreClick">
+          <a href="#" role="button" aria-label="ERPLibre" t-on-click.stop.prevent="onErplibreClick">
             🏠 ERPLibre ›
           </a>
         </li>

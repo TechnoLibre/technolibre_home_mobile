@@ -8,7 +8,8 @@ export class NoteEntryTextComponent extends EnhancedComponent {
 			t-att-id="props.id"
 			t-att-disabled="props.params.readonly ? true : false"
 			class="note-entry__text"
-			placeholder="Text"
+			placeholder="Texte"
+			aria-label="Entrée texte"
 			t-model="props.params.text"
 		></textarea>
 	`;

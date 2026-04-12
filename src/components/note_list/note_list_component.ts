@@ -37,9 +37,12 @@ export class NoteListComponent extends EnhancedComponent {
 				<h1 id="notes-heading">${ENV.LABEL_NOTE}s</h1>
 				<a
 					id="notes-add"
+					role="button"
+					href="#"
+					aria-label="Nouvelle note"
 					t-on-click.stop.prevent="onNoteAddClick"
 				>
-					<img src="${NoteAddIcon}" />
+					<img src="${NoteAddIcon}" alt="" aria-hidden="true"/>
 				</a>
 			</header>
 			<NoteListControlsComponent
@@ -60,8 +63,8 @@ export class NoteListComponent extends EnhancedComponent {
 						'active': pinned.length !== 0
 					}"
 				>
-					<h3>Notes épinglées</h3>
-					<ul class="notes-list" t-ref="pinned">
+					<h2 t-if="pinned.length > 0" class="notes-section-heading">Notes épinglées</h2>
+					<ul class="notes-list" aria-label="Notes épinglées" t-ref="pinned">
 						<NotesItemComponent
 							t-foreach="pinned"
 							t-as="noteItem"
@@ -84,8 +87,8 @@ export class NoteListComponent extends EnhancedComponent {
 						'active': unpinned.length !== 0
 					}"
 				>
-					<h3>Notes non épinglées</h3>
-					<ul class="notes-list" t-ref="unpinned">
+					<h2 t-if="unpinned.length > 0 and pinned.length > 0" class="notes-section-heading">Notes</h2>
+					<ul class="notes-list" aria-label="Notes" t-ref="unpinned">
 						<NotesItemComponent
 							t-foreach="unpinned"
 							t-as="noteItem"
@@ -105,7 +108,7 @@ export class NoteListComponent extends EnhancedComponent {
 				<div id="notes-empty" t-if="currentNoteList.length === 0">
 					<p t-if="state.showArchivedNotes">Aucune ${ENV.LABEL_NOTE} archivée.</p>
 					<p t-else="">
-						<a id="notes-add" t-on-click.stop.prevent="onNoteAddClick">Ajoutez une ${ENV.LABEL_NOTE} 🤖</a>
+						<a class="notes-empty__add-link" role="button" href="#" t-on-click.stop.prevent="onNoteAddClick">Ajoutez une ${ENV.LABEL_NOTE} 🤖</a>
 					</p>
 				</div>
 			</section>
