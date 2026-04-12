@@ -8,19 +8,30 @@ import type { ProcessService } from "./processService";
 // Model metadata
 // ---------------------------------------------------------------------------
 
+const HF = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+
 const MODEL_URLS: Record<WhisperModel, string> = {
-    tiny:  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
-    small: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+    tiny:              `${HF}/ggml-tiny.bin`,
+    base:              `${HF}/ggml-base.bin`,
+    small:             `${HF}/ggml-small.bin`,
+    medium:            `${HF}/ggml-medium.bin`,
+    "large-v3-turbo":  `${HF}/ggml-large-v3-turbo.bin`,
 };
 
 export const MODEL_SIZES: Record<WhisperModel, string> = {
-    tiny:  "~75 Mo",
-    small: "~244 Mo",
+    tiny:              "~75 Mo",
+    base:              "~142 Mo",
+    small:             "~244 Mo",
+    medium:            "~769 Mo",
+    "large-v3-turbo":  "~874 Mo",
 };
 
 export const MODEL_LABELS: Record<WhisperModel, string> = {
-    tiny:  "Tiny (~75 Mo) — rapide, recommandé",
-    small: "Small (~244 Mo) — plus précis, plus lent",
+    tiny:              "Tiny (~75 Mo) — très rapide",
+    base:              "Base (~142 Mo) — recommandé",
+    small:             "Small (~244 Mo) — précis",
+    medium:            "Medium (~769 Mo) — très précis",
+    "large-v3-turbo":  "Large-v3-turbo (~874 Mo) — meilleur",
 };
 
 // ---------------------------------------------------------------------------
@@ -141,7 +152,8 @@ export class TranscriptionService {
 
     async getSelectedModel(): Promise<WhisperModel> {
         const val = await this.db.getUserGraphicPref("whisper_model");
-        return (val === "small" ? "small" : "tiny") as WhisperModel;
+        const valid: WhisperModel[] = ["tiny", "base", "small", "medium", "large-v3-turbo"];
+        return valid.includes(val as WhisperModel) ? (val as WhisperModel) : "tiny";
     }
 
     async setSelectedModel(model: WhisperModel): Promise<void> {

@@ -1,7 +1,7 @@
 import { registerPlugin } from "@capacitor/core";
 import type { PluginListenerHandle } from "@capacitor/core";
 
-export type WhisperModel = "tiny" | "small";
+export type WhisperModel = "tiny" | "base" | "small" | "medium" | "large-v3-turbo";
 
 export interface WhisperProgressEvent {
     ratio: number;
