@@ -36,6 +36,23 @@
 
 	--options__item__background-color: rgba(40, 40, 40, 0.985);
 	--options__item__color: #eee;
+
+	// Surfaces
+	--card-bg: #151515;
+	--card-hover-bg: #1e1e1e;
+
+	// Form inputs
+	--input-bg: #1a1a1a;
+	--input-border: #404040;
+
+	// Tags
+	--tag-bg: #1e2e93;
+	--tag-color: #f0f0f0;
+
+	// Status backgrounds
+	--status-error-bg: #1a0000;
+	--status-warning-bg: #1a1100;
+	--status-debug-bg: #0d1a12;
 }
 
 // ─── Contraste (dark grey) — charcoal, vivid accents ─────────────────────────
@@ -69,6 +86,23 @@
 
 	--options__item__background-color: rgba(28, 28, 28, 0.98);
 	--options__item__color: #f2f2f2;
+
+	// Surfaces
+	--card-bg: #252525;
+	--card-hover-bg: #2e2e2e;
+
+	// Form inputs
+	--input-bg: #262626;
+	--input-border: #484848;
+
+	// Tags
+	--tag-bg: #2038a0;
+	--tag-color: #dbeafe;
+
+	// Status backgrounds
+	--status-error-bg: #2a0808;
+	--status-warning-bg: #2a1a00;
+	--status-debug-bg: #0d1a12;
 }
 
 // ─── Coloré (light warm) — parchment, fin d'après-midi ───────────────────────
@@ -102,6 +136,23 @@
 
 	--options__item__background-color: rgba(254, 245, 232, 0.98);
 	--options__item__color: #1c1207;
+
+	// Surfaces
+	--card-bg: #fde8c4;
+	--card-hover-bg: #fad5a0;
+
+	// Form inputs
+	--input-bg: #fffbf5;
+	--input-border: #e8c99a;
+
+	// Tags
+	--tag-bg: #fde68a;
+	--tag-color: #78350f;
+
+	// Status backgrounds
+	--status-error-bg: #fee2e2;
+	--status-warning-bg: #fef3c7;
+	--status-debug-bg: #dcfce7;
 }
 
 // ─── Clair (light clean) — white, high contrast ───────────────────────────────
@@ -135,4 +186,21 @@
 
 	--options__item__background-color: rgba(255, 255, 255, 0.98);
 	--options__item__color: #111111;
+
+	// Surfaces
+	--card-bg: #e8e8e8;
+	--card-hover-bg: #dcdcdc;
+
+	// Form inputs
+	--input-bg: #ffffff;
+	--input-border: #cccccc;
+
+	// Tags
+	--tag-bg: #dbeafe;
+	--tag-color: #1e3a8a;
+
+	// Status backgrounds
+	--status-error-bg: #fef2f2;
+	--status-warning-bg: #fefce8;
+	--status-debug-bg: #f0fdf4;
 }

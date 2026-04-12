@@ -108,7 +108,7 @@
 	align-items: center;
 	justify-content: center;
 	gap: 0.4rem;
-	background: #1e1e1e;
+	background: var(--card-hover-bg);
 	border: 1px solid #333;
 	border-radius: 0.75rem;
 	color: #ddd;
@@ -118,17 +118,17 @@
 
 	&:hover,
 	&:active {
-		background: #282828;
+		background: var(--btn-back-hover-color);
 		border-color: #555;
 	}
 
 	&--accent {
-		background: color-mix(in srgb, var(--btn-blue-color) 20%, #1e1e1e);
+		background: color-mix(in srgb, var(--btn-blue-color) 20%, var(--card-hover-bg));
 		border-color: color-mix(in srgb, var(--btn-blue-color) 50%, #333);
 
 		&:hover,
 		&:active {
-			background: color-mix(in srgb, var(--btn-blue-color) 30%, #1e1e1e);
+			background: color-mix(in srgb, var(--btn-blue-color) 30%, var(--card-hover-bg));
 		}
 	}
 }
@@ -186,7 +186,7 @@
 	display: flex;
 	align-items: center;
 	gap: 0.5rem;
-	background: #1a1a1a;
+	background: var(--card-bg);
 	border: 1px solid #2a2a2a;
 	border-radius: 0.5rem;
 	color: #ccc;
@@ -198,8 +198,8 @@
 
 	&:hover,
 	&:active {
-		background: #222;
-		border-color: #3a3a3a;
+		background: var(--btn-back-color);
+		border-color: var(--surface-btn-active);
 	}
 }
 

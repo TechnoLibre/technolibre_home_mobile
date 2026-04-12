@@ -1,7 +1,7 @@
 @use "../../../css/mixins.scss";
 
 .note-entry-audio-component .note-entry__wrapper {
-	background-color: #262626;
+	background-color: var(--card-bg);
 	border-radius: 1.25rem;
 	padding: 0.5rem;
 	transition: background-color 150ms ease-in-out;
@@ -35,11 +35,11 @@
 }
 
 .note-entry-audio-component .note-entry--audio__play {
-	background-color: #000;
+	background-color: var(--background);
 }
 
 .note-entry-audio-component .note-entry--audio__record {
-	background-color: #000;
+	background-color: var(--background);
 }
 
 .note-entry-audio-component .note-entry--audio__stop-recording {
@@ -72,7 +72,7 @@
 }
 
 .note-entry-audio-component .note-entry--audio__transcription {
-	border-top: 1px solid #333;
+	border-top: 1px solid var(--section-border-color);
 	margin-top: 0.5rem;
 	padding-top: 0.5rem;
 }
@@ -88,7 +88,7 @@
 
 .note-entry-audio-component .note-entry--audio__add-text {
 	background: transparent;
-	border: 1px solid #444;
+	border: 1px solid var(--surface-subtle);
 	border-radius: 0.75rem;
 	color: #888;
 	cursor: pointer;
@@ -104,7 +104,7 @@
 }
 
 .note-entry-audio-component .note-entry--audio__transcribe {
-	background: #1a3a5c;
+	background: var(--btn-blue-color);
 	border: none;
 	border-radius: 50%;
 	color: #8ab4d4;
@@ -120,7 +120,7 @@
 	width: 36px;
 
 	&:hover:not(:disabled) {
-		background: #1f4e7a;
+		background: var(--btn-blue-hover-color);
 		color: #cce0f5;
 	}
 

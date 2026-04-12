@@ -28,8 +28,8 @@
 
     &--toggle {
         justify-content: space-between;
-        background: #1a1a1a;
-        border: 1px solid #333;
+        background: var(--card-bg);
+        border: 1px solid var(--section-border-color);
         border-radius: 0.625rem;
         padding: 0.875rem;
     }
@@ -93,7 +93,7 @@
     &__slider {
         position: absolute;
         inset: 0;
-        background: #444;
+        background: var(--surface-subtle);
         border-radius: 24px;
         cursor: pointer;
         transition: background 0.2s;
@@ -150,14 +150,14 @@
     align-items: flex-start;
     gap: 0.75rem;
     padding: 0.875rem;
-    border: 1.5px solid #333;
+    border: 1.5px solid var(--section-border-color);
     border-radius: 0.625rem;
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
-    background: #1a1a1a;
+    background: var(--card-bg);
 
     &:active {
-        background: #222;
+        background: var(--btn-back-color);
     }
 
     &--english-only {
@@ -395,7 +395,7 @@
 
 .transcription-progress {
     height: 6px;
-    background: #2a2a2a;
+    background: var(--surface-btn);
     border-radius: 3px;
     overflow: hidden;
 
