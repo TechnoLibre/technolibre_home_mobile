@@ -126,6 +126,13 @@ export class OptionsProcessesComponent extends EnhancedComponent {
                         </t>
                     </div>
 
+                    <button
+                        t-if="state.detail.type === 'transcription' and state.detail.noteId"
+                        class="process-modal__goto"
+                        t-on-click="onModalNavClick"
+                    >
+                        › Aller à la note
+                    </button>
                     <button class="process-modal__close" t-on-click="closeDetail">Fermer</button>
                 </div>
             </div>
@@ -164,6 +171,12 @@ export class OptionsProcessesComponent extends EnhancedComponent {
 
     closeDetail(): void {
         this.state.detail = null;
+    }
+
+    onModalNavClick(): void {
+        if (this.state.detail?.type === "transcription" && this.state.detail?.noteId) {
+            this.navigate(`/note/${this.state.detail.noteId}`);
+        }
     }
 
     // ── Navigate button ───────────────────────────────────────────────────────
