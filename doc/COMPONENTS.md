@@ -14,7 +14,15 @@ RootComponent
 ## Composants par route
 
 ### HomeComponent — `/`
-Écran d'accueil. Affiche le titre de l'application et un raccourci vers les notes.
+
+Écran d'accueil avec tableau de bord.
+
+**Disposition :**
+- **Barre de statistiques** — compte de notes actives, d'apps Odoo, de serveurs SSH. Si des déploiements sont en cours, un point animé (`home-stats__deploy-dot`) et leur nombre sont ajoutés.
+- **Grille 2×2 d'actions** — Notes, Nouvelle note, Serveurs, Odoo. Chaque bouton porte un badge avec le compte de l'entité correspondante.
+- **Bande de notes rapides** — jusqu'à 4 notes non archivées, triées par priorité 1 en tête puis chronologie inverse. Chaque bouton porte une bordure gauche colorée selon la priorité : rouge (1), jaune (2), bleu (3), gris (4).
+
+Les statistiques et les notes rapides sont chargées au montage via `NoteService`, `AppService` et `ServerService`.
 
 ---
 
@@ -64,7 +72,7 @@ Sous-composants :
 | `DatePickerComponent` | Sélecteur de date (overlay) |
 | `NoteEntryTextComponent` | Entrée texte |
 | `NoteEntryPhotoComponent` | Entrée photo |
-| `NoteEntryVideoComponent` | Entrée vidéo |
+| `NoteEntryVideoComponent` | Entrée vidéo (lecture, recapture, transcription) |
 | `NoteEntryAudioComponent` | Entrée audio |
 | `NoteEntryGeolocationComponent` | Entrée GPS (lat/lon/timestamp) |
 | `NoteEntryDateComponent` | Entrée date |
@@ -72,6 +80,15 @@ Sous-composants :
 Fonctionnalités notables :
 - **Bouton de synchro multi-serveurs** — appui long sur le bouton de sync pour choisir les serveurs cibles parmi les applications configurées ; le choix est persisté dans `selected_sync_config_ids`
 - **Ouvrir dans l'app** — bouton "Ouvrir dans app" qui lance la WebView avec auto-login et navigue directement vers la tâche Odoo correspondante
+
+#### Transcription (bouton "T")
+
+`NoteEntryAudioComponent` et `NoteEntryVideoComponent` affichent un bouton **T** lorsque la transcription Whisper est activée et qu'un fichier est présent.
+
+- Pendant la transcription, le bouton affiche la progression (`0%`→`100%`, ou `…` si encore à 0).
+- L'état de transcription est maintenu au niveau du service (`TranscriptionService`) : si l'utilisateur navigue et revient, le composant se reconnecte à la transcription en cours via `subscribeTranscriptionProgress` / `subscribeTranscription`.
+- Un bouton `↗` apparaît pendant ou après la transcription pour naviguer vers **Options › Processus**.
+- Pour les entrées vidéo, le chemin Capacitor WebView (`https://localhost/_capacitor_file_/…`) est converti en chemin absolu natif par `toNativePath()` avant d'être passé au plugin Java.
 
 ---
 
@@ -162,6 +179,19 @@ Fonctionnalités :
 - Historique des migrations de données
 - **Page ERPLibre** (`/options/erplibre`) — informations sur le projet, logo, liens officiels
 - **Boutons d'erreur dans le dialogue d'application** — copier le message d'erreur dans le presse-papier, ouvrir un ticket GitHub pré-rempli
+
+---
+
+### OptionsProcessesComponent — `/options/processes`
+
+Journal des processus de transcription et de téléchargement de modèle.
+
+Fonctionnalités :
+- Liste tous les enregistrements `ProcessRecord` (plus récent en tête), avec icône selon le type et statut coloré.
+- Pendant l'exécution : affiche un spinner et le pourcentage si > 0.
+- Clic sur un élément → **modal de détail** : statut, horodatage de démarrage et de fin, durée, message d'erreur, résultat (texte transcrit ou URL), panneau de débogage (log JSON horodaté, style monospace vert).
+- **Bouton de navigation** `›` : pour une transcription, navigue vers la note associée (`/note/:noteId`) ; pour un téléchargement, navigue vers `/options/transcription`.
+- **Nettoyer l'historique** — confirmation puis suppression de tous les enregistrements via `ProcessService.clearAll()`.
 
 ## Classe de base `EnhancedComponent`
 

@@ -8,6 +8,7 @@ import { Note, NoteEntry } from "../models/note";
 import { Reminder } from "../models/reminder";
 import { Server } from "../models/server";
 import { Workspace } from "../models/workspace";
+import type { ProcessRecord, ProcessType, ProcessStatus } from "../models/process";
 import { StorageConstants } from "../constants/storage";
 
 export type SyncStatus = "local" | "pending" | "synced" | "conflict" | "error";
@@ -715,6 +716,124 @@ export class DatabaseService {
           : (row.scheduled_ids ?? []),
       batchEndsAt: row.batch_ends_at ?? null,
       createdAt: row.created_at ?? new Date().toISOString(),
+    };
+  }
+
+  // Processes
+
+  async createProcessesTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS processes (
+        id            TEXT PRIMARY KEY,
+        type          TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'running',
+        label         TEXT NOT NULL DEFAULT '',
+        started_at    INTEGER NOT NULL,
+        completed_at  INTEGER,
+        error_message TEXT,
+        note_id       TEXT,
+        model         TEXT,
+        result        TEXT,
+        debug_log     TEXT
+      )
+    `);
+  }
+
+  async addResultColumnToProcesses(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(processes)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!existingNames.includes("result")) {
+      await this.db.execute("ALTER TABLE processes ADD COLUMN result TEXT");
+    }
+  }
+
+  async addDebugLogColumnToProcesses(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(processes)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!existingNames.includes("debug_log")) {
+      await this.db.execute("ALTER TABLE processes ADD COLUMN debug_log TEXT");
+    }
+  }
+
+  async deleteAllProcesses(): Promise<void> {
+    await this.db.run("DELETE FROM processes");
+  }
+
+  async getAllProcesses(): Promise<ProcessRecord[]> {
+    const result = await this.db.query(
+      "SELECT * FROM processes ORDER BY started_at ASC"
+    );
+    return (result.values ?? []).map((row: any) => this.rowToProcess(row));
+  }
+
+  async insertProcess(record: ProcessRecord): Promise<void> {
+    await this.db.run(
+      `INSERT INTO processes
+         (id, type, status, label, started_at, completed_at, error_message, note_id, model, result)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.id,
+        record.type,
+        record.status,
+        record.label,
+        record.startedAt.getTime(),
+        record.completedAt ? record.completedAt.getTime() : null,
+        record.errorMessage ?? null,
+        record.noteId ?? null,
+        record.model ?? null,
+        record.result ?? null,
+      ]
+    );
+  }
+
+  async updateProcessStatus(
+    id: string,
+    status: ProcessStatus,
+    completedAt: Date | null,
+    errorMessage: string | null,
+    result?: string,
+    debugLog?: string[]
+  ): Promise<void> {
+    const debugLogJson = debugLog && debugLog.length > 0
+      ? JSON.stringify(debugLog)
+      : null;
+    await this.db.run(
+      `UPDATE processes
+         SET status = ?, completed_at = ?, error_message = ?, result = ?, debug_log = ?
+       WHERE id = ?`,
+      [status, completedAt ? completedAt.getTime() : null, errorMessage ?? null, result ?? null, debugLogJson, id]
+    );
+  }
+
+  /** Mark every process still flagged "running" as interrupted (app restarted). */
+  async markInterruptedProcesses(): Promise<void> {
+    await this.db.run(
+      `UPDATE processes
+         SET status = 'error',
+             error_message = 'Interrompu (redémarrage)',
+             completed_at = ?
+       WHERE status = 'running'`,
+      [Date.now()]
+    );
+  }
+
+  private rowToProcess(row: any): ProcessRecord {
+    let debugLog: string[] | undefined;
+    if (row.debug_log) {
+      try { debugLog = JSON.parse(row.debug_log); } catch { debugLog = undefined; }
+    }
+    return {
+      id:           row.id,
+      type:         row.type as ProcessType,
+      status:       row.status as ProcessStatus,
+      label:        row.label,
+      startedAt:    new Date(Number(row.started_at)),
+      completedAt:  row.completed_at != null ? new Date(Number(row.completed_at)) : null,
+      errorMessage: row.error_message ?? null,
+      noteId:       row.note_id ?? undefined,
+      model:        row.model ?? undefined,
+      result:       row.result ?? undefined,
+      debugLog,
     };
   }
 

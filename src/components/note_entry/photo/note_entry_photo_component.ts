@@ -7,6 +7,8 @@ import { Dialog } from "@capacitor/dialog";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { Events } from "../../../constants/events";
 
+import CameraIcon from "../../../assets/icon/flip_camera_android.svg";
+import OpenIcon from "../../../assets/icon/open.svg";
 import PhotoOffIcon from "../../../assets/icon/photo_off.svg";
 import CloseIcon from "../../../assets/icon/close.svg";
 
@@ -36,14 +38,16 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 					class="note-entry__photo__button note-entry__photo__open-camera"
 					t-on-click.stop.prevent="onClickOpenCamera"
 				>
-					Ouvrir la caméra
+					<img src="${CameraIcon}" />
+					<span>Photo</span>
 				</button>
 				<button
 					class="note-entry__photo__button note-entry__photo__open-photo"
 					t-if="props.params.path"
 					t-on-click.stop.prevent="onClickOpenPhoto"
 				>
-					Ouvrir la photo
+					<img src="${OpenIcon}" />
+					<span>Voir</span>
 				</button>
 			</div>
 		</div>

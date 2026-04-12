@@ -5,7 +5,7 @@
 | Couche | Technologie | Version |
 |--------|-------------|---------|
 | UI Framework | Odoo Owl | 2.8.1 |
-| Build | Vite | 5.4.2 |
+| Build | Vite | 6.4.2 |
 | Langage | TypeScript | — |
 | Pont natif | Capacitor | 7.4.4 |
 | Base de données locale | @capacitor-community/sqlite | 7.0.2 |
@@ -23,10 +23,14 @@ erplibre_home_mobile/
 │   │   └── routes.ts           # Table des routes
 │   ├── components/             # Composants Owl (38 fichiers TypeScript)
 │   ├── services/               # Logique métier
-│   │   ├── appService.ts       # Gestion des applications Odoo
-│   │   ├── databaseService.ts  # Abstraction SQLite
-│   │   ├── intentService.ts    # Intents Android (partage)
-│   │   └── note/               # Services de notes (3 sous-services)
+│   │   ├── appService.ts           # Gestion des applications Odoo
+│   │   ├── databaseService.ts      # Abstraction SQLite
+│   │   ├── intentService.ts        # Intents Android (partage)
+│   │   ├── serverService.ts        # CRUD serveurs SSH + workspaces
+│   │   ├── deploymentService.ts    # Orchestration déploiement ERPLibre
+│   │   ├── transcriptionService.ts # Transcription audio/vidéo (Whisper)
+│   │   ├── processService.ts       # Journal persistant des transcriptions et téléchargements
+│   │   └── note/                   # Services de notes (3 sous-services)
 │   ├── models/                 # Interfaces TypeScript
 │   ├── utils/                  # Utilitaires
 │   ├── constants/              # Constantes de l'application
@@ -48,7 +52,7 @@ Au démarrage, un écran de boot statique (HTML pur) affiche chaque étape en te
 3. Récupération / génération de la clé d'encryption SQLite (SecureStorage)
 4. Initialisation de la base SQLite chiffrée
 5. Exécution des migrations de données
-6. Création des services : `AppService`, `NoteService`, `IntentService`
+6. Création des services : `AppService`, `NoteService`, `IntentService`, `ProcessService` (initialisation : marquage des processus interrompus + chargement de l'historique)
 7. Montage du `RootComponent` sur le DOM — l'écran de boot est retiré
 8. Écoute des événements de navigation et de caméra
 
@@ -97,6 +101,10 @@ Capacitor synchronise les fichiers web compilés (`dist/`) vers le projet Androi
 | `capacitor-voice-recorder` | Audio |
 | `@capacitor-community/video-recorder` | Vidéo |
 | `@supernotes/capacitor-send-intent` | Intents Android (partage) |
+| `SshPlugin` *(custom)* | Connexion SSH + exécution de commandes (JSch) |
+| `WhisperPlugin` *(custom)* | Transcription audio locale (whisper.cpp / GGML) |
+| `OcrPlugin` *(custom)* | Détection de texte via ML Kit (caméra vidéo) |
+| `NetworkScanPlugin` *(custom)* | Scan réseau SSH (50 threads, détection bannière) |
 
 ## Permissions Android
 
@@ -107,19 +115,22 @@ Déclarées dans `android/app/src/main/AndroidManifest.xml` :
 - `RECORD_AUDIO`
 - `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`
 
+> **Note** : Le scan réseau SSH (`NetworkScanPlugin`) utilise `NetworkInterface.getNetworkInterfaces()` pour détecter l'adresse IPv4 locale — aucune permission Android spécifique n'est requise (fonctionne sur WiFi, Ethernet, partage USB).
+
 ## Pattern architectural global
 
 ```
 Composants Owl
     │  événements (EventBus)
     ▼
-Services (AppService, NoteService, IntentService)
+Services (AppService, NoteService, ServerService, DeploymentService,
+          TranscriptionService, ProcessService, IntentService, SyncService)
     │  appels async
     ▼
 DatabaseService (SQLite via Capacitor)
     │  plugins Capacitor
     ▼
-APIs natives Android (GPS, caméra, audio, biométrie)
+APIs natives Android (GPS, caméra, audio, biométrie, SSH, Whisper, ML Kit, OCR, NetworkScan)
 ```
 
 ## Variables d'environnement Vite

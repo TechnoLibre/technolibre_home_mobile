@@ -14,4 +14,6 @@ export const Events: Record<string, string> = {
 	SCROLL_TO_LAST_ENTRY: "scroll_to_last_entry",
 	SYNC_CHANGES_DETECTED: "sync_changes_detected",
 	DEV_MODE_UNLOCKED: "dev_mode_unlocked",
+	ADD_TRANSCRIPTION_TEXT: "add_transcription_text",
+	SET_ENTRY_TRANSCRIPTION: "set_entry_transcription",
 }

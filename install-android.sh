@@ -51,8 +51,27 @@ sdkmanager "platform-tools"
 sdkmanager "platforms;android-34"
 sdkmanager "build-tools;34.0.0"
 
-# Step 5: Verify installation
-echo "==> Step 5: Verifying installation..."
+# Step 5: Install NDK (required for whisper.cpp JNI build)
+echo "==> Step 5: Installing Android NDK..."
+# Via Android Studio :
+#   Tools → SDK Manager → SDK Tools → NDK (Side by side) → cocher → Apply
+#
+# Via ligne de commande :
+sdkmanager "ndk;27.0.12077973"
+
+# Step 6: Clone whisper.cpp (required for on-device audio transcription)
+echo "==> Step 6: Cloning whisper.cpp..."
+WHISPER_DST="$(dirname "$0")/android/app/src/main/cpp/whisper"
+if [ ! -d "$WHISPER_DST" ]; then
+    mkdir -p "$(dirname "$WHISPER_DST")"
+    git clone --depth=1 https://github.com/ggerganov/whisper.cpp.git "$WHISPER_DST"
+    echo "whisper.cpp cloned to $WHISPER_DST"
+else
+    echo "whisper.cpp already present at $WHISPER_DST, skipping clone."
+fi
+
+# Step 7: Verify installation
+echo "==> Step 7: Verifying installation..."
 sdkmanager --list | grep "Installed packages" -A 50 | grep -v "^---"
 echo ""
 echo "ANDROID_HOME=$ANDROID_HOME"

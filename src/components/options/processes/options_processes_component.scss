@@ -1,0 +1,286 @@
+#options-processes-component {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.processes-body {
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    overflow-y: auto;
+}
+
+.processes-empty {
+    color: #888;
+    font-size: 0.9rem;
+    text-align: center;
+    padding: 2rem 1rem;
+    margin: 0;
+}
+
+// ── Process item ─────────────────────────────────────────────────────────────
+
+.process-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 0.875rem;
+    border: 1.5px solid #333;
+    border-radius: 0.625rem;
+    background: #1a1a1a;
+    transition: border-color 0.15s;
+
+    &--running {
+        border-color: var(--btn-blue-color, #3b82f6);
+        background: rgba(59, 130, 246, 0.06);
+    }
+
+    &--done {
+        border-color: #2d6a4f;
+        background: rgba(45, 106, 79, 0.08);
+    }
+
+    &--error {
+        border-color: #7a1f1f;
+        background: rgba(122, 31, 31, 0.08);
+    }
+
+    &__icon {
+        font-size: 1.2rem;
+        flex-shrink: 0;
+        width: 1.6rem;
+        text-align: center;
+    }
+
+    &__body {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        flex: 1;
+        min-width: 0;
+    }
+
+    &__label {
+        font-size: 0.875rem;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    &__status {
+        font-size: 0.75rem;
+        color: #888;
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+
+        .process-item--done & {
+            color: #4caf50;
+        }
+
+        .process-item--error & {
+            color: #f66;
+        }
+
+        .process-item--running & {
+            color: var(--btn-blue-color, #3b82f6);
+        }
+    }
+
+    &__duration {
+        font-size: 0.7rem;
+        color: #666;
+        font-weight: normal;
+    }
+
+    &__nav-btn {
+        background: transparent;
+        border: 1.5px solid #444;
+        border-radius: 0.375rem;
+        color: #aaa;
+        font-size: 1.1rem;
+        line-height: 1;
+        padding: 0.3rem 0.55rem;
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: border-color 0.15s, color 0.15s;
+
+        &:hover {
+            border-color: var(--btn-blue-color, #3b82f6);
+            color: var(--btn-blue-color, #3b82f6);
+        }
+    }
+}
+
+// ── Clear button ─────────────────────────────────────────────────────────────
+
+.processes-clear-btn {
+    margin-top: 0.5rem;
+    background: transparent;
+    border: 1.5px solid #5a1f1f;
+    border-radius: 0.5rem;
+    color: #f66;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.6rem 1rem;
+    transition: background 0.15s;
+    width: 100%;
+
+    &:hover {
+        background: rgba(255, 100, 100, 0.08);
+    }
+}
+
+// ── Detail modal ─────────────────────────────────────────────────────────────
+
+.process-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: flex-end;
+    z-index: 200;
+}
+
+.process-modal {
+    background: #1c1c1c;
+    border-top: 1.5px solid #333;
+    border-radius: 1rem 1rem 0 0;
+    padding: 1.25rem 1rem 1.5rem;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-height: 80vh;
+    overflow-y: auto;
+
+    &__header {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+    }
+
+    &__icon {
+        font-size: 1.3rem;
+        flex-shrink: 0;
+    }
+
+    &__title {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: #ddd;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__rows {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    &__row {
+        display: flex;
+        gap: 0.75rem;
+        align-items: baseline;
+
+        &--result {
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+    }
+
+    &__key {
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #666;
+        flex-shrink: 0;
+        min-width: 5rem;
+    }
+
+    &__val {
+        font-size: 0.85rem;
+        color: #bbb;
+        word-break: break-all;
+
+        &--error {
+            color: #f66;
+        }
+    }
+
+    &__result {
+        font-size: 0.82rem;
+        color: #aaa;
+        background: #111;
+        border: 1px solid #2a2a2a;
+        border-radius: 0.4rem;
+        padding: 0.6rem 0.75rem;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 180px;
+        overflow-y: auto;
+    }
+
+    &__row--debug {
+        flex-direction: column;
+        gap: 0.35rem;
+    }
+
+    &__debug {
+        font-family: monospace;
+        font-size: 0.72rem;
+        color: #7ec8a0;
+        background: #0d1a12;
+        border: 1px solid #1a3a22;
+        border-radius: 0.4rem;
+        padding: 0.6rem 0.75rem;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 220px;
+        overflow-y: auto;
+        margin: 0;
+    }
+
+    &__close {
+        background: #2a2a2a;
+        border: 1px solid #3a3a3a;
+        border-radius: 0.5rem;
+        color: #ccc;
+        cursor: pointer;
+        font-size: 0.9rem;
+        font-weight: 600;
+        padding: 0.65rem;
+        transition: background 0.15s;
+        width: 100%;
+
+        &:hover {
+            background: #333;
+        }
+    }
+}
+
+// ── Spinning animation for running processes ──────────────────────────────────
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.process-spinner {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(59, 130, 246, 0.3);
+    border-top-color: var(--btn-blue-color, #3b82f6);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+}

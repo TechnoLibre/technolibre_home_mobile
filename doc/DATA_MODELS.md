@@ -245,6 +245,34 @@ interface VideoIntent {
 
 ---
 
+## ProcessRecord
+
+Enregistrement d'un processus de transcription ou de téléchargement de modèle, géré par `ProcessService`.
+
+```typescript
+type ProcessType   = "transcription" | "download";
+type ProcessStatus = "running" | "done" | "error";
+
+interface ProcessRecord {
+  id: string;                   // Identifiant généré : "${Date.now()}-${random}"
+  type: ProcessType;
+  status: ProcessStatus;
+  label: string;                // Nom du fichier audio ou du modèle
+  startedAt: Date;
+  completedAt: Date | null;
+  errorMessage: string | null;
+  noteId?: string;              // Transcription uniquement — note à naviguer
+  model?: string;               // Téléchargement uniquement — pour naviguer vers /options/transcription
+  percent?: number;             // Progression 0–100 ; non stocké en base
+  result?: string;              // Texte transcrit ou URL de téléchargement ; stocké en base
+  debugLog?: string[];          // Messages horodatés Java-level ; non persistés entre redémarrages
+}
+```
+
+Les processus encore en statut `"running"` lors du redémarrage de l'app sont automatiquement marqués `"error"` avec le message `"Interrompu (redémarrage)"`.
+
+---
+
 ## Schéma SQLite complet
 
 ```sql
@@ -317,6 +345,31 @@ CREATE TABLE reminders (
   trigger_at TEXT NOT NULL,
   created_at TEXT
 );
+
+-- Journal des processus (transcriptions et téléchargements de modèles)
+-- started_at et completed_at sont des timestamps Unix en millisecondes (INTEGER).
+-- debug_log est un tableau JSON de chaînes horodatées, ou NULL si aucun log.
+CREATE TABLE processes (
+  id            TEXT PRIMARY KEY,
+  type          TEXT NOT NULL,              -- "transcription" | "download"
+  status        TEXT NOT NULL DEFAULT 'running',  -- "running" | "done" | "error"
+  label         TEXT NOT NULL DEFAULT '',   -- nom de fichier ou du modèle
+  started_at    INTEGER NOT NULL,           -- Unix ms
+  completed_at  INTEGER,                    -- Unix ms, NULL si non terminé
+  error_message TEXT,
+  note_id       TEXT,                       -- transcription : note associée
+  model         TEXT,                       -- téléchargement : nom du modèle
+  result        TEXT,                       -- texte transcrit ou URL de téléchargement
+  debug_log     TEXT                        -- JSON array de messages horodatés
+);
 ```
 
 > Les colonnes `tags`, `entries`, `selected_sync_config_ids` et `sync_per_server_status` stockent du JSON sérialisé. La conversion est gérée par `DatabaseService`.
+
+### Migrations `processes`
+
+| Migration | Description |
+|-----------|-------------|
+| `addProcessesTable` | Crée la table `processes` avec toutes les colonnes de base sauf `result` et `debug_log`. |
+| `addProcessResultColumn` | Ajoute `result TEXT` (idempotente). |
+| `addProcessDebugLogColumn` | Ajoute `debug_log TEXT` (idempotente). |

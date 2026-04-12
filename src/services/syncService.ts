@@ -1,4 +1,4 @@
-import { CapacitorCookies } from "@capacitor/core";
+import { Capacitor, CapacitorCookies } from "@capacitor/core";
 import { RawHttp } from "../plugins/rawHttpPlugin";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "./databaseService";
@@ -617,17 +617,47 @@ export class SyncService {
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
   /**
-   * Makes a POST request via the RawHttp native plugin, which bypasses
-   * Android's CookieHandler so manually-set Cookie headers are preserved.
-   * Returns a response shape compatible with parseNativeResponse().
+   * Makes a POST request.
+   *
+   * On Android native: uses the RawHttp plugin, which bypasses Android's
+   * CookieHandler so manually-set Cookie headers are preserved on plain HTTP
+   * connections to IP addresses. If the plugin is absent (old APK), throws a
+   * clear error — fetch() cannot be used as a fallback on Android because the
+   * WebView blocks cross-origin requests (CORS) to Odoo servers.
+   *
+   * On web (dev mode): uses fetch() directly.
    */
   private async rawPost(
     url: string,
     headers: Record<string, string>,
     body: object
   ): Promise<{ status: number; headers: Record<string, string | string[]>; data: any }> {
-    const resp = await RawHttp.post({ url, headers, body: JSON.stringify(body) });
-    return { status: resp.status, headers: resp.headers, data: resp.data };
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const resp = await RawHttp.post({ url, headers, body: JSON.stringify(body) });
+        return { status: resp.status, headers: resp.headers, data: resp.data };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.toLowerCase().includes("not implement")) {
+          throw new Error(
+            "Le plugin HTTP natif (RawHttp) n'est pas disponible. " +
+            "Reconstruisez l'APK pour activer la synchronisation."
+          );
+        }
+        throw e;
+      }
+    }
+    // Web/dev path — fetch() works here (no Android WebView CORS restriction)
+    const resp = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const text = await resp.text();
+    const respHeaders: Record<string, string> = {};
+    // Optional chaining: test mocks may omit headers; real fetch() always has it.
+    resp.headers?.forEach?.((val: string, key: string) => { respHeaders[key] = val; });
+    return { status: resp.status, headers: respHeaders, data: text };
   }
 
   /** Ensures the URL has an http(s) scheme; defaults to https. */

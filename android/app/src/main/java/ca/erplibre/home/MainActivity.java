@@ -17,6 +17,9 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(RawHttpPlugin.class);
         registerPlugin(SshPlugin.class);
+        registerPlugin(WhisperPlugin.class);
+        registerPlugin(OcrPlugin.class);
+        registerPlugin(NetworkScanPlugin.class);
         super.onCreate(savedInstanceState);
         CastContext.getSharedInstance(this);
     }

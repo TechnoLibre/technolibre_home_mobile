@@ -14,6 +14,8 @@ import { ServersDeployComponent } from "../components/servers/deploy/servers_dep
 import { ServersSettingsComponent } from "../components/servers/settings/servers_settings_component";
 import { ServersWorkspaceComponent } from "../components/servers/workspace/servers_workspace_component";
 import { ServersResourcesComponent } from "../components/servers/resources/servers_resources_component";
+import { OptionsTranscriptionComponent } from "../components/options/transcription/options_transcription_component";
+import { OptionsProcessesComponent } from "../components/options/processes/options_processes_component";
 
 export interface Route {
 	pathname: string;
@@ -25,7 +27,7 @@ export const routes: Route[] = [
 	{ pathname: "/applications/edit/:url/:username", component: ApplicationsEditComponent },
 	{ pathname: "/applications/add", component: ApplicationsAddComponent },
 	{ pathname: "/applications", component: ApplicationsComponent },
-	{ pathname: "/servers/edit/:host/:username", component: ServersEditComponent },
+	{ pathname: "/servers/edit", component: ServersEditComponent },
 	{ pathname: "/servers/add", component: ServersAddComponent },
 	{ pathname: "/servers/settings/:host/:username", component: ServersSettingsComponent },
 	{ pathname: "/servers/workspace/:host/:username", component: ServersWorkspaceComponent },
@@ -37,6 +39,8 @@ export const routes: Route[] = [
 	{ pathname: "/intent/:type", component: IntentComponent },
 	{ pathname: "/options/database", component: OptionsDatabaseComponent },
 	{ pathname: "/options/erplibre", component: OptionsErplibreComponent },
+	{ pathname: "/options/transcription", component: OptionsTranscriptionComponent },
+	{ pathname: "/options/processes", component: OptionsProcessesComponent },
 	{ pathname: "/options", component: OptionsComponent },
 	{ pathname: "*", component: HomeComponent }
 ];

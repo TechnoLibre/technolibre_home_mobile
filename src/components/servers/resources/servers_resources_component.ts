@@ -13,9 +13,6 @@ import {
     parseNet, parseUptime, parseUsers, parseSensors,
 } from "../../../utils/serverResourceParsers";
 
-    return result;
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export class ServersResourcesComponent extends EnhancedComponent {

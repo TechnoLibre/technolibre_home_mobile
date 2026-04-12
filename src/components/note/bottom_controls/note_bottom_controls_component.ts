@@ -2,7 +2,6 @@ import { xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 
-import AddIcon from "../../../assets/icon/add-plus-square-svgrepo-com.svg";
 import AddDateIcon from "../../../assets/icon/date_edit.svg";
 import AddPhotoIcon from "../../../assets/icon/photo.svg";
 import AddVideoIcon from "../../../assets/icon/video_add.svg";
@@ -20,8 +19,8 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			href="#"
 			t-on-click.stop.prevent="props.addLocation"
 		>
-			<img src="${AddIcon}" />
 			<img src="${GlobeLocationIcon}" />
+			<span>Lieu</span>
 		</a>
 		<a
 			id="note__control__photo"
@@ -29,8 +28,8 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			href="#"
 			t-on-click.stop.prevent="props.addPhoto"
 		>
-			<img src="${AddIcon}" />
 			<img src="${AddPhotoIcon}" />
+			<span>Photo</span>
 		</a>
 		<a
 			id="note__control__video"
@@ -38,8 +37,8 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			href="#"
 			t-on-click.stop.prevent="props.addVideo"
 		>
-			<img src="${AddIcon}" />
 			<img src="${AddVideoIcon}" />
+			<span>Vidéo</span>
 		</a>
 		<a
 			id="note__control__audio"
@@ -47,8 +46,8 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			href="#"
 			t-on-click.stop.prevent="props.addAudio"
 		>
-			<img src="${AddIcon}" />
 			<img src="${AudioIcon}" />
+			<span>Audio</span>
 		</a>
 		<a
 			id="note__control__text"
@@ -56,8 +55,8 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			href="#"
 			t-on-click.stop.prevent="props.addText"
 		>
-			<img src="${AddIcon}" />
 			<img src="${TextIcon}" />
+			<span>Texte</span>
 		</a>
 		<a
 			id="note__control__date"
@@ -65,8 +64,8 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			href="#"
 			t-on-click.stop.prevent="props.addDateEntry"
 		>
-			<img src="${AddIcon}" />
 			<img src="${AddDateIcon}" />
+			<span>Date</span>
 		</a>
 	</section>
 </div>

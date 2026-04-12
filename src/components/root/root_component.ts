@@ -10,7 +10,6 @@ import { StorageConstants } from "../../constants/storage";
 import { StorageGetResult, StorageUtils } from "../../utils/storageUtils";
 
 import { ContentComponent } from "../content/content_component";
-import { IntentComponent } from "../intent/intent_component";
 import { NavbarComponent } from "../navbar/navbar_component";
 import { VideoCameraComponent } from "../video_camera/video_camera_component";
 
@@ -44,7 +43,6 @@ export class RootComponent extends EnhancedComponent {
 			<button class="sync-banner__btn" t-on-click="onSyncBannerSync">Sync</button>
 			<button class="sync-banner__close" t-on-click="onSyncBannerDismiss">✕</button>
 		</div>
-		<IntentComponent />
 		<VideoCameraComponent
 			t-if="state.isCameraOpen"
 			entryId="state.videoEntryId"
@@ -52,7 +50,7 @@ export class RootComponent extends EnhancedComponent {
 		<div id="video-player__wrapper"></div>
 	`;
 
-	static components = { ContentComponent, IntentComponent, NavbarComponent, VideoCameraComponent };
+	static components = { ContentComponent, NavbarComponent, VideoCameraComponent };
 
 	setup() {
 		this.state = useState({

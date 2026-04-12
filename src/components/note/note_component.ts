@@ -839,17 +839,65 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	private listenForEvents() {
-		const onAudio = this.setAudioRecording.bind(this);
-		const onVideo = this.setVideoRecording.bind(this);
-		const onPhoto = this.setPhoto.bind(this);
-		this.eventBus.addEventListener(Events.SET_AUDIO_RECORDING, onAudio);
-		this.eventBus.addEventListener(Events.SET_VIDEO_RECORDING, onVideo);
-		this.eventBus.addEventListener(Events.SET_PHOTO, onPhoto);
+		const onAudio          = this.setAudioRecording.bind(this);
+		const onVideo          = this.setVideoRecording.bind(this);
+		const onPhoto          = this.setPhoto.bind(this);
+		const onTranscription  = this.addTranscriptionText.bind(this);
+		const onSetTranscript  = this.setEntryTranscription.bind(this);
+		this.eventBus.addEventListener(Events.SET_AUDIO_RECORDING,    onAudio);
+		this.eventBus.addEventListener(Events.SET_VIDEO_RECORDING,    onVideo);
+		this.eventBus.addEventListener(Events.SET_PHOTO,              onPhoto);
+		this.eventBus.addEventListener(Events.ADD_TRANSCRIPTION_TEXT, onTranscription);
+		this.eventBus.addEventListener(Events.SET_ENTRY_TRANSCRIPTION, onSetTranscript);
 		onWillDestroy(() => {
-			this.eventBus.removeEventListener(Events.SET_AUDIO_RECORDING, onAudio);
-			this.eventBus.removeEventListener(Events.SET_VIDEO_RECORDING, onVideo);
-			this.eventBus.removeEventListener(Events.SET_PHOTO, onPhoto);
+			this.eventBus.removeEventListener(Events.SET_AUDIO_RECORDING,    onAudio);
+			this.eventBus.removeEventListener(Events.SET_VIDEO_RECORDING,    onVideo);
+			this.eventBus.removeEventListener(Events.SET_PHOTO,              onPhoto);
+			this.eventBus.removeEventListener(Events.ADD_TRANSCRIPTION_TEXT, onTranscription);
+			this.eventBus.removeEventListener(Events.SET_ENTRY_TRANSCRIPTION, onSetTranscript);
 		});
+	}
+
+	private addTranscriptionText(event: any) {
+		const { afterEntryId, text } = event?.detail ?? {};
+		if (!text) return;
+
+		const entries: NoteEntry[] = this.state.note.entries;
+		const newTextEntry = this.noteService.entry.getNewTextEntry();
+		(newTextEntry.params as NoteEntryTextParams).text = text;
+
+		if (afterEntryId) {
+			const idx = entries.findIndex(e => e.id === afterEntryId);
+			if (idx !== -1) {
+				entries.splice(idx + 1, 0, newTextEntry);
+				this.saveNoteData();
+				return;
+			}
+		}
+		// fallback: append at end
+		entries.push(newTextEntry);
+		this.saveNoteData();
+	}
+
+	private async setEntryTranscription(event: any) {
+		const { entryId, text } = event?.detail ?? {};
+		if (!entryId || text == null) return;
+
+		let entry: NoteEntry | undefined;
+		try {
+			entry = this.getEntry(entryId);
+		} catch (error: unknown) {
+			if (error instanceof Error) {
+				Dialog.alert({ message: error.message });
+			}
+			return;
+		}
+
+		if (!entry || (entry.type !== "audio" && entry.type !== "video")) return;
+
+		(entry.params as NoteEntryAudioParams | NoteEntryVideoParams).transcription = text;
+		await this.saveNoteData();
+		await this.getNote();
 	}
 
 	private async setPhoto(event: any) {

@@ -103,12 +103,9 @@ export class ServersEditComponent extends EnhancedComponent {
     static components = { HeadingComponent };
 
     async setup() {
-        const params = this.router.getRouteParams(
-            window.location.pathname,
-            "/servers/edit/:host/:username"
-        );
-        const host = decodeURIComponent(params.get("host") ?? "");
-        const username = decodeURIComponent(params.get("username") ?? "");
+        const params   = new URLSearchParams(window.location.search);
+        const host     = params.get("host")     ?? "";
+        const username = params.get("username") ?? "";
 
         this.state = useState({
             server: {

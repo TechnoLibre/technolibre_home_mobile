@@ -20,8 +20,13 @@ import { addSyncPerServerStatus } from "../services/migrations/addSyncPerServerS
 import { addServersTable } from "../services/migrations/addServersTable";
 import { addServerWorkspacesTable } from "../services/migrations/addServerWorkspacesTable";
 import { addNotePriority } from "../services/migrations/addNotePriority";
+import { addProcessesTable } from "../services/migrations/addProcessesTable";
+import { addProcessResultColumn } from "../services/migrations/addProcessResultColumn";
+import { addProcessDebugLogColumn } from "../services/migrations/addProcessDebugLogColumn";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
+import { TranscriptionService } from "../services/transcriptionService";
+import { ProcessService } from "../services/processService";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
 import type { FontFamily } from "../models/graphicPrefs";
 import { SyncService } from "../services/syncService";
@@ -139,6 +144,21 @@ async function startApp() {
 			description: "Ajout de la priorité (matrice d'Eisenhower) sur les notes",
 			run: addNotePriority,
 		},
+		{
+			version: 2026041104,
+			description: "Création de la table de l'historique des processus",
+			run: addProcessesTable,
+		},
+		{
+			version: 2026041105,
+			description: "Ajout de la colonne result sur la table des processus",
+			run: addProcessResultColumn,
+		},
+		{
+			version: 2026041106,
+			description: "Ajout de la colonne debug_log sur la table des processus",
+			run: addProcessDebugLogColumn,
+		},
 	]);
 
 	setBootStep("Chargement des préférences graphiques…");
@@ -160,6 +180,9 @@ async function startApp() {
 	const notificationService = new NotificationService(syncService, appService, eventBus);
 	const serverService = new ServerService(db);
 	const deploymentService = new DeploymentService(serverService);
+	const processService = new ProcessService(db);
+	await processService.initialize();
+	const transcriptionService = new TranscriptionService(db, processService);
 	notificationService.start();
 
 	// Re-schedule any reminders whose notification batch is expiring
@@ -167,7 +190,7 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService };
+	const env = { eventBus, router, appService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService };
 
 	setBootStep("Montage de l'interface…");
 	await mount(RootComponent, document.body, { env });

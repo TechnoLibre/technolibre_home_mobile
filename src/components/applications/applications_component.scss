@@ -91,6 +91,133 @@
 	gap: 0.5rem;
 }
 
+// ── Scan button ───────────────────────────────────────────────────────────────
+
+#applications-component #servers-scan {
+	background-color: #1565c0;
+	border: none;
+	border-radius: 0.25em;
+	box-shadow: 0px 4px 4px 0 rgba(0, 0, 0, 0.35);
+	color: var(--text);
+	cursor: pointer;
+	outline: none;
+	padding: 0.75em 1em;
+	transition: background-color 150ms ease-in-out;
+	white-space: nowrap;
+	&:not(:disabled):hover { background-color: #1976d2; }
+	&:disabled { opacity: 0.7; cursor: not-allowed; }
+}
+
+#applications-component #servers-scan-cancel {
+	background-color: #3a3a3a;
+	border: 1px solid #555;
+	border-radius: 0.25em;
+	color: var(--text-greyed-out);
+	cursor: pointer;
+	outline: none;
+	padding: 0.75em 1em;
+	transition: background-color 150ms ease-in-out, color 150ms ease-in-out;
+	white-space: nowrap;
+	&:hover { background-color: #444; color: var(--text); }
+}
+
+// ── Scan results panel ────────────────────────────────────────────────────────
+
+#applications-component #servers-scan-results {
+	margin: 0.75rem 0 0;
+	border: 1.5px solid #1565c0;
+	border-radius: 0.5rem;
+	background: #080d18;
+	overflow: hidden;
+}
+
+#applications-component .scan-results__header {
+	@include mixins.flex(center, space-between);
+	padding: 0.5rem 0.75rem;
+	background: rgba(21, 101, 192, 0.18);
+	font-size: 0.82rem;
+	font-weight: 600;
+	color: #90caf9;
+}
+
+#applications-component .scan-results__close {
+	background: none;
+	border: none;
+	color: #666;
+	cursor: pointer;
+	font-size: 1rem;
+	line-height: 1;
+	padding: 0 0.2rem;
+	transition: color 100ms;
+	&:hover { color: #fff; }
+}
+
+#applications-component .scan-host {
+	@include mixins.flex(center, space-between);
+	gap: 0.75rem;
+	padding: 0.55rem 0.75rem;
+	border-top: 1px solid #111827;
+
+	&__info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+		flex: 1;
+		min-width: 0;
+	}
+
+	&__ip {
+		font-family: monospace;
+		font-size: 0.9rem;
+		font-weight: 700;
+	}
+
+	&__hostname {
+		color: #8ab4d4;
+		font-size: 0.8rem;
+		font-weight: 500;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	&__banner {
+		font-size: 0.7rem;
+		color: #5a7a9a;
+		font-family: monospace;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	&__btn {
+		background: #2e7d32;
+		border: none;
+		border-radius: 0.25rem;
+		color: #fff;
+		cursor: pointer;
+		flex-shrink: 0;
+		font-size: 0.8rem;
+		font-weight: 700;
+		padding: 0.4rem 0.75rem;
+		transition: background 150ms;
+		white-space: nowrap;
+		&:hover { background: #388e3c; }
+	}
+
+	&__tag {
+		flex-shrink: 0;
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.03em;
+		padding: 0.25rem 0.5rem;
+		border-radius: 0.25rem;
+		white-space: nowrap;
+		&--added  { background: rgba(46, 125, 50, 0.18); color: #81c784; }
+		&--exists { background: rgba(255,255,255,0.04); color: #666; }
+	}
+}
+
 #applications-component #servers-add {
 	background-color: #2e7d32;
 	border: none;

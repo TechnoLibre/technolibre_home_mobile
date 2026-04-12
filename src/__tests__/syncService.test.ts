@@ -27,14 +27,17 @@ function makeNote(overrides: Partial<Note> = {}): Note {
   return { ...BASE_NOTE, ...overrides };
 }
 
-function mockFetch(responseBody: object, status = 200) {
+function mockFetch(responseBody: object, status = 200, extraHeaders: Record<string, string> = {}) {
   // The CapacitorHttp mock in @capacitor/core delegates to fetch,
   // then parses the body as JSON. So we still mock global.fetch here.
   const bodyText = JSON.stringify(responseBody);
+  // Provide a Headers-like forEach so rawPost()'s fetch fallback path doesn't crash.
+  const headerMap = new Map(Object.entries(extraHeaders));
   return vi.fn().mockResolvedValue({
     ok: status >= 200 && status < 300,
     status,
     text: async () => bodyText,
+    headers: { forEach: (cb: (value: string, key: string) => void) => headerMap.forEach((v, k) => cb(v, k)) },
   } as unknown as Response);
 }
 
