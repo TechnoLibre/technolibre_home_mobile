@@ -3,13 +3,99 @@ import { Capacitor } from "@capacitor/core";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { HeadingComponent } from "../../heading/heading_component";
 import type { WhisperModel } from "../../../plugins/whisperPlugin";
-import { MODEL_LABELS } from "../../../services/transcriptionService";
 
 interface ModelDef {
-    key: WhisperModel;
-    label: string;
-    size: string;
-    desc: string;
+    key:          WhisperModel;
+    name:         string;
+    size:         string;
+    ram:          string;
+    speedDots:    number;   // 1–5
+    speedLabel:   string;
+    qualityDots:  number;   // 1–5
+    qualityLabel: string;
+    desc:         string;
+    recommended?: boolean;
+    heavy?:       boolean;  // warn about RAM on low-end devices
+    englishOnly?: boolean;  // warn that model does not support French
+}
+
+const ALL_MODELS: ModelDef[] = [
+    {
+        key:          "tiny",
+        name:         "Tiny",
+        size:         "~75 Mo",
+        ram:          "~125 Mo",
+        speedDots:    5,
+        speedLabel:   "Très rapide",
+        qualityDots:  3,
+        qualityLabel: "Correcte",
+        desc:         "Idéal pour tester ou transcrire du français clair et articulé.",
+    },
+    {
+        key:          "base",
+        name:         "Base",
+        size:         "~142 Mo",
+        ram:          "~210 Mo",
+        speedDots:    4,
+        speedLabel:   "Rapide",
+        qualityDots:  4,
+        qualityLabel: "Bonne",
+        desc:         "Meilleur équilibre vitesse / précision pour la majorité des usages.",
+        recommended:  true,
+    },
+    {
+        key:          "small",
+        name:         "Small",
+        size:         "~244 Mo",
+        ram:          "~440 Mo",
+        speedDots:    3,
+        speedLabel:   "Moyen",
+        qualityDots:  4,
+        qualityLabel: "Bonne",
+        desc:         "Gère mieux les accents et le bruit de fond que Base.",
+    },
+    {
+        key:          "medium",
+        name:         "Medium",
+        size:         "~769 Mo",
+        ram:          "~1,5 Go",
+        speedDots:    2,
+        speedLabel:   "Lent",
+        qualityDots:  5,
+        qualityLabel: "Excellente",
+        desc:         "Très haute précision pour du contenu technique ou des accents marqués.",
+        heavy:        true,
+    },
+    {
+        key:          "large-v3-turbo",
+        name:         "Large-v3-turbo",
+        size:         "~874 Mo",
+        ram:          "~1,6 Go",
+        speedDots:    3,
+        speedLabel:   "Moyen",
+        qualityDots:  5,
+        qualityLabel: "Excellente",
+        desc:         "Meilleure qualité disponible en local. Plus rapide que Medium pour une précision identique.",
+        heavy:        true,
+    },
+    {
+        key:          "distil-large-v3",
+        name:         "Distil-large-v3",
+        size:         "~756 Mo",
+        ram:          "~1,2 Go",
+        speedDots:    4,
+        speedLabel:   "Rapide",
+        qualityDots:  1,
+        qualityLabel: "Anglais seul",
+        desc:         "⚠ Anglais uniquement — ne transcrit pas le français. Optimisé pour l'anglais avec une vitesse élevée.",
+        heavy:        true,
+        englishOnly:  true,
+    },
+];
+
+/** Render n filled + (max-n) empty dots. */
+function dots(n: number, max: number, filled: string, empty: string): string {
+    return filled.repeat(n) + empty.repeat(max - n);
 }
 
 export class OptionsTranscriptionComponent extends EnhancedComponent {
@@ -31,8 +117,8 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                         <div class="transcription-row__label">
                             <span class="transcription-row__title">🎙️ Transcription audio</span>
                             <span class="transcription-row__desc">
-                                Convertit les enregistrements audio en texte (Whisper,
-                                entièrement local — aucun serveur, aucun abonnement).
+                                Convertit les enregistrements audio en texte via Whisper —
+                                entièrement local, aucun serveur, aucun abonnement.
                             </span>
                         </div>
                         <div class="transcription-toggle-wrap">
@@ -57,24 +143,69 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                         <div class="transcription-section">
                             <p class="transcription-section__title">Modèle Whisper</p>
                             <p class="transcription-section__hint">
-                                Sélectionnez un modèle, puis téléchargez-le pour activer la transcription.
+                                Sélectionnez un modèle puis téléchargez-le pour activer la transcription.
                             </p>
 
                             <t t-foreach="models" t-as="m" t-key="m.key">
                                 <div
                                     class="transcription-model"
-                                    t-att-class="{ 'transcription-model--active': state.selectedModel === m.key }"
+                                    t-att-class="{
+                                        'transcription-model--active':       state.selectedModel === m.key,
+                                        'transcription-model--recommended':  m.recommended,
+                                        'transcription-model--english-only': m.englishOnly,
+                                    }"
                                     t-att-data-model-key="m.key"
                                     t-on-click="onModelCardClick"
                                 >
                                     <div class="transcription-model__radio" />
+
                                     <div class="transcription-model__info">
+
+                                        <!-- Header: name + badges -->
                                         <div class="transcription-model__header">
-                                            <span class="transcription-model__name" t-esc="m.label" />
+                                            <span class="transcription-model__name" t-esc="m.name" />
+                                            <span t-if="m.recommended"
+                                                  class="transcription-model__badge transcription-model__badge--recommended">
+                                                ★ Recommandé
+                                            </span>
+                                            <span t-if="m.englishOnly"
+                                                  class="transcription-model__badge transcription-model__badge--english-only">
+                                                🇬🇧 Anglais uniquement
+                                            </span>
                                             <span class="transcription-model__size" t-esc="m.size" />
                                         </div>
+
+                                        <!-- Metrics: speed + quality -->
+                                        <div class="transcription-model__metrics">
+                                            <span class="transcription-model__metric">
+                                                <span class="transcription-model__metric-label">Vitesse</span>
+                                                <span class="transcription-model__metric-dots"
+                                                      t-esc="speedDots(m)" />
+                                                <span class="transcription-model__metric-text"
+                                                      t-esc="m.speedLabel" />
+                                            </span>
+                                            <span class="transcription-model__metric">
+                                                <span class="transcription-model__metric-label">Qualité FR</span>
+                                                <span class="transcription-model__metric-dots transcription-model__metric-dots--quality"
+                                                      t-esc="qualityDots(m)" />
+                                                <span class="transcription-model__metric-text"
+                                                      t-esc="m.qualityLabel" />
+                                            </span>
+                                        </div>
+
+                                        <!-- RAM + heavy warning -->
+                                        <div class="transcription-model__meta">
+                                            <span class="transcription-model__ram">RAM : <t t-esc="m.ram"/></span>
+                                            <span t-if="m.heavy" class="transcription-model__heavy">
+                                                ⚠ Appareil récent conseillé
+                                            </span>
+                                        </div>
+
+                                        <!-- Description -->
                                         <span class="transcription-model__desc" t-esc="m.desc" />
-                                        <t t-if="m.key === 'tiny' ? state.tinyDownloaded : state.smallDownloaded">
+
+                                        <!-- Download status -->
+                                        <t t-if="state.downloadedModels[m.key]">
                                             <span class="transcription-model__badge transcription-model__badge--ok">
                                                 ✓ Téléchargé
                                             </span>
@@ -84,6 +215,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                                 À télécharger
                                             </span>
                                         </t>
+
                                     </div>
                                 </div>
                             </t>
@@ -118,7 +250,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                         <div t-if="isCurrentModelDownloaded" class="transcription-ready">
                             <p>
                                 ✓ Modèle prêt. Le bouton&amp;nbsp;<strong>T</strong>&amp;nbsp;
-                                apparaîtra sur vos enregistrements audio pour les transcrire.
+                                apparaîtra sur vos enregistrements pour les transcrire.
                             </p>
                             <button class="transcription-delete__btn"
                                     t-att-disabled="state.isDeleting"
@@ -138,33 +270,27 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
 
     static components = { HeadingComponent };
 
-    models: ModelDef[] = [
-        {
-            key:   "tiny",
-            label: MODEL_LABELS.tiny,
-            size:  "~75 Mo",
-            desc:  "Rapide — précision correcte pour du français clair",
-        },
-        {
-            key:   "small",
-            label: MODEL_LABELS.small,
-            size:  "~244 Mo",
-            desc:  "Plus lent — meilleure précision, accents et bruit de fond",
-        },
-    ];
+    models: ModelDef[] = ALL_MODELS;
 
     setup() {
         this.state = useState({
-            enabled:         false,
-            selectedModel:   "tiny" as WhisperModel,
-            tinyDownloaded:  false,
-            smallDownloaded: false,
-            isDownloading:   false,
-            downloadPercent: 0,
-            downloadError:   "",
-            isDeleting:      false,
-            deleteError:     "",
+            enabled:          false,
+            selectedModel:    "tiny" as WhisperModel,
+            downloadedModels: {
+                tiny:              false,
+                base:              false,
+                small:             false,
+                medium:            false,
+                "large-v3-turbo":  false,
+                "distil-large-v3": false,
+            } as Record<WhisperModel, boolean>,
+            isDownloading:    false,
+            downloadPercent:  0,
+            downloadError:    "",
+            isDeleting:       false,
+            deleteError:      "",
         });
+
         let unsubscribe: (() => void) | null = null;
 
         onMounted(async () => {
@@ -198,9 +324,15 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
     }
 
     get isCurrentModelDownloaded(): boolean {
-        return this.state.selectedModel === "tiny"
-            ? this.state.tinyDownloaded
-            : this.state.smallDownloaded;
+        return this.state.downloadedModels[this.state.selectedModel] ?? false;
+    }
+
+    speedDots(m: ModelDef): string {
+        return dots(m.speedDots, 5, "⚡", "·");
+    }
+
+    qualityDots(m: ModelDef): string {
+        return dots(m.qualityDots, 5, "★", "☆");
     }
 
     private async loadSettings() {
@@ -210,8 +342,10 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
     }
 
     private async refreshModelStatus() {
-        this.state.tinyDownloaded  = await this.transcriptionService.isModelDownloaded("tiny");
-        this.state.smallDownloaded = await this.transcriptionService.isModelDownloaded("small");
+        for (const m of ALL_MODELS) {
+            this.state.downloadedModels[m.key] =
+                await this.transcriptionService.isModelDownloaded(m.key);
+        }
     }
 
     async onToggleEnabled() {
