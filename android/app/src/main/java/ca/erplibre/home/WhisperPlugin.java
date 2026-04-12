@@ -63,7 +63,7 @@ public class WhisperPlugin extends Plugin {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Override
-    protected void load() {
+    public void load() {
         instance = this;
         createNotificationChannel();
     }
@@ -419,6 +419,11 @@ public class WhisperPlugin extends Plugin {
     }
 
     // ─── Callbacks from WhisperDownloadService ────────────────────────────────
+
+    /** Public bridge so WhisperDownloadService can emit events (notifyListeners is protected). */
+    public void notifyDownloadProgress(JSObject evt) {
+        notifyListeners("downloadProgress", evt);
+    }
 
     /** Called by WhisperDownloadService on the service thread → dispatches on UI thread. */
     void onForegroundDownloadComplete(String path) {

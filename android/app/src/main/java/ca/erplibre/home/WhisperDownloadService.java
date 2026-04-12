@@ -190,7 +190,7 @@ public class WhisperDownloadService extends Service {
         evt.put("ratio",    ratio);
         evt.put("received", received);
         evt.put("total",    total);
-        plugin.notifyListeners("downloadProgress", evt);
+        plugin.notifyDownloadProgress(evt);
     }
 
     private void notifyComplete(String path) {
