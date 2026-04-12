@@ -17,4 +17,5 @@ export const Events: Record<string, string> = {
 	ADD_TRANSCRIPTION_TEXT: "add_transcription_text",
 	SET_ENTRY_TRANSCRIPTION: "set_entry_transcription",
 	NOTE_TAGS_UPDATED: "note_tags_updated",
+	TAGS_UPDATED: "tags_updated",
 }

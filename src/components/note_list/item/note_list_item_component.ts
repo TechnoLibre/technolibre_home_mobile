@@ -15,7 +15,7 @@ export class NotesItemComponent extends EnhancedComponent {
 			t-att-data-id="props.note.id"
 			t-att-class="{
 				'notes-item--done': props.note.done,
-				'has-tags': props.note.tags.length !== 0,
+				'has-tags': resolvedTags().length !== 0,
 				'notes-item--priority-1': props.note.priority === 1,
 				'notes-item--priority-2': props.note.priority === 2,
 				'notes-item--priority-3': props.note.priority === 3,
@@ -26,13 +26,14 @@ export class NotesItemComponent extends EnhancedComponent {
 			<NoteListItemHandleComponent
 				editMode="props.editMode"
 			/>
+			<t t-set="resolvedTagList" t-value="resolvedTags()" />
 			<div
 				class="notes-item__tags"
-				t-if="props.note.tags.length !== 0"
+				t-if="resolvedTagList.length !== 0"
 				t-on-click.stop.prevent=""
 			>
 				<div
-					t-foreach="resolvedTags()"
+					t-foreach="resolvedTagList"
 					t-as="rt"
 					t-key="rt.id"
 					class="notes-item__tag"

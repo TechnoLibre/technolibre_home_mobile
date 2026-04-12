@@ -12,6 +12,8 @@ interface TagManagerState {
     newColor: string;
     newParentId: string;
     saving: boolean;
+    editingTagId: string | null;
+    editingColor: string;
 }
 
 export class TagManagerComponent extends EnhancedComponent {
@@ -63,16 +65,26 @@ export class TagManagerComponent extends EnhancedComponent {
                     <!-- Available (unapplied) tags -->
                     <section id="tag-manager__content">
                         <div class="tag-manager__chips">
-                            <button
+                            <span
                                 t-foreach="getUnappliedTags()"
                                 t-as="tag"
                                 t-key="tag.id"
-                                class="tag-manager__chip tag-manager__chip--available"
-                                t-att-style="'color:' + tag.color + ';border-color:' + tag.color"
-                                t-on-click.stop.prevent="() => this.applyTag(tag.id)"
+                                class="tag-manager__chip-group"
                             >
-                                <span t-esc="getTagLabel(tag)" />
-                            </button>
+                                <button
+                                    class="tag-manager__chip tag-manager__chip--available"
+                                    t-att-style="'color:' + tag.color + ';border-color:' + tag.color"
+                                    t-on-click.stop.prevent="() => this.applyTag(tag.id)"
+                                >
+                                    <span t-esc="getTagLabel(tag)" />
+                                </button>
+                                <button
+                                    class="tag-manager__chip-edit-btn"
+                                    t-att-style="'color:' + tag.color"
+                                    t-on-click.stop.prevent="() => this.startEditTag(tag)"
+                                    title="Modifier la couleur"
+                                >✎</button>
+                            </span>
                         </div>
                         <p
                             t-if="getUnappliedTags().length === 0 and getAppliedTags().length === 0 and state.search === ''"
@@ -80,6 +92,49 @@ export class TagManagerComponent extends EnhancedComponent {
                         >
                             Aucun tag. Tapez un nom pour en créer un.
                         </p>
+                    </section>
+
+                    <!-- Edit tag color form -->
+                    <section id="tag-manager__edit-form" t-if="state.editingTagId">
+                        <t t-set="editTag" t-value="getEditingTag()" />
+                        <p class="tag-manager__section-label">
+                            Modifier « <t t-esc="editTag and editTag.name or ''" /> »
+                        </p>
+                        <div class="tag-manager__color-picker">
+                            <div class="tag-manager__color-swatches">
+                                <button
+                                    t-foreach="getPresetColors()"
+                                    t-as="c"
+                                    t-key="c"
+                                    type="button"
+                                    class="tag-manager__color-swatch"
+                                    t-att-style="'background-color:' + c"
+                                    t-att-class="{ 'tag-manager__color-swatch--selected': state.editingColor === c }"
+                                    t-on-click.stop.prevent="() => this.selectEditColor(c)"
+                                />
+                            </div>
+                            <div class="tag-manager__color-hex-row">
+                                <div class="tag-manager__color-preview" t-att-style="'background-color:' + state.editingColor" />
+                                <input
+                                    type="text"
+                                    class="tag-manager__color-hex-input"
+                                    placeholder="#6b7280"
+                                    t-model="state.editingColor"
+                                />
+                            </div>
+                        </div>
+                        <div class="tag-manager__edit-controls">
+                            <a
+                                class="tag-manager__action"
+                                href="#"
+                                t-on-click.stop.prevent="saveTagColor"
+                            >Enregistrer</a>
+                            <a
+                                class="tag-manager__action tag-manager__action--close"
+                                href="#"
+                                t-on-click.stop.prevent="cancelEditTag"
+                            >Annuler</a>
+                        </div>
                     </section>
 
                     <!-- Create form (name from search field, no exact match) -->
@@ -156,6 +211,8 @@ export class TagManagerComponent extends EnhancedComponent {
             newColor: "#6b7280",
             newParentId: "",
             saving: false,
+            editingTagId: null,
+            editingColor: "#6b7280",
         });
         onMounted(() => {
             this.eventBus.addEventListener(Events.TAG_MANAGER, this.onTagManagerEvent.bind(this));
@@ -169,6 +226,8 @@ export class TagManagerComponent extends EnhancedComponent {
         this.state.newColor = "#6b7280";
         this.state.newParentId = "";
         this.state.saving = false;
+        this.state.editingTagId = null;
+        this.state.editingColor = "#6b7280";
 
         const allTags = await this.tagService.getAllTags();
         this.state.allTags = allTags;
@@ -221,6 +280,36 @@ export class TagManagerComponent extends EnhancedComponent {
         if (!tag.parentId) return tag.name;
         const parent = this.state.allTags.find((t) => t.id === tag.parentId);
         return parent ? `${parent.name} › ${tag.name}` : tag.name;
+    }
+
+    getEditingTag(): Tag | undefined {
+        return this.state.allTags.find((t) => t.id === this.state.editingTagId);
+    }
+
+    startEditTag(tag: Tag) {
+        this.state.editingTagId = tag.id;
+        this.state.editingColor = tag.color;
+    }
+
+    cancelEditTag() {
+        this.state.editingTagId = null;
+    }
+
+    async saveTagColor() {
+        if (!this.state.editingTagId) return;
+        const tag = this.getEditingTag();
+        if (!tag) return;
+        await this.tagService.updateTag(this.state.editingTagId, {
+            ...tag,
+            color: this.state.editingColor,
+        });
+        this.state.allTags = await this.tagService.getAllTags();
+        this.state.editingTagId = null;
+        this.eventBus.trigger(Events.TAGS_UPDATED, {});
+    }
+
+    selectEditColor(color: string) {
+        this.state.editingColor = color;
     }
 
     getPresetColors(): string[] {

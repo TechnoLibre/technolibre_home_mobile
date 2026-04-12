@@ -130,9 +130,12 @@ export class NoteListComponent extends EnhancedComponent {
 			tagMap: {} as Record<string, Tag>,
 		});
 		onMounted(this.onMounted.bind(this));
-		this.getNotes();
-		this.getNoteSyncCounts();
-		this.getTags();
+		// Load tags first so tagMap is populated before notes render
+		this.getTags().then(() => {
+			this.getNotes();
+			this.getNoteSyncCounts();
+		});
+		this.eventBus.addEventListener(Events.TAGS_UPDATED, () => this.getTags());
 	}
 
 	private onMounted() {

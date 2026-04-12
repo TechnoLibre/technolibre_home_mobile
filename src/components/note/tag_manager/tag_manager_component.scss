@@ -18,9 +18,10 @@
         "applied"
         "top-controls"
         "content"
+        "edit-form"
         "create-form"
         "bottom-controls";
-    grid-template-rows: auto auto auto 1fr auto auto;
+    grid-template-rows: auto auto auto 1fr auto auto auto;
     max-height: 36rem;
 }
 
@@ -79,12 +80,47 @@
     text-transform: uppercase;
 }
 
+/* ── Edit form ───────────────────────────────────────── */
+
+#tag-manager__edit-form {
+    grid-area: edit-form;
+}
+
+.tag-manager__edit-controls {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
 /* ── Tag chips ───────────────────────────────────────── */
 
 .tag-manager__chips {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
+}
+
+.tag-manager__chip-group {
+    align-items: center;
+    display: inline-flex;
+    gap: 0.2rem;
+}
+
+.tag-manager__chip-edit-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.9rem;
+    line-height: 1;
+    opacity: 0.4;
+    outline: none;
+    padding: 0.1rem 0.2rem;
+    transition: opacity 0.15s;
+
+    &:hover,
+    &:active {
+        opacity: 1;
+    }
 }
 
 .tag-manager__chip {
