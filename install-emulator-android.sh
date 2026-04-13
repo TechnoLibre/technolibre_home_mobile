@@ -45,6 +45,7 @@ sudo apt-get install -y \
     libpulse0 \
     libgl1 \
     libx11-6 \
+    libx11-xcb1 \
     libxext6 \
     libxrender1 \
     libxtst6 \

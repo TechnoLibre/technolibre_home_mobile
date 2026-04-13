@@ -72,6 +72,14 @@ export ANDROID_HOME
 export ANDROID_AVD_HOME="$HOME/.android/avd"
 export PATH="$PATH:$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools"
 
+# --- Pre-create ini files to suppress harmless first-run warnings ---
+mkdir -p "$HOME/.android"
+touch "$HOME/.android/emu-update-last-check.ini" 2>/dev/null || true
+mkdir -p "$HOME/.android/avd/${AVD_NAME}.avd" 2>/dev/null || true
+if [ ! -f "$HOME/.android/avd/${AVD_NAME}.avd/quickbootChoice.ini" ]; then
+    echo "saveOnExit = yes" > "$HOME/.android/avd/${AVD_NAME}.avd/quickbootChoice.ini"
+fi
+
 # --- Check if emulator already running ---
 if "$ADB" devices | grep -q "emulator-"; then
     echo "==> Emulator already running:"
@@ -80,16 +88,19 @@ if "$ADB" devices | grep -q "emulator-"; then
 else
     # --- Start emulator ---
     echo "==> Starting AVD '${AVD_NAME}' in headless mode..."
+    EMULATOR_LOG="/tmp/emulator-${AVD_NAME}.log"
     "$EMULATOR" \
         -avd "$AVD_NAME" \
         -no-window \
         -no-audio \
         -no-boot-anim \
+        -no-snapshot-load \
         -gpu swiftshader_indirect \
         -memory 2048 \
+        > "$EMULATOR_LOG" 2>&1 \
         &
     EMULATOR_PID=$!
-    echo "    Emulator PID: $EMULATOR_PID"
+    echo "    Emulator PID: $EMULATOR_PID (log: $EMULATOR_LOG)"
 
     # --- Wait for boot ---
     echo ""
