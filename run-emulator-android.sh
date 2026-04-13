@@ -4,6 +4,18 @@
 
 set -e
 
+# --- KVM group activation ---
+# User may be in the kvm group in /etc/group but the current session
+# was started before the group was added (install-emulator-android.sh ran
+# adduser). Re-exec via 'sg kvm' to activate it without logging out.
+if ! id -nG | grep -qw kvm; then
+    if grep -qP "^kvm:[^:]*:[^:]*:.*\b${USER}\b" /etc/group 2>/dev/null; then
+        echo "==> KVM group found in /etc/group but not active in this session."
+        echo "    Re-launching with 'sg kvm' to activate it..."
+        exec sg kvm -c "\"$0\" $*"
+    fi
+fi
+
 ANDROID_HOME="${ANDROID_HOME:-$HOME/android}"
 ADB="$ANDROID_HOME/platform-tools/adb"
 EMULATOR="$ANDROID_HOME/emulator/emulator"
