@@ -1,6 +1,7 @@
 #!/bin/bash
-# Take a screenshot of the running web app using Playwright + Firefox (headless)
-# Works on a Linux server with no display (DISPLAY not required)
+# Take a screenshot of the running web app using Selenium + Firefox (headless)
+# Stack: Selenium WebDriver (Apache 2.0) + Firefox (MPL 2.0) + geckodriver (MPL 2.0)
+# No Microsoft, no Google — W3C WebDriver standard.
 #
 # Prerequisites: run-web.sh must be running in another terminal first
 #
@@ -8,7 +9,7 @@
 #   ./screenshot-web.sh                        # screenshot / (home)
 #   ./screenshot-web.sh --url /notes           # specific route
 #   ./screenshot-web.sh --url / --out home.png # custom output file
-#   ./screenshot-web.sh --install              # only install Playwright + Firefox
+#   ./screenshot-web.sh --install              # only install dependencies
 
 set -e
 
@@ -16,27 +17,24 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_URL="http://localhost:5173"
 ROUTE="/"
 OUT_DIR="$SCRIPT_DIR/screenshots"
-BROWSER="firefox"
 INSTALL_ONLY=false
 WAIT_MS=2000
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --url)      ROUTE="$2";        shift 2 ;;
-        --out)      CUSTOM_OUT="$2";   shift 2 ;;
-        --port)     BASE_URL="http://localhost:$2"; shift 2 ;;
-        --wait)     WAIT_MS="$2";      shift 2 ;;
-        --chromium) BROWSER="chromium"; shift ;;
-        --install)  INSTALL_ONLY=true;  shift ;;
+        --url)     ROUTE="$2";       shift 2 ;;
+        --out)     CUSTOM_OUT="$2";  shift 2 ;;
+        --port)    BASE_URL="http://localhost:$2"; shift 2 ;;
+        --wait)    WAIT_MS="$2";     shift 2 ;;
+        --install) INSTALL_ONLY=true; shift ;;
         --help|-h)
-            echo "Usage: $0 [--url ROUTE] [--out FILE] [--port PORT] [--wait MS] [--chromium]"
+            echo "Usage: $0 [--url ROUTE] [--out FILE] [--port PORT] [--wait MS]"
             echo ""
             echo "  --url ROUTE    Route to screenshot (default: /)"
             echo "  --out FILE     Output PNG path (default: screenshots/<route>.png)"
             echo "  --port PORT    Dev server port (default: 5173)"
             echo "  --wait MS      Wait for JS render in ms (default: 2000)"
-            echo "  --chromium     Use Chromium instead of Firefox"
-            echo "  --install      Only install Playwright browser, then exit"
+            echo "  --install      Only install dependencies, then exit"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -45,31 +43,37 @@ done
 
 cd "$SCRIPT_DIR"
 
-# --- Install Playwright as local devDep if needed ---
-if ! node -e "require('playwright')" 2>/dev/null; then
-    echo "==> Installing playwright locally..."
-    npm install --save-dev playwright
+# --- Step 1: Firefox ---
+if ! which firefox > /dev/null 2>&1; then
+    echo "==> Installing Firefox (Mozilla MPL 2.0)..."
+    # Ubuntu 24.04: firefox snap wrapper → real deb via PPA for headless use
+    sudo add-apt-repository -y ppa:mozillateam/ppa
+    echo 'Package: *
+Pin: release o=LP-PPA-mozillateam
+Pin-Priority: 1001' | sudo tee /etc/apt/preferences.d/mozilla-firefox > /dev/null
+    sudo apt-get update -q
+    sudo apt-get install -y firefox
+    echo "    Firefox installed: $(firefox --version)"
 fi
 
-# --- Install browser binary if needed ---
-PLAYWRIGHT_CACHE="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
-BROWSER_BIN_FOUND=false
-[ -d "$PLAYWRIGHT_CACHE" ] && ls "$PLAYWRIGHT_CACHE/${BROWSER}-"* &>/dev/null && BROWSER_BIN_FOUND=true
-
-if [ "$BROWSER_BIN_FOUND" = false ]; then
-    echo "==> Installing Playwright ${BROWSER} binary (~300 MB, first time only)..."
-    # System deps for headless Firefox on Ubuntu 24.04
-    sudo apt-get install -y \
-        libgtk-3-0 libdbus-glib-1-2 libxt6 \
-        libasound2t64 2>/dev/null || \
-    sudo apt-get install -y \
-        libgtk-3-0 libdbus-glib-1-2 libxt6 \
-        libasound2 2>/dev/null || true
-    npx playwright install "$BROWSER"
-    echo "    Done."
+# --- Step 2: geckodriver (Mozilla MPL 2.0) ---
+if ! which geckodriver > /dev/null 2>&1; then
+    echo "==> Installing geckodriver (Mozilla MPL 2.0)..."
+    GECKO_VER=$(curl -s https://api.github.com/repos/mozilla/geckodriver/releases/latest \
+        | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    GECKO_URL="https://github.com/mozilla/geckodriver/releases/download/v${GECKO_VER}/geckodriver-v${GECKO_VER}-linux64.tar.gz"
+    curl -L "$GECKO_URL" | sudo tar -xz -C /usr/local/bin/
+    sudo chmod +x /usr/local/bin/geckodriver
+    echo "    geckodriver installed: $(geckodriver --version | head -1)"
 fi
 
-$INSTALL_ONLY && { echo "Playwright $BROWSER ready."; exit 0; }
+# --- Step 3: selenium-webdriver npm package (Apache 2.0) ---
+if ! node -e "require('selenium-webdriver')" 2>/dev/null; then
+    echo "==> Installing selenium-webdriver (Apache 2.0)..."
+    npm install --save-dev selenium-webdriver
+fi
+
+$INSTALL_ONLY && { echo "All dependencies installed."; exit 0; }
 
 # --- Check server is reachable ---
 if ! curl -sf "${BASE_URL}/" > /dev/null 2>&1; then
@@ -84,47 +88,55 @@ SAFE_ROUTE="${SAFE_ROUTE:-home}"
 mkdir -p "$OUT_DIR"
 OUT_FILE="${CUSTOM_OUT:-$OUT_DIR/${SAFE_ROUTE}.png}"
 
-echo "==> Screenshotting ${BASE_URL}${ROUTE} with ${BROWSER} (headless)..."
+echo "==> Screenshotting ${BASE_URL}${ROUTE} with Firefox headless + Selenium..."
 
-# --- Write temp Playwright script ---
-TMP_SCRIPT=$(mktemp /tmp/playwright-XXXXXX.mjs)
+# --- Write temp Selenium script ---
+TMP_SCRIPT=$(mktemp /tmp/selenium-XXXXXX.mjs)
 trap "rm -f $TMP_SCRIPT" EXIT
 
 cat > "$TMP_SCRIPT" <<EOF
-import { ${BROWSER^} } from 'playwright';
+import { Builder, By, until, logging } from 'selenium-webdriver';
+import firefox from 'selenium-webdriver/firefox.js';
+import { writeFileSync } from 'fs';
 
-const errors = [];
+const options = new firefox.Options()
+    .addArguments('--headless')
+    .addArguments('--width=390')
+    .addArguments('--height=844');
 
-const browser = await ${BROWSER^}.launch({ headless: true });
-const context = await browser.newContext({
-    viewport: { width: 390, height: 844 },
-    deviceScaleFactor: 2,
-});
-const page = await context.newPage();
+const prefs = new logging.Preferences();
+prefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 
-page.on('pageerror', e => errors.push('PAGE ERROR: ' + e.message));
-page.on('console', m => {
-    if (m.type() === 'error') errors.push('CONSOLE: ' + m.text());
-});
+const driver = await new Builder()
+    .forBrowser('firefox')
+    .setFirefoxOptions(options)
+    .setLoggingPrefs(prefs)
+    .build();
 
-await page.goto('${BASE_URL}${ROUTE}', { waitUntil: 'networkidle', timeout: 15000 });
-await page.waitForTimeout(${WAIT_MS});
-await page.screenshot({ path: '${OUT_FILE}', fullPage: false });
+try {
+    await driver.get('${BASE_URL}${ROUTE}');
+    await driver.sleep(${WAIT_MS});
 
-await browser.close();
+    const screenshot = await driver.takeScreenshot();
+    writeFileSync('${OUT_FILE}', Buffer.from(screenshot, 'base64'));
+    console.log('    Saved: ${OUT_FILE}');
 
-if (errors.length > 0) {
-    console.error('\\n==> JS errors detected:');
-    errors.forEach(e => console.error('    ' + e));
-    process.exit(1);
-} else {
-    console.log('    No JS errors.');
+    const logs = await driver.manage().logs().get(logging.Type.BROWSER);
+    const errors = logs.filter(l => l.level.value >= logging.Level.SEVERE.value);
+    if (errors.length > 0) {
+        console.error('\\n==> JS errors detected:');
+        errors.forEach(e => console.error('    ' + e.message));
+        process.exit(1);
+    } else {
+        console.log('    No JS errors.');
+    }
+} finally {
+    await driver.quit();
 }
 EOF
 
 node "$TMP_SCRIPT"
 
 echo ""
-echo "==> Screenshot saved: ${OUT_FILE}"
-echo "    Pull it to your machine with:"
+echo "==> Done. Pull to local machine:"
 echo "    scp $(hostname):${OUT_FILE} ."
