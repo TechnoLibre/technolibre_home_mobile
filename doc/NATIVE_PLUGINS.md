@@ -54,12 +54,38 @@ Les modèles GGML sont stockés dans `{filesDir}/whisper/ggml-<model>.bin`.
 |---------|-------------|
 | `isModelLoaded()` | Retourne `{ loaded: boolean }` — si un modèle est déjà en mémoire. |
 | `loadModel({ model })` | Charge le modèle GGML en mémoire via `WhisperLib.initContext()`. |
-| `getModelPath({ model })` | Retourne `{ path: string; exists: boolean }` — chemin absolu du binaire sur l'appareil. |
-| `downloadModel({ model, url })` | Télécharge le binaire GGML en streaming natif (64 KB/chunk, `HttpURLConnection`) avec redirect manuel. Fire des événements `downloadProgress`. Résout avec `{ path }`. |
+| `getModelPath({ model })` | Retourne `{ path: string; exists: boolean }` — chemin absolu du `.bin` sur l'appareil. Renvoie `exists: false` si seul le fichier `.partial` est présent. |
+| `downloadModel({ model, url })` | Télécharge en mode **WakeLock** (CPU/réseau actifs même écran éteint). Pour les téléchargements frais avec `Content-Length` connu, utilise 4 connexions HTTP Range en parallèle (`ExecutorService` + `FileChannel` positionnel) pour saturer la bande passante. Reprise depuis le fichier `.partial` en mono-thread. Fire des événements `downloadProgress`. Résout avec `{ path }`. |
+| `downloadModelForeground({ model, url })` | Télécharge via un **Android Foreground Service** avec une notification persistante (bouton Annuler). Survit à l'extinction de l'écran sans WakeLock. Si le service est déjà actif pour le même modèle (ex : après recréation d'Activity), ré-attache la Promise JS sans démarrer un second thread. Résout avec `{ path }`. |
+| `getServiceStatus()` | Retourne `{ downloading: boolean; model: string }` — état du Foreground Service. Utilisé par la couche JS pour se ré-attacher après une recréation d'Activity. |
+| `cancelDownload({ model? })` | Annule le téléchargement du modèle indiqué, ou tous les téléchargements si `model` est omis. Le fichier `.partial` est **conservé** pour permettre une reprise ultérieure (WakeLock). Les téléchargements multi-thread annulés suppriment le `.partial` (données incomplètes non-séquentielles). |
 | `transcribe({ audioPath, lang? })` | Transcrit un fichier audio. `audioPath` est relatif à `filesDir`. `lang` est un code BCP-47 (défaut `"fr"`). Résout avec `{ text }`. |
 | `unloadModel()` | Libère le modèle de la mémoire. |
+| `deleteModel({ model })` | Supprime le binaire `.bin` du disque (et le `.partial` si présent). Décharge le modèle de la mémoire si nécessaire. |
 | `addListener("progress", fn)` | Progression de la transcription. `fn` reçoit `{ ratio: number; text: string }`. |
-| `addListener("downloadProgress", fn)` | Progression du téléchargement. `fn` reçoit `{ ratio: number; received: number; total: number }`. |
+| `addListener("downloadProgress", fn)` | Progression du téléchargement (WakeLock et Foreground). `fn` reçoit `{ model: string; ratio: number; received: number; total: number }`. Le champ `model` permet de router les événements quand plusieurs modèles se téléchargent en parallèle. |
+
+### Modes de téléchargement
+
+```
+downloadModel()                    downloadModelForeground()
+─────────────────────────────      ──────────────────────────────────────
+Thread background Java             Android Foreground Service séparé
+WakeLock PARTIAL_WAKE_LOCK         Notification persistante + bouton Annuler
+Parallèle (4 threads HTTP Range)   Mono-thread (robuste, fichiers ≥ 1 Go)
+Reprise .partial (mono-thread)     Reprise .partial
+Notifications OS par modèle        Notification unique (NOTIF_ID 9001)
+Annulation par-modèle (flag)       Annulation via Intent ACTION_CANCEL
+```
+
+### Téléchargement multi-thread (WakeLock)
+
+Pour les téléchargements frais (aucun fichier `.partial`) avec `Content-Length` connu :
+
+1. **Pré-allocation** : `RandomAccessFile.setLength(total)` réserve l'espace disque.
+2. **4 threads** : chaque thread ouvre sa propre `HttpURLConnection` avec `Range: bytes=X-Y` et écrit via `FileChannel.write(ByteBuffer, position)` — sans superposition.
+3. **Progression atomique** : `AtomicLong totalReceived` + `AtomicInteger notifPct` — une seule notification par point de pourcentage, thread-safe.
+4. **Échec** : si le serveur ne retourne pas HTTP 206, le `.partial` est supprimé et la Promise est rejetée. Le prochain appel recommence en mono-thread (pas de `.partial` → nouveau téléchargement).
 
 ### Pourquoi le téléchargement est natif
 
@@ -143,3 +169,41 @@ interface ScannedHost {
     hostname?: string;  // nom DNS inversé si le réseau local a des enregistrements PTR
 }
 ```
+
+---
+
+## DeviceStatsPlugin
+
+**Fichiers :**
+- Bridge TS : `src/plugins/deviceStatsPlugin.ts`
+- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/DeviceStatsPlugin.java`
+
+Plugin de surveillance des ressources système en temps réel (CPU, RAM, batterie).
+Utilisé par `options_resources_component` pour afficher des graphiques mis à jour à intervalle configurable.
+
+### API
+
+| Méthode | Description |
+|---------|-------------|
+| `startPolling({ intervalMs })` | Démarre la collecte des métriques à l'intervalle donné (ms). Fire des événements `stats` en continu. |
+| `stopPolling()` | Arrête la collecte. |
+| `addListener("stats", fn)` | Reçoit les métriques à chaque tick. `fn` reçoit `DeviceStats`. |
+
+### Interface `DeviceStats`
+
+```typescript
+interface DeviceStats {
+    cpuPercent:      number;   // utilisation CPU globale (0–100)
+    ramUsedMb:       number;   // RAM utilisée en Mo
+    ramTotalMb:      number;   // RAM totale en Mo
+    batteryPercent:  number;   // niveau batterie (0–100)
+    batteryCharging: boolean;  // vrai si branché
+}
+```
+
+### Implémentation
+
+- **CPU** : lecture de `/proc/stat` entre deux intervalles — différence `(total - idle) / total` en pourcentage.
+- **RAM** : `ActivityManager.MemoryInfo` — `totalMem` et `availMem` (soustraction pour `usedMem`).
+- **Batterie** : `Intent` `ACTION_BATTERY_CHANGED` via `registerReceiver(null, ...)` — sans permission requise.
+- **Polling** : `Handler` + `Runnable` sur le thread principal ; stoppé proprement par `stopPolling()` ou destruction du plugin.

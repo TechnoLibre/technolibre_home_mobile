@@ -188,6 +188,53 @@ describe("TranscriptionService", () => {
                 url: expect.stringContaining("ggml-small.bin"),
             });
         });
+
+        it("ignores a second downloadModel call for the same model while already downloading", async () => {
+            let secondCallCount = 0;
+            const firstInFlight = service.downloadModel("tiny");
+            // Call again for the same model — should be a no-op.
+            const secondCall = service.downloadModel("tiny").then(() => { secondCallCount++; });
+            await Promise.all([firstInFlight, secondCall]);
+            // downloadModel (native) should have been called only once.
+            expect(WhisperPlugin.downloadModel).toHaveBeenCalledTimes(1);
+        });
+
+        it("allows concurrent downloads for different models", async () => {
+            const mockRemoveSmall = vi.fn().mockResolvedValue(undefined);
+            vi.mocked(WhisperPlugin.addListener).mockResolvedValue({ remove: mockRemoveSmall });
+            vi.mocked(WhisperPlugin.downloadModel).mockResolvedValue({ path: "/data/whisper/ggml-tiny.bin" });
+
+            await Promise.all([
+                service.downloadModel("tiny"),
+                service.downloadModel("small"),
+            ]);
+            // Each model should have triggered a separate native call.
+            expect(WhisperPlugin.downloadModel).toHaveBeenCalledTimes(2);
+        });
+
+        it("falls back to wakelock when foreground is already active for a different model", async () => {
+            // Start a foreground download for 'tiny' without awaiting it.
+            const downloadModelForeground = vi.fn().mockResolvedValue({ path: "" });
+            (WhisperPlugin as any).downloadModelForeground = downloadModelForeground;
+
+            // Simulate foreground-mode download in-flight for 'tiny'.
+            // We inject it directly into _activeDownloads to avoid timing issues.
+            const activeMap = (service as any)._activeDownloads as Map<string, any>;
+            activeMap.set("tiny", { model: "tiny", percent: 10, mode: "foreground",
+                                    receivedBytes: 0, totalBytes: 0, speedBytesPerSec: 0 });
+
+            // Now request a foreground download for 'small' — should fall back to wakelock.
+            await service.downloadModel("small", "foreground");
+
+            // The effective mode stored in activeDownloads was 'wakelock', so the
+            // native wakelock call (not foreground) was used.
+            expect(WhisperPlugin.downloadModel).toHaveBeenCalledWith(
+                expect.objectContaining({ model: "small" })
+            );
+            expect(downloadModelForeground).not.toHaveBeenCalled();
+
+            activeMap.delete("tiny");
+        });
     });
 
     // ── transcribe ────────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ SyncService          → Synchronisation bidirectionnelle Odoo
 IntentService        → Écoute et parsing des intents Android
 ServerService        → CRUD serveurs SSH + workspaces
 DeploymentService    → Déploiement SSH en arrière-plan (état réactif)
+TagService           → CRUD tags hiérarchiques avec cache en mémoire
 TranscriptionService → Transcription audio/vidéo locale (Whisper, on-device)
 ProcessService       → Journal persistant des transcriptions et téléchargements
 ```
@@ -414,6 +415,60 @@ Must be called once after the DB migrations have run. Marks any process still fl
 
 ---
 
+## TagService (`src/services/tagService.ts`)
+
+CRUD pour les tags hiérarchiques (parent → enfants). Maintient un cache en mémoire
+(`_cache: Tag[] | null`) pour éviter les lectures SQL répétées dans les composants OWL.
+
+### Modèle `Tag`
+
+```typescript
+interface Tag {
+    id:       string;    // UUID v4 généré par getNewId()
+    name:     string;    // nom affiché
+    color:    string;    // couleur hex ex: "#6b7280"
+    parentId?: string;  // undefined = tag racine
+}
+```
+
+Les tags sont persistés dans la table SQLite `tags`. La hiérarchie est un arbre simple
+(un seul niveau de parenté par ligne, profondeur arbitraire via traversée BFS).
+
+### Méthodes principales
+
+| Méthode | Description |
+|---------|-------------|
+| `getAllTags()` | Charge tous les tags depuis la DB et met à jour le cache. |
+| `getCached()` | Retourne le cache synchrone (tableau vide si non encore chargé). |
+| `invalidateCache()` | Vide le cache — prochain appel à `getAllTags()` relit la DB. |
+| `getRootTags()` | Tags sans `parentId` (niveau racine). |
+| `getChildTags(parentId)` | Enfants directs d'un tag. |
+| `getTagsByIds(ids)` | Filtre les tags par liste d'IDs. |
+| `getTagById(id)` | Retourne le tag correspondant ou `null`. |
+| `addTag(tag)` | Insère en DB et invalide le cache. |
+| `updateTag(id, tag)` | Met à jour en DB et invalide le cache. |
+| `deleteTag(id)` | Supprime en DB et invalide le cache. |
+| `getAllDescendantIds(tagId)` | BFS récursif — retourne tous les IDs descendants (enfants, petits-enfants, …). |
+| `getNewId()` | Génère un UUID v4. |
+
+### Pattern d'utilisation dans un composant OWL
+
+```typescript
+// onMounted — charge le cache une fois
+const tags = await this.tagService.getAllTags();
+
+// Template — lecture synchrone (pas d'await, pas de re-render)
+const names = entry.tagIds.map(id =>
+    this.tagService.getCached().find(t => t.id === id)?.name ?? id
+);
+
+// Après mutation
+await this.tagService.addTag(newTag);
+this.tagService.invalidateCache();   // ou laissez addTag() l'invalider automatiquement
+```
+
+---
+
 ## TranscriptionService (`src/services/transcriptionService.ts`)
 
 Transcription audio locale (on-device) via **whisper.cpp** / GGML.
@@ -423,10 +478,14 @@ Le modèle s'exécute entièrement sur l'appareil — aucun serveur externe, auc
 
 | Clé | Taille | Description |
 |-----|--------|-------------|
-| `tiny` | ~75 Mo | Rapide, précision correcte pour du français clair |
-| `small` | ~244 Mo | Plus lent, meilleure précision (accents, bruit de fond) |
+| `tiny` | ~75 Mo | Très rapide, précision correcte pour du français clair |
+| `base` | ~142 Mo | Recommandé (compromis vitesse / précision) |
+| `small` | ~244 Mo | Précis |
+| `medium` | ~769 Mo | Très précis |
+| `large-v3-turbo` | ~874 Mo | Meilleur modèle multilingue |
+| `distil-large-v3` | ~756 Mo | Anglais uniquement |
 
-Les binaires GGML sont téléchargés depuis HuggingFace (`ggerganov/whisper.cpp`) et stockés dans `{filesDir}/whisper/`.
+Les binaires GGML sont téléchargés depuis HuggingFace (`ggerganov/whisper.cpp`) et stockés dans `{filesDir}/whisper/ggml-<model>.bin`.
 
 ### Paramètres de configuration
 
@@ -436,22 +495,63 @@ Persistés dans la table `user_graphic_prefs` de la base SQLite :
 |------------|----------|-------------------|
 | `whisper_enabled` | `isEnabled()` / `setEnabled(bool)` | `false` |
 | `whisper_model` | `getSelectedModel()` / `setSelectedModel(model)` | `"tiny"` |
+| `whisper_download_mode` | `getDownloadMode()` / `setDownloadMode(mode)` | `"wakelock"` |
+
+### État des téléchargements
+
+Le service maintient une `Map<WhisperModel, DownloadProgress>` (`_activeDownloads`) qui
+survit aux re-montages de composants. Les composants s'abonnent via `subscribeProgress()` et
+se ré-attachent à l'état existant dans `onMounted`.
+
+```typescript
+interface DownloadProgress {
+    model:            WhisperModel;
+    percent:          number;          // 0–100
+    mode:             "wakelock" | "foreground";
+    receivedBytes:    number;
+    totalBytes:       number;
+    speedBytesPerSec: number;
+}
+```
+
+### Modes de téléchargement
+
+| Mode | Mécanisme | Avantage |
+|------|-----------|----------|
+| `"wakelock"` | Thread Java + `PowerManager.PARTIAL_WAKE_LOCK` | Téléchargements parallèles ; reprise `.partial` |
+| `"foreground"` | Android Foreground Service | Notification OS visible ; recommandé pour ≥ 1 Go |
+
+Si le mode `"foreground"` est demandé alors que le service est déjà actif pour un **autre** modèle,
+`downloadModel()` bascule automatiquement sur `"wakelock"` (fallback silencieux).
 
 ### Méthodes principales
 
 | Méthode | Description |
 |---------|-------------|
-| `isEnabled()` | Retourne `true` si la transcription est activée par l'utilisateur |
+| `isEnabled()` | Retourne `true` si la transcription est activée |
 | `setEnabled(enabled)` | Active ou désactive la transcription |
-| `getSelectedModel()` | Retourne le modèle sélectionné (`"tiny"` ou `"small"`) ; fallback sur `"tiny"` pour toute valeur inconnue |
+| `getSelectedModel()` | Retourne le modèle sélectionné ; fallback `"tiny"` pour valeur inconnue |
 | `setSelectedModel(model)` | Persiste le choix de modèle |
-| `isModelDownloaded(model)` | Vérifie si le binaire GGML est présent sur l'appareil (toujours `false` hors Android) |
-| `downloadModel(model, onProgress)` | Télécharge le binaire via `WhisperPlugin.downloadModel()` (Java natif, streaming 64 KB) ; appelle `onProgress(ratio, received, total)` à chaque chunk |
-| `transcribe(audioPath, lang?)` | Transcrit un enregistrement audio ; lève une erreur si appelé hors Android |
+| `getDownloadMode()` / `setDownloadMode(mode)` | Mode de téléchargement (`"wakelock"` ou `"foreground"`) |
+| `isModelDownloaded(model)` | `true` si le `.bin` est présent et qu'aucun téléchargement n'est en cours pour ce modèle |
+| `downloadModel(model, mode?)` | Lance le téléchargement du modèle dans le mode choisi ; fallback automatique wakelock si foreground occupé |
+| `cancelDownload(model?)` | Annule le téléchargement du modèle indiqué, ou tous si omis |
+| `deleteModel(model)` | Supprime le `.bin` et le `.partial` du disque |
+| `subscribeProgress(cb)` | Abonnement aux mises à jour de progression. `cb(info, model)` — `info` est `null` à la fin. Retourne une fonction de désabonnement. |
+| `activeDownloads` | `ReadonlyMap<WhisperModel, DownloadProgress>` — tous les téléchargements en cours. |
+| `activeDownload` | Premier téléchargement actif ou `null` (compat. descendante). |
+| `maybeReconnectForeground()` | Appelle `getServiceStatus()` et se ré-attache au Foreground Service si actif mais non suivi (après recréation d'Activity). |
+| `transcribe(audioPath, lang?, noteId?, rawPath?)` | Transcrit un enregistrement audio/vidéo ; lève une erreur si appelé hors Android |
 
-### Téléchargement natif (sans OOM)
+### Reconnexion après recréation d'Activity
 
-Le téléchargement des modèles utilise `WhisperPlugin.downloadModel()` côté Java (`HttpURLConnection`, redirection manuelle, streaming 64 KB → disque direct). Cela évite l'allocation en mémoire WebView qui causait une corruption silencieuse des fichiers > 200 Mo (le moteur JavaScript allouait ~600 Mo pour le base64 d'un fichier de 244 Mo, aboutissant à un fichier tronqué que `WhisperLib.initContext()` rejetait avec exitcode 0).
+Quand Android recrée l'Activity (rotation, retour d'arrière-plan), le state JS est perdu
+mais le Foreground Service continue de tourner. `onMounted` dans les composants appelle
+`maybeReconnectForeground()` qui :
+
+1. Vérifie `WhisperDownloadService.downloading` (champ statique Java) via `getServiceStatus()`.
+2. Si un téléchargement est actif, déclenche `downloadModel(model, "foreground")` en fire-and-forget.
+3. Java détecte `downloading == true && model == currentModel` → met à jour `pendingForegroundCallId` sans démarrer un second thread.
 
 ### Flux de transcription
 
@@ -459,9 +559,10 @@ Le téléchargement des modèles utilise `WhisperPlugin.downloadModel()` côté 
 transcribe(audioPath)
   └── isNativePlatform() ?
         ├── non  → throw "La transcription n'est disponible que sur Android."
-        └── oui  → getSelectedModel()
+        └── oui  → addListener("progress")
+                   → getSelectedModel()
                    → WhisperPlugin.isModelLoaded()
                          └── loaded=false → WhisperPlugin.loadModel({ model })
                    → WhisperPlugin.transcribe({ audioPath, lang })
-                   → retourne text
+                   → retourne text.trim()
 ```
