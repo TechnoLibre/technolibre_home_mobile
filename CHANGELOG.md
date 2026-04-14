@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2026.04.14.01] - 2026-04-14
+
+Summary of development since release `2026.04.13.01` (April 13, 2026).
+Integrates the `code_integration` branch.
+
+### Added
+- **Code browser** (`/options/code`) — multi-mode source code navigator with
+  three connection modes:
+  - **Bundle** — reads the app's own sources bundled at compile time
+    (`src/public/repo/`), no SSH connection required
+  - **SSH Path** — connects to a registered SSH server; displays available
+    workspaces as a picker, then browses the remote filesystem
+  - **SSH URL** — reads ERPLibre manifest repos bundled at compile time
+    (`src/public/repos/{slug}/`); project chips show name and revision
+- **Syntax highlighting** — zero-dependency tokeniser for Python, TypeScript,
+  JSON, SCSS and Shell; all colours via CSS variables (Monokai-style defaults)
+- **Markdown preview** — toggle between raw source and rendered HTML for `.md`
+  files
+- **Image viewer** — inline `<img>` display for `.png`, `.jpg`, `.svg`,
+  `.webp` and other image formats; data-URL for SSH mode, bundle URL for
+  offline mode
+- **Inline editor** — single-line editing via `writeLine()` (SSH mode only);
+  the highlighted line refreshes after save without reloading the full file
+- **Vite source bundler** — `bundleSourcePlugin` in `vite.config.ts` copies
+  app sources to `src/public/repo/` and manifest repos to
+  `src/public/repos/{slug}/` at build time; generates `index.json` per bundle
+  and `manifest.json` listing available repos
+
+### Changed
+- **Vite bundler — artifact exclusions**: manifest repo bundles now skip
+  `android/`, `ios/`, `build/`, `.gradle/`, `__pycache__/`, `venv/` and other
+  build-artifact directories, binary file extensions (`.so`, `.class`, `.jar`,
+  `.aar`, `.dex`, `.pyc`, etc.) and files > 1 MB — prevents APK packaging
+  failures caused by bundling 39 MB of compiled Gradle artifacts
+- **Build diagnostics** (`BUNDLE_DEBUG=1`): per-file verbose tracing of
+  copy/skip decisions; per-project wall-clock timing and skipped-file count on
+  every summary line; `[bundle-warn]` warnings on broken symlinks or permission
+  errors without aborting the build
+
 ## [2026.04.13.01] - 2026-04-13
 
 Summary of development since release `2026.03.18.01` (March 20, 2026).

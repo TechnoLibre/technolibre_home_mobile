@@ -16,6 +16,8 @@ DeploymentService    → Déploiement SSH en arrière-plan (état réactif)
 TagService           → CRUD tags hiérarchiques avec cache en mémoire
 TranscriptionService → Transcription audio/vidéo locale (Whisper, on-device)
 ProcessService       → Journal persistant des transcriptions et téléchargements
+CodeService          → Navigation SSH du code source (listDir, readFile, git)
+BundleCodeService    → Lecture hors-ligne du code bundlé à la compilation
 ```
 
 ## AppService (`src/services/appService.ts`)
@@ -566,3 +568,98 @@ transcribe(audioPath)
                    → WhisperPlugin.transcribe({ audioPath, lang })
                    → retourne text.trim()
 ```
+
+---
+
+## CodeService (`src/services/codeService.ts`)
+
+Navigation SSH du code source : système de fichiers, opérations git et clonage de dépôts distants.
+Enveloppe le singleton `SshPlugin` — ne pas utiliser en parallèle avec d'autres opérations SSH.
+
+### Connexion
+
+```typescript
+await codeService.connect(server);   // ouvre la session SSH
+await codeService.disconnect();      // ferme la session
+codeService.isConnected;             // boolean
+```
+
+### URL helpers (statiques)
+
+| Méthode | Description |
+|---------|-------------|
+| `isGitUrl(str)` | `true` si la chaîne ressemble à une URL git clonable (`https://` ou `git@`) |
+
+### Système de fichiers
+
+| Méthode | Description |
+|---------|-------------|
+| `listDir(dirPath)` | Liste le contenu d'un répertoire (dossiers en tête, puis fichiers, triés). Exclut `.git` et `node_modules`. |
+| `readFile(filePath)` | Lit le contenu d'un fichier via base64 SSH (gère l'UTF-8 et les lignes vides). |
+| `readFileAsBase64(filePath)` | Retourne la chaîne base64 brute (utile pour les images). |
+| `writeLine(filePath, lineNum, content)` | Remplace une ligne (1-based) via Python3 + base64 côté serveur pour gérer les caractères spéciaux. |
+
+### Exécution
+
+| Méthode | Description |
+|---------|-------------|
+| `execStream(command, onLine)` | Exécute une commande et diffuse chaque ligne (stdout + stderr) vers un callback. Retourne le code de sortie. |
+
+### Git
+
+| Méthode | Description |
+|---------|-------------|
+| `cloneOrPull(url, onProgress)` | Clone un dépôt git (`https://` ou `git@`) dans `~/.cache/erplibre_code/{slug}` ; `git pull` si déjà présent. Retourne le chemin local. |
+| `gitCurrentBranch(repoPath)` | Branche active du dépôt. |
+| `gitStatus(repoPath)` | Sortie `git status --short`. |
+| `gitLog(repoPath, limit?)` | N derniers commits (défaut 25) → `GitCommit[]` avec hash, shortHash, subject, author, date. |
+| `gitBranches(repoPath)` | Liste des branches locales → `GitBranch[]` avec flag `current`. |
+| `gitDiff(repoPath)` | Diff complet (stdout + stderr). |
+| `gitCheckout(repoPath, ref)` | Checkout d'une branche ou d'un commit. Retourne `{ output, exitCode }`. |
+| `gitCommit(repoPath, message)` | `git add -A && git commit -m <msg>`. Le message est encodé en base64 pour gérer les guillemets. Retourne `{ output, exitCode }`. |
+
+### Slug d'URL
+
+La méthode privée `_urlToSlug(url)` convertit une URL git en identifiant filesystem-safe (60 car. max). L'algorithme est répliqué à l'identique dans `vite.config.ts` (`urlToSlug`) pour que les chemins `/repos/{slug}/` correspondent entre le build et le runtime.
+
+---
+
+## BundleCodeService (`src/services/bundleCodeService.ts`)
+
+Lecture hors-ligne du code source bundlé à la compilation par le plugin Vite.
+Aucune connexion SSH requise. Utilise `fetch()` contre des fichiers statiques dans `dist/`.
+
+### Chemins de base
+
+| `baseUrl` | Source |
+|-----------|--------|
+| `/repo` (défaut) | Sources de l'app elle-même (`src/public/repo/`) |
+| `/repos/{slug}` | Dépôt d'un projet du manifeste (`src/public/repos/{slug}/`) |
+
+Le slug correspond exactement à celui généré par `CodeService._urlToSlug`.
+
+### Méthodes
+
+| Méthode | Description |
+|---------|-------------|
+| `initialize()` | Charge `${baseUrl}/index.json`. Appelée automatiquement à la première opération. |
+| `listDir(dirPath)` | Filtre l'index par chemin parent pour retourner les enfants directs. |
+| `readFile(filePath)` | Récupère le contenu brut du fichier via `fetch`. |
+| `getFileUrl(filePath)` | Retourne l'URL absolue (`${baseUrl}/${filePath}`) — utilisée comme `src` pour les images. |
+
+### Génération des bundles (Vite)
+
+Le plugin `bundleSourcePlugin` dans `vite.config.ts` génère les bundles au `buildStart` :
+
+1. **App source** → `src/public/repo/` + `src/public/repo/index.json`
+2. **Projets du manifeste** → `src/public/repos/{slug}/` + `src/public/repos/manifest.json`
+
+Fichiers exclus du bundle des dépôts manifeste :
+- Répertoires d'artefacts : `android/`, `ios/`, `build/`, `.gradle/`, `__pycache__/`, `venv/`, `target/`, etc.
+- Extensions binaires : `.so`, `.class`, `.jar`, `.aar`, `.dex`, `.pyc`, etc.
+- Fichiers > 1 Mo
+
+Variable d'environnement `ERPLIBRE_MANIFEST_PATH` pour personnaliser le chemin du manifeste
+(défaut : `../../.repo/local_manifests/erplibre_manifest.xml`).
+
+Variable d'environnement `BUNDLE_DEBUG=1` pour activer le log détaillé par fichier lors du build.
