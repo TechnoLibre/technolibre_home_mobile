@@ -77,12 +77,12 @@
     <!-- Geolocation Plugin -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-feature android:name="android.hardware.location.gps" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <!-- CapacitorVoiceRecorder Plugin -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <!-- CapacitorVideoPlayer Plugin -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- CapacitorVideoPlayer Plugin (legacy, no-op on API 33+) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 </manifest>

@@ -29,7 +29,12 @@ export interface SyncResult {
 interface StoredSession {
   sessionId: string;
   odooMajorVersion: number;
+  /** ISO timestamp when the session was created — for local expiry enforcement. */
+  createdAt?: string;
 }
+
+/** Maximum session age in milliseconds (default: 24 hours). */
+const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 // ─── SyncService ──────────────────────────────────────────────────────────────
 
@@ -164,7 +169,7 @@ export class SyncService {
 
     this._lastAuthDiag = diag.join("\n");
     const odooMajorVersion: number = json.result?.server_version_info?.[0] ?? 18;
-    const stored: StoredSession = { sessionId, odooMajorVersion };
+    const stored: StoredSession = { sessionId, odooMajorVersion, createdAt: new Date().toISOString() };
     await SecureStoragePlugin.set({ key: this.sessionKey(creds), value: JSON.stringify(stored) });
     return stored;
   }
@@ -177,8 +182,18 @@ export class SyncService {
     try {
       const result = await SecureStoragePlugin.get({ key: this.sessionKey(creds) });
       const parsed = JSON.parse(result.value);
-      if (parsed?.sessionId && parsed?.odooMajorVersion) return parsed as StoredSession;
-      throw new Error("stale format");
+      if (!parsed?.sessionId || !parsed?.odooMajorVersion) throw new Error("stale format");
+
+      // Enforce local session expiry
+      if (parsed.createdAt) {
+        const age = Date.now() - new Date(parsed.createdAt).getTime();
+        if (age > SESSION_MAX_AGE_MS) {
+          await SecureStoragePlugin.remove({ key: this.sessionKey(creds) }).catch(() => {});
+          throw new Error("session expired locally");
+        }
+      }
+
+      return parsed as StoredSession;
     } catch {
       return this.authenticate(creds);
     }

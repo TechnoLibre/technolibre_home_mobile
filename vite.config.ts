@@ -350,13 +350,16 @@ function bundleSourcePlugin(): Plugin {
 
 // ── Vite config ───────────────────────────────────────────────────────────────
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
     root: "./src",
     plugins: [bundleSourcePlugin()],
     build: {
         outDir: "../dist",
         minify: "esbuild",
         emptyOutDir: true,
+    },
+    esbuild: {
+        drop: mode === "production" ? ["console", "debugger"] : [],
     },
     css: {
         preprocessorOptions: {
@@ -365,4 +368,4 @@ export default defineConfig({
             },
         },
     },
-});
+}));

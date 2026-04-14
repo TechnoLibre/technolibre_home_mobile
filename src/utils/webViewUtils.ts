@@ -49,8 +49,7 @@ try{
 
 		let newScript = document.createElement("script");
 
-		// TODO not working the injection, not secure
-		newScript.innerHTML = `window.onload = (${script})();`;
+		newScript.textContent = `window.onload = (${script})();`;
 		windowDocument.body.appendChild(newScript);
 
 		// newWindow.onload = function () {
