@@ -193,6 +193,58 @@ Fonctionnalités :
 - **Bouton de navigation** `›` : pour une transcription, navigue vers la note associée (`/note/:noteId`) ; pour un téléchargement, navigue vers `/options/transcription`.
 - **Nettoyer l'historique** — confirmation puis suppression de tous les enregistrements via `ProcessService.clearAll()`.
 
+---
+
+### OptionsCodeComponent — `/options/code`
+
+Navigateur de code source multi-mode : parcourt et affiche des fichiers de code avec coloration syntaxique, rendu Markdown et affichage d'images.
+
+#### Modes de connexion
+
+| Mode | Bouton | Description |
+|------|--------|-------------|
+| **Bundle** | 💾 Bundle | Sources de l'app bundlées à la compilation dans `/repo/`. Aucune connexion requise. |
+| **SSH Chemin** | 🔑 SSH Chemin | Serveur SSH sélectionné depuis la liste, workspace choisi dans un sélecteur ou chemin libre. |
+| **SSH URL** | 🔗 SSH URL | Dépôts du manifeste ERPLibre bundlés à la compilation dans `/repos/{slug}/`. Sélection par chip (nom + révision). |
+
+#### Panneau de configuration (`code-setup`)
+
+- **Sélecteur de mode** — 3 boutons toggle.
+- **Bundle** : connexion immédiate à `/repo/index.json`.
+- **SSH Chemin** :
+  - Sélecteur de serveur (liste des serveurs enregistrés).
+  - Une fois le serveur sélectionné : liste des workspaces SSH (`ServerService.getWorkspaces`) cliquable, puis champ de chemin libre avec expansion `~/`.
+  - Bouton « Connecter ».
+- **SSH URL** :
+  - Chips des projets du manifeste bundlés (nom + révision) lus depuis `/repos/manifest.json`.
+  - Sélection d'un chip → connexion immédiate au bundle `/repos/{slug}/`.
+
+#### Panneau explorateur (`code-explorer`)
+
+Arborescence de fichiers : icône 📁/📄, clic pour entrer dans un dossier ou ouvrir un fichier. Chemin actuel affiché, bouton « ↑ Parent » pour remonter.
+
+#### Panneau de visualisation (`code-viewer`)
+
+Affiché lors de l'ouverture d'un fichier :
+
+| Contrôle | Condition | Action |
+|----------|-----------|--------|
+| Badge langue | toujours | Indique la langue détectée (python, typescript, json, scss, shell, markdown, image) |
+| Bouton 🖼 Image | fichier image | Bascule entre code hexadécimal et affichage `<img>` |
+| Bouton 👁 Rendu | fichier `.md` | Bascule entre source brute et rendu HTML via `innerHTML` |
+| Bouton ✎ Modifier | mode SSH uniquement | Rend la ligne active éditable via `writeLine()` |
+
+**Coloration syntaxique** (`src/components/options/code/syntax_highlight.ts`) :
+
+Sans dépendance externe. Tokeniseur caractère par caractère pour :
+- **Python** : mots-clés, builtins, chaînes (préfixe `f/b/r/u`, triple quotes), décorateurs `@`, nombres, noms de `def`/`class`.
+- **TypeScript/JS** : mots-clés, types (`string`, `number`…), builtins, template literals, commentaires `//` et `/* */`, appels de fonction (lookahead `(`).
+- **JSON** : clés (`hl-key`) vs valeurs (`hl-str`), nombres négatifs, `null`/`true`/`false`.
+- **SCSS** : `--css-vars`, `$variables`, `@rules`, couleurs hex, nombres+unités.
+- **Shell** : mots-clés, `$VAR`/`${VAR}`, chaînes, commentaires `#`.
+
+Toutes les couleurs passent par des variables CSS (`--hl-kw`, `--hl-str`, `--hl-comment`, etc.) définies dans `options_code_component.scss` avec des valeurs par défaut style Monokai.
+
 ## Classe de base `EnhancedComponent`
 
 Tous les composants héritent d'`EnhancedComponent` qui fournit :

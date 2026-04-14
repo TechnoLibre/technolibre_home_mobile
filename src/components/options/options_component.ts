@@ -20,6 +20,7 @@ import { OptionsGraphicComponent } from "./graphic/options_graphic_component";
 import { OptionsErplibreComponent } from "./erplibre/options_erplibre_component";
 import { OptionsTranscriptionComponent } from "./transcription/options_transcription_component";
 import { OptionsProcessesComponent } from "./processes/options_processes_component";
+import { OptionsCodeComponent } from "./code/options_code_component";
 
 export class OptionsComponent extends EnhancedComponent {
 	static template = xml`
@@ -48,6 +49,11 @@ export class OptionsComponent extends EnhancedComponent {
         <li class="options-list__item">
           <a href="#" role="button" aria-label="Processus" t-on-click.stop.prevent="onProcessesClick">
             ⚙️ Processus ›
+          </a>
+        </li>
+        <li class="options-list__item">
+          <a href="#" role="button" aria-label="Code" t-on-click.stop.prevent="onCodeClick">
+            💻 Code ›
           </a>
         </li>
         <li class="options-list__item">
@@ -95,6 +101,10 @@ export class OptionsComponent extends EnhancedComponent {
 		this.navigate("/options/processes");
 	}
 
+	onCodeClick() {
+		this.navigate("/options/code");
+	}
+
 	onErplibreClick() {
 		this.navigate("/options/erplibre");
 	}
@@ -113,5 +123,6 @@ export class OptionsComponent extends EnhancedComponent {
 		OptionsErplibreComponent,
 		OptionsTranscriptionComponent,
 		OptionsProcessesComponent,
+		OptionsCodeComponent,
 	};
 }

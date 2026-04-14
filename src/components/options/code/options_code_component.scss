@@ -1,0 +1,800 @@
+// ── Options Code Component ────────────────────────────────────────────────────
+
+#options-code-component {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    padding-bottom: 2rem;
+}
+
+// ── Common buttons ────────────────────────────────────────────────────────────
+
+.code__btn {
+    border: none;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.5rem 0.9rem;
+    transition: background-color 0.15s;
+
+    &:disabled {
+        cursor: not-allowed;
+        opacity: 0.4;
+    }
+
+    &--primary {
+        background-color: var(--btn-green-color);
+        color: #fff;
+        margin-top: 0.75rem;
+        padding: 0.7rem 1.2rem;
+        width: 100%;
+        &:not(:disabled):active { background-color: var(--btn-green-hover-color); }
+    }
+
+    &--disconnect {
+        background-color: var(--btn-red-color);
+        color: #fff;
+        font-size: 0.78rem;
+        padding: 0.35rem 0.7rem;
+        &:not(:disabled):active { background-color: var(--btn-red-hover-color); }
+    }
+
+    &--back {
+        background-color: var(--surface-btn);
+        color: var(--text);
+        &:not(:disabled):active { background-color: var(--surface-btn-active); }
+    }
+
+    &--mode {
+        background-color: var(--btn-blue-color);
+        color: #fff;
+        font-size: 0.78rem;
+        &:not(:disabled):active { background-color: var(--btn-blue-hover-color); }
+    }
+
+    &--up {
+        background-color: var(--surface-btn);
+        color: var(--text);
+        font-size: 1rem;
+        padding: 0.3rem 0.6rem;
+        &:not(:disabled):active { background-color: var(--surface-btn-active); }
+    }
+
+    &--refresh {
+        background-color: var(--surface-btn);
+        color: var(--text);
+        font-size: 0.78rem;
+        padding: 0.3rem 0.7rem;
+        &:not(:disabled):active { background-color: var(--surface-btn-active); }
+    }
+
+    &--checkout {
+        background-color: var(--btn-blue-color);
+        color: #fff;
+        font-size: 0.75rem;
+        padding: 0.25rem 0.6rem;
+        &:not(:disabled):active { background-color: var(--btn-blue-hover-color); }
+    }
+
+    &--save {
+        background-color: var(--btn-green-color);
+        color: #fff;
+        min-width: 2rem;
+        padding: 0.3rem 0.5rem;
+        &:not(:disabled):active { background-color: var(--btn-green-hover-color); }
+    }
+
+    &--cancel {
+        background-color: var(--btn-grey-color);
+        color: #fff;
+        min-width: 2rem;
+        padding: 0.3rem 0.5rem;
+        &:not(:disabled):active { background-color: var(--btn-grey-hover-color); }
+    }
+
+    &--sm {
+        font-size: 0.7rem;
+        padding: 0.2rem 0.5rem;
+    }
+}
+
+.code__error {
+    background-color: var(--status-error-bg);
+    border-left: 3px solid var(--btn-red-color);
+    border-radius: 0.25rem;
+    color: var(--btn-red-color);
+    font-size: 0.85rem;
+    margin: 0.5rem 1rem;
+    padding: 0.6rem 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.code__spinner {
+    color: var(--text-greyed-out);
+    font-style: italic;
+    padding: 1rem;
+    text-align: center;
+}
+
+.code__empty {
+    color: var(--text-greyed-out);
+    font-size: 0.85rem;
+    padding: 1rem;
+    text-align: center;
+}
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
+
+.code-setup {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin: 0 auto;
+    max-width: 48rem;
+    padding: 1rem;
+    width: 100%;
+
+    &__label {
+        color: var(--text-greyed-out);
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        margin-top: 0.5rem;
+        text-transform: uppercase;
+    }
+
+    // 3-button mode toggle
+    &__mode-row {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 0.25rem;
+    }
+
+    &__mode-btn {
+        background-color: var(--surface-btn);
+        border: 1px solid var(--section-border-color);
+        border-radius: 0.35rem;
+        color: var(--text-greyed-out);
+        cursor: pointer;
+        flex: 1;
+        font-size: 0.82rem;
+        font-weight: 600;
+        padding: 0.55rem 0.4rem;
+        text-align: center;
+        transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+
+        &:active { background-color: var(--surface-btn-active); }
+
+        &--active {
+            background-color: var(--accent-color);
+            border-color: var(--accent-color);
+            color: #fff;
+        }
+    }
+
+    // Description text shown under the mode buttons
+    &__hint {
+        border-left: 3px solid var(--accent-color);
+        color: var(--text-greyed-out);
+        font-size: 0.82rem;
+        font-style: italic;
+        padding: 0.35rem 0.65rem;
+    }
+
+    // Streaming clone/pull output
+    &__clone-output {
+        background-color: var(--status-debug-bg);
+        border-radius: 0.25rem;
+        color: var(--accent-color);
+        font-family: monospace;
+        font-size: 0.78rem;
+        max-height: 8rem;
+        overflow-y: auto;
+        padding: 0.5rem 0.75rem;
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+
+    // Workspace picker (ssh-path)
+    &__workspace-list {
+        border: 1px solid var(--section-border-color);
+        border-radius: 0.35rem;
+        list-style: none;
+        margin: 0;
+        max-height: 12rem;
+        overflow-y: auto;
+        padding: 0;
+    }
+
+    &__workspace-item {
+        align-items: center;
+        border-bottom: 1px solid var(--section-border-color);
+        cursor: pointer;
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.6rem 0.8rem;
+        transition: background-color 0.12s;
+
+        &:last-child { border-bottom: none; }
+        &:active { background-color: var(--surface-btn-active); }
+
+        &--active {
+            background-color: var(--status-debug-bg);
+            border-left: 3px solid var(--accent-color);
+        }
+    }
+
+    &__workspace-icon { flex-shrink: 0; font-size: 0.95rem; }
+
+    &__workspace-path {
+        font-family: monospace;
+        font-size: 0.82rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    // Manifest project chips (ssh-url)
+    &__chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin-bottom: 0.25rem;
+    }
+
+    &__chip {
+        align-items: baseline;
+        background-color: var(--surface-btn);
+        border: 1px solid var(--section-border-color);
+        border-radius: 1rem;
+        cursor: pointer;
+        display: flex;
+        gap: 0.35rem;
+        padding: 0.35rem 0.75rem;
+        transition: background-color 0.12s, border-color 0.12s;
+
+        &:active { background-color: var(--surface-btn-active); }
+
+        &--active {
+            background-color: var(--accent-color);
+            border-color: var(--accent-color);
+            color: #fff;
+
+            .code-setup__chip-rev { color: rgba(255, 255, 255, 0.75); }
+        }
+    }
+
+    &__chip-name {
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+
+    &__chip-rev {
+        color: var(--text-greyed-out);
+        font-family: monospace;
+        font-size: 0.72rem;
+    }
+
+    &__select,
+    &__input {
+        appearance: none;
+        background-color: var(--input-bg);
+        border: 1px solid var(--input-border);
+        border-radius: 0.25rem;
+        color: var(--text);
+        font-size: 0.9rem;
+        padding: 0.6rem 0.8rem;
+        width: 100%;
+
+        &:focus {
+            border-color: var(--accent-color);
+            outline: none;
+        }
+    }
+}
+
+// ── Browser header ────────────────────────────────────────────────────────────
+
+.code-browser {
+    &__header {
+        align-items: center;
+        background-color: var(--card-bg);
+        border-bottom: 1px solid var(--section-border-color);
+        display: flex;
+        justify-content: space-between;
+        padding: 0.5rem 1rem;
+    }
+
+    &__server-info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+    }
+
+    &__server-label {
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    &__branch {
+        background-color: var(--tag-bg);
+        border-radius: 0.25rem;
+        color: var(--tag-color);
+        font-family: monospace;
+        font-size: 0.72rem;
+        padding: 0.1rem 0.4rem;
+        width: fit-content;
+    }
+
+    // Tab bar
+    &__tabs {
+        display: flex;
+        border-bottom: 2px solid var(--section-border-color);
+    }
+
+    &__tab {
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--text-greyed-out);
+        cursor: pointer;
+        flex: 1;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-bottom: -2px;
+        padding: 0.65rem;
+        transition: color 0.15s, border-color 0.15s;
+
+        &--active {
+            border-bottom-color: var(--accent-color);
+            color: var(--text);
+        }
+
+        &:active { background-color: var(--surface-btn); }
+    }
+}
+
+// ── File tree ─────────────────────────────────────────────────────────────────
+
+.code-tree {
+    &__path-bar {
+        align-items: center;
+        background-color: var(--card-bg);
+        border-bottom: 1px solid var(--section-border-color);
+        display: flex;
+        font-family: monospace;
+        font-size: 0.75rem;
+        gap: 0.5rem;
+        justify-content: space-between;
+        padding: 0.4rem 1rem;
+    }
+
+    &__path-text {
+        color: var(--text-greyed-out);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__list {
+        list-style: none;
+        margin: 0;
+        padding: 0.5rem 0;
+    }
+
+    &__item {
+        align-items: center;
+        border-bottom: 1px solid var(--section-border-color);
+        cursor: pointer;
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.7rem 1rem;
+        transition: background-color 0.1s;
+
+        &:active { background-color: var(--surface-btn); }
+    }
+
+    &__icon { font-size: 1rem; flex-shrink: 0; }
+
+    &__name {
+        font-family: monospace;
+        font-size: 0.88rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__item--dir &__name { font-weight: 600; }
+
+    &__empty {
+        color: var(--text-greyed-out);
+        font-size: 0.85rem;
+        padding: 1rem;
+        text-align: center;
+    }
+}
+
+// ── File viewer ───────────────────────────────────────────────────────────────
+
+.code-viewer {
+    &__header {
+        align-items: center;
+        background-color: var(--card-bg);
+        border-bottom: 1px solid var(--section-border-color);
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+    }
+
+    &__filename {
+        flex: 1;
+        font-family: monospace;
+        font-size: 0.85rem;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    // Language badge (python, typescript, etc.)
+    &__lang-badge {
+        background-color: var(--tag-bg);
+        border-radius: 0.2rem;
+        color: var(--tag-color);
+        flex-shrink: 0;
+        font-family: monospace;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        padding: 0.1rem 0.4rem;
+        text-transform: uppercase;
+    }
+
+    // Code view
+    &__code {
+        overflow-x: auto;
+    }
+
+    // Image view
+    &__image-wrap {
+        align-items: center;
+        display: flex;
+        justify-content: center;
+        min-height: 8rem;
+        overflow: auto;
+        padding: 1.25rem;
+    }
+
+    &__image {
+        border-radius: 0.25rem;
+        max-height: 65vh;
+        max-width: 100%;
+        object-fit: contain;
+    }
+
+    // Markdown preview
+    &__markdown {
+        max-width: 52rem;
+        padding: 1rem 1.25rem;
+    }
+}
+
+// ── Code line ─────────────────────────────────────────────────────────────────
+
+.code-line {
+    align-items: baseline;
+    border-bottom: 1px solid var(--section-border-color);
+    display: flex;
+    gap: 0;
+    min-height: 1.6rem;
+    position: relative;
+
+    &:active { background-color: var(--surface-btn); }
+
+    &--editing {
+        background-color: var(--status-warning-bg);
+        border-left: 3px solid var(--btn-blue-color);
+    }
+
+    &__num {
+        background-color: var(--card-bg);
+        border-right: 1px solid var(--section-border-color);
+        color: var(--text-greyed-out);
+        flex-shrink: 0;
+        font-family: monospace;
+        font-size: 0.72rem;
+        min-width: 2.8rem;
+        padding: 0.3rem 0.4rem;
+        text-align: right;
+        user-select: none;
+    }
+
+    &__content {
+        cursor: text;
+        flex: 1;
+        font-family: monospace;
+        font-size: 0.82rem;
+        overflow-x: auto;
+        padding: 0.3rem 0.5rem;
+        white-space: pre;
+    }
+
+    &__add-note {
+        background-color: var(--btn-green-color);
+        border: none;
+        border-radius: 0.2rem;
+        color: #fff;
+        cursor: pointer;
+        flex-shrink: 0;
+        font-size: 0.85rem;
+        font-weight: 700;
+        line-height: 1;
+        margin: 0.2rem 0.3rem;
+        opacity: 0.7;
+        padding: 0.15rem 0.35rem;
+        transition: opacity 0.15s;
+
+        &:active { opacity: 1; }
+    }
+
+    &__input {
+        background-color: var(--input-bg);
+        border: 1px solid var(--btn-blue-color);
+        border-radius: 0.2rem;
+        color: var(--text);
+        flex: 1;
+        font-family: monospace;
+        font-size: 0.82rem;
+        margin: 0.2rem 0.3rem;
+        outline: none;
+        padding: 0.2rem 0.4rem;
+    }
+
+    &__edit-btns {
+        display: flex;
+        flex-shrink: 0;
+        gap: 0.25rem;
+        margin-right: 0.3rem;
+    }
+}
+
+// ── Syntax highlighting tokens ────────────────────────────────────────────────
+// Token classes emitted by syntax_highlight.ts. Colors chosen to be readable
+// on both light and dark backgrounds via CSS variables with sensible defaults.
+
+.hl-kw       { color: var(--hl-keyword,   #c792ea); font-weight: 600; }  // keywords
+.hl-str      { color: var(--hl-string,    #c3e88d); }                     // strings
+.hl-comment  { color: var(--hl-comment,   #546e7a); font-style: italic; } // comments
+.hl-num      { color: var(--hl-number,    #f78c6c); }                     // numbers / colors
+.hl-builtin  { color: var(--hl-builtin,   #82aaff); }                     // built-ins
+.hl-type     { color: var(--hl-type,      #ffcb6b); }                     // types (TS)
+.hl-fn       { color: var(--hl-function,  #82aaff); font-style: italic; } // function names
+.hl-decorator{ color: var(--hl-decorator, #f07178); }                     // @decorators / $vars
+.hl-op       { color: var(--hl-operator,  #89ddff); }                     // operators
+.hl-key      { color: var(--hl-key,       #f07178); font-weight: 600; }   // JSON keys
+
+// ── Markdown preview styles ───────────────────────────────────────────────────
+
+.code-viewer__markdown {
+    h1.md-h1, h2.md-h2, h3.md-h3 {
+        border-bottom: 1px solid var(--section-border-color);
+        font-weight: 700;
+        margin: 1rem 0 0.4rem;
+        padding-bottom: 0.2rem;
+    }
+    h1.md-h1 { font-size: 1.4rem; }
+    h2.md-h2 { font-size: 1.15rem; }
+    h3.md-h3 { font-size: 1rem; }
+
+    p.md-p { line-height: 1.6; margin: 0.3rem 0; }
+
+    .md-li { line-height: 1.6; margin: 0.15rem 0; padding-left: 0.3rem; }
+
+    .md-spacer { height: 0.4rem; }
+
+    .md-hr {
+        border: none;
+        border-top: 1px solid var(--section-border-color);
+        margin: 0.75rem 0;
+    }
+
+    blockquote.md-blockquote {
+        border-left: 3px solid var(--accent-color);
+        color: var(--text-greyed-out);
+        font-style: italic;
+        margin: 0.3rem 0;
+        padding: 0.2rem 0.75rem;
+    }
+
+    code.md-inline-code {
+        background-color: var(--card-bg);
+        border-radius: 0.2rem;
+        font-family: monospace;
+        font-size: 0.85em;
+        padding: 0.1em 0.3em;
+    }
+
+    pre.md-code-block {
+        background-color: var(--card-bg);
+        border-radius: 0.25rem;
+        border: 1px solid var(--section-border-color);
+        font-family: monospace;
+        font-size: 0.82rem;
+        line-height: 1.5;
+        margin: 0.5rem 0;
+        overflow-x: auto;
+        padding: 0.75rem 1rem;
+        white-space: pre;
+    }
+
+    .md-link {
+        color: var(--btn-blue-color);
+        text-decoration: underline;
+    }
+
+    table { border-collapse: collapse; width: 100%; font-size: 0.85rem; margin: 0.5rem 0; }
+    th, td { border: 1px solid var(--section-border-color); padding: 0.3rem 0.6rem; }
+    th { background-color: var(--card-bg); font-weight: 700; }
+}
+
+// ── Git panel ─────────────────────────────────────────────────────────────────
+
+.code-git {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+
+    &__section {
+        border-bottom: 1px solid var(--section-border-color);
+        padding: 0.75rem 1rem;
+    }
+
+    &__section-header {
+        align-items: center;
+        color: var(--text);
+        display: flex;
+        font-size: 0.8rem;
+        font-weight: 700;
+        gap: 0.5rem;
+        justify-content: space-between;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+
+        em { text-transform: none; font-weight: 400; color: var(--accent-color); }
+    }
+
+    &__header-btns {
+        display: flex;
+        gap: 0.4rem;
+    }
+
+    &__status {
+        background-color: var(--card-bg);
+        border-radius: 0.25rem;
+        font-family: monospace;
+        font-size: 0.82rem;
+        padding: 0.5rem 0.75rem;
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+
+    &__clean {
+        color: var(--btn-green-color);
+        font-size: 0.85rem;
+        font-style: italic;
+    }
+
+    &__branches {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    &__branch {
+        align-items: center;
+        border-radius: 0.25rem;
+        display: flex;
+        justify-content: space-between;
+        padding: 0.35rem 0.5rem;
+
+        &--current {
+            background-color: var(--status-debug-bg);
+            font-weight: 700;
+        }
+    }
+
+    &__branch-name {
+        font-family: monospace;
+        font-size: 0.85rem;
+    }
+
+    &__msg-input {
+        background-color: var(--input-bg);
+        border: 1px solid var(--input-border);
+        border-radius: 0.25rem;
+        color: var(--text);
+        font-size: 0.88rem;
+        padding: 0.5rem 0.75rem;
+        resize: vertical;
+        width: 100%;
+
+        &:focus {
+            border-color: var(--accent-color);
+            outline: none;
+        }
+    }
+
+    &__output {
+        background-color: var(--status-debug-bg);
+        border-radius: 0.25rem;
+        color: var(--accent-color);
+        font-family: monospace;
+        font-size: 0.78rem;
+        max-height: 12rem;
+        overflow-y: auto;
+        padding: 0.5rem 0.75rem;
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+
+    &__log {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    &__commit {
+        background-color: var(--card-bg);
+        border-radius: 0.25rem;
+        padding: 0.5rem 0.6rem;
+    }
+
+    &__commit-top {
+        align-items: baseline;
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 0.2rem;
+    }
+
+    &__commit-hash {
+        background-color: var(--tag-bg);
+        border-radius: 0.2rem;
+        color: var(--tag-color);
+        flex-shrink: 0;
+        font-family: monospace;
+        font-size: 0.72rem;
+        padding: 0.1rem 0.35rem;
+    }
+
+    &__commit-subject {
+        font-size: 0.85rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__commit-meta {
+        color: var(--text-greyed-out);
+        font-size: 0.75rem;
+        margin-bottom: 0.3rem;
+    }
+
+    &__empty {
+        color: var(--text-greyed-out);
+        font-size: 0.85rem;
+        font-style: italic;
+        text-align: center;
+    }
+}

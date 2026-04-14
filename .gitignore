@@ -194,3 +194,7 @@ dist/
 
 # Working directory
 android/app/src/main/cpp/whisper
+
+# Generated bundles — rebuilt by vite at every build
+src/public/repo/
+src/public/repos/
