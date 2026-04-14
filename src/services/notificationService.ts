@@ -90,7 +90,7 @@ export class NotificationService {
 
     this.ntfyService.connect(ntfyApp.ntfyUrl, ntfyApp.ntfyTopic, (_title) => {
       this.onNtfyMessage(ntfyApp);
-    });
+    }, ntfyApp.ntfyToken || undefined);
   }
 
   private async onNtfyMessage(app: Application): Promise<void> {

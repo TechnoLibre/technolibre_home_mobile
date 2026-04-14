@@ -1,3 +1,4 @@
+import { defineCustomElements } from "@ionic/pwa-elements/loader";
 import { RootComponent } from "../components/root/root_component";
 import { EventBus, mount } from "@odoo/owl";
 import { Capacitor } from "@capacitor/core";
@@ -25,6 +26,7 @@ import { addProcessesTable } from "../services/migrations/addProcessesTable";
 import { addProcessResultColumn } from "../services/migrations/addProcessResultColumn";
 import { addProcessDebugLogColumn } from "../services/migrations/addProcessDebugLogColumn";
 import { addTagsTable } from "../services/migrations/addTagsTable";
+import { addNtfyTokenColumn } from "../services/migrations/addNtfyTokenColumn";
 import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
@@ -176,6 +178,11 @@ async function startApp() {
 			description: "Création de la table des tags et migration des tags existants",
 			run: addTagsTable,
 		},
+		{
+			version: 2026041401,
+			description: "Ajout de la colonne ntfy_token pour l'authentification NTFY",
+			run: addNtfyTokenColumn,
+		},
 	]);
 
 	setBootStep(t("boot.loading_graphic_prefs"));
@@ -220,6 +227,7 @@ async function startApp() {
 
 	setBootStep(t("boot.mounting_interface"));
 	await mount(RootComponent, document.body, { env });
+	defineCustomElements(window);
 	hideBootScreen();
 }
 

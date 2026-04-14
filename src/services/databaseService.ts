@@ -312,6 +312,14 @@ export class DatabaseService {
     }
   }
 
+  async addNtfyTokenColumn(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(applications)");
+    const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!existingNames.includes("ntfy_token")) {
+      await this.db.execute("ALTER TABLE applications ADD COLUMN ntfy_token TEXT NOT NULL DEFAULT ''");
+    }
+  }
+
   async addOdooVersionToApplications(): Promise<void> {
     const existing = await this.db.query("PRAGMA table_info(applications)");
     const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
@@ -328,12 +336,13 @@ export class DatabaseService {
   async addApplication(app: Application): Promise<void> {
     await this.db.run(
       `INSERT INTO applications
-        (url, username, password, database, odoo_version, auto_sync, poll_interval_minutes, ntfy_url, ntfy_topic)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (url, username, password, database, odoo_version, auto_sync, poll_interval_minutes, ntfy_url, ntfy_topic, ntfy_token)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [app.url, app.username, app.password,
        app.database ?? "", app.odooVersion ?? "",
        app.autoSync ? 1 : 0,
-       app.pollIntervalMinutes ?? 5, app.ntfyUrl ?? "", app.ntfyTopic ?? ""]
+       app.pollIntervalMinutes ?? 5, app.ntfyUrl ?? "", app.ntfyTopic ?? "",
+       app.ntfyToken ?? ""]
     );
   }
 
@@ -357,11 +366,12 @@ export class DatabaseService {
     app: Application
   ): Promise<void> {
     await this.db.run(
-      "UPDATE applications SET url = ?, username = ?, password = ?, database = ?, odoo_version = ?, auto_sync = ?, poll_interval_minutes = ?, ntfy_url = ?, ntfy_topic = ? WHERE url = ? AND username = ?",
+      "UPDATE applications SET url = ?, username = ?, password = ?, database = ?, odoo_version = ?, auto_sync = ?, poll_interval_minutes = ?, ntfy_url = ?, ntfy_topic = ?, ntfy_token = ? WHERE url = ? AND username = ?",
       [app.url, app.username, app.password,
        app.database ?? "", app.odooVersion ?? "",
        app.autoSync ? 1 : 0,
        app.pollIntervalMinutes ?? 5, app.ntfyUrl ?? "", app.ntfyTopic ?? "",
+       app.ntfyToken ?? "",
        url, username]
     );
   }
@@ -377,6 +387,7 @@ export class DatabaseService {
       pollIntervalMinutes: row.poll_interval_minutes ?? 5,
       ntfyUrl: row.ntfy_url ?? "",
       ntfyTopic: row.ntfy_topic ?? "",
+      ntfyToken: row.ntfy_token ?? "",
     };
   }
 

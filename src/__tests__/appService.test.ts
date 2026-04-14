@@ -14,6 +14,7 @@ const baseApp = (overrides: Partial<Application> = {}): Application => ({
   pollIntervalMinutes: 5,
   ntfyUrl: "",
   ntfyTopic: "",
+  ntfyToken: "",
   ...overrides,
 });
 

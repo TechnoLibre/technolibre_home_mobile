@@ -355,7 +355,7 @@ export default defineConfig({
     plugins: [bundleSourcePlugin()],
     build: {
         outDir: "../dist",
-        minify: false,
+        minify: "esbuild",
         emptyOutDir: true,
     },
     css: {
