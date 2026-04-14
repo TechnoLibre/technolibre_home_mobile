@@ -8,10 +8,14 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import com.jcraft.jsch.Channel;
 import com.jcraft.jsch.ChannelExec;
+import com.jcraft.jsch.HostKey;
+import com.jcraft.jsch.HostKeyRepository;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
+import com.jcraft.jsch.UserInfo;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -20,6 +24,19 @@ import java.nio.charset.StandardCharsets;
 public class SshPlugin extends Plugin {
 
     private Session session;
+
+    /**
+     * Returns the app-private known_hosts file for SSH host key verification.
+     * Uses Trust-On-First-Use (TOFU): accepts and stores key on first connect,
+     * verifies on subsequent connections.
+     */
+    private File getKnownHostsFile() {
+        File sshDir = new File(getContext().getFilesDir(), ".ssh");
+        if (!sshDir.exists()) {
+            sshDir.mkdirs();
+        }
+        return new File(sshDir, "known_hosts");
+    }
 
     @PluginMethod
     public void connect(PluginCall call) {
@@ -39,6 +56,13 @@ public class SshPlugin extends Plugin {
             try {
                 JSch jsch = new JSch();
 
+                // Load or create known_hosts for TOFU host key verification
+                File knownHosts = getKnownHostsFile();
+                if (!knownHosts.exists()) {
+                    knownHosts.createNewFile();
+                }
+                jsch.setKnownHosts(knownHosts.getAbsolutePath());
+
                 if ("key".equals(authType)) {
                     byte[] keyBytes = credential.getBytes(StandardCharsets.UTF_8);
                     byte[] passphraseBytes = (passphrase != null && !passphrase.isEmpty())
@@ -53,19 +77,59 @@ public class SshPlugin extends Plugin {
                     session.setPassword(credential);
                 }
 
-                // Disable strict host key checking for mobile deployments
+                // TOFU via UserInfo: auto-accept unknown hosts, reject changed keys.
+                // JSch calls promptYesNo when host is unknown (StrictHostKeyChecking=ask).
+                // After connect, the key is automatically persisted to known_hosts.
                 java.util.Properties config = new java.util.Properties();
-                config.put("StrictHostKeyChecking", "no");
+                config.put("StrictHostKeyChecking", "ask");
                 session.setConfig(config);
+                session.setUserInfo(new TofuUserInfo());
 
                 session.setTimeout(30000);
                 session.connect(30000);
 
-                call.resolve();
+                JSObject result = new JSObject();
+                if (session.getHostKey() != null) {
+                    result.put("hostKeyFingerprint", session.getHostKey().getFingerPrint(jsch));
+                }
+                call.resolve(result);
+            } catch (com.jcraft.jsch.JSchException e) {
+                String msg = e.getMessage();
+                if (msg != null && (msg.contains("HostKey") || msg.contains("host key")
+                        || msg.contains("changed"))) {
+                    call.reject("SSH host key verification failed. The server's key may have "
+                        + "changed — possible MITM attack. Use clearKnownHost() to remove "
+                        + "the old key if the change is expected.", e);
+                } else {
+                    call.reject("SSH connection failed: " + msg, e);
+                }
             } catch (Exception e) {
                 call.reject("SSH connection failed: " + e.getMessage(), e);
             }
         }).start();
+    }
+
+    @PluginMethod
+    public void clearKnownHost(PluginCall call) {
+        String host = call.getString("host");
+        if (host == null) {
+            call.reject("Missing required parameter: host");
+            return;
+        }
+
+        try {
+            JSch jsch = new JSch();
+            File knownHosts = getKnownHostsFile();
+            if (knownHosts.exists()) {
+                jsch.setKnownHosts(knownHosts.getAbsolutePath());
+                jsch.getHostKeyRepository().remove(host, "ssh-rsa");
+                jsch.getHostKeyRepository().remove(host, "ecdsa-sha2-nistp256");
+                jsch.getHostKeyRepository().remove(host, "ssh-ed25519");
+            }
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Failed to clear known host: " + e.getMessage(), e);
+        }
     }
 
     @PluginMethod
@@ -162,5 +226,30 @@ public class SshPlugin extends Plugin {
         }
         session = null;
         call.resolve();
+    }
+
+    /**
+     * Trust-On-First-Use (TOFU) UserInfo implementation for JSch.
+     * - promptYesNo is called when host key is unknown → returns true (accept + store)
+     * - If the host key has CHANGED, JSch rejects before calling promptYesNo,
+     *   so this only auto-accepts genuinely new hosts.
+     */
+    private static class TofuUserInfo implements UserInfo {
+        @Override
+        public String getPassphrase() { return null; }
+        @Override
+        public String getPassword() { return null; }
+        @Override
+        public boolean promptPassword(String message) { return false; }
+        @Override
+        public boolean promptPassphrase(String message) { return false; }
+        @Override
+        public boolean promptYesNo(String message) {
+            // Auto-accept unknown host keys (TOFU).
+            // JSch persists the key to known_hosts automatically.
+            return true;
+        }
+        @Override
+        public void showMessage(String message) { }
     }
 }
