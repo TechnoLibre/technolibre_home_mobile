@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  COLOR_THEME_LABELS,
   DEFAULT_GRAPHIC_PREFS,
   FONT_CSS_VALUES,
   FONT_LABELS,
@@ -11,9 +12,18 @@ import {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 describe("GraphicPrefs constants", () => {
-  it("DEFAULT_GRAPHIC_PREFS has fontFamily=sans and fontSizeScale=1", () => {
+  it("DEFAULT_GRAPHIC_PREFS has fontFamily=sans, fontSizeScale=1, colorTheme=dark, reduceMotion=false", () => {
     expect(DEFAULT_GRAPHIC_PREFS.fontFamily).toBe("sans");
     expect(DEFAULT_GRAPHIC_PREFS.fontSizeScale).toBe(1);
+    expect(DEFAULT_GRAPHIC_PREFS.colorTheme).toBe("dark");
+    expect(DEFAULT_GRAPHIC_PREFS.reduceMotion).toBe(false);
+  });
+
+  it("COLOR_THEME_LABELS provides a label for all four themes", () => {
+    expect(COLOR_THEME_LABELS.dark).toBeTruthy();
+    expect(COLOR_THEME_LABELS["dark-grey"]).toBeTruthy();
+    expect(COLOR_THEME_LABELS["light-warm"]).toBeTruthy();
+    expect(COLOR_THEME_LABELS.light).toBeTruthy();
   });
 
   it("FONT_CSS_VALUES provides CSS strings for all three font families", () => {
@@ -57,42 +67,72 @@ describe("GraphicPrefs constants", () => {
 describe("applyGraphicPrefs", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("sets --app-font-family CSS variable on documentElement", () => {
+  function makeDocStub() {
+    const dataset: Record<string, string> = {};
     const setProperty = vi.fn();
-    vi.stubGlobal("document", { documentElement: { style: { setProperty } } });
+    vi.stubGlobal("document", { documentElement: { style: { setProperty }, dataset } });
+    return { setProperty, dataset };
+  }
 
-    applyGraphicPrefs({ fontFamily: "mono", fontSizeScale: 1 });
-
-    expect(setProperty).toHaveBeenCalledWith(
-      "--app-font-family",
-      FONT_CSS_VALUES.mono
-    );
+  it("sets --app-font-family CSS variable on documentElement", () => {
+    const { setProperty } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "mono", fontSizeScale: 1, colorTheme: "dark", reduceMotion: false });
+    expect(setProperty).toHaveBeenCalledWith("--app-font-family", FONT_CSS_VALUES.mono);
   });
 
   it("sets --app-font-scale CSS variable on documentElement", () => {
-    const setProperty = vi.fn();
-    vi.stubGlobal("document", { documentElement: { style: { setProperty } } });
-
-    applyGraphicPrefs({ fontFamily: "serif", fontSizeScale: 1.3 });
-
+    const { setProperty } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "serif", fontSizeScale: 1.3, colorTheme: "dark", reduceMotion: false });
     expect(setProperty).toHaveBeenCalledWith("--app-font-scale", "1.3");
   });
 
-  it("applies all font families without error", () => {
-    const setProperty = vi.fn();
-    vi.stubGlobal("document", { documentElement: { style: { setProperty } } });
+  it("sets data-theme attribute on documentElement", () => {
+    const { dataset } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "light", reduceMotion: false });
+    expect(dataset.theme).toBe("light");
+  });
 
+  it("dark theme sets data-theme=dark", () => {
+    const { dataset } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark", reduceMotion: false });
+    expect(dataset.theme).toBe("dark");
+  });
+
+  it("dark-grey theme sets data-theme=dark-grey", () => {
+    const { dataset } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark-grey", reduceMotion: false });
+    expect(dataset.theme).toBe("dark-grey");
+  });
+
+  it("light-warm theme sets data-theme=light-warm", () => {
+    const { dataset } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "light-warm", reduceMotion: false });
+    expect(dataset.theme).toBe("light-warm");
+  });
+
+  it("applies all font families without error", () => {
+    makeDocStub();
     for (const family of ["sans", "serif", "mono"] as const) {
-      expect(() => applyGraphicPrefs({ fontFamily: family, fontSizeScale: 1 })).not.toThrow();
+      expect(() => applyGraphicPrefs({ fontFamily: family, fontSizeScale: 1, colorTheme: "dark", reduceMotion: false })).not.toThrow();
     }
   });
 
   it("applies all FONT_SIZE_STEPS without error", () => {
-    const setProperty = vi.fn();
-    vi.stubGlobal("document", { documentElement: { style: { setProperty } } });
-
+    makeDocStub();
     for (const scale of FONT_SIZE_STEPS) {
-      expect(() => applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: scale })).not.toThrow();
+      expect(() => applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: scale, colorTheme: "dark", reduceMotion: false })).not.toThrow();
     }
+  });
+
+  it("reduceMotion=true sets data-reduce-motion=true", () => {
+    const { dataset } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark", reduceMotion: true });
+    expect(dataset.reduceMotion).toBe("true");
+  });
+
+  it("reduceMotion=false sets data-reduce-motion=false", () => {
+    const { dataset } = makeDocStub();
+    applyGraphicPrefs({ fontFamily: "sans", fontSizeScale: 1, colorTheme: "dark", reduceMotion: false });
+    expect(dataset.reduceMotion).toBe("false");
   });
 });

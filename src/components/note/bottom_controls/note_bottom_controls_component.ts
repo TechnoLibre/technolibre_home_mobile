@@ -17,54 +17,66 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			id="note__control__location"
 			class="note__control"
 			href="#"
+			role="button"
+			aria-label="Ajouter un lieu"
 			t-on-click.stop.prevent="props.addLocation"
 		>
-			<img src="${GlobeLocationIcon}" />
+			<img src="${GlobeLocationIcon}" alt="" aria-hidden="true"/>
 			<span>Lieu</span>
 		</a>
 		<a
 			id="note__control__photo"
 			class="note__control"
 			href="#"
+			role="button"
+			aria-label="Ajouter une photo"
 			t-on-click.stop.prevent="props.addPhoto"
 		>
-			<img src="${AddPhotoIcon}" />
+			<img src="${AddPhotoIcon}" alt="" aria-hidden="true"/>
 			<span>Photo</span>
 		</a>
 		<a
 			id="note__control__video"
 			class="note__control"
 			href="#"
+			role="button"
+			aria-label="Ajouter une vidéo"
 			t-on-click.stop.prevent="props.addVideo"
 		>
-			<img src="${AddVideoIcon}" />
+			<img src="${AddVideoIcon}" alt="" aria-hidden="true"/>
 			<span>Vidéo</span>
 		</a>
 		<a
 			id="note__control__audio"
 			class="note__control"
 			href="#"
+			role="button"
+			aria-label="Ajouter un audio"
 			t-on-click.stop.prevent="props.addAudio"
 		>
-			<img src="${AudioIcon}" />
+			<img src="${AudioIcon}" alt="" aria-hidden="true"/>
 			<span>Audio</span>
 		</a>
 		<a
 			id="note__control__text"
 			class="note__control"
 			href="#"
+			role="button"
+			aria-label="Ajouter du texte"
 			t-on-click.stop.prevent="props.addText"
 		>
-			<img src="${TextIcon}" />
+			<img src="${TextIcon}" alt="" aria-hidden="true"/>
 			<span>Texte</span>
 		</a>
 		<a
 			id="note__control__date"
 			class="note__control"
 			href="#"
+			role="button"
+			aria-label="Ajouter une date"
 			t-on-click.stop.prevent="props.addDateEntry"
 		>
-			<img src="${AddDateIcon}" />
+			<img src="${AddDateIcon}" alt="" aria-hidden="true"/>
 			<span>Date</span>
 		</a>
 	</section>

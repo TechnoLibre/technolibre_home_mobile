@@ -22,8 +22,8 @@
     // ── Info ──────────────────────────────────────────────────────────────────
 
     .workspace__info {
-        background-color: #151515;
-        border: 1px solid #333;
+        background-color: var(--card-bg);
+        border: 1px solid var(--section-border-color);
         border-radius: 0.5rem;
         display: flex;
         flex-direction: column;
@@ -83,7 +83,7 @@
     }
 
     .workspace__info-error {
-        background-color: #1a0000;
+        background-color: var(--status-error-bg);
         border: 1px solid #d32f2f;
         border-radius: 0.3rem;
         color: #ef9a9a;
@@ -136,8 +136,8 @@
 
     .workspace__terminal-header {
         align-items: center;
-        background-color: #0d0d0d;
-        border: 1px solid #2a2a2a;
+        background-color: var(--background);
+        border: 1px solid var(--surface-btn);
         border-radius: 0.4rem 0.4rem 0 0;
         display: flex;
         gap: 0.5rem;
@@ -182,18 +182,18 @@
 
     .workspace__terminal-toolbar {
         align-items: center;
-        background-color: #141414;
-        border-bottom: 1px solid #2a2a2a;
-        border-left: 1px solid #2a2a2a;
-        border-right: 1px solid #2a2a2a;
+        background-color: var(--card-bg);
+        border-bottom: 1px solid var(--surface-btn);
+        border-left: 1px solid var(--surface-btn);
+        border-right: 1px solid var(--surface-btn);
         display: flex;
         gap: 0.4rem;
         padding: 0.2rem 0.5rem;
     }
 
     .workspace__terminal-nav-btn {
-        background-color: #1e2a3a;
-        border: 1px solid #2a3a4a;
+        background-color: var(--surface-btn);
+        border: 1px solid var(--section-border-color);
         border-radius: 0.2rem;
         color: #90caf9;
         cursor: pointer;
@@ -201,7 +201,7 @@
         outline: none;
         padding: 0.15rem 0.5rem;
         transition: background-color 100ms ease-in-out;
-        &:hover { background-color: #263a4a; }
+        &:hover { background-color: var(--surface-btn-active); }
 
         &--bottom { margin-left: auto; }
     }
@@ -212,9 +212,9 @@
     }
 
     .workspace__terminal-output {
-        background-color: #0a0a0a;
-        border-left: 1px solid #2a2a2a;
-        border-right: 1px solid #2a2a2a;
+        background-color: var(--background);
+        border-left: 1px solid var(--surface-btn);
+        border-right: 1px solid var(--surface-btn);
         flex: 1;
         font-family: monospace;
         font-size: 0.8rem;
@@ -243,17 +243,17 @@
     }
 
     .workspace__quick-btns {
-        background-color: #111;
-        border-left: 1px solid #2a2a2a;
-        border-right: 1px solid #2a2a2a;
+        background-color: var(--background);
+        border-left: 1px solid var(--surface-btn);
+        border-right: 1px solid var(--surface-btn);
         display: flex;
         gap: 0.4rem;
         padding: 0.4rem 0.5rem;
     }
 
     .workspace__quick-btn {
-        background-color: #1e2a3a;
-        border: 1px solid #2a3a4a;
+        background-color: var(--surface-btn);
+        border: 1px solid var(--section-border-color);
         border-radius: 0.2rem;
         color: #90caf9;
         cursor: pointer;
@@ -262,7 +262,7 @@
         outline: none;
         padding: 0.3rem 0.75rem;
         transition: background-color 150ms ease-in-out;
-        &:hover:not(:disabled) { background-color: #263a4a; }
+        &:hover:not(:disabled) { background-color: var(--surface-btn-active); }
         &:disabled { cursor: default; opacity: 0.4; }
 
         &--cd {
@@ -275,8 +275,8 @@
 
     .workspace__terminal-input-row {
         align-items: center;
-        background-color: #0d0d0d;
-        border: 1px solid #2a2a2a;
+        background-color: var(--background);
+        border: 1px solid var(--surface-btn);
         border-radius: 0 0 0.4rem 0.4rem;
         border-top: none;
         display: flex;
@@ -323,8 +323,8 @@
 
     .workspace__cd-header {
         align-items: center;
-        background-color: #151515;
-        border: 1px solid #333;
+        background-color: var(--card-bg);
+        border: 1px solid var(--section-border-color);
         border-radius: 0.4rem 0.4rem 0 0;
         display: flex;
         justify-content: space-between;
@@ -350,9 +350,9 @@
     }
 
     .workspace__cd-current {
-        background-color: #0a0a0a;
-        border-left: 1px solid #333;
-        border-right: 1px solid #333;
+        background-color: var(--background);
+        border-left: 1px solid var(--section-border-color);
+        border-right: 1px solid var(--section-border-color);
         color: #90caf9;
         font-family: monospace;
         font-size: 0.8rem;
@@ -375,8 +375,8 @@
     }
 
     .workspace__cd-list {
-        background-color: #111;
-        border: 1px solid #333;
+        background-color: var(--background);
+        border: 1px solid var(--section-border-color);
         border-radius: 0 0 0.4rem 0.4rem;
         border-top: none;
         flex: 1;
@@ -389,13 +389,13 @@
 
     .workspace__cd-item {
         align-items: baseline;
-        border-bottom: 1px solid #1e1e1e;
+        border-bottom: 1px solid var(--card-hover-bg);
         cursor: pointer;
         display: flex;
         gap: 0.5rem;
         padding: 0.65rem 0.75rem;
         transition: background-color 100ms ease-in-out;
-        &:hover { background-color: #1e2a3a; }
+        &:hover { background-color: var(--surface-btn); }
         &:last-child { border-bottom: none; }
 
         &--up {

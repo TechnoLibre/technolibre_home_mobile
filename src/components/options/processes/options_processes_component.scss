@@ -27,9 +27,9 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.75rem 0.875rem;
-    border: 1.5px solid #333;
+    border: 1.5px solid var(--section-border-color);
     border-radius: 0.625rem;
-    background: #1a1a1a;
+    background: var(--card-bg);
     transition: border-color 0.15s;
 
     &--running {
@@ -98,7 +98,7 @@
 
     &__nav-btn {
         background: transparent;
-        border: 1.5px solid #444;
+        border: 1.5px solid var(--surface-subtle);
         border-radius: 0.375rem;
         color: #aaa;
         font-size: 1.1rem;
@@ -147,8 +147,8 @@
 }
 
 .process-modal {
-    background: #1c1c1c;
-    border-top: 1.5px solid #333;
+    background: var(--card-bg);
+    border-top: 1.5px solid var(--section-border-color);
     border-radius: 1rem 1rem 0 0;
     padding: 1.25rem 1rem 1.5rem;
     width: 100%;
@@ -218,8 +218,8 @@
     &__result {
         font-size: 0.82rem;
         color: #aaa;
-        background: #111;
-        border: 1px solid #2a2a2a;
+        background: var(--background);
+        border: 1px solid var(--surface-btn);
         border-radius: 0.4rem;
         padding: 0.6rem 0.75rem;
         line-height: 1.55;
@@ -238,7 +238,7 @@
         font-family: monospace;
         font-size: 0.72rem;
         color: #7ec8a0;
-        background: #0d1a12;
+        background: var(--status-debug-bg);
         border: 1px solid #1a3a22;
         border-radius: 0.4rem;
         padding: 0.6rem 0.75rem;
@@ -250,9 +250,26 @@
         margin: 0;
     }
 
+    &__goto {
+        background: transparent;
+        border: 1.5px solid var(--btn-blue-color, #3b82f6);
+        border-radius: 0.5rem;
+        color: var(--btn-blue-color, #3b82f6);
+        cursor: pointer;
+        font-size: 0.9rem;
+        font-weight: 600;
+        padding: 0.65rem;
+        transition: background 0.15s;
+        width: 100%;
+
+        &:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+    }
+
     &__close {
-        background: #2a2a2a;
-        border: 1px solid #3a3a3a;
+        background: var(--surface-btn);
+        border: 1px solid var(--section-border-color);
         border-radius: 0.5rem;
         color: #ccc;
         cursor: pointer;
@@ -263,7 +280,7 @@
         width: 100%;
 
         &:hover {
-            background: #333;
+            background: var(--surface-btn-active);
         }
     }
 }

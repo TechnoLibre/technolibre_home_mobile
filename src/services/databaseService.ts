@@ -5,6 +5,7 @@ import {
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { Application } from "../models/application";
 import { Note, NoteEntry } from "../models/note";
+import { Tag } from "../models/tag";
 import { Reminder } from "../models/reminder";
 import { Server } from "../models/server";
 import { Workspace } from "../models/workspace";
@@ -834,6 +835,57 @@ export class DatabaseService {
       model:        row.model ?? undefined,
       result:       row.result ?? undefined,
       debugLog,
+    };
+  }
+
+  // Tags
+
+  async createTagsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS tags (
+        id        TEXT PRIMARY KEY NOT NULL,
+        name      TEXT NOT NULL,
+        color     TEXT NOT NULL DEFAULT '#6b7280',
+        parent_id TEXT
+      )
+    `);
+  }
+
+  async getAllTags(): Promise<Tag[]> {
+    const result = await this.db.query("SELECT * FROM tags ORDER BY name");
+    return (result.values ?? []).map((row: any) => this.rowToTag(row));
+  }
+
+  async getTagById(id: string): Promise<Tag | null> {
+    const result = await this.db.query("SELECT * FROM tags WHERE id = ?", [id]);
+    const row = result.values?.[0];
+    return row ? this.rowToTag(row) : null;
+  }
+
+  async addTag(tag: Tag): Promise<void> {
+    await this.db.run(
+      "INSERT INTO tags (id, name, color, parent_id) VALUES (?, ?, ?, ?)",
+      [tag.id, tag.name, tag.color, tag.parentId ?? null]
+    );
+  }
+
+  async updateTag(id: string, tag: Tag): Promise<void> {
+    await this.db.run(
+      "UPDATE tags SET name = ?, color = ?, parent_id = ? WHERE id = ?",
+      [tag.name, tag.color, tag.parentId ?? null, id]
+    );
+  }
+
+  async deleteTag(id: string): Promise<void> {
+    await this.db.run("DELETE FROM tags WHERE id = ?", [id]);
+  }
+
+  private rowToTag(row: any): Tag {
+    return {
+      id: row.id,
+      name: row.name,
+      color: row.color ?? "#6b7280",
+      parentId: row.parent_id ?? undefined,
     };
   }
 

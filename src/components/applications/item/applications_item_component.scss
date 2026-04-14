@@ -4,7 +4,7 @@
 	align-items: center;
 	border: 2px solid var(--section-border-color);
 	border-radius: 0.5em;
-	background-color: #151515;
+	background-color: var(--card-bg);
 	display: grid;
 	grid-template-areas: "data data" "user actions";
 	grid-template-columns: 1fr auto;
@@ -27,8 +27,8 @@
 	}
 	&__url {
 		@include mixins.ellipsis;
-		background-color: #000;
-		border-bottom: 2px solid #202020;
+		background-color: var(--background);
+		border-bottom: 2px solid var(--card-bg);
 		font-weight: 600;
 		padding: 1rem;
 		width: 100%;
@@ -73,12 +73,12 @@
 		}
 	}
 	&__info {
-		background-color: #333;
+		background-color: var(--section-border-color);
 		color: var(--text);
 		font-size: 1.1rem;
 		grid-area: info;
 		&:hover {
-			background-color: #444;
+			background-color: var(--surface-subtle);
 		}
 	}
 	&__edit {
@@ -124,8 +124,8 @@
 }
 
 .app-info-dialog {
-	background: #1a1a1a;
-	border: 1px solid #3a3a3a;
+	background: var(--card-bg);
+	border: 1px solid var(--surface-btn-active);
 	border-radius: 0.5rem;
 	display: flex;
 	flex-direction: column;
@@ -136,8 +136,8 @@
 
 	&__header {
 		align-items: center;
-		background: #111;
-		border-bottom: 1px solid #333;
+		background: var(--background);
+		border-bottom: 1px solid var(--section-border-color);
 		display: flex;
 		flex-shrink: 0;
 		gap: 0.5rem;
@@ -192,8 +192,8 @@
 	}
 
 	&__error-btn {
-		background: #252525;
-		border: 1px solid #444;
+		background: var(--card-bg);
+		border: 1px solid var(--surface-subtle);
 		border-radius: 0.375rem;
 		color: var(--text);
 		cursor: pointer;
@@ -235,8 +235,8 @@
 	}
 
 	&__filter {
-		background: #252525;
-		border: 1px solid #444;
+		background: var(--card-bg);
+		border: 1px solid var(--surface-subtle);
 		border-radius: 0.375rem;
 		color: var(--text);
 		flex-shrink: 0;
@@ -256,7 +256,7 @@
 	}
 
 	&__model-item {
-		border-bottom: 1px solid #2a2a2a;
+		border-bottom: 1px solid var(--surface-btn);
 	}
 
 	&__model-btn {
@@ -305,8 +305,8 @@
 	}
 
 	&__fields {
-		background: #111;
-		border-top: 1px solid #2a2a2a;
+		background: var(--background);
+		border-top: 1px solid var(--surface-btn);
 		padding: 0.25rem 0 0.5rem;
 	}
 
@@ -323,7 +323,7 @@
 	}
 
 	&__field-row {
-		border-top: 1px solid #1e1e1e;
+		border-top: 1px solid var(--card-hover-bg);
 		display: flex;
 		flex-direction: column;
 		gap: 0.1rem;

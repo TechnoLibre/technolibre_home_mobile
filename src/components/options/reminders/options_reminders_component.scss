@@ -21,7 +21,7 @@
 	}
 
 	&__body {
-		border-top: 1px solid #2a2a2a;
+		border-top: 1px solid var(--surface-btn);
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
@@ -44,8 +44,8 @@
 
 	&__input,
 	&__select {
-		background: #1a1a1a;
-		border: 1px solid #333;
+		background: var(--input-bg);
+		border: 1px solid var(--section-border-color);
 		border-radius: 0.25rem;
 		color: var(--text);
 		font-size: 0.9rem;
@@ -72,8 +72,8 @@
 		}
 
 		&--toggle {
-			background: #2a2a2a;
-			border: 1px solid #444;
+			background: var(--surface-btn);
+			border: 1px solid var(--surface-subtle);
 			color: var(--text);
 			min-width: 2rem;
 		}
@@ -98,8 +98,8 @@
 
 	&__item {
 		align-items: center;
-		background: #1a1a1a;
-		border: 1px solid #2a2a2a;
+		background: var(--card-bg);
+		border: 1px solid var(--surface-btn);
 		border-radius: 0.25rem;
 		display: flex;
 		gap: 0.5rem;

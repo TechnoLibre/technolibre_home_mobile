@@ -1,10 +1,22 @@
+// ─── Shared non-theme variables ───────────────────────────────────────────────
 :root {
 	--app-font-family: "VarOpenSans", system-ui, sans-serif;
 	--app-font-scale: 1;
+}
+
+// ─── Nuit (dark night) — AMOLED deep black, original look ────────────────────
+:root,
+:root[data-theme="dark"] {
 	--text: #f3f3f3;
 	--text-greyed-out: #808080;
 	--fill: #f3f3f3;
 	--background: #000;
+	--accent-color: #31d53d;
+
+	--surface-btn: #2a2a2a;
+	--surface-btn-active: #3a3a3a;
+	--surface-subtle: #444;
+
 	--btn-red-color: #8a0000;
 	--btn-red-hover-color: #780000;
 	--btn-blue-color: #2151d3;
@@ -15,11 +27,208 @@
 	--btn-grey-hover-color: #4a4a4a;
 	--btn-back-color: #222;
 	--btn-back-hover-color: #2a2a2a;
+
 	--section-border-color: #333;
 	--nav-background-color: #1a1a1a;
 	--nav-text-color: #aaa;
 	--nav-text-color-deselected-active: #888;
 	--nav-text-color-selected-active: #ccc;
+
 	--options__item__background-color: rgba(40, 40, 40, 0.985);
 	--options__item__color: #eee;
+
+	// Active nav item
+	--nav-active-bg: #000;
+	--nav-active-subpath-bg: #0a0a0a;
+
+	// Icon filter (white SVG icons on dark bg = correct; invert for light bg)
+	--icon-filter: none;
+
+	// Surfaces
+	--card-bg: #151515;
+	--card-hover-bg: #1e1e1e;
+
+	// Form inputs
+	--input-bg: #1a1a1a;
+	--input-border: #404040;
+
+	// Tags
+	--tag-bg: #1e2e93;
+	--tag-color: #f0f0f0;
+
+	// Status backgrounds
+	--status-error-bg: #1a0000;
+	--status-warning-bg: #1a1100;
+	--status-debug-bg: #0d1a12;
+}
+
+// ─── Contraste (dark grey) — charcoal, vivid accents ─────────────────────────
+:root[data-theme="dark-grey"] {
+	--text: #f2f2f2;
+	--text-greyed-out: #a8a8a8;
+	--fill: #f2f2f2;
+	--background: #1e1e1e;
+	--accent-color: #60a5fa;
+
+	--surface-btn: #303030;
+	--surface-btn-active: #404040;
+	--surface-subtle: #525252;
+
+	--btn-red-color: #f87171;
+	--btn-red-hover-color: #ef4444;
+	--btn-blue-color: #60a5fa;
+	--btn-blue-hover-color: #3b82f6;
+	--btn-green-color: #4ade80;
+	--btn-green-hover-color: #22c55e;
+	--btn-grey-color: #525252;
+	--btn-grey-hover-color: #616161;
+	--btn-back-color: #2a2a2a;
+	--btn-back-hover-color: #343434;
+
+	--section-border-color: #3a3a3a;
+	--nav-background-color: #141414;
+	--nav-text-color: #b0b0b0;
+	--nav-text-color-deselected-active: #909090;
+	--nav-text-color-selected-active: #e0e0e0;
+
+	--options__item__background-color: rgba(28, 28, 28, 0.98);
+	--options__item__color: #f2f2f2;
+
+	// Active nav item
+	--nav-active-bg: #080808;
+	--nav-active-subpath-bg: #0d0d0d;
+
+	// Icon filter
+	--icon-filter: none;
+
+	// Surfaces
+	--card-bg: #252525;
+	--card-hover-bg: #2e2e2e;
+
+	// Form inputs
+	--input-bg: #262626;
+	--input-border: #484848;
+
+	// Tags
+	--tag-bg: #2038a0;
+	--tag-color: #dbeafe;
+
+	// Status backgrounds
+	--status-error-bg: #2a0808;
+	--status-warning-bg: #2a1a00;
+	--status-debug-bg: #0d1a12;
+}
+
+// ─── Coloré (light warm) — parchment, fin d'après-midi ───────────────────────
+:root[data-theme="light-warm"] {
+	--text: #1c1207;
+	--text-greyed-out: #6b4c28;
+	--fill: #1c1207;
+	--background: #fef9f0;
+	--accent-color: #b45309;
+
+	--surface-btn: #fde8c4;
+	--surface-btn-active: #fad5a0;
+	--surface-subtle: #e8c99a;
+
+	--btn-red-color: #b91c1c;
+	--btn-red-hover-color: #991b1b;
+	--btn-blue-color: #1d4ed8;
+	--btn-blue-hover-color: #1e40af;
+	--btn-green-color: #15803d;
+	--btn-green-hover-color: #166534;
+	--btn-grey-color: #78350f;
+	--btn-grey-hover-color: #92400e;
+	--btn-back-color: #fde8c4;
+	--btn-back-hover-color: #fad5a0;
+
+	--section-border-color: #e8c99a;
+	--nav-background-color: #fffbf5;
+	--nav-text-color: #78350f;
+	--nav-text-color-deselected-active: #92400e;
+	--nav-text-color-selected-active: #1c1207;
+
+	--options__item__background-color: rgba(254, 245, 232, 0.98);
+	--options__item__color: #1c1207;
+
+	// Active nav item
+	--nav-active-bg: #fde8c4;
+	--nav-active-subpath-bg: #fad5a0;
+
+	// Icon filter — invert white SVGs to dark for light background
+	--icon-filter: invert(1);
+
+	// Surfaces
+	--card-bg: #fde8c4;
+	--card-hover-bg: #fad5a0;
+
+	// Form inputs
+	--input-bg: #fffbf5;
+	--input-border: #e8c99a;
+
+	// Tags
+	--tag-bg: #fde68a;
+	--tag-color: #78350f;
+
+	// Status backgrounds
+	--status-error-bg: #fee2e2;
+	--status-warning-bg: #fef3c7;
+	--status-debug-bg: #dcfce7;
+}
+
+// ─── Clair (light clean) — white, high contrast ───────────────────────────────
+:root[data-theme="light"] {
+	--text: #111111;
+	--text-greyed-out: #555555;
+	--fill: #111111;
+	--background: #f5f5f5;
+	--accent-color: #16a34a;
+
+	--surface-btn: #e5e5e5;
+	--surface-btn-active: #d0d0d0;
+	--surface-subtle: #c0c0c0;
+
+	--btn-red-color: #dc2626;
+	--btn-red-hover-color: #b91c1c;
+	--btn-blue-color: #2563eb;
+	--btn-blue-hover-color: #1d4ed8;
+	--btn-green-color: #16a34a;
+	--btn-green-hover-color: #15803d;
+	--btn-grey-color: #6b7280;
+	--btn-grey-hover-color: #4b5563;
+	--btn-back-color: #e5e5e5;
+	--btn-back-hover-color: #d4d4d4;
+
+	--section-border-color: #d4d4d4;
+	--nav-background-color: #ffffff;
+	--nav-text-color: #555555;
+	--nav-text-color-deselected-active: #777777;
+	--nav-text-color-selected-active: #111111;
+
+	--options__item__background-color: rgba(255, 255, 255, 0.98);
+	--options__item__color: #111111;
+
+	// Active nav item
+	--nav-active-bg: #d4d4d4;
+	--nav-active-subpath-bg: #dcdcdc;
+
+	// Icon filter — invert white SVGs to dark for light background
+	--icon-filter: invert(1);
+
+	// Surfaces
+	--card-bg: #e8e8e8;
+	--card-hover-bg: #dcdcdc;
+
+	// Form inputs
+	--input-bg: #ffffff;
+	--input-border: #cccccc;
+
+	// Tags
+	--tag-bg: #dbeafe;
+	--tag-color: #1e3a8a;
+
+	// Status backgrounds
+	--status-error-bg: #fef2f2;
+	--status-warning-bg: #fefce8;
+	--status-debug-bg: #f0fdf4;
 }

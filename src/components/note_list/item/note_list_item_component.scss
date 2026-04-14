@@ -5,7 +5,7 @@
 	align-items: center;
 	border: 2px solid var(--section-border-color);
 	border-radius: 0.5em;
-	background-color: #151515;
+	background-color: var(--card-bg);
 	cursor: pointer;
 	display: grid;
 	grid-template-areas: "handle data actions";
@@ -14,7 +14,7 @@
 	overflow: hidden;
 	transition: background-color 150ms ease-in-out;
 	&:hover {
-		background-color: #1a1a1a;
+		background-color: var(--card-hover-bg);
 	}
 	&.has-tags {
 		grid-template-areas: "tags tags tags" "handle data actions";
@@ -24,18 +24,16 @@
 	}
 	&__tags {
 		@include mixins.flex();
-		background-color: #000;
+		background-color: var(--background);
 		grid-area: tags;
 		padding: 0.5rem;
 	}
 	&__tag {
-		background-color: #1e2e93;
-		border-radius: 0.25rem;
-		font-size: 0.75rem;
-		padding: 0.35rem 0.75rem;
-		&:hover {
-			background-color: color.scale(#1e2e93, $lightness: -5%);
-		}
+		border-radius: 999px;
+		color: #fff;
+		font-size: 0.72rem;
+		font-weight: 600;
+		padding: 0.2rem 0.6rem;
 	}
 	&__tag + .notes-item__tag {
 		margin-left: 0.5rem;

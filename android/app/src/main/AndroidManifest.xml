@@ -42,6 +42,11 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name=".WhisperDownloadService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -61,6 +66,12 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- API 34+ requires specific foreground service type permission -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- API 33+: required to show foreground service notifications -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Geolocation Plugin -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

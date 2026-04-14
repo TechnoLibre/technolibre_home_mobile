@@ -3,13 +3,101 @@ import { Capacitor } from "@capacitor/core";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { HeadingComponent } from "../../heading/heading_component";
 import type { WhisperModel } from "../../../plugins/whisperPlugin";
-import { MODEL_LABELS } from "../../../services/transcriptionService";
+import type { DownloadProgress } from "../../../services/transcriptionService";
+import type { ProcessRecord } from "../../../models/process";
 
 interface ModelDef {
-    key: WhisperModel;
-    label: string;
-    size: string;
-    desc: string;
+    key:          WhisperModel;
+    name:         string;
+    size:         string;
+    ram:          string;
+    speedDots:    number;   // 1–5
+    speedLabel:   string;
+    qualityDots:  number;   // 1–5
+    qualityLabel: string;
+    desc:         string;
+    recommended?: boolean;
+    heavy?:       boolean;  // warn about RAM on low-end devices
+    englishOnly?: boolean;  // warn that model does not support French
+}
+
+const ALL_MODELS: ModelDef[] = [
+    {
+        key:          "tiny",
+        name:         "Tiny",
+        size:         "~75 Mo",
+        ram:          "~125 Mo",
+        speedDots:    5,
+        speedLabel:   "Très rapide",
+        qualityDots:  3,
+        qualityLabel: "Correcte",
+        desc:         "Idéal pour tester ou transcrire du français clair et articulé.",
+    },
+    {
+        key:          "base",
+        name:         "Base",
+        size:         "~142 Mo",
+        ram:          "~210 Mo",
+        speedDots:    4,
+        speedLabel:   "Rapide",
+        qualityDots:  4,
+        qualityLabel: "Bonne",
+        desc:         "Meilleur équilibre vitesse / précision pour la majorité des usages.",
+        recommended:  true,
+    },
+    {
+        key:          "small",
+        name:         "Small",
+        size:         "~244 Mo",
+        ram:          "~440 Mo",
+        speedDots:    3,
+        speedLabel:   "Moyen",
+        qualityDots:  4,
+        qualityLabel: "Bonne",
+        desc:         "Gère mieux les accents et le bruit de fond que Base.",
+    },
+    {
+        key:          "medium",
+        name:         "Medium",
+        size:         "~769 Mo",
+        ram:          "~1,5 Go",
+        speedDots:    2,
+        speedLabel:   "Lent",
+        qualityDots:  5,
+        qualityLabel: "Excellente",
+        desc:         "Très haute précision pour du contenu technique ou des accents marqués.",
+        heavy:        true,
+    },
+    {
+        key:          "large-v3-turbo",
+        name:         "Large-v3-turbo",
+        size:         "~874 Mo",
+        ram:          "~1,6 Go",
+        speedDots:    3,
+        speedLabel:   "Moyen",
+        qualityDots:  5,
+        qualityLabel: "Excellente",
+        desc:         "Meilleure qualité disponible en local. Plus rapide que Medium pour une précision identique.",
+        heavy:        true,
+    },
+    {
+        key:          "distil-large-v3",
+        name:         "Distil-large-v3",
+        size:         "~756 Mo",
+        ram:          "~1,2 Go",
+        speedDots:    4,
+        speedLabel:   "Rapide",
+        qualityDots:  1,
+        qualityLabel: "Anglais seul",
+        desc:         "⚠ Anglais uniquement — ne transcrit pas le français. Optimisé pour l'anglais avec une vitesse élevée.",
+        heavy:        true,
+        englishOnly:  true,
+    },
+];
+
+/** Render n filled + (max-n) empty dots. */
+function dots(n: number, max: number, filled: string, empty: string): string {
+    return filled.repeat(n) + empty.repeat(max - n);
 }
 
 export class OptionsTranscriptionComponent extends EnhancedComponent {
@@ -31,8 +119,8 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                         <div class="transcription-row__label">
                             <span class="transcription-row__title">🎙️ Transcription audio</span>
                             <span class="transcription-row__desc">
-                                Convertit les enregistrements audio en texte (Whisper,
-                                entièrement local — aucun serveur, aucun abonnement).
+                                Convertit les enregistrements audio en texte via Whisper —
+                                entièrement local, aucun serveur, aucun abonnement.
                             </span>
                         </div>
                         <div class="transcription-toggle-wrap">
@@ -57,78 +145,217 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                         <div class="transcription-section">
                             <p class="transcription-section__title">Modèle Whisper</p>
                             <p class="transcription-section__hint">
-                                Sélectionnez un modèle, puis téléchargez-le pour activer la transcription.
+                                Sélectionnez un modèle puis téléchargez-le pour activer la transcription.
                             </p>
 
                             <t t-foreach="models" t-as="m" t-key="m.key">
                                 <div
                                     class="transcription-model"
-                                    t-att-class="{ 'transcription-model--active': state.selectedModel === m.key }"
+                                    t-att-class="{
+                                        'transcription-model--active':       state.selectedModel === m.key,
+                                        'transcription-model--recommended':  m.recommended,
+                                        'transcription-model--english-only': m.englishOnly,
+                                    }"
                                     t-att-data-model-key="m.key"
                                     t-on-click="onModelCardClick"
                                 >
                                     <div class="transcription-model__radio" />
+
                                     <div class="transcription-model__info">
+
+                                        <!-- Header: name + badges -->
                                         <div class="transcription-model__header">
-                                            <span class="transcription-model__name" t-esc="m.label" />
+                                            <span class="transcription-model__name" t-esc="m.name" />
+                                            <span t-if="m.recommended"
+                                                  class="transcription-model__badge transcription-model__badge--recommended">
+                                                ★ Recommandé
+                                            </span>
+                                            <span t-if="m.englishOnly"
+                                                  class="transcription-model__badge transcription-model__badge--english-only">
+                                                🇬🇧 Anglais uniquement
+                                            </span>
                                             <span class="transcription-model__size" t-esc="m.size" />
                                         </div>
-                                        <span class="transcription-model__desc" t-esc="m.desc" />
-                                        <t t-if="m.key === 'tiny' ? state.tinyDownloaded : state.smallDownloaded">
-                                            <span class="transcription-model__badge transcription-model__badge--ok">
-                                                ✓ Téléchargé
+
+                                        <!-- Metrics: speed + quality -->
+                                        <div class="transcription-model__metrics">
+                                            <span class="transcription-model__metric">
+                                                <span class="transcription-model__metric-label">Vitesse</span>
+                                                <span class="transcription-model__metric-dots"
+                                                      t-esc="speedDots(m)" />
+                                                <span class="transcription-model__metric-text"
+                                                      t-esc="m.speedLabel" />
                                             </span>
+                                            <span class="transcription-model__metric">
+                                                <span class="transcription-model__metric-label">Qualité FR</span>
+                                                <span class="transcription-model__metric-dots transcription-model__metric-dots--quality"
+                                                      t-esc="qualityDots(m)" />
+                                                <span class="transcription-model__metric-text"
+                                                      t-esc="m.qualityLabel" />
+                                            </span>
+                                        </div>
+
+                                        <!-- RAM + heavy warning -->
+                                        <div class="transcription-model__meta">
+                                            <span class="transcription-model__ram">RAM : <t t-esc="m.ram"/></span>
+                                            <span t-if="m.heavy" class="transcription-model__heavy">
+                                                ⚠ Appareil récent conseillé
+                                            </span>
+                                        </div>
+
+                                        <!-- Description -->
+                                        <span class="transcription-model__desc" t-esc="m.desc" />
+
+                                        <!-- Download status -->
+                                        <t t-if="state.downloadedModels[m.key]">
+                                            <div class="transcription-model__footer">
+                                                <span class="transcription-model__badge transcription-model__badge--ok">✓ Téléchargé</span>
+                                                <button class="transcription-model__delete-btn"
+                                                        t-att-data-model-key="m.key"
+                                                        t-att-disabled="state.isDeleting"
+                                                        t-on-click.stop="onModelDeleteClick"
+                                                        title="Supprimer">🗑</button>
+                                            </div>
+                                        </t>
+                                        <t t-elif="state.downloadingModels[m.key]">
+                                            <div class="transcription-model__footer transcription-model__footer--downloading">
+                                                <div class="transcription-progress transcription-progress--sm">
+                                                    <div class="transcription-progress__bar"
+                                                         t-att-style="'width:' + (state.downloadingModels[m.key].percent || 0) + '%'" />
+                                                </div>
+                                                <span class="transcription-model__dl-info">
+                                                    <t t-esc="state.downloadingModels[m.key].percent || 0"/>%
+                                                    <t t-if="state.downloadingModels[m.key].speedBytesPerSec > 0">
+                                                        · <t t-esc="formatSpeed(state.downloadingModels[m.key].speedBytesPerSec)"/>
+                                                    </t>
+                                                </span>
+                                                <button class="transcription-model__cancel-btn"
+                                                        t-att-data-model-key="m.key"
+                                                        t-on-click.stop="onModelCancelClick">✕</button>
+                                            </div>
                                         </t>
                                         <t t-else="">
-                                            <span class="transcription-model__badge transcription-model__badge--pending">
-                                                À télécharger
-                                            </span>
+                                            <div class="transcription-model__footer">
+                                                <span class="transcription-model__badge transcription-model__badge--pending">À télécharger</span>
+                                                <button class="transcription-model__dl-btn"
+                                                        t-att-data-model-key="m.key"
+                                                        t-on-click.stop="onModelDownloadClick">⬇ Télécharger</button>
+                                            </div>
                                         </t>
+
                                     </div>
                                 </div>
                             </t>
                         </div>
 
-                        <!-- ── Download button ─────────────────────────────── -->
-                        <t t-if="!isCurrentModelDownloaded">
-                            <div class="transcription-download">
-                                <button
-                                    class="transcription-download__btn"
-                                    t-att-disabled="state.isDownloading"
-                                    t-on-click="downloadModel"
-                                >
-                                    <t t-if="!state.isDownloading">⬇ Télécharger le modèle sélectionné</t>
-                                    <t t-else="">Téléchargement… <t t-esc="state.downloadPercent"/>%</t>
-                                </button>
-
-                                <div t-if="state.isDownloading" class="transcription-progress">
-                                    <div
-                                        class="transcription-progress__bar"
-                                        t-att-style="'width: ' + state.downloadPercent + '%'"
-                                    />
+                        <!-- ── Download mode toggle ───────────────────────── -->
+                        <t t-if="hasUndownloadedModels">
+                            <div class="transcription-mode">
+                                <p class="transcription-section__title">Mode de téléchargement</p>
+                                <div class="transcription-mode__options">
+                                    <button
+                                        class="transcription-mode__btn"
+                                        t-att-class="{'transcription-mode__btn--active': state.downloadMode === 'wakelock'}"
+                                        t-on-click="onSetDownloadModeWakelock"
+                                    >
+                                        🔋 Standard
+                                        <span class="transcription-mode__sub">WakeLock + reprise auto</span>
+                                    </button>
+                                    <button
+                                        class="transcription-mode__btn"
+                                        t-att-class="{'transcription-mode__btn--active': state.downloadMode === 'foreground'}"
+                                        t-on-click="onSetDownloadModeForeground"
+                                    >
+                                        📲 Service de fond
+                                        <span class="transcription-mode__sub">Recommandé ≥ 1 Go</span>
+                                    </button>
                                 </div>
-
-                                <p t-if="state.downloadError"
-                                   class="transcription-error"
-                                   t-esc="state.downloadError" />
+                                <p t-if="state.downloadMode === 'foreground'" class="transcription-mode__hint">
+                                    Service Android persistant avec notification + bouton Annuler. Survit même si l'écran reste éteint longtemps.
+                                </p>
+                                <p t-else="" class="transcription-mode__hint">
+                                    Le CPU et le réseau restent actifs écran éteint. Reprend automatiquement où il s'était arrêté si interrompu.
+                                </p>
                             </div>
                         </t>
 
-                        <!-- ── Ready ───────────────────────────────────────── -->
+                        <!-- ── Ready message ───────────────────────────────── -->
                         <div t-if="isCurrentModelDownloaded" class="transcription-ready">
                             <p>
                                 ✓ Modèle prêt. Le bouton&amp;nbsp;<strong>T</strong>&amp;nbsp;
-                                apparaîtra sur vos enregistrements audio pour les transcrire.
+                                apparaîtra sur vos enregistrements pour les transcrire.
                             </p>
-                            <button class="transcription-delete__btn"
-                                    t-att-disabled="state.isDeleting"
-                                    t-on-click="deleteModel">
-                                <t t-if="!state.isDeleting">🗑 Supprimer le modèle</t>
-                                <t t-else="">Suppression…</t>
-                            </button>
                             <p t-if="state.deleteError" class="transcription-error"
                                t-esc="state.deleteError" />
                         </div>
+
+                        <!-- ── Download history ────────────────────────────── -->
+                        <t t-if="state.recentDownloads.length > 0">
+                            <div class="transcription-history">
+                                <p class="transcription-section__title">Historique des téléchargements</p>
+                                <t t-foreach="state.recentDownloads" t-as="dl" t-key="dl.id">
+                                    <div class="transcription-history__item"
+                                         t-att-class="{'transcription-history__item--expanded': state.expandedHistoryId === dl.id}"
+                                         t-att-data-history-id="dl.id"
+                                         t-on-click="onHistoryItemClick">
+                                        <div class="transcription-history__row">
+                                            <span class="transcription-history__name"
+                                                  t-esc="dl.model || dl.label" />
+                                            <span t-if="dl.downloadMode === 'foreground'"
+                                                  class="transcription-history__mode"
+                                                  title="Service de fond">📲</span>
+                                            <span t-elif="dl.downloadMode"
+                                                  class="transcription-history__mode"
+                                                  title="WakeLock + reprise">🔋</span>
+                                            <span
+                                                class="transcription-history__status"
+                                                t-att-class="{
+                                                    'transcription-history__status--done':    dl.status === 'done',
+                                                    'transcription-history__status--error':   dl.status === 'error',
+                                                    'transcription-history__status--running': dl.status === 'running',
+                                                }"
+                                            >
+                                                <t t-if="dl.status === 'running'">
+                                                    <t t-esc="dl.percent || 0"/>%
+                                                </t>
+                                                <t t-elif="dl.status === 'done'">✓</t>
+                                                <t t-elif="dl.status === 'error'" t-esc="dl.errorMessage || '✗'" />
+                                            </span>
+                                        </div>
+                                        <!-- Expanded detail -->
+                                        <t t-if="state.expandedHistoryId === dl.id">
+                                            <div class="transcription-history__detail">
+                                                <!-- Live progress for running downloads -->
+                                                <t t-if="dl.status === 'running' and state.downloadingModels[dl.model]">
+                                                    <div class="transcription-progress transcription-progress--sm">
+                                                        <div class="transcription-progress__bar"
+                                                             t-att-style="'width:' + (state.downloadingModels[dl.model].percent || 0) + '%'" />
+                                                    </div>
+                                                    <div class="transcription-history__bytes">
+                                                        <span t-esc="formatBytes(state.downloadingModels[dl.model].receivedBytes)"/>
+                                                        /
+                                                        <span t-esc="formatBytes(state.downloadingModels[dl.model].totalBytes)"/>
+                                                        <t t-if="state.downloadingModels[dl.model].speedBytesPerSec > 0">
+                                                            · <span t-esc="formatSpeed(state.downloadingModels[dl.model].speedBytesPerSec)"/>
+                                                        </t>
+                                                    </div>
+                                                </t>
+                                                <!-- Static info for completed/failed -->
+                                                <t t-if="dl.status !== 'running'">
+                                                    <span class="transcription-history__detail-status">
+                                                        <t t-if="dl.status === 'done'">Téléchargement terminé</t>
+                                                        <t t-elif="dl.status === 'error'" t-esc="dl.errorMessage || 'Erreur inconnue'" />
+                                                    </span>
+                                                </t>
+                                                <span class="transcription-history__detail-mode">
+                                                    Mode : <t t-esc="dl.downloadMode === 'foreground' ? 'Service de fond' : 'Standard'"/>
+                                                </span>
+                                            </div>
+                                        </t>
+                                    </div>
+                                </t>
+                            </div>
+                        </t>
 
                     </t>
                 </t>
@@ -138,59 +365,77 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
 
     static components = { HeadingComponent };
 
-    models: ModelDef[] = [
-        {
-            key:   "tiny",
-            label: MODEL_LABELS.tiny,
-            size:  "~75 Mo",
-            desc:  "Rapide — précision correcte pour du français clair",
-        },
-        {
-            key:   "small",
-            label: MODEL_LABELS.small,
-            size:  "~244 Mo",
-            desc:  "Plus lent — meilleure précision, accents et bruit de fond",
-        },
-    ];
+    models: ModelDef[] = ALL_MODELS;
 
     setup() {
         this.state = useState({
-            enabled:         false,
-            selectedModel:   "tiny" as WhisperModel,
-            tinyDownloaded:  false,
-            smallDownloaded: false,
-            isDownloading:   false,
-            downloadPercent: 0,
-            downloadError:   "",
-            isDeleting:      false,
-            deleteError:     "",
+            enabled:          false,
+            selectedModel:    "tiny" as WhisperModel,
+            downloadedModels: {
+                tiny:              false,
+                base:              false,
+                small:             false,
+                medium:            false,
+                "large-v3-turbo":  false,
+                "distil-large-v3": false,
+            } as Record<WhisperModel, boolean>,
+            downloadingModels: {} as Partial<Record<WhisperModel, DownloadProgress>>,
+            downloadMode:     "wakelock" as "wakelock" | "foreground",
+            isDeleting:       false,
+            deleteError:      "",
+            recentDownloads:  [] as ProcessRecord[],
+            expandedHistoryId: null as string | null,
         });
-        let unsubscribe: (() => void) | null = null;
+
+        let unsubscribeProgress:  (() => void) | null = null;
+        let unsubscribeProcesses: (() => void) | null = null;
+
+        const refreshDownloadHistory = () => {
+            this.state.recentDownloads = this.processService
+                .getAll()
+                .filter(p => p.type === "download")
+                .slice(0, 8);
+        };
 
         onMounted(async () => {
-            // Subscribe and sync download state BEFORE loadSettings() so that
-            // isModelDownloaded() (called inside loadSettings) already sees
-            // isDownloading=true and skips the partial file on disk.
-            const active = this.transcriptionService.activeDownload;
-            if (active) {
-                this.state.isDownloading   = true;
-                this.state.downloadPercent = active.percent;
-            }
-
-            unsubscribe = this.transcriptionService.subscribeProgress(async (info) => {
-                if (info) {
-                    this.state.isDownloading   = true;
-                    this.state.downloadPercent = info.percent;
-                } else {
-                    this.state.isDownloading = false;
+            // Set up subscriptions FIRST so that maybeReconnectForeground()
+            // (which calls downloadModel() fire-and-forget) triggers the
+            // callback synchronously before loadSettings() runs.
+            unsubscribeProgress = this.transcriptionService.subscribeProgress(async (info, model) => {
+                if (info && model) {
+                    this.state.downloadingModels = { ...this.state.downloadingModels, [model]: info };
+                } else if (!info && model) {
+                    const next = { ...this.state.downloadingModels };
+                    delete next[model];
+                    this.state.downloadingModels = next;
                     await this.refreshModelStatus();
                 }
             });
 
+            unsubscribeProcesses = this.processService.subscribe(() => {
+                refreshDownloadHistory();
+            });
+
+            // Sync download state — either from in-memory tracking or by
+            // re-attaching to a foreground service whose JS state was lost
+            // (e.g. after Activity recreation while service kept running).
+            const downloads = this.transcriptionService.activeDownloads;
+            if (downloads.size > 0) {
+                const newMap: Partial<Record<WhisperModel, DownloadProgress>> = {};
+                downloads.forEach((progress, m) => { newMap[m] = progress; });
+                this.state.downloadingModels = newMap;
+            } else {
+                await this.transcriptionService.maybeReconnectForeground();
+            }
+
             await this.loadSettings();
+            refreshDownloadHistory();
         });
 
-        onWillDestroy(() => { if (unsubscribe) unsubscribe(); });
+        onWillDestroy(() => {
+            if (unsubscribeProgress)  unsubscribeProgress();
+            if (unsubscribeProcesses) unsubscribeProcesses();
+        });
     }
 
     get isNative(): boolean {
@@ -198,20 +443,42 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
     }
 
     get isCurrentModelDownloaded(): boolean {
-        return this.state.selectedModel === "tiny"
-            ? this.state.tinyDownloaded
-            : this.state.smallDownloaded;
+        return this.state.downloadedModels[this.state.selectedModel] ?? false;
+    }
+
+    get hasUndownloadedModels(): boolean {
+        return ALL_MODELS.some(m => !this.state.downloadedModels[m.key]);
+    }
+
+    formatBytes(n: number): string {
+        if (n <= 0) return "";
+        if (n < 1_048_576) return (n / 1_024).toFixed(0) + " Ko";
+        if (n < 1_073_741_824) return (n / 1_048_576).toFixed(1) + " Mo";
+        return (n / 1_073_741_824).toFixed(2) + " Go";
+    }
+
+    formatSpeed(n: number): string { return this.formatBytes(n) + "/s"; }
+
+    speedDots(m: ModelDef): string {
+        return dots(m.speedDots, 5, "⚡", "·");
+    }
+
+    qualityDots(m: ModelDef): string {
+        return dots(m.qualityDots, 5, "★", "☆");
     }
 
     private async loadSettings() {
         this.state.enabled       = await this.transcriptionService.isEnabled();
         this.state.selectedModel = await this.transcriptionService.getSelectedModel();
+        this.state.downloadMode  = await this.transcriptionService.getDownloadMode();
         await this.refreshModelStatus();
     }
 
     private async refreshModelStatus() {
-        this.state.tinyDownloaded  = await this.transcriptionService.isModelDownloaded("tiny");
-        this.state.smallDownloaded = await this.transcriptionService.isModelDownloaded("small");
+        for (const m of ALL_MODELS) {
+            this.state.downloadedModels[m.key] =
+                await this.transcriptionService.isModelDownloaded(m.key);
+        }
     }
 
     async onToggleEnabled() {
@@ -229,11 +496,40 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
         await this.transcriptionService.setSelectedModel(model);
     }
 
-    async deleteModel() {
+    onModelDownloadClick(event: MouseEvent) {
+        event.stopPropagation();
+        const key = (event.currentTarget as HTMLElement).dataset.modelKey as WhisperModel;
+        if (key) this.startDownload(key);
+    }
+
+    async startDownload(model: WhisperModel) {
+        try {
+            await this.transcriptionService.downloadModel(model, this.state.downloadMode);
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (!msg.toLowerCase().includes("cancelled")) {
+                console.warn("[Transcription] Download error:", msg);
+            }
+        }
+    }
+
+    onModelCancelClick(event: MouseEvent) {
+        event.stopPropagation();
+        const key = (event.currentTarget as HTMLElement).dataset.modelKey as WhisperModel;
+        if (key) this.transcriptionService.cancelDownload(key);
+    }
+
+    onModelDeleteClick(event: MouseEvent) {
+        event.stopPropagation();
+        const key = (event.currentTarget as HTMLElement).dataset.modelKey as WhisperModel;
+        if (key) this.deleteModel(key);
+    }
+
+    async deleteModel(model: WhisperModel) {
         this.state.isDeleting  = true;
         this.state.deleteError = "";
         try {
-            await this.transcriptionService.deleteModel(this.state.selectedModel);
+            await this.transcriptionService.deleteModel(model);
             await this.refreshModelStatus();
         } catch (e: unknown) {
             this.state.deleteError =
@@ -243,20 +539,16 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
         }
     }
 
-    async downloadModel() {
-        this.state.isDownloading   = true;
-        this.state.downloadPercent = 0;
-        this.state.downloadError   = "";
+    onHistoryItemClick(event: MouseEvent) {
+        const id = (event.currentTarget as HTMLElement).dataset.historyId as string;
+        this.state.expandedHistoryId = this.state.expandedHistoryId === id ? null : id;
+    }
 
-        try {
-            // Progress updates arrive via the service subscription (see setup()).
-            await this.transcriptionService.downloadModel(this.state.selectedModel);
-        } catch (e: unknown) {
-            this.state.downloadError =
-                "Erreur : " + (e instanceof Error ? e.message : String(e));
-            this.state.isDownloading = false;
-        }
-        // On success, isDownloading is reset and refreshModelStatus() is called
-        // by the subscribeProgress callback (info === null on completion).
+    onSetDownloadModeWakelock()  { this.setDownloadMode("wakelock"); }
+    onSetDownloadModeForeground() { this.setDownloadMode("foreground"); }
+
+    async setDownloadMode(mode: "wakelock" | "foreground") {
+        this.state.downloadMode = mode;
+        await this.transcriptionService.setDownloadMode(mode);
     }
 }

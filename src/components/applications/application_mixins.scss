@@ -11,8 +11,8 @@
 		}
 		& input[type="text"],
 		& input[type="password"] {
-			background-color: #202020;
-			border: 2px solid #404040;
+			background-color: var(--input-bg);
+			border: 2px solid var(--input-border);
 			border-radius: 0.25em;
 			box-shadow: 0px 4px 4px 0 rgba(0, 0, 0, 0.35);
 			color: var(--text);
@@ -110,7 +110,7 @@
 			&::-webkit-details-marker { display: none; }
 			&::marker { display: none; }
 			&:hover {
-				background-color: #323232;
+				background-color: var(--card-hover-bg);
 			}
 		}
 	}

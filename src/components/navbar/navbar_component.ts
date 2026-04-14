@@ -7,8 +7,8 @@ import { NavbarItemComponent } from "./item/navbar_item_component";
 
 export class NavbarComponent extends EnhancedComponent {
 	static template = xml`
-		<nav id="nav">
-			<ul id="nav-list">
+		<nav id="nav" aria-label="Navigation principale">
+			<ul id="nav-list" role="list">
 				<NavbarItemComponent
 					displayName="'Accueil'"
 					currentRoute="state.currentRoute"

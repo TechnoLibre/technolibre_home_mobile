@@ -1,10 +1,11 @@
-import { onMounted, onPatched, useRef, xml } from "@odoo/owl";
+import { onMounted, onPatched, onWillStart, useState, useRef, xml } from "@odoo/owl";
 
 import { Sortable } from "sortablejs";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { Events } from "../../../constants/events";
 import { NoteEntry } from "../../../models/note";
+import { Tag } from "../../../models/tag";
 
 import { NoteEntryComponent } from "../../note_entry/note_entry_component";
 
@@ -15,24 +16,27 @@ export class NoteContentComponent extends EnhancedComponent {
 				id="note__content"
 				t-on-input.stop.prevent="props.saveNoteData"
 			>
+				<t t-set="resolvedTagList" t-value="resolvedTags()" />
 				<ul
 					id="note__tags__list"
-					t-if="props.note.tags.length !== 0"
+					t-if="resolvedTagList.length !== 0"
 				>
 					<li
 						class="note__tag"
-						t-foreach="props.note.tags"
-						t-as="tag"
-						t-key="tag"
+						t-foreach="resolvedTagList"
+						t-as="rt"
+						t-key="rt.id"
+						t-att-style="'background-color:' + rt.color"
 					>
-						<t t-esc="tag"></t>
+						<t t-esc="rt.name"></t>
 					</li>
 				</ul>
 				<textarea
 					type="text"
 					t-ref="note-title"
 					id="note__title"
-					placeholder="Title"
+					placeholder="Titre"
+					aria-label="Titre de la note"
 					t-model="props.note.title"
 					t-on-keydown="onTitleKeydown"
 				/>
@@ -58,8 +62,24 @@ export class NoteContentComponent extends EnhancedComponent {
 	entries = useRef("note-entries");
 	private didAutoFocus = false;
 	titleRef = useRef("note-title");
+	state!: { tagMap: Record<string, Tag> };
+
+	resolvedTags(): Tag[] {
+		return this.props.note.tags
+			.map((id: string) => this.state.tagMap[id])
+			.filter((t: Tag | undefined): t is Tag => t !== undefined);
+	}
+
+	private async getTags() {
+		try {
+			const tags = await this.tagService.getAllTags();
+			this.state.tagMap = Object.fromEntries(tags.map((t) => [t.id, t]));
+		} catch { /* non-critical */ }
+	}
 
 	setup() {
+		this.state = useState({ tagMap: {} as Record<string, Tag> });
+		onWillStart(() => this.getTags());
 		onMounted(this.onMounted.bind(this));
 
 		onPatched(() => {
@@ -95,6 +115,7 @@ export class NoteContentComponent extends EnhancedComponent {
 		});
 		this.eventBus.addEventListener(Events.FOCUS_LAST_ENTRY, this.focusLastEntry.bind(this));
 		this.eventBus.addEventListener(Events.SCROLL_TO_LAST_ENTRY, this.scrollToLastEntry.bind(this));
+		this.eventBus.addEventListener(Events.TAGS_UPDATED, () => this.getTags());
 	}
 
 	private onSort() {

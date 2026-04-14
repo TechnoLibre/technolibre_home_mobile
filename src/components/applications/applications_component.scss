@@ -47,7 +47,7 @@
 
 #applications-component #applications-empty {
 	@include mixins.flex--center;
-	background-color: #222;
+	background-color: var(--btn-back-color);
 	padding: 1em;
 	text-align: center;
 	& p {
@@ -60,8 +60,8 @@
 // ── Toggle button (shared for apps & servers) ─────────────────────────────────
 
 #applications-component .section__btn-toggle {
-	background-color: #2a2a2a;
-	border: 1px solid #3a3a3a;
+	background-color: var(--surface-btn);
+	border: 1px solid var(--section-border-color);
 	border-radius: 0.25em;
 	box-shadow: 0px 4px 4px 0 rgba(0, 0, 0, 0.35);
 	color: var(--text-greyed-out);
@@ -71,7 +71,7 @@
 	transition: background-color 150ms ease-in-out, color 150ms ease-in-out;
 	white-space: nowrap;
 	&:hover {
-		background-color: #333;
+		background-color: var(--section-border-color);
 		color: var(--text);
 	}
 }
@@ -109,7 +109,7 @@
 }
 
 #applications-component #servers-scan-cancel {
-	background-color: #3a3a3a;
+	background-color: var(--surface-btn-active);
 	border: 1px solid #555;
 	border-radius: 0.25em;
 	color: var(--text-greyed-out);
@@ -118,7 +118,7 @@
 	padding: 0.75em 1em;
 	transition: background-color 150ms ease-in-out, color 150ms ease-in-out;
 	white-space: nowrap;
-	&:hover { background-color: #444; color: var(--text); }
+	&:hover { background-color: var(--surface-subtle); color: var(--text); }
 }
 
 // ── Scan results panel ────────────────────────────────────────────────────────
@@ -127,7 +127,7 @@
 	margin: 0.75rem 0 0;
 	border: 1.5px solid #1565c0;
 	border-radius: 0.5rem;
-	background: #080d18;
+	background: var(--background);
 	overflow: hidden;
 }
 
@@ -242,7 +242,7 @@
 
 #applications-component #servers-empty {
 	@include mixins.flex--center;
-	background-color: #222;
+	background-color: var(--btn-back-color);
 	border-radius: 0.25em;
 	margin: 0.75em 0 0 0;
 	padding: 1em;

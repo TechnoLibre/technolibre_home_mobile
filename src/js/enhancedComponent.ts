@@ -10,6 +10,7 @@ import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
 import { TranscriptionService } from "../services/transcriptionService";
 import { ProcessService } from "../services/processService";
+import { TagService } from "../services/tagService";
 import { Events } from "../constants/events";
 
 export abstract class EnhancedComponent extends Component {
@@ -61,6 +62,10 @@ export abstract class EnhancedComponent extends Component {
 
 	public get processService(): ProcessService {
 		return this.env.processService;
+	}
+
+	public get tagService(): TagService {
+		return this.env.tagService;
 	}
 
 	public navigate(url: string): void {

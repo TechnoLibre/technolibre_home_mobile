@@ -10,6 +10,7 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 		<button
 			type="button"
 			class="geolocation__open-popover"
+			aria-label="Voir les données de géolocalisation"
 			t-on-click.stop.prevent="showPopover"
 		>
 			<t t-esc="props.params.text"></t>
@@ -17,13 +18,16 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 		<div
 			class="geolocation-popover"
 			popover=""
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="geolocation-display__title"
 			t-ref="geolocation-popover"
 			t-on-click.stop.prevent="hidePopover"
 		>
 			<div class="geolocation-display__wrapper" t-on-click.stop.prevent="">
 				<div class="geolocation-display">
 					<section class="geolocation-display__heading">
-						<h3>Données de géolocalisation</h3>
+						<h2 id="geolocation-display__title">Données de géolocalisation</h2>
 					</section>
 					<section class="geolocation-display__content">
 						<p>

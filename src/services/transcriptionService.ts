@@ -8,19 +8,33 @@ import type { ProcessService } from "./processService";
 // Model metadata
 // ---------------------------------------------------------------------------
 
+const HF = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+
 const MODEL_URLS: Record<WhisperModel, string> = {
-    tiny:  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
-    small: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+    tiny:              `${HF}/ggml-tiny.bin`,
+    base:              `${HF}/ggml-base.bin`,
+    small:             `${HF}/ggml-small.bin`,
+    medium:            `${HF}/ggml-medium.bin`,
+    "large-v3-turbo":  `${HF}/ggml-large-v3-turbo.bin`,
+    "distil-large-v3": `${HF}/ggml-distil-large-v3.bin`,
 };
 
 export const MODEL_SIZES: Record<WhisperModel, string> = {
-    tiny:  "~75 Mo",
-    small: "~244 Mo",
+    tiny:              "~75 Mo",
+    base:              "~142 Mo",
+    small:             "~244 Mo",
+    medium:            "~769 Mo",
+    "large-v3-turbo":  "~874 Mo",
+    "distil-large-v3": "~756 Mo",
 };
 
 export const MODEL_LABELS: Record<WhisperModel, string> = {
-    tiny:  "Tiny (~75 Mo) — rapide, recommandé",
-    small: "Small (~244 Mo) — plus précis, plus lent",
+    tiny:              "Tiny (~75 Mo) — très rapide",
+    base:              "Base (~142 Mo) — recommandé",
+    small:             "Small (~244 Mo) — précis",
+    medium:            "Medium (~769 Mo) — très précis",
+    "large-v3-turbo":  "Large-v3-turbo (~874 Mo) — meilleur",
+    "distil-large-v3": "Distil-large-v3 (~756 Mo) — anglais uniquement",
 };
 
 // ---------------------------------------------------------------------------
@@ -28,17 +42,21 @@ export const MODEL_LABELS: Record<WhisperModel, string> = {
 // ---------------------------------------------------------------------------
 
 export interface DownloadProgress {
-    model: WhisperModel;
-    percent: number;
+    model:            WhisperModel;
+    percent:          number;
+    mode:             "wakelock" | "foreground";
+    receivedBytes:    number;
+    totalBytes:       number;
+    speedBytesPerSec: number;
 }
 
 export class TranscriptionService {
     private db: DatabaseService;
     private _processService: ProcessService | null;
 
-    /** Non-null while a download is running — survives component remounts. */
-    private _activeDownload: DownloadProgress | null = null;
-    private _progressSubs = new Set<(info: DownloadProgress | null) => void>();
+    /** Per-model download progress — survives component remounts. */
+    private _activeDownloads = new Map<WhisperModel, DownloadProgress>();
+    private _progressSubs = new Set<(info: DownloadProgress | null, model?: WhisperModel) => void>();
 
     /** Audio paths currently being transcribed. */
     private _activeTranscriptions = new Set<string>();
@@ -52,23 +70,32 @@ export class TranscriptionService {
         this._processService = processService ?? null;
     }
 
-    /** Current download progress, or null if idle. */
+    /** All currently active downloads (read-only). */
+    get activeDownloads(): ReadonlyMap<WhisperModel, DownloadProgress> {
+        return this._activeDownloads;
+    }
+
+    /**
+     * Current download progress (first active download), or null if idle.
+     * Kept for backward compatibility with reconnect logic.
+     */
     get activeDownload(): DownloadProgress | null {
-        return this._activeDownload;
+        const first = this._activeDownloads.values().next();
+        return first.done ? null : first.value;
     }
 
     /**
      * Subscribe to download progress updates.
-     * The callback receives the current progress, or null when the download
-     * finishes (success or error). Returns an unsubscribe function.
+     * The callback receives the current progress (or null on finish) and the
+     * model key. Returns an unsubscribe function.
      */
-    subscribeProgress(cb: (info: DownloadProgress | null) => void): () => void {
+    subscribeProgress(cb: (info: DownloadProgress | null, model?: WhisperModel) => void): () => void {
         this._progressSubs.add(cb);
         return () => this._progressSubs.delete(cb);
     }
 
-    private _notifyProgress(info: DownloadProgress | null) {
-        this._progressSubs.forEach(cb => cb(info));
+    private _notifyProgress(info: DownloadProgress | null, model?: WhisperModel) {
+        this._progressSubs.forEach(cb => cb(info, model));
     }
 
     // ── Transcription state (for reconnection across navigation) ─────────────
@@ -141,11 +168,21 @@ export class TranscriptionService {
 
     async getSelectedModel(): Promise<WhisperModel> {
         const val = await this.db.getUserGraphicPref("whisper_model");
-        return (val === "small" ? "small" : "tiny") as WhisperModel;
+        const valid: WhisperModel[] = ["tiny", "base", "small", "medium", "large-v3-turbo", "distil-large-v3"];
+        return valid.includes(val as WhisperModel) ? (val as WhisperModel) : "tiny";
     }
 
     async setSelectedModel(model: WhisperModel): Promise<void> {
         await this.db.setUserGraphicPref("whisper_model", model);
+    }
+
+    async getDownloadMode(): Promise<"wakelock" | "foreground"> {
+        const val = await this.db.getUserGraphicPref("whisper_download_mode");
+        return val === "foreground" ? "foreground" : "wakelock";
+    }
+
+    async setDownloadMode(mode: "wakelock" | "foreground"): Promise<void> {
+        await this.db.setUserGraphicPref("whisper_download_mode", mode);
     }
 
     // ── Model management ─────────────────────────────────────────────────────
@@ -154,7 +191,7 @@ export class TranscriptionService {
         // A download in progress creates the file immediately (FileOutputStream),
         // so file.exists() returns true even for an incomplete binary.
         // Treat an actively downloading model as not yet available.
-        if (this._activeDownload?.model === model) return false;
+        if (this._activeDownloads.has(model)) return false;
         if (!Capacitor.isNativePlatform()) return false;
         try {
             const { exists } = await WhisperPlugin.getModelPath({ model });
@@ -174,22 +211,52 @@ export class TranscriptionService {
      * Progress is tracked on the service itself (`activeDownload`) so that
      * components that remount mid-download can reconnect via `subscribeProgress`.
      */
-    async downloadModel(model: WhisperModel): Promise<void> {
+    async downloadModel(
+        model: WhisperModel,
+        mode: "wakelock" | "foreground" = "wakelock"
+    ): Promise<void> {
+        if (this._activeDownloads.has(model)) return; // already downloading this model
+        // If foreground mode is requested but another foreground download is already
+        // running, fall back to wakelock (Android supports only one foreground
+        // service at a time; wakelock downloads run in parallel without limit).
+        const hasForeground = [...this._activeDownloads.values()].some(d => d.mode === "foreground");
+        const effectiveMode: "wakelock" | "foreground" = (mode === "foreground" && hasForeground) ? "wakelock" : mode;
         const url = MODEL_URLS[model];
-        this._activeDownload = { model, percent: 0 };
-        this._notifyProgress(this._activeDownload);
+        const initial: DownloadProgress = { model, percent: 0, mode: effectiveMode, receivedBytes: 0, totalBytes: 0, speedBytesPerSec: 0 };
+        this._activeDownloads.set(model, initial);
+        this._notifyProgress(initial, model);
 
-        const processId = this._processService?.addDownload(model, url);
+        const processId = this._processService?.addDownload(model, url, effectiveMode);
 
         let listener: PluginListenerHandle | null = null;
+        let lastReceived = 0;
+        let lastTime = Date.now();
+
         try {
             listener = await WhisperPlugin.addListener("downloadProgress", (data) => {
+                if (data.model !== model) return; // ignore other models' events
+                const now = Date.now();
+                const dt = (now - lastTime) / 1000;
+                const prevSpeed = this._activeDownloads.get(model)?.speedBytesPerSec ?? 0;
+                const speed = dt > 0.1 ? (data.received - lastReceived) / dt : prevSpeed;
+                lastReceived = data.received;
+                lastTime = now;
                 const percent = Math.round(data.ratio * 100);
-                this._activeDownload = { model, percent };
-                this._notifyProgress(this._activeDownload);
+                const progress: DownloadProgress = {
+                    model, percent, mode: effectiveMode,
+                    receivedBytes: data.received,
+                    totalBytes: data.total,
+                    speedBytesPerSec: Math.max(0, speed),
+                };
+                this._activeDownloads.set(model, progress);
+                this._notifyProgress(progress, model);
                 if (processId) this._processService?.updateProgress(processId, percent);
             });
-            await WhisperPlugin.downloadModel({ model, url });
+            if (effectiveMode === "foreground") {
+                await WhisperPlugin.downloadModelForeground({ model, url });
+            } else {
+                await WhisperPlugin.downloadModel({ model, url });
+            }
             if (processId) await this._processService?.completeProcess(processId);
         } catch (e) {
             if (processId) {
@@ -201,9 +268,45 @@ export class TranscriptionService {
             throw e;
         } finally {
             if (listener) await listener.remove();
-            this._activeDownload = null;
-            this._notifyProgress(null);
+            this._activeDownloads.delete(model);
+            this._notifyProgress(null, model);
         }
+    }
+
+    /**
+     * Reconnect to a foreground service download that is still running but
+     * whose JS state was lost (e.g. after Activity recreation).
+     *
+     * If the service reports an active download and _activeDownload is null,
+     * this starts a fire-and-forget downloadModel() call that re-attaches to
+     * the running service thread (Java side detects the re-attach and does NOT
+     * start a second thread).
+     *
+     * Returns true if a reconnection was initiated.
+     */
+    async maybeReconnectForeground(): Promise<boolean> {
+        if (!Capacitor.isNativePlatform()) return false;
+        if (this._activeDownloads.size > 0) return true;
+        try {
+            const { downloading, model } = await WhisperPlugin.getServiceStatus();
+            if (!downloading || !model || !(model in MODEL_URLS)) return false;
+            // Fire-and-forget: downloadModel sets _activeDownload synchronously
+            // before its first await, so subscribers are notified immediately.
+            this.downloadModel(model as WhisperModel, "foreground").catch(() => {
+                // Ignore — cancelled/error clears _activeDownload via finally
+            });
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /** Cancel a specific download (or all downloads if no model given). */
+    async cancelDownload(model?: WhisperModel): Promise<void> {
+        if (!Capacitor.isNativePlatform()) return;
+        try {
+            await WhisperPlugin.cancelDownload(model ? { model } : undefined);
+        } catch { /* ignore */ }
     }
 
     async deleteModel(model: WhisperModel): Promise<void> {

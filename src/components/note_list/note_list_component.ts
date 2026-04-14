@@ -8,6 +8,7 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../constants/errorMessages";
 import { Events } from "../../constants/events";
 import { Note } from "../../models/note";
+import { Tag } from "../../models/tag";
 
 import { HeadingComponent } from "../heading/heading_component";
 import { NotesItemComponent } from "./item/note_list_item_component";
@@ -36,9 +37,12 @@ export class NoteListComponent extends EnhancedComponent {
 				<h1 id="notes-heading">${ENV.LABEL_NOTE}s</h1>
 				<a
 					id="notes-add"
+					role="button"
+					href="#"
+					aria-label="Nouvelle note"
 					t-on-click.stop.prevent="onNoteAddClick"
 				>
-					<img src="${NoteAddIcon}" />
+					<img src="${NoteAddIcon}" alt="" aria-hidden="true"/>
 				</a>
 			</header>
 			<NoteListControlsComponent
@@ -59,14 +63,15 @@ export class NoteListComponent extends EnhancedComponent {
 						'active': pinned.length !== 0
 					}"
 				>
-					<h3>Notes épinglées</h3>
-					<ul class="notes-list" t-ref="pinned">
+					<h2 t-if="pinned.length > 0" class="notes-section-heading">Notes épinglées</h2>
+					<ul class="notes-list" aria-label="Notes épinglées" t-ref="pinned">
 						<NotesItemComponent
 							t-foreach="pinned"
 							t-as="noteItem"
 							t-key="noteItem.id"
 							note="noteItem"
 							editMode="state.editMode"
+							tagMap="state.tagMap"
 							syncSynced="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].synced : 0"
 							syncError="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].error : 0"
 							openNote.bind="openNote"
@@ -82,14 +87,15 @@ export class NoteListComponent extends EnhancedComponent {
 						'active': unpinned.length !== 0
 					}"
 				>
-					<h3>Notes non épinglées</h3>
-					<ul class="notes-list" t-ref="unpinned">
+					<h2 t-if="unpinned.length > 0 and pinned.length > 0" class="notes-section-heading">Notes</h2>
+					<ul class="notes-list" aria-label="Notes" t-ref="unpinned">
 						<NotesItemComponent
 							t-foreach="unpinned"
 							t-as="noteItem"
 							t-key="noteItem.id"
 							note="noteItem"
 							editMode="state.editMode"
+							tagMap="state.tagMap"
 							syncSynced="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].synced : 0"
 							syncError="state.syncCounts[noteItem.id] ? state.syncCounts[noteItem.id].error : 0"
 							openNote.bind="openNote"
@@ -102,7 +108,7 @@ export class NoteListComponent extends EnhancedComponent {
 				<div id="notes-empty" t-if="currentNoteList.length === 0">
 					<p t-if="state.showArchivedNotes">Aucune ${ENV.LABEL_NOTE} archivée.</p>
 					<p t-else="">
-						<a id="notes-add" t-on-click.stop.prevent="onNoteAddClick">Ajoutez une ${ENV.LABEL_NOTE} 🤖</a>
+						<a class="notes-empty__add-link" role="button" href="#" t-on-click.stop.prevent="onNoteAddClick">Ajoutez une ${ENV.LABEL_NOTE} 🤖</a>
 					</p>
 				</div>
 			</section>
@@ -124,10 +130,15 @@ export class NoteListComponent extends EnhancedComponent {
 			editMode: false,
 			sortByPriority: false,
 			syncCounts: {} as Record<string, { synced: number; error: number }>,
+			tagMap: {} as Record<string, Tag>,
 		});
 		onMounted(this.onMounted.bind(this));
-		this.getNotes();
-		this.getNoteSyncCounts();
+		// Load tags first so tagMap is populated before notes render
+		this.getTags().then(() => {
+			this.getNotes();
+			this.getNoteSyncCounts();
+		});
+		this.eventBus.addEventListener(Events.TAGS_UPDATED, () => this.getTags());
 	}
 
 	private onMounted() {
@@ -160,6 +171,13 @@ export class NoteListComponent extends EnhancedComponent {
 				Dialog.alert({ message: error.message });
 			}
 		}
+	}
+
+	async getTags() {
+		try {
+			const tags = await this.tagService.getAllTags();
+			this.state.tagMap = Object.fromEntries(tags.map((t) => [t.id, t]));
+		} catch { /* tags are non-critical */ }
 	}
 
 	async getNoteSyncCounts() {

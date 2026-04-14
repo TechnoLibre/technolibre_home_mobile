@@ -63,7 +63,7 @@
 
 #note-list-component #notes-empty {
 	@include mixins.flex--center;
-	background-color: #1a1a1a;
+	background-color: var(--card-bg);
 	padding: 1em;
 	text-align: center;
 	& p {

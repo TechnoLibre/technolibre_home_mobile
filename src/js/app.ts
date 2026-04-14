@@ -23,12 +23,14 @@ import { addNotePriority } from "../services/migrations/addNotePriority";
 import { addProcessesTable } from "../services/migrations/addProcessesTable";
 import { addProcessResultColumn } from "../services/migrations/addProcessResultColumn";
 import { addProcessDebugLogColumn } from "../services/migrations/addProcessDebugLogColumn";
+import { addTagsTable } from "../services/migrations/addTagsTable";
+import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
 import { TranscriptionService } from "../services/transcriptionService";
 import { ProcessService } from "../services/processService";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
-import type { FontFamily } from "../models/graphicPrefs";
+import type { FontFamily, ColorTheme } from "../models/graphicPrefs";
 import { SyncService } from "../services/syncService";
 import { NotificationService } from "../services/notificationService";
 import { ReminderService } from "../services/reminderService";
@@ -159,20 +161,30 @@ async function startApp() {
 			description: "Ajout de la colonne debug_log sur la table des processus",
 			run: addProcessDebugLogColumn,
 		},
+		{
+			version: 2026041201,
+			description: "Création de la table des tags et migration des tags existants",
+			run: addTagsTable,
+		},
 	]);
 
 	setBootStep("Chargement des préférences graphiques…");
 	{
 		const fontFamily = await db.getUserGraphicPref("font_family") as FontFamily | null;
 		const fontSizeScale = await db.getUserGraphicPref("font_size_scale");
+		const colorTheme = await db.getUserGraphicPref("color_theme") as ColorTheme | null;
+		const reduceMotionRaw = await db.getUserGraphicPref("reduce_motion");
 		applyGraphicPrefs({
 			fontFamily: fontFamily ?? DEFAULT_GRAPHIC_PREFS.fontFamily,
 			fontSizeScale: fontSizeScale ? parseFloat(fontSizeScale) : DEFAULT_GRAPHIC_PREFS.fontSizeScale,
+			colorTheme: colorTheme ?? DEFAULT_GRAPHIC_PREFS.colorTheme,
+			reduceMotion: reduceMotionRaw === "true",
 		});
 	}
 
 	setBootStep("Initialisation des services…");
 	const appService = new AppService(db);
+	const tagService = new TagService(db);
 	const noteService = new NoteService(eventBus, db);
 	const intentService = new IntentService(eventBus);
 	const syncService = new SyncService(db);
@@ -190,7 +202,7 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService };
+	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService };
 
 	setBootStep("Montage de l'interface…");
 	await mount(RootComponent, document.body, { env });

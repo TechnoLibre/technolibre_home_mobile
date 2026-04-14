@@ -36,11 +36,11 @@
 }
 
 @mixin intent__item {
-	background-color: #333;
+	background-color: var(--section-border-color);
 	border-radius: 0.25rem;
 	padding: 1rem 0.75rem;
 	&:hover {
-		background-color: #3A3A3A;
+		background-color: var(--surface-btn-active);
 	}
 	& + .intent__item {
 		margin-top: 0.5rem;
@@ -88,7 +88,7 @@
 }
 
 @mixin popover__content {
-	background-color: rgba(#222, 0.95);
+	background-color: var(--options__item__background-color);
 	border-radius: 0.25rem;
 	color: var(--text);
 	height: 100%;

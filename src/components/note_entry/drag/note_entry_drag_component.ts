@@ -11,8 +11,10 @@ export class NoteEntryDragComponent extends EnhancedComponent {
 			t-att-class="{
 				'active': props.editMode
 			}"
+			t-att-aria-hidden="props.editMode ? 'false' : 'true'"
+			t-att-aria-label="props.editMode ? 'Glisser pour réordonner' : null"
 		>
-			<img src="${DragIcon}" />
+			<img src="${DragIcon}" alt="" aria-hidden="true" />
 		</div>
 	`;
 }
