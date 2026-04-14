@@ -321,6 +321,11 @@ export class ApplicationsComponent extends EnhancedComponent {
 
         /* const loginScriptLoop = `const inputUsername = document.getElementById(\"login\"); const inputPassword = document.getElementById(\"password\"); const inputSubmit = document.querySelector(\"button[type='submit']\"); if (!inputUsername || !inputPassword || !inputSubmit) { return; } inputUsername.value = \"${matchingApp.username}\"; inputPassword.value = \"${matchingApp.password}\"; inputSubmit.click();`; */
 
+        // Escape credentials for safe injection into JS template literal
+        const escapeForJS = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+        const safeUsername = escapeForJS(matchingApp.username);
+        const safePassword = escapeForJS(matchingApp.password);
+
         // This script support auto-login and fix infinite loop
         const loginScript = `
 (async () => {
@@ -415,8 +420,8 @@ export class ApplicationsComponent extends EnhancedComponent {
       waitForXPathWithObserver(PASS_XPATH, { timeout: 15000 })
     ]);
 
-    setInputValue(userEl, "${matchingApp.username}");
-    setInputValue(passEl, "${matchingApp.password}");
+    setInputValue(userEl, "${safeUsername}");
+    setInputValue(passEl, "${safePassword}");
 
     // petite pause pour laisser les validations côté client se déclencher
     await sleep(250);
