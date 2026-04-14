@@ -24,8 +24,9 @@ android {
     }
     buildTypes {
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
     externalNativeBuild {
@@ -53,7 +54,7 @@ dependencies {
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
     implementation "com.google.android.gms:play-services-cast-framework:21.2.0"
-    implementation "com.jcraft:jsch:0.1.55"
+    implementation "com.github.mwiede:jsch:0.2.25"
     implementation "com.google.mlkit:text-recognition:16.0.1"
 }
 

@@ -38,6 +38,7 @@
     "@capawesome/capacitor-android-edge-to-edge-support": "^8.0.0",
     "@capgo/inappbrowser": "^8.5.0",
     "@chrismclarke/capacitor-video-player": "^7.0.0",
+    "@ionic/pwa-elements": "^3.4.0",
     "@odoo/owl": "^2.8.1",
     "@popperjs/core": "^2.11.8",
     "@supernotes/capacitor-send-intent": "^7.0.0",

@@ -78,6 +78,7 @@ describe("DatabaseService", () => {
       pollIntervalMinutes: 5,
       ntfyUrl: "",
       ntfyTopic: "",
+      ntfyToken: "",
     };
 
     it("should return an empty list initially", async () => {
@@ -103,6 +104,7 @@ describe("DatabaseService", () => {
         pollIntervalMinutes: 5,
         ntfyUrl: "",
         ntfyTopic: "",
+        ntfyToken: "",
       };
       await db.addApplication(app);
       await db.addApplication(app2);
@@ -128,6 +130,7 @@ describe("DatabaseService", () => {
         pollIntervalMinutes: 5,
         ntfyUrl: "",
         ntfyTopic: "",
+        ntfyToken: "",
       };
       await db.addApplication(app);
       await db.addApplication(app2);
@@ -149,6 +152,7 @@ describe("DatabaseService", () => {
         pollIntervalMinutes: 5,
         ntfyUrl: "",
         ntfyTopic: "",
+        ntfyToken: "",
       };
       await db.updateApplication(app.url, app.username, updated);
       const apps = await db.getAllApplications();
@@ -474,6 +478,7 @@ describe("DatabaseService", () => {
       pollIntervalMinutes: 5,
       ntfyUrl: "",
       ntfyTopic: "",
+      ntfyToken: "",
     };
 
     it("addOdooVersionToApplications is idempotent", async () => {
