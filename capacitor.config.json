@@ -11,10 +11,10 @@
   "android": {
     "buildOptions": {
       "releaseType": "APK",
-      "keystorePath": "./../../debug.keystore",
-      "keystorePassword": "android",
-      "keystoreAlias": "android",
-      "keystoreAliasPassword": "android"
+      "keystorePath": "./../../release.keystore",
+      "keystorePassword": "${KEYSTORE_PASSWORD}",
+      "keystoreAlias": "${KEYSTORE_ALIAS}",
+      "keystoreAliasPassword": "${KEYSTORE_ALIAS_PASSWORD}"
     },
     "backgroundColor": "#00000000"
   }

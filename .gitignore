@@ -192,6 +192,10 @@ node_modules/
 .sourcemaps
 dist/
 
+# Keystores — never commit signing keys
+*.keystore
+*.jks
+
 # Working directory
 android/app/src/main/cpp/whisper
 
