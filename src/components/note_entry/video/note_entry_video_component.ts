@@ -72,12 +72,42 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 				</div>
 				<div t-if="props.params.transcription" class="note-entry__video__transcription">
 					<p class="note-entry__video__transcription-text" t-esc="props.params.transcription"/>
-					<button
-						type="button"
-						class="note-entry__video__add-text"
-						t-on-click.stop.prevent="addTextEntry"
-						title="Créer une entrée texte avec ce contenu"
-					>Texte +</button>
+					<div class="note-entry__video__transcription-actions">
+						<button
+							type="button"
+							class="note-entry__video__add-text"
+							t-att-aria-label="t('button.add_text_entry')"
+							t-on-click.stop.prevent="addTextEntry"
+							t-esc="t('button.add_text_entry_short')"
+						/>
+						<button
+							type="button"
+							class="note-entry__video__translate-btn"
+							t-att-disabled="state.isTranslating"
+							t-att-aria-busy="state.translatingTarget === 'en' ? 'true' : 'false'"
+							t-att-aria-label="t('button.translate_fr_en')"
+							t-on-click.stop.prevent="() => this.translateTranscription('fr', 'en')"
+						>
+							<t t-if="state.translatingTarget === 'en'">…</t>
+							<t t-else="">FR→EN</t>
+						</button>
+						<button
+							type="button"
+							class="note-entry__video__translate-btn"
+							t-att-disabled="state.isTranslating"
+							t-att-aria-busy="state.translatingTarget === 'fr' ? 'true' : 'false'"
+							t-att-aria-label="t('button.translate_en_fr')"
+							t-on-click.stop.prevent="() => this.translateTranscription('en', 'fr')"
+						>
+							<t t-if="state.translatingTarget === 'fr'">…</t>
+							<t t-else="">EN→FR</t>
+						</button>
+					</div>
+					<div t-if="props.params.transcriptionTranslation" class="note-entry__video__translation">
+						<span class="note-entry__video__translation-lang"
+						      t-esc="props.params.transcriptionTranslationLang ? props.params.transcriptionTranslationLang.toUpperCase() : ''"/>
+						<p class="note-entry__video__translation-text" t-esc="props.params.transcriptionTranslation"/>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -102,6 +132,8 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 			isTranscribing:        false,
 			transcriptionPercent:  0,
 			transcriptionEnabled:  false,
+			isTranslating:         false,
+			translatingTarget:     null as "fr" | "en" | null,
 		});
 
 		let _unsubProgress: (() => void) | null = null;
@@ -154,6 +186,31 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 			afterEntryId: this.props.id,
 			text,
 		});
+	}
+
+	async translateTranscription(source: "fr" | "en", target: "fr" | "en") {
+		const text = this.props.params?.transcription;
+		if (!text?.trim() || this.state.isTranslating) return;
+
+		this.state.isTranslating     = true;
+		this.state.translatingTarget = target;
+		try {
+			const translation = await this.translationService.translate(text, source, target);
+			this.eventBus.trigger(Events.SET_ENTRY_TRANSLATION, {
+				entryId: this.props.id,
+				translation,
+				targetLang: target,
+				field: "transcription",
+			});
+		} catch (e: unknown) {
+			const msg = e instanceof Error ? e.message : String(e);
+			await Dialog.alert({
+				message: this.t("error.translation_failed", { error: msg }),
+			});
+		} finally {
+			this.state.isTranslating     = false;
+			this.state.translatingTarget = null;
+		}
 	}
 
 	async onClickOpenCamera() {

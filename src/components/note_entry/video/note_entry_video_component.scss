@@ -122,6 +122,13 @@
 	word-break: break-word;
 }
 
+.note-entry-video-component .note-entry__video__transcription-actions {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	flex-wrap: wrap;
+}
+
 .note-entry-video-component .note-entry__video__add-text {
 	background: transparent;
 	border: 1px solid var(--surface-subtle);
@@ -137,6 +144,55 @@
 		border-color: #8ab4d4;
 		color: #8ab4d4;
 	}
+}
+
+.note-entry-video-component .note-entry__video__translate-btn {
+	background: transparent;
+	border: 1px solid var(--surface-subtle);
+	border-radius: 0.75rem;
+	color: #888;
+	cursor: pointer;
+	font-size: 0.75rem;
+	outline: none;
+	padding: 0.2rem 0.6rem;
+	transition: border-color 150ms, color 150ms;
+
+	&:hover:not(:disabled) {
+		border-color: #8ab4d4;
+		color: #8ab4d4;
+	}
+
+	&:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+}
+
+.note-entry-video-component .note-entry__video__translation {
+	border-top: 1px dashed var(--surface-subtle);
+	margin-top: 0.4rem;
+	padding-top: 0.4rem;
+}
+
+.note-entry-video-component .note-entry__video__translation-lang {
+	display: inline-block;
+	background: var(--btn-blue-color);
+	border-radius: 0.25rem;
+	color: #8ab4d4;
+	font-size: 0.65rem;
+	font-weight: 700;
+	margin-bottom: 0.2rem;
+	padding: 0.1rem 0.35rem;
+}
+
+.note-entry-video-component .note-entry__video__translation-text {
+	color: #aaa;
+	font-size: 0.85rem;
+	font-style: italic;
+	line-height: 1.4;
+	margin: 0;
+	white-space: pre-wrap;
+	word-break: break-word;
 }
 
 .note-entry-video-component .note-entry__video__transcribe {

@@ -19,6 +19,7 @@ import { OptionsRemindersComponent } from "./reminders/options_reminders_compone
 import { OptionsGraphicComponent } from "./graphic/options_graphic_component";
 import { OptionsErplibreComponent } from "./erplibre/options_erplibre_component";
 import { OptionsTranscriptionComponent } from "./transcription/options_transcription_component";
+import { OptionsTranslationComponent } from "./translation/options_translation_component";
 import { OptionsProcessesComponent } from "./processes/options_processes_component";
 import { OptionsCodeComponent } from "./code/options_code_component";
 import { OptionsLanguageComponent } from "./language/options_language_component";
@@ -45,6 +46,11 @@ export class OptionsComponent extends EnhancedComponent {
         <li class="options-list__item">
           <a href="#" role="button" t-att-aria-label="t('options.transcription')" t-on-click.stop.prevent="onTranscriptionClick">
             🎙️ <t t-esc="t('options.transcription')"/> ›
+          </a>
+        </li>
+        <li class="options-list__item">
+          <a href="#" role="button" t-att-aria-label="t('options.translation')" t-on-click.stop.prevent="onTranslationClick">
+            🌐 <t t-esc="t('options.translation')"/> ›
           </a>
         </li>
         <li class="options-list__item">
@@ -103,6 +109,10 @@ export class OptionsComponent extends EnhancedComponent {
 		this.navigate("/options/transcription");
 	}
 
+	onTranslationClick() {
+		this.navigate("/options/translation");
+	}
+
 	onProcessesClick() {
 		this.navigate("/options/processes");
 	}
@@ -132,6 +142,7 @@ export class OptionsComponent extends EnhancedComponent {
 		OptionsGraphicComponent,
 		OptionsErplibreComponent,
 		OptionsTranscriptionComponent,
+		OptionsTranslationComponent,
 		OptionsProcessesComponent,
 		OptionsCodeComponent,
 		OptionsLanguageComponent,

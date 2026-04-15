@@ -23,6 +23,7 @@ export const translations: Record<string, string> = {
   "options.title": "Options",
   "options.database": "Base de données",
   "options.transcription": "Transcription audio",
+  "options.translation": "Traduction",
   "options.processes": "Processus",
   "options.erplibre": "ERPLibre",
   "options.language": "Langue",
@@ -61,6 +62,7 @@ export const translations: Record<string, string> = {
   "error.failed_to_read_size": "Erreur lors de la lecture de la taille :\n{error}",
   "error.failed_to_read_device_info": "Erreur lors de la lecture des infos appareil :\n{error}",
   "error.notification_permission_denied": "Permission de notification refusée.",
+  "error.translation_failed": "Traduction échouée : {error}",
 
   // Common buttons
   "button.add": "+ Ajouter",
@@ -107,8 +109,16 @@ export const translations: Record<string, string> = {
   "button.transcribe": "T",
   "button.transcribe_audio": "Transcrire l'enregistrement",
   "button.transcribe_video": "Transcrire la vidéo",
+  "button.translate": "🌐",
+  "button.translate_text": "Traduire le texte",
+  "button.translate_transcription": "Traduire la transcription",
+  "button.translate_to_en": "→ English (EN)",
+  "button.translate_to_fr": "→ Français (FR)",
+  "button.translate_fr_en": "FR→EN",
+  "button.translate_en_fr": "EN→FR",
   "button.view_processes": "Voir les processus",
   "button.add_text_entry": "Créer une entrée texte avec ce contenu",
+  "button.add_text_entry_short": "Texte +",
   "button.open_map": "Ouvrir la carte",
   "button.delete_entry": "Supprimer cette entrée",
 
@@ -243,6 +253,20 @@ export const translations: Record<string, string> = {
   "label.odoo": "Odoo",
   "label.opened_at": "Ouvert à {time}",
   "label.transcription_in_progress": "Transcription en cours…",
+  "label.translation_in_progress": "Traduction en cours…",
+  "label.translated_text": "Texte traduit",
+  "label.translation_api": "Méthode de traduction",
+  "label.translation_local_group": "🔒 Local — sans internet",
+  "label.translation_internet_group": "☁️ Cloud — connexion internet requise",
+  "label.translation_badge_local": "🔒 Local — sans internet",
+  "label.translation_badge_server": "🖥️ Serveur (réseau local ou internet)",
+  "label.translation_badge_internet": "☁️ Internet requis",
+  "label.translation_api_ollama": "Ollama — GPT local",
+  "label.translation_api_libretranslate": "LibreTranslate — serveur de traduction",
+  "label.translation_api_mymemory": "MyMemory — service cloud gratuit",
+  "label.ollama_url": "URL du serveur Ollama",
+  "label.ollama_model": "Modèle Ollama",
+  "label.libre_translate_url": "URL LibreTranslate",
   "label.duration": "Durée",
   "label.transcribed_text": "Texte transcrit",
   "label.download_url": "URL téléchargement",
@@ -264,6 +288,7 @@ export const translations: Record<string, string> = {
   "heading.options": "Options",
   "heading.database": "Base de données",
   "heading.transcription": "Options › Transcription",
+  "heading.translation": "Options › Traduction",
   "heading.processes": "Options › Processus",
   "heading.erplibre": "ERPLibre",
   "heading.language": "Langue / Language",
@@ -296,6 +321,7 @@ export const translations: Record<string, string> = {
   "dialog.title.disable_biometry": "Désactiver la biométrie?",
 
   // Dialog messages
+  "dialog.translate_to": "Traduire vers :",
   "dialog.confirm_delete_app": "Voulez-vous vraiment supprimer l'application {url} pour le compte {username}?",
   "dialog.confirm_delete_entry": "Supprimer cette entrée de {label}?",
   "dialog.confirm_reset_browser": "Voulez-vous réinitialiser le navigateur intégré?",
@@ -325,10 +351,13 @@ export const translations: Record<string, string> = {
   "message.no_archived_notes": "Aucune note archivée.",
   "message.add_first_note": "Ajoutez une note 🤖",
   "message.component_error": "Une erreur inattendue est survenue dans cette page.",
+  "message.translation_config_saved": "Configuration sauvegardée.",
 
   // Hints
   "hint.ntfy_config": "Configurez le même topic dans Odoo (Paramètres → ERPLibre Mobile).",
   "hint.whisper_model": "Un modèle plus grand est plus lent mais plus précis.",
+  "hint.translation_ollama": "Ollama doit tourner en local ou sur un serveur de votre réseau (ex. : serveur ERPLibre). Aucune connexion internet n'est nécessaire. URL exemple : http://192.168.1.100:11434",
+  "hint.translation_libretranslate": "LibreTranslate peut être hébergé sur votre propre serveur pour fonctionner sans internet. URL exemple : http://192.168.1.100:5000/translate",
 
   // Aria labels
   "aria.main_navigation": "Navigation principale",

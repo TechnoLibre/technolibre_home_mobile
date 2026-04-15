@@ -966,6 +966,7 @@ export class NoteComponent extends EnhancedComponent {
 		const onPhoto          = this.setPhoto.bind(this);
 		const onTranscription  = this.addTranscriptionText.bind(this);
 		const onSetTranscript  = this.setEntryTranscription.bind(this);
+		const onSetTranslation = this.setEntryTranslation.bind(this);
 		const onTagsUpdated    = (e: any) => {
 			if (e?.detail?.noteId === this.state.noteId) {
 				this.state.note.tags = e?.detail?.tagIds ?? [];
@@ -976,6 +977,7 @@ export class NoteComponent extends EnhancedComponent {
 		this.eventBus.addEventListener(Events.SET_PHOTO,              onPhoto);
 		this.eventBus.addEventListener(Events.ADD_TRANSCRIPTION_TEXT, onTranscription);
 		this.eventBus.addEventListener(Events.SET_ENTRY_TRANSCRIPTION, onSetTranscript);
+		this.eventBus.addEventListener(Events.SET_ENTRY_TRANSLATION,   onSetTranslation);
 		this.eventBus.addEventListener(Events.NOTE_TAGS_UPDATED,       onTagsUpdated);
 		onWillDestroy(() => {
 			this.eventBus.removeEventListener(Events.SET_AUDIO_RECORDING,    onAudio);
@@ -983,6 +985,7 @@ export class NoteComponent extends EnhancedComponent {
 			this.eventBus.removeEventListener(Events.SET_PHOTO,              onPhoto);
 			this.eventBus.removeEventListener(Events.ADD_TRANSCRIPTION_TEXT, onTranscription);
 			this.eventBus.removeEventListener(Events.SET_ENTRY_TRANSCRIPTION, onSetTranscript);
+			this.eventBus.removeEventListener(Events.SET_ENTRY_TRANSLATION,   onSetTranslation);
 			this.eventBus.removeEventListener(Events.NOTE_TAGS_UPDATED,       onTagsUpdated);
 		});
 	}
@@ -1025,6 +1028,35 @@ export class NoteComponent extends EnhancedComponent {
 		if (!entry || (entry.type !== "audio" && entry.type !== "video")) return;
 
 		(entry.params as NoteEntryAudioParams | NoteEntryVideoParams).transcription = text;
+		await this.saveNoteData();
+		await this.getNote();
+	}
+
+	private async setEntryTranslation(event: any) {
+		const { entryId, translation, targetLang, field } = event?.detail ?? {};
+		if (!entryId || translation == null) return;
+
+		let entry: NoteEntry | undefined;
+		try {
+			entry = this.getEntry(entryId);
+		} catch (error: unknown) {
+			if (error instanceof Error) {
+				Dialog.alert({ message: error.message });
+			}
+			return;
+		}
+		if (!entry) return;
+
+		if (field === "text" && entry.type === "text") {
+			(entry.params as NoteEntryTextParams).translation     = translation;
+			(entry.params as NoteEntryTextParams).translationLang = targetLang;
+		} else if (field === "transcription" && (entry.type === "audio" || entry.type === "video")) {
+			(entry.params as NoteEntryAudioParams | NoteEntryVideoParams).transcriptionTranslation     = translation;
+			(entry.params as NoteEntryAudioParams | NoteEntryVideoParams).transcriptionTranslationLang = targetLang;
+		} else {
+			return;
+		}
+
 		await this.saveNoteData();
 		await this.getNote();
 	}

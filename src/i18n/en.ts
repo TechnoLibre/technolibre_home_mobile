@@ -23,6 +23,7 @@ export const translations: Record<string, string> = {
   "options.title": "Options",
   "options.database": "Database",
   "options.transcription": "Audio Transcription",
+  "options.translation": "Translation",
   "options.processes": "Processes",
   "options.erplibre": "ERPLibre",
   "options.language": "Language",
@@ -61,6 +62,7 @@ export const translations: Record<string, string> = {
   "error.failed_to_read_size": "Error reading database size:\n{error}",
   "error.failed_to_read_device_info": "Error reading device info:\n{error}",
   "error.notification_permission_denied": "Notification permission denied.",
+  "error.translation_failed": "Translation failed: {error}",
 
   // Common buttons
   "button.add": "+ Add",
@@ -107,8 +109,16 @@ export const translations: Record<string, string> = {
   "button.transcribe": "T",
   "button.transcribe_audio": "Transcribe recording",
   "button.transcribe_video": "Transcribe video",
+  "button.translate": "🌐",
+  "button.translate_text": "Translate text",
+  "button.translate_transcription": "Translate transcription",
+  "button.translate_to_en": "→ English (EN)",
+  "button.translate_to_fr": "→ Français (FR)",
+  "button.translate_fr_en": "FR→EN",
+  "button.translate_en_fr": "EN→FR",
   "button.view_processes": "View processes",
   "button.add_text_entry": "Create text entry from this content",
+  "button.add_text_entry_short": "Text +",
   "button.open_map": "Open map",
   "button.delete_entry": "Delete this entry",
 
@@ -243,6 +253,20 @@ export const translations: Record<string, string> = {
   "label.odoo": "Odoo",
   "label.opened_at": "Opened at {time}",
   "label.transcription_in_progress": "Transcription in progress…",
+  "label.translation_in_progress": "Translation in progress…",
+  "label.translated_text": "Translated text",
+  "label.translation_api": "Translation method",
+  "label.translation_local_group": "🔒 Local — no internet required",
+  "label.translation_internet_group": "☁️ Cloud — internet connection required",
+  "label.translation_badge_local": "🔒 Local — no internet",
+  "label.translation_badge_server": "🖥️ Server (local network or internet)",
+  "label.translation_badge_internet": "☁️ Internet required",
+  "label.translation_api_ollama": "Ollama — local GPT",
+  "label.translation_api_libretranslate": "LibreTranslate — translation server",
+  "label.translation_api_mymemory": "MyMemory — free cloud service",
+  "label.ollama_url": "Ollama server URL",
+  "label.ollama_model": "Ollama model",
+  "label.libre_translate_url": "LibreTranslate URL",
   "label.duration": "Duration",
   "label.transcribed_text": "Transcribed text",
   "label.download_url": "Download URL",
@@ -264,6 +288,7 @@ export const translations: Record<string, string> = {
   "heading.options": "Options",
   "heading.database": "Database",
   "heading.transcription": "Options › Transcription",
+  "heading.translation": "Options › Translation",
   "heading.processes": "Options › Processes",
   "heading.erplibre": "ERPLibre",
   "heading.language": "Langue / Language",
@@ -296,6 +321,7 @@ export const translations: Record<string, string> = {
   "dialog.title.disable_biometry": "Disable biometrics?",
 
   // Dialog messages
+  "dialog.translate_to": "Translate to:",
   "dialog.confirm_delete_app": "Are you sure you want to delete the application {url} for account {username}?",
   "dialog.confirm_delete_entry": "Delete this {label} entry?",
   "dialog.confirm_reset_browser": "Do you want to reset the embedded browser?",
@@ -325,10 +351,13 @@ export const translations: Record<string, string> = {
   "message.no_archived_notes": "No archived notes.",
   "message.add_first_note": "Add a note 🤖",
   "message.component_error": "An unexpected error occurred on this page.",
+  "message.translation_config_saved": "Configuration saved.",
 
   // Hints
   "hint.ntfy_config": "Configure the same topic in Odoo (Settings → ERPLibre Mobile).",
   "hint.whisper_model": "A larger model is slower but more accurate.",
+  "hint.translation_ollama": "Ollama must run locally or on a server on your network (e.g. your ERPLibre server). No internet connection required. Example URL: http://192.168.1.100:11434",
+  "hint.translation_libretranslate": "LibreTranslate can be self-hosted so it works without internet. Example URL: http://192.168.1.100:5000/translate",
 
   // Aria labels
   "aria.main_navigation": "Main navigation",

@@ -13,3 +13,64 @@
 	resize: none;
 	width: 100%;
 }
+
+.note-entry-text-component .note-entry-text__wrapper {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+}
+
+.note-entry-text-component .note-entry-text__actions {
+	display: flex;
+	justify-content: flex-end;
+	padding: 0.1rem 0;
+}
+
+.note-entry-text-component .note-entry-text__translate-btn {
+	background: transparent;
+	border: 1px solid var(--surface-subtle);
+	border-radius: 0.75rem;
+	color: #888;
+	cursor: pointer;
+	font-size: 0.8rem;
+	outline: none;
+	padding: 0.15rem 0.5rem;
+	transition: border-color 150ms, color 150ms;
+
+	&:hover:not(:disabled) {
+		border-color: #8ab4d4;
+		color: #8ab4d4;
+	}
+
+	&:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+}
+
+.note-entry-text-component .note-entry-text__translation {
+	border-top: 1px dashed var(--surface-subtle);
+	margin-top: 0.3rem;
+	padding-top: 0.4rem;
+}
+
+.note-entry-text-component .note-entry-text__translation-lang {
+	display: inline-block;
+	background: var(--btn-blue-color);
+	border-radius: 0.25rem;
+	color: #8ab4d4;
+	font-size: 0.65rem;
+	font-weight: 700;
+	margin-bottom: 0.25rem;
+	padding: 0.1rem 0.35rem;
+}
+
+.note-entry-text-component .note-entry-text__translation-text {
+	color: #aaa;
+	font-size: 0.9rem;
+	font-style: italic;
+	line-height: 1.5;
+	margin: 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
