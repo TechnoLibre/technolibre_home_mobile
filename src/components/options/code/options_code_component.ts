@@ -90,10 +90,12 @@ function renderMarkdown(text: string): string {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+const BREADCRUMBS = [{ label: "Options", url: "/options" }];
+
 export class OptionsCodeComponent extends EnhancedComponent {
     static template = xml`
 <div id="options-code-component">
-  <HeadingComponent title="'Code'" />
+  <HeadingComponent title="'Code'" breadcrumbs="breadcrumbs" />
 
   <!-- ══════════════════ SETUP ══════════════════ -->
   <t t-if="state.phase === 'setup'">
@@ -472,6 +474,8 @@ export class OptionsCodeComponent extends EnhancedComponent {
     `;
 
     static components = { HeadingComponent };
+
+    get breadcrumbs() { return BREADCRUMBS; }
 
     private _codeService: CodeService | null = null;
     private _bundleService: BundleCodeService | null = null;

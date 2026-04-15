@@ -5,9 +5,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    // Exclude whisper.cpp vendor tests — they require a compiled C++ addon
-    // (addon.node) that is only built when targeting desktop Node.js, not Android.
-    exclude: ["android/**", "node_modules/**"],
+    // Exclude whisper.cpp Node.js addon tests — addon.node requires a native
+    // C++ build (node-gyp) that is not part of the mobile project build.
+    exclude: ["android/**", "**/github-com-ggerganov-whisper-cpp/**", "node_modules/**"],
     alias: {
       "capacitor-secure-storage-plugin": resolve(
         __dirname,

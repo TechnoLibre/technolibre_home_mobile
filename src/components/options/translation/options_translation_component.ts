@@ -8,10 +8,12 @@ import type { MarianModel, MarianModelInfo } from "../../../plugins/marianPlugin
 
 type ModelUI = { ready: boolean; downloading: boolean; percent: number };
 
+const BREADCRUMBS = [{ label: "Options", url: "/options" }];
+
 export class OptionsTranslationComponent extends EnhancedComponent {
     static template = xml`
         <div id="options-translation-component">
-            <HeadingComponent title="t('heading.translation')" backUrl="'/options'" />
+            <HeadingComponent title="t('heading.translation')" breadcrumbs="breadcrumbs" />
 
             <div class="tr-body">
 
@@ -294,6 +296,8 @@ export class OptionsTranslationComponent extends EnhancedComponent {
     `;
 
     static components = { HeadingComponent };
+
+    get breadcrumbs() { return BREADCRUMBS; }
 
     setup() {
         // Build initial per-model UI state

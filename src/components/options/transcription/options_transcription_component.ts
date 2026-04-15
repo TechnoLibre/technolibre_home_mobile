@@ -100,10 +100,12 @@ function dots(n: number, max: number, filled: string, empty: string): string {
     return filled.repeat(n) + empty.repeat(max - n);
 }
 
+const BREADCRUMBS = [{ label: "Options", url: "/options" }];
+
 export class OptionsTranscriptionComponent extends EnhancedComponent {
     static template = xml`
         <div id="options-transcription-component">
-            <HeadingComponent title="t('heading.transcription')" backUrl="'/options'" />
+            <HeadingComponent title="t('heading.transcription')" breadcrumbs="breadcrumbs" />
 
             <div class="transcription-body">
 
@@ -362,6 +364,8 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
     `;
 
     static components = { HeadingComponent };
+
+    get breadcrumbs() { return BREADCRUMBS; }
 
     models: ModelDef[] = ALL_MODELS;
 

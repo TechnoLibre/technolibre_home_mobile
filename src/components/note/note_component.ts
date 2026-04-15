@@ -96,14 +96,36 @@ export class NoteComponent extends EnhancedComponent {
 							>Annuler</button>
 						</div>
 					</div>
-					<button
-						type="button"
-						class="breadcrumb__meta-btn"
-						t-att-disabled="state.newNote"
-						title="Métadonnées SQL"
-						aria-label="Métadonnées SQL"
-						t-on-click.stop.prevent="onMetadataClick"
-					>ℹ</button>
+					<div class="breadcrumb__options-wrap">
+						<button
+							type="button"
+							class="breadcrumb__options-btn"
+							t-att-disabled="state.newNote"
+							title="Options"
+							aria-label="Options"
+							aria-haspopup="menu"
+							t-att-aria-expanded="state.showOptionsMenu ? 'true' : 'false'"
+							t-on-click.stop.prevent="toggleOptionsMenu"
+						>⋮</button>
+						<div
+							t-if="state.showOptionsMenu"
+							class="breadcrumb__options-menu"
+							role="menu"
+						>
+							<button
+								type="button"
+								class="breadcrumb__options-item"
+								role="menuitem"
+								t-on-click.stop.prevent="onMetadataClick"
+							>ℹ Métadonnées SQL</button>
+							<button
+								type="button"
+								class="breadcrumb__options-item"
+								role="menuitem"
+								t-on-click.stop.prevent="onDebugClick"
+							>🐛 Debug</button>
+						</div>
+					</div>
 				</div>
 			</nav>
 			<NoteTopControlsComponent
@@ -227,6 +249,20 @@ export class NoteComponent extends EnhancedComponent {
 				</div>
 			</div>
 		</div>
+		<div
+			t-if="state.debugDialog.visible"
+			class="error-dialog-overlay"
+			role="presentation"
+			t-on-click.stop.prevent="closeDebugDialog"
+		>
+			<div class="error-dialog" role="dialog" aria-modal="true" t-on-click.stop="">
+				<pre class="debug-dialog__message" t-esc="state.debugDialog.message"/>
+				<div class="error-dialog__actions">
+					<button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="createDebugNote">📝 Ajouter une note</button>
+					<button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeDebugDialog">Fermer</button>
+				</div>
+			</div>
+		</div>
 	`;
 
 	static components = {
@@ -259,6 +295,8 @@ export class NoteComponent extends EnhancedComponent {
 			syncConfigs: [] as SyncConfig[],
 			selectedConfigIds: [] as string[],
 			showConfigPicker: false,
+			showOptionsMenu: false,
+			debugDialog: { visible: false, message: "" },
 			errorDialog: { visible: false, message: "" },
 			openInApp: { visible: false, apps: [] as Array<{ label: string; appUrl: string; username: string; password: string; odooId: number }> },
 			priorityPicker: { visible: false },
@@ -389,6 +427,8 @@ export class NoteComponent extends EnhancedComponent {
 		else if (this.state.errorDialog.visible) { ev.preventDefault(); this.closeErrorDialog(); }
 		else if (this.state.openInApp.visible) { ev.preventDefault(); this.closeOpenInApp(); }
 		else if (this.state.showConfigPicker) { ev.preventDefault(); this.cancelConfigPick(); }
+		else if (this.state.showOptionsMenu) { ev.preventDefault(); this.state.showOptionsMenu = false; }
+		else if (this.state.debugDialog.visible) { ev.preventDefault(); this.closeDebugDialog(); }
 	}
 
 	private announceSyncStatus(status: string) {
@@ -551,7 +591,41 @@ export class NoteComponent extends EnhancedComponent {
 		this.navigate(`/note/${encodeURIComponent(note.id)}`);
 	}
 
+	toggleOptionsMenu() {
+		this.state.showOptionsMenu = !this.state.showOptionsMenu;
+	}
+
+	onDebugClick() {
+		this.state.showOptionsMenu = false;
+		const noteTitle = this.state.note?.title || "Nouvelle note";
+		this.state.debugDialog = {
+			visible: true,
+			message: [
+				`Vue       : Notes › ${noteTitle}`,
+				`Composant : note_component.ts`,
+				`Route     : /note/:id`,
+			].join("\n"),
+		};
+	}
+
+	closeDebugDialog() {
+		this.state.debugDialog.visible = false;
+	}
+
+	async createDebugNote() {
+		const message = this.state.debugDialog.message;
+		this.state.debugDialog.visible = false;
+		const note = this.noteService.getNewNote(this.noteService.getNewId());
+		note.title = "Debug";
+		const entry = this.noteService.entry.getNewTextEntry();
+		(entry.params as NoteEntryTextParams).text = message;
+		note.entries = [entry];
+		await this.noteService.crud.add(note);
+		this.navigate(`/note/${encodeURIComponent(note.id)}`);
+	}
+
 	async onMetadataClick() {
+		this.state.showOptionsMenu = false;
 		try {
 			const row = await this.databaseService.getNoteRawData(this.state.noteId);
 			if (!row) {

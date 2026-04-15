@@ -1,12 +1,26 @@
 @use "../../css/mixins.scss";
 
 .heading-component {
-	@include mixins.flex--center;
+	align-items: center;
+	display: flex;
+	justify-content: center;
+	padding-right: 0.25rem;
+}
+
+.heading-component__main {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	max-width: 48rem;
+	min-width: 0;
+}
+
+.heading-component__options {
+	align-self: center;
+	flex-shrink: 0;
 }
 
 .heading-component h1.page-heading {
-	flex-grow: 1;
-	max-width: 48rem;
 	padding: 1rem 1.25rem;
 }
 
@@ -35,4 +49,16 @@
 	.breadcrumb__current {
 		color: var(--text-greyed-out);
 	}
+}
+
+.debug-dialog__message {
+	color: var(--text);
+	flex: 1;
+	font-family: monospace;
+	font-size: 0.85rem;
+	line-height: 1.6;
+	margin: 0;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	word-break: break-all;
 }
