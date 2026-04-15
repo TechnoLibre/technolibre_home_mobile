@@ -1,12 +1,14 @@
 import { Capacitor } from "@capacitor/core";
 import { MarianPlugin } from "../plugins/marianPlugin";
-import type { MarianDirection } from "../plugins/marianPlugin";
+import type { MarianModel } from "../plugins/marianPlugin";
 import { DatabaseService } from "./databaseService";
 
-const PREF_API_TYPE    = "translation_api_type";
-const PREF_LIBRE_URL   = "translation_libre_url";
-const PREF_OLLAMA_URL  = "translation_ollama_url";
-const PREF_OLLAMA_MODEL = "translation_ollama_model";
+const PREF_API_TYPE          = "translation_api_type";
+const PREF_LIBRE_URL         = "translation_libre_url";
+const PREF_OLLAMA_URL        = "translation_ollama_url";
+const PREF_OLLAMA_MODEL      = "translation_ollama_model";
+const PREF_MARIAN_MODEL_FR_EN = "translation_marian_model_fr_en";
+const PREF_MARIAN_MODEL_EN_FR = "translation_marian_model_en_fr";
 
 const MYMEMORY_BASE  = "https://api.mymemory.translated.net/get";
 const MYMEMORY_CHUNK = 450; // free-tier char limit per request
@@ -73,6 +75,22 @@ export class TranslationService {
         await this.db.setUserGraphicPref(PREF_LIBRE_URL, url);
     }
 
+    async getSelectedMarianModel(direction: "fr-en" | "en-fr"): Promise<MarianModel> {
+        const pref = direction === "fr-en" ? PREF_MARIAN_MODEL_FR_EN : PREF_MARIAN_MODEL_EN_FR;
+        const v = await this.db.getUserGraphicPref(pref).catch(() => null);
+        const valid = direction === "fr-en"
+            ? ["fr-en-tiny", "fr-en-base", "fr-en-large"]
+            : ["en-fr-tiny", "en-fr-base", "en-fr-large"];
+        if (v && valid.includes(v)) return v as MarianModel;
+        return `${direction}-tiny` as MarianModel;
+    }
+
+    async setSelectedMarianModel(model: MarianModel): Promise<void> {
+        const direction = model.startsWith("fr-en") ? "fr-en" : "en-fr";
+        const pref = direction === "fr-en" ? PREF_MARIAN_MODEL_FR_EN : PREF_MARIAN_MODEL_EN_FR;
+        await this.db.setUserGraphicPref(pref, model);
+    }
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     async translate(
@@ -107,8 +125,9 @@ export class TranslationService {
         if (!Capacitor.isNativePlatform()) {
             throw new Error("MarianMT is only available on Android.");
         }
-        const direction: MarianDirection = `${source}-${target}` as MarianDirection;
-        const { text: translated } = await MarianPlugin.translate({ text, direction });
+        const direction = `${source}-${target}` as "fr-en" | "en-fr";
+        const model = await this.getSelectedMarianModel(direction);
+        const { text: translated } = await MarianPlugin.translate({ text, model });
         if (!translated?.trim()) throw new Error("MarianMT returned an empty translation.");
         return translated;
     }

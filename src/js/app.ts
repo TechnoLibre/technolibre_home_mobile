@@ -1,5 +1,6 @@
 import { RootComponent } from "../components/root/root_component";
 import { EventBus, mount } from "@odoo/owl";
+import { Capacitor } from "@capacitor/core";
 import { SplashScreen } from "@capacitor/splash-screen";
 import { SimpleRouter } from "./router";
 import { AppService } from "../services/appService";
@@ -66,12 +67,16 @@ function hideBootScreen() {
 }
 
 async function startApp() {
-	await SplashScreen.hide();
+	const isNative = Capacitor.isNativePlatform();
+
+	if (isNative) await SplashScreen.hide();
 
 	const router = new SimpleRouter();
 
 	setBootStep(t("boot.checking_biometric"));
-	const authenticated = await BiometryUtils.authenticateForDatabase();
+	const authenticated = isNative
+		? await BiometryUtils.authenticateForDatabase()
+		: true;
 	if (!authenticated) {
 		setBootStep(t("boot.biometric_failed"));
 		return;
@@ -79,6 +84,8 @@ async function startApp() {
 
 	setBootStep(t("boot.reading_encryption_key"));
 	const db = new DatabaseService();
+
+	if (isNative) {
 
 	await db.initialize(setBootStep);
 
@@ -185,6 +192,8 @@ async function startApp() {
 		});
 	}
 
+	} // end if (isNative)
+
 	setBootStep(t("boot.initializing_services"));
 	const appService = new AppService(db);
 	const tagService = new TagService(db);
@@ -196,7 +205,7 @@ async function startApp() {
 	const serverService = new ServerService(db);
 	const deploymentService = new DeploymentService(serverService);
 	const processService = new ProcessService(db);
-	await processService.initialize();
+	if (isNative) await processService.initialize();
 	const transcriptionService = new TranscriptionService(db, processService);
 	const translationService = new TranslationService(db);
 	const marianService = new MarianService();
