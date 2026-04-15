@@ -11,9 +11,8 @@ export class OptionsClearCacheComponent extends EnhancedComponent {
       <a
         href="#"
         t-on-click.stop.prevent="onClearCacheClick"
-      >
-        🔄 Réinitialiser navigateur
-      </a>
+        t-esc="t('button.reset_browser')"
+      />
     </li>
   `;
 
@@ -23,7 +22,7 @@ export class OptionsClearCacheComponent extends EnhancedComponent {
 
 	async onClearCacheClick() {
 		const confirmResult: ConfirmResult = await Dialog.confirm({
-			message: "Voulez-vous réinitialiser le navigateur intégré?"
+			message: this.t("dialog.confirm_reset_browser"),
 		});
 
 		if (!confirmResult.value) {
@@ -32,8 +31,6 @@ export class OptionsClearCacheComponent extends EnhancedComponent {
 
 		await WebViewUtils.clearCache();
 
-		Dialog.alert({
-			message: "Navigateur intégré réinitialisé avec succès."
-		});
+		Dialog.alert({ message: this.t("message.browser_reset_success") });
 	}
 }

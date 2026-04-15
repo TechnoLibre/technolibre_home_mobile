@@ -39,25 +39,24 @@ const ENV = {
 export class ApplicationsComponent extends EnhancedComponent {
     static template = xml`
       <div id="applications-component">
-        <HeadingComponent title="'Applications'" />
+        <HeadingComponent title="t('nav.applications')" />
         <section id="applications">
           <div id="applications-options">
             <button class="section__btn-toggle"
                     t-att-aria-expanded="state.showApps ? 'true' : 'false'"
                     aria-controls="applications-list"
                     t-on-click="() => this.state.showApps = !this.state.showApps">
-              <t t-if="state.showApps">Masquer (<t t-esc="state.applications.length" />)</t>
-              <t t-else="">Afficher (<t t-esc="state.applications.length" />)</t>
+              <t t-if="state.showApps"><t t-esc="t('button.hide')"/> (<t t-esc="state.applications.length" />)</t>
+              <t t-else=""><t t-esc="t('button.show')"/> (<t t-esc="state.applications.length" />)</t>
             </button>
             <a
               id="applications-add"
               href="#"
               role="button"
-              aria-label="Ajouter une application"
+              t-att-aria-label="t('button.add_application')"
               t-on-click.stop.prevent="onAppAddClick"
-            >
-              Ajouter une application
-            </a>
+              t-esc="t('button.add_application')"
+            />
           </div>
           <t t-if="state.showApps">
             <ul id="applications-list" t-if="state.applications.length != 0">
@@ -72,50 +71,49 @@ export class ApplicationsComponent extends EnhancedComponent {
               />
             </ul>
             <div id="applications-empty" t-else="">
-              <p>Il n'y a pas d'application dans le stockage local.</p>
+              <p t-esc="t('message.no_applications')" />
             </div>
           </t>
         </section>
 
-        <HeadingComponent title="'Serveurs'" />
+        <HeadingComponent title="t('nav.servers')" />
         <section id="servers">
           <div id="servers-options">
             <button class="section__btn-toggle"
                     t-att-aria-expanded="state.showServers ? 'true' : 'false'"
                     aria-controls="servers-list"
                     t-on-click="() => this.state.showServers = !this.state.showServers">
-              <t t-if="state.showServers">Masquer (<t t-esc="state.servers.length" />)</t>
-              <t t-else="">Afficher (<t t-esc="state.servers.length" />)</t>
+              <t t-if="state.showServers"><t t-esc="t('button.hide')"/> (<t t-esc="state.servers.length" />)</t>
+              <t t-else=""><t t-esc="t('button.show')"/> (<t t-esc="state.servers.length" />)</t>
             </button>
             <button id="servers-scan"
                     t-if="isNative"
                     t-att-disabled="state.isScanning"
-                    t-att-aria-label="state.isScanning ? 'Scan en cours…' : 'Scanner le réseau'"
+                    t-att-aria-label="state.isScanning ? t('label.scan_in_progress') : t('button.scan_network')"
                     t-on-click="onScanClick">
-              <t t-if="!state.isScanning">🔍 Scan</t>
-              <t t-else="">⏳ Scan…</t>
+              <t t-if="!state.isScanning" t-esc="t('label.scan')"/>
+              <t t-else="" t-esc="t('label.scanning')"/>
             </button>
             <button id="servers-scan-cancel"
                     t-if="state.isScanning"
-                    aria-label="Annuler le scan"
-                    t-on-click="onScanCancel">
-              Annuler
-            </button>
+                    t-att-aria-label="t('button.cancel_scan')"
+                    t-on-click="onScanCancel"
+                    t-esc="t('button.cancel')"
+            />
             <a
               id="servers-add"
               href="#"
               role="button"
-              aria-label="Ajouter un serveur"
+              t-att-aria-label="t('button.add_server')"
               t-on-click.stop.prevent="onServerAddClick"
-            >
-              Ajouter un serveur
-            </a>
+              t-esc="t('button.add_server')"
+            />
           </div>
 
           <!-- ── Scan results panel ── -->
           <div t-if="state.scannedHosts.length > 0" id="servers-scan-results">
             <div class="scan-results__header">
-              <span>Machines SSH détectées (<t t-esc="state.scannedHosts.length" />)</span>
+              <span><t t-esc="t('section.ssh_machines')"/> (<t t-esc="state.scannedHosts.length" />)</span>
               <button class="scan-results__close" t-on-click="clearScanResults">✕</button>
             </div>
             <t t-foreach="state.scannedHosts" t-as="found" t-key="found.host">
@@ -126,17 +124,17 @@ export class ApplicationsComponent extends EnhancedComponent {
                   <span class="scan-host__banner" t-esc="found.banner" />
                 </div>
                 <t t-if="found.alreadyExists">
-                  <span class="scan-host__tag scan-host__tag--exists">Déjà dans la liste</span>
+                  <span class="scan-host__tag scan-host__tag--exists" t-esc="t('label.already_in_list')" />
                 </t>
                 <t t-elif="found.added">
-                  <span class="scan-host__tag scan-host__tag--added">✓ Ajouté</span>
+                  <span class="scan-host__tag scan-host__tag--added" t-esc="t('label.added')" />
                 </t>
                 <t t-else="">
                   <button class="scan-host__btn"
                           t-att-data-host="found.host"
-                          t-on-click="onAddScannedHostClick">
-                    + Ajouter
-                  </button>
+                          t-on-click="onAddScannedHostClick"
+                          t-esc="t('button.add')"
+                  />
                 </t>
               </div>
             </t>
@@ -154,7 +152,7 @@ export class ApplicationsComponent extends EnhancedComponent {
               />
             </ul>
             <div id="servers-empty" t-else="">
-              <p>Il n'y a pas de serveur dans le stockage local.</p>
+              <p t-esc="t('message.no_servers')" />
             </div>
           </t>
         </section>
@@ -497,7 +495,7 @@ export class ApplicationsComponent extends EnhancedComponent {
 
     async deleteApplication(appID: ApplicationID) {
         const deleteConfirmed = confirm(
-            `Voulez-vous vraiment supprimer l'application ${appID.url} pour le compte ${appID.username}?`
+            this.t("dialog.confirm_delete_app", { url: appID.url, username: appID.username })
         );
 
         if (!deleteConfirmed) {

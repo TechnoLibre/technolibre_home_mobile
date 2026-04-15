@@ -1,4 +1,5 @@
 import { Component, EventBus } from "@odoo/owl";
+import { t } from "../i18n";
 import { SimpleRouter } from "./router";
 import { AppService } from "../services/appService";
 import { NoteService } from "../services/note/noteService";
@@ -67,6 +68,9 @@ export abstract class EnhancedComponent extends Component {
 	public get tagService(): TagService {
 		return this.env.tagService;
 	}
+
+	/** Translation function — call as `t("key")` in templates and code. */
+	public readonly t = t;
 
 	public navigate(url: string): void {
 		this.eventBus.dispatchEvent(

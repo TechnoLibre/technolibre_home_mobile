@@ -36,6 +36,7 @@ import { NotificationService } from "../services/notificationService";
 import { ReminderService } from "../services/reminderService";
 import { BiometryUtils } from "../utils/biometryUtils";
 import { Events } from "../constants/events";
+import { t } from "../i18n";
 
 const eventBus = new EventBus();
 
@@ -67,19 +68,19 @@ async function startApp() {
 
 	const router = new SimpleRouter();
 
-	setBootStep("Vérification biométrique…");
+	setBootStep(t("boot.checking_biometric"));
 	const authenticated = await BiometryUtils.authenticateForDatabase();
 	if (!authenticated) {
-		setBootStep("Authentification biométrique échouée. Relancez l'application.");
+		setBootStep(t("boot.biometric_failed"));
 		return;
 	}
 
-	setBootStep("Lecture clé de chiffrement…");
+	setBootStep(t("boot.reading_encryption_key"));
 	const db = new DatabaseService();
 
 	await db.initialize(setBootStep);
 
-	setBootStep("Vérification migrations…");
+	setBootStep(t("boot.checking_migrations"));
 	await runMigrations(db, [
 		{
 			version: 2026031801,
@@ -168,7 +169,7 @@ async function startApp() {
 		},
 	]);
 
-	setBootStep("Chargement des préférences graphiques…");
+	setBootStep(t("boot.loading_graphic_prefs"));
 	{
 		const fontFamily = await db.getUserGraphicPref("font_family") as FontFamily | null;
 		const fontSizeScale = await db.getUserGraphicPref("font_size_scale");
@@ -182,7 +183,7 @@ async function startApp() {
 		});
 	}
 
-	setBootStep("Initialisation des services…");
+	setBootStep(t("boot.initializing_services"));
 	const appService = new AppService(db);
 	const tagService = new TagService(db);
 	const noteService = new NoteService(eventBus, db);
@@ -204,12 +205,12 @@ async function startApp() {
 
 	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService };
 
-	setBootStep("Montage de l'interface…");
+	setBootStep(t("boot.mounting_interface"));
 	await mount(RootComponent, document.body, { env });
 	hideBootScreen();
 }
 
 startApp().catch((error) => {
 	console.error("Failed to start app:", error);
-	setBootStep(`Erreur : ${error?.message ?? error}`);
+	setBootStep(t("boot.error", { message: error?.message ?? error }));
 });

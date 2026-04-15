@@ -18,6 +18,7 @@ import { OptionsTranscriptionComponent } from "../components/options/transcripti
 import { OptionsProcessesComponent } from "../components/options/processes/options_processes_component";
 import { OptionsResourcesComponent } from "../components/options/resources/options_resources_component";
 import { OptionsCodeComponent } from "../components/options/code/options_code_component";
+import { OptionsLanguageComponent } from "../components/options/language/options_language_component";
 import { TagNotesComponent } from "../components/tags/tag_notes_component";
 
 export interface Route {
@@ -41,6 +42,7 @@ export const routes: Route[] = [
 	{ pathname: "/notes/edit/:id", component: NoteListComponent },
 	{ pathname: "/note/:id", component: NoteComponent },
 	{ pathname: "/intent/:type", component: IntentComponent },
+	{ pathname: "/options/language", component: OptionsLanguageComponent },
 	{ pathname: "/options/database", component: OptionsDatabaseComponent },
 	{ pathname: "/options/erplibre", component: OptionsErplibreComponent },
 	{ pathname: "/options/transcription", component: OptionsTranscriptionComponent },

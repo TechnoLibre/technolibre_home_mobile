@@ -14,16 +14,14 @@ export class OptionsToggleBiometryComponent extends EnhancedComponent {
         href="#"
         t-on-click.stop.prevent="onEnableBiometryClick"
         t-if="state.hasUserEnabledBiometry === false"
-      >
-        👆 Activer biométrie
-      </a>
+        t-esc="t('button.enable_biometry')"
+      />
       <a
         href="#"
         t-on-click.stop.prevent="onDisableBiometryClick"
         t-if="state.hasUserEnabledBiometry === true"
-      >
-        👆 Désactiver biométrie
-      </a>
+        t-esc="t('button.disable_biometry')"
+      />
     </li>
   `;
 
@@ -39,24 +37,24 @@ export class OptionsToggleBiometryComponent extends EnhancedComponent {
 
 	async onEnableBiometryClick() {
 		this.toggleBiometry(
-			"Activer la biométrie?",
-			"Cette application utilise l'authentification biométrique pour s'assurer que vous seul ayez accès aux informations sécurisées.",
-			"Succès",
-			"L'authentification biométrique a été activée avec succès.",
-			"Erreur",
-			"Échec de l'authentification biométrique.",
+			this.t("dialog.title.enable_biometry"),
+			this.t("dialog.biometry_info"),
+			this.t("label.success"),
+			this.t("message.biometry_enabled"),
+			this.t("label.error"),
+			this.t("message.biometry_failed"),
 			true
 		);
 	}
 
 	async onDisableBiometryClick() {
 		this.toggleBiometry(
-			"Désactiver la biométrie?",
-			"Cette application utilise l'authentification biométrique pour s'assurer que vous seul ayez accès aux informations sécurisées.",
-			"Succès",
-			"L'authentification biométrique a été désactivée avec succès.",
-			"Erreur",
-			"Échec de l'authentification biométrique.",
+			this.t("dialog.title.disable_biometry"),
+			this.t("dialog.biometry_info"),
+			this.t("label.success"),
+			this.t("message.biometry_disabled"),
+			this.t("label.error"),
+			this.t("message.biometry_failed"),
 			false
 		);
 	}

@@ -38,11 +38,12 @@ export class TagManagerComponent extends EnhancedComponent {
                     <div class="sr-only" aria-live="polite" aria-atomic="true" t-esc="state.liveMsg" />
 
                     <section id="tag-manager__heading">
-                        <h2 id="tag-manager__title">Gestionnaire de tags</h2>
+                        <h2 id="tag-manager__title" t-esc="t('heading.tag_manager')"/>
                     </section>
 
                     <!-- Applied tags -->
                     <section id="tag-manager__applied" t-if="getAppliedTags().length > 0" aria-label="Tags appliqués">
+
                         <p class="tag-manager__section-label" aria-hidden="true">Tags appliqués</p>
                         <div class="tag-manager__chips" role="list">
                             <button
@@ -62,11 +63,11 @@ export class TagManagerComponent extends EnhancedComponent {
 
                     <!-- Search input -->
                     <section id="tag-manager__top-controls">
-                        <label for="tag-manager__search" class="sr-only">Rechercher ou créer un tag</label>
+                        <label for="tag-manager__search" class="sr-only" t-esc="t('placeholder.search_or_create_tag')"/>
                         <input
                             id="tag-manager__search"
                             type="text"
-                            placeholder="Rechercher ou créer un tag…"
+                            t-att-placeholder="t('placeholder.search_or_create_tag')"
                             t-model="state.search"
                             autocomplete="off"
                             autocorrect="off"
@@ -75,7 +76,7 @@ export class TagManagerComponent extends EnhancedComponent {
                     </section>
 
                     <!-- Available (unapplied) tags -->
-                    <section id="tag-manager__content" aria-label="Tags disponibles">
+                    <section id="tag-manager__content" t-att-aria-label="t('aria.available_tags')">
                         <div class="tag-manager__chips" role="list">
                             <span
                                 t-foreach="getUnappliedTags()"
@@ -103,9 +104,8 @@ export class TagManagerComponent extends EnhancedComponent {
                         <p
                             t-if="getUnappliedTags().length === 0 and getAppliedTags().length === 0 and state.search === ''"
                             class="tag-manager__empty"
-                        >
-                            Aucun tag. Tapez un nom pour en créer un.
-                        </p>
+                            t-esc="t('message.no_tags')"
+                        />
                     </section>
 
                     <!-- Edit tag color form -->
@@ -148,13 +148,15 @@ export class TagManagerComponent extends EnhancedComponent {
                                 href="#"
                                 role="button"
                                 t-on-click.stop.prevent="saveTagColor"
-                            >Enregistrer</a>
+                                t-esc="t('button.save')"
+                            />
                             <a
                                 class="tag-manager__action tag-manager__action--close"
                                 href="#"
                                 role="button"
                                 t-on-click.stop.prevent="cancelEditTag"
-                            >Annuler</a>
+                                t-esc="t('button.cancel')"
+                            />
                         </div>
                     </section>
 
@@ -166,7 +168,7 @@ export class TagManagerComponent extends EnhancedComponent {
                         <div class="tag-manager__create-row">
                             <label for="tag-manager__parent-select" class="sr-only">Tag parent</label>
                             <select id="tag-manager__parent-select" t-model="state.newParentId" class="tag-manager__parent-select">
-                                <option value="">Aucun parent</option>
+                                <option value="" t-esc="t('label.no_parent')"/>
                                 <t t-foreach="state.allTags" t-as="pt" t-key="pt.id">
                                     <option t-att-value="pt.id" t-esc="pt.name" />
                                 </t>
@@ -213,19 +215,17 @@ export class TagManagerComponent extends EnhancedComponent {
                             t-att-aria-disabled="state.saving ? 'true' : 'false'"
                             t-att-class="{ 'disabled': state.saving }"
                             t-on-click.stop.prevent="onCreateTagClick"
-                        >
-                            Créer
-                        </a>
+                            t-esc="t('button.create_tag')"
+                        />
                         <a
                             id="tag-manager__close"
                             class="tag-manager__action tag-manager__action--close"
                             href="#"
                             role="button"
-                            aria-label="Fermer le gestionnaire de tags"
+                            t-att-aria-label="t('button.close_tag_manager')"
                             t-on-click.stop.prevent="hidePopover"
-                        >
-                            Fermer
-                        </a>
+                            t-esc="t('button.close')"
+                        />
                     </section>
 
                 </div>
@@ -369,14 +369,14 @@ export class TagManagerComponent extends EnhancedComponent {
         if (this.state.noteTags.includes(tagId)) return;
         this.state.noteTags = [...this.state.noteTags, tagId];
         const tag = this.state.allTags.find((t) => t.id === tagId);
-        this._announce(tag ? `Tag appliqué : ${tag.name}` : "Tag appliqué");
+        this._announce(tag ? `${this.t("message.tag_applied")}: ${tag.name}` : this.t("message.tag_applied"));
         await this.saveTagsToNote();
     }
 
     async removeTag(tagId: string) {
         const tag = this.state.allTags.find((t) => t.id === tagId);
         this.state.noteTags = this.state.noteTags.filter((id) => id !== tagId);
-        this._announce(tag ? `Tag retiré : ${tag.name}` : "Tag retiré");
+        this._announce(tag ? `${this.t("message.tag_removed")}: ${tag.name}` : this.t("message.tag_removed"));
         await this.saveTagsToNote();
     }
 

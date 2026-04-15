@@ -55,11 +55,11 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			class="note__control"
 			href="#"
 			role="button"
-			aria-label="Mode édition"
+			t-att-aria-label="t('button.edit_mode')"
 			t-on-click.stop.prevent="props.toggleEditMode"
 		>
 			<img src="${EditNoteIcon}" alt="" aria-hidden="true"/>
-			<p>Edit Mode</p>
+			<p t-esc="t('button.edit_mode')"/>
 		</a>
 		<a
 			id="note__control__sync"
@@ -80,7 +80,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			class="note__control"
 			href="#"
 			role="button"
-			aria-label="Options de la note"
+			t-att-aria-label="t('aria.note_options')"
 			t-att-aria-expanded="props.optionMode ? 'true' : 'false'"
 			t-on-click.stop.prevent="props.toggleOptionMode"
 		>
@@ -91,12 +91,12 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			class="note__control"
 			href="#"
 			role="button"
-			aria-label="Tags"
+			t-att-aria-label="t('button.tags_open')"
 			t-on-click.stop.prevent="props.onTagsClick"
 			t-if="props.optionMode"
 		>
 			<img src="${TagIcon}" alt="" aria-hidden="true"/>
-			<p>Tags</p>
+			<p t-esc="t('label.tags')"/>
 		</a>
 		<a
 			id="note__control__archive"
@@ -106,13 +106,13 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			}"
 			href="#"
 			role="button"
-			t-att-aria-label="props.note.archived ? 'Désarchiver' : 'Archiver'"
+			t-att-aria-label="props.note.archived ? t('button.unarchive') : t('button.archive')"
 			t-on-click.stop.prevent="props.onArchiveClick"
 			t-if="props.optionMode"
 		>
 			<img src="${ArchiveNoteIcon}" alt="" aria-hidden="true"/>
-			<p t-if="props.note.archived">Unarchive</p>
-			<p t-else="">Archive</p>
+			<p t-if="props.note.archived" t-esc="t('button.unarchive')"/>
+			<p t-else="" t-esc="t('button.archive')"/>
 		</a>
 		<a
 			id="note__control__pin"
@@ -122,13 +122,13 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			}"
 			href="#"
 			role="button"
-			t-att-aria-label="props.note.pinned ? 'Désépingler' : 'Épingler'"
+			t-att-aria-label="props.note.pinned ? t('button.unpin') : t('button.pin')"
 			t-on-click.stop.prevent="props.onPinClick"
 			t-if="props.optionMode"
 		>
 			<img src="${PinNoteIcon}" alt="" aria-hidden="true"/>
-			<p t-if="props.note.pinned">Unpin</p>
-			<p t-else="">Pin</p>
+			<p t-if="props.note.pinned" t-esc="t('button.unpin')"/>
+			<p t-else="" t-esc="t('button.pin')"/>
 		</a>
 		<a
 			id="note__control__done"
@@ -138,24 +138,24 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			}"
 			href="#"
 			role="button"
-			t-att-aria-label="props.note.done ? 'Marquer comme non terminé' : 'Marquer comme terminé'"
+			t-att-aria-label="props.note.done ? t('button.mark_not_done') : t('button.mark_done')"
 			t-on-click.stop.prevent="props.toggleDone"
 			t-if="props.optionMode"
 		>
 			<img src="${CheckBoxIcon}" t-if="props.note.done" alt="" aria-hidden="true"/>
 			<img src="${CheckBoxBlankIcon}" t-else="" alt="" aria-hidden="true"/>
-			<p>Done</p>
+			<p t-esc="t('label.done')"/>
 		</a>
 		<a
 			id="note__control__open-in-app"
 			class="note__control"
 			href="#"
 			role="button"
-			aria-label="Ouvrir dans l'application"
+			t-att-aria-label="t('button.open_in_app_long')"
 			t-on-click.stop.prevent="props.onOpenInAppClick"
 			t-if="props.optionMode"
 		>
-			<p>Ouvrir dans app</p>
+			<p t-esc="t('button.open_in_app')"/>
 		</a>
 		<a
 			id="note__control__priority"
@@ -168,12 +168,12 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			}"
 			href="#"
 			role="button"
-			aria-label="Priorité"
+			t-att-aria-label="t('label.priority')"
 			t-on-click.stop.prevent="props.onPriorityClick"
 			t-if="props.optionMode"
 		>
 			<p>
-				Priorité
+				<t t-esc="t('label.priority')"/>
 				<t t-if="props.note.priority"> (P<t t-esc="props.note.priority"/>)</t>
 			</p>
 		</a>

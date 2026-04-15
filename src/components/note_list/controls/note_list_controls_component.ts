@@ -16,7 +16,7 @@ const ENV = {
 
 export class NoteListControlsComponent extends EnhancedComponent {
 	static template = xml`
-		<section id="notes__controls" aria-label="Contrôles de la liste">
+		<section id="notes__controls" t-att-aria-label="t('aria.list_controls')">
 			<a
 				class="notes__control notes__control__edit-mode"
 				t-att-class="{
@@ -25,11 +25,11 @@ export class NoteListControlsComponent extends EnhancedComponent {
 				}"
 				href="#"
 				role="button"
-				aria-label="Mode édition"
+				t-att-aria-label="t('button.edit_mode')"
 				t-att-aria-pressed="props.editMode ? 'true' : 'false'"
 				t-on-click.stop.prevent="props.onToggleEditModeClick"
 			>
-				<p>Edit mode</p>
+				<p t-esc="t('button.edit_mode')"/>
 			</a>
 			<a
 				class="notes__control notes__control__show-archived"
@@ -39,11 +39,11 @@ export class NoteListControlsComponent extends EnhancedComponent {
 				}"
 				href="#"
 				role="button"
-				aria-label="Afficher les notes archivées"
+				t-att-aria-label="t('button.show_archived')"
 				t-att-aria-pressed="props.showArchivedNotes ? 'true' : 'false'"
 				t-on-click.stop.prevent="props.onToggleNoteListClick"
 			>
-				<p>Montrer les ${ENV.LABEL_NOTE}s archivées</p>
+				<p t-esc="t('button.show_archived')"/>
 				<div
 					id="notes__control__show-archived__indicator"
 					aria-hidden="true"
@@ -58,11 +58,11 @@ export class NoteListControlsComponent extends EnhancedComponent {
 				class="notes__control notes__control__sort-priority"
 				href="#"
 				role="button"
-				aria-label="Trier par priorité"
+				t-att-aria-label="t('button.sort_by_priority')"
 				t-att-aria-pressed="props.sortByPriority ? 'true' : 'false'"
 				t-on-click.stop.prevent="props.onToggleSortClick"
 			>
-				<p>Trier par priorité</p>
+				<p t-esc="t('button.sort_by_priority')"/>
 				<div
 					class="notes__control__sort-priority__indicator"
 					aria-hidden="true"

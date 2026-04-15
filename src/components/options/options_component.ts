@@ -21,17 +21,18 @@ import { OptionsErplibreComponent } from "./erplibre/options_erplibre_component"
 import { OptionsTranscriptionComponent } from "./transcription/options_transcription_component";
 import { OptionsProcessesComponent } from "./processes/options_processes_component";
 import { OptionsCodeComponent } from "./code/options_code_component";
+import { OptionsLanguageComponent } from "./language/options_language_component";
 
 export class OptionsComponent extends EnhancedComponent {
 	static template = xml`
     <div id="options-component">
-      <HeadingComponent title="'Options'" />
-      <ul id="options-list" aria-label="Options">
+      <HeadingComponent title="t('options.title')" />
+      <ul id="options-list" t-att-aria-label="t('options.title')">
         <OptionsClearCacheComponent />
         <OptionsToggleBiometryComponent />
         <li class="options-list__item" t-if="state.isDebug">
-          <a href="#" role="button" aria-label="Base de données" t-on-click.stop.prevent="onDatabaseClick">
-            🗄️ Base de données ›
+          <a href="#" role="button" t-att-aria-label="t('options.database')" t-on-click.stop.prevent="onDatabaseClick">
+            🗄️ <t t-esc="t('options.database')"/> ›
           </a>
         </li>
         <OptionsPermissionsComponent />
@@ -42,13 +43,13 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsGraphicComponent />
         <OptionsChangelogComponent />
         <li class="options-list__item">
-          <a href="#" role="button" aria-label="Transcription audio" t-on-click.stop.prevent="onTranscriptionClick">
-            🎙️ Transcription audio ›
+          <a href="#" role="button" t-att-aria-label="t('options.transcription')" t-on-click.stop.prevent="onTranscriptionClick">
+            🎙️ <t t-esc="t('options.transcription')"/> ›
           </a>
         </li>
         <li class="options-list__item">
-          <a href="#" role="button" aria-label="Processus" t-on-click.stop.prevent="onProcessesClick">
-            ⚙️ Processus ›
+          <a href="#" role="button" t-att-aria-label="t('options.processes')" t-on-click.stop.prevent="onProcessesClick">
+            ⚙️ <t t-esc="t('options.processes')"/> ›
           </a>
         </li>
         <li class="options-list__item">
@@ -57,8 +58,13 @@ export class OptionsComponent extends EnhancedComponent {
           </a>
         </li>
         <li class="options-list__item">
-          <a href="#" role="button" aria-label="ERPLibre" t-on-click.stop.prevent="onErplibreClick">
-            🏠 ERPLibre ›
+          <a href="#" role="button" t-att-aria-label="t('options.language')" t-on-click.stop.prevent="onLanguageClick">
+            🌐 <t t-esc="t('options.language')"/> ›
+          </a>
+        </li>
+        <li class="options-list__item">
+          <a href="#" role="button" t-att-aria-label="t('options.erplibre')" t-on-click.stop.prevent="onErplibreClick">
+            🏠 <t t-esc="t('options.erplibre')"/> ›
           </a>
         </li>
       </ul>
@@ -105,6 +111,10 @@ export class OptionsComponent extends EnhancedComponent {
 		this.navigate("/options/code");
 	}
 
+	onLanguageClick() {
+		this.navigate("/options/language");
+	}
+
 	onErplibreClick() {
 		this.navigate("/options/erplibre");
 	}
@@ -124,5 +134,6 @@ export class OptionsComponent extends EnhancedComponent {
 		OptionsTranscriptionComponent,
 		OptionsProcessesComponent,
 		OptionsCodeComponent,
+		OptionsLanguageComponent,
 	};
 }

@@ -103,14 +103,12 @@ function dots(n: number, max: number, filled: string, empty: string): string {
 export class OptionsTranscriptionComponent extends EnhancedComponent {
     static template = xml`
         <div id="options-transcription-component">
-            <HeadingComponent title="'Options › Transcription'" backUrl="'/options'" />
+            <HeadingComponent title="t('heading.transcription')" backUrl="'/options'" />
 
             <div class="transcription-body">
 
                 <!-- Not available on web -->
-                <p t-if="!isNative" class="transcription-unavailable">
-                    La transcription audio n'est disponible que sur l'application mobile Android.
-                </p>
+                <p t-if="!isNative" class="transcription-unavailable" t-esc="t('message.transcription_android_only')" />
 
                 <t t-if="isNative">
 
@@ -127,7 +125,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                             <span
                                 class="transcription-toggle-state"
                                 t-att-class="{ 'transcription-toggle-state--on': state.enabled }"
-                                t-esc="state.enabled ? 'Activée' : 'Désactivée'"
+                                t-esc="state.enabled ? t('label.enabled') : t('label.disabled')"
                             />
                             <label class="transcription-switch">
                                 <input type="checkbox"
@@ -143,10 +141,8 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
 
                         <!-- ── Model selector ──────────────────────────────── -->
                         <div class="transcription-section">
-                            <p class="transcription-section__title">Modèle Whisper</p>
-                            <p class="transcription-section__hint">
-                                Sélectionnez un modèle puis téléchargez-le pour activer la transcription.
-                            </p>
+                            <p class="transcription-section__title" t-esc="t('label.whisper_model')"/>
+                            <p class="transcription-section__hint" t-esc="t('hint.whisper_model')"/>
 
                             <t t-foreach="models" t-as="m" t-key="m.key">
                                 <div
@@ -167,9 +163,9 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                         <div class="transcription-model__header">
                                             <span class="transcription-model__name" t-esc="m.name" />
                                             <span t-if="m.recommended"
-                                                  class="transcription-model__badge transcription-model__badge--recommended">
-                                                ★ Recommandé
-                                            </span>
+                                                  class="transcription-model__badge transcription-model__badge--recommended"
+                                                  t-esc="'★ ' + t('label.recommended')"
+                                            />
                                             <span t-if="m.englishOnly"
                                                   class="transcription-model__badge transcription-model__badge--english-only">
                                                 🇬🇧 Anglais uniquement
@@ -209,7 +205,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                         <!-- Download status -->
                                         <t t-if="state.downloadedModels[m.key]">
                                             <div class="transcription-model__footer">
-                                                <span class="transcription-model__badge transcription-model__badge--ok">✓ Téléchargé</span>
+                                                <span class="transcription-model__badge transcription-model__badge--ok" t-esc="'✓ ' + t('label.downloaded')"/>
                                                 <button class="transcription-model__delete-btn"
                                                         t-att-data-model-key="m.key"
                                                         t-att-disabled="state.isDeleting"
@@ -236,10 +232,12 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                         </t>
                                         <t t-else="">
                                             <div class="transcription-model__footer">
-                                                <span class="transcription-model__badge transcription-model__badge--pending">À télécharger</span>
+                                                <span class="transcription-model__badge transcription-model__badge--pending" t-esc="t('label.model_to_download')"/>
                                                 <button class="transcription-model__dl-btn"
                                                         t-att-data-model-key="m.key"
-                                                        t-on-click.stop="onModelDownloadClick">⬇ Télécharger</button>
+                                                        t-on-click.stop="onModelDownloadClick"
+                                                        t-esc="t('button.download')"
+                                                />
                                             </div>
                                         </t>
 
@@ -251,23 +249,23 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                         <!-- ── Download mode toggle ───────────────────────── -->
                         <t t-if="hasUndownloadedModels">
                             <div class="transcription-mode">
-                                <p class="transcription-section__title">Mode de téléchargement</p>
+                                <p class="transcription-section__title" t-esc="t('label.download_mode')"/>
                                 <div class="transcription-mode__options">
                                     <button
                                         class="transcription-mode__btn"
                                         t-att-class="{'transcription-mode__btn--active': state.downloadMode === 'wakelock'}"
                                         t-on-click="onSetDownloadModeWakelock"
                                     >
-                                        🔋 Standard
-                                        <span class="transcription-mode__sub">WakeLock + reprise auto</span>
+                                        <t t-esc="t('button.download_standard')"/>
+                                        <span class="transcription-mode__sub" t-esc="t('label.wakelock_description')"/>
                                     </button>
                                     <button
                                         class="transcription-mode__btn"
                                         t-att-class="{'transcription-mode__btn--active': state.downloadMode === 'foreground'}"
                                         t-on-click="onSetDownloadModeForeground"
                                     >
-                                        📲 Service de fond
-                                        <span class="transcription-mode__sub">Recommandé ≥ 1 Go</span>
+                                        <t t-esc="t('button.download_foreground')"/>
+                                        <span class="transcription-mode__sub" t-esc="t('label.foreground_recommended')"/>
                                     </button>
                                 </div>
                                 <p t-if="state.downloadMode === 'foreground'" class="transcription-mode__hint">
@@ -292,7 +290,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                         <!-- ── Download history ────────────────────────────── -->
                         <t t-if="state.recentDownloads.length > 0">
                             <div class="transcription-history">
-                                <p class="transcription-section__title">Historique des téléchargements</p>
+                                <p class="transcription-section__title" t-esc="t('label.download_history')"/>
                                 <t t-foreach="state.recentDownloads" t-as="dl" t-key="dl.id">
                                     <div class="transcription-history__item"
                                          t-att-class="{'transcription-history__item--expanded': state.expandedHistoryId === dl.id}"
@@ -533,7 +531,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
             await this.refreshModelStatus();
         } catch (e: unknown) {
             this.state.deleteError =
-                "Erreur : " + (e instanceof Error ? e.message : String(e));
+                this.t("label.error") + " : " + (e instanceof Error ? e.message : String(e));
         } finally {
             this.state.isDeleting = false;
         }
