@@ -26,6 +26,7 @@ import { addProcessResultColumn } from "../services/migrations/addProcessResultC
 import { addProcessDebugLogColumn } from "../services/migrations/addProcessDebugLogColumn";
 import { addTagsTable } from "../services/migrations/addTagsTable";
 import { addNtfyTokenColumn } from "../services/migrations/addNtfyTokenColumn";
+import { encryptExistingCredentials } from "../services/migrations/encryptExistingCredentials";
 import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
@@ -172,6 +173,11 @@ async function startApp() {
 			version: 2026041401,
 			description: "Ajout de la colonne ntfy_token pour l'authentification NTFY",
 			run: addNtfyTokenColumn,
+		},
+		{
+			version: 2026041402,
+			description: "Chiffrement AES-256-GCM des credentials existants",
+			run: encryptExistingCredentials,
 		},
 	]);
 

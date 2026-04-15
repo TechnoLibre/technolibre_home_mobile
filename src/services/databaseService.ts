@@ -11,6 +11,7 @@ import { Server } from "../models/server";
 import { Workspace } from "../models/workspace";
 import type { ProcessRecord, ProcessType, ProcessStatus } from "../models/process";
 import { StorageConstants } from "../constants/storage";
+import { encryptCredential, decryptCredential } from "../utils/cryptoUtils";
 
 export type SyncStatus = "local" | "pending" | "synced" | "conflict" | "error";
 
@@ -155,10 +156,15 @@ export class DatabaseService {
 
   async getAllServers(): Promise<Server[]> {
     const result = await this.db.query("SELECT * FROM servers");
-    return (result.values ?? []).map((row: any) => this.rowToServer(row));
+    return Promise.all((result.values ?? []).map((row: any) => this.rowToServer(row)));
   }
 
   async addServer(server: Server): Promise<void> {
+    const [encPass, encKey, encPhrase] = await Promise.all([
+      encryptCredential(server.password ?? ""),
+      encryptCredential(server.privateKey ?? ""),
+      encryptCredential(server.passphrase ?? ""),
+    ]);
     await this.db.run(
       `INSERT INTO servers
         (host, port, username, auth_type, password, private_key, passphrase, label, deploy_path)
@@ -168,9 +174,9 @@ export class DatabaseService {
         server.port ?? 22,
         server.username,
         server.authType ?? "password",
-        server.password ?? "",
-        server.privateKey ?? "",
-        server.passphrase ?? "",
+        encPass,
+        encKey,
+        encPhrase,
         server.label ?? "",
         server.deployPath ?? "~/erplibre",
       ]
@@ -185,6 +191,11 @@ export class DatabaseService {
   }
 
   async updateServer(host: string, username: string, server: Server): Promise<void> {
+    const [encPass, encKey, encPhrase] = await Promise.all([
+      encryptCredential(server.password ?? ""),
+      encryptCredential(server.privateKey ?? ""),
+      encryptCredential(server.passphrase ?? ""),
+    ]);
     await this.db.run(
       `UPDATE servers SET
         host = ?, port = ?, username = ?, auth_type = ?,
@@ -195,9 +206,9 @@ export class DatabaseService {
         server.port ?? 22,
         server.username,
         server.authType ?? "password",
-        server.password ?? "",
-        server.privateKey ?? "",
-        server.passphrase ?? "",
+        encPass,
+        encKey,
+        encPhrase,
         server.label ?? "",
         server.deployPath ?? "~/erplibre",
         host,
@@ -206,15 +217,20 @@ export class DatabaseService {
     );
   }
 
-  private rowToServer(row: any): Server {
+  private async rowToServer(row: any): Promise<Server> {
+    const [password, privateKey, passphrase] = await Promise.all([
+      decryptCredential(row.password ?? ""),
+      decryptCredential(row.private_key ?? ""),
+      decryptCredential(row.passphrase ?? ""),
+    ]);
     return {
       host: row.host,
       port: row.port ?? 22,
       username: row.username,
       authType: row.auth_type === "key" ? "key" : "password",
-      password: row.password ?? "",
-      privateKey: row.private_key ?? "",
-      passphrase: row.passphrase ?? "",
+      password,
+      privateKey,
+      passphrase,
       label: row.label ?? "",
       deployPath: row.deploy_path ?? "~/erplibre",
     };
@@ -312,6 +328,17 @@ export class DatabaseService {
     }
   }
 
+  /** Direct query access for migrations. Returns raw row objects. */
+  async rawQuery(sql: string): Promise<any[]> {
+    const result = await this.db.query(sql);
+    return result.values ?? [];
+  }
+
+  /** Direct write access for migrations. */
+  async rawRun(sql: string, values: any[]): Promise<void> {
+    await this.db.run(sql, values);
+  }
+
   async addNtfyTokenColumn(): Promise<void> {
     const existing = await this.db.query("PRAGMA table_info(applications)");
     const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
@@ -330,19 +357,23 @@ export class DatabaseService {
 
   async getAllApplications(): Promise<Application[]> {
     const result = await this.db.query("SELECT * FROM applications");
-    return (result.values ?? []).map((row: any) => this.rowToApplication(row));
+    return Promise.all((result.values ?? []).map((row: any) => this.rowToApplication(row)));
   }
 
   async addApplication(app: Application): Promise<void> {
+    const [encPassword, encToken] = await Promise.all([
+      encryptCredential(app.password),
+      encryptCredential(app.ntfyToken ?? ""),
+    ]);
     await this.db.run(
       `INSERT INTO applications
         (url, username, password, database, odoo_version, auto_sync, poll_interval_minutes, ntfy_url, ntfy_topic, ntfy_token)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [app.url, app.username, app.password,
+      [app.url, app.username, encPassword,
        app.database ?? "", app.odooVersion ?? "",
        app.autoSync ? 1 : 0,
        app.pollIntervalMinutes ?? 5, app.ntfyUrl ?? "", app.ntfyTopic ?? "",
-       app.ntfyToken ?? ""]
+       encToken]
     );
   }
 
@@ -365,29 +396,37 @@ export class DatabaseService {
     username: string,
     app: Application
   ): Promise<void> {
+    const [encPassword, encToken] = await Promise.all([
+      encryptCredential(app.password),
+      encryptCredential(app.ntfyToken ?? ""),
+    ]);
     await this.db.run(
       "UPDATE applications SET url = ?, username = ?, password = ?, database = ?, odoo_version = ?, auto_sync = ?, poll_interval_minutes = ?, ntfy_url = ?, ntfy_topic = ?, ntfy_token = ? WHERE url = ? AND username = ?",
-      [app.url, app.username, app.password,
+      [app.url, app.username, encPassword,
        app.database ?? "", app.odooVersion ?? "",
        app.autoSync ? 1 : 0,
        app.pollIntervalMinutes ?? 5, app.ntfyUrl ?? "", app.ntfyTopic ?? "",
-       app.ntfyToken ?? "",
+       encToken,
        url, username]
     );
   }
 
-  private rowToApplication(row: any): Application {
+  private async rowToApplication(row: any): Promise<Application> {
+    const [password, ntfyToken] = await Promise.all([
+      decryptCredential(row.password ?? ""),
+      decryptCredential(row.ntfy_token ?? ""),
+    ]);
     return {
       url: row.url,
       username: row.username,
-      password: row.password,
+      password,
       database: row.database ?? "",
       odooVersion: row.odoo_version ?? "",
       autoSync: row.auto_sync === 1 || row.auto_sync === true,
       pollIntervalMinutes: row.poll_interval_minutes ?? 5,
       ntfyUrl: row.ntfy_url ?? "",
       ntfyTopic: row.ntfy_topic ?? "",
-      ntfyToken: row.ntfy_token ?? "",
+      ntfyToken,
     };
   }
 

@@ -12,9 +12,14 @@ import java.io.OutputStream;
 import java.net.CookieHandler;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLPeerUnverifiedException;
 
 /**
  * Minimal HTTP POST plugin that bypasses Capacitor's CookieHandler.
@@ -33,11 +38,86 @@ import java.util.Map;
 @CapacitorPlugin(name = "RawHttp")
 public class RawHttpPlugin extends Plugin {
 
+    /**
+     * Computes the SHA-256 fingerprint of a certificate's public key (SPKI).
+     */
+    private static String sha256Fingerprint(X509Certificate cert) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hash = digest.digest(cert.getPublicKey().getEncoded());
+        StringBuilder sb = new StringBuilder();
+        for (byte b : hash) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Verifies that the HTTPS connection's leaf certificate matches the expected pin.
+     * @throws SecurityException if the pin doesn't match.
+     */
+    private void verifyCertificatePin(HttpsURLConnection httpsConn, String expectedPin)
+            throws SSLPeerUnverifiedException, Exception {
+        Certificate[] certs = httpsConn.getServerCertificates();
+        if (certs.length == 0) {
+            throw new SecurityException("No server certificates presented");
+        }
+        X509Certificate leaf = (X509Certificate) certs[0];
+        String actualPin = sha256Fingerprint(leaf);
+        if (!actualPin.equalsIgnoreCase(expectedPin)) {
+            throw new SecurityException(
+                "Certificate pin mismatch — possible MITM attack. "
+                + "Expected: " + expectedPin.substring(0, 16) + "… "
+                + "Got: " + actualPin.substring(0, 16) + "…"
+            );
+        }
+    }
+
+    /**
+     * Returns the SHA-256 fingerprint of a server's leaf certificate.
+     * Used to establish the pin on first connection.
+     */
+    @PluginMethod
+    public void getCertificatePin(PluginCall call) {
+        String urlStr = call.getString("url");
+        if (urlStr == null || urlStr.isEmpty()) {
+            call.reject("url is required");
+            return;
+        }
+
+        new Thread(() -> {
+            HttpsURLConnection conn = null;
+            try {
+                URL url = new URL(urlStr);
+                conn = (HttpsURLConnection) url.openConnection();
+                conn.setConnectTimeout(10000);
+                conn.connect();
+
+                Certificate[] certs = conn.getServerCertificates();
+                if (certs.length == 0) {
+                    call.reject("No server certificates");
+                    return;
+                }
+                X509Certificate leaf = (X509Certificate) certs[0];
+                JSObject result = new JSObject();
+                result.put("pin", sha256Fingerprint(leaf));
+                result.put("subject", leaf.getSubjectX500Principal().getName());
+                result.put("issuer", leaf.getIssuerX500Principal().getName());
+                result.put("expires", leaf.getNotAfter().toInstant().toString());
+                call.resolve(result);
+            } catch (Exception e) {
+                call.reject("Failed to get certificate: " + e.getMessage(), e);
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }).start();
+    }
+
     @PluginMethod
     public void post(PluginCall call) {
         String urlStr = call.getString("url");
         JSObject headers = call.getObject("headers", new JSObject());
         String body = call.getString("body", "");
+        String certPin = call.getString("certPin", null);
 
         if (urlStr == null || urlStr.isEmpty()) {
             call.reject("url is required");
@@ -72,6 +152,11 @@ public class RawHttpPlugin extends Plugin {
             conn.setFixedLengthStreamingMode(bodyBytes.length);
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(bodyBytes);
+            }
+
+            // Verify certificate pin if provided (before reading response)
+            if (certPin != null && !certPin.isEmpty() && conn instanceof HttpsURLConnection) {
+                verifyCertificatePin((HttpsURLConnection) conn, certPin);
             }
 
             // Read response
