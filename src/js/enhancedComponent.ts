@@ -11,6 +11,7 @@ import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
 import { TranscriptionService } from "../services/transcriptionService";
 import { TranslationService } from "../services/translationService";
+import { MarianService } from "../services/marianService";
 import { ProcessService } from "../services/processService";
 import { TagService } from "../services/tagService";
 import { Events } from "../constants/events";
@@ -64,6 +65,10 @@ export abstract class EnhancedComponent extends Component {
 
 	public get translationService(): TranslationService {
 		return this.env.translationService;
+	}
+
+	public get marianService(): MarianService {
+		return this.env.marianService;
 	}
 
 	public get processService(): ProcessService {

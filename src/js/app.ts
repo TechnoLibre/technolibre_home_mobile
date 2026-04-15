@@ -29,6 +29,7 @@ import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
 import { TranscriptionService } from "../services/transcriptionService";
 import { TranslationService } from "../services/translationService";
+import { MarianService } from "../services/marianService";
 import { ProcessService } from "../services/processService";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
 import type { FontFamily, ColorTheme } from "../models/graphicPrefs";
@@ -198,6 +199,7 @@ async function startApp() {
 	await processService.initialize();
 	const transcriptionService = new TranscriptionService(db, processService);
 	const translationService = new TranslationService(db);
+	const marianService = new MarianService();
 	notificationService.start();
 
 	// Re-schedule any reminders whose notification batch is expiring
@@ -205,7 +207,7 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, processService };
+	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, marianService, processService };
 
 	setBootStep(t("boot.mounting_interface"));
 	await mount(RootComponent, document.body, { env });

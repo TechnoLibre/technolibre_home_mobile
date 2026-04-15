@@ -192,8 +192,9 @@ node_modules/
 .sourcemaps
 dist/
 
-# Working directory
+# Working directory — cloned manually, not committed
 android/app/src/main/cpp/whisper
+android/app/src/main/cpp/sentencepiece
 
 # Generated bundles — rebuilt by vite at every build
 src/public/repo/

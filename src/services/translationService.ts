@@ -1,3 +1,6 @@
+import { Capacitor } from "@capacitor/core";
+import { MarianPlugin } from "../plugins/marianPlugin";
+import type { MarianDirection } from "../plugins/marianPlugin";
 import { DatabaseService } from "./databaseService";
 
 const PREF_API_TYPE    = "translation_api_type";
@@ -9,10 +12,11 @@ const MYMEMORY_BASE  = "https://api.mymemory.translated.net/get";
 const MYMEMORY_CHUNK = 450; // free-tier char limit per request
 
 export type TranslationLang    = "fr" | "en";
-export type TranslationApiType = "ollama" | "libretranslate" | "mymemory";
+export type TranslationApiType = "marian" | "ollama" | "libretranslate" | "mymemory";
 
 /** Whether each backend requires internet access. */
 export const TRANSLATION_REQUIRES_INTERNET: Record<TranslationApiType, boolean> = {
+    marian:         false, // on-device — no internet, no server
     ollama:         false, // local server (LAN or device)
     libretranslate: false, // can be local, depends on configured URL
     mymemory:       true,  // cloud API — always needs internet
@@ -34,8 +38,8 @@ export class TranslationService {
 
     async getApiType(): Promise<TranslationApiType> {
         const v = await this.db.getUserGraphicPref(PREF_API_TYPE).catch(() => null);
-        if (v === "libretranslate" || v === "mymemory") return v;
-        return "ollama"; // default: local GPT
+        if (v === "marian" || v === "libretranslate" || v === "mymemory" || v === "ollama") return v;
+        return "ollama"; // default (existing installs keep Ollama; new installs can switch to MarianMT)
     }
 
     async setApiType(type: TranslationApiType): Promise<void> {
@@ -82,6 +86,8 @@ export class TranslationService {
 
         const apiType = await this.getApiType();
         switch (apiType) {
+            case "marian":
+                return this._callMarian(trimmed, source, target);
             case "ollama":
                 return this._callOllama(trimmed, source, target);
             case "libretranslate":
@@ -89,6 +95,22 @@ export class TranslationService {
             case "mymemory":
                 return this._callMyMemoryChunked(trimmed, source, target);
         }
+    }
+
+    // ── MarianMT (on-device — no internet, no server) ────────────────────────
+
+    private async _callMarian(
+        text: string,
+        source: TranslationLang,
+        target: TranslationLang
+    ): Promise<string> {
+        if (!Capacitor.isNativePlatform()) {
+            throw new Error("MarianMT is only available on Android.");
+        }
+        const direction: MarianDirection = `${source}-${target}` as MarianDirection;
+        const { text: translated } = await MarianPlugin.translate({ text, direction });
+        if (!translated?.trim()) throw new Error("MarianMT returned an empty translation.");
+        return translated;
     }
 
     // ── Ollama (local GPT — no internet) ──────────────────────────────────────

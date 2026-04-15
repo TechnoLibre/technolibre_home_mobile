@@ -85,6 +85,89 @@
         background: rgba(224, 147, 58, 0.18);
         color: #e0933a;
     }
+
+    &--ondevice {
+        background: rgba(103, 58, 183, 0.15);
+        color: #9c6ee8;
+    }
+}
+
+/* ── MarianMT model rows ────────────────────────────────────────────────── */
+
+.translation-marian-model {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.translation-marian-model__header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.translation-marian-model__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.translation-marian-status {
+    font-size: 0.75rem;
+    font-weight: 600;
+
+    &--ready {
+        color: #4caf50;
+    }
+
+    &--downloading {
+        color: #e0933a;
+    }
+
+    &--missing {
+        color: #888;
+    }
+}
+
+.translation-marian-progress {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+}
+
+.translation-marian-bar {
+    flex: 1;
+    height: 0.4rem;
+    border-radius: 0.2rem;
+    appearance: none;
+
+    &::-webkit-progress-bar {
+        background: var(--surface-subtle);
+        border-radius: 0.2rem;
+    }
+
+    &::-webkit-progress-value {
+        background: #9c6ee8;
+        border-radius: 0.2rem;
+    }
+}
+
+.translation-marian-percent {
+    font-size: 0.75rem;
+    color: #888;
+    min-width: 2.5rem;
+    text-align: right;
+}
+
+.translation-url-save--danger {
+    background: var(--btn-red-color, #c0392b);
+
+    &:hover {
+        background: var(--btn-red-hover-color, #a93226);
+    }
 }
 
 /* ── Config block (shown under selected option) ────────────────────── */
