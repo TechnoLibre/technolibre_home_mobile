@@ -79,8 +79,8 @@ export class TranslationService {
         const pref = direction === "fr-en" ? PREF_MARIAN_MODEL_FR_EN : PREF_MARIAN_MODEL_EN_FR;
         const v = await this.db.getUserGraphicPref(pref).catch(() => null);
         const valid = direction === "fr-en"
-            ? ["fr-en-tiny", "fr-en-base", "fr-en-large"]
-            : ["en-fr-tiny", "en-fr-base", "en-fr-large"];
+            ? ["fr-en-tiny", "fr-en-base"]
+            : ["en-fr-tiny", "en-fr-base"];
         if (v && valid.includes(v)) return v as MarianModel;
         return `${direction}-tiny` as MarianModel;
     }

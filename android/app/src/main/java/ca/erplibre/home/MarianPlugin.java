@@ -13,6 +13,10 @@ import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.FloatBuffer;
+import java.nio.LongBuffer;
 import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -24,6 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
+import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
 
 /**
@@ -42,10 +47,9 @@ import ai.onnxruntime.OrtSession;
  *    add(MarianPlugin.class);
  *
  * ── Model variants ─────────────────────────────────────────────────────────
- * Six variants: {fr-en,en-fr} × {tiny,base,large}
+ * Four variants: {fr-en,en-fr} × {tiny,base}
  *   tiny  — quantized (int8)    ~82 MB   fast, lower quality
  *   base  — float32             ~182 MB  balanced (recommended)
- *   large — TC-Big quantized    ~300 MB  best quality, slower
  *
  * Downloaded at runtime to <filesDir>/marian/{model}/  e.g. marian/fr-en-base/
  *   encoder.onnx  — ONNX encoder
@@ -104,13 +108,6 @@ public class MarianPlugin extends Plugin {
             HN  + "/opus-mt-fr-en/resolve/main/source.spm",
             HN  + "/opus-mt-fr-en/resolve/main/target.spm",
         });
-        MODEL_VARIANTS.put("fr-en-large", new String[]{
-            Xen + "/opus-mt-tc-big-fr-en/resolve/main/onnx/encoder_model_quantized.onnx",
-            Xen + "/opus-mt-tc-big-fr-en/resolve/main/onnx/decoder_model_quantized.onnx",
-            HN  + "/opus-mt-tc-big-fr-en/resolve/main/source.spm",
-            HN  + "/opus-mt-tc-big-fr-en/resolve/main/target.spm",
-        });
-
         // ── EN → FR ──────────────────────────────────────────────────────────
 
         MODEL_VARIANTS.put("en-fr-tiny", new String[]{
@@ -124,12 +121,6 @@ public class MarianPlugin extends Plugin {
             Xen + "/opus-mt-en-fr/resolve/main/onnx/decoder_model.onnx",
             HN  + "/opus-mt-en-fr/resolve/main/source.spm",
             HN  + "/opus-mt-en-fr/resolve/main/target.spm",
-        });
-        MODEL_VARIANTS.put("en-fr-large", new String[]{
-            Xen + "/opus-mt-tc-big-en-fr/resolve/main/onnx/encoder_model_quantized.onnx",
-            Xen + "/opus-mt-tc-big-en-fr/resolve/main/onnx/decoder_model_quantized.onnx",
-            HN  + "/opus-mt-tc-big-en-fr/resolve/main/source.spm",
-            HN  + "/opus-mt-tc-big-en-fr/resolve/main/target.spm",
         });
     }
 
@@ -300,32 +291,60 @@ public class MarianPlugin extends Plugin {
         for (int i = 0; i < rawIds.length; i++) inputIds[i] = rawIds[i];
         inputIds[rawIds.length] = EOS_TOKEN_ID;
 
-        Log.d(TAG, "[" + model + "] src tokens (" + rawIds.length + "): " + Arrays.toString(rawIds));
+        Log.i(TAG, "[" + model + "] src tokens (" + rawIds.length + "): " + Arrays.toString(rawIds));
+        Log.i(TAG, "[" + model + "] src roundtrip: '" + MarianLib.decode(srcSpmPtr, rawIds) + "'");
+        if (rawIds.length == 0) {
+            Log.e(TAG, "[" + model + "] SentencePiece returned 0 tokens for input: " + text);
+            throw new Exception("Tokenization failed: SentencePiece returned empty token list");
+        }
 
         // 2. Build encoder inputs (batch_size=1)
-        final long[][] encInputIds = new long[][]{inputIds};
-        final long[][] encAttnMask = new long[][]{onesLong(inputIds.length)};
+        final long[] encAttnMaskFlat = onesLong(inputIds.length);
 
         final Map<String, OnnxTensor> encIn = new HashMap<>();
-        encIn.put("input_ids",      OnnxTensor.createTensor(ortEnv, encInputIds));
-        encIn.put("attention_mask", OnnxTensor.createTensor(ortEnv, encAttnMask));
+        encIn.put("input_ids",      longTensor1D(inputIds,        "enc_input_ids"));
+        encIn.put("attention_mask", longTensor1D(encAttnMaskFlat, "enc_attn_mask"));
 
-        // 3. Run encoder
+        // 3. Run encoder — flatten to explicit shape to avoid ORT Java 3D-array issues
         final float[][][] hiddenStates;
+        final int encSeqLen;
         try (OrtSession.Result encOut = encoderSession.run(encIn)) {
             hiddenStates = (float[][][]) ((OnnxTensor) encOut.get("last_hidden_state").get()).getValue();
         }
+        encSeqLen = hiddenStates[0].length;
+        final int hiddenSize = hiddenStates[0][0].length;
+        Log.i(TAG, "[" + model + "] encoder output shape: [1, " + encSeqLen + ", " + hiddenSize + "]");
         for (OnnxTensor t : encIn.values()) t.close();
 
         // 4. Beam search decode using auto-detected BOS
         final int        bos        = DETECTED_BOS.getOrDefault(model, 59513);
-        final List<Long> decoderIds = beamSearch(hiddenStates, encAttnMask, bos);
+        Log.i(TAG, "[" + model + "] using BOS=" + bos);
+
+        // Sanity-check encoder output values (detect all-zero / NaN hidden states)
+        float hsMin = Float.MAX_VALUE, hsMax = -Float.MAX_VALUE, hsSum = 0f;
+        int hsSamples = 0;
+        for (float[] row : hiddenStates[0]) {
+            for (float v : row) {
+                if (v < hsMin) hsMin = v;
+                if (v > hsMax) hsMax = v;
+                hsSum += v;
+                hsSamples++;
+            }
+        }
+        Log.i(TAG, "[" + model + "] hiddenStates stats: min=" + hsMin
+            + " max=" + hsMax + " mean=" + (hsSum / hsSamples));
+
+        final List<Long> decoderIds = beamSearch(hiddenStates, encAttnMaskFlat, bos, model);
 
         // 5. Decode token IDs → text
         final int[] outputIds = new int[decoderIds.size()];
         for (int i = 0; i < decoderIds.size(); i++) outputIds[i] = (int)(long) decoderIds.get(i);
-        Log.d(TAG, "[" + model + "] out tokens (" + outputIds.length + "): " + Arrays.toString(outputIds));
-        return MarianLib.decode(tgtSpmPtr, outputIds);
+        Log.i(TAG, "[" + model + "] out tokens (" + outputIds.length + "): " + Arrays.toString(outputIds));
+        final String outViaTgt = MarianLib.decode(tgtSpmPtr, outputIds);
+        final String outViaSrc = MarianLib.decode(srcSpmPtr, outputIds);
+        Log.i(TAG, "[" + model + "] out via tgt.spm: '" + outViaTgt + "'");
+        Log.i(TAG, "[" + model + "] out via src.spm: '" + outViaSrc + "'");
+        return outViaTgt;
     }
 
     private void loadSessions(File dir, String model) throws Exception {
@@ -345,7 +364,22 @@ public class MarianPlugin extends Plugin {
         }
 
         loadedModel = model;
+        Log.i(TAG, "Encoder input names:  " + encoderSession.getInputNames());
+        Log.i(TAG, "Encoder output names: " + encoderSession.getOutputNames());
+        Log.i(TAG, "Decoder input names:  " + decoderSession.getInputNames());
+        Log.i(TAG, "Decoder output names: " + decoderSession.getOutputNames());
         Log.i(TAG, "Sessions loaded for model: " + model);
+
+        // Probe vocabulary to detect src/tgt mismatch or shared vocab
+        final int[] probeIds = {0, 1, 7, 13, 250, 4252};
+        final StringBuilder sbSrc = new StringBuilder();
+        final StringBuilder sbTgt = new StringBuilder();
+        for (int id : probeIds) {
+            sbSrc.append(id).append("='").append(MarianLib.decode(srcSpmPtr, new int[]{id})).append("' ");
+            sbTgt.append(id).append("='").append(MarianLib.decode(tgtSpmPtr, new int[]{id})).append("' ");
+        }
+        Log.i(TAG, "[" + model + "] src.spm probe: " + sbSrc);
+        Log.i(TAG, "[" + model + "] tgt.spm probe: " + sbTgt);
 
         warmUpSessions(model);
     }
@@ -360,12 +394,12 @@ public class MarianPlugin extends Plugin {
             Log.d(TAG, "Warming up: " + model);
 
             // Minimal encoder input: single EOS token.
-            final long[][] dummyIds  = new long[][]{{(long) EOS_TOKEN_ID}};
-            final long[][] dummyMask = new long[][]{{1L}};
+            final long[] dummyIds  = new long[]{(long) EOS_TOKEN_ID};
+            final long[] dummyMask = new long[]{1L};
 
             final Map<String, OnnxTensor> encIn = new HashMap<>();
-            encIn.put("input_ids",      OnnxTensor.createTensor(ortEnv, dummyIds));
-            encIn.put("attention_mask", OnnxTensor.createTensor(ortEnv, dummyMask));
+            encIn.put("input_ids",      longTensor1D(dummyIds,  "wu_enc_ids"));
+            encIn.put("attention_mask", longTensor1D(dummyMask, "wu_enc_mask"));
 
             final float[][][] dummyHidden;
             try (OrtSession.Result encOut = encoderSession.run(encIn)) {
@@ -376,12 +410,10 @@ public class MarianPlugin extends Plugin {
 
             // Minimal decoder input: EOS as placeholder BOS (always a valid token ID).
             // We read logits.length to determine the real vocab_size.
-            final long[][] decIds = new long[][]{{(long) EOS_TOKEN_ID}};
-
             final Map<String, OnnxTensor> decIn = new HashMap<>();
-            decIn.put("input_ids",              OnnxTensor.createTensor(ortEnv, decIds));
-            decIn.put("encoder_hidden_states",  OnnxTensor.createTensor(ortEnv, dummyHidden));
-            decIn.put("encoder_attention_mask", OnnxTensor.createTensor(ortEnv, dummyMask));
+            decIn.put("input_ids",              longTensor1D(dummyIds,  "wu_dec_ids"));
+            decIn.put("encoder_hidden_states",  hiddenStatesTensor(dummyHidden));
+            decIn.put("encoder_attention_mask", longTensor1D(dummyMask, "wu_dec_mask"));
 
             try (OrtSession.Result decOut = decoderSession.run(decIn)) {
                 final float[][][] allLogits = (float[][][])
@@ -482,6 +514,43 @@ public class MarianPlugin extends Plugin {
         return arr;
     }
 
+    /**
+     * Build an OnnxTensor for encoder hidden states using a DIRECT ByteBuffer
+     * with an explicit shape.  ORT Java's 3-D array auto-detection can silently
+     * mis-map data on Android; a heap FloatBuffer also fails because ORT JNI on
+     * Android requires native-order direct buffers for correct zero-copy access.
+     * Shape: [1, seqLen, hiddenSize].
+     */
+    private OnnxTensor hiddenStatesTensor(float[][][] hs) throws OrtException {
+        final int seqLen = hs[0].length;
+        final int hidden = hs[0][0].length;
+        final FloatBuffer buf = ByteBuffer
+            .allocateDirect(seqLen * hidden * Float.BYTES)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer();
+        for (int s = 0; s < seqLen; s++) buf.put(hs[0][s]);
+        buf.rewind();
+        return OnnxTensor.createTensor(ortEnv, buf, new long[]{1, seqLen, hidden});
+    }
+
+    /**
+     * Build an OnnxTensor for a 1-D long array with shape [1, length].
+     * Uses a DIRECT ByteBuffer to guarantee correct JNI semantics on Android.
+     * Logs the first element as a sanity-check (e.g. attention mask should be 1,
+     * not 0).
+     */
+    private OnnxTensor longTensor1D(long[] ids, String debugName) throws OrtException {
+        final LongBuffer buf = ByteBuffer
+            .allocateDirect(ids.length * Long.BYTES)
+            .order(ByteOrder.nativeOrder())
+            .asLongBuffer();
+        buf.put(ids);
+        buf.rewind();
+        Log.d(TAG, "longTensor1D[" + debugName + "] ids[0]=" + ids[0]
+            + " len=" + ids.length);
+        return OnnxTensor.createTensor(ortEnv, buf, new long[]{1, ids.length});
+    }
+
     // ── Beam search ───────────────────────────────────────────────────────────
 
     /**
@@ -492,7 +561,8 @@ public class MarianPlugin extends Plugin {
      * length-normalised log-prob) is returned with BOS and EOS stripped.
      */
     private List<Long> beamSearch(
-            float[][][] hiddenStates, long[][] encAttnMask, int bos) throws Exception {
+            float[][][] hiddenStates, long[] encAttnMask, int bos,
+            String model) throws Exception {
 
         List<long[]> activeTokens   = new ArrayList<>();
         List<Double> activeScores   = new ArrayList<>();
@@ -508,13 +578,12 @@ public class MarianPlugin extends Plugin {
             final List<Double> candScores = new ArrayList<>();
 
             for (int b = 0; b < activeTokens.size(); b++) {
-                final long[]   seq    = activeTokens.get(b);
-                final long[][] decIn2 = new long[][]{seq};
+                final long[] seq = activeTokens.get(b);
 
                 final Map<String, OnnxTensor> decIn = new HashMap<>();
-                decIn.put("input_ids",              OnnxTensor.createTensor(ortEnv, decIn2));
-                decIn.put("encoder_hidden_states",  OnnxTensor.createTensor(ortEnv, hiddenStates));
-                decIn.put("encoder_attention_mask", OnnxTensor.createTensor(ortEnv, encAttnMask));
+                decIn.put("input_ids",              longTensor1D(seq,         "dec_input_ids"));
+                decIn.put("encoder_hidden_states",  hiddenStatesTensor(hiddenStates));
+                decIn.put("encoder_attention_mask", longTensor1D(encAttnMask, "dec_enc_mask"));
 
                 final float[] logits;
                 try (OrtSession.Result decOut = decoderSession.run(decIn)) {
@@ -526,6 +595,22 @@ public class MarianPlugin extends Plugin {
 
                 final float[] lp      = logSoftmax(logits);
                 final int[]   topToks = topK(lp, BEAM_WIDTH);
+
+                // Step-0 diagnostics: log top-10 predictions for beam 0
+                if (step == 0 && b == 0) {
+                    final int[]   top10  = topK(lp, 10);
+                    final float[] top10p = new float[10];
+                    final StringBuilder sbW = new StringBuilder();
+                    for (int ti = 0; ti < 10; ti++) {
+                        top10p[ti] = lp[top10[ti]];
+                        sbW.append(top10[ti]).append("='")
+                           .append(MarianLib.decode(tgtSpmPtr, new int[]{top10[ti]}))
+                           .append("' ");
+                    }
+                    Log.i(TAG, "[" + model + "] step-0 top-10 ids:    " + Arrays.toString(top10));
+                    Log.i(TAG, "[" + model + "] step-0 top-10 logprob:" + Arrays.toString(top10p));
+                    Log.i(TAG, "[" + model + "] step-0 top-10 words:  " + sbW);
+                }
 
                 for (int tok : topToks) {
                     final long[] newSeq = Arrays.copyOf(seq, seq.length + 1);

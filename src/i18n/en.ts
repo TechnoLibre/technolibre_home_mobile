@@ -374,7 +374,7 @@ export const translations: Record<string, string> = {
   // Hints
   "hint.ntfy_config": "Configure the same topic in Odoo (Settings → ERPLibre Mobile).",
   "hint.whisper_model": "A larger model is slower but more accurate.",
-  "hint.translation_marian": "MarianMT runs entirely on the device — no internet, no server needed. Choose a variant: Tiny (fast, basic), Base (balanced, recommended), or Large (best quality). Apache 2.0 license (Helsinki-NLP).",
+  "hint.translation_marian": "MarianMT runs entirely on the device — no internet, no server needed. Choose a variant: Tiny (fast, quantized) or Base (balanced, recommended). Apache 2.0 license (Helsinki-NLP).",
   "hint.translation_ollama": "Ollama must run locally or on a server on your network (e.g. your ERPLibre server). No internet connection required. Example URL: http://192.168.1.100:11434",
   "hint.translation_libretranslate": "LibreTranslate can be self-hosted so it works without internet. Example URL: http://192.168.1.100:5000/translate",
 

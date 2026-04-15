@@ -8,11 +8,10 @@ export type MarianDirection = "fr-en" | "en-fr";
  * Model variant: direction + size tier.
  *   tiny  — quantized (int8), fastest, smallest, lower quality (~82 MB)
  *   base  — full precision (float32), balanced                 (~182 MB)
- *   large — TC-Big quantized, best quality, slowest            (~300 MB)
  */
 export type MarianModel =
-    | "fr-en-tiny" | "fr-en-base" | "fr-en-large"
-    | "en-fr-tiny" | "en-fr-base" | "en-fr-large";
+    | "fr-en-tiny" | "fr-en-base"
+    | "en-fr-tiny" | "en-fr-base";
 
 export interface MarianModelInfo {
     model:       MarianModel;
@@ -34,11 +33,9 @@ export const MARIAN_MODELS: MarianModelInfo[] = [
     // FR → EN
     { model: "fr-en-tiny",  direction: "fr-en", quality: 2, speed: 5, size: "~82 MB",  sizeMb: 82,  recommended: false },
     { model: "fr-en-base",  direction: "fr-en", quality: 3, speed: 3, size: "~182 MB", sizeMb: 182, recommended: true  },
-    { model: "fr-en-large", direction: "fr-en", quality: 4, speed: 2, size: "~300 MB", sizeMb: 300, recommended: false },
     // EN → FR
     { model: "en-fr-tiny",  direction: "en-fr", quality: 2, speed: 5, size: "~82 MB",  sizeMb: 82,  recommended: false },
     { model: "en-fr-base",  direction: "en-fr", quality: 3, speed: 3, size: "~182 MB", sizeMb: 182, recommended: true  },
-    { model: "en-fr-large", direction: "en-fr", quality: 4, speed: 2, size: "~300 MB", sizeMb: 300, recommended: false },
 ];
 
 export interface MarianDownloadProgress {

@@ -281,12 +281,12 @@ export class OptionsTranslationComponent extends EnhancedComponent {
                             t-att-disabled="state.isTesting"
                             t-on-click="runTest">
                         <t t-if="state.isTesting">…</t>
-                        <t t-else="">🧪 Test — "Bonjour le monde"</t>
+                        <t t-else="">🧪 Test (3 phrases)</t>
                     </button>
-                    <p t-if="state.testResult"
-                       t-att-class="'tr-test__result'
-                           + (state.testError ? ' tr-test__result--error' : '')"
-                       t-esc="state.testResult"/>
+                    <pre t-if="state.testResult"
+                         t-att-class="'tr-test__result'
+                             + (state.testError ? ' tr-test__result--error' : '')"
+                         t-esc="state.testResult"/>
                 </div>
 
             </div>
@@ -486,11 +486,20 @@ export class OptionsTranslationComponent extends EnhancedComponent {
         this.state.isTesting  = true;
         this.state.testResult = "";
         this.state.testError  = false;
+
+        const TEST_PHRASES: Array<[string, "fr" | "en", "fr" | "en"]> = [
+            ["Bonjour le monde",          "fr", "en"],
+            ["La réunion est annulée.",   "fr", "en"],
+            ["Hello world",               "en", "fr"],
+        ];
+
         try {
-            const result = await this.translationService.translate(
-                "Bonjour le monde", "fr", "en"
-            );
-            this.state.testResult = `✓  "Bonjour le monde" → "${result}"`;
+            const lines: string[] = [];
+            for (const [phrase, src, tgt] of TEST_PHRASES) {
+                const result = await this.translationService.translate(phrase, src, tgt);
+                lines.push(`"${phrase}" → "${result}"`);
+            }
+            this.state.testResult = "✓  " + lines.join("\n    ");
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e);
             this.state.testResult = this.t("error.translation_failed", { error: msg });
