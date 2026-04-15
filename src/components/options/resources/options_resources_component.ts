@@ -7,6 +7,8 @@ import type { DeviceStats } from "../../../plugins/deviceStatsPlugin";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+const BREADCRUMBS = [{ label: "Options", url: "/options" }];
+
 const HISTORY_LEN  = 60;   // samples kept in circular buffer
 const CHART_W      = 200;
 const CHART_H      = 50;
@@ -36,7 +38,7 @@ function fmtPct(n: number): string {
 export class OptionsResourcesComponent extends EnhancedComponent {
     static template = xml`
         <div id="options-resources-component">
-            <HeadingComponent title="'Options › Ressources'" backUrl="'/options'" />
+            <HeadingComponent title="'Ressources'" breadcrumbs="breadcrumbs" />
 
             <div class="devres__body">
 
@@ -182,6 +184,8 @@ export class OptionsResourcesComponent extends EnhancedComponent {
     `;
 
     static components = { HeadingComponent };
+
+    get breadcrumbs() { return BREADCRUMBS; }
 
     private _timer: ReturnType<typeof setInterval> | null = null;
 

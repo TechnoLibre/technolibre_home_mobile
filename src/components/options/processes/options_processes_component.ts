@@ -5,10 +5,12 @@ import { HeadingComponent } from "../../heading/heading_component";
 import { getCurrentLocale } from "../../../i18n";
 import type { ProcessRecord } from "../../../models/process";
 
+const BREADCRUMBS = [{ label: "Options", url: "/options" }];
+
 export class OptionsProcessesComponent extends EnhancedComponent {
     static template = xml`
         <div id="options-processes-component">
-            <HeadingComponent title="t('heading.processes')" backUrl="'/options'" />
+            <HeadingComponent title="t('heading.processes')" breadcrumbs="breadcrumbs" />
 
             <div class="processes-body">
 
@@ -133,6 +135,8 @@ export class OptionsProcessesComponent extends EnhancedComponent {
     `;
 
     static components = { HeadingComponent };
+
+    get breadcrumbs() { return BREADCRUMBS; }
 
     setup() {
         this.state = useState({

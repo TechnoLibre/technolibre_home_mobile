@@ -9,10 +9,12 @@ const LOCALES: { key: Locale; flag: string }[] = [
   { key: "en", flag: "🇨🇦" },
 ];
 
+const BREADCRUMBS = [{ label: "Options", url: "/options" }];
+
 export class OptionsLanguageComponent extends EnhancedComponent {
   static template = xml`
     <div id="options-language-component">
-      <HeadingComponent title="t('heading.language')" backPath="'/options'" />
+      <HeadingComponent title="t('heading.language')" breadcrumbs="breadcrumbs" />
 
       <ul class="options-language__list">
         <t t-foreach="locales" t-as="locale" t-key="locale.key">
@@ -36,6 +38,8 @@ export class OptionsLanguageComponent extends EnhancedComponent {
   `;
 
   static components = { HeadingComponent };
+
+  get breadcrumbs() { return BREADCRUMBS; }
 
   locales = LOCALES;
   currentLocale: Locale = getCurrentLocale();
