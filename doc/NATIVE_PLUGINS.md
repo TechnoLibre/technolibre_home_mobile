@@ -207,3 +207,121 @@ interface DeviceStats {
 - **RAM** : `ActivityManager.MemoryInfo` — `totalMem` et `availMem` (soustraction pour `usedMem`).
 - **Batterie** : `Intent` `ACTION_BATTERY_CHANGED` via `registerReceiver(null, ...)` — sans permission requise.
 - **Polling** : `Handler` + `Runnable` sur le thread principal ; stoppé proprement par `stopPolling()` ou destruction du plugin.
+
+---
+
+## MarianPlugin
+
+**Fichiers :**
+- Bridge TS : `src/plugins/marianPlugin.ts`
+- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/MarianPlugin.java`
+- JNI bridge : `android/app/src/main/java/ca/erplibre/home/MarianLib.java`
+- Native library : `libmarian_jni.so` (built via NDK from `android/app/src/main/cpp/`)
+
+**Libraries :**
+- ONNX Runtime Android (`com.microsoft.onnxruntime:onnxruntime-android:1.20.0`)
+- SentencePiece (Google) — JNI, must be cloned manually (see Build note below)
+
+On-device FR↔EN translation using Helsinki-NLP MarianMT ONNX models. No internet connection
+and no external server are required at inference time. All model files are stored in
+`{filesDir}/marian/{model}/`.
+
+### JNI bridge (`MarianLib`)
+
+`MarianLib.java` wraps `libmarian_jni.so`. It exposes four native methods
+(`loadModel`, `freeModel`, `encode`, `decode`) and a static `isAvailable()` guard that
+returns `false` when the library failed to load (sentencepiece not compiled). The plugin
+checks `isAvailable()` at the start of every `translate` call and rejects with an actionable
+message if the library is absent.
+
+### API
+
+| Method | Description |
+|--------|-------------|
+| `isModelDownloaded({ model })` | Returns `{ exists: boolean }`. True when all four model files (`encoder.onnx`, `decoder.onnx`, `source.spm`, `target.spm`) are present on disk. |
+| `downloadModel({ model })` | Download all four model files sequentially with HTTP Range resume support. Fires `downloadProgress` events. Rejects if the model key is unknown or the download is cancelled. |
+| `translate({ text, model })` | Tokenise with SentencePiece, run the ONNX encoder, then beam-search decode (beam width 4) with the ONNX decoder. Returns `{ text: string }`. Rejects if the native library is unavailable or the model is not downloaded. |
+| `deleteModel({ model })` | Delete all model files for the variant. Unloads ORT sessions if that variant is currently loaded in memory. |
+| `cancelDownload()` | Set the cancel flag. The download thread checks it between files and after each 64 KB chunk. |
+| `addListener("downloadProgress", fn)` | Per-file download progress. See `MarianDownloadProgress` interface below. |
+
+### Model variants
+
+| Model key | Direction | Quality (1–5) | Speed (1–5) | Size | Recommended |
+|-----------|-----------|:---:|:---:|------|:-----------:|
+| `fr-en-tiny` | FR → EN | 2 | 5 | ~82 MB | No |
+| `fr-en-base` | FR → EN | 3 | 3 | ~182 MB | Yes |
+| `en-fr-tiny` | EN → FR | 2 | 5 | ~82 MB | No |
+| `en-fr-base` | EN → FR | 3 | 3 | ~182 MB | Yes |
+
+`tiny` variants use int8 quantized ONNX models (`encoder_model_quantized.onnx`).
+`base` variants use float32 models (`encoder_model.onnx`). ONNX files come from
+`Xenova/opus-mt-*` on HuggingFace; SentencePiece vocabularies come from
+`Helsinki-NLP/opus-mt-*`.
+
+### `downloadProgress` event
+
+```typescript
+interface MarianDownloadProgress {
+    model:         MarianModel;  // e.g. "fr-en-base"
+    file:          string;       // "encoder.onnx" | "decoder.onnx" | "source.spm" | "target.spm"
+    percent:       number;       // 0–100
+    receivedBytes: number;
+    totalBytes:    number;
+}
+```
+
+Files are downloaded sequentially. The `file` field identifies which of the four files is
+currently downloading.
+
+### TypeScript usage example
+
+```typescript
+import { MarianPlugin } from "../plugins/marianPlugin";
+
+const { exists } = await MarianPlugin.isModelDownloaded({ model: "fr-en-base" });
+
+if (!exists) {
+    const listener = await MarianPlugin.addListener("downloadProgress", (e) => {
+        console.log(`${e.file}: ${e.percent}%`);
+    });
+    await MarianPlugin.downloadModel({ model: "fr-en-base" });
+    await listener.remove();
+}
+
+const { text } = await MarianPlugin.translate({
+    text: "Bonjour le monde",
+    model: "fr-en-base",
+});
+// text → "Hello world"
+```
+
+### Build note: SentencePiece NDK dependency
+
+The SentencePiece source tree must be cloned manually before building the app:
+
+```bash
+git clone --depth=1 https://github.com/google/sentencepiece \
+    android/app/src/main/cpp/sentencepiece
+```
+
+`android/app/src/main/cpp/CMakeLists.txt` expects this directory to be present. If it is
+absent, `libmarian_jni.so` is not built, `MarianLib.isAvailable()` returns `false` at
+runtime, and all `translate` calls are rejected gracefully. Download and model management
+still work without the native library.
+
+### Known limitations
+
+- **Android only.** `MarianPlugin` is not registered on iOS or in the browser.
+  `TranslationService` checks `Capacitor.isNativePlatform()` before calling the plugin and
+  rejects with a clear message otherwise.
+- **ORT direct `ByteBuffer` requirement.** ORT JNI on Android requires native-order direct
+  `ByteBuffer`s for float and long tensors; heap-allocated arrays cause silent data
+  corruption or JNI errors. All tensor construction in the plugin uses
+  `ByteBuffer.allocateDirect(...).order(ByteOrder.nativeOrder())`.
+- **Single model in memory.** Only one variant is kept loaded at a time. Switching variants
+  triggers a full session reload (encoder + decoder ORT sessions + two SentencePiece
+  models).
+- **Single-threaded executor.** Downloads and translations share one `ExecutorService`. A
+  translation request queued while a download is in progress will wait until all four files
+  finish.

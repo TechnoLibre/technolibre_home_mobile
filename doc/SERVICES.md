@@ -663,3 +663,82 @@ Variable d'environnement `ERPLIBRE_MANIFEST_PATH` pour personnaliser le chemin d
 (défaut : `../../.repo/local_manifests/erplibre_manifest.xml`).
 
 Variable d'environnement `BUNDLE_DEBUG=1` pour activer le log détaillé par fichier lors du build.
+
+---
+
+## TranslationService (`src/services/translationService.ts`)
+
+Text translation between French and English. Delegates to one of four pluggable backends
+selected by the user in Options › Traduction. All preferences are persisted in SQLite so the
+choice survives app restarts.
+
+### Constructor / dependencies
+
+```typescript
+new TranslationService(db: DatabaseService)
+```
+
+Requires a fully initialised `DatabaseService` (tables must exist). No network calls at
+construction time.
+
+### Public API
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `translate` | `(text, source, target) → Promise<string>` | Translate `text` from `source` to `target`. Returns the original string if `source === target` or if the text is empty after trimming. |
+| `getApiType` | `() → Promise<TranslationApiType>` | Returns the currently selected backend. Defaults to `"ollama"` when no preference is stored. |
+| `setApiType` | `(type) → Promise<void>` | Persist the backend choice. |
+| `getOllamaUrl` | `() → Promise<string>` | Ollama server URL (default: `http://localhost:11434`). |
+| `setOllamaUrl` | `(url) → Promise<void>` | Persist the Ollama URL. |
+| `getOllamaModel` | `() → Promise<string>` | Ollama model name (default: `"llama3.2"`). |
+| `setOllamaModel` | `(model) → Promise<void>` | Persist the Ollama model name. |
+| `getLibreTranslateUrl` | `() → Promise<string>` | LibreTranslate endpoint (default: `http://localhost:5000/translate`). |
+| `setLibreTranslateUrl` | `(url) → Promise<void>` | Persist the LibreTranslate URL. |
+| `getSelectedMarianModel` | `(direction) → Promise<MarianModel>` | Returns the MarianMT model variant for `"fr-en"` or `"en-fr"`. Defaults to the `tiny` variant if no preference is stored. |
+| `setSelectedMarianModel` | `(model) → Promise<void>` | Persist the MarianMT model choice. Direction is inferred from the model key prefix. |
+
+### Backend overview
+
+| Backend | Offline | When to use |
+|---------|---------|-------------|
+| `marian` | Yes — on-device NDK | Best privacy; no server required; Android only. Requires the MarianMT models to be downloaded first (Options › Traduction). |
+| `ollama` | Yes — local server | Ollama running on the device or on a LAN host (e.g. an ERPLibre server). Default backend for existing installs. |
+| `libretranslate` | Configurable | Self-hosted LibreTranslate instance. Can be fully offline if the instance is on the local network. |
+| `mymemory` | No — cloud API | Free-tier cloud API. No local setup. Limited to 450 characters per request; longer text is split automatically. |
+
+The constant `TRANSLATION_REQUIRES_INTERNET` (exported from `translationService.ts`) maps
+each backend to a boolean, so the UI can display the correct badge without calling into the
+service.
+
+### Preferences keys (SQLite `user_graphic_prefs`)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `translation_api_type` | `"ollama"` | Active backend |
+| `translation_libre_url` | `http://localhost:5000/translate` | LibreTranslate endpoint |
+| `translation_ollama_url` | `http://localhost:11434` | Ollama base URL |
+| `translation_ollama_model` | `"llama3.2"` | Ollama model name |
+| `translation_marian_model_fr_en` | `"fr-en-tiny"` | Selected MarianMT FR→EN variant |
+| `translation_marian_model_en_fr` | `"en-fr-tiny"` | Selected MarianMT EN→FR variant |
+
+### Usage example
+
+```typescript
+// Injected at boot; db is already initialised.
+const translationService = new TranslationService(db);
+
+// Select the on-device backend
+await translationService.setApiType("marian");
+await translationService.setSelectedMarianModel("fr-en-base");
+
+// Translate a note entry
+const english = await translationService.translate(
+    "Bonjour le monde",
+    "fr",
+    "en"
+);
+// → "Hello world"
+```
+
+MyMemory chunking is transparent: texts longer than 450 characters are split at sentence
+boundaries (`[.!?]\s`) and the translated parts are joined with a single space.
