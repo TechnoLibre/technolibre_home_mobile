@@ -50,21 +50,38 @@ import ai.onnxruntime.OrtSession;
  *
  * Model source: Helsinki-NLP/opus-mt-{direction} (ONNX via Xenova exports)
  * ── Special tokens ─────────────────────────────────────────────────────────
- * For Helsinki-NLP opus-mt models (config.json):
- *   eos_token_id           = 0
- *   decoder_start_token_id = 65000  (same as pad_token_id)
+ * For Helsinki-NLP opus-mt models (Xenova ONNX exports):
+ *   eos_token_id              = 0  (all directions)
+ *   decoder_start_token_id    = vocab_size - 1  (= pad_token_id)
+ *     fr-en: 59513  (vocab_size 59514, French → English)
+ *     en-fr: 59513  (vocab_size 59514, same French decoder SPM)
+ *
+ * Note: the config.json for the multilingual opus-mt-en-ROMANCE model reports
+ * vocab_size=65001, but Xenova/opus-mt-en-fr uses the same French target
+ * vocabulary (59514 tokens).  Using 65000 as BOS causes OrtInvalidArgument.
  */
 @CapacitorPlugin(name = "MarianPlugin")
 public class MarianPlugin extends Plugin {
 
     private static final String TAG = "MarianPlugin";
 
-    // Special token IDs for Helsinki-NLP opus-mt models
+    // Special token IDs for Helsinki-NLP opus-mt models (Xenova ONNX exports).
+    // EOS is 0 for all opus-mt directions.
+    // DECODER_START = decoder_start_token_id = pad_token_id = vocab_size - 1.
+    // Both fr-en and en-fr use the same French SPM (59514 tokens) as the
+    // decoder/target vocabulary, so decoder_start_token_id = 59513 for both.
     private static final int EOS_TOKEN_ID = 0;
-    private static final int PAD_TOKEN_ID = 65000; // forced decoder BOS
+
+    private static final Map<String, Integer> DECODER_START = new HashMap<>();
+    static {
+        DECODER_START.put("fr-en", 59513);
+        DECODER_START.put("en-fr", 59513);
+    }
 
     // Max generated tokens (prevents infinite loop)
     private static final int MAX_OUTPUT_LEN = 256;
+    // Beam width for beam search decoding (4 is standard for MarianMT)
+    private static final int BEAM_WIDTH     = 4;
 
     // ── Model download URLs ──────────────────────────────────────────────────
     // Source: Helsinki-NLP (spm files) + Xenova (quantized ONNX exports)
@@ -262,6 +279,8 @@ public class MarianPlugin extends Plugin {
         for (int i = 0; i < rawIds.length; i++) inputIds[i] = rawIds[i];
         inputIds[rawIds.length] = EOS_TOKEN_ID;
 
+        Log.d(TAG, "[" + direction + "] src tokens (" + rawIds.length + "): " + Arrays.toString(rawIds));
+
         // 2. Build encoder inputs (batch_size=1)
         final long[][] encInputIds  = new long[][]{inputIds};
         final long[][] encAttnMask  = new long[][]{onesLong(inputIds.length)};
@@ -278,36 +297,15 @@ public class MarianPlugin extends Plugin {
         // Close encoder input tensors
         for (OnnxTensor t : encIn.values()) t.close();
 
-        // 4. Greedy decode
-        final List<Long> decoderIds = new ArrayList<>();
-        decoderIds.add((long) PAD_TOKEN_ID); // forced BOS
+        // 4. Beam search decode
+        final int        decoderBos = DECODER_START.getOrDefault(direction, 0);
+        Log.d(TAG, "[" + direction + "] BOS=" + decoderBos);
+        final List<Long> decoderIds = beamSearch(hiddenStates, encAttnMask, decoderBos);
 
-        for (int step = 0; step < MAX_OUTPUT_LEN; step++) {
-            final long[]   decIdsArr = toLongArray(decoderIds);
-            final long[][] decInput  = new long[][]{decIdsArr};
-
-            final Map<String, OnnxTensor> decIn = new HashMap<>();
-            decIn.put("input_ids",              OnnxTensor.createTensor(ortEnv, decInput));
-            decIn.put("encoder_hidden_states",  OnnxTensor.createTensor(ortEnv, hiddenStates));
-            decIn.put("encoder_attention_mask", OnnxTensor.createTensor(ortEnv, encAttnMask));
-
-            final int nextToken;
-            try (OrtSession.Result decOut = decoderSession.run(decIn)) {
-                final float[][][] logits = (float[][][]) ((OnnxTensor) decOut.get("logits").get()).getValue();
-                // Take argmax at the last decoder position
-                nextToken = argmax(logits[0][decoderIds.size() - 1]);
-            }
-            for (OnnxTensor t : decIn.values()) t.close();
-
-            if (nextToken == EOS_TOKEN_ID) break;
-            decoderIds.add((long) nextToken);
-        }
-
-        // 5. Decode token IDs → text (skip forced BOS at index 0)
-        final int[] outputIds = new int[decoderIds.size() - 1];
-        for (int i = 1; i < decoderIds.size(); i++) {
-            outputIds[i - 1] = (int)(long) decoderIds.get(i);
-        }
+        // 5. Decode token IDs → text
+        final int[] outputIds = new int[decoderIds.size()];
+        for (int i = 0; i < decoderIds.size(); i++) outputIds[i] = (int)(long) decoderIds.get(i);
+        Log.d(TAG, "[" + direction + "] out tokens (" + outputIds.length + "): " + Arrays.toString(outputIds));
         return MarianLib.decode(tgtSpmPtr, outputIds);
     }
 
@@ -329,6 +327,57 @@ public class MarianPlugin extends Plugin {
 
         loadedDir = direction;
         Log.i(TAG, "Sessions loaded for direction: " + direction);
+
+        // ── Warm-up pass ─────────────────────────────────────────────────────
+        // On Android, ORT quantized kernels are JIT-compiled lazily: the very
+        // first session.run() after createSession() triggers compilation inline
+        // and may produce incorrect output while the compiled kernel is being
+        // installed.  All subsequent calls use the compiled version and are
+        // correct.  Running one dummy forward pass here ensures real translate()
+        // calls always use the compiled kernels.
+        warmUpSessions(direction);
+    }
+
+    /**
+     * Run a single dummy encoder + decoder forward pass to prime ORT's JIT
+     * kernel compilation for this direction.  Output is discarded.
+     * Failures are logged but never propagated — this is best-effort only.
+     */
+    private void warmUpSessions(String direction) {
+        try {
+            Log.d(TAG, "Warming up sessions for direction: " + direction);
+
+            // Minimal encoder input: a single EOS token.
+            final long[][] dummyIds  = new long[][]{{(long) EOS_TOKEN_ID}};
+            final long[][] dummyMask = new long[][]{{1L}};
+
+            final Map<String, OnnxTensor> encIn = new HashMap<>();
+            encIn.put("input_ids",      OnnxTensor.createTensor(ortEnv, dummyIds));
+            encIn.put("attention_mask", OnnxTensor.createTensor(ortEnv, dummyMask));
+
+            final float[][][] dummyHidden;
+            try (OrtSession.Result encOut = encoderSession.run(encIn)) {
+                dummyHidden = (float[][][])
+                    ((OnnxTensor) encOut.get("last_hidden_state").get()).getValue();
+            }
+            for (OnnxTensor t : encIn.values()) t.close();
+
+            // Minimal decoder input: a single BOS token.
+            final int bos = DECODER_START.getOrDefault(direction, 0);
+            final long[][] decIds = new long[][]{{(long) bos}};
+
+            final Map<String, OnnxTensor> decIn = new HashMap<>();
+            decIn.put("input_ids",              OnnxTensor.createTensor(ortEnv, decIds));
+            decIn.put("encoder_hidden_states",  OnnxTensor.createTensor(ortEnv, dummyHidden));
+            decIn.put("encoder_attention_mask", OnnxTensor.createTensor(ortEnv, dummyMask));
+
+            try (OrtSession.Result ignored = decoderSession.run(decIn)) { /* discard */ }
+            for (OnnxTensor t : decIn.values()) t.close();
+
+            Log.d(TAG, "Warm-up done for direction: " + direction);
+        } catch (Exception e) {
+            Log.w(TAG, "Warm-up skipped (non-fatal): " + e.getMessage());
+        }
     }
 
     private void unloadSessions() {
@@ -413,17 +462,154 @@ public class MarianPlugin extends Plugin {
         return arr;
     }
 
-    private static long[] toLongArray(List<Long> list) {
-        final long[] arr = new long[list.size()];
-        for (int i = 0; i < list.size(); i++) arr[i] = list.get(i);
-        return arr;
+    // ── Beam search ───────────────────────────────────────────────────────────
+
+    /**
+     * Beam search decoder.
+     *
+     * Keeps BEAM_WIDTH candidate sequences at each step.  At every step each
+     * active beam is expanded to BEAM_WIDTH new candidates (top-k from the
+     * decoder logits).  Beams that produce EOS are moved to the finished list.
+     * The best finished sequence (by length-normalised log-prob) is returned as
+     * a list of token IDs with BOS and EOS already stripped.
+     */
+    private List<Long> beamSearch(
+            float[][][] hiddenStates, long[][] encAttnMask, int bos) throws Exception {
+
+        List<long[]> activeTokens   = new ArrayList<>();
+        List<Double> activeScores   = new ArrayList<>();
+        List<long[]> finishedTokens = new ArrayList<>();
+        List<Double> finishedScores = new ArrayList<>();
+
+        // Seed: single beam containing only BOS
+        activeTokens.add(new long[]{(long) bos});
+        activeScores.add(0.0);
+
+        for (int step = 0; step < MAX_OUTPUT_LEN && !activeTokens.isEmpty(); step++) {
+
+            // ── Expand every active beam ──────────────────────────────────────
+            final List<long[]> candTokens = new ArrayList<>();
+            final List<Double> candScores = new ArrayList<>();
+
+            for (int b = 0; b < activeTokens.size(); b++) {
+                final long[]   seq    = activeTokens.get(b);
+                final long[][] decIn2 = new long[][]{seq};
+
+                final Map<String, OnnxTensor> decIn = new HashMap<>();
+                decIn.put("input_ids",              OnnxTensor.createTensor(ortEnv, decIn2));
+                decIn.put("encoder_hidden_states",  OnnxTensor.createTensor(ortEnv, hiddenStates));
+                decIn.put("encoder_attention_mask", OnnxTensor.createTensor(ortEnv, encAttnMask));
+
+                final float[] logits;
+                try (OrtSession.Result decOut = decoderSession.run(decIn)) {
+                    final float[][][] all = (float[][][])
+                        ((OnnxTensor) decOut.get("logits").get()).getValue();
+                    logits = all[0][seq.length - 1]; // logits at last position
+                }
+                for (OnnxTensor t : decIn.values()) t.close();
+
+                final float[] lp      = logSoftmax(logits);
+                final int[]   topToks = topK(lp, BEAM_WIDTH);
+
+                if (step == 0) {
+                    // Log first-step candidates to diagnose BOS/vocab issues
+                    final StringBuilder sb = new StringBuilder("[beam] step0 top-" + BEAM_WIDTH + ": ");
+                    for (int t : topToks) sb.append(t).append("(").append(String.format("%.3f", lp[t])).append(") ");
+                    Log.d(TAG, sb.toString());
+                    Log.d(TAG, "[beam] vocab_size (approx) = " + logits.length);
+                }
+
+                for (int tok : topToks) {
+                    final long[] newSeq = Arrays.copyOf(seq, seq.length + 1);
+                    newSeq[seq.length] = (long) tok;
+                    candTokens.add(newSeq);
+                    candScores.add(activeScores.get(b) + lp[tok]);
+                }
+            }
+
+            // ── Rank all candidates by length-normalised score ────────────────
+            final List<Integer> order = new ArrayList<>();
+            for (int i = 0; i < candTokens.size(); i++) order.add(i);
+            order.sort((i, j) -> {
+                double si = lengthNorm(candScores.get(i), candTokens.get(i).length - 1);
+                double sj = lengthNorm(candScores.get(j), candTokens.get(j).length - 1);
+                return Double.compare(sj, si); // descending
+            });
+
+            // ── Route top-BEAM_WIDTH into active or finished ──────────────────
+            activeTokens.clear();
+            activeScores.clear();
+
+            for (int idx : order) {
+                if (activeTokens.size() >= BEAM_WIDTH) break;
+                final long[] seq   = candTokens.get(idx);
+                final double score = candScores.get(idx);
+                if (seq[seq.length - 1] == EOS_TOKEN_ID) {
+                    finishedTokens.add(seq);
+                    finishedScores.add(score);
+                } else {
+                    activeTokens.add(seq);
+                    activeScores.add(score);
+                }
+            }
+
+            if (finishedTokens.size() >= BEAM_WIDTH) break; // enough hypotheses
+        }
+
+        // Move remaining active beams (hit MAX_OUTPUT_LEN) into finished
+        finishedTokens.addAll(activeTokens);
+        finishedScores.addAll(activeScores);
+
+        if (finishedTokens.isEmpty()) return new ArrayList<>();
+
+        // ── Pick best finished beam ───────────────────────────────────────────
+        int    bestIdx   = 0;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < finishedTokens.size(); i++) {
+            int    genLen = finishedTokens.get(i).length - 1; // exclude BOS
+            double ns     = lengthNorm(finishedScores.get(i), genLen);
+            if (ns > bestScore) { bestScore = ns; bestIdx = i; }
+        }
+
+        // Return token IDs, stripping BOS (index 0) and any trailing EOS
+        final long[]    best   = finishedTokens.get(bestIdx);
+        final List<Long> result = new ArrayList<>();
+        for (int i = 1; i < best.length; i++) {
+            if (best[i] == EOS_TOKEN_ID) break;
+            result.add(best[i]);
+        }
+        return result;
     }
 
-    private static int argmax(float[] arr) {
-        int best = 0;
-        for (int i = 1; i < arr.length; i++) {
-            if (arr[i] > arr[best]) best = i;
+    /** Length normalisation with alpha = 0.6 (standard for MarianMT). */
+    private static double lengthNorm(double score, int genLen) {
+        return score / Math.pow(Math.max(genLen, 1), 0.6);
+    }
+
+    /** Numerically stable log-softmax. */
+    private static float[] logSoftmax(float[] logits) {
+        float max = logits[0];
+        for (float v : logits) if (v > max) max = v;
+        double sum = 0.0;
+        for (float v : logits) sum += Math.exp(v - max);
+        final float logSum = (float)(max + Math.log(sum));
+        final float[] out  = new float[logits.length];
+        for (int i = 0; i < logits.length; i++) out[i] = logits[i] - logSum;
+        return out;
+    }
+
+    /** Returns the indices of the top-k largest elements, highest first. */
+    private static int[] topK(float[] arr, int k) {
+        final int[]     result = new int[k];
+        final boolean[] used   = new boolean[arr.length];
+        for (int r = 0; r < k; r++) {
+            int best = -1;
+            for (int j = 0; j < arr.length; j++) {
+                if (!used[j] && (best < 0 || arr[j] > arr[best])) best = j;
+            }
+            result[r] = best;
+            if (best >= 0) used[best] = true;
         }
-        return best;
+        return result;
     }
 }
