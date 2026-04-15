@@ -12,6 +12,8 @@ interface TagNotesState {
     notes: Note[];
     tagMap: Record<string, Tag>;
     loaded: boolean;
+    showOptionsMenu: boolean;
+    debugDialog: { visible: boolean; message: string };
 }
 
 export class TagNotesComponent extends EnhancedComponent {
@@ -32,6 +34,29 @@ export class TagNotesComponent extends EnhancedComponent {
                     t-att-style="'background-color:' + state.tag.color"
                     t-esc="state.tag.name"
                 />
+                <div class="breadcrumb__options-wrap tag-notes__options">
+                    <button
+                        type="button"
+                        class="breadcrumb__options-btn"
+                        title="Options"
+                        aria-label="Options"
+                        aria-haspopup="menu"
+                        t-att-aria-expanded="state.showOptionsMenu ? 'true' : 'false'"
+                        t-on-click.stop.prevent="toggleOptionsMenu"
+                    >⋮</button>
+                    <div
+                        t-if="state.showOptionsMenu"
+                        class="breadcrumb__options-menu"
+                        role="menu"
+                    >
+                        <button
+                            type="button"
+                            class="breadcrumb__options-item"
+                            role="menuitem"
+                            t-on-click.stop.prevent="onDebugClick"
+                        >🐛 Debug</button>
+                    </div>
+                </div>
             </nav>
 
             <t t-if="state.loaded">
@@ -87,6 +112,20 @@ export class TagNotesComponent extends EnhancedComponent {
             </t>
 
         </div>
+        <div
+            t-if="state.debugDialog.visible"
+            class="error-dialog-overlay"
+            role="presentation"
+            t-on-click.stop.prevent="closeDebugDialog"
+        >
+            <div class="error-dialog" role="dialog" aria-modal="true" t-on-click.stop="">
+                <pre class="debug-dialog__message" t-esc="state.debugDialog.message"/>
+                <div class="error-dialog__actions">
+                    <button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="createDebugNote">📝 Ajouter une note</button>
+                    <button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeDebugDialog">Fermer</button>
+                </div>
+            </div>
+        </div>
     `;
 
     setup() {
@@ -96,6 +135,8 @@ export class TagNotesComponent extends EnhancedComponent {
             notes: [],
             tagMap: {},
             loaded: false,
+            showOptionsMenu: false,
+            debugDialog: { visible: false, message: "" },
         });
         onMounted(() => this.load());
     }
@@ -132,6 +173,40 @@ export class TagNotesComponent extends EnhancedComponent {
         );
 
         this.state.loaded = true;
+    }
+
+    toggleOptionsMenu() {
+        this.state.showOptionsMenu = !this.state.showOptionsMenu;
+    }
+
+    onDebugClick() {
+        this.state.showOptionsMenu = false;
+        const tagName = this.state.tag?.name ?? "";
+        const viewPath = tagName ? `Accueil › ${tagName}` : "Accueil";
+        this.state.debugDialog = {
+            visible: true,
+            message: [
+                `Vue       : ${viewPath}`,
+                `Composant : tag_notes_component.ts`,
+                `Route     : ${window.location.pathname}`,
+            ].join("\n"),
+        };
+    }
+
+    closeDebugDialog() {
+        this.state.debugDialog.visible = false;
+    }
+
+    async createDebugNote() {
+        const message = this.state.debugDialog.message;
+        this.state.debugDialog.visible = false;
+        const note = this.noteService.getNewNote(this.noteService.getNewId());
+        note.title = "Debug";
+        const entry = this.noteService.entry.getNewTextEntry();
+        (entry.params as { text: string }).text = message;
+        note.entries = [entry];
+        await this.noteService.crud.add(note);
+        this.navigate(`/note/${encodeURIComponent(note.id)}`);
     }
 
     onBackClick() {
