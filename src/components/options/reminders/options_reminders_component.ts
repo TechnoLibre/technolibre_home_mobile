@@ -1,14 +1,15 @@
 import { onMounted, useState, xml } from "@odoo/owl";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { ReminderService, Reminder, INTERVAL_OPTIONS } from "../../../services/reminderService";
+import { getCurrentLocale } from "../../../i18n";
 
 export class OptionsRemindersComponent extends EnhancedComponent {
   static template = xml`
     <li class="options-list__item options-reminders">
       <div class="options-reminders__header" t-on-click="toggleExpanded">
-        <span>🔔 Rappels personnels</span>
+        <span t-esc="t('button.reminders')"/>
         <span class="options-reminders__count" t-if="activeCount > 0">
-          <t t-esc="activeCount"/> actif(s)
+          <t t-esc="activeCount"/> <t t-esc="t('label.active_count')"/>
         </span>
         <span t-esc="state.expanded ? '▲' : '▼'" />
       </div>
@@ -17,17 +18,17 @@ export class OptionsRemindersComponent extends EnhancedComponent {
 
         <!-- New reminder form -->
         <div class="options-reminders__form">
-          <label class="options-reminders__label">Message</label>
+          <label class="options-reminders__label" t-esc="t('label.message')"/>
           <input
             class="options-reminders__input"
             type="text"
-            placeholder="ex: Boire un verre d'eau"
+            t-att-placeholder="t('placeholder.reminder_message')"
             maxlength="120"
             t-att-value="state.draft.message"
             t-on-input="onMessageInput"
           />
 
-          <label class="options-reminders__label">Intervalle</label>
+          <label class="options-reminders__label" t-esc="t('label.interval')"/>
           <select class="options-reminders__select" t-on-change="onIntervalChange">
             <t t-foreach="intervals" t-as="opt" t-key="opt.minutes">
               <option
@@ -43,8 +44,8 @@ export class OptionsRemindersComponent extends EnhancedComponent {
             t-att-disabled="!state.draft.message.trim() or state.isBusy"
             t-on-click="addReminder"
           >
-            <t t-if="state.isBusy">⟳</t>
-            <t t-else="">+ Ajouter ce rappel</t>
+            <t t-if="state.isBusy" t-esc="t('label.saving')"/>
+            <t t-else="" t-esc="t('button.add_reminder')"/>
           </button>
         </div>
 
@@ -61,11 +62,11 @@ export class OptionsRemindersComponent extends EnhancedComponent {
               <span class="options-reminders__item-meta">
                 <t t-esc="intervalLabel(reminder.intervalMinutes)" />
                 — <span t-att-class="'options-reminders__status options-reminders__status--' + (reminder.active ? 'active' : 'paused')">
-                  <t t-esc="reminder.active ? 'actif' : 'pausé'" />
+                  <t t-esc="reminder.active ? t('label.enabled') : t('label.disabled')" />
                 </span>
               </span>
               <span class="options-reminders__item-date">
-                Créé le <t t-esc="formatDate(reminder.createdAt)" />
+                <t t-esc="formatDate(reminder.createdAt)" />
               </span>
             </div>
             <div class="options-reminders__item-actions">
@@ -84,9 +85,7 @@ export class OptionsRemindersComponent extends EnhancedComponent {
           </li>
         </ul>
 
-        <p t-if="!state.reminders.length" class="options-reminders__empty">
-          Aucun rappel configuré.
-        </p>
+        <p t-if="!state.reminders.length" class="options-reminders__empty" t-esc="t('message.no_reminders')" />
 
         <p t-if="state.error" class="options-reminders__error" t-esc="state.error" />
       </div>
@@ -122,7 +121,8 @@ export class OptionsRemindersComponent extends EnhancedComponent {
 
   formatDate(iso: string): string {
     if (!iso) return "—";
-    return new Date(iso).toLocaleDateString("fr-CA", {
+    const locale = getCurrentLocale() === "en" ? "en-CA" : "fr-CA";
+    return new Date(iso).toLocaleDateString(locale, {
       year: "numeric",
       month: "short",
       day: "numeric",
@@ -153,7 +153,7 @@ export class OptionsRemindersComponent extends EnhancedComponent {
     try {
       const granted = await this.svc.requestPermission();
       if (!granted) {
-        this.state.error = "Permission de notification refusée.";
+        this.state.error = this.t("error.notification_permission_denied");
         return;
       }
       let reminder = this.svc.create(message.trim(), intervalMinutes);
@@ -164,7 +164,7 @@ export class OptionsRemindersComponent extends EnhancedComponent {
       this.state.reminders = updated;
       this.state.draft.message = "";
     } catch (e: unknown) {
-      this.state.error = `Erreur : ${e instanceof Error ? e.message : String(e)}`;
+      this.state.error = `${this.t("label.error")} : ${e instanceof Error ? e.message : String(e)}`;
     } finally {
       this.state.isBusy = false;
     }
@@ -185,7 +185,7 @@ export class OptionsRemindersComponent extends EnhancedComponent {
       await this.svc.saveAll(list);
       this.state.reminders = list;
     } catch (e: unknown) {
-      this.state.error = `Erreur : ${e instanceof Error ? e.message : String(e)}`;
+      this.state.error = `${this.t("label.error")} : ${e instanceof Error ? e.message : String(e)}`;
     } finally {
       this.state.isBusy = false;
     }
@@ -201,7 +201,7 @@ export class OptionsRemindersComponent extends EnhancedComponent {
       await this.svc.saveAll(list);
       this.state.reminders = list;
     } catch (e: unknown) {
-      this.state.error = `Erreur : ${e instanceof Error ? e.message : String(e)}`;
+      this.state.error = `${this.t("label.error")} : ${e instanceof Error ? e.message : String(e)}`;
     } finally {
       this.state.isBusy = false;
     }

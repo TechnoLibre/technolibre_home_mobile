@@ -7,24 +7,24 @@ import { NavbarItemComponent } from "./item/navbar_item_component";
 
 export class NavbarComponent extends EnhancedComponent {
 	static template = xml`
-		<nav id="nav" aria-label="Navigation principale">
+		<nav id="nav" t-att-aria-label="t('nav.main')">
 			<ul id="nav-list" role="list">
 				<NavbarItemComponent
-					displayName="'Accueil'"
+					displayName="t('nav.home')"
 					currentRoute="state.currentRoute"
 					path="'/'"
 					subpaths="[]"
 					onItemClick.bind="onNavListItemClick"
 				/>
 				<NavbarItemComponent
-					displayName="'Services'"
+					displayName="t('nav.services')"
 					currentRoute="state.currentRoute"
 					path="'/applications'"
 					subpaths="['/applications/add', '/applications/edit/:url/:username']"
 					onItemClick.bind="onNavListItemClick"
 				/>
 				<NavbarItemComponent
-					displayName="'Options'"
+					displayName="t('nav.options')"
 					currentRoute="state.currentRoute"
 					path="'/options'"
 					subpaths="[]"

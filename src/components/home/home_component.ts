@@ -17,7 +17,7 @@ const ENV = {
     DEBUG_DEV: import.meta.env.VITE_DEBUG_DEV === "true",
 };
 
-const STARTUP_TIME = new Date().toLocaleTimeString([], {
+const STARTUP_TIMESTAMP = new Date().toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -40,10 +40,10 @@ export class HomeComponent extends EnhancedComponent {
     static template = xml`
     <div id="home-component">
       <div id="home-header">
-        <img id="logo" src="${CompanyLogo}" alt="Logo ERPLibre"
+        <img id="logo" src="${CompanyLogo}" t-att-alt="t('aria.erplibre_logo')"
              role="button"
              tabindex="0"
-             aria-label="Faire tourner le logo"
+             t-att-aria-label="t('button.spin_logo')"
              t-att-class="{'logo--spinning': state.spinning}"
              t-on-click="onLogoClick"
              t-on-keydown="(ev) => (ev.key === 'Enter' || ev.key === ' ') ? onLogoClick() : null"
@@ -51,20 +51,20 @@ export class HomeComponent extends EnhancedComponent {
         <h1 id="title" t-esc="state.title" />
       </div>
 
-      <div id="home-stats" t-if="state.loaded" aria-label="Statistiques">
+      <div id="home-stats" t-if="state.loaded" t-att-aria-label="t('label.statistics')">
         <span class="home-stats__item">
           <span class="home-stats__value" t-esc="state.noteCount" />
-          <span class="home-stats__label"> note<t t-if="state.noteCount !== 1">s</t></span>
+          <span class="home-stats__label"> <t t-esc="state.noteCount !== 1 ? t('label.notes') : t('label.note')"/></span>
         </span>
         <span class="home-stats__sep" aria-hidden="true">·</span>
         <span class="home-stats__item">
           <span class="home-stats__value" t-esc="state.appCount" />
-          <span class="home-stats__label"> app<t t-if="state.appCount !== 1">s</t> Odoo</span>
+          <span class="home-stats__label"> <t t-esc="state.appCount !== 1 ? t('label.apps') : t('label.app')"/> <t t-esc="t('label.odoo')"/></span>
         </span>
         <span class="home-stats__sep" aria-hidden="true">·</span>
         <span class="home-stats__item">
           <span class="home-stats__value" t-esc="state.serverCount" />
-          <span class="home-stats__label"> serveur<t t-if="state.serverCount !== 1">s</t></span>
+          <span class="home-stats__label"> <t t-esc="state.serverCount !== 1 ? t('label.servers') : t('label.server')"/></span>
         </span>
         <t t-set="activeCount" t-value="deploymentService.deployments.length" />
         <t t-if="activeCount > 0">
@@ -72,7 +72,7 @@ export class HomeComponent extends EnhancedComponent {
           <span class="home-stats__item home-stats__item--deploy">
             <span class="home-stats__deploy-dot" aria-hidden="true"/>
             <span class="home-stats__value" t-esc="activeCount" />
-            <span class="home-stats__label"> déploiement<t t-if="activeCount !== 1">s</t></span>
+            <span class="home-stats__label"> <t t-esc="activeCount !== 1 ? t('label.deployments') : t('label.deployment')"/></span>
           </span>
         </t>
       </div>
@@ -86,29 +86,29 @@ export class HomeComponent extends EnhancedComponent {
                 t-esc="state.noteCount" aria-hidden="true"/>
         </button>
         <button class="home-action-card home-action-card--accent" role="listitem" t-on-click="onNoteNewClick"
-                aria-label="Créer une nouvelle note">
+                t-att-aria-label="t('button.new_note')">
           <span class="home-action-card__icon" aria-hidden="true">✏️</span>
-          <span class="home-action-card__label">Nouvelle</span>
+          <span class="home-action-card__label" t-esc="t('label.new')"/>
         </button>
         <button class="home-action-card" role="listitem" t-on-click="onServersClick"
-                t-att-aria-label="state.serverCount + ' serveur' + (state.serverCount !== 1 ? 's' : '') + ' — gérer les serveurs'">
+                t-att-aria-label="t('label.servers')">
           <span class="home-action-card__icon" aria-hidden="true">🖥️</span>
-          <span class="home-action-card__label">Serveurs</span>
+          <span class="home-action-card__label" t-esc="t('label.servers')"/>
           <span t-if="state.serverCount > 0" class="home-action-card__badge"
                 t-esc="state.serverCount" aria-hidden="true"/>
         </button>
         <button class="home-action-card" role="listitem" t-on-click="onApplicationsClick"
-                t-att-aria-label="state.appCount + ' application' + (state.appCount !== 1 ? 's' : '') + ' Odoo — gérer les applications'">
+                t-att-aria-label="t('label.odoo')">
           <span class="home-action-card__icon" aria-hidden="true">🔗</span>
-          <span class="home-action-card__label">Odoo</span>
+          <span class="home-action-card__label" t-esc="t('label.odoo')"/>
           <span t-if="state.appCount > 0" class="home-action-card__badge"
                 t-esc="state.appCount" aria-hidden="true"/>
         </button>
       </div>
 
       <div id="home-quick-notes" t-if="state.loaded and state.quickNotes.length > 0">
-        <p class="home-quick-notes__heading" aria-hidden="true">Accès rapide</p>
-        <ul class="home-quick-notes__list" aria-label="Accès rapide aux notes">
+        <p class="home-quick-notes__heading" aria-hidden="true" t-esc="t('label.quick_access')"/>
+        <ul class="home-quick-notes__list" t-att-aria-label="t('label.quick_access_notes')">
           <li t-foreach="state.quickNotes" t-as="note" t-key="note.id">
             <button class="home-quick-note"
                     t-att-class="{
@@ -117,20 +117,20 @@ export class HomeComponent extends EnhancedComponent {
                       'home-quick-note--priority-3': note.priority === 3,
                       'home-quick-note--priority-4': note.priority === 4,
                     }"
-                    t-att-aria-label="'Ouvrir : ' + (note.title || '(Sans titre)')"
+                    t-att-aria-label="note.title || t('label.untitled')"
                     t-on-click="() => this.onNoteClick(note.id)">
-              <span t-if="note.pinned" class="home-quick-note__pin" aria-label="Épinglée">📌</span>
-              <span class="home-quick-note__title" t-esc="note.title || '(Sans titre)'" />
+              <span t-if="note.pinned" class="home-quick-note__pin" t-att-aria-label="t('label.pinned')">📌</span>
+              <span class="home-quick-note__title" t-esc="note.title || t('label.untitled')" />
               <span t-if="note.date" class="home-quick-note__date" t-esc="formatNoteDate(note.date)" />
-              <span t-if="note.done" class="home-quick-note__done" aria-label="Terminée">✓</span>
+              <span t-if="note.done" class="home-quick-note__done" t-att-aria-label="t('label.done')">✓</span>
             </button>
           </li>
         </ul>
       </div>
 
       <div id="home-tags" t-if="state.loaded and state.rootTags.length > 0">
-        <p class="home-tags__heading" aria-hidden="true">Tags</p>
-        <ul class="home-tags__list" aria-label="Filtrer par tag">
+        <p class="home-tags__heading" aria-hidden="true" t-esc="t('label.tags')"/>
+        <ul class="home-tags__list" t-att-aria-label="t('label.filter_by_tag')">
           <li t-foreach="state.rootTags" t-as="tag" t-key="tag.id">
             <button
               class="home-tag-chip"
@@ -144,9 +144,11 @@ export class HomeComponent extends EnhancedComponent {
         </ul>
       </div>
 
-      <p id="startup-time" aria-hidden="true">Ouvert à ${STARTUP_TIME}</p>
+      <p id="startup-time" aria-hidden="true" t-esc="t('label.opened_at', {time: startupTime})"/>
     </div>
   `;
+
+    readonly startupTime = STARTUP_TIMESTAMP;
 
     setup() {
         this.state = useState<HomeState>({

@@ -1,5 +1,6 @@
 import { RootComponent } from "../components/root/root_component";
 import { EventBus, mount } from "@odoo/owl";
+import { Capacitor } from "@capacitor/core";
 import { SplashScreen } from "@capacitor/splash-screen";
 import { SimpleRouter } from "./router";
 import { AppService } from "../services/appService";
@@ -28,6 +29,8 @@ import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
 import { TranscriptionService } from "../services/transcriptionService";
+import { TranslationService } from "../services/translationService";
+import { MarianService } from "../services/marianService";
 import { ProcessService } from "../services/processService";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
 import type { FontFamily, ColorTheme } from "../models/graphicPrefs";
@@ -36,6 +39,7 @@ import { NotificationService } from "../services/notificationService";
 import { ReminderService } from "../services/reminderService";
 import { BiometryUtils } from "../utils/biometryUtils";
 import { Events } from "../constants/events";
+import { t } from "../i18n";
 
 const eventBus = new EventBus();
 
@@ -63,23 +67,29 @@ function hideBootScreen() {
 }
 
 async function startApp() {
-	await SplashScreen.hide();
+	const isNative = Capacitor.isNativePlatform();
+
+	if (isNative) await SplashScreen.hide();
 
 	const router = new SimpleRouter();
 
-	setBootStep("Vérification biométrique…");
-	const authenticated = await BiometryUtils.authenticateForDatabase();
+	setBootStep(t("boot.checking_biometric"));
+	const authenticated = isNative
+		? await BiometryUtils.authenticateForDatabase()
+		: true;
 	if (!authenticated) {
-		setBootStep("Authentification biométrique échouée. Relancez l'application.");
+		setBootStep(t("boot.biometric_failed"));
 		return;
 	}
 
-	setBootStep("Lecture clé de chiffrement…");
+	setBootStep(t("boot.reading_encryption_key"));
 	const db = new DatabaseService();
+
+	if (isNative) {
 
 	await db.initialize(setBootStep);
 
-	setBootStep("Vérification migrations…");
+	setBootStep(t("boot.checking_migrations"));
 	await runMigrations(db, [
 		{
 			version: 2026031801,
@@ -168,7 +178,7 @@ async function startApp() {
 		},
 	]);
 
-	setBootStep("Chargement des préférences graphiques…");
+	setBootStep(t("boot.loading_graphic_prefs"));
 	{
 		const fontFamily = await db.getUserGraphicPref("font_family") as FontFamily | null;
 		const fontSizeScale = await db.getUserGraphicPref("font_size_scale");
@@ -182,7 +192,9 @@ async function startApp() {
 		});
 	}
 
-	setBootStep("Initialisation des services…");
+	} // end if (isNative)
+
+	setBootStep(t("boot.initializing_services"));
 	const appService = new AppService(db);
 	const tagService = new TagService(db);
 	const noteService = new NoteService(eventBus, db);
@@ -193,8 +205,10 @@ async function startApp() {
 	const serverService = new ServerService(db);
 	const deploymentService = new DeploymentService(serverService);
 	const processService = new ProcessService(db);
-	await processService.initialize();
+	if (isNative) await processService.initialize();
 	const transcriptionService = new TranscriptionService(db, processService);
+	const translationService = new TranslationService(db);
+	const marianService = new MarianService();
 	notificationService.start();
 
 	// Re-schedule any reminders whose notification batch is expiring
@@ -202,14 +216,14 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService };
+	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, marianService, processService };
 
-	setBootStep("Montage de l'interface…");
+	setBootStep(t("boot.mounting_interface"));
 	await mount(RootComponent, document.body, { env });
 	hideBootScreen();
 }
 
 startApp().catch((error) => {
 	console.error("Failed to start app:", error);
-	setBootStep(`Erreur : ${error?.message ?? error}`);
+	setBootStep(t("boot.error", { message: error?.message ?? error }));
 });

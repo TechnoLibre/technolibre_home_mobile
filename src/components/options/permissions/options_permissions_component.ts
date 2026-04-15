@@ -3,24 +3,22 @@ import { Dialog } from "@capacitor/dialog";
 import { Geolocation } from "@capacitor/geolocation";
 import { Camera } from "@capacitor/camera";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
-
-const STATUS_LABEL: Record<string, string> = {
-	granted: "✓ accordée",
-	denied: "✗ refusée",
-	prompt: "? à demander",
-	"prompt-with-rationale": "? à demander (avec justification)",
-};
+import { t } from "../../../i18n";
 
 function label(status: string): string {
-	return STATUS_LABEL[status] ?? status;
+	const map: Record<string, string> = {
+		granted: t("permission.granted"),
+		denied: t("permission.denied"),
+		prompt: t("permission.prompt"),
+		"prompt-with-rationale": t("permission.prompt_with_rationale"),
+	};
+	return map[status] ?? status;
 }
 
 export class OptionsPermissionsComponent extends EnhancedComponent {
 	static template = xml`
     <li class="options-list__item">
-      <a href="#" t-on-click.stop.prevent="onShowPermissionsClick">
-        🛡️ Permissions
-      </a>
+      <a href="#" t-on-click.stop.prevent="onShowPermissionsClick" t-esc="t('button.permissions')" />
     </li>
   `;
 
@@ -36,28 +34,28 @@ export class OptionsPermissionsComponent extends EnhancedComponent {
 			const lines: string[] = [];
 
 			if (geo) {
-				lines.push(`GPS (précis)  : ${label(geo.location)}`);
-				lines.push(`GPS (approx.) : ${label(geo.coarseLocation)}`);
+				lines.push(`${this.t("label.gps_precise")}  : ${label(geo.location)}`);
+				lines.push(`${this.t("label.gps_approximate")} : ${label(geo.coarseLocation)}`);
 			} else {
-				lines.push("GPS : indisponible");
+				lines.push(this.t("label.gps_unavailable"));
 			}
 
 			lines.push("");
 
 			if (cam) {
-				lines.push(`Caméra   : ${label(cam.camera)}`);
-				lines.push(`Photos   : ${label(cam.photos)}`);
+				lines.push(`${this.t("label.camera")}   : ${label(cam.camera)}`);
+				lines.push(`${this.t("label.photos")}   : ${label(cam.photos)}`);
 			} else {
-				lines.push("Caméra : indisponible");
+				lines.push(this.t("label.camera_unavailable"));
 			}
 
 			message = lines.join("\n");
 		} catch (error: unknown) {
-			message = `Erreur lors de la vérification des permissions:\n${error}`;
+			message = `${this.t("label.error")}: ${error}`;
 		}
 
 		await Dialog.alert({
-			title: "Permissions",
+			title: this.t("dialog.title.permissions"),
 			message,
 		});
 	}

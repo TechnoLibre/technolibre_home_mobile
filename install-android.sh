@@ -70,8 +70,19 @@ else
     echo "whisper.cpp already present at $WHISPER_DST, skipping clone."
 fi
 
-# Step 7: Verify installation
-echo "==> Step 7: Verifying installation..."
+# Step 7: Clone sentencepiece (required for MarianMT on-device translation)
+echo "==> Step 7: Cloning sentencepiece..."
+SPM_DST="$(dirname "$0")/android/app/src/main/cpp/sentencepiece"
+if [ ! -d "$SPM_DST" ]; then
+    mkdir -p "$(dirname "$SPM_DST")"
+    git clone --depth=1 https://github.com/google/sentencepiece.git "$SPM_DST"
+    echo "sentencepiece cloned to $SPM_DST"
+else
+    echo "sentencepiece already present at $SPM_DST, skipping clone."
+fi
+
+# Step 8: Verify installation
+echo "==> Step 8: Verifying installation..."
 sdkmanager --list | grep "Installed packages" -A 50 | grep -v "^---"
 echo ""
 echo "ANDROID_HOME=$ANDROID_HOME"

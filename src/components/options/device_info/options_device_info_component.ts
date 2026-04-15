@@ -14,20 +14,16 @@ export class OptionsDeviceInfoComponent extends EnhancedComponent {
 	static template = xml`
     <t>
       <li class="options-list__item">
-        <a href="#" t-on-click.stop.prevent="onShowDeviceInfoClick">
-          📱 Infos appareil
-        </a>
+        <a href="#" t-on-click.stop.prevent="onShowDeviceInfoClick" t-esc="t('button.device_info')" />
       </li>
       <li class="options-list__item">
-        <a href="#" t-on-click.stop.prevent="onResourcesClick">
-          📊 Ressources système
-        </a>
+        <a href="#" t-on-click.stop.prevent="onResourcesClick" t-esc="t('button.system_resources')" />
       </li>
       <li t-if="!state.devModeEnabled"
           class="options-list__item options-list__item--dev-unlock"
           t-att-class="devUnlockClass"
           t-on-click="onDevModeClick">
-        <t t-if="state.clicks === 0">🔧 Activer mode dev</t>
+        <t t-if="state.clicks === 0" t-esc="t('button.unlock_dev_mode')"/>
         <t t-else=""><t t-esc="CLICKS_REQUIRED - state.clicks" /></t>
       </li>
     </t>
@@ -99,27 +95,27 @@ export class OptionsDeviceInfoComponent extends EnhancedComponent {
 			]);
 
 			const lines: string[] = [
-				`Modèle : ${info.model}`,
-				`Fabricant : ${info.manufacturer}`,
-				`OS : ${info.operatingSystem} ${info.osVersion}`,
-				`Plateforme : ${info.platform}`,
-				`Langue : ${lang.value}`,
+				this.t("label.device_model", { model: info.model }),
+				this.t("label.device_manufacturer", { manufacturer: info.manufacturer }),
+				this.t("label.device_os", { os: info.operatingSystem, version: info.osVersion }),
+				this.t("label.device_platform", { platform: info.platform }),
+				this.t("label.device_language", { lang: lang.value }),
 			];
 
 			if (appInfo) {
 				lines.push("");
-				lines.push(`App : ${appInfo.name}`);
-				lines.push(`Version : ${appInfo.version} (build ${appInfo.build})`);
-				lines.push(`ID : ${appInfo.id}`);
+				lines.push(this.t("label.app_name", { name: appInfo.name }));
+				lines.push(this.t("label.app_version", { version: appInfo.version, build: appInfo.build }));
+				lines.push(this.t("label.app_id", { id: appInfo.id }));
 			}
 
 			message = lines.join("\n");
 		} catch (error: unknown) {
-			message = `Erreur lors de la lecture des infos appareil:\n${error}`;
+			message = this.t("error.failed_to_read_device_info", { error: String(error) });
 		}
 
 		await Dialog.alert({
-			title: "Infos appareil",
+			title: this.t("dialog.title.device_info"),
 			message,
 		});
 	}

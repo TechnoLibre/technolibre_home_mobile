@@ -14,22 +14,12 @@ export class OptionsErplibreComponent extends EnhancedComponent {
       <div id="options-erplibre-component">
         <HeadingComponent title="'ERPLibre'" breadcrumbs="breadcrumbs" />
         <div class="erplibre__content">
-          <img class="erplibre__logo" src="${CompanyLogo}" alt="Logo ERPLibre" />
+          <img class="erplibre__logo" src="${CompanyLogo}" t-att-alt="t('aria.erplibre_logo')" />
           <h2 class="erplibre__title">ERPLibre</h2>
-          <p class="erplibre__tagline">Logiciel de gestion d'entreprise</p>
-          <p class="erplibre__description">
-            ERPLibre est une plateforme ERP communautaire libre, basée sur
-            Odoo Community Edition. Elle vous permet de gérer vos ventes,
-            achats, comptabilité, ressources humaines et bien plus, en toute
-            autonomie.
-          </p>
-          <p class="erplibre__description">
-            Libre, modulaire et souverain — ERPLibre est conçu pour les
-            entreprises qui souhaitent garder le contrôle de leurs données.
-          </p>
-          <button class="erplibre__btn-website" t-on-click="onOpenWebsiteClick">
-            Ouvrir le site web
-          </button>
+          <p class="erplibre__tagline" t-esc="t('erplibre.tagline')" />
+          <p class="erplibre__description" t-esc="t('erplibre.description_1')" />
+          <p class="erplibre__description" t-esc="t('erplibre.description_2')" />
+          <button class="erplibre__btn-website" t-on-click="onOpenWebsiteClick" t-esc="t('button.open_website')" />
         </div>
       </div>
     `;
@@ -37,7 +27,7 @@ export class OptionsErplibreComponent extends EnhancedComponent {
 	static components = { HeadingComponent };
 
 	get breadcrumbs() {
-		return [{ label: "Options", url: "/options" }];
+		return [{ label: this.t("breadcrumb.options"), url: "/options" }];
 	}
 
 	onOpenWebsiteClick() {

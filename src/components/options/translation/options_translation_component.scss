@@ -1,0 +1,459 @@
+// ── Root wrapper ─────────────────────────────────────────────────────────────
+
+#options-translation-component {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+// ── Page body ────────────────────────────────────────────────────────────────
+
+.tr-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    padding: 1rem;
+    overflow-y: auto;
+}
+
+// ── Section groups ───────────────────────────────────────────────────────────
+
+.tr-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.tr-group__label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    margin-bottom: 0.1rem;
+    padding: 0 0.2rem;
+
+    &--local    { color: #4caf50; }
+    &--internet { color: #e0933a; }
+}
+
+// ── Option cards ─────────────────────────────────────────────────────────────
+
+.tr-option {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    background: var(--card-bg);
+    border: 1.5px solid var(--section-border-color);
+    border-radius: 0.65rem;
+    cursor: pointer;
+    padding: 0.7rem 0.9rem;
+    transition: border-color 0.15s;
+
+    input[type="radio"] {
+        accent-color: var(--accent-color);
+        flex-shrink: 0;
+        width: 1.1rem;
+        height: 1.1rem;
+    }
+
+    &--selected {
+        border-color: var(--accent-color);
+    }
+
+    // When an expand panel follows, remove the bottom radius so they connect.
+    &--open {
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
+        border-bottom-color: transparent;
+    }
+}
+
+.tr-option__row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.tr-option__name {
+    font-size: 0.9rem;
+    font-weight: 500;
+    flex: 1;
+    min-width: 0;
+}
+
+// ── Expand panel (shown below selected option) ───────────────────────────────
+
+.tr-expand {
+    background: var(--card-bg);
+    border: 1.5px solid var(--accent-color);
+    border-top: none;
+    border-radius: 0 0 0.65rem 0.65rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    padding: 0.9rem;
+}
+
+// ── Badges ───────────────────────────────────────────────────────────────────
+
+.tr-badge {
+    border-radius: 0.25rem;
+    display: inline-block;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 0.1rem 0.4rem;
+    white-space: nowrap;
+
+    &--local    { background: rgba(76, 175, 80, 0.15); color: #4caf50; }
+    &--neutral  { background: rgba(74, 144, 217, 0.15); color: #6ab0e8; }
+    &--internet { background: rgba(224, 147, 58, 0.15); color: #e0933a; }
+    &--ondevice { background: rgba(103, 58, 183, 0.15); color: #9c6ee8; }
+}
+
+// ── Hint text ────────────────────────────────────────────────────────────────
+
+.tr-hint {
+    color: #888;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    margin: 0;
+}
+
+// ── MarianMT model cards ─────────────────────────────────────────────────────
+
+.tr-model {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.875rem;
+    border: 1.5px solid var(--section-border-color);
+    border-radius: 0.625rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    background: var(--card-bg);
+
+    &:active { background: var(--btn-back-color); }
+
+    &--active {
+        border-color: var(--btn-blue-color, #3b82f6);
+        background: rgba(59, 130, 246, 0.07);
+
+        .tr-model__radio {
+            border-color: var(--btn-blue-color, #3b82f6);
+            background: var(--btn-blue-color, #3b82f6);
+
+            &::after { display: block; }
+        }
+    }
+
+    &__radio {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        border: 2px solid #555;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 2px;
+        transition: border-color 0.15s, background 0.15s;
+
+        &::after {
+            content: "";
+            display: none;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: white;
+        }
+    }
+
+    &__info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        flex: 1;
+    }
+
+    &__header {
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+
+    &__name {
+        font-size: 0.95rem;
+        font-weight: 600;
+    }
+
+    &__size {
+        font-size: 0.75rem;
+        color: #888;
+    }
+
+    &__metrics {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-top: 0.1rem;
+    }
+
+    &__metric {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.78rem;
+    }
+
+    &__metric-label {
+        color: #888;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    &__metric-dots {
+        color: #e6a817; // ⚡ amber for speed
+        letter-spacing: 0.05em;
+
+        &--quality { color: #f4c542; } // ★ gold for quality
+    }
+
+    &__metric-text {
+        color: #aaa;
+        font-size: 0.78rem;
+    }
+
+    &__badge {
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        padding: 0.1rem 0.4rem;
+        border-radius: 0.25rem;
+        align-self: flex-start;
+
+        &--recommended {
+            color: #f4c542;
+            background: rgba(244, 197, 66, 0.12);
+        }
+
+        &--ok {
+            color: #4caf50;
+            background: rgba(76, 175, 80, 0.1);
+        }
+
+        &--pending {
+            color: #888;
+            background: rgba(255, 255, 255, 0.05);
+        }
+    }
+
+    &__footer {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 0.15rem;
+
+        &--downloading { flex-wrap: wrap; }
+    }
+
+    &__dl-info {
+        font-size: 0.78rem;
+        color: #888;
+    }
+
+    &__dl-btn {
+        background: var(--btn-blue-color, #3b82f6);
+        border: none;
+        border-radius: 0.4rem;
+        color: white;
+        cursor: pointer;
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 0.25rem 0.65rem;
+        transition: filter 0.15s;
+
+        &:hover { filter: brightness(1.1); }
+    }
+
+    &__cancel-btn {
+        background: transparent;
+        border: 1.5px solid #f66;
+        border-radius: 0.4rem;
+        color: #f66;
+        cursor: pointer;
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 0.2rem 0.45rem;
+        transition: background 0.15s;
+
+        &:hover { background: rgba(255, 100, 100, 0.1); }
+    }
+
+    &__delete-btn {
+        background: transparent;
+        border: none;
+        color: #888;
+        cursor: pointer;
+        font-size: 0.9rem;
+        padding: 0.1rem 0.2rem;
+        transition: color 0.15s;
+
+        &:hover { color: #f66; }
+    }
+}
+
+// ── Section dividers (FR→EN / EN→FR) ─────────────────────────────────────────
+
+.tr-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+
+    &__title {
+        color: #888;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+}
+
+// ── Progress bar ─────────────────────────────────────────────────────────────
+
+.tr-progress {
+    flex: 1;
+    height: 6px;
+    background: var(--surface-btn);
+    border-radius: 3px;
+    overflow: hidden;
+
+    &--sm { height: 4px; }
+
+    &__bar {
+        height: 100%;
+        background: var(--btn-blue-color, #3b82f6);
+        border-radius: 3px;
+        transition: width 0.4s linear;
+    }
+}
+
+// ── (legacy) Progress element ─────────────────────────────────────────────────
+
+.tr-bar {
+    flex: 1;
+    height: 0.4rem;
+    border-radius: 0.2rem;
+    appearance: none;
+
+    &::-webkit-progress-bar {
+        background: var(--surface-subtle);
+        border-radius: 0.2rem;
+    }
+    &::-webkit-progress-value {
+        background: #9c6ee8;
+        border-radius: 0.2rem;
+    }
+}
+
+.tr-pct {
+    font-size: 0.75rem;
+    color: #888;
+    min-width: 2.5rem;
+    text-align: right;
+}
+
+// ── Form fields (Ollama / LibreTranslate config) ──────────────────────────────
+
+.tr-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.tr-field__label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    opacity: 0.75;
+}
+
+.tr-field__input {
+    background: var(--background);
+    border: 1px solid var(--surface-subtle);
+    border-radius: 0.4rem;
+    color: var(--text);
+    font-size: 0.85rem;
+    outline: none;
+    padding: 0.4rem 0.65rem;
+
+    &:focus { border-color: var(--accent-color); }
+}
+
+// ── Buttons ──────────────────────────────────────────────────────────────────
+
+.tr-btn {
+    border: none;
+    border-radius: 0.45rem;
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 500;
+    outline: none;
+    padding: 0.4rem 0.85rem;
+
+    &--primary {
+        background: var(--btn-blue-color);
+        color: #cce0f5;
+        &:hover { background: var(--btn-blue-hover-color); }
+    }
+
+    &--ghost {
+        background: transparent;
+        border: 1px solid var(--surface-subtle);
+        color: var(--text);
+        opacity: 0.65;
+        &:hover { opacity: 1; }
+    }
+
+    &--danger {
+        background: var(--btn-red-color, #c0392b);
+        color: #fff;
+        &:hover { background: var(--btn-red-hover-color, #a93226); }
+    }
+
+    &--test {
+        align-self: flex-start;
+        background: var(--card-bg);
+        border: 1px solid var(--surface-subtle);
+        color: var(--text);
+        &:disabled { cursor: not-allowed; opacity: 0.5; }
+    }
+
+    &__sub {
+        font-size: 0.75rem;
+        opacity: 0.7;
+    }
+}
+
+// ── Test section ─────────────────────────────────────────────────────────────
+
+.tr-test {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0 0.1rem;
+}
+
+.tr-test__result {
+    font-size: 0.85rem;
+    line-height: 1.5;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+
+    &--error { color: #e07070; }
+}

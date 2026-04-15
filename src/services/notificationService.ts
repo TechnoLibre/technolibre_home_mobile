@@ -1,4 +1,5 @@
 import { App } from "@capacitor/app";
+import { Capacitor } from "@capacitor/core";
 import { EventBus } from "@odoo/owl";
 
 import { Events } from "../constants/events";
@@ -41,15 +42,17 @@ export class NotificationService {
    * Call once at app startup.
    */
   start(): void {
-    App.addListener("appStateChange", ({ isActive }) => {
-      if (isActive) {
-        this.startPolling();
-        this.startNtfy();
-      } else {
-        this.stopPolling();
-        this.ntfyService.disconnect();
-      }
-    });
+    if (Capacitor.isNativePlatform()) {
+      App.addListener("appStateChange", ({ isActive }) => {
+        if (isActive) {
+          this.startPolling();
+          this.startNtfy();
+        } else {
+          this.stopPolling();
+          this.ntfyService.disconnect();
+        }
+      });
+    }
 
     window.addEventListener("online", () => this.onNetworkRestore());
 

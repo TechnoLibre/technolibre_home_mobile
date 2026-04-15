@@ -16,6 +16,7 @@ export const Events: Record<string, string> = {
 	DEV_MODE_UNLOCKED: "dev_mode_unlocked",
 	ADD_TRANSCRIPTION_TEXT: "add_transcription_text",
 	SET_ENTRY_TRANSCRIPTION: "set_entry_transcription",
+	SET_ENTRY_TRANSLATION: "set_entry_translation",
 	NOTE_TAGS_UPDATED: "note_tags_updated",
 	TAGS_UPDATED: "tags_updated",
 }

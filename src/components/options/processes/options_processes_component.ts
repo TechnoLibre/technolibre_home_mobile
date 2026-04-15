@@ -2,19 +2,18 @@ import { onMounted, onWillDestroy, useState, xml } from "@odoo/owl";
 import { Dialog } from "@capacitor/dialog";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { HeadingComponent } from "../../heading/heading_component";
+import { getCurrentLocale } from "../../../i18n";
 import type { ProcessRecord } from "../../../models/process";
 
 export class OptionsProcessesComponent extends EnhancedComponent {
     static template = xml`
         <div id="options-processes-component">
-            <HeadingComponent title="'Options › Processus'" backUrl="'/options'" />
+            <HeadingComponent title="t('heading.processes')" backUrl="'/options'" />
 
             <div class="processes-body">
 
                 <t t-if="state.records.length === 0">
-                    <p class="processes-empty">
-                        Aucun processus pour cette session.
-                    </p>
+                    <p class="processes-empty" t-esc="t('message.no_processes')" />
                 </t>
 
                 <t t-foreach="state.records" t-as="rec" t-key="rec.id">
@@ -41,14 +40,14 @@ export class OptionsProcessesComponent extends EnhancedComponent {
                                     <t t-if="rec.percent and rec.percent > 0">
                                         <t t-esc="rec.percent"/>%
                                     </t>
-                                    <t t-else="">En cours…</t>
+                                    <t t-else="" t-esc="t('label.in_progress')"/>
                                 </t>
                                 <t t-elif="rec.status === 'done'">
                                     ✓ <t t-esc="formatDate(rec.completedAt)" />
                                     <span class="process-item__duration" t-esc="formatDuration(rec)" />
                                 </t>
                                 <t t-else="">
-                                    ✗ <t t-esc="rec.errorMessage || 'Erreur'" />
+                                    ✗ <t t-esc="rec.errorMessage || t('label.error')" />
                                     <span class="process-item__duration" t-esc="formatDuration(rec)" />
                                 </t>
                             </span>
@@ -66,9 +65,7 @@ export class OptionsProcessesComponent extends EnhancedComponent {
                 </t>
 
                 <t t-if="state.records.length > 0">
-                    <button class="processes-clear-btn" t-on-click="onClearClick">
-                        🗑 Nettoyer l'historique
-                    </button>
+                    <button class="processes-clear-btn" t-on-click="onClearClick" t-esc="t('button.clear_history')" />
                 </t>
             </div>
 
@@ -85,26 +82,26 @@ export class OptionsProcessesComponent extends EnhancedComponent {
 
                     <div class="process-modal__rows">
                         <div class="process-modal__row">
-                            <span class="process-modal__key">Statut</span>
+                            <span class="process-modal__key" t-esc="t('label.status')"/>
                             <span class="process-modal__val" t-esc="formatStatus(state.detail)" />
                         </div>
                         <div class="process-modal__row">
-                            <span class="process-modal__key">Démarré</span>
+                            <span class="process-modal__key" t-esc="t('label.started')"/>
                             <span class="process-modal__val" t-esc="formatDateTime(state.detail.startedAt)" />
                         </div>
                         <t t-if="state.detail.completedAt">
                             <div class="process-modal__row">
-                                <span class="process-modal__key">Terminé</span>
+                                <span class="process-modal__key" t-esc="t('label.completed')"/>
                                 <span class="process-modal__val" t-esc="formatDateTime(state.detail.completedAt)" />
                             </div>
                             <div class="process-modal__row">
-                                <span class="process-modal__key">Durée</span>
+                                <span class="process-modal__key" t-esc="t('label.duration')"/>
                                 <span class="process-modal__val" t-esc="formatDuration(state.detail)" />
                             </div>
                         </t>
                         <t t-if="state.detail.errorMessage">
                             <div class="process-modal__row">
-                                <span class="process-modal__key">Erreur</span>
+                                <span class="process-modal__key" t-esc="t('label.error')"/>
                                 <span class="process-modal__val process-modal__val--error"
                                       t-esc="state.detail.errorMessage" />
                             </div>
@@ -117,10 +114,7 @@ export class OptionsProcessesComponent extends EnhancedComponent {
                         </t>
                         <t t-if="state.detail.result">
                             <div class="process-modal__row process-modal__row--result">
-                                <span class="process-modal__key">
-                                    <t t-if="state.detail.type === 'transcription'">Texte transcrit</t>
-                                    <t t-else="">URL téléchargement</t>
-                                </span>
+                                <span class="process-modal__key" t-esc="state.detail.type === 'transcription' ? t('label.transcribed_text') : t('label.download_url')"/>
                                 <span class="process-modal__result" t-esc="state.detail.result" />
                             </div>
                         </t>
@@ -130,10 +124,9 @@ export class OptionsProcessesComponent extends EnhancedComponent {
                         t-if="state.detail.type === 'transcription' and state.detail.noteId"
                         class="process-modal__goto"
                         t-on-click="onModalNavClick"
-                    >
-                        › Aller à la note
-                    </button>
-                    <button class="process-modal__close" t-on-click="closeDetail">Fermer</button>
+                        t-esc="t('button.go_to_note')"
+                    />
+                    <button class="process-modal__close" t-on-click="closeDetail" t-esc="t('button.close')" />
                 </div>
             </div>
         </div>
@@ -202,10 +195,10 @@ export class OptionsProcessesComponent extends EnhancedComponent {
 
     async onClearClick(): Promise<void> {
         const { value } = await Dialog.confirm({
-            title:         "Nettoyer l'historique",
-            message:       "Supprimer tous les processus de l'historique ?",
-            okButtonTitle: "Nettoyer",
-            cancelButtonTitle: "Annuler",
+            title:         this.t("button.clear_history"),
+            message:       this.t("dialog.confirm_clear_history"),
+            okButtonTitle: this.t("button.clear_history"),
+            cancelButtonTitle: this.t("button.cancel"),
         });
         if (!value) return;
         this.state.detail = null;
@@ -216,27 +209,29 @@ export class OptionsProcessesComponent extends EnhancedComponent {
 
     formatLabel(rec: ProcessRecord): string {
         if (rec.type === "download") {
-            return `Téléchargement modèle ${rec.model ?? rec.label}`;
+            return this.t("label.download_model", { model: rec.model ?? rec.label });
         }
-        return `Transcription ${rec.label}`;
+        return this.t("label.transcription_label", { label: rec.label });
     }
 
     formatStatus(rec: ProcessRecord): string {
-        if (rec.status === "running") return "En cours";
-        if (rec.status === "done")    return "Terminé";
-        return "Erreur";
+        if (rec.status === "running") return this.t("label.in_progress");
+        if (rec.status === "done")    return this.t("label.completed");
+        return this.t("label.error");
     }
 
     formatDate(date: Date | null): string {
         if (!date) return "";
-        return date.toLocaleTimeString("fr-FR", {
+        const locale = getCurrentLocale() === "en" ? "en-CA" : "fr-CA";
+        return date.toLocaleTimeString(locale, {
             hour: "2-digit", minute: "2-digit", second: "2-digit",
         });
     }
 
     formatDateTime(date: Date | null): string {
         if (!date) return "";
-        return date.toLocaleString("fr-FR", {
+        const locale = getCurrentLocale() === "en" ? "en-CA" : "fr-CA";
+        return date.toLocaleString(locale, {
             day: "2-digit", month: "2-digit", year: "numeric",
             hour: "2-digit", minute: "2-digit", second: "2-digit",
         });

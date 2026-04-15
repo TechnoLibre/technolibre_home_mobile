@@ -5,9 +5,7 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 export class OptionsDbSizeComponent extends EnhancedComponent {
 	static template = xml`
     <li class="options-list__item">
-      <a href="#" t-on-click.stop.prevent="onShowDbSizeClick">
-        Taille base SQLite
-      </a>
+      <a href="#" t-on-click.stop.prevent="onShowDbSizeClick" t-esc="t('button.sqlite_size')" />
     </li>
   `;
 
@@ -22,21 +20,19 @@ export class OptionsDbSizeComponent extends EnhancedComponent {
 			const mb = (totalBytes / 1024 / 1024).toFixed(2);
 
 			const lines = [
-				`Total : ${totalBytes.toLocaleString()} octets`,
-				`        ${kb} Ko`,
-				`        ${mb} Mo`,
+				this.t("label.total_bytes", { bytes: `${totalBytes.toLocaleString()} (${kb} Ko / ${mb} Mo)` }),
 			];
 			if (pageCount > 0) {
-				lines.push(``, `Pages : ${pageCount}`, `Taille page : ${pageSize} octets`);
+				lines.push("", this.t("label.page_count", { count: String(pageCount) }), this.t("label.page_size", { size: String(pageSize) }));
 			}
 			lines.push(``, `--- Diagnostics ---`, ...diagnostics);
 			message = lines.join("\n");
 		} catch (error: unknown) {
-			message = `Erreur lors de la lecture de la taille:\n${error}`;
+			message = this.t("error.failed_to_read_size", { error: String(error) });
 		}
 
 		await Dialog.alert({
-			title: "SQLite — Taille de la base",
+			title: this.t("dialog.title.sqlite_size"),
 			message,
 		});
 	}

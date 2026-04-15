@@ -89,6 +89,7 @@ export class RootComponent extends EnhancedComponent {
 	}
 
 	private setupAndroidBackButton() {
+		if (!Capacitor.isNativePlatform()) return;
 		App.addListener("backButton", data => {
 			if (data.canGoBack) {
 				window.history.back();
@@ -99,6 +100,7 @@ export class RootComponent extends EnhancedComponent {
 	}
 
 	private async setDefaultBiometryStorageValue() {
+		if (!Capacitor.isNativePlatform()) return;
 		const getResult: StorageGetResult = await StorageUtils.getValueByKey(StorageConstants.BIOMETRY_ENABLED_STORAGE_KEY);
 
 		if (!getResult.keyExists) {

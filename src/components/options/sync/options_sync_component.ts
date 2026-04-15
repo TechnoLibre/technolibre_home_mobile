@@ -14,19 +14,12 @@ export class OptionsSyncComponent extends EnhancedComponent {
         t-on-click="toggleExpanded"
         t-on-keydown="(ev) => (ev.key === 'Enter' || ev.key === ' ') ? toggleExpanded() : null"
       >
-        <span>☁️ Synchronisation Odoo</span>
+        <span t-esc="t('button.odoo_sync')"/>
         <span aria-hidden="true" t-esc="state.expanded ? '▲' : '▼'" />
       </div>
       <div t-if="state.expanded" id="options-sync__body" class="options-sync__body">
-        <p class="options-sync__info">
-          La configuration de synchronisation se fait directement dans la liste
-          des <strong>Applications</strong>. Appuyez sur le crayon d'une
-          application pour configurer la base de données et les options de
-          synchronisation automatique.
-        </p>
-        <button class="options-sync__btn options-sync__btn--add" t-on-click="goToApps">
-          Aller aux Applications ›
-        </button>
+        <p class="options-sync__info" t-esc="t('message.sync_config_info')" />
+        <button class="options-sync__btn options-sync__btn--add" t-on-click="goToApps" t-esc="t('button.go_to_applications')" />
       </div>
     </li>
   `;

@@ -15,9 +15,11 @@ import { ServersSettingsComponent } from "../components/servers/settings/servers
 import { ServersWorkspaceComponent } from "../components/servers/workspace/servers_workspace_component";
 import { ServersResourcesComponent } from "../components/servers/resources/servers_resources_component";
 import { OptionsTranscriptionComponent } from "../components/options/transcription/options_transcription_component";
+import { OptionsTranslationComponent } from "../components/options/translation/options_translation_component";
 import { OptionsProcessesComponent } from "../components/options/processes/options_processes_component";
 import { OptionsResourcesComponent } from "../components/options/resources/options_resources_component";
 import { OptionsCodeComponent } from "../components/options/code/options_code_component";
+import { OptionsLanguageComponent } from "../components/options/language/options_language_component";
 import { TagNotesComponent } from "../components/tags/tag_notes_component";
 
 export interface Route {
@@ -41,9 +43,11 @@ export const routes: Route[] = [
 	{ pathname: "/notes/edit/:id", component: NoteListComponent },
 	{ pathname: "/note/:id", component: NoteComponent },
 	{ pathname: "/intent/:type", component: IntentComponent },
+	{ pathname: "/options/language", component: OptionsLanguageComponent },
 	{ pathname: "/options/database", component: OptionsDatabaseComponent },
 	{ pathname: "/options/erplibre", component: OptionsErplibreComponent },
 	{ pathname: "/options/transcription", component: OptionsTranscriptionComponent },
+	{ pathname: "/options/translation", component: OptionsTranslationComponent },
 	{ pathname: "/options/processes", component: OptionsProcessesComponent },
 	{ pathname: "/options/resources", component: OptionsResourcesComponent },
 	{ pathname: "/options/code", component: OptionsCodeComponent },

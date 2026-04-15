@@ -1,4 +1,5 @@
 import { Component, EventBus } from "@odoo/owl";
+import { t } from "../i18n";
 import { SimpleRouter } from "./router";
 import { AppService } from "../services/appService";
 import { NoteService } from "../services/note/noteService";
@@ -9,6 +10,8 @@ import { NotificationService } from "../services/notificationService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
 import { TranscriptionService } from "../services/transcriptionService";
+import { TranslationService } from "../services/translationService";
+import { MarianService } from "../services/marianService";
 import { ProcessService } from "../services/processService";
 import { TagService } from "../services/tagService";
 import { Events } from "../constants/events";
@@ -60,6 +63,14 @@ export abstract class EnhancedComponent extends Component {
 		return this.env.transcriptionService;
 	}
 
+	public get translationService(): TranslationService {
+		return this.env.translationService;
+	}
+
+	public get marianService(): MarianService {
+		return this.env.marianService;
+	}
+
 	public get processService(): ProcessService {
 		return this.env.processService;
 	}
@@ -67,6 +78,9 @@ export abstract class EnhancedComponent extends Component {
 	public get tagService(): TagService {
 		return this.env.tagService;
 	}
+
+	/** Translation function — call as `t("key")` in templates and code. */
+	public readonly t = t;
 
 	public navigate(url: string): void {
 		this.eventBus.dispatchEvent(

@@ -35,8 +35,8 @@ export class NoteContentComponent extends EnhancedComponent {
 					type="text"
 					t-ref="note-title"
 					id="note__title"
-					placeholder="Titre"
-					aria-label="Titre de la note"
+					t-att-placeholder="t('placeholder.title')"
+					t-att-aria-label="t('aria.note_title')"
 					t-model="props.note.title"
 					t-on-keydown="onTitleKeydown"
 				/>

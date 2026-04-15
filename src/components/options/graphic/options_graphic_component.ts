@@ -5,8 +5,8 @@ import {
   DEFAULT_GRAPHIC_PREFS,
   FONT_CSS_VALUES,
   FONT_LABELS,
-  FONT_SIZE_LABELS,
   FONT_SIZE_STEPS,
+  getFontSizeLabel,
   applyGraphicPrefs,
 } from "../../../models/graphicPrefs";
 import type { ColorTheme, FontFamily, GraphicPrefs } from "../../../models/graphicPrefs";
@@ -33,14 +33,14 @@ export class OptionsGraphicComponent extends EnhancedComponent {
         t-on-click="toggleExpanded"
         t-on-keydown="(ev) => ev.key === 'Enter' || ev.key === ' ' ? toggleExpanded() : null"
       >
-        <span>🎨 Apparence</span>
+        <span><t t-esc="t('button.appearance')"/></span>
         <span t-esc="state.expanded ? '▲' : '▼'"/>
       </div>
 
       <div t-if="state.expanded" class="options-graphic__body">
 
         <div class="options-graphic__section">
-          <p class="options-graphic__label">Thème</p>
+          <p class="options-graphic__label" t-esc="t('label.theme')"/>
           <div class="options-graphic__theme-grid">
             <t t-foreach="themeOptions" t-as="opt" t-key="opt.key">
               <button
@@ -53,7 +53,7 @@ export class OptionsGraphicComponent extends EnhancedComponent {
         </div>
 
         <div class="options-graphic__section">
-          <p class="options-graphic__label">Police</p>
+          <p class="options-graphic__label" t-esc="t('label.font')"/>
           <div class="options-graphic__font-row">
             <t t-foreach="fontOptions" t-as="opt" t-key="opt.key">
               <button
@@ -64,15 +64,12 @@ export class OptionsGraphicComponent extends EnhancedComponent {
               ><t t-esc="opt.label"/></button>
             </t>
           </div>
-          <p class="options-graphic__preview" t-att-style="'font-family: ' + currentFontCss">
-            Le renard brun saute par-dessus le chien paresseux.
-          </p>
+          <p class="options-graphic__preview" t-att-style="'font-family: ' + currentFontCss"
+             t-esc="t('label.font_preview')"/>
         </div>
 
         <div class="options-graphic__section">
-          <p class="options-graphic__label">
-            Taille de police — <span t-esc="fontSizeLabel"/>
-          </p>
+          <p class="options-graphic__label" t-esc="t('label.font_size', {size: fontSizeLabel})"/>
           <div class="options-graphic__size-row">
             <button
               type="button"
@@ -99,7 +96,7 @@ export class OptionsGraphicComponent extends EnhancedComponent {
 
         <div class="options-graphic__section">
           <label class="options-graphic__toggle-row">
-            <span class="options-graphic__label options-graphic__label--inline">Réduire les animations</span>
+            <span class="options-graphic__label options-graphic__label--inline" t-esc="t('label.reduce_motion')"/>
             <input
               type="checkbox"
               class="options-graphic__toggle"
@@ -201,6 +198,6 @@ export class OptionsGraphicComponent extends EnhancedComponent {
   }
 
   get fontSizeLabel(): string {
-    return FONT_SIZE_LABELS[this.state.fontSizeStepIndex];
+    return getFontSizeLabel(this.state.fontSizeStepIndex);
   }
 }

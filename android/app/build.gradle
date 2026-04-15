@@ -55,6 +55,8 @@ dependencies {
     implementation "com.google.android.gms:play-services-cast-framework:21.2.0"
     implementation "com.jcraft:jsch:0.1.55"
     implementation "com.google.mlkit:text-recognition:16.0.1"
+    // MarianMT on-device translation: ONNX Runtime for encoder/decoder inference
+    implementation "com.microsoft.onnxruntime:onnxruntime-android:1.20.0"
 }
 
 apply from: 'capacitor.build.gradle'

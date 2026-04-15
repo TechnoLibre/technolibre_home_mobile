@@ -14,6 +14,10 @@ export interface NoteEntryAudioParams {
 	path: string;
 	/** Text produced by Whisper transcription, stored on the entry itself. */
 	transcription?: string;
+	/** Translation of the transcription text. */
+	transcriptionTranslation?: string;
+	/** Target language of the transcription translation ("fr" | "en"). */
+	transcriptionTranslationLang?: string;
 }
 
 export interface NoteEntryDateParams {
@@ -28,6 +32,10 @@ export interface NoteEntryPhotoParams {
 export interface NoteEntryTextParams {
 	text: string;
 	readonly: boolean;
+	/** Translation of the text content. */
+	translation?: string;
+	/** Target language of the translation ("fr" | "en"). */
+	translationLang?: string;
 }
 
 export interface NoteEntryVideoParams {
@@ -35,6 +43,10 @@ export interface NoteEntryVideoParams {
 	thumbnailPath?: string;
 	/** Text produced by Whisper transcription, stored on the entry itself. */
 	transcription?: string;
+	/** Translation of the transcription text. */
+	transcriptionTranslation?: string;
+	/** Target language of the transcription translation ("fr" | "en"). */
+	transcriptionTranslationLang?: string;
 }
 
 export interface NoteEntryGeolocationParams {

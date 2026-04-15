@@ -18,6 +18,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(RawHttpPlugin.class);
         registerPlugin(SshPlugin.class);
         registerPlugin(WhisperPlugin.class);
+        registerPlugin(MarianPlugin.class);
         registerPlugin(OcrPlugin.class);
         registerPlugin(NetworkScanPlugin.class);
         registerPlugin(DeviceStatsPlugin.class);

@@ -39,7 +39,7 @@ export class NoteListComponent extends EnhancedComponent {
 					id="notes-add"
 					role="button"
 					href="#"
-					aria-label="Nouvelle note"
+					t-att-aria-label="t('button.new_note')"
 					t-on-click.stop.prevent="onNoteAddClick"
 				>
 					<img src="${NoteAddIcon}" alt="" aria-hidden="true"/>
@@ -63,8 +63,8 @@ export class NoteListComponent extends EnhancedComponent {
 						'active': pinned.length !== 0
 					}"
 				>
-					<h2 t-if="pinned.length > 0" class="notes-section-heading">Notes épinglées</h2>
-					<ul class="notes-list" aria-label="Notes épinglées" t-ref="pinned">
+					<h2 t-if="pinned.length > 0" class="notes-section-heading" t-esc="t('heading.pinned_notes')"/>
+					<ul class="notes-list" t-att-aria-label="t('heading.pinned_notes')" t-ref="pinned">
 						<NotesItemComponent
 							t-foreach="pinned"
 							t-as="noteItem"
@@ -87,8 +87,8 @@ export class NoteListComponent extends EnhancedComponent {
 						'active': unpinned.length !== 0
 					}"
 				>
-					<h2 t-if="unpinned.length > 0 and pinned.length > 0" class="notes-section-heading">Notes</h2>
-					<ul class="notes-list" aria-label="Notes" t-ref="unpinned">
+					<h2 t-if="unpinned.length > 0 and pinned.length > 0" class="notes-section-heading" t-esc="t('heading.notes')"/>
+					<ul class="notes-list" t-att-aria-label="t('heading.notes')" t-ref="unpinned">
 						<NotesItemComponent
 							t-foreach="unpinned"
 							t-as="noteItem"
@@ -106,9 +106,9 @@ export class NoteListComponent extends EnhancedComponent {
 					</ul>
 				</div>
 				<div id="notes-empty" t-if="currentNoteList.length === 0">
-					<p t-if="state.showArchivedNotes">Aucune ${ENV.LABEL_NOTE} archivée.</p>
+					<p t-if="state.showArchivedNotes" t-esc="t('message.no_archived_notes')"/>
 					<p t-else="">
-						<a class="notes-empty__add-link" role="button" href="#" t-on-click.stop.prevent="onNoteAddClick">Ajoutez une ${ENV.LABEL_NOTE} 🤖</a>
+						<a class="notes-empty__add-link" role="button" href="#" t-on-click.stop.prevent="onNoteAddClick" t-esc="t('message.add_first_note')"/>
 					</p>
 				</div>
 			</section>
@@ -241,7 +241,7 @@ export class NoteListComponent extends EnhancedComponent {
 	}
 
 	async deleteNote(noteId: string) {
-		const deleteConfirmed = confirm(`Voulez-vous vraiment supprimer cette note?`);
+		const deleteConfirmed = confirm(this.t("dialog.confirm_delete_note"));
 
 		if (!deleteConfirmed) {
 			return;
