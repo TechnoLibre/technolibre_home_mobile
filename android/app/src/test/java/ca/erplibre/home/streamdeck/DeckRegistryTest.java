@@ -32,7 +32,11 @@ public class DeckRegistryTest {
     public void neo_has_infobars_and_touchpoints() {
         DeckSpec s = DeckRegistry.lookup(0x009a);
         assertNotNull(s);
-        assertEquals(2, s.infoBarCount);
+        // Neo has a single 248x58 screen — see python-elgato-streamdeck
+        // StreamDeckNeo.py SCREEN_PIXEL_WIDTH/HEIGHT.
+        assertEquals(1, s.infoBarCount);
+        assertEquals(248, s.infoBarW);
+        assertEquals(58,  s.infoBarH);
         assertEquals(2, s.touchPoints);
         assertTrue(s.capabilities.contains("infobars"));
         assertTrue(s.capabilities.contains("touchpoints"));

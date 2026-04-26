@@ -35,4 +35,53 @@ public class LcdEncoderTest {
     public void plus_lcd_rejects_oversized_region() {
         LcdEncoder.paginatePlusLcd(0, 0, 801, 100, new byte[1]);
     }
+
+    @Test
+    public void neo_screen_single_page_when_smaller_than_payload() {
+        byte[] jpeg = new byte[100];
+        for (int i = 0; i < jpeg.length; i++) jpeg[i] = (byte) (i & 0xFF);
+
+        List<byte[]> pages = LcdEncoder.paginateNeoScreen(jpeg);
+        assertEquals(1, pages.size());
+
+        byte[] p = pages.get(0);
+        assertEquals(1024, p.length);
+        assertEquals(0x02, p[0] & 0xFF);            // report id
+        assertEquals(0x0B, p[1] & 0xFF);            // Neo screen command
+        assertEquals(0x00, p[2] & 0xFF);            // reserved
+        assertEquals(0x01, p[3] & 0xFF);            // last flag
+        assertEquals(100,  (p[4] & 0xFF) | ((p[5] & 0xFF) << 8));   // payload length
+        assertEquals(0,    (p[6] & 0xFF) | ((p[7] & 0xFF) << 8));   // page 0
+        // Payload starts at byte 8.
+        assertEquals(0,  p[8] & 0xFF);
+        assertEquals(99, p[8 + 99] & 0xFF);
+    }
+
+    @Test
+    public void neo_screen_multi_page_splits_correctly() {
+        // 3000 bytes -> ceil(3000 / 1016) = 3 pages.
+        byte[] jpeg = new byte[3000];
+        List<byte[]> pages = LcdEncoder.paginateNeoScreen(jpeg);
+        assertEquals(3, pages.size());
+
+        // Pages 0/1 not last, page 2 last.
+        assertEquals(0x00, pages.get(0)[3] & 0xFF);
+        assertEquals(0x00, pages.get(1)[3] & 0xFF);
+        assertEquals(0x01, pages.get(2)[3] & 0xFF);
+
+        // Page numbers 0, 1, 2.
+        assertEquals(0, (pages.get(0)[6] & 0xFF) | ((pages.get(0)[7] & 0xFF) << 8));
+        assertEquals(1, (pages.get(1)[6] & 0xFF) | ((pages.get(1)[7] & 0xFF) << 8));
+        assertEquals(2, (pages.get(2)[6] & 0xFF) | ((pages.get(2)[7] & 0xFF) << 8));
+
+        // Payload lengths: 1016, 1016, 968 (3000 - 2*1016).
+        assertEquals(1016, (pages.get(0)[4] & 0xFF) | ((pages.get(0)[5] & 0xFF) << 8));
+        assertEquals(1016, (pages.get(1)[4] & 0xFF) | ((pages.get(1)[5] & 0xFF) << 8));
+        assertEquals(968,  (pages.get(2)[4] & 0xFF) | ((pages.get(2)[5] & 0xFF) << 8));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void neo_screen_rejects_empty_payload() {
+        LcdEncoder.paginateNeoScreen(new byte[0]);
+    }
 }
