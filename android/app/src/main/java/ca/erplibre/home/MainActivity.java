@@ -12,6 +12,8 @@ import com.google.android.gms.cast.framework.CastContext;
 
 import com.getcapacitor.BridgeActivity;
 
+import ca.erplibre.home.streamdeck.StreamDeckPlugin;
+
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -21,6 +23,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(OcrPlugin.class);
         registerPlugin(NetworkScanPlugin.class);
         registerPlugin(DeviceStatsPlugin.class);
+        registerPlugin(StreamDeckPlugin.class);
         super.onCreate(savedInstanceState);
         CastContext.getSharedInstance(this);
     }
