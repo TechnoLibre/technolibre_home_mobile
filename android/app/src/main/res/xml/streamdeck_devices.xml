@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Elgato vendor-id 0x0fd9 = 4057 -->
+    <usb-device vendor-id="4057" product-id="96"  /> <!-- 0x0060 Original v1 -->
+    <usb-device vendor-id="4057" product-id="99"  /> <!-- 0x0063 Mini -->
+    <usb-device vendor-id="4057" product-id="108" /> <!-- 0x006c XL -->
+    <usb-device vendor-id="4057" product-id="109" /> <!-- 0x006d Original v2 -->
+    <usb-device vendor-id="4057" product-id="128" /> <!-- 0x0080 MK.2 -->
+    <usb-device vendor-id="4057" product-id="132" /> <!-- 0x0084 Plus -->
+    <usb-device vendor-id="4057" product-id="154" /> <!-- 0x009a Neo -->
+</resources>
