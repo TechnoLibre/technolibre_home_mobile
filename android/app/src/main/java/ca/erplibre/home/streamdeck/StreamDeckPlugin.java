@@ -221,11 +221,16 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     @PluginMethod
     public void setInfoBar(PluginCall call) {
-        // Neo info bars use a different command byte than Plus LCD. Wiring is
-        // deferred to a separate plan once the protocol is cross-checked
-        // against python-elgato-streamdeck StreamDeckNeo.py — see "Out of scope"
-        // in the spec.
-        call.reject("unsupported:neo_infobar_pending_protocol_verification");
+        DeckSession s = requireSession(call); if (s == null) return;
+        if (s.spec().infoBarCount == 0) { call.reject("unsupported:no_infobar"); return; }
+        Integer index = call.getInt("index");
+        if (index == null) { call.reject("missing:index"); return; }
+        if (index < 0 || index >= s.spec().infoBarCount) {
+            call.reject("invalid_index:" + index); return;
+        }
+        byte[] raw = decodeBytes(call); if (raw == null) return;
+        s.queue().offerCoalesce(new NeoInfoBarWriteJob(s, index, raw, call));
+        call.setKeepAlive(true);
     }
 
     private byte[] decodeBytes(PluginCall call) {
