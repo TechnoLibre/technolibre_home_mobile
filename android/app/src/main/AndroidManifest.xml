@@ -25,6 +25,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/streamdeck_devices" />
+
         </activity>
 
         <activity
@@ -78,6 +85,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <!-- Stream Deck USB Host -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <!-- CapacitorVoiceRecorder Plugin -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
