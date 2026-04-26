@@ -207,3 +207,67 @@ interface DeviceStats {
 - **RAM** : `ActivityManager.MemoryInfo` — `totalMem` et `availMem` (soustraction pour `usedMem`).
 - **Batterie** : `Intent` `ACTION_BATTERY_CHANGED` via `registerReceiver(null, ...)` — sans permission requise.
 - **Polling** : `Handler` + `Runnable` sur le thread principal ; stoppé proprement par `stopPolling()` ou destruction du plugin.
+
+---
+
+## StreamDeckPlugin
+
+**Fichiers :**
+- Bridge TS : `src/plugins/streamDeckPlugin.ts`
+- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/streamdeck/`
+- Filtre USB : `android/app/src/main/res/xml/streamdeck_devices.xml`
+
+**Bibliothèque :** Android USB Host API natif (`UsbManager`, `UsbDeviceConnection`, `bulkTransfer`, `controlTransfer`).
+
+**Modèles supportés :** Elgato Stream Deck Original v1 (`0x0060`), Mini
+(`0x0063`), XL (`0x006c`), Original v2 (`0x006d`), MK.2 (`0x0080`),
+Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
+
+### API
+
+| Méthode | Description |
+|---------|-------------|
+| `listDecks()` | Retourne tous les decks connus, chacun avec capacités (keys/dials/lcd/infobars/touchpoints). |
+| `getDeckInfo({deckId})` | Détail d'un deck (model, rows/cols, keyImage, dials, lcd…). |
+| `requestPermission({deckId})` | Force la demande de permission USB si manquante. |
+| `reset({deckId})` | Efface toutes les images des touches. |
+| `setBrightness({deckId, percent})` | Luminosité 0..100. |
+| `setKeyImage({deckId, key, bytes, format})` | Pousse une image. `bytes` = base64. `format = "jpeg"` pour v2+/MK.2/XL/Plus/Neo, `"png"` pour v1/Mini (Java fait BMP rotaté). Résout `{dropped: true}` si une image plus récente a été poussée pour la même touche entre-temps. |
+| `clearKey({deckId, key})` | Image noire 1×1 → touche éteinte. |
+| `clearAllKeys({deckId})` | Identique à `reset`. |
+| `setLcdImage({deckId, bytes})` | Plus uniquement — JPEG plein 800×100. |
+| `setLcdRegion({deckId, x, y, w, h, bytes})` | Plus uniquement — JPEG région partielle. |
+| `setInfoBar({deckId, index, bytes})` | Neo uniquement — **non implémenté** dans ce plan, rejette `unsupported:neo_infobar_pending_protocol_verification`. À compléter dans un plan ultérieur après vérification du protocole Neo. |
+
+### Events
+
+| Event | Payload |
+|-------|---------|
+| `deckConnected` | `{deckId, info, reason?}` |
+| `deckDisconnected` | `{deckId, reason}` (`usb_lost`, `app_destroyed`) |
+| `permissionDenied` | `{deckId, reason}` |
+| `keyChanged` | `{deckId, key, pressed}` |
+| `dialRotated` | `{deckId, dial, delta}` (Plus) |
+| `dialPressed` | `{deckId, dial, pressed}` (Plus) |
+| `lcdTouched` | `{deckId, type, x, y, xEnd?, yEnd?}` (Plus) |
+| `neoTouched` | `{deckId, index, pressed}` (Neo) |
+
+### Identité persistante
+
+Les decks sont identifiés par leur **numéro de série USB** (lu via
+feature report à la connexion). Un deck rebranché conserve donc son
+`deckId` — les préférences/layouts/snapshots peuvent être indexés par
+ce serial sans risque.
+
+### Architecture
+
+Pattern strategy. `DeckRegistry` mappe `productId → DeckSpec`. Une
+`DeckSession` par deck connecté possède son propre thread reader (HID
+IN), thread writer (HID OUT consommant `WriterQueue`), et un
+`DeckTransport` + `ImageEncoder` choisis selon la spec. Les images
+poussées rapidement pour la même touche sont coalescées : la dernière
+gagne, les plus anciennes résolvent leur Promise avec `{dropped: true}`.
+
+### Tests manuels
+
+Voir `doc/streamdeck_test_matrix.md` — checklist par modèle physique.
