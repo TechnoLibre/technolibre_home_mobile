@@ -357,6 +357,24 @@ export default defineConfig(({ mode }) => ({
         outDir: "../dist",
         minify: "esbuild",
         emptyOutDir: true,
+        rollupOptions: {
+            output: {
+                // Split vendor bundles so the WebView can parse chunks in
+                // parallel at startup. Heavy libs are isolated; everything
+                // else under node_modules lands in a generic "vendor" chunk.
+                manualChunks(id: string) {
+                    if (!id.includes("node_modules")) return undefined;
+                    if (id.includes("@odoo/owl")) return "owl";
+                    if (id.includes("@capacitor-community/sqlite")) return "sqlite";
+                    if (id.includes("@capacitor/") || id.includes("@capacitor-community/") ||
+                        id.includes("capacitor-") || id.includes("@capawesome") ||
+                        id.includes("@capgo")) {
+                        return "capacitor";
+                    }
+                    return "vendor";
+                },
+            },
+        },
     },
     esbuild: {
         drop: mode === "production" ? ["console", "debugger"] : [],
