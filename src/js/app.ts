@@ -31,6 +31,7 @@ import { encryptExistingCredentials } from "../services/migrations/encryptExisti
 import { addEditableReposTable } from "../services/migrations/addEditableReposTable";
 import { RepoExtractorService } from "../services/repoExtractorService";
 import { RepoEditService } from "../services/repoEditService";
+import { CodeStyleService } from "../services/codeStyleService";
 import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
@@ -236,6 +237,8 @@ async function startApp() {
 		all: <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
 			db.rawQuery(sql, params as any[] | undefined) as Promise<T[]>,
 	});
+	const codeStyleService = new CodeStyleService(db);
+	await codeStyleService.loadAndApply();
 	notificationService.start();
 
 	// Re-schedule any reminders whose notification batch is expiring
@@ -243,7 +246,7 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, marianService, processService, repoExtractorService, repoEditService };
+	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, marianService, processService, repoExtractorService, repoEditService, codeStyleService };
 
 	setBootStep(t("boot.mounting_interface"));
 	await mount(RootComponent, document.body, { env });
