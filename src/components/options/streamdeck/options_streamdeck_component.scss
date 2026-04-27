@@ -55,6 +55,54 @@
         padding: 0.5rem 0.7rem;
     }
 
+    &__deck--clickable {
+        cursor: pointer;
+        transition: background-color 0.15s ease-out;
+
+        &:hover { background: var(--surface-btn); }
+        &:focus-visible {
+            outline: 2px solid var(--accent-color);
+            outline-offset: -2px;
+        }
+    }
+
+    &__deck-caret {
+        color: var(--text-greyed-out);
+        font-size: 0.75rem;
+        margin-left: auto;
+    }
+
+    &__deck-params {
+        border-top: 1px solid var(--surface-btn);
+        cursor: default;
+        margin-top: 0.5rem;
+        padding-top: 0.5rem;
+    }
+
+    &__deck-params-header {
+        font-size: 0.85rem;
+        margin-bottom: 0.4rem;
+    }
+
+    &__deck-params-row {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin-bottom: 0.3rem;
+    }
+
+    &__brightness-slider {
+        accent-color: var(--accent-color);
+        flex-grow: 1;
+        min-width: 6rem;
+    }
+
+    &__debug--on {
+        background: var(--accent-color) !important;
+        color: #fff !important;
+    }
+
     &__deck-line {
         display: flex;
         font-size: 0.8rem;

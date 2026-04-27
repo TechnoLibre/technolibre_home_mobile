@@ -73,12 +73,18 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             </t>
 
             <t t-foreach="state.decks" t-as="row" t-key="row.info.deckId">
-              <div class="options-streamdeck__deck">
+              <div class="options-streamdeck__deck options-streamdeck__deck--clickable"
+                   role="button"
+                   tabindex="0"
+                   t-on-click="() => this.toggleDeckParams(row.info.deckId)"
+                   t-on-keydown="(ev) => this.onDeckKey(ev, row.info.deckId)">
                 <div class="options-streamdeck__deck-line">
                   <strong t-esc="row.info.model" />
                   <span class="options-streamdeck__deck-serial">
                     serial: <code t-esc="row.info.deckId" />
                   </span>
+                  <span class="options-streamdeck__deck-caret"
+                        t-esc="state.expandedDeckId === row.info.deckId ? '▲' : '▼'" />
                 </div>
                 <div class="options-streamdeck__deck-line">
                   <span><t t-esc="row.info.rows" />×<t t-esc="row.info.cols" /> = <t t-esc="row.info.keyCount" /> touches</span>
@@ -104,6 +110,44 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                 <div class="options-streamdeck__deck-line">
                   <span>capacités: <t t-esc="row.info.capabilities.join(', ')" /></span>
                 </div>
+
+                <!-- Parameter panel — clicking the deck row toggles it.
+                     stop click propagation on inner controls so dragging
+                     the slider or hitting a preset doesn't collapse the
+                     panel back. -->
+                <t t-if="state.expandedDeckId === row.info.deckId">
+                  <div class="options-streamdeck__deck-params"
+                       t-on-click.stop=""
+                       t-on-keydown.stop="">
+                    <div class="options-streamdeck__deck-params-header">
+                      💡 Luminosité —
+                      <strong t-esc="state.brightness[row.info.deckId] !== undefined ? state.brightness[row.info.deckId] + '%' : '50% (par défaut)'" />
+                    </div>
+                    <div class="options-streamdeck__deck-params-row">
+                      <button class="options-streamdeck__refresh"
+                              t-on-click="() => this.bumpBrightness(row.info.deckId, -10)">
+                        −10
+                      </button>
+                      <input type="range" min="0" max="100" step="1"
+                             class="options-streamdeck__brightness-slider"
+                             t-att-value="state.brightness[row.info.deckId] ?? 50"
+                             t-on-input="(ev) => this.onBrightnessSlider(ev, row.info.deckId)" />
+                      <button class="options-streamdeck__refresh"
+                              t-on-click="() => this.bumpBrightness(row.info.deckId, 10)">
+                        +10
+                      </button>
+                    </div>
+                    <div class="options-streamdeck__deck-params-row">
+                      <t t-foreach="brightnessPresets" t-as="preset" t-key="preset">
+                        <button class="options-streamdeck__refresh"
+                                t-att-class="{ 'options-streamdeck__debug--on': (state.brightness[row.info.deckId] ?? 50) === preset }"
+                                t-on-click="() => this.applyBrightness(row.info.deckId, preset)">
+                          <t t-esc="preset" />%
+                        </button>
+                      </t>
+                    </div>
+                  </div>
+                </t>
               </div>
             </t>
 
@@ -178,7 +222,19 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         events: [] as EventLogEntry[],
         error: "",
         debugLogging: false,
+        // Which deck row's parameter panel is open (deckId, "" = none).
+        // Single-open at a time keeps the diagnostic panel scannable.
+        expandedDeckId: "",
+        // Per-deck brightness in percent. Stream Deck firmware doesn't
+        // expose a getBrightness, so we keep our own state and default
+        // to 50% (matches the firmware factory default).
+        brightness: {} as Record<string, number>,
     });
+
+    // Exposed to the template so the t-foreach over presets stays a
+    // simple identifier — Owl AOT precompile is happiest without
+    // array literals in attribute values.
+    brightnessPresets = [0, 25, 50, 75, 100];
 
     private _listeners: PluginListenerHandle[] = [];
 
@@ -284,6 +340,39 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         } catch (e) {
             this._log(`requestPermissionForUsb ERROR: ${e}`);
         }
+    }
+
+    toggleDeckParams(deckId: string): void {
+        this.state.expandedDeckId = this.state.expandedDeckId === deckId ? "" : deckId;
+    }
+
+    onDeckKey(ev: KeyboardEvent, deckId: string): void {
+        if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            this.toggleDeckParams(deckId);
+        }
+    }
+
+    async applyBrightness(deckId: string, percent: number): Promise<void> {
+        const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+        this.state.brightness[deckId] = clamped;
+        try {
+            await StreamDeckPlugin.setBrightness({ deckId, percent: clamped });
+            this._log(`setBrightness(${deckId}) → ${clamped}%`);
+        } catch (e) {
+            this._log(`setBrightness(${deckId}) ERROR: ${e}`);
+        }
+    }
+
+    bumpBrightness(deckId: string, delta: number): void {
+        const current = this.state.brightness[deckId] ?? 50;
+        this.applyBrightness(deckId, current + delta);
+    }
+
+    onBrightnessSlider(ev: Event, deckId: string): void {
+        const input = ev.target as HTMLInputElement;
+        const v = parseInt(input.value, 10);
+        if (!Number.isNaN(v)) this.applyBrightness(deckId, v);
     }
 
     async retryPermission(): Promise<void> {
