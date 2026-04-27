@@ -41,8 +41,9 @@ interface DeckCanvasCache {
  */
 export class StreamDeckCameraStreamer {
     private static readonly TICK_MS = 200; // 5 fps target — actual rate depends on encode + USB drain
-    private static readonly JPEG_QUALITY = 0.55;
+    private static readonly DEFAULT_JPEG_QUALITY = 0.8;
 
+    private quality = StreamDeckCameraStreamer.DEFAULT_JPEG_QUALITY;
     private active = false;
     private stream: MediaStream | null = null;
     private video: HTMLVideoElement | null = null;
@@ -58,6 +59,15 @@ export class StreamDeckCameraStreamer {
     constructor(private readonly controller: StreamDeckController) {}
 
     isActive(): boolean { return this.active; }
+
+    getQuality(): number { return this.quality; }
+
+    /** Clamp to a sane JPEG range. <0.1 produces unreadable blocks,
+     *  >0.95 explodes byte size for negligible visual gain. */
+    setQuality(q: number): void {
+        if (Number.isNaN(q)) return;
+        this.quality = Math.max(0.1, Math.min(1.0, q));
+    }
 
     onActiveChange(cb: ListenerLike): () => void {
         this.listenersOut.add(cb);
@@ -278,7 +288,7 @@ export class StreamDeckCameraStreamer {
                 // already. Strip the "data:image/jpeg;base64," prefix.
                 // ~5–10× faster than toBlob+arrayBuffer+btoa in Android
                 // WebView (no encoder-thread context switch, no Blob).
-                const dataUrl = tile.toDataURL(mime, StreamDeckCameraStreamer.JPEG_QUALITY);
+                const dataUrl = tile.toDataURL(mime, this.quality);
                 const comma = dataUrl.indexOf(",");
                 if (comma < 0) continue;
                 entries[count++] = {
