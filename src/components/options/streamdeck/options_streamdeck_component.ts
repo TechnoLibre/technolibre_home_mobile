@@ -50,6 +50,12 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                       t-on-click="() => this.scanAllUsb()">
                 🔍 Scanner USB
               </button>
+              <button class="options-streamdeck__refresh"
+                      t-att-class="{ 'options-streamdeck__debug--on': state.debugLogging }"
+                      t-on-click="() => this.toggleDebugLogging()">
+                <t t-if="state.debugLogging">🛑 Debug ON</t>
+                <t t-else="">🐞 Debug OFF</t>
+              </button>
             </div>
 
             <t t-if="state.error">
@@ -170,6 +176,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         allUsb: [] as UsbDeviceDiag[],
         events: [] as EventLogEntry[],
         error: "",
+        debugLogging: false,
     });
 
     private _listeners: PluginListenerHandle[] = [];
@@ -214,6 +221,17 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             const msg = e instanceof Error ? e.message : String(e);
             this.state.error = msg;
             this._log(`listDecks ERROR: ${msg}`);
+        }
+    }
+
+    async toggleDebugLogging(): Promise<void> {
+        const next = !this.state.debugLogging;
+        try {
+            const r = await StreamDeckPlugin.setDebugLogging({ enabled: next });
+            this.state.debugLogging = r.enabled;
+            this._log(`debug logging → ${r.enabled ? "ON" : "OFF"}`);
+        } catch (e) {
+            this._log(`setDebugLogging ERROR: ${e}`);
         }
     }
 
@@ -313,6 +331,11 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             await StreamDeckPlugin.addListener("neoTouched", (ev) => {
                 if (!ev.pressed) return;
                 this._log(`neoTouched: index=${ev.index}`);
+            }),
+        );
+        this._listeners.push(
+            await StreamDeckPlugin.addListener("rawInputReport", (ev) => {
+                this._log(`raw[${ev.len}]: ${ev.bytes}`);
             }),
         );
     }

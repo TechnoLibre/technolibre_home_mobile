@@ -51,6 +51,11 @@ public final class DeckSession {
     private Thread readerThread;
     private Thread writerThread;
     private volatile boolean running = false;
+    /** When true the reader thread emits a `rawInputReport` event for every
+     * successful bulkTransfer (stripped to first 32 bytes hex). Off by
+     * default — flips on via StreamDeckPlugin.setDebugLogging. */
+    private static volatile boolean debugLogging = false;
+    static void setDebugLogging(boolean v) { debugLogging = v; }
 
     public DeckSession(DeckSpec spec, UsbDevice device, EventEmitter emitter) {
         this.spec = spec;
@@ -226,6 +231,20 @@ public final class DeckSession {
                 Log.w(TAG, "reader bulkTransfer error " + got + " — closing session");
                 close("usb_lost");
                 return;
+            }
+            if (debugLogging) {
+                StringBuilder sb = new StringBuilder();
+                int dump = Math.min(got, 32);
+                for (int i = 0; i < dump; i++) {
+                    if (i > 0) sb.append(" ");
+                    sb.append(String.format("%02x", buf[i] & 0xFF));
+                }
+                if (got > dump) sb.append(" …");
+                JSObject ev = new JSObject();
+                ev.put("deckId", serial);
+                ev.put("len", got);
+                ev.put("bytes", sb.toString());
+                emitter.emit("rawInputReport", ev);
             }
             parseInputReport(buf, got);
         }
