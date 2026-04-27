@@ -4,6 +4,7 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 import {
     StreamDeckPlugin,
     DeckInfo,
+    UsbDeviceDiag,
 } from "../../../plugins/streamDeckPlugin";
 
 interface DeckRow {
@@ -44,6 +45,10 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                       t-att-disabled="state.decks.length === 0"
                       t-on-click="() => this.retryPermission()">
                 🔓 Demander permission
+              </button>
+              <button class="options-streamdeck__refresh"
+                      t-on-click="() => this.scanAllUsb()">
+                🔍 Scanner USB
               </button>
             </div>
 
@@ -95,6 +100,34 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
               </div>
             </t>
 
+            <t t-if="state.allUsb.length > 0">
+              <div class="options-streamdeck__log">
+                <div class="options-streamdeck__log-header">USB devices vus par Android (tous)</div>
+                <t t-foreach="state.allUsb" t-as="dev" t-key="dev.deviceName">
+                  <div class="options-streamdeck__deck">
+                    <div class="options-streamdeck__deck-line">
+                      <strong>
+                        <t t-if="dev.knownStreamDeck">✅</t>
+                        <t t-elif="dev.isElgato">⚠️ Elgato</t>
+                        <t t-else="">❓</t>
+                        <t t-esc="dev.productName || '(no product name)'" />
+                      </strong>
+                      <span><t t-esc="dev.manufacturerName" /></span>
+                    </div>
+                    <div class="options-streamdeck__deck-line">
+                      <span>vendor=<code t-esc="dev.vendorIdHex" /></span>
+                      <span>product=<code t-esc="dev.productIdHex" /></span>
+                    </div>
+                    <div class="options-streamdeck__deck-line">
+                      <span class="options-streamdeck__deck-serial" t-esc="dev.deviceName" />
+                      <span t-if="dev.hasPermission">[permission OK]</span>
+                      <span t-else="">[permission ?]</span>
+                    </div>
+                  </div>
+                </t>
+              </div>
+            </t>
+
             <div class="options-streamdeck__log">
               <div class="options-streamdeck__log-header">Journal d'événements</div>
               <t t-if="state.events.length === 0">
@@ -114,6 +147,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
     state = useState({
         expanded: false,
         decks: [] as DeckRow[],
+        allUsb: [] as UsbDeviceDiag[],
         events: [] as EventLogEntry[],
         error: "",
     });
@@ -151,6 +185,23 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             const msg = e instanceof Error ? e.message : String(e);
             this.state.error = msg;
             this._log(`listDecks ERROR: ${msg}`);
+        }
+    }
+
+    async scanAllUsb(): Promise<void> {
+        try {
+            const r = await StreamDeckPlugin.listAllUsbDevices();
+            this.state.allUsb = r.devices;
+            this._log(
+                `listAllUsbDevices → ${r.devices.length} device(s) ` +
+                `(${r.devices.filter((d) => d.isElgato).length} Elgato, ` +
+                `${r.devices.filter((d) => d.knownStreamDeck).length} known)`,
+            );
+            if (r.devices.length === 0) {
+                this._log("⚠️ aucun device USB — OTG inactif ou câble HS");
+            }
+        } catch (e) {
+            this._log(`listAllUsbDevices ERROR: ${e}`);
         }
     }
 

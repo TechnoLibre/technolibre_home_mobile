@@ -126,6 +126,52 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         call.resolve(r);
     }
 
+    /**
+     * Diagnostic: returns every USB device the phone currently sees,
+     * including non-Elgato ones. Lets the diagnostic UI distinguish:
+     *   - empty list             → USB OTG not working at all (cable / phone)
+     *   - Elgato vendor present  → registered, plugin will pick it up
+     *   - unknown vendor/product → device works, but our registry needs the PID
+     */
+    @PluginMethod
+    public void listAllUsbDevices(PluginCall call) {
+        JSArray arr = new JSArray();
+        Map<String, UsbDevice> all = usb.getDeviceList();
+        for (UsbDevice d : all.values()) {
+            JSObject o = new JSObject();
+            o.put("deviceName", d.getDeviceName());
+            o.put("vendorId", d.getVendorId());
+            o.put("productId", d.getProductId());
+            o.put("vendorIdHex", "0x" + Integer.toHexString(d.getVendorId()));
+            o.put("productIdHex", "0x" + Integer.toHexString(d.getProductId()));
+            o.put("productName", d.getProductName() != null ? d.getProductName() : "");
+            o.put("manufacturerName",
+                d.getManufacturerName() != null ? d.getManufacturerName() : "");
+            o.put("serial",
+                tryGetSerial(d));
+            o.put("isElgato", DeckRegistry.isElgato(d.getVendorId()));
+            o.put("knownStreamDeck", DeckRegistry.lookup(d.getProductId()) != null
+                && DeckRegistry.isElgato(d.getVendorId()));
+            o.put("hasPermission", usb.hasPermission(d));
+            arr.put(o);
+        }
+        JSObject r = new JSObject();
+        r.put("devices", arr);
+        call.resolve(r);
+    }
+
+    private String tryGetSerial(UsbDevice d) {
+        try {
+            // getSerialNumber requires permission on Android 10+; may return null
+            String s = d.getSerialNumber();
+            return s != null ? s : "";
+        } catch (SecurityException e) {
+            return "(no permission)";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     @PluginMethod
     public void getDeckInfo(PluginCall call) {
         DeckSession s = requireSession(call); if (s == null) return;
