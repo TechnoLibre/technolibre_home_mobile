@@ -89,13 +89,16 @@ export class NoteContentComponent extends EnhancedComponent {
 				const el = this.titleRef.el as HTMLTextAreaElement | null;
 				if (el && el.value.trim() === "") {
 					el.focus({ preventScroll: true });
+					// On Android WebView, .focus() alone places the textarea
+					// in focus state but the visible caret only appears after
+					// a real touch event. Dispatching a synthetic click +
+					// setSelectionRange(0, 0) gives us both: caret at
+					// position 0, ready for typing, no keyboard popped.
+					try {
+						el.click();
+						el.setSelectionRange(0, 0);
+					} catch { /* very old WebView: ignore */ }
 					this.didAutoFocus = true;
-					// On Android, programmatic .focus() does not pop the
-					// virtual keyboard. Invoke the Capacitor Keyboard plugin
-					// explicitly. Fail-soft on platforms where it's a no-op.
-					import("@capacitor/keyboard")
-						.then(({ Keyboard }) => Keyboard.show())
-						.catch(() => { /* web / iOS / older plugin: ignore */ });
 				}
 			});
 		});
