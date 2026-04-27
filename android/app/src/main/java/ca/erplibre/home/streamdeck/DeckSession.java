@@ -328,7 +328,13 @@ public final class DeckSession {
             close("usb_request_init_failed");
             return;
         }
-        ByteBuffer buf = ByteBuffer.allocate(64);
+        // The IN endpoint's max packet size is the only safe buffer size.
+        // Stream Deck XL/Plus send 512-byte reports — using 64 bytes
+        // returned EOVERFLOW (errno 75) on Pixel 6 / ThinkPhone kernels
+        // and silent truncation on Motorola. Match the device.
+        int bufSize = epIn != null ? epIn.getMaxPacketSize() : 64;
+        if (bufSize < 64) bufSize = 64;
+        ByteBuffer buf = ByteBuffer.allocate(bufSize);
         long lastDataAt = System.currentTimeMillis();
         long lastStarveLog = lastDataAt;
 
@@ -399,8 +405,12 @@ public final class DeckSession {
     private void readerLoopBulk() {
         // Sync read on the interrupt-IN endpoint. Shorter timeout (250 ms)
         // so the loop iterates often enough to react to running=false
-        // and to surface starvation breadcrumbs.
-        byte[] buf = new byte[64];
+        // and to surface starvation breadcrumbs. Buffer must match the
+        // endpoint's max packet (512 on XL/Plus) — undersized buffers
+        // return EOVERFLOW on stricter kernels (Pixel 6 / ThinkPhone).
+        int bufSize = epIn != null ? epIn.getMaxPacketSize() : 64;
+        if (bufSize < 64) bufSize = 64;
+        byte[] buf = new byte[bufSize];
         long lastDataAt = System.currentTimeMillis();
         long lastStarveLog = lastDataAt;
         while (running) {
@@ -564,7 +574,13 @@ public final class DeckSession {
             // sees the existing claim. Reads will still work.
         }
 
-        byte[] buf = new byte[64];
+        // Same buffer-size lesson as the other readers: undersized buffers
+        // return EOVERFLOW (errno 75) from USBDEVFS_BULK on Pixel 6 and
+        // ThinkPhone kernels because the deck's IN endpoint sends 512-
+        // byte reports. Use the endpoint's max packet size.
+        int bufSize = epIn != null ? epIn.getMaxPacketSize() : 64;
+        if (bufSize < 64) bufSize = 64;
+        byte[] buf = new byte[bufSize];
         long lastDataAt = System.currentTimeMillis();
         long lastStarveLog = lastDataAt;
         int epAddr = epIn != null ? epIn.getAddress() : 0x81;
