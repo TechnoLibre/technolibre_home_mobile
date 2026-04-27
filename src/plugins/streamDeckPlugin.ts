@@ -71,8 +71,24 @@ export interface ImageWriteResult {
     dropped?: boolean;
 }
 
+export interface UsbDeviceDiag {
+    deviceName: string;
+    vendorId: number;
+    productId: number;
+    vendorIdHex: string;
+    productIdHex: string;
+    productName: string;
+    manufacturerName: string;
+    serial: string;
+    isElgato: boolean;
+    knownStreamDeck: boolean;
+    hasPermission: boolean;
+}
+
 interface StreamDeckPluginApi {
     listDecks(): Promise<{ decks: DeckInfo[] }>;
+    /** Diagnostic: every USB device on the phone, regardless of vendor. */
+    listAllUsbDevices(): Promise<{ devices: UsbDeviceDiag[] }>;
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
     requestPermission(opts: { deckId: string }): Promise<{ granted: boolean }>;
     reset(opts: { deckId: string }): Promise<void>;
