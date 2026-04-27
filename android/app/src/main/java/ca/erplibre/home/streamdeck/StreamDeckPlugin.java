@@ -206,6 +206,21 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /**
+     * Toggle the per-session reader-thread raw input dump. When on, every
+     * successful interrupt-IN transfer emits a `rawInputReport` event with
+     * the first 32 bytes hex — used by the diagnostic UI to verify the
+     * deck is actually sending data when buttons are pressed.
+     */
+    @PluginMethod
+    public void setDebugLogging(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled"));
+        DeckSession.setDebugLogging(enabled);
+        JSObject r = new JSObject();
+        r.put("enabled", enabled);
+        call.resolve(r);
+    }
+
+    /**
      * Walk every USB device and re-run onDeckAttached for known Elgato
      * Stream Decks that already have permission but aren't open. Useful
      * when the diagnostic UI subscribes after the boot-time attach

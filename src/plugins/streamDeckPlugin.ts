@@ -108,6 +108,12 @@ interface StreamDeckPluginApi {
      * are otherwise lost).
      */
     retryAttach(): Promise<{ retried: number }>;
+    /**
+     * Toggle raw-input dump from the reader thread (one event per
+     * successful interrupt-IN transfer, including timeouts? no, only
+     * data-bearing reads).
+     */
+    setDebugLogging(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
     requestPermission(opts: { deckId: string }): Promise<{ granted: boolean }>;
     reset(opts: { deckId: string }): Promise<void>;
@@ -164,6 +170,10 @@ interface StreamDeckPluginApi {
     addListener(
         eventName: "neoTouched",
         listener: (ev: NeoTouchEvent) => void
+    ): Promise<PluginListenerHandle>;
+    addListener(
+        eventName: "rawInputReport",
+        listener: (ev: { deckId: string; len: number; bytes: string }) => void
     ): Promise<PluginListenerHandle>;
 }
 
