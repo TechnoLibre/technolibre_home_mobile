@@ -57,8 +57,8 @@ describe("RepoEditService", () => {
             run: vi.fn().mockResolvedValue(undefined),
             all: vi.fn().mockResolvedValue([]),
         };
-        const svc = new RepoEditService(extractor, "/repos/foo.tar.gz", db);
-        const sha = await svc.promoteToEditable("foo");
+        const svc = new RepoEditService(extractor, db);
+        const sha = await svc.promoteToEditable("foo", "/repos/foo.tar.gz");
 
         expect(extractor.ensureExtracted).toHaveBeenCalled();
         expect(mockGit.init).toHaveBeenCalledWith(expect.objectContaining({
@@ -81,7 +81,7 @@ describe("RepoEditService", () => {
                 .mockResolvedValueOnce([{ baseline_sha: "old-sha" }]), // baseline lookup
         };
         const extractor = { ensureExtracted: vi.fn() } as unknown as RepoExtractorService;
-        const svc = new RepoEditService(extractor, "/repos/foo.tar.gz", db);
+        const svc = new RepoEditService(extractor, db);
         const sha = await svc.promoteToEditable("foo");
         expect(sha).toBe("old-sha");
         expect(extractor.ensureExtracted).not.toHaveBeenCalled();
@@ -95,7 +95,7 @@ describe("RepoEditService", () => {
         };
         mockFs.rmdir.mockResolvedValue(undefined);
         const extractor = { ensureExtracted: vi.fn() } as unknown as RepoExtractorService;
-        const svc = new RepoEditService(extractor, "/repos/foo.tar.gz", db);
+        const svc = new RepoEditService(extractor, db);
         await svc.unpromote("foo");
         expect(mockFs.rmdir).toHaveBeenCalledWith(expect.objectContaining({
             path: "repos/foo",

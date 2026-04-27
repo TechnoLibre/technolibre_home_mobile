@@ -329,13 +329,15 @@ export class DatabaseService {
   }
 
   /** Direct query access for migrations. Returns raw row objects. */
-  async rawQuery(sql: string): Promise<any[]> {
-    const result = await this.db.query(sql);
+  async rawQuery(sql: string, values?: any[]): Promise<any[]> {
+    const result = values
+      ? await this.db.query(sql, values)
+      : await this.db.query(sql);
     return result.values ?? [];
   }
 
   /** Direct write access for migrations. */
-  async rawRun(sql: string, values: any[]): Promise<void> {
+  async rawRun(sql: string, values: any[] = []): Promise<void> {
     await this.db.run(sql, values);
   }
 

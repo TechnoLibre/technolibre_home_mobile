@@ -3,6 +3,8 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { HeadingComponent } from "../../heading/heading_component";
 import { CodeService, DirEntry, GitBranch, GitCommit } from "../../../services/codeService";
 import { BundleCodeService } from "../../../services/bundleCodeService";
+import { RepoFs, getRepoFs } from "../../../services/repoFsFactory";
+import { ManifestProject as ManifestProjectModel } from "../../../models/manifestProject";
 import {
     detectFileLang, imageMime, supportsHighlight, highlightLine, FileLang,
 } from "./syntax_highlight";
@@ -15,13 +17,7 @@ type Phase = "setup" | "browser";
 type BrowserTab = "files" | "git";
 type FileViewMode = "code" | "markdown" | "image";
 
-interface ManifestProject {
-    url: string;
-    name: string;
-    path: string;
-    slug: string;
-    revision: string;
-}
+type ManifestProject = ManifestProjectModel;
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
 
@@ -475,6 +471,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
     private _codeService: CodeService | null = null;
     private _bundleService: BundleCodeService | null = null;
+    private _repoFs: RepoFs | null = null;
 
     // ── Reader interface ──────────────────────────────────────────────────────
 
@@ -482,8 +479,9 @@ export class OptionsCodeComponent extends EnhancedComponent {
         listDir(p: string): Promise<DirEntry[]>;
         readFile(p: string): Promise<string>;
     } {
-        if (this.state.mode !== "ssh-path") return this._bundleService!;
-        return this._codeService!;
+        if (this.state.mode === "ssh-path") return this._codeService!;
+        if (this._repoFs) return this._repoFs;
+        return this._bundleService!;
     }
 
     get canGoUp(): boolean {
@@ -613,8 +611,11 @@ export class OptionsCodeComponent extends EnhancedComponent {
                 "URL non trouvée dans le bundle. Recompilez l'application ou choisissez un dépôt de la liste.",
             );
         }
-        this._bundleService = new BundleCodeService(`/repos/${project.slug}`);
-        await this._bundleService.initialize();
+        this._repoFs = await getRepoFs(
+            project,
+            this.env.repoExtractorService,
+            this.env.repoEditService,
+        );
         this.state.serverLabel = project.name;
         this.state.currentBranch = project.revision;
         await this._loadDir("");
@@ -646,6 +647,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
         await this._codeService?.disconnect();
         this._codeService = null;
         this._bundleService = null;
+        this._repoFs = null;
         this.state.phase = "setup";
         this.state.error = "";
         this.state.currentFilePath = "";

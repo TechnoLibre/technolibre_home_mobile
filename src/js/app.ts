@@ -28,6 +28,8 @@ import { addTagsTable } from "../services/migrations/addTagsTable";
 import { addNtfyTokenColumn } from "../services/migrations/addNtfyTokenColumn";
 import { encryptExistingCredentials } from "../services/migrations/encryptExistingCredentials";
 import { addEditableReposTable } from "../services/migrations/addEditableReposTable";
+import { RepoExtractorService } from "../services/repoExtractorService";
+import { RepoEditService } from "../services/repoEditService";
 import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
@@ -214,6 +216,12 @@ async function startApp() {
 	const processService = new ProcessService(db);
 	await processService.initialize();
 	const transcriptionService = new TranscriptionService(db, processService);
+	const repoExtractorService = new RepoExtractorService();
+	const repoEditService = new RepoEditService(repoExtractorService, {
+		run: (sql: string, params?: unknown[]) => db.rawRun(sql, (params ?? []) as any[]),
+		all: <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
+			db.rawQuery(sql, params as any[] | undefined) as Promise<T[]>,
+	});
 	notificationService.start();
 
 	// Re-schedule any reminders whose notification batch is expiring
@@ -221,7 +229,7 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService };
+	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService, repoExtractorService, repoEditService };
 
 	setBootStep("Montage de l'interface…");
 	await mount(RootComponent, document.body, { env });
