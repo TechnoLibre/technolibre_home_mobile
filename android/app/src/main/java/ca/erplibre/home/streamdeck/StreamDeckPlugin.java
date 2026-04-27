@@ -342,12 +342,30 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /**
-     * Switch the reader thread strategy. Default UsbRequest async; on
-     * kernels where that path silently shadow-consumes IN reports, the
-     * bulkTransfer sync path may deliver instead. Takes effect on the
-     * next session open — caller should follow up with restartSessions
-     * (or unplug/replug) to apply now.
+     * Switch the reader thread strategy. "userequest" / "bulk" both
+     * use the interrupt-IN endpoint; "polled" uses GET_REPORT on the
+     * control endpoint as a last-resort path for kernels that shadow-
+     * consume the interrupt path entirely. Takes effect on next
+     * session open — caller should follow with restartSessions.
      */
+    @PluginMethod
+    public void setReaderMode(PluginCall call) {
+        String mode = call.getString("mode");
+        if (mode == null) { call.reject("missing:mode"); return; }
+        DeckSession.setReaderMode(mode);
+        JSObject r = new JSObject();
+        r.put("mode", DeckSession.getReaderMode());
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void getReaderMode(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("mode", DeckSession.getReaderMode());
+        call.resolve(r);
+    }
+
+    // Back-compat with older JS bridges still expecting the boolean form.
     @PluginMethod
     public void setReaderUseBulk(PluginCall call) {
         boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled"));

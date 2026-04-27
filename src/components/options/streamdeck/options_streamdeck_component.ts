@@ -58,10 +58,9 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                 <t t-else="">🐞 Debug OFF</t>
               </button>
               <button class="options-streamdeck__refresh"
-                      t-att-class="{ 'options-streamdeck__debug--on': state.readerUseBulk }"
-                      t-on-click="() => this.toggleReaderMode()">
-                <t t-if="state.readerUseBulk">📥 Mode: bulk</t>
-                <t t-else="">📥 Mode: UsbRequest</t>
+                      t-att-class="{ 'options-streamdeck__debug--on': state.readerMode !== 'userequest' }"
+                      t-on-click="() => this.cycleReaderMode()">
+                📥 Mode: <t t-esc="state.readerMode" />
               </button>
               <button class="options-streamdeck__refresh"
                       t-on-click="() => this.restartSessions()">
@@ -316,7 +315,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         events: [] as EventLogEntry[],
         error: "",
         debugLogging: false,
-        readerUseBulk: false,
+        readerMode: "userequest" as "userequest" | "bulk" | "polled",
         // Which deck row's parameter panel is open (deckId, "" = none).
         // Single-open at a time keeps the diagnostic panel scannable.
         expandedDeckId: "",
@@ -364,8 +363,8 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             await this.refresh();
             await this._wireListeners();
             try {
-                const r = await StreamDeckPlugin.getReaderUseBulk();
-                this.state.readerUseBulk = r.enabled;
+                const r = await StreamDeckPlugin.getReaderMode();
+                this.state.readerMode = r.mode;
             } catch { /* ignore */ }
         });
         onWillUnmount(async () => {
@@ -421,14 +420,18 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         }
     }
 
-    async toggleReaderMode(): Promise<void> {
-        const next = !this.state.readerUseBulk;
+    async cycleReaderMode(): Promise<void> {
+        // userequest → bulk → polled → userequest
+        const cycle: ("userequest" | "bulk" | "polled")[] =
+            ["userequest", "bulk", "polled"];
+        const idx = cycle.indexOf(this.state.readerMode);
+        const next = cycle[(idx + 1) % cycle.length];
         try {
-            const r = await StreamDeckPlugin.setReaderUseBulk({ enabled: next });
-            this.state.readerUseBulk = r.enabled;
-            this._log(`reader mode → ${r.enabled ? "bulkTransfer" : "UsbRequest"} (restart sessions to apply)`);
+            const r = await StreamDeckPlugin.setReaderMode({ mode: next });
+            this.state.readerMode = r.mode;
+            this._log(`reader mode → ${r.mode} (restart sessions to apply)`);
         } catch (e) {
-            this._log(`setReaderUseBulk ERROR: ${e}`);
+            this._log(`setReaderMode ERROR: ${e}`);
         }
     }
 

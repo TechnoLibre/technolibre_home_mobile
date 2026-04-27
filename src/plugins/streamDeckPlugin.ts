@@ -114,10 +114,19 @@ interface StreamDeckPluginApi {
      * data-bearing reads).
      */
     setDebugLogging(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
-    /** Switch reader strategy. UsbRequest async (default) vs bulkTransfer
-     *  sync. Takes effect on next session open — call restartSessions
-     *  to apply without unplugging. */
+    /** Switch reader strategy. Three options:
+     *   - "userequest": UsbRequest async on interrupt-IN (default)
+     *   - "bulk":       bulkTransfer sync on interrupt-IN
+     *   - "polled":     HID GET_REPORT on EP0 (~30 Hz polling)
+     *  Takes effect on next session open — call restartSessions to
+     *  apply without unplugging. */
+    setReaderMode(opts: { mode: "userequest" | "bulk" | "polled" }):
+        Promise<{ mode: "userequest" | "bulk" | "polled" }>;
+    getReaderMode():
+        Promise<{ mode: "userequest" | "bulk" | "polled" }>;
+    /** @deprecated — use setReaderMode. */
     setReaderUseBulk(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
+    /** @deprecated — use getReaderMode. */
     getReaderUseBulk(): Promise<{ enabled: boolean }>;
     /** Close every open session and re-attach. Used to pick up a
      *  reader-mode change without an unplug. */
