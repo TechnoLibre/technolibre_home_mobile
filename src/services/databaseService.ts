@@ -790,6 +790,22 @@ export class DatabaseService {
     `);
   }
 
+  async createEditableReposTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS editable_repos (
+        slug          TEXT PRIMARY KEY,
+        baseline_sha  TEXT NOT NULL,
+        build_id      TEXT NOT NULL,
+        promoted_at   INTEGER NOT NULL,
+        head_sha      TEXT
+      )
+    `);
+    await this.db.execute(`
+      CREATE INDEX IF NOT EXISTS idx_editable_repos_promoted_at
+        ON editable_repos(promoted_at)
+    `);
+  }
+
   async addResultColumnToProcesses(): Promise<void> {
     const existing = await this.db.query("PRAGMA table_info(processes)");
     const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
