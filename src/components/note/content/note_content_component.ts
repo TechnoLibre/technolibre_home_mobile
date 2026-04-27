@@ -1,4 +1,4 @@
-import { onMounted, onPatched, onWillStart, useState, useRef, xml } from "@odoo/owl";
+import { onMounted, onPatched, onWillStart, onWillUnmount, useState, useRef, xml } from "@odoo/owl";
 
 import { Sortable } from "sortablejs";
 
@@ -35,8 +35,9 @@ export class NoteContentComponent extends EnhancedComponent {
 					type="text"
 					t-ref="note-title"
 					id="note__title"
-					placeholder="Titre"
-					aria-label="Titre de la note"
+					t-att-class="{ 'note__title--awaiting-input': !(props.note.title and props.note.title.trim()) }"
+					placeholder="Sujet de la note"
+					aria-label="Sujet de la note"
 					t-model="props.note.title"
 					t-on-keydown="onTitleKeydown"
 				/>
@@ -82,38 +83,72 @@ export class NoteContentComponent extends EnhancedComponent {
 		onWillStart(() => this.getTags());
 		onMounted(this.onMounted.bind(this));
 
-		// Try to land the caret in the empty title several times — Android
-		// WebView occasionally needs the focus to happen after layout
-		// stabilizes (route transition, sibling components mounting…).
-		const tryFocusTitle = (): boolean => {
-			if (this.didAutoFocus) return true;
-			const el = this.titleRef.el as HTMLTextAreaElement | null;
-			if (!el || el.value.trim() !== "") return false;
-			// Set selection BEFORE focus — some WebViews ignore
-			// setSelectionRange when called during the focus event itself.
-			try { el.setSelectionRange(0, 0); } catch { /* ignore */ }
-			el.focus({ preventScroll: true });
-			try {
-				// Synthetic mousedown+mouseup so the WebView treats this
-				// the same as a real tap and shows the caret.
-				const opts = { bubbles: true, cancelable: true };
-				el.dispatchEvent(new MouseEvent("mousedown", opts));
-				el.dispatchEvent(new MouseEvent("mouseup", opts));
-				el.dispatchEvent(new MouseEvent("click", opts));
-			} catch { /* ignore */ }
-			try { el.setSelectionRange(0, 0); } catch { /* ignore */ }
-			this.didAutoFocus = true;
-			return true;
+		// Persistent focus loop. Android WebView frequently refuses to
+		// render the caret on a programmatic focus (gesture trust). The
+		// reliable path is to keep re-focusing every animation frame
+		// until either:
+		//   - document.activeElement === titleRef.el (focus took), AND
+		//   - the user actually starts typing (value becomes non-empty)
+		// or
+		//   - we hit the hard timeout (3 s) — give up so we don't
+		//     monopolize focus forever.
+		//
+		// As a UX backup, the .note__title--awaiting-input CSS class
+		// pulses a colored border on the empty title so the user can
+		// see WHERE to tap even when the system caret stays invisible.
+		let focusInterval: ReturnType<typeof setInterval> | null = null;
+		let focusStartedAt = 0;
+		const stopFocusLoop = () => {
+			if (focusInterval !== null) {
+				clearInterval(focusInterval);
+				focusInterval = null;
+			}
+		};
+		const startFocusLoop = () => {
+			stopFocusLoop();
+			focusStartedAt = Date.now();
+			focusInterval = setInterval(() => {
+				const el = this.titleRef.el as HTMLTextAreaElement | null;
+				if (!el) return;
+				const val = (el.value || "").trim();
+				if (val !== "") {
+					stopFocusLoop();
+					return;
+				}
+				if (Date.now() - focusStartedAt > 3000) {
+					stopFocusLoop();
+					return;
+				}
+				if (document.activeElement === el) {
+					// Focus state is on us already — let it ride.
+					return;
+				}
+				try { el.setSelectionRange(0, 0); } catch {}
+				el.focus({ preventScroll: true });
+				try {
+					const opts = { bubbles: true, cancelable: true };
+					el.dispatchEvent(new MouseEvent("mousedown", opts));
+					el.dispatchEvent(new MouseEvent("mouseup", opts));
+					el.dispatchEvent(new MouseEvent("click", opts));
+				} catch {}
+				try { el.setSelectionRange(0, 0); } catch {}
+			}, 120);
 		};
 
-		onPatched(() => {
-			if (this.didAutoFocus) return;
-			// Three attempts: rAF (right after current frame), 80 ms
-			// (typical layout-settle), and 400 ms (route-transition slack).
-			requestAnimationFrame(() => tryFocusTitle());
-			setTimeout(tryFocusTitle, 80);
-			setTimeout(tryFocusTitle, 400);
+		onMounted(() => {
+			if (!this.props.note?.title || !this.props.note.title.trim()) {
+				startFocusLoop();
+			}
 		});
+		onPatched(() => {
+			if (focusInterval !== null) return;
+			if (!this.didAutoFocus
+				&& (!this.props.note?.title || !this.props.note.title.trim())) {
+				this.didAutoFocus = true;
+				startFocusLoop();
+			}
+		});
+		onWillUnmount(() => stopFocusLoop());
 	}
 
 	private onTitleKeydown(ev: KeyboardEvent) {
