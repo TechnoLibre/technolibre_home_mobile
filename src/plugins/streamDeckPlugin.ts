@@ -114,6 +114,14 @@ interface StreamDeckPluginApi {
      * data-bearing reads).
      */
     setDebugLogging(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
+    /** Switch reader strategy. UsbRequest async (default) vs bulkTransfer
+     *  sync. Takes effect on next session open — call restartSessions
+     *  to apply without unplugging. */
+    setReaderUseBulk(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
+    getReaderUseBulk(): Promise<{ enabled: boolean }>;
+    /** Close every open session and re-attach. Used to pick up a
+     *  reader-mode change without an unplug. */
+    restartSessions(): Promise<{ restarted: number }>;
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
     requestPermission(opts: { deckId: string }): Promise<{ granted: boolean }>;
     reset(opts: { deckId: string }): Promise<void>;

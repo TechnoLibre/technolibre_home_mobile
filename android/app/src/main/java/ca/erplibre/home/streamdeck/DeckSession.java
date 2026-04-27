@@ -60,6 +60,17 @@ public final class DeckSession {
     private static volatile boolean debugLogging = false;
     static void setDebugLogging(boolean v) { debugLogging = v; }
 
+    /** Reader strategy. Some Android kernels shadow-consume one of the
+     * two read paths but not the other:
+     *   - UsbRequest async (default) — survives most stock kernels
+     *   - bulkTransfer (sync interrupt read) — works on phones where
+     *     UsbRequest never yields data
+     * Toggled at runtime via setReaderUseBulk; takes effect on the
+     * next session open (unplug/replug or restart-decks). */
+    private static volatile boolean readerUseBulk = false;
+    static void setReaderUseBulk(boolean v) { readerUseBulk = v; }
+    static boolean getReaderUseBulk() { return readerUseBulk; }
+
     public DeckSession(DeckSpec spec, UsbDevice device, EventEmitter emitter) {
         this.spec = spec;
         this.device = device;
@@ -85,15 +96,26 @@ public final class DeckSession {
     public synchronized void open(UsbManager usb) throws DeckOpenException {
         if (running) return;
 
+        Log.i(TAG, "open: device=" + device.getDeviceName()
+            + " interfaces=" + device.getInterfaceCount());
+
         // Find the HID interface.
         UsbInterface chosenIface = null;
         UsbEndpoint chosenIn = null, chosenOut = null;
         for (int i = 0; i < device.getInterfaceCount(); i++) {
             UsbInterface itf = device.getInterface(i);
+            Log.i(TAG, "  iface[" + i + "] class=" + itf.getInterfaceClass()
+                + " sub=" + itf.getInterfaceSubclass()
+                + " proto=" + itf.getInterfaceProtocol()
+                + " endpoints=" + itf.getEndpointCount());
             if (itf.getInterfaceClass() != UsbConstants.USB_CLASS_HID) continue;
             UsbEndpoint epi = null, epo = null;
             for (int e = 0; e < itf.getEndpointCount(); e++) {
                 UsbEndpoint ep = itf.getEndpoint(e);
+                Log.i(TAG, "    ep[" + e + "] addr=0x" + Integer.toHexString(ep.getAddress())
+                    + " type=" + ep.getType()
+                    + " dir=" + (ep.getDirection() == UsbConstants.USB_DIR_IN ? "IN" : "OUT")
+                    + " maxPkt=" + ep.getMaxPacketSize());
                 if (ep.getDirection() == UsbConstants.USB_DIR_IN)  epi = ep;
                 if (ep.getDirection() == UsbConstants.USB_DIR_OUT) epo = ep;
             }
@@ -105,13 +127,35 @@ public final class DeckSession {
 
         connection = usb.openDevice(device);
         if (connection == null) throw new DeckOpenException("open_failed");
-        if (!connection.claimInterface(chosenIface, /*forceClaim=*/true)) {
+        boolean claimed = connection.claimInterface(chosenIface, /*forceClaim=*/true);
+        Log.i(TAG, "claimInterface(force=true) → " + claimed);
+        if (!claimed) {
             connection.close();
             throw new DeckOpenException("interface_busy");
         }
         this.iface = chosenIface;
         this.epIn  = chosenIn;
         this.epOut = chosenOut;
+        Log.i(TAG, "selected epIn=0x" + Integer.toHexString(epIn.getAddress())
+            + " epOut=0x" + Integer.toHexString(epOut.getAddress())
+            + " readerUseBulk=" + readerUseBulk);
+
+        // HID class SET_IDLE 0 — tells the device to send reports only on
+        // change, no idle re-transmission. On some Android kernels the
+        // built-in HID driver auto-polls the IN endpoint and shadow-
+        // consumes our reads; SET_IDLE 0 makes the device stop honouring
+        // those polls so our reader gets the actual key-state reports.
+        // Best-effort: a stall here is informational, not fatal.
+        try {
+            int sent = connection.controlTransfer(
+                /*reqType=*/0x21, /*req=*/0x0A,
+                /*value=*/0x0000, /*index=*/chosenIface.getId(),
+                /*data=*/null, /*len=*/0,
+                /*timeout=*/1000);
+            Log.i(TAG, "SET_IDLE 0 → " + sent);
+        } catch (Throwable t) {
+            Log.w(TAG, "SET_IDLE failed (non-fatal): " + t.getMessage());
+        }
 
         try {
             this.serial   = readSerial();
@@ -222,13 +266,17 @@ public final class DeckSession {
     }
 
     private void readerLoop() {
-        // Use the async UsbRequest path instead of bulkTransfer for the
-        // interrupt-IN endpoint: on Android, bulkTransfer reads can be
-        // shadow-consumed by the kernel HID driver — the deck appears
-        // healthy (writes succeed, key images render) but the IN
-        // endpoint never yields a single byte. UsbRequest goes through
-        // a different code path that bypasses the kernel driver's
-        // interrupt-poll, so our reads actually receive the reports.
+        // Reader path is selectable per-session via the static
+        // readerUseBulk flag. UsbRequest works on most kernels because
+        // it bypasses the kernel HID driver's interrupt-poll. On
+        // kernels where THAT path is the shadowed one, the bulkTransfer
+        // (sync interrupt read) path picks up the slack. The user
+        // toggles this from the diagnostic panel and unplugs/replugs.
+        if (readerUseBulk) readerLoopBulk();
+        else               readerLoopUsbRequest();
+    }
+
+    private void readerLoopUsbRequest() {
         UsbRequest req = new UsbRequest();
         if (!req.initialize(connection, epIn)) {
             Log.w(TAG, "UsbRequest.initialize failed for reader");
@@ -236,6 +284,8 @@ public final class DeckSession {
             return;
         }
         ByteBuffer buf = ByteBuffer.allocate(64);
+        long lastDataAt = System.currentTimeMillis();
+        long lastStarveLog = lastDataAt;
 
         try {
             while (running) {
@@ -248,7 +298,7 @@ public final class DeckSession {
                 }
                 UsbRequest finished;
                 try {
-                    finished = connection.requestWait();
+                    finished = connection.requestWait(5000);
                 } catch (Throwable t) {
                     if (!running) return;
                     Log.w(TAG, "requestWait threw — closing", t);
@@ -256,37 +306,100 @@ public final class DeckSession {
                     return;
                 }
                 if (!running) break;
+                long now = System.currentTimeMillis();
                 if (finished == null) {
-                    Log.w(TAG, "requestWait returned null — connection lost");
-                    close("usb_lost");
-                    return;
+                    // Timeout — emit a starvation breadcrumb every 5 s
+                    // so the user sees that the reader is alive but
+                    // the IN endpoint is yielding nothing. Strong
+                    // signal that switching to bulkTransfer mode might
+                    // help (or vice versa).
+                    if (now - lastStarveLog >= 5000) {
+                        Log.w(TAG, "reader (UsbRequest) starving — "
+                            + (now - lastDataAt) + " ms since last data");
+                        lastStarveLog = now;
+                        if (debugLogging) {
+                            JSObject ev = new JSObject();
+                            ev.put("deckId", serial);
+                            ev.put("len", 0);
+                            ev.put("bytes", "(starving UsbRequest "
+                                + (now - lastDataAt) + "ms)");
+                            emitter.emit("rawInputReport", ev);
+                        }
+                    }
+                    continue;
                 }
                 int got = buf.position();
                 if (got <= 0) continue;
+                lastDataAt = now;
 
                 byte[] data = new byte[got];
                 buf.position(0);
                 buf.get(data, 0, got);
 
-                if (debugLogging) {
-                    StringBuilder sb = new StringBuilder();
-                    int dump = Math.min(got, 32);
-                    for (int i = 0; i < dump; i++) {
-                        if (i > 0) sb.append(" ");
-                        sb.append(String.format("%02x", data[i] & 0xFF));
-                    }
-                    if (got > dump) sb.append(" …");
-                    JSObject ev = new JSObject();
-                    ev.put("deckId", serial);
-                    ev.put("len", got);
-                    ev.put("bytes", sb.toString());
-                    emitter.emit("rawInputReport", ev);
-                }
+                if (debugLogging) emitRaw(data, got);
                 parseInputReport(data, got);
             }
         } finally {
             try { req.close(); } catch (Throwable ignored) {}
         }
+    }
+
+    private void readerLoopBulk() {
+        // Sync read on the interrupt-IN endpoint. Shorter timeout (250 ms)
+        // so the loop iterates often enough to react to running=false
+        // and to surface starvation breadcrumbs.
+        byte[] buf = new byte[64];
+        long lastDataAt = System.currentTimeMillis();
+        long lastStarveLog = lastDataAt;
+        while (running) {
+            int got;
+            try {
+                got = connection.bulkTransfer(epIn, buf, buf.length, 250);
+            } catch (Throwable t) {
+                if (!running) return;
+                Log.w(TAG, "bulkTransfer threw — closing", t);
+                close("bulk_read_threw:" + t.getClass().getSimpleName());
+                return;
+            }
+            if (!running) break;
+            long now = System.currentTimeMillis();
+            if (got <= 0) {
+                if (now - lastStarveLog >= 5000) {
+                    Log.w(TAG, "reader (bulk) starving — "
+                        + (now - lastDataAt) + " ms since last data");
+                    lastStarveLog = now;
+                    if (debugLogging) {
+                        JSObject ev = new JSObject();
+                        ev.put("deckId", serial);
+                        ev.put("len", 0);
+                        ev.put("bytes", "(starving bulk "
+                            + (now - lastDataAt) + "ms)");
+                        emitter.emit("rawInputReport", ev);
+                    }
+                }
+                continue;
+            }
+            lastDataAt = now;
+            byte[] data = new byte[got];
+            System.arraycopy(buf, 0, data, 0, got);
+            if (debugLogging) emitRaw(data, got);
+            parseInputReport(data, got);
+        }
+    }
+
+    private void emitRaw(byte[] data, int got) {
+        StringBuilder sb = new StringBuilder();
+        int dump = Math.min(got, 32);
+        for (int i = 0; i < dump; i++) {
+            if (i > 0) sb.append(" ");
+            sb.append(String.format("%02x", data[i] & 0xFF));
+        }
+        if (got > dump) sb.append(" …");
+        JSObject ev = new JSObject();
+        ev.put("deckId", serial);
+        ev.put("len", got);
+        ev.put("bytes", sb.toString());
+        emitter.emit("rawInputReport", ev);
     }
 
     /**

@@ -254,6 +254,54 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /**
+     * Switch the reader thread strategy. Default UsbRequest async; on
+     * kernels where that path silently shadow-consumes IN reports, the
+     * bulkTransfer sync path may deliver instead. Takes effect on the
+     * next session open — caller should follow up with restartSessions
+     * (or unplug/replug) to apply now.
+     */
+    @PluginMethod
+    public void setReaderUseBulk(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled"));
+        DeckSession.setReaderUseBulk(enabled);
+        JSObject r = new JSObject();
+        r.put("enabled", enabled);
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void getReaderUseBulk(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("enabled", DeckSession.getReaderUseBulk());
+        call.resolve(r);
+    }
+
+    /**
+     * Close every open session and re-attach. Lets the user apply
+     * setReaderUseBulk without unplugging the deck.
+     */
+    @PluginMethod
+    public void restartSessions(PluginCall call) {
+        int closed = 0;
+        java.util.List<UsbDevice> toReattach = new java.util.ArrayList<>();
+        synchronized (sessionsByDevice) {
+            for (DeckSession s : sessionsByDevice.values()) {
+                toReattach.add(s.device());
+                s.close("restart_requested");
+                closed++;
+            }
+            sessionsByDevice.clear();
+            sessionsBySerial.clear();
+        }
+        for (UsbDevice d : toReattach) {
+            if (DeckRegistry.isElgato(d.getVendorId())) onDeckAttached(d);
+        }
+        JSObject r = new JSObject();
+        r.put("restarted", closed);
+        call.resolve(r);
+    }
+
+    /**
      * Walk every USB device and re-run onDeckAttached for known Elgato
      * Stream Decks that already have permission but aren't open. Useful
      * when the diagnostic UI subscribes after the boot-time attach
