@@ -315,7 +315,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         events: [] as EventLogEntry[],
         error: "",
         debugLogging: false,
-        readerMode: "userequest" as "userequest" | "bulk" | "polled" | "native",
+        readerMode: "userequest" as "userequest" | "bulk" | "polled",
         // Which deck row's parameter panel is open (deckId, "" = none).
         // Single-open at a time keeps the diagnostic panel scannable.
         expandedDeckId: "",
@@ -421,9 +421,9 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
     }
 
     async cycleReaderMode(): Promise<void> {
-        // userequest → bulk → polled → native → userequest
-        const cycle: ("userequest" | "bulk" | "polled" | "native")[] =
-            ["userequest", "bulk", "polled", "native"];
+        // userequest → bulk → polled → userequest
+        const cycle: ("userequest" | "bulk" | "polled")[] =
+            ["userequest", "bulk", "polled"];
         const idx = cycle.indexOf(this.state.readerMode);
         const next = cycle[(idx + 1) % cycle.length];
         try {

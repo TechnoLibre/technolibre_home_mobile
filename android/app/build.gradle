@@ -26,14 +26,12 @@ android {
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "boolean", "SKIP_WHISPER", "${skipWhisper}"
-        // CMake is always configured because native_usb (USBDEVFS ioctls
-        // for the Stream Deck reader fallback) is small and always built.
-        // Whisper is opt-out at the CMake layer via BUILD_WHISPER=OFF.
-        externalNativeBuild {
-            cmake {
-                cppFlags "-std=c++17"
-                arguments "-DANDROID_STL=c++_shared",
-                          "-DBUILD_WHISPER=${skipWhisper ? 'OFF' : 'ON'}"
+        if (!skipWhisper) {
+            externalNativeBuild {
+                cmake {
+                    cppFlags "-std=c++17"
+                    arguments "-DANDROID_STL=c++_shared"
+                }
             }
         }
         if (!allAbis) {
@@ -54,10 +52,12 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
-    externalNativeBuild {
-        cmake {
-            path "src/main/cpp/CMakeLists.txt"
-            version "3.22.1"
+    if (!skipWhisper) {
+        externalNativeBuild {
+            cmake {
+                path "src/main/cpp/CMakeLists.txt"
+                version "3.22.1"
+            }
         }
     }
 }

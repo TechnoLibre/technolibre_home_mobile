@@ -83,16 +83,11 @@ public final class DeckSession {
     static final String READER_MODE_USEREQUEST = "userequest";
     static final String READER_MODE_BULK       = "bulk";
     static final String READER_MODE_POLLED     = "polled";
-    /** Native USBDEVFS path — uses ioctl(USBDEVFS_DISCONNECT) to detach
-     *  the in-kernel HID driver before claiming. Last-resort fallback
-     *  for kernels that silently shadow Java's claim path. */
-    static final String READER_MODE_NATIVE     = "native";
     private static volatile String readerMode = READER_MODE_USEREQUEST;
     static void setReaderMode(String v) {
         if (READER_MODE_USEREQUEST.equals(v)
             || READER_MODE_BULK.equals(v)
-            || READER_MODE_POLLED.equals(v)
-            || READER_MODE_NATIVE.equals(v)) {
+            || READER_MODE_POLLED.equals(v)) {
             readerMode = v;
         }
     }
@@ -309,14 +304,10 @@ public final class DeckSession {
         // readerMode flag. UsbRequest async works on most kernels; on
         // kernels where THAT is shadowed, bulk picks up the slack; on
         // kernels where BOTH interrupt-IN paths are dead, polled
-        // GET_REPORT on the control endpoint sometimes works. On
-        // kernels where every Java path is dead the native USBDEVFS
-        // mode bypasses claimInterface() entirely and detaches the
-        // in-kernel HID driver via USBDEVFS_DISCONNECT first.
+        // GET_REPORT on the control endpoint sometimes works.
         switch (readerMode) {
             case READER_MODE_BULK:   readerLoopBulk();       break;
             case READER_MODE_POLLED: readerLoopPolled();     break;
-            case READER_MODE_NATIVE: readerLoopNative();     break;
             default:                 readerLoopUsbRequest();
         }
     }
@@ -546,86 +537,6 @@ public final class DeckSession {
      * we fall through to the UsbRequest path so the session still
      * works with output-only.
      */
-    private void readerLoopNative() {
-        if (!NativeUsb.isLoaded()) {
-            Log.w(TAG, "native reader requested but native_usb not loaded ("
-                + NativeUsb.loadError() + ") — falling back to UsbRequest");
-            readerLoopUsbRequest();
-            return;
-        }
-        int fd = connection.getFileDescriptor();
-        int ifaceId = iface != null ? iface.getId() : 0;
-        if (fd < 0) {
-            Log.w(TAG, "native reader: invalid fd, fallback");
-            readerLoopUsbRequest();
-            return;
-        }
-
-        int discRet = NativeUsb.nativeDisconnectKernel(fd, ifaceId);
-        Log.i(TAG, "native disconnect kernel(" + ifaceId + ") → " + discRet);
-        // Some Android kernels return ENOENT/ENODATA when no driver was
-        // attached — that's fine. Real failures (EPERM, EBUSY) are
-        // logged but we still try claim+read; might still work.
-
-        int claimRet = NativeUsb.nativeClaimInterface(fd, ifaceId);
-        Log.i(TAG, "native claim(" + ifaceId + ") → " + claimRet);
-        if (claimRet < 0 && claimRet != -16 /*EBUSY*/ ) {
-            // EBUSY is OK — Java side already claimed, native ioctl
-            // sees the existing claim. Reads will still work.
-        }
-
-        // Same buffer-size lesson as the other readers: undersized buffers
-        // return EOVERFLOW (errno 75) from USBDEVFS_BULK on Pixel 6 and
-        // ThinkPhone kernels because the deck's IN endpoint sends 512-
-        // byte reports. Use the endpoint's max packet size.
-        int bufSize = epIn != null ? epIn.getMaxPacketSize() : 64;
-        if (bufSize < 64) bufSize = 64;
-        byte[] buf = new byte[bufSize];
-        long lastDataAt = System.currentTimeMillis();
-        long lastStarveLog = lastDataAt;
-        int epAddr = epIn != null ? epIn.getAddress() : 0x81;
-
-        while (running) {
-            int got = NativeUsb.nativeBulkRead(fd, epAddr, buf, 250);
-            if (!running) break;
-            long now = System.currentTimeMillis();
-            if (got < 0) {
-                // -110 = ETIMEDOUT (no data). Anything else worth logging.
-                if (got != -110 && now - lastStarveLog >= 5000) {
-                    Log.w(TAG, "reader (native) errno=" + (-got) + ", "
-                        + (now - lastDataAt) + " ms since last data");
-                    lastStarveLog = now;
-                }
-                if (got == -110) {
-                    if (now - lastStarveLog >= 5000) {
-                        Log.w(TAG, "reader (native) starving — "
-                            + (now - lastDataAt) + " ms since last data");
-                        lastStarveLog = now;
-                        if (debugLogging) {
-                            JSObject ev = new JSObject();
-                            ev.put("deckId", serial);
-                            ev.put("len", 0);
-                            ev.put("bytes", "(starving native "
-                                + (now - lastDataAt) + "ms)");
-                            emitter.emit("rawInputReport", ev);
-                        }
-                    }
-                }
-                continue;
-            }
-            if (got == 0) continue;
-            lastDataAt = now;
-            byte[] data = new byte[got];
-            System.arraycopy(buf, 0, data, 0, got);
-            if (debugLogging) emitRaw(data, got);
-            parseInputReport(data, got);
-        }
-        // We don't release the interface — connection.close() in
-        // session close will tear everything down via the kernel anyway,
-        // and explicitly releasing while Java still has a claim can
-        // throw permission errors on some kernels.
-    }
-
     private void emitRaw(byte[] data, int got) {
         // Dedupe — only emit when bytes actually changed since the
         // last report. Polled mode floods us with the same snapshot
