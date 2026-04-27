@@ -362,6 +362,41 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         call.setKeepAlive(true);
     }
 
+    /**
+     * Streaming-friendly batch: queues N key writes through a single JNI
+     * crossing. Each entry is fire-and-forget on the WriterQueue (no
+     * per-key resolve), so the call returns the moment everything is
+     * decoded and offered. The queue's coalescing keeps backpressure
+     * bounded — only the latest job per key actually hits USB.
+     */
+    @PluginMethod
+    public void setKeyImagesBatch(PluginCall call) {
+        DeckSession s = requireSession(call); if (s == null) return;
+        JSArray entries = call.getArray("entries");
+        if (entries == null) { call.reject("missing:entries"); return; }
+        int queued = 0;
+        int dropped = 0;
+        for (int i = 0; i < entries.length(); i++) {
+            try {
+                org.json.JSONObject o = entries.getJSONObject(i);
+                int key = o.getInt("key");
+                String b64 = o.getString("bytes");
+                if (key < 0 || key >= s.spec().keyCount) { dropped++; continue; }
+                byte[] raw;
+                try { raw = Base64.decode(b64, Base64.NO_WRAP); }
+                catch (IllegalArgumentException ex) { dropped++; continue; }
+                s.queue().offerCoalesce(new ImageWriteJob(s, key, raw, null));
+                queued++;
+            } catch (Throwable t) {
+                dropped++;
+            }
+        }
+        JSObject r = new JSObject();
+        r.put("queued", queued);
+        r.put("dropped", dropped);
+        call.resolve(r);
+    }
+
     @PluginMethod
     public void clearKey(PluginCall call) {
         DeckSession s = requireSession(call); if (s == null) return;
