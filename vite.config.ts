@@ -398,7 +398,20 @@ function bundleSourcePlugin(): Plugin {
 
             const bundledProjects: ManifestProject[] = [];
 
-            if (!existsSync(manifestPath)) {
+            // Dev escape hatch: BUNDLE_SKIP_REPOS=1 skips the manifest-repo
+            // tar.gz creation entirely, leaving an empty manifest.json. Saves
+            // ~15 s of build + ~15 s of adb install (≈378 MB of assets gone).
+            // The Code tool's "browse a manifest repo" flow surfaces a clear
+            // error in this mode (BundleNotShippedError); use the full build
+            // when you actually need to browse those repos.
+            const skipRepos = process.env["BUNDLE_SKIP_REPOS"] === "1";
+
+            if (skipRepos) {
+                console.log(
+                    "[bundle-manifest] BUNDLE_SKIP_REPOS=1 — skipping all " +
+                    "manifest repos (Code tool's 'browse repo' will fail-soft).",
+                );
+            } else if (!existsSync(manifestPath)) {
                 console.log(`[bundle-manifest] manifest not found: ${manifestPath}`);
             } else {
                 const xml = readFileSync(manifestPath, "utf-8");
