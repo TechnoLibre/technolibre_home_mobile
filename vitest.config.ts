@@ -5,9 +5,17 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    // Exclude whisper.cpp Node.js addon tests — addon.node requires a native
-    // C++ build (node-gyp) that is not part of the mobile project build.
-    exclude: ["android/**", "**/github-com-ggerganov-whisper-cpp/**", "node_modules/**"],
+    // Exclude whisper.cpp vendor tests -- they need a compiled C++ addon
+    // (addon.node) built only for desktop Node.js, not Android. Also exclude
+    // the bundled-source duplicates (src/public/, dist/) so vitest does not
+    // run the same suite three times nor pick up unrelated JS test files.
+    exclude: [
+      "android/**",
+      "**/github-com-ggerganov-whisper-cpp/**",
+      "node_modules/**",
+      "dist/**",
+      "src/public/**",
+    ],
     alias: {
       "capacitor-secure-storage-plugin": resolve(
         __dirname,
