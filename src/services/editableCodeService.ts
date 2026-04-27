@@ -1,4 +1,5 @@
 import { Filesystem, Directory } from "@capacitor/filesystem";
+import { createTwoFilesPatch } from "diff";
 import { capacitorFsAdapter } from "./git/capacitorFsAdapter";
 import { GitStatus, GitCommit } from "../models/gitTypes";
 import { DirEntry } from "./codeService";
@@ -89,9 +90,15 @@ export class EditableCodeService {
                 }).then((b) => new TextDecoder().decode(b.blob)).catch(() => "");
                 const workBlob = await this.readFile(fp).catch(() => "");
                 if (headBlob !== workBlob) {
-                    out.push(`--- a/${fp}`);
-                    out.push(`+++ b/${fp}`);
-                    out.push(...simpleLineDiff(headBlob, workBlob));
+                    // Real Myers-style unified diff via the `diff` npm package.
+                    const patch = createTwoFilesPatch(
+                        `a/${fp}`, `b/${fp}`, headBlob, workBlob, "", "",
+                        { context: 3 },
+                    );
+                    // Strip the leading "Index:" / "===" header that
+                    // createTwoFilesPatch adds; keep the standard "--- / +++" hunks.
+                    const lines = patch.split("\n").slice(2).join("\n");
+                    out.push(lines);
                 }
             } catch { /* ignore per-file errors */ }
         }
@@ -168,29 +175,3 @@ function _b64ToBytes(b64: string): Uint8Array {
     return out;
 }
 
-/** Minimal line diff (no Myers — just full-file replacement when texts differ). */
-function simpleLineDiff(a: string, b: string): string[] {
-    const out: string[] = [];
-    if (!a && b) {
-        for (const l of b.split("\n")) out.push(`+${l}`);
-        return out;
-    }
-    if (a && !b) {
-        for (const l of a.split("\n")) out.push(`-${l}`);
-        return out;
-    }
-    const aLines = a.split("\n");
-    const bLines = b.split("\n");
-    const max = Math.max(aLines.length, bLines.length);
-    for (let i = 0; i < max; i++) {
-        const al = aLines[i];
-        const bl = bLines[i];
-        if (al === bl) {
-            out.push(` ${al}`);
-        } else {
-            if (al !== undefined) out.push(`-${al}`);
-            if (bl !== undefined) out.push(`+${bl}`);
-        }
-    }
-    return out;
-}
