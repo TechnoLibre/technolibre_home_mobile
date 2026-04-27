@@ -11,6 +11,9 @@ import androidx.core.view.WindowInsetsCompat;
 import com.google.android.gms.cast.framework.CastContext;
 
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.Plugin;
+
+import android.util.Log;
 
 import ca.erplibre.home.streamdeck.StreamDeckPlugin;
 
@@ -19,7 +22,21 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(RawHttpPlugin.class);
         registerPlugin(SshPlugin.class);
-        registerPlugin(WhisperPlugin.class);
+        // Whisper plugin pulls in libwhisper_jni.so / libggml.so. When the
+        // dev fast-path BUNDLE_SKIP_WHISPER=1 build was used, those libs
+        // are absent — registering the plugin would crash on the static
+        // System.loadLibrary inside WhisperLib. Gate it on the build flag.
+        if (!BuildConfig.SKIP_WHISPER) {
+            try {
+                @SuppressWarnings("unchecked")
+                Class<? extends Plugin> cls =
+                    (Class<? extends Plugin>) Class.forName("ca.erplibre.home.WhisperPlugin");
+                registerPlugin(cls);
+            } catch (Throwable t) {
+                Log.w("MainActivity",
+                    "WhisperPlugin not available: " + t.getMessage());
+            }
+        }
         registerPlugin(OcrPlugin.class);
         registerPlugin(NetworkScanPlugin.class);
         registerPlugin(DeviceStatsPlugin.class);
