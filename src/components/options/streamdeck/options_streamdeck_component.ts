@@ -141,16 +141,24 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             </t>
 
             <div class="options-streamdeck__log">
-              <div class="options-streamdeck__log-header">Journal d'événements</div>
-              <t t-if="state.events.length === 0">
-                <p class="options-streamdeck__hint">Aucun événement.</p>
-              </t>
-              <t t-foreach="state.events" t-as="ev" t-key="ev_index">
-                <div class="options-streamdeck__log-row">
-                  <span class="options-streamdeck__log-ts" t-esc="ev.ts" />
-                  <span t-esc="ev.text" />
-                </div>
-              </t>
+              <div class="options-streamdeck__log-header">
+                <span>Journal d'événements (<t t-esc="state.events.length" />)</span>
+                <button class="options-streamdeck__refresh"
+                        t-on-click="() => this.clearLog()">
+                  🗑 Vider
+                </button>
+              </div>
+              <div class="options-streamdeck__log-scroll">
+                <t t-if="state.events.length === 0">
+                  <p class="options-streamdeck__hint">Aucun événement.</p>
+                </t>
+                <t t-foreach="state.events" t-as="ev" t-key="ev_index">
+                  <div class="options-streamdeck__log-row">
+                    <span class="options-streamdeck__log-ts" t-esc="ev.ts" />
+                    <span t-esc="ev.text" />
+                  </div>
+                </t>
+              </div>
             </div>
           </div>
         </li>
@@ -275,11 +283,47 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                 this._log(`permissionDenied: ${ev.reason ?? "no reason"}`);
             }),
         );
+        this._listeners.push(
+            await StreamDeckPlugin.addListener("keyChanged", (ev) => {
+                // Filter: only log key edges (pressed=true) to keep the
+                // journal readable on big decks (XL = 32 keys × press+release
+                // would flood it). Releases still come through the plugin
+                // and reach the controller.
+                if (!ev.pressed) return;
+                this._log(`keyChanged: deck=${ev.deckId} key=${ev.key} pressed=true`);
+            }),
+        );
+        this._listeners.push(
+            await StreamDeckPlugin.addListener("dialRotated", (ev) => {
+                this._log(`dialRotated: dial=${ev.dial} delta=${ev.delta}`);
+            }),
+        );
+        this._listeners.push(
+            await StreamDeckPlugin.addListener("dialPressed", (ev) => {
+                if (!ev.pressed) return;
+                this._log(`dialPressed: dial=${ev.dial}`);
+            }),
+        );
+        this._listeners.push(
+            await StreamDeckPlugin.addListener("lcdTouched", (ev) => {
+                this._log(`lcdTouched: type=${ev.type} x=${ev.x} y=${ev.y}`);
+            }),
+        );
+        this._listeners.push(
+            await StreamDeckPlugin.addListener("neoTouched", (ev) => {
+                if (!ev.pressed) return;
+                this._log(`neoTouched: index=${ev.index}`);
+            }),
+        );
+    }
+
+    clearLog(): void {
+        this.state.events = [];
     }
 
     private _log(text: string): void {
         const ts = new Date().toLocaleTimeString();
         this.state.events.unshift({ ts, text });
-        if (this.state.events.length > 50) this.state.events.pop();
+        if (this.state.events.length > 200) this.state.events.pop();
     }
 }

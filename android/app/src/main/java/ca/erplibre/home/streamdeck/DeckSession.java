@@ -247,7 +247,16 @@ public final class DeckSession {
         int reportId = buf[0] & 0xFF;
         int subType = buf[1] & 0xFF;
 
-        if (reportId == 0x01 && subType == 0x00) {
+        // Decks WITH multiple report kinds (Plus, Neo) discriminate via byte 1
+        // (0x00=keys, 0x02=lcd touch, 0x03=dial, 0x04=neo touch). Decks
+        // WITHOUT (XL, MK.2, Original v2, Mini, Original v1) just emit a
+        // key report under reportId 0x01 — byte 1 is part of the header
+        // and can be anything.
+        boolean hasReportSubtypes = spec.dialCount > 0 || spec.touchPoints > 0;
+        boolean isKeyReport = reportId == 0x01
+            && (!hasReportSubtypes || subType == 0x00);
+
+        if (isKeyReport) {
             // Key report. Keys start at offset 4 for V2, 1 for V1.
             int offset = (spec.transport == DeckSpec.TransportKind.V2) ? 4 : 1;
             for (int k = 0; k < spec.keyCount; k++) {
