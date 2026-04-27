@@ -114,16 +114,20 @@ interface StreamDeckPluginApi {
      * data-bearing reads).
      */
     setDebugLogging(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
-    /** Switch reader strategy. Three options:
+    /** Switch reader strategy. Four options:
      *   - "userequest": UsbRequest async on interrupt-IN (default)
      *   - "bulk":       bulkTransfer sync on interrupt-IN
      *   - "polled":     HID GET_REPORT on EP0 (~30 Hz polling)
+     *   - "native":     USBDEVFS ioctls via JNI — calls
+     *                   USBDEVFS_DISCONNECT to detach the in-kernel
+     *                   HID driver before claiming. Last-resort path
+     *                   for kernels that shadow the Java reader.
      *  Takes effect on next session open — call restartSessions to
      *  apply without unplugging. */
-    setReaderMode(opts: { mode: "userequest" | "bulk" | "polled" }):
-        Promise<{ mode: "userequest" | "bulk" | "polled" }>;
+    setReaderMode(opts: { mode: "userequest" | "bulk" | "polled" | "native" }):
+        Promise<{ mode: "userequest" | "bulk" | "polled" | "native" }>;
     getReaderMode():
-        Promise<{ mode: "userequest" | "bulk" | "polled" }>;
+        Promise<{ mode: "userequest" | "bulk" | "polled" | "native" }>;
     /** @deprecated — use setReaderMode. */
     setReaderUseBulk(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
     /** @deprecated — use getReaderMode. */
