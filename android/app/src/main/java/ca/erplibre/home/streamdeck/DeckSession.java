@@ -60,16 +60,38 @@ public final class DeckSession {
     private static volatile boolean debugLogging = false;
     static void setDebugLogging(boolean v) { debugLogging = v; }
 
-    /** Reader strategy. Some Android kernels shadow-consume one of the
-     * two read paths but not the other:
-     *   - UsbRequest async (default) — survives most stock kernels
-     *   - bulkTransfer (sync interrupt read) — works on phones where
-     *     UsbRequest never yields data
-     * Toggled at runtime via setReaderUseBulk; takes effect on the
-     * next session open (unplug/replug or restart-decks). */
-    private static volatile boolean readerUseBulk = false;
-    static void setReaderUseBulk(boolean v) { readerUseBulk = v; }
-    static boolean getReaderUseBulk() { return readerUseBulk; }
+    /** Reader strategy. Some Android kernels shadow-consume the
+     * interrupt-IN endpoint entirely; for those, GET_REPORT polling on
+     * the control endpoint is the only path that delivers anything.
+     *   - "userequest" — UsbRequest async on interrupt-IN. Default.
+     *   - "bulk"       — bulkTransfer sync on interrupt-IN.
+     *   - "polled"     — HID GET_REPORT control transfer @ ~30 Hz on
+     *                    EP0. Never shadowed by kernel HID drivers
+     *                    (control endpoint is shared infrastructure).
+     * Takes effect on the next session open. */
+    static final String READER_MODE_USEREQUEST = "userequest";
+    static final String READER_MODE_BULK       = "bulk";
+    static final String READER_MODE_POLLED     = "polled";
+    private static volatile String readerMode = READER_MODE_USEREQUEST;
+    static void setReaderMode(String v) {
+        if (READER_MODE_USEREQUEST.equals(v)
+            || READER_MODE_BULK.equals(v)
+            || READER_MODE_POLLED.equals(v)) {
+            readerMode = v;
+        }
+    }
+    static String getReaderMode() { return readerMode; }
+    // Back-compat with the old boolean toggle.
+    static void setReaderUseBulk(boolean v) {
+        readerMode = v ? READER_MODE_BULK : READER_MODE_USEREQUEST;
+    }
+    static boolean getReaderUseBulk() { return READER_MODE_BULK.equals(readerMode); }
+
+    /** Polling period for the GET_REPORT path. ~33 Hz keeps perceived
+     *  latency under 35 ms, well below the human reaction floor for a
+     *  button press. Lower values eat more CPU and battery for no
+     *  perceptible gain. */
+    private static final int POLLED_INTERVAL_MS = 30;
 
     public DeckSession(DeckSpec spec, UsbDevice device, EventEmitter emitter) {
         this.spec = spec;
@@ -267,13 +289,16 @@ public final class DeckSession {
 
     private void readerLoop() {
         // Reader path is selectable per-session via the static
-        // readerUseBulk flag. UsbRequest works on most kernels because
-        // it bypasses the kernel HID driver's interrupt-poll. On
-        // kernels where THAT path is the shadowed one, the bulkTransfer
-        // (sync interrupt read) path picks up the slack. The user
-        // toggles this from the diagnostic panel and unplugs/replugs.
-        if (readerUseBulk) readerLoopBulk();
-        else               readerLoopUsbRequest();
+        // readerMode flag. UsbRequest async works on most kernels; on
+        // kernels where THAT is shadowed, bulk picks up the slack; on
+        // kernels where BOTH interrupt-IN paths are dead, polled
+        // GET_REPORT on the control endpoint is the last-resort
+        // fallback that bypasses the interrupt machinery entirely.
+        switch (readerMode) {
+            case READER_MODE_BULK:   readerLoopBulk();       break;
+            case READER_MODE_POLLED: readerLoopPolled();     break;
+            default:                 readerLoopUsbRequest();
+        }
     }
 
     private void readerLoopUsbRequest() {
@@ -296,9 +321,15 @@ public final class DeckSession {
                     close("usb_request_queue_failed");
                     return;
                 }
-                UsbRequest finished;
+                UsbRequest finished = null;
+                boolean timedOut = false;
                 try {
                     finished = connection.requestWait(5000);
+                } catch (java.util.concurrent.TimeoutException te) {
+                    // requestWait(timeout) throws on timeout in API 26+;
+                    // earlier API returns null. Either way it just means
+                    // "nothing in the last 5 s" — NOT a fatal error.
+                    timedOut = true;
                 } catch (Throwable t) {
                     if (!running) return;
                     Log.w(TAG, "requestWait threw — closing", t);
@@ -307,12 +338,13 @@ public final class DeckSession {
                 }
                 if (!running) break;
                 long now = System.currentTimeMillis();
-                if (finished == null) {
-                    // Timeout — emit a starvation breadcrumb every 5 s
-                    // so the user sees that the reader is alive but
-                    // the IN endpoint is yielding nothing. Strong
-                    // signal that switching to bulkTransfer mode might
-                    // help (or vice versa).
+                if (timedOut || finished == null) {
+                    // Cancel the in-flight request before re-queueing.
+                    // Without this, some Android kernels leave the
+                    // request hanging in driver state and the next
+                    // queue() call fails outright (we saw that on
+                    // ThinkPhone after ~100 s of starvation).
+                    try { req.cancel(); } catch (Throwable ignored) {}
                     if (now - lastStarveLog >= 5000) {
                         Log.w(TAG, "reader (UsbRequest) starving — "
                             + (now - lastDataAt) + " ms since last data");
@@ -385,6 +417,76 @@ public final class DeckSession {
             if (debugLogging) emitRaw(data, got);
             parseInputReport(data, got);
         }
+    }
+
+    /**
+     * Poll the device's input report via HID class GET_REPORT on EP0.
+     * Used as a last-resort path on phones whose kernel claims the
+     * interrupt-IN endpoint and never lets userspace see a key event
+     * (observed on Lenovo ThinkPhone). The control endpoint is shared
+     * infrastructure that no kernel HID driver claims, so this path
+     * always works at the cost of polling instead of waking on event.
+     *
+     * Effective rate is ~33 Hz which is well below human reaction time
+     * floor for a button press, so latency is unnoticeable in practice.
+     */
+    private void readerLoopPolled() {
+        // Stream Deck input reports vary in size by model; the buffer
+        // sized to the IN endpoint's max packet ensures we always
+        // read enough.
+        int reportSize = epIn != null ? epIn.getMaxPacketSize() : 64;
+        if (reportSize <= 0) reportSize = 64;
+        byte[] buf = new byte[reportSize];
+        long lastDataAt = System.currentTimeMillis();
+        long lastStarveLog = lastDataAt;
+        int ifaceId = iface != null ? iface.getId() : 0;
+        // HID GET_REPORT: reqType 0xA1 (Class | Interface | IN), req 0x01,
+        // value (Input=1 << 8 | reportId). Stream Deck input report id
+        // is 0x01 across all the v1/v2 layouts we care about.
+        final int reqType = 0xA1;
+        final int req     = 0x01;
+        final int wValue  = (0x01 << 8) | 0x01;
+
+        while (running) {
+            int got;
+            try {
+                got = connection.controlTransfer(reqType, req, wValue, ifaceId,
+                    buf, buf.length, 200);
+            } catch (Throwable t) {
+                if (!running) return;
+                Log.w(TAG, "controlTransfer threw — closing", t);
+                close("polled_threw:" + t.getClass().getSimpleName());
+                return;
+            }
+            if (!running) break;
+            long now = System.currentTimeMillis();
+            if (got <= 0) {
+                if (now - lastStarveLog >= 5000) {
+                    Log.w(TAG, "reader (polled) starving — "
+                        + (now - lastDataAt) + " ms since last data, last got=" + got);
+                    lastStarveLog = now;
+                    if (debugLogging) {
+                        JSObject ev = new JSObject();
+                        ev.put("deckId", serial);
+                        ev.put("len", got);
+                        ev.put("bytes", "(starving polled, last=" + got + ")");
+                        emitter.emit("rawInputReport", ev);
+                    }
+                }
+                sleepQuiet(POLLED_INTERVAL_MS);
+                continue;
+            }
+            lastDataAt = now;
+            byte[] data = new byte[got];
+            System.arraycopy(buf, 0, data, 0, got);
+            if (debugLogging) emitRaw(data, got);
+            parseInputReport(data, got);
+            sleepQuiet(POLLED_INTERVAL_MS);
+        }
+    }
+
+    private static void sleepQuiet(long ms) {
+        try { Thread.sleep(ms); } catch (InterruptedException ignored) { /* loop will exit on running=false */ }
     }
 
     private void emitRaw(byte[] data, int got) {
