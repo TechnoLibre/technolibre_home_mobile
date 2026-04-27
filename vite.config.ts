@@ -10,6 +10,9 @@ import {
     writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { randomBytes } from "node:crypto";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -24,9 +27,28 @@ interface ManifestProject {
     path: string;
     slug: string;
     revision: string;
+    archive: string;
+    indexUrl: string;
+    fileCount: number;
+    uncompressedBytes: number;
+    compressedBytes: number;
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Create a gzipped tar archive of the given source dir.
+ * Uses the system `tar` command — fastest path; required at build time.
+ */
+function createTarGz(srcDir: string, archivePath: string): void {
+    try {
+        execFileSync("tar", ["-czf", archivePath, "-C", srcDir, "."], {
+            stdio: ["ignore", "ignore", "pipe"],
+        });
+    } catch (e) {
+        throw new Error(`tar -czf failed for ${srcDir} → ${archivePath}: ${e}`);
+    }
+}
 
 /**
  * rmSync with broken-symlink and ENOTEMPTY tolerance. The bundle pipeline
@@ -339,25 +361,68 @@ function bundleSourcePlugin(): Plugin {
                         continue;
                     }
 
-                    const projOutDir = join(reposOutDir, slug);
-                    mkdirSync(projOutDir, { recursive: true });
+                    // Stage filtered files in a temp dir, then tar.gz them.
+                    const stage = join(
+                        tmpdir(),
+                        `erplibre-bundle-${slug}-${randomBytes(4).toString("hex")}`,
+                    );
+                    mkdirSync(stage, { recursive: true });
+
                     const projIndex: BundleEntry[] = [];
-                    const projStats: CopyStats = { copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, errors: 0 };
+                    const projStats: CopyStats = {
+                        copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, errors: 0,
+                    };
                     const projT0 = Date.now();
-                    copyDirToBundle(localPath, "", projOutDir, projIndex, manifestExtraSkip, outputExclusions, MAX_BUNDLE_FILE_BYTES, projStats);
+                    copyDirToBundle(
+                        localPath, "", stage, projIndex, manifestExtraSkip,
+                        outputExclusions, MAX_BUNDLE_FILE_BYTES, projStats,
+                    );
+
+                    // Write index.json into the stage so it lands inside the archive.
                     writeFileSync(
-                        join(projOutDir, "index.json"),
+                        join(stage, "index.json"),
                         JSON.stringify(projIndex, null, 2),
                     );
 
+                    // Also write a sidecar index.json next to the archive so the
+                    // runtime can show the directory tree without unpacking.
+                    const indexOutPath = join(reposOutDir, `${slug}.index.json`);
+                    writeFileSync(indexOutPath, JSON.stringify(projIndex, null, 2));
+
+                    // Compute uncompressed size.
+                    const uncompressedBytes = projIndex
+                        .filter((e) => e.type === "file")
+                        .reduce((sum, e) => {
+                            try {
+                                return sum + statSync(join(stage, e.path)).size;
+                            } catch {
+                                return sum;
+                            }
+                        }, 0);
+
+                    const archivePath = join(reposOutDir, `${slug}.tar.gz`);
+                    createTarGz(stage, archivePath);
+
+                    const compressedBytes = statSync(archivePath).size;
+
+                    // Clean up the stage.
+                    removeDirRobust(stage);
+
                     const name = proj.name.replace(/\.git$/, "");
-                    bundledProjects.push({ url, name, path: proj.path, slug, revision: proj.revision });
+                    bundledProjects.push({
+                        url, name, path: proj.path, slug, revision: proj.revision,
+                        archive: `repos/${slug}.tar.gz`,
+                        indexUrl: `repos/${slug}.index.json`,
+                        fileCount: projStats.copied,
+                        uncompressedBytes,
+                        compressedBytes,
+                    });
+
                     console.log(
-                        `[bundle-manifest] ${slug}: ${projStats.copied} files` +
-                        `  skipped=${projStats.skippedName + projStats.skippedSize}` +
-                        `  (${Date.now() - projT0} ms` +
-                        (projStats.errors ? `  ⚠ ${projStats.errors} errors` : "") +
-                        `)`
+                        `[bundle-manifest] ${slug}.tar.gz: ${projStats.copied} files` +
+                        `, ${(uncompressedBytes / 1024).toFixed(0)} KB → ` +
+                        `${(compressedBytes / 1024).toFixed(0)} KB` +
+                        `  (${Date.now() - projT0} ms)`,
                     );
                 }
             }
