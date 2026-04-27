@@ -265,6 +265,10 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
     }
 
     async askPermissionForUsb(deviceName: string): Promise<void> {
+        // Log immediately so the user sees the click register even if the
+        // OS dialog is slow to surface (multi-deck setups can take a few
+        // hundred ms before the second prompt appears).
+        this._log(`requestPermissionForUsb(${deviceName}) → asking…`);
         try {
             const r = await StreamDeckPlugin.requestPermissionForUsb({ deviceName });
             this._log(
