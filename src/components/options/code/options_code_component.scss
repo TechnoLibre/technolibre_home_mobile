@@ -97,6 +97,75 @@
         font-size: 0.7rem;
         padding: 0.2rem 0.5rem;
     }
+
+    // ── Edit-mode buttons (added with the bundle pipeline + edit feature) ──
+
+    &--edit {
+        background-color: var(--code-edit-btn-bg, var(--btn-green-color));
+        color: var(--code-edit-btn-fg, #fff);
+        font-size: 0.78rem;
+        padding: 0.35rem 0.7rem;
+        margin-right: 0.4rem;
+        &:not(:disabled):active {
+            background-color: var(--code-edit-btn-hover, var(--btn-green-hover-color));
+        }
+    }
+
+    &--unpromote {
+        background-color: var(--code-unpromote-btn-bg, var(--surface-btn));
+        color: var(--code-unpromote-btn-fg, var(--text));
+        font-size: 0.78rem;
+        padding: 0.35rem 0.7rem;
+        margin-right: 0.4rem;
+        &:not(:disabled):active {
+            background-color: var(--code-unpromote-btn-hover, var(--surface-btn-active));
+        }
+    }
+
+    &--commit {
+        background-color: var(--code-commit-btn-bg, var(--btn-green-color));
+        color: #fff;
+        font-size: 0.85rem;
+        padding: 0.5rem 1rem;
+        margin-top: 0.4rem;
+        width: 100%;
+        &:not(:disabled):active {
+            background-color: var(--code-commit-btn-hover, var(--btn-green-hover-color));
+        }
+    }
+
+    &--reset-all {
+        background-color: var(--code-reset-btn-bg, var(--btn-red-color));
+        color: #fff;
+        font-size: 0.78rem;
+        padding: 0.3rem 0.7rem;
+        &:not(:disabled):active {
+            background-color: var(--code-reset-btn-hover, var(--btn-red-hover-color));
+        }
+    }
+
+    &--reset-file {
+        background-color: var(--code-reset-file-btn-bg, var(--surface-btn));
+        color: var(--text);
+        font-size: 0.85rem;
+        padding: 0.15rem 0.45rem;
+        line-height: 1;
+        margin-left: 0.4rem;
+        &:not(:disabled):active {
+            background-color: var(--code-reset-file-btn-hover, var(--surface-btn-active));
+        }
+    }
+
+    &--baseline-update {
+        background-color: var(--code-baseline-btn-bg, var(--btn-blue-color));
+        color: #fff;
+        font-size: 0.78rem;
+        padding: 0.35rem 0.7rem;
+        margin-top: 0.4rem;
+        &:not(:disabled):active {
+            background-color: var(--code-baseline-btn-hover, var(--btn-blue-hover-color));
+        }
+    }
 }
 
 .code__error {
@@ -116,6 +185,36 @@
     font-style: italic;
     padding: 1rem;
     text-align: center;
+}
+
+// ── Warning banners (baseline drift) ──────────────────────────────────────────
+
+.code__warning {
+    background-color: var(--code-warning-bg, var(--status-warning-bg));
+    border-left: 3px solid var(--code-warning-border, #d97706);
+    border-radius: 0.25rem;
+    color: var(--code-warning-fg, var(--text));
+    font-size: 0.85rem;
+    margin: 0.5rem 1rem;
+    padding: 0.6rem 0.8rem;
+    line-height: 1.4;
+
+    em {
+        font-family: monospace;
+        font-style: normal;
+        background: rgba(0, 0, 0, 0.25);
+        padding: 0 0.25rem;
+        border-radius: 0.15rem;
+    }
+
+    strong {
+        display: inline-block;
+        margin-right: 0.4rem;
+    }
+
+    &--baseline {
+        // Reserved for future per-warning overrides.
+    }
 }
 
 .code__empty {
@@ -796,5 +895,111 @@
         font-size: 0.85rem;
         font-style: italic;
         text-align: center;
+    }
+
+    // ── Editable-mode additions ──
+
+    &__group {
+        background: var(--code-git-group-bg, var(--card-bg));
+        border-radius: 0.3rem;
+        margin-bottom: 0.5rem;
+        padding: 0.4rem 0.6rem;
+    }
+
+    &__group-header {
+        color: var(--text-greyed-out);
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin-bottom: 0.3rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    &__file {
+        align-items: center;
+        display: flex;
+        gap: 0.4rem;
+        padding: 0.2rem 0;
+    }
+
+    &__file-name {
+        background: none;
+        border: none;
+        color: var(--text);
+        cursor: pointer;
+        font-family: monospace;
+        font-size: 0.85rem;
+        padding: 0.15rem 0.3rem;
+        text-align: left;
+        flex: 1;
+        word-break: break-all;
+
+        &:active { background: var(--surface-btn-active); }
+
+        &--modified {
+            color: var(--code-git-modified-fg, #d97706);
+        }
+        &--staged {
+            color: var(--code-git-staged-fg, #2563eb);
+        }
+        &--untracked {
+            color: var(--code-git-untracked-fg, var(--accent-color));
+        }
+        &--deleted {
+            color: var(--code-git-deleted-fg, var(--btn-red-color));
+            text-decoration: line-through;
+        }
+    }
+
+    &__diff {
+        background: var(--code-git-diff-bg, #0a0a0a);
+        border-radius: 0.25rem;
+        color: var(--code-git-diff-fg, var(--text));
+        font-family: monospace;
+        font-size: 0.75rem;
+        line-height: 1.4;
+        margin: 0;
+        max-height: 24rem;
+        overflow: auto;
+        padding: 0.6rem;
+        white-space: pre;
+    }
+
+    &__commit {
+        align-items: baseline;
+        display: flex;
+        font-size: 0.8rem;
+        gap: 0.5rem;
+        padding: 0.2rem 0;
+    }
+
+    &__commit-sha {
+        color: var(--text-greyed-out);
+        font-family: monospace;
+    }
+
+    &__commit-msg {
+        flex: 1;
+        word-break: break-word;
+    }
+
+    &__commit-date {
+        color: var(--text-greyed-out);
+        font-size: 0.7rem;
+    }
+
+    &__commit-input {
+        background: var(--input-bg);
+        border: 1px solid var(--input-border);
+        border-radius: 0.25rem;
+        color: var(--text);
+        font-size: 0.85rem;
+        padding: 0.4rem 0.6rem;
+        width: 100%;
+    }
+
+    &__header-btns {
+        display: flex;
+        gap: 0.4rem;
     }
 }
