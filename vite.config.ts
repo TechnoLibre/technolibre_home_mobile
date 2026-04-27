@@ -432,6 +432,21 @@ function bundleSourcePlugin(): Plugin {
                 JSON.stringify(bundledProjects, null, 2),
             );
             console.log(`[bundle-manifest] ${bundledProjects.length} repos → src/public/repos/`);
+
+            // Build identifier — used as baseline tag in editable repos.
+            let buildId = "unknown";
+            try {
+                const sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+                    stdio: ["ignore", "pipe", "ignore"], encoding: "utf-8",
+                }).trim();
+                if (sha) buildId = sha;
+            } catch { /* outside git or git missing */ }
+            buildId += "_" + Date.now().toString(36);
+            writeFileSync(
+                join(root, "src", "public", "build_id.json"),
+                JSON.stringify({ buildId, generatedAt: new Date().toISOString() }, null, 2),
+            );
+            console.log(`[bundle-manifest] build_id=${buildId}`);
         },
     };
 }
