@@ -4,6 +4,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Base64;
 import android.util.Log;
 
@@ -43,6 +46,21 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * even when the failure event was emitted before any listener attached. */
     private final Map<String, String> lastAttachError = new HashMap<>();
 
+    /** Pending detach close jobs, keyed by USB deviceName. Detach events
+     *  are debounced — some Android stacks fire detach immediately
+     *  followed by a fresh attach (transient enumeration). Closing the
+     *  session synchronously on detach + opening a new one on attach
+     *  causes the reader thread to die mid-flight and surfaces as
+     *  "buttons work once then stop". */
+    private final Map<String, Runnable> pendingCloseJobs = new HashMap<>();
+    private static final long DETACH_DEBOUNCE_MS = 250L;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    /** Single shared partial wake lock — acquired while at least one
+     *  session is open so the USB bus doesn't suspend after the first
+     *  interrupt-IN event. Released when the last session closes. */
+    private PowerManager.WakeLock wakeLock;
+
     private final EventEmitter emitter = (name, data) -> notifyListeners(name, data);
 
     @Override
@@ -52,6 +70,13 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         permissions = new UsbPermissionRequester(ctx, usb);
         hotplug = new UsbHotplugReceiver(this);
         hotplug.attach(ctx);
+        try {
+            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ErpLibre:StreamDeck");
+            wakeLock.setReferenceCounted(false);
+        } catch (Throwable t) {
+            Log.w(TAG, "wake lock init failed: " + t.getMessage());
+        }
         // The lifecycle service runs only to receive onTaskRemoved on
         // swipe-from-recents — the Activity lifecycle does not guarantee
         // onDestroy on that path, so handleOnDestroy alone leaves the deck
@@ -76,6 +101,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             sessionsBySerial.clear();
         }
         StreamDeckLifecycleService.setTaskRemovedHandler(null);
+        if (wakeLock != null) {
+            try { if (wakeLock.isHeld()) wakeLock.release(); }
+            catch (Throwable ignored) { /* ignore */ }
+        }
     }
 
     /**
@@ -108,6 +137,29 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     @Override
     public void onDeckAttached(UsbDevice device) {
         final String name = device.getDeviceName();
+
+        // Cancel any in-flight detach close — the device just bounced
+        // (transient enumeration) and we want to keep the existing
+        // session alive instead of churning through a close+reopen.
+        Runnable pending;
+        synchronized (sessionsByDevice) { pending = pendingCloseJobs.remove(name); }
+        if (pending != null) {
+            mainHandler.removeCallbacks(pending);
+            Log.i(TAG, "onDeckAttached: cancelled pending close for " + name + " (transient detach)");
+        }
+
+        // Idempotent: if we already have an open session for this USB
+        // device path, the second attach is just hotplug noise (or a
+        // race after a quick detach we already debounced). Bail early
+        // so we don't construct a parallel session that fights the
+        // first one for the interface and surfaces as permissionDenied.
+        synchronized (sessionsByDevice) {
+            if (sessionsByDevice.containsKey(name)) {
+                Log.i(TAG, "onDeckAttached: session already open for " + name + " — skipping");
+                return;
+            }
+        }
+
         DeckSpec spec = DeckRegistry.lookup(device.getProductId());
         if (spec == null) {
             Log.w(TAG, "unknown Elgato product 0x" + Integer.toHexString(device.getProductId()));
@@ -143,6 +195,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                     }
                     lastAttachError.remove(name);
                 }
+                acquireWakeLockIfNeeded();
             } catch (DeckSession.DeckOpenException e) {
                 String reason = e.getMessage();
                 recordAttachError(name, reason);
@@ -171,12 +224,47 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     @Override
     public void onDeckDetached(UsbDevice device) {
-        DeckSession session;
+        final String name = device.getDeviceName();
+        // Debounce: ThinkPhone (and a few other Android stacks) emit
+        // detach + attach in tight succession after the first interrupt
+        // event. Closing the session synchronously here would tear the
+        // reader thread down and leave subsequent presses unobserved.
+        // Schedule the close, and let onDeckAttached cancel it if the
+        // device comes back within DETACH_DEBOUNCE_MS.
+        Runnable closeJob = () -> {
+            DeckSession session;
+            synchronized (sessionsByDevice) {
+                session = sessionsByDevice.remove(name);
+                pendingCloseJobs.remove(name);
+                if (session != null) sessionsBySerial.remove(session.serial());
+            }
+            if (session != null) {
+                Log.i(TAG, "onDeckDetached: closing session for " + name + " (debounce expired)");
+                session.close("usb_lost");
+            }
+            releaseWakeLockIfIdle();
+        };
         synchronized (sessionsByDevice) {
-            session = sessionsByDevice.remove(device.getDeviceName());
-            if (session != null) sessionsBySerial.remove(session.serial());
+            Runnable prev = pendingCloseJobs.put(name, closeJob);
+            if (prev != null) mainHandler.removeCallbacks(prev);
         }
-        if (session != null) session.close("usb_lost");
+        Log.i(TAG, "onDeckDetached: scheduled close for " + name + " in " + DETACH_DEBOUNCE_MS + " ms");
+        mainHandler.postDelayed(closeJob, DETACH_DEBOUNCE_MS);
+    }
+
+    private void acquireWakeLockIfNeeded() {
+        if (wakeLock == null) return;
+        try { if (!wakeLock.isHeld()) wakeLock.acquire(); }
+        catch (Throwable t) { Log.w(TAG, "wake lock acquire failed: " + t.getMessage()); }
+    }
+
+    private void releaseWakeLockIfIdle() {
+        if (wakeLock == null) return;
+        boolean any;
+        synchronized (sessionsByDevice) { any = !sessionsByDevice.isEmpty(); }
+        if (any) return;
+        try { if (wakeLock.isHeld()) wakeLock.release(); }
+        catch (Throwable t) { Log.w(TAG, "wake lock release failed: " + t.getMessage()); }
     }
 
     // ─────────────────────────── Plugin methods ──────────────────────────────
