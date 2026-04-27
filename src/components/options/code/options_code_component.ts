@@ -235,6 +235,19 @@ export class OptionsCodeComponent extends EnhancedComponent {
       </button>
     </div>
 
+    <t t-if="state.baselineMismatch">
+      <div class="code__warning code__warning--baseline">
+        <strong>⚠ Baseline modifié</strong> —
+        l'application a été recompilée depuis que tu as activé l'édition de ce repo.
+        Ton historique git est basé sur l'ancien baseline (<em t-esc="state.promotedBuildId" />),
+        le nouveau est <em t-esc="state.shippedBuildId" />.
+        <button class="code__btn code__btn--baseline-update"
+                t-on-click="() => this.onRepromoteBaseline()">
+          🔄 Réinitialiser au nouveau baseline (perd les modifications)
+        </button>
+      </div>
+    </t>
+
     <div class="code-browser__tabs">
       <button class="code-browser__tab"
               t-att-class="{ 'code-browser__tab--active': state.tab === 'files' }"
@@ -649,6 +662,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
         this.state.currentSlug = project.slug;
         this.state.currentArchiveUrl = `/${project.archive}`;
         this.state.isEditable = await this.env.repoEditService.isEditable(project.slug);
+        await this._refreshBaselineStatus();
         this.state.serverLabel = project.name;
         this.state.currentBranch = this.state.isEditable
             ? `${project.revision} (édition)` : `${project.revision} (lecture seule)`;
@@ -683,6 +697,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
                 );
             }
             this.state.isEditable = true;
+            await this._refreshBaselineStatus();
             this.state.currentBranch = this.state.currentBranch.replace(
                 "(lecture seule)", "(édition)",
             );
@@ -692,6 +707,42 @@ export class OptionsCodeComponent extends EnhancedComponent {
         } finally {
             this.state.promoting = false;
         }
+    }
+
+    /**
+     * After loading or promotion, compare the stored editable baseline build_id
+     * to the currently-shipped build_id. Sets state.baselineMismatch when the
+     * developer has rebuilt the app since the user promoted this repo.
+     */
+    private async _refreshBaselineStatus(): Promise<void> {
+        if (!this.state.isEditable || !this.state.currentSlug) {
+            this.state.baselineMismatch = false;
+            this.state.shippedBuildId = "";
+            this.state.promotedBuildId = "";
+            return;
+        }
+        try {
+            const meta = await this.env.repoEditService.getEditableMeta(this.state.currentSlug);
+            const shipped = await this.env.repoEditService.getShippedBuildId();
+            this.state.promotedBuildId = meta?.build_id ?? "";
+            this.state.shippedBuildId = shipped;
+            this.state.baselineMismatch =
+                !!meta && shipped !== "unknown" && meta.build_id !== shipped;
+        } catch (e) {
+            console.warn("[code] baseline status check failed:", e);
+            this.state.baselineMismatch = false;
+        }
+    }
+
+    /** User chose "re-promote" after baseline drift — drops edits + re-promotes. */
+    async onRepromoteBaseline(): Promise<void> {
+        const ok = window.confirm(
+            "Réinitialiser ce repo au nouveau baseline? Toutes les modifications seront perdues. " +
+            "Conseille de commiter d'abord si tu veux garder un historique.",
+        );
+        if (!ok) return;
+        await this.onUnpromote();
+        await this.onPromoteEdit();
     }
 
     async onUnpromote(): Promise<void> {

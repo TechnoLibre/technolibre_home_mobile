@@ -29,6 +29,32 @@ export class RepoEditService {
         return rows.length > 0;
     }
 
+    /**
+     * Returns the stored editable_repos row for a slug, or null if not editable.
+     * Used by the UI to detect baseline drift when the shipped build_id changes.
+     */
+    async getEditableMeta(slug: string): Promise<{
+        slug: string;
+        baseline_sha: string;
+        build_id: string;
+        promoted_at: number;
+        head_sha: string | null;
+    } | null> {
+        const rows = await this.db.all<{
+            slug: string; baseline_sha: string; build_id: string;
+            promoted_at: number; head_sha: string | null;
+        }>(
+            "SELECT slug, baseline_sha, build_id, promoted_at, head_sha FROM editable_repos WHERE slug = ? LIMIT 1",
+            [slug],
+        );
+        return rows[0] ?? null;
+    }
+
+    /** Reads the currently-shipped build_id from /build_id.json. */
+    async getShippedBuildId(): Promise<string> {
+        return this._readBuildId();
+    }
+
     async promoteToEditable(slug: string, archiveUrl: string): Promise<string> {
         if (await this.isEditable(slug)) {
             const rows = await this.db.all<{ baseline_sha: string }>(
