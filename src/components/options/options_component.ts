@@ -17,6 +17,7 @@ import { OptionsMigrationHistoryComponent } from "./migration_history/options_mi
 import { OptionsSyncComponent } from "./sync/options_sync_component";
 import { OptionsRemindersComponent } from "./reminders/options_reminders_component";
 import { OptionsGraphicComponent } from "./graphic/options_graphic_component";
+import { OptionsCodeStyleComponent } from "./code_style/options_code_style_component";
 import { OptionsErplibreComponent } from "./erplibre/options_erplibre_component";
 import { OptionsTranscriptionComponent } from "./transcription/options_transcription_component";
 import { OptionsProcessesComponent } from "./processes/options_processes_component";
@@ -40,6 +41,7 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsSyncComponent />
         <OptionsRemindersComponent />
         <OptionsGraphicComponent />
+        <OptionsCodeStyleComponent />
         <OptionsChangelogComponent />
         <li class="options-list__item">
           <a href="#" role="button" aria-label="Transcription audio" t-on-click.stop.prevent="onTranscriptionClick">
@@ -120,6 +122,7 @@ export class OptionsComponent extends EnhancedComponent {
 		OptionsSyncComponent,
 		OptionsRemindersComponent,
 		OptionsGraphicComponent,
+		OptionsCodeStyleComponent,
 		OptionsErplibreComponent,
 		OptionsTranscriptionComponent,
 		OptionsProcessesComponent,
