@@ -20,6 +20,10 @@ const ENV = {
 };
 
 export class NoteEntryDeleteComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    deleteIcon = DeleteIcon;
+
 	static template = xml`
 		<div
 			class="note-entry-delete-component"
@@ -32,7 +36,7 @@ export class NoteEntryDeleteComponent extends EnhancedComponent {
 				aria-label="Supprimer cette entrée"
 				t-on-click.stop.prevent="onNoteEntryDeleteClick"
 			>
-				<img src="${DeleteIcon}" alt="" aria-hidden="true" />
+				<img t-att-src="deleteIcon" alt="" aria-hidden="true" />
 			</button>
 		</div>
 	`;

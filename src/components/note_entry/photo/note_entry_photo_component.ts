@@ -13,6 +13,13 @@ import PhotoOffIcon from "../../../assets/icon/photo_off.svg";
 import CloseIcon from "../../../assets/icon/close.svg";
 
 export class NoteEntryPhotoComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    photoOffIcon = PhotoOffIcon;
+    cameraIcon = CameraIcon;
+    openIcon = OpenIcon;
+    closeIcon = CloseIcon;
+
 	static template = xml`
 		<div
 			class="note-entry__wrapper"
@@ -30,7 +37,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 				</t>
 				<t t-else="">
 					<div class="note-entry__photo__thumbnail--empty">
-						<img src="${PhotoOffIcon}" alt="" aria-hidden="true" />
+						<img t-att-src="photoOffIcon" alt="" aria-hidden="true" />
 					</div>
 				</t>
 			</div>
@@ -40,7 +47,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 					aria-label="Prendre une photo"
 					t-on-click.stop.prevent="onClickOpenCamera"
 				>
-					<img src="${CameraIcon}" alt="" aria-hidden="true" />
+					<img t-att-src="cameraIcon" alt="" aria-hidden="true" />
 					<span>Photo</span>
 				</button>
 				<button
@@ -49,7 +56,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 					aria-label="Voir la photo en plein écran"
 					t-on-click.stop.prevent="onClickOpenPhoto"
 				>
-					<img src="${OpenIcon}" alt="" aria-hidden="true" />
+					<img t-att-src="openIcon" alt="" aria-hidden="true" />
 					<span>Voir</span>
 				</button>
 			</div>
@@ -66,7 +73,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 				aria-label="Fermer la photo"
 				t-on-click.stop.prevent="onClickClosePhoto"
 			>
-				<img src="${CloseIcon}" alt="" aria-hidden="true" />
+				<img t-att-src="closeIcon" alt="" aria-hidden="true" />
 			</button>
 			<img
 				class="note-entry__photo__overlay__img"

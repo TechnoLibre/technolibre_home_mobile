@@ -10,11 +10,15 @@ import CompanyLogo from "../../../assets/company_logo.png";
 const WEBSITE_URL: string = import.meta.env.VITE_WEBSITE_URL ?? "https://erplibre.ca";
 
 export class OptionsErplibreComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    companyLogo = CompanyLogo;
+
 	static template = xml`
       <div id="options-erplibre-component">
         <HeadingComponent title="'ERPLibre'" breadcrumbs="breadcrumbs" />
         <div class="erplibre__content">
-          <img class="erplibre__logo" src="${CompanyLogo}" alt="Logo ERPLibre" />
+          <img class="erplibre__logo" t-att-src="companyLogo" alt="Logo ERPLibre" />
           <h2 class="erplibre__title">ERPLibre</h2>
           <p class="erplibre__tagline">Logiciel de gestion d'entreprise</p>
           <p class="erplibre__description">

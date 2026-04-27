@@ -15,13 +15,20 @@ interface ModelData {
 }
 
 export class ApplicationsItemComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    userIcon = UserIcon;
+    deleteIcon = DeleteIcon;
+    editIcon = EditIcon;
+    openIcon = OpenIcon;
+
 	static template = xml`
     <li class="app-list__item">
       <div class="app-list__item__data">
         <p class="app-list__item__url"><t t-esc="props.app.url"></t></p>
       </div>
       <div class="app-list__item__user">
-        <img src="${UserIcon}" />
+        <img t-att-src="userIcon" />
         <p class="app-list__item__username"><t t-esc="props.app.username"></t></p>
       </div>
       <div class="app-list__item__actions">
@@ -30,7 +37,7 @@ export class ApplicationsItemComponent extends EnhancedComponent {
           class="app-list__item__action app-list__item__delete"
           t-on-click.stop="() => this.props.deleteApp(state.appID)"
         >
-          <img src="${DeleteIcon}" />
+          <img t-att-src="deleteIcon" />
         </button>
         <button
           type="button"
@@ -43,14 +50,14 @@ export class ApplicationsItemComponent extends EnhancedComponent {
           class="app-list__item__action app-list__item__edit"
           t-on-click.stop="() => this.props.editApp(state.appID)"
         >
-          <img src="${EditIcon}" />
+          <img t-att-src="editIcon" />
         </button>
         <button
           type="button"
           class="app-list__item__action app-list__item__open"
           t-on-click.stop="() => this.props.openApp(state.appID)"
         >
-          <img src="${OpenIcon}" />
+          <img t-att-src="openIcon" />
         </button>
       </div>
     </li>

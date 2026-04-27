@@ -15,6 +15,10 @@ const ENV = {
 };
 
 export class NoteListControlsComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    lABEL_NOTE = ENV.LABEL_NOTE;
+
 	static template = xml`
 		<section id="notes__controls" aria-label="Contrôles de la liste">
 			<a
@@ -43,7 +47,7 @@ export class NoteListControlsComponent extends EnhancedComponent {
 				t-att-aria-pressed="props.showArchivedNotes ? 'true' : 'false'"
 				t-on-click.stop.prevent="props.onToggleNoteListClick"
 			>
-				<p>Montrer les ${ENV.LABEL_NOTE}s archivées</p>
+				<p>Montrer les <t t-esc="lABEL_NOTE"/>s archivées</p>
 				<div
 					id="notes__control__show-archived__indicator"
 					aria-hidden="true"

@@ -9,6 +9,11 @@ import DeleteIcon from "../../../assets/icon/delete.svg";
 import CloudSyncIcon from "../../../assets/icon/cloud_sync.svg";
 
 export class NotesItemComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    cloudSyncIcon = CloudSyncIcon;
+    deleteIcon = DeleteIcon;
+
 	static template = xml`
 		<li
 			class="notes-item"
@@ -65,7 +70,7 @@ export class NotesItemComponent extends EnhancedComponent {
 						t-if="props.syncSynced > 0 || props.syncError > 0"
 						t-att-aria-label="(props.syncSynced > 0 ? props.syncSynced + ' sync' : '') + (props.syncError > 0 ? ' ' + props.syncError + ' erreur(s)' : '')"
 					>
-						<img src="${CloudSyncIcon}" alt="" aria-hidden="true"/>
+						<img t-att-src="cloudSyncIcon" alt="" aria-hidden="true"/>
 						<span
 							t-if="props.syncSynced > 0"
 							class="notes-item__sync-count--synced"
@@ -93,7 +98,7 @@ export class NotesItemComponent extends EnhancedComponent {
 					t-att-aria-label="'Supprimer : ' + (props.note.title || '(Sans titre)')"
 					t-on-click.stop.prevent="() => this.props.deleteNote(props.note.id)"
 				>
-					<img src="${DeleteIcon}" alt="" aria-hidden="true"/>
+					<img t-att-src="deleteIcon" alt="" aria-hidden="true"/>
 				</button>
 			</div>
 		</li>

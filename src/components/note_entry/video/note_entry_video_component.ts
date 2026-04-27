@@ -13,6 +13,13 @@ import VideoOffIcon from "../../../assets/icon/video_off.svg";
 import CloseIcon from "../../../assets/icon/close.svg";
 
 export class NoteEntryVideoComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    videoOffIcon = VideoOffIcon;
+    cameraIcon = CameraIcon;
+    playIcon = PlayIcon;
+    closeIcon = CloseIcon;
+
 	static template = xml`
 		<div
 			class="note-entry__wrapper"
@@ -27,7 +34,7 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 						t-att-src="getThumbnailSrc()"
 						class="note-entry__video__thumbnail__img"
 					/>
-					<img t-else="" src="${VideoOffIcon}" />
+					<img t-else="" t-att-src="videoOffIcon" />
 				</div>
 			</div>
 			<div class="note-entry__video__data">
@@ -36,7 +43,7 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 						class="note-entry__video__button note-entry__video__open-camera"
 						t-on-click.stop.prevent="onClickOpenCamera"
 					>
-						<img src="${CameraIcon}" />
+						<img t-att-src="cameraIcon" />
 						<span>Vidéo</span>
 					</button>
 					<button
@@ -44,7 +51,7 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 						t-if="props.params.path"
 						t-on-click.stop.prevent="onClickOpenVideo"
 					>
-						<img src="${PlayIcon}" />
+						<img t-att-src="playIcon" />
 						<span>Lire</span>
 					</button>
 					<button
@@ -83,7 +90,7 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 		</div>
 		<div t-if="state.showVideo" class="note-entry__video__overlay">
 			<button class="note-entry__video__overlay__close" t-on-click.stop.prevent="onClickCloseVideo">
-				<img src="${CloseIcon}" />
+				<img t-att-src="closeIcon" />
 			</button>
 			<video
 				class="note-entry__video__overlay__player"

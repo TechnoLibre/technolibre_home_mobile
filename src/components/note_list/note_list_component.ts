@@ -31,10 +31,15 @@ const ENV = {
 };
 
 export class NoteListComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    lABEL_NOTE = ENV.LABEL_NOTE;
+    noteAddIcon = NoteAddIcon;
+
 	static template = xml`
 		<div id="note-list-component">
 			<header id="notes-header">
-				<h1 id="notes-heading">${ENV.LABEL_NOTE}s</h1>
+				<h1 id="notes-heading"><t t-esc="lABEL_NOTE"/>s</h1>
 				<a
 					id="notes-add"
 					role="button"
@@ -42,7 +47,7 @@ export class NoteListComponent extends EnhancedComponent {
 					aria-label="Nouvelle note"
 					t-on-click.stop.prevent="onNoteAddClick"
 				>
-					<img src="${NoteAddIcon}" alt="" aria-hidden="true"/>
+					<img t-att-src="noteAddIcon" alt="" aria-hidden="true"/>
 				</a>
 			</header>
 			<NoteListControlsComponent
@@ -106,9 +111,9 @@ export class NoteListComponent extends EnhancedComponent {
 					</ul>
 				</div>
 				<div id="notes-empty" t-if="currentNoteList.length === 0">
-					<p t-if="state.showArchivedNotes">Aucune ${ENV.LABEL_NOTE} archivée.</p>
+					<p t-if="state.showArchivedNotes">Aucune <t t-esc="lABEL_NOTE"/> archivée.</p>
 					<p t-else="">
-						<a class="notes-empty__add-link" role="button" href="#" t-on-click.stop.prevent="onNoteAddClick">Ajoutez une ${ENV.LABEL_NOTE} 🤖</a>
+						<a class="notes-empty__add-link" role="button" href="#" t-on-click.stop.prevent="onNoteAddClick">Ajoutez une <t t-esc="lABEL_NOTE"/> 🤖</a>
 					</p>
 				</div>
 			</section>

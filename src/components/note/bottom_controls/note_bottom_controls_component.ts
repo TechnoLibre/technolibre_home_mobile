@@ -10,6 +10,15 @@ import GlobeLocationIcon from "../../../assets/icon/globe_location.svg";
 import TextIcon from "../../../assets/icon/text-selection-svgrepo-com.svg";
 
 export class NoteBottomControlsComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    globeLocationIcon = GlobeLocationIcon;
+    addPhotoIcon = AddPhotoIcon;
+    addVideoIcon = AddVideoIcon;
+    audioIcon = AudioIcon;
+    textIcon = TextIcon;
+    addDateIcon = AddDateIcon;
+
 	static template = xml`
 <div id="note__bottom-controls__wrapper">
 	<section id="note__bottom-controls">
@@ -21,7 +30,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			aria-label="Ajouter un lieu"
 			t-on-click.stop.prevent="props.addLocation"
 		>
-			<img src="${GlobeLocationIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="globeLocationIcon" alt="" aria-hidden="true"/>
 			<span>Lieu</span>
 		</a>
 		<a
@@ -32,7 +41,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			aria-label="Ajouter une photo"
 			t-on-click.stop.prevent="props.addPhoto"
 		>
-			<img src="${AddPhotoIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="addPhotoIcon" alt="" aria-hidden="true"/>
 			<span>Photo</span>
 		</a>
 		<a
@@ -43,7 +52,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			aria-label="Ajouter une vidéo"
 			t-on-click.stop.prevent="props.addVideo"
 		>
-			<img src="${AddVideoIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="addVideoIcon" alt="" aria-hidden="true"/>
 			<span>Vidéo</span>
 		</a>
 		<a
@@ -54,7 +63,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			aria-label="Ajouter un audio"
 			t-on-click.stop.prevent="props.addAudio"
 		>
-			<img src="${AudioIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="audioIcon" alt="" aria-hidden="true"/>
 			<span>Audio</span>
 		</a>
 		<a
@@ -65,7 +74,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			aria-label="Ajouter du texte"
 			t-on-click.stop.prevent="props.addText"
 		>
-			<img src="${TextIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="textIcon" alt="" aria-hidden="true"/>
 			<span>Texte</span>
 		</a>
 		<a
@@ -76,7 +85,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
 			aria-label="Ajouter une date"
 			t-on-click.stop.prevent="props.addDateEntry"
 		>
-			<img src="${AddDateIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="addDateIcon" alt="" aria-hidden="true"/>
 			<span>Date</span>
 		</a>
 	</section>

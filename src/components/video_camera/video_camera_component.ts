@@ -17,6 +17,11 @@ import CloseIcon from "../../assets/icon/close.svg";
 import FlipCameraAndroidIcon from "../../assets/icon/flip_camera_android.svg";
 
 export class VideoCameraComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    closeIcon = CloseIcon;
+    flipCameraAndroidIcon = FlipCameraAndroidIcon;
+
 	static template = xml`
 		<div id="video-camera-component">
 			<!-- OCR text-highlight canvas — always in DOM, drawn only when AI is active -->
@@ -35,7 +40,7 @@ export class VideoCameraComponent extends EnhancedComponent {
 			</section>
 			<section id="video-camera__bottom-controls">
 				<button id="video-camera__close-camera" t-on-click.stop.prevent="closeCamera">
-					<img src="${CloseIcon}" />
+					<img t-att-src="closeIcon" />
 				</button>
 				<button
 					id="video-camera__record"
@@ -46,7 +51,7 @@ export class VideoCameraComponent extends EnhancedComponent {
 				>
 				</button>
 				<button id="video-camera__flip-camera" t-on-click.stop.prevent="flipCamera">
-					<img src="${FlipCameraAndroidIcon}" />
+					<img t-att-src="flipCameraAndroidIcon" />
 				</button>
 			</section>
 		</div>
