@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
-import { tmpdir } from "node:os";
+import { tmpdir, cpus } from "node:os";
 import { randomBytes } from "node:crypto";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
@@ -418,8 +418,9 @@ function bundleSourcePlugin(): Plugin {
 
                 // Parallelize the per-repo work (file walk → tar.gz). Tar
                 // processes run concurrently up to MANIFEST_PARALLEL workers.
+                // Default = nproc (logical CPUs). Override via BUNDLE_PARALLEL.
                 const MANIFEST_PARALLEL = Number(
-                    process.env["BUNDLE_PARALLEL"] ?? "4",
+                    process.env["BUNDLE_PARALLEL"] ?? cpus().length,
                 );
                 const tManifestT0 = Date.now();
 
