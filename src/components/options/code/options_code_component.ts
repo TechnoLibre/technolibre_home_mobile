@@ -253,7 +253,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
               t-att-class="{ 'code-browser__tab--active': state.tab === 'files' }"
               t-on-click="() => this.onTabFiles()">📂 Fichiers</button>
       <button class="code-browser__tab"
-              t-if="state.mode === 'ssh-path'"
+              t-if="state.mode === 'ssh-path' or state.isEditable"
               t-att-class="{ 'code-browser__tab--active': state.tab === 'git' }"
               t-on-click="() => this.onTabGit()">🔀 Git</button>
     </div>
@@ -406,6 +406,125 @@ export class OptionsCodeComponent extends EnhancedComponent {
     </t>
 
     <!-- ── Git tab (ssh-path only) ─────────────────── -->
+    <!-- ── Editable-mode Git tab (manifest repo promoted) ── -->
+    <t t-if="state.tab === 'git' and state.isEditable">
+      <div class="code-git">
+
+        <div class="code-git__section">
+          <div class="code-git__section-header">
+            <span>Statut — <em t-esc="state.currentBranch" /></span>
+            <div class="code-git__header-btns">
+              <button class="code__btn code__btn--refresh"
+                      t-on-click="() => this.onEditGitRefresh()">↻ Rafraîchir</button>
+              <button class="code__btn code__btn--reset-all"
+                      t-on-click="() => this.onEditGitResetAll()"
+                      t-att-disabled="state.editGitStatus.modified.length === 0 and state.editGitStatus.untracked.length === 0 and state.editGitStatus.deleted.length === 0">
+                ⟲ Tout annuler
+              </button>
+            </div>
+          </div>
+
+          <t t-if="state.editGitStatus.modified.length === 0 and state.editGitStatus.untracked.length === 0 and state.editGitStatus.staged.length === 0 and state.editGitStatus.deleted.length === 0">
+            <div class="code-git__empty">Working tree propre.</div>
+          </t>
+
+          <t t-if="state.editGitStatus.modified.length > 0">
+            <div class="code-git__group">
+              <div class="code-git__group-header">Modifié (<t t-esc="state.editGitStatus.modified.length" />)</div>
+              <t t-foreach="state.editGitStatus.modified" t-as="fp" t-key="fp">
+                <div class="code-git__file">
+                  <button class="code-git__file-name code-git__file-name--modified"
+                          t-on-click="() => this.onEditGitDiffFile(fp)">
+                    <t t-esc="fp" />
+                  </button>
+                  <button class="code__btn code__btn--reset-file"
+                          t-on-click="() => this.onEditGitResetFile(fp)">↶</button>
+                </div>
+              </t>
+            </div>
+          </t>
+
+          <t t-if="state.editGitStatus.staged.length > 0">
+            <div class="code-git__group">
+              <div class="code-git__group-header">Stagé (<t t-esc="state.editGitStatus.staged.length" />)</div>
+              <t t-foreach="state.editGitStatus.staged" t-as="fp" t-key="fp">
+                <div class="code-git__file">
+                  <button class="code-git__file-name code-git__file-name--staged"
+                          t-on-click="() => this.onEditGitDiffFile(fp)">
+                    <t t-esc="fp" />
+                  </button>
+                </div>
+              </t>
+            </div>
+          </t>
+
+          <t t-if="state.editGitStatus.untracked.length > 0">
+            <div class="code-git__group">
+              <div class="code-git__group-header">Non suivis (<t t-esc="state.editGitStatus.untracked.length" />)</div>
+              <t t-foreach="state.editGitStatus.untracked" t-as="fp" t-key="fp">
+                <div class="code-git__file">
+                  <span class="code-git__file-name code-git__file-name--untracked" t-esc="fp" />
+                </div>
+              </t>
+            </div>
+          </t>
+
+          <t t-if="state.editGitStatus.deleted.length > 0">
+            <div class="code-git__group">
+              <div class="code-git__group-header">Supprimés (<t t-esc="state.editGitStatus.deleted.length" />)</div>
+              <t t-foreach="state.editGitStatus.deleted" t-as="fp" t-key="fp">
+                <div class="code-git__file">
+                  <span class="code-git__file-name code-git__file-name--deleted" t-esc="fp" />
+                  <button class="code__btn code__btn--reset-file"
+                          t-on-click="() => this.onEditGitResetFile(fp)">↶</button>
+                </div>
+              </t>
+            </div>
+          </t>
+        </div>
+
+        <t t-if="state.editGitDiff">
+          <div class="code-git__section">
+            <div class="code-git__section-header">
+              <span>Diff — <em t-esc="state.editGitDiffFile" /></span>
+            </div>
+            <pre class="code-git__diff" t-esc="state.editGitDiff" />
+          </div>
+        </t>
+
+        <div class="code-git__section">
+          <div class="code-git__section-header">
+            <span>Commit</span>
+          </div>
+          <input class="code-git__commit-input" type="text"
+                 placeholder="Message de commit"
+                 t-model="state.editGitCommitMessage" />
+          <button class="code__btn code__btn--commit"
+                  t-on-click="() => this.onEditGitCommit()"
+                  t-att-disabled="!state.editGitCommitMessage.trim()">
+            ✓ Commit
+          </button>
+        </div>
+
+        <div class="code-git__section">
+          <div class="code-git__section-header">
+            <span>Historique (<t t-esc="state.editGitLog.length" />)</span>
+          </div>
+          <t t-if="state.editGitLog.length === 0">
+            <div class="code-git__empty">Aucun commit.</div>
+          </t>
+          <t t-foreach="state.editGitLog" t-as="commit" t-key="commit.sha">
+            <div class="code-git__commit">
+              <span class="code-git__commit-sha" t-esc="commit.sha.slice(0, 8)" />
+              <span class="code-git__commit-msg" t-esc="commit.message" />
+              <span class="code-git__commit-date" t-esc="commit.date.slice(0, 10)" />
+            </div>
+          </t>
+        </div>
+      </div>
+    </t>
+
+    <!-- ── SSH-path Git tab (existing) ── -->
     <t t-if="state.tab === 'git' and state.mode === 'ssh-path'">
       <div class="code-git">
 
@@ -850,7 +969,93 @@ export class OptionsCodeComponent extends EnhancedComponent {
     async onTabGit(): Promise<void> {
         this.state.tab = "git";
         this.state.error = "";
-        await this.onGitRefresh();
+        if (this.state.mode === "ssh-path") {
+            await this.onGitRefresh();
+        } else if (this.state.isEditable) {
+            await this.onEditGitRefresh();
+        }
+    }
+
+    // ── Edit-mode git ops (manifest repo promoted to Documents + git baseline) ─
+
+    private _editableSvc(): import("../../../services/editableCodeService").EditableCodeService {
+        if (!this._repoFs || !("status" in (this._repoFs as object))) {
+            throw new Error("Pas en mode édition");
+        }
+        return this._repoFs as import("../../../services/editableCodeService").EditableCodeService;
+    }
+
+    async onEditGitRefresh(): Promise<void> {
+        if (!this.state.isEditable) return;
+        try {
+            const svc = this._editableSvc();
+            this.state.editGitStatus = await svc.status();
+            this.state.editGitLog = await svc.log({ limit: 20 });
+            // If a file is currently selected for diff, refresh its diff too.
+            if (this.state.editGitDiffFile) {
+                this.state.editGitDiff = await svc.diff(this.state.editGitDiffFile);
+            }
+        } catch (e) {
+            this.state.error = `Git refresh: ${e instanceof Error ? e.message : String(e)}`;
+        }
+    }
+
+    async onEditGitDiffFile(filepath: string): Promise<void> {
+        try {
+            this.state.editGitDiffFile = filepath;
+            this.state.editGitDiff = await this._editableSvc().diff(filepath);
+        } catch (e) {
+            this.state.error = `Git diff: ${e instanceof Error ? e.message : String(e)}`;
+        }
+    }
+
+    async onEditGitCommit(): Promise<void> {
+        const msg = (this.state.editGitCommitMessage ?? "").trim();
+        if (!msg) {
+            this.state.error = "Message de commit requis.";
+            return;
+        }
+        try {
+            const sha = await this._editableSvc().commit(msg);
+            this.state.editGitCommitMessage = "";
+            this.state.editGitDiff = "";
+            this.state.editGitDiffFile = "";
+            this.state.error = "";
+            console.log(`[code] commit ${sha.slice(0, 8)}: ${msg}`);
+            await this.onEditGitRefresh();
+        } catch (e) {
+            this.state.error = `Commit: ${e instanceof Error ? e.message : String(e)}`;
+        }
+    }
+
+    async onEditGitResetFile(filepath: string): Promise<void> {
+        const ok = window.confirm(`Annuler les modifications de "${filepath}"?`);
+        if (!ok) return;
+        try {
+            await this._editableSvc().resetFile(filepath);
+            if (this.state.editGitDiffFile === filepath) {
+                this.state.editGitDiff = "";
+                this.state.editGitDiffFile = "";
+            }
+            await this.onEditGitRefresh();
+        } catch (e) {
+            this.state.error = `Reset: ${e instanceof Error ? e.message : String(e)}`;
+        }
+    }
+
+    async onEditGitResetAll(): Promise<void> {
+        const ok = window.confirm(
+            "Annuler TOUTES les modifications non-commitées? Action irréversible.",
+        );
+        if (!ok) return;
+        try {
+            await this._editableSvc().resetAll();
+            this.state.editGitDiff = "";
+            this.state.editGitDiffFile = "";
+            await this.onEditGitRefresh();
+        } catch (e) {
+            this.state.error = `Reset all: ${e instanceof Error ? e.message : String(e)}`;
+        }
     }
 
     // ── File viewer ───────────────────────────────────────────────────────────
