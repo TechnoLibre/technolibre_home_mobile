@@ -57,6 +57,16 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                 <t t-if="state.debugLogging">🛑 Debug ON</t>
                 <t t-else="">🐞 Debug OFF</t>
               </button>
+              <button class="options-streamdeck__refresh"
+                      t-att-class="{ 'options-streamdeck__debug--on': state.readerUseBulk }"
+                      t-on-click="() => this.toggleReaderMode()">
+                <t t-if="state.readerUseBulk">📥 Mode: bulk</t>
+                <t t-else="">📥 Mode: UsbRequest</t>
+              </button>
+              <button class="options-streamdeck__refresh"
+                      t-on-click="() => this.restartSessions()">
+                🔄 Redémarrer sessions
+              </button>
             </div>
 
             <t t-if="state.error">
@@ -306,6 +316,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         events: [] as EventLogEntry[],
         error: "",
         debugLogging: false,
+        readerUseBulk: false,
         // Which deck row's parameter panel is open (deckId, "" = none).
         // Single-open at a time keeps the diagnostic panel scannable.
         expandedDeckId: "",
@@ -352,6 +363,10 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         onMounted(async () => {
             await this.refresh();
             await this._wireListeners();
+            try {
+                const r = await StreamDeckPlugin.getReaderUseBulk();
+                this.state.readerUseBulk = r.enabled;
+            } catch { /* ignore */ }
         });
         onWillUnmount(async () => {
             for (const h of this._listeners) {
@@ -403,6 +418,29 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             this._log(`debug logging → ${r.enabled ? "ON" : "OFF"}`);
         } catch (e) {
             this._log(`setDebugLogging ERROR: ${e}`);
+        }
+    }
+
+    async toggleReaderMode(): Promise<void> {
+        const next = !this.state.readerUseBulk;
+        try {
+            const r = await StreamDeckPlugin.setReaderUseBulk({ enabled: next });
+            this.state.readerUseBulk = r.enabled;
+            this._log(`reader mode → ${r.enabled ? "bulkTransfer" : "UsbRequest"} (restart sessions to apply)`);
+        } catch (e) {
+            this._log(`setReaderUseBulk ERROR: ${e}`);
+        }
+    }
+
+    async restartSessions(): Promise<void> {
+        try {
+            const r = await StreamDeckPlugin.restartSessions();
+            this._log(`restartSessions → ${r.restarted} deck(s) re-attached`);
+            // listDecks lags briefly — refresh after a beat so the
+            // panel shows the new sessions.
+            setTimeout(() => this.refresh(), 500);
+        } catch (e) {
+            this._log(`restartSessions ERROR: ${e}`);
         }
     }
 
