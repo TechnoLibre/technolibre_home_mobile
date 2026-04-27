@@ -54,6 +54,34 @@
         }
     }
 
+    &__settings {
+        border-top: 1px solid var(--surface-btn);
+        margin-top: 0.7rem;
+        padding-top: 0.6rem;
+    }
+
+    &__setting {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        margin-bottom: 0.5rem;
+    }
+
+    &__setting-label {
+        font-size: 0.85rem;
+    }
+
+    &__setting-hint {
+        color: var(--text-greyed-out);
+        font-size: 0.75rem;
+        margin: 0;
+    }
+
+    &__slider {
+        accent-color: var(--accent-color);
+        width: 100%;
+    }
+
     &__error {
         background-color: var(--status-error-bg);
         border-left: 3px solid var(--btn-red-color);
