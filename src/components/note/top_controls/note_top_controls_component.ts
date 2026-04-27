@@ -12,6 +12,17 @@ import PinNoteIcon from "../../../assets/icon/pin.svg";
 import TagIcon from "../../../assets/icon/tag.svg";
 
 export class NoteTopControlsComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    editNoteIcon = EditNoteIcon;
+    cloudSyncIcon = CloudSyncIcon;
+    optionNoteIcon = OptionNoteIcon;
+    tagIcon = TagIcon;
+    archiveNoteIcon = ArchiveNoteIcon;
+    pinNoteIcon = PinNoteIcon;
+    checkBoxIcon = CheckBoxIcon;
+    checkBoxBlankIcon = CheckBoxBlankIcon;
+
 	state: any;
 	_pressTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -58,7 +69,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			t-att-aria-label="t('button.edit_mode')"
 			t-on-click.stop.prevent="props.toggleEditMode"
 		>
-			<img src="${EditNoteIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="editNoteIcon" alt="" aria-hidden="true"/>
 			<p t-esc="t('button.edit_mode')"/>
 		</a>
 		<a
@@ -72,7 +83,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			t-on-pointercancel="onSyncPointerCancel"
 			t-on-contextmenu.stop.prevent=""
 		>
-			<img src="${CloudSyncIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="cloudSyncIcon" alt="" aria-hidden="true"/>
 			<p t-esc="props.syncLabel" />
 		</a>
 		<a
@@ -84,7 +95,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			t-att-aria-expanded="props.optionMode ? 'true' : 'false'"
 			t-on-click.stop.prevent="props.toggleOptionMode"
 		>
-			<img src="${OptionNoteIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="optionNoteIcon" alt="" aria-hidden="true"/>
 		</a>
 		<a
 			id="note__control__tags"
@@ -95,7 +106,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			t-on-click.stop.prevent="props.onTagsClick"
 			t-if="props.optionMode"
 		>
-			<img src="${TagIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="tagIcon" alt="" aria-hidden="true"/>
 			<p t-esc="t('label.tags')"/>
 		</a>
 		<a
@@ -110,7 +121,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			t-on-click.stop.prevent="props.onArchiveClick"
 			t-if="props.optionMode"
 		>
-			<img src="${ArchiveNoteIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="archiveNoteIcon" alt="" aria-hidden="true"/>
 			<p t-if="props.note.archived" t-esc="t('button.unarchive')"/>
 			<p t-else="" t-esc="t('button.archive')"/>
 		</a>
@@ -126,7 +137,7 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			t-on-click.stop.prevent="props.onPinClick"
 			t-if="props.optionMode"
 		>
-			<img src="${PinNoteIcon}" alt="" aria-hidden="true"/>
+			<img t-att-src="pinNoteIcon" alt="" aria-hidden="true"/>
 			<p t-if="props.note.pinned" t-esc="t('button.unpin')"/>
 			<p t-else="" t-esc="t('button.pin')"/>
 		</a>
@@ -142,8 +153,8 @@ export class NoteTopControlsComponent extends EnhancedComponent {
 			t-on-click.stop.prevent="props.toggleDone"
 			t-if="props.optionMode"
 		>
-			<img src="${CheckBoxIcon}" t-if="props.note.done" alt="" aria-hidden="true"/>
-			<img src="${CheckBoxBlankIcon}" t-else="" alt="" aria-hidden="true"/>
+			<img t-att-src="checkBoxIcon" t-if="props.note.done" alt="" aria-hidden="true"/>
+			<img t-att-src="checkBoxBlankIcon" t-else="" alt="" aria-hidden="true"/>
 			<p t-esc="t('label.done')"/>
 		</a>
 		<a

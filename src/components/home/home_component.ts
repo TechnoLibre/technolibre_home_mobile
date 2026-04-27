@@ -37,10 +37,16 @@ interface HomeState {
 export class HomeComponent extends EnhancedComponent {
     state!: HomeState;
 
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    companyLogo = CompanyLogo;
+    labelNote = ENV.LABEL_NOTE;
+    startupTime = STARTUP_TIME;
+
     static template = xml`
     <div id="home-component">
       <div id="home-header">
-        <img id="logo" src="${CompanyLogo}" t-att-alt="t('aria.erplibre_logo')"
+        <img id="logo" t-att-src="companyLogo" t-att-alt="t('aria.erplibre_logo')"
              role="button"
              tabindex="0"
              t-att-aria-label="t('button.spin_logo')"
@@ -81,7 +87,7 @@ export class HomeComponent extends EnhancedComponent {
         <button class="home-action-card" role="listitem" t-on-click="onNotesClick"
                 t-att-aria-label="state.noteCount + ' note' + (state.noteCount !== 1 ? 's' : '') + ' — ouvrir la liste'">
           <span class="home-action-card__icon" aria-hidden="true">📝</span>
-          <span class="home-action-card__label">${ENV.LABEL_NOTE}s</span>
+          <span class="home-action-card__label"><t t-esc="labelNote"/>s</span>
           <span t-if="state.noteCount > 0" class="home-action-card__badge"
                 t-esc="state.noteCount" aria-hidden="true"/>
         </button>

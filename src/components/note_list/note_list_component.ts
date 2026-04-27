@@ -31,10 +31,15 @@ const ENV = {
 };
 
 export class NoteListComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    lABEL_NOTE = ENV.LABEL_NOTE;
+    noteAddIcon = NoteAddIcon;
+
 	static template = xml`
 		<div id="note-list-component">
 			<header id="notes-header">
-				<h1 id="notes-heading">${ENV.LABEL_NOTE}s</h1>
+				<h1 id="notes-heading"><t t-esc="lABEL_NOTE"/>s</h1>
 				<a
 					id="notes-add"
 					role="button"
@@ -42,7 +47,7 @@ export class NoteListComponent extends EnhancedComponent {
 					t-att-aria-label="t('button.new_note')"
 					t-on-click.stop.prevent="onNoteAddClick"
 				>
-					<img src="${NoteAddIcon}" alt="" aria-hidden="true"/>
+					<img t-att-src="noteAddIcon" alt="" aria-hidden="true"/>
 				</a>
 				<div class="breadcrumb__options-wrap">
 					<button
