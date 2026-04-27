@@ -27,6 +27,7 @@ import { addProcessDebugLogColumn } from "../services/migrations/addProcessDebug
 import { addTagsTable } from "../services/migrations/addTagsTable";
 import { addNtfyTokenColumn } from "../services/migrations/addNtfyTokenColumn";
 import { encryptExistingCredentials } from "../services/migrations/encryptExistingCredentials";
+import { addEditableReposTable } from "../services/migrations/addEditableReposTable";
 import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
@@ -178,6 +179,11 @@ async function startApp() {
 			version: 2026041402,
 			description: "Chiffrement AES-256-GCM des credentials existants",
 			run: encryptExistingCredentials,
+		},
+		{
+			version: 2026042601,
+			description: "Table editable_repos pour les repos promus en mode édition",
+			run: addEditableReposTable,
 		},
 	]);
 
