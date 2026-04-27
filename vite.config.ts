@@ -501,6 +501,11 @@ export default defineConfig(({ mode }) => ({
                 // parallel at startup. Heavy libs are isolated; everything
                 // else under node_modules lands in a generic "vendor" chunk.
                 manualChunks(id: string) {
+                    // Owl pre-compiled templates: ~400 KB of inlined function
+                    // expressions. Isolating them lets the WebView parse the
+                    // main entry and this chunk in parallel at boot.
+                    if (id.includes("__owl-precompiled__")) return "owl-templates";
+
                     if (!id.includes("node_modules")) return undefined;
                     if (id.includes("@odoo/owl")) return "owl";
                     if (id.includes("@capacitor-community/sqlite")) return "sqlite";
