@@ -83,6 +83,10 @@ export interface UsbDeviceDiag {
     isElgato: boolean;
     knownStreamDeck: boolean;
     hasPermission: boolean;
+    /** True if the plugin currently has an open DeckSession for this device. */
+    inSession: boolean;
+    /** Last attach failure reason for this device path (empty if none). */
+    lastAttachError: string;
 }
 
 interface StreamDeckPluginApi {
@@ -91,6 +95,13 @@ interface StreamDeckPluginApi {
     listAllUsbDevices(): Promise<{ devices: UsbDeviceDiag[] }>;
     /** Ask the OS for permission on a USB device by its system name. */
     requestPermissionForUsb(opts: { deviceName: string }): Promise<{ granted: boolean; error?: string }>;
+    /**
+     * Re-run onDeckAttached for every USB device that is a known Stream
+     * Deck with permission but has no open DeckSession. Use this after
+     * the diagnostic UI's listener attaches (boot-time attach errors
+     * are otherwise lost).
+     */
+    retryAttach(): Promise<{ retried: number }>;
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
     requestPermission(opts: { deckId: string }): Promise<{ granted: boolean }>;
     reset(opts: { deckId: string }): Promise<void>;

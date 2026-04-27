@@ -129,6 +129,12 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                         🔓 Demander permission pour ce device
                       </button>
                     </div>
+                    <div t-if="dev.lastAttachError" class="options-streamdeck__error">
+                      ❌ Dernière erreur d'attach: <code t-esc="dev.lastAttachError" />
+                    </div>
+                    <div t-if="dev.knownStreamDeck and dev.hasPermission and !dev.inSession" class="options-streamdeck__deck-line">
+                      <span>⚠ permission OK mais session jamais ouverte — voir l'erreur ci-dessus</span>
+                    </div>
                   </div>
                 </t>
               </div>
@@ -184,9 +190,18 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
     async refresh(): Promise<void> {
         this.state.error = "";
         try {
+            // First: ask the plugin to retry attach on any known deck that
+            // has permission but no open session. Catches the case where the
+            // boot-time attach failed silently (we missed the event).
+            const retry = await StreamDeckPlugin.retryAttach();
+            if (retry.retried > 0) {
+                this._log(`retryAttach → ${retry.retried} device(s) re-attached`);
+            }
             const r = await StreamDeckPlugin.listDecks();
             this.state.decks = r.decks.map((info) => ({ info }));
             this._log(`listDecks → ${r.decks.length} deck(s)`);
+            // Always also refresh the all-USB scan so lastAttachError shows up.
+            await this.scanAllUsb();
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             this.state.error = msg;
