@@ -90,6 +90,12 @@ export class NoteContentComponent extends EnhancedComponent {
 				if (el && el.value.trim() === "") {
 					el.focus({ preventScroll: true });
 					this.didAutoFocus = true;
+					// On Android, programmatic .focus() does not pop the
+					// virtual keyboard. Invoke the Capacitor Keyboard plugin
+					// explicitly. Fail-soft on platforms where it's a no-op.
+					import("@capacitor/keyboard")
+						.then(({ Keyboard }) => Keyboard.show())
+						.catch(() => { /* web / iOS / older plugin: ignore */ });
 				}
 			});
 		});

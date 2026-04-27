@@ -84,8 +84,8 @@ export class StreamDeckController {
     }
 
     private async _renderHome(deck: DeckInfo): Promise<void> {
-        const { w, h, format } = deck.keyImage;
-        const blob = await this._renderTile(w, h, "📝", "Note", "#1e3a8a");
+        const { w, h, format, rotation } = deck.keyImage;
+        const blob = await this._renderTile(w, h, rotation ?? 0, "📝", "Note", "#1e3a8a");
         const bytes = await this._blobToBase64(blob);
         await StreamDeckPlugin.setKeyImage({
             deckId: deck.deckId,
@@ -98,6 +98,7 @@ export class StreamDeckController {
     private async _renderTile(
         w: number,
         h: number,
+        rotationDeg: number,
         icon: string,
         label: string,
         bg: string,
@@ -107,6 +108,16 @@ export class StreamDeckController {
         canvas.height = h;
         const ctx = canvas.getContext("2d");
         if (!ctx) throw new Error("canvas 2d context unavailable");
+
+        // Some Stream Deck models (XL, MK.2, Original v2…) have their LCD
+        // mounted upside-down. Rotate the entire context BEFORE drawing so
+        // the JPEG bytes we ship out come pre-flipped — the user sees it
+        // upright when looking at the deck normally.
+        if (rotationDeg !== 0) {
+            ctx.translate(w / 2, h / 2);
+            ctx.rotate((rotationDeg * Math.PI) / 180);
+            ctx.translate(-w / 2, -h / 2);
+        }
 
         ctx.fillStyle = bg;
         ctx.fillRect(0, 0, w, h);
@@ -123,8 +134,6 @@ export class StreamDeckController {
         ctx.font = `bold ${Math.floor(h * 0.18)}px sans-serif`;
         ctx.fillText(label, w / 2, h * 0.78);
 
-        // JPEG fits every model except v1/Mini which need PNG (BMP path).
-        // The deck's spec tells us — caller already passed the right format.
         return await new Promise<Blob>((resolve, reject) => {
             canvas.toBlob(
                 (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),

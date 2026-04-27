@@ -33,6 +33,7 @@ public final class DeckRegistry {
             .model("xl").productId(0x006c)
             .grid(4, 8)
             .keyImage(96, 96, DeckSpec.ImageFormat.JPEG)
+            .keyImageRotation(180)
             .transport(DeckSpec.TransportKind.V2)
             .capability("keys")
             .build());
@@ -43,6 +44,7 @@ public final class DeckRegistry {
             .model("xl_v2").productId(0x008f)
             .grid(4, 8)
             .keyImage(96, 96, DeckSpec.ImageFormat.JPEG)
+            .keyImageRotation(180)
             .transport(DeckSpec.TransportKind.V2)
             .capability("keys")
             .build());
@@ -51,6 +53,7 @@ public final class DeckRegistry {
             .model("original_v2").productId(0x006d)
             .grid(3, 5)
             .keyImage(72, 72, DeckSpec.ImageFormat.JPEG)
+            .keyImageRotation(180)
             .transport(DeckSpec.TransportKind.V2)
             .capability("keys")
             .build());
@@ -59,6 +62,7 @@ public final class DeckRegistry {
             .model("mk2").productId(0x0080)
             .grid(3, 5)
             .keyImage(72, 72, DeckSpec.ImageFormat.JPEG)
+            .keyImageRotation(180)
             .transport(DeckSpec.TransportKind.V2)
             .capability("keys")
             .build());

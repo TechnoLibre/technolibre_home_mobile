@@ -408,6 +408,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         keyImg.put("format", spec.keyImageFormat == DeckSpec.ImageFormat.JPEG ? "jpeg"
                           : spec.keyImageFormat == DeckSpec.ImageFormat.BMP_BGR_ROT180 ? "bmp_bgr_rot180"
                           : "bmp_bgr_rot270");
+        keyImg.put("rotation", spec.keyImageRotation);
         o.put("keyImage", keyImg);
         o.put("dialCount", spec.dialCount);
         if (spec.lcdW > 0) {
