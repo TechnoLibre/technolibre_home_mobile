@@ -663,3 +663,19 @@ Variable d'environnement `ERPLIBRE_MANIFEST_PATH` pour personnaliser le chemin d
 (défaut : `../../.repo/local_manifests/erplibre_manifest.xml`).
 
 Variable d'environnement `BUNDLE_DEBUG=1` pour activer le log détaillé par fichier lors du build.
+
+## Bundle Pipeline tar.gz + Edit Mode
+
+Voir `doc/BUNDLE_PIPELINE.md` pour le flow complet. En résumé:
+
+- `RepoExtractorService` — extrait les manifest repos depuis `tar.gz` vers Cache.
+- `BundleCodeService` (mode archive) — lit les fichiers depuis Cache après extraction.
+- `RepoEditService` — promotion Cache → Documents + commit baseline `isomorphic-git`.
+- `EditableCodeService` — read/write + git diff/log/commit/reset sur un repo promu.
+- `repoFsFactory.getRepoFs(project)` — choisit le bon backend selon que le slug est en mode édition ou non.
+
+La table SQLite `editable_repos` (migration `2026042601`) suit les repos promus.
+
+Décompression via `DecompressionStream('gzip')` natif (Chrome 80+, dispo sur WebView Android 7+). `isomorphic-git` chargé en lazy `import()` au moment de la promotion — n'impacte pas le startup (~150 KB chunk séparé).
+
+Test matrix manuelle: `doc/bundle_extract_test_matrix.md`.
