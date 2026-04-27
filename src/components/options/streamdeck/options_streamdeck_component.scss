@@ -1,0 +1,105 @@
+.options-streamdeck {
+    &__header {
+        align-items: center;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        padding: 0.6rem 0.8rem;
+        user-select: none;
+    }
+
+    &__body {
+        padding: 0.4rem 0.8rem 0.8rem;
+    }
+
+    &__toolbar {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 0.6rem;
+    }
+
+    &__refresh,
+    &__retry {
+        background: var(--surface-btn);
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 0.85rem;
+        padding: 0.4rem 0.7rem;
+
+        &:disabled { opacity: 0.4; cursor: not-allowed; }
+        &:not(:disabled):active { background: var(--surface-btn-active); }
+    }
+
+    &__hint {
+        color: var(--text-greyed-out);
+        font-size: 0.85rem;
+        margin: 0.4rem 0;
+    }
+
+    &__error {
+        background-color: var(--status-error-bg);
+        border-left: 3px solid var(--btn-red-color);
+        border-radius: 0.25rem;
+        color: var(--btn-red-color);
+        font-size: 0.85rem;
+        margin: 0.5rem 0;
+        padding: 0.5rem 0.7rem;
+    }
+
+    &__deck {
+        background: var(--card-bg);
+        border-radius: 0.3rem;
+        margin-bottom: 0.5rem;
+        padding: 0.5rem 0.7rem;
+    }
+
+    &__deck-line {
+        display: flex;
+        font-size: 0.8rem;
+        gap: 0.6rem;
+        justify-content: space-between;
+        padding: 0.15rem 0;
+
+        code {
+            background: rgba(0,0,0,0.25);
+            border-radius: 0.15rem;
+            font-family: monospace;
+            padding: 0 0.25rem;
+        }
+    }
+
+    &__deck-serial {
+        color: var(--text-greyed-out);
+    }
+
+    &__log {
+        background: var(--card-bg);
+        border-radius: 0.3rem;
+        margin-top: 0.6rem;
+        padding: 0.5rem 0.7rem;
+    }
+
+    &__log-header {
+        color: var(--text-greyed-out);
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.3rem;
+        text-transform: uppercase;
+    }
+
+    &__log-row {
+        display: flex;
+        font-family: monospace;
+        font-size: 0.75rem;
+        gap: 0.5rem;
+        padding: 0.1rem 0;
+    }
+
+    &__log-ts {
+        color: var(--text-greyed-out);
+        flex-shrink: 0;
+    }
+}
