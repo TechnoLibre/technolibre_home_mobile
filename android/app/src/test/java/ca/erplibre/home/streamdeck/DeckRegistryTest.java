@@ -64,8 +64,8 @@ public class DeckRegistryTest {
     }
 
     @Test
-    public void all_seven_models_present() {
-        int[] pids = {0x0060, 0x0063, 0x006c, 0x006d, 0x0080, 0x0084, 0x009a};
+    public void all_eight_models_present() {
+        int[] pids = {0x0060, 0x0063, 0x006c, 0x006d, 0x0080, 0x0084, 0x008f, 0x009a};
         for (int pid : pids) {
             assertNotNull("missing pid 0x" + Integer.toHexString(pid), DeckRegistry.lookup(pid));
         }
