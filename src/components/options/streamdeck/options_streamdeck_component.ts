@@ -146,6 +146,20 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                         </button>
                       </t>
                     </div>
+
+                    <div class="options-streamdeck__deck-params-row">
+                      <label class="options-streamdeck__checkbox-label">
+                        <input type="checkbox"
+                               t-att-checked="state.borderCompensation[row.info.deckId]"
+                               t-on-change="(ev) => this.toggleBorderCompensation(row.info.deckId, ev.target.checked)" />
+                        Inclure les bordures dans l'image (caméra)
+                      </label>
+                    </div>
+                    <p class="options-streamdeck__hint options-streamdeck__hint--inline">
+                      Compense les espaces physiques entre les touches.
+                      Les pixels qui tombent sur les bordures sont écartés
+                      au lieu d'être affichés sur la mauvaise touche.
+                    </p>
                   </div>
                 </t>
               </div>
@@ -229,6 +243,10 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         // expose a getBrightness, so we keep our own state and default
         // to 50% (matches the firmware factory default).
         brightness: {} as Record<string, number>,
+        // Per-deck "include bezel in camera stream" toggle. The actual
+        // value lives on the camera streamer (singleton); this mirror
+        // is only for the checkbox to render reactively.
+        borderCompensation: {} as Record<string, boolean>,
     });
 
     // Exposed to the template so the t-foreach over presets stays a
@@ -283,6 +301,9 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             const r = await StreamDeckPlugin.listDecks();
             this.state.decks = r.decks.map((info) => ({ info }));
             this._log(`listDecks → ${r.decks.length} deck(s)`);
+            // Mirror the streamer's per-deck border-compensation flags
+            // so the checkbox reflects state correctly across re-mounts.
+            this.syncBorderCompensationFromStreamer();
             // Always also refresh the all-USB scan so lastAttachError shows up.
             await this.scanAllUsb();
         } catch (e) {
@@ -373,6 +394,27 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         const input = ev.target as HTMLInputElement;
         const v = parseInt(input.value, 10);
         if (!Number.isNaN(v)) this.applyBrightness(deckId, v);
+    }
+
+    toggleBorderCompensation(deckId: string, on: boolean): void {
+        // The camera streamer is the source of truth (it owns the per-
+        // deck composite cache). The component just mirrors the value
+        // for the checkbox to render — read back after set so a clamp
+        // or anything similar in the streamer surfaces here.
+        const streamer = (this.env as any).streamDeckCameraStreamer;
+        if (!streamer) return;
+        streamer.setBorderCompensation(deckId, on);
+        this.state.borderCompensation[deckId] = streamer.getBorderCompensation(deckId);
+        this._log(`borderCompensation(${deckId}) → ${on ? "on" : "off"}`);
+    }
+
+    private syncBorderCompensationFromStreamer(): void {
+        const streamer = (this.env as any).streamDeckCameraStreamer;
+        if (!streamer) return;
+        for (const row of this.state.decks) {
+            this.state.borderCompensation[row.info.deckId] =
+                streamer.getBorderCompensation(row.info.deckId);
+        }
     }
 
     async retryPermission(): Promise<void> {
