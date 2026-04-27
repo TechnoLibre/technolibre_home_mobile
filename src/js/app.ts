@@ -31,6 +31,7 @@ import { addEditableReposTable } from "../services/migrations/addEditableReposTa
 import { RepoExtractorService } from "../services/repoExtractorService";
 import { RepoEditService } from "../services/repoEditService";
 import { CodeStyleService } from "../services/codeStyleService";
+import { StreamDeckController } from "../services/streamDeckController";
 import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
@@ -225,6 +226,10 @@ async function startApp() {
 	});
 	const codeStyleService = new CodeStyleService(db);
 	await codeStyleService.loadAndApply();
+	const streamDeckController = new StreamDeckController(eventBus, noteService);
+	streamDeckController.start().catch((e) =>
+		console.warn("[boot] StreamDeckController.start failed:", e),
+	);
 	notificationService.start();
 
 	// Re-schedule any reminders whose notification batch is expiring
@@ -232,7 +237,7 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService, repoExtractorService, repoEditService, codeStyleService };
+	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService, repoExtractorService, repoEditService, codeStyleService, streamDeckController };
 
 	setBootStep("Montage de l'interface…");
 	await mount(RootComponent, document.body, { env });

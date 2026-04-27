@@ -89,6 +89,8 @@ interface StreamDeckPluginApi {
     listDecks(): Promise<{ decks: DeckInfo[] }>;
     /** Diagnostic: every USB device on the phone, regardless of vendor. */
     listAllUsbDevices(): Promise<{ devices: UsbDeviceDiag[] }>;
+    /** Ask the OS for permission on a USB device by its system name. */
+    requestPermissionForUsb(opts: { deviceName: string }): Promise<{ granted: boolean; error?: string }>;
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
     requestPermission(opts: { deckId: string }): Promise<{ granted: boolean }>;
     reset(opts: { deckId: string }): Promise<void>;
