@@ -14,8 +14,19 @@
 
     &__toolbar {
         display: flex;
+        flex-wrap: wrap;
         gap: 0.5rem;
         margin-bottom: 0.6rem;
+
+        // Each button takes a third of the width minus gap, so the
+        // toolbar lays out as 3 columns × N rows. With 6 buttons we
+        // get the requested 2-row, 3-column grid; if a future button
+        // lands or one is removed, the layout stays consistent.
+        > .options-streamdeck__refresh,
+        > .options-streamdeck__retry {
+            flex: 1 1 calc(33.333% - 0.34rem);
+            min-width: 0;
+        }
     }
 
     &__refresh,
@@ -26,7 +37,13 @@
         color: var(--text);
         cursor: pointer;
         font-size: 0.85rem;
-        padding: 0.4rem 0.7rem;
+        // Smaller side padding so emoji + label fits a third-width
+        // column on a phone without truncation.
+        padding: 0.4rem 0.5rem;
+        // Truncate gracefully if a label is unusually long.
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
 
         &:disabled { opacity: 0.4; cursor: not-allowed; }
         &:not(:disabled):active { background: var(--surface-btn-active); }
