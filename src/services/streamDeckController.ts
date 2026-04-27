@@ -26,11 +26,30 @@ interface NoteServiceLike {
 export class StreamDeckController {
     private decks = new Map<string, DeckInfo>();
     private listeners: PluginListenerHandle[] = [];
+    /** When true, the home tile and key-0 navigation are suspended so the
+     * camera streamer (or any future taker-over) owns the deck surface. */
+    private cameraStreaming = false;
 
     constructor(
         private readonly eventBus: EventBusLike,
         private readonly noteService: NoteServiceLike,
     ) {}
+
+    setCameraStreaming(active: boolean): void {
+        this.cameraStreaming = active;
+    }
+
+    /** Repaint the home tile on every known deck. Used by the camera
+     *  streamer when it stops, so the user lands back on "Note". */
+    async repaintAll(): Promise<void> {
+        if (this.cameraStreaming) return;
+        if (this._isHidden()) return;
+        for (const info of this.decks.values()) {
+            await this._renderHome(info).catch((e) =>
+                console.warn(`[streamdeck] repaintAll deckId=${info.deckId}:`, e),
+            );
+        }
+    }
 
     async start(): Promise<void> {
         // Repaint the home tile on every deck (re)connection — but only
@@ -40,6 +59,7 @@ export class StreamDeckController {
         // deckConnected, and an unconditional paint flashes "Note" on
         // the LCD before USB suspends again.
         const repaintIfVisible = async (info: DeckInfo) => {
+            if (this.cameraStreaming) return;
             if (this._isHidden()) return;
             await this._renderHome(info).catch((e) =>
                 console.warn(`[streamdeck] paint deckId=${info.deckId}:`, e),
@@ -76,6 +96,10 @@ export class StreamDeckController {
         this.listeners.push(
             await StreamDeckPlugin.addListener("keyChanged", (ev) => {
                 if (!ev.pressed) return;
+                // While the camera streamer owns the deck, the streamer
+                // itself listens to keyChanged to stop. Suppress home
+                // navigation so the press doesn't double-trigger.
+                if (this.cameraStreaming) return;
                 if (ev.key !== 0) return;
                 const newId = this.noteService.getNewId();
                 this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
@@ -88,6 +112,7 @@ export class StreamDeckController {
         // back to foreground), repaint every known deck to recover from
         // any background flicker that may have left the LCD blank.
         document.addEventListener("visibilitychange", () => {
+            if (this.cameraStreaming) return;
             if (this._isHidden()) return;
             for (const info of this.decks.values()) {
                 this._renderHome(info).catch((e) =>
