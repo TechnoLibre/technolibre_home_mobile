@@ -117,6 +117,19 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
       <t t-if="state.mode === 'bundle'">
         <div class="code-setup__hint">Sources embarquées à la compilation. Lecture seule, aucun serveur requis.</div>
+        <div class="code-setup__label">Cible du bundle</div>
+        <div class="code-setup__modes">
+          <button class="code-setup__mode-btn"
+                  t-att-class="{ 'code-setup__mode-btn--active': state.bundleTarget === 'mobile' }"
+                  t-on-click="() => state.bundleTarget = 'mobile'">
+            📱 Mobile
+          </button>
+          <button class="code-setup__mode-btn"
+                  t-att-class="{ 'code-setup__mode-btn--active': state.bundleTarget === 'erplibre' }"
+                  t-on-click="() => state.bundleTarget = 'erplibre'">
+            🏠 ERPLibre (racine)
+          </button>
+        </div>
       </t>
       <t t-if="state.mode === 'ssh-path'">
         <div class="code-setup__hint">Naviguez un workspace sur un serveur SSH.</div>
@@ -657,6 +670,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
             serverWorkspaces: [] as Workspace[],
             workspacesLoading: false,
             manifestProjects: [] as ManifestProject[],
+            bundleTarget: "mobile" as "mobile" | "erplibre",
 
             tab: "files" as BrowserTab,
             serverLabel: "",
@@ -757,9 +771,14 @@ export class OptionsCodeComponent extends EnhancedComponent {
     }
 
     private async _connectBundle(): Promise<void> {
-        this._bundleService = new BundleCodeService("/repo");
+        const target = this.state.bundleTarget;
+        const baseUrl = target === "erplibre" ? "/erplibre" : "/repo";
+        this._bundleService = new BundleCodeService(baseUrl);
         await this._bundleService.initialize();
-        this.state.serverLabel = "Bundle (sources embarquées)";
+        this.state.serverLabel =
+            target === "erplibre"
+                ? "Bundle ERPLibre (racine du workspace)"
+                : "Bundle Mobile (sources de l'app)";
         this.state.currentBranch = "(lecture seule)";
         await this._loadDir("");
         this.state.phase = "browser";

@@ -202,4 +202,5 @@ android/app/src/main/cpp/whisper
 # Generated bundles — rebuilt by vite at every build
 src/public/repo/
 src/public/repos/
+src/public/erplibre/
 src/__owl-precompiled__.ts

@@ -7,7 +7,15 @@ export default defineConfig({
     environment: "node",
     // Exclude whisper.cpp vendor tests — they require a compiled C++ addon
     // (addon.node) that is only built when targeting desktop Node.js, not Android.
-    exclude: ["android/**", "node_modules/**"],
+    // Also exclude bundled-source duplicates (src/public/repo/, src/public/erplibre/,
+    // dist/repo/, dist/erplibre/) so vitest does not run the same suite three
+    // times nor pick up unrelated JS test files (gnome-extension etc.).
+    exclude: [
+      "android/**",
+      "node_modules/**",
+      "dist/**",
+      "src/public/**",
+    ],
     alias: {
       "capacitor-secure-storage-plugin": resolve(
         __dirname,
