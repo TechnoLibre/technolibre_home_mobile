@@ -59,7 +59,18 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         if (hotplug != null) hotplug.detach(getContext());
         if (permissions != null) permissions.close();
         synchronized (sessionsByDevice) {
-            for (DeckSession s : sessionsByDevice.values()) s.close("app_destroyed");
+            // Clear every visible surface before tearing down USB. reset()
+            // is a synchronous feature-report write that drops in front of
+            // the writer queue's pending image jobs, so the deck goes dark
+            // even when key paints are still queued. Best-effort: a failure
+            // here must not block close().
+            for (DeckSession s : sessionsByDevice.values()) {
+                try { s.reset(); }
+                catch (Throwable t) {
+                    Log.w(TAG, "reset on destroy failed for " + s.serial() + ": " + t.getMessage());
+                }
+                s.close("app_destroyed");
+            }
             sessionsByDevice.clear();
             sessionsBySerial.clear();
         }
