@@ -35,10 +35,16 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
               <button
                   class="options-camera-stream__button"
                   t-att-class="{ 'options-camera-stream__button--on': state.active }"
-                  t-att-disabled="state.deckCount === 0 and !state.active"
+                  t-att-disabled="isToggleDisabled"
                   t-on-click="() => this.onToggle()">
                 <t t-if="state.active">⏹ Désactiver</t>
                 <t t-else="">▶ Activer (<t t-esc="state.deckCount" /> deck<t t-if="state.deckCount !== 1">s</t>)</t>
+              </button>
+              <button
+                  class="options-camera-stream__refresh"
+                  t-on-click="() => this.refreshDeckCount()"
+                  title="Re-scanner les decks">
+                ↻
               </button>
             </div>
 
@@ -86,7 +92,20 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
         });
     }
 
-    toggle(): void { this.state.expanded = !this.state.expanded; }
+    get isToggleDisabled(): boolean {
+        // A getter avoids the t-att expression mixing JS `===` with Owl
+        // `and` that can land an HTML `disabled="false"` attribute (which
+        // browsers still treat as disabled).
+        return !this.state.active && this.state.deckCount === 0;
+    }
+
+    toggle(): void {
+        this.state.expanded = !this.state.expanded;
+        // Expanding refreshes the count — boot-time scans on hubs can
+        // miss a deck that took a beat longer to enumerate, and the
+        // initial onMounted poll then sticks at 0.
+        if (this.state.expanded) this.refreshDeckCount();
+    }
 
     onHeaderKey(ev: KeyboardEvent): void {
         if (ev.key === "Enter" || ev.key === " ") {
@@ -108,8 +127,13 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
         }
     }
 
-    private async refreshDeckCount(): Promise<void> {
+    async refreshDeckCount(): Promise<void> {
         try {
+            // Mirror the diagnostic panel: retryAttach picks up decks
+            // that have permission but whose boot-time onDeckAttached
+            // failed silently (common with USB hubs and concurrent
+            // enumeration of multiple decks).
+            try { await StreamDeckPlugin.retryAttach(); } catch { /* ignore */ }
             const r = await StreamDeckPlugin.listDecks();
             this.state.deckCount = r.decks.length;
         } catch {
