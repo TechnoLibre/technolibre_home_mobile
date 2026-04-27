@@ -6,15 +6,16 @@ import {
     DeckInfo,
     UsbDeviceDiag,
 } from "../../../plugins/streamDeckPlugin";
+import {
+    streamDeckEventLog,
+    StreamDeckEventLogEntry,
+} from "../../../services/streamDeckEventLog";
 
 interface DeckRow {
     info: DeckInfo;
 }
 
-interface EventLogEntry {
-    ts: string;
-    text: string;
-}
+type EventLogEntry = StreamDeckEventLogEntry;
 
 /**
  * Options panel that surfaces every connected Stream Deck the
@@ -181,7 +182,17 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
 
     private _listeners: PluginListenerHandle[] = [];
 
+    private _logUnsubscribe?: () => void;
+
     setup(): void {
+        // Pull existing entries from the singleton ring buffer first, then
+        // subscribe so subsequent additions show up live. Both happen on
+        // every (re)mount, so navigating away & back reveals the full log.
+        this.state.events = streamDeckEventLog.getAll();
+        this._logUnsubscribe = streamDeckEventLog.subscribe(() => {
+            this.state.events = streamDeckEventLog.getAll();
+        });
+
         onMounted(async () => {
             await this.refresh();
             await this._wireListeners();
@@ -190,6 +201,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             for (const h of this._listeners) {
                 try { await h.remove(); } catch { /* ignore */ }
             }
+            this._logUnsubscribe?.();
         });
     }
 
@@ -284,69 +296,22 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
     }
 
     private async _wireListeners(): Promise<void> {
+        // Plugin event → singleton log subscriptions are wired once at app
+        // boot in app.ts, so they survive navigation. The component just
+        // listens to refresh-relevant events to update the deck/USB lists.
         this._listeners.push(
-            await StreamDeckPlugin.addListener("deckConnected", (ev) => {
-                this._log(`deckConnected: ${ev.deckId}`);
-                this.refresh();
-            }),
+            await StreamDeckPlugin.addListener("deckConnected", () => this.refresh()),
         );
         this._listeners.push(
-            await StreamDeckPlugin.addListener("deckDisconnected", (ev) => {
-                this._log(`deckDisconnected: ${ev.deckId} (${ev.reason ?? "no reason"})`);
-                this.refresh();
-            }),
-        );
-        this._listeners.push(
-            await StreamDeckPlugin.addListener("permissionDenied", (ev) => {
-                this._log(`permissionDenied: ${ev.reason ?? "no reason"}`);
-            }),
-        );
-        this._listeners.push(
-            await StreamDeckPlugin.addListener("keyChanged", (ev) => {
-                // Filter: only log key edges (pressed=true) to keep the
-                // journal readable on big decks (XL = 32 keys × press+release
-                // would flood it). Releases still come through the plugin
-                // and reach the controller.
-                if (!ev.pressed) return;
-                this._log(`keyChanged: deck=${ev.deckId} key=${ev.key} pressed=true`);
-            }),
-        );
-        this._listeners.push(
-            await StreamDeckPlugin.addListener("dialRotated", (ev) => {
-                this._log(`dialRotated: dial=${ev.dial} delta=${ev.delta}`);
-            }),
-        );
-        this._listeners.push(
-            await StreamDeckPlugin.addListener("dialPressed", (ev) => {
-                if (!ev.pressed) return;
-                this._log(`dialPressed: dial=${ev.dial}`);
-            }),
-        );
-        this._listeners.push(
-            await StreamDeckPlugin.addListener("lcdTouched", (ev) => {
-                this._log(`lcdTouched: type=${ev.type} x=${ev.x} y=${ev.y}`);
-            }),
-        );
-        this._listeners.push(
-            await StreamDeckPlugin.addListener("neoTouched", (ev) => {
-                if (!ev.pressed) return;
-                this._log(`neoTouched: index=${ev.index}`);
-            }),
-        );
-        this._listeners.push(
-            await StreamDeckPlugin.addListener("rawInputReport", (ev) => {
-                this._log(`raw[${ev.len}]: ${ev.bytes}`);
-            }),
+            await StreamDeckPlugin.addListener("deckDisconnected", () => this.refresh()),
         );
     }
 
     clearLog(): void {
-        this.state.events = [];
+        streamDeckEventLog.clear();
     }
 
     private _log(text: string): void {
-        const ts = new Date().toLocaleTimeString();
-        this.state.events.unshift({ ts, text });
-        if (this.state.events.length > 200) this.state.events.pop();
+        streamDeckEventLog.add(text);
     }
 }
