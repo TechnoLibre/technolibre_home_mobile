@@ -73,6 +73,16 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         DeckSpec spec = DeckRegistry.lookup(device.getProductId());
         if (spec == null) {
             Log.w(TAG, "unknown Elgato product 0x" + Integer.toHexString(device.getProductId()));
+            // Surface to JS so the diagnostic UI can explain "permission OK
+            // but model not registered" instead of silently dropping.
+            JSObject ev = new JSObject();
+            ev.put("deckId", "");
+            ev.put("reason",
+                "unknown_product:0x" + Integer.toHexString(device.getProductId())
+                + " (manufacturer=" + (device.getManufacturerName() != null ? device.getManufacturerName() : "?")
+                + ", product=" + (device.getProductName() != null ? device.getProductName() : "?")
+                + ")");
+            emitter.emit("permissionDenied", ev);
             return;
         }
         permissions.request(device).whenComplete((granted, err) -> {
