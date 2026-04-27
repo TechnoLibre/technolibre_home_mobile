@@ -28,6 +28,23 @@ interface ManifestProject {
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
+/**
+ * rmSync with broken-symlink and ENOTEMPTY tolerance. The bundle pipeline
+ * has occasionally produced ENOTEMPTY when a previous build left stale
+ * symlinks under src/public/repos/{slug}/ — the recursive remove races
+ * with the kernel re-tagging dir entries. We retry up to 5 times.
+ */
+function removeDirRobust(dir: string): void {
+    if (!existsSync(dir)) return;
+    try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch (e) {
+        console.warn(`[bundle-warn] removeDirRobust failed once: ${dir} — ${e}`);
+        // One more attempt after a small backoff. If this still fails, propagate.
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
+    }
+}
+
 /** Derive a filesystem-safe slug from a git URL (mirrors CodeService._urlToSlug). */
 function urlToSlug(url: string): string {
     return url
@@ -228,7 +245,7 @@ function bundleSourcePlugin(): Plugin {
 
             // ── 1. App source bundle (src/public/repo/) ───────────────────
             const appOutDir = join(root, "src", "public", "repo");
-            if (existsSync(appOutDir)) rmSync(appOutDir, { recursive: true });
+            removeDirRobust(appOutDir);
             mkdirSync(appOutDir, { recursive: true });
 
             const appIndex: BundleEntry[] = [];
@@ -251,10 +268,16 @@ function bundleSourcePlugin(): Plugin {
             const ROOT_PATTERNS = [
                 /\.md$/i, /\.ts$/, /\.sh$/, /^LICENSE$/, /^\.gitignore$/, /^capacitor\.config\.json$/,
             ];
-            for (const name of readdirSync(root).sort()) {
+            let rootEntries: string[];
+            try { rootEntries = readdirSync(root).sort(); }
+            catch (e) { console.warn(`[bundle-warn] readdir(${root}) failed: ${e}`); rootEntries = []; }
+            for (const name of rootEntries) {
                 if (ROOT_SKIP_FILES.has(name)) continue;
                 const fullSrc = join(root, name);
-                if (!statSync(fullSrc).isFile()) continue;
+                let st;
+                try { st = statSync(fullSrc); }
+                catch (e) { dbg(`skip(stat) ${name} — ${e}`); continue; }
+                if (!st.isFile()) continue;
                 if (!ROOT_PATTERNS.some((re) => re.test(name))) continue;
                 copyFileSync(fullSrc, join(appOutDir, name));
                 appIndex.push({ path: name, type: "file" });
@@ -275,7 +298,7 @@ function bundleSourcePlugin(): Plugin {
                     join(root, "../../.repo/local_manifests/erplibre_manifest.xml"),
             );
             const reposOutDir = join(root, "src", "public", "repos");
-            if (existsSync(reposOutDir)) rmSync(reposOutDir, { recursive: true });
+            removeDirRobust(reposOutDir);
             mkdirSync(reposOutDir, { recursive: true });
 
             // Paths that must never be entered while walking a manifest project
