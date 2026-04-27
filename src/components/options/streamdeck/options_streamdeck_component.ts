@@ -208,7 +208,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                         Largeur bordure (entre colonnes) —
                         <strong t-esc="borderSliderLabel(row.info.deckId, 'w')" />
                       </div>
-                      <input type="range" min="0" max="40" step="1"
+                      <input type="range" min="0" max="90" step="1"
                              class="options-streamdeck__brightness-slider"
                              t-att-value="borderSliderValue(row.info.deckId, 'w')"
                              t-on-input="(ev) => this.onBorderRatioInput(ev, row.info.deckId, 'w')" />
@@ -217,7 +217,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                         Hauteur bordure (entre rangées) —
                         <strong t-esc="borderSliderLabel(row.info.deckId, 'h')" />
                       </div>
-                      <input type="range" min="0" max="40" step="1"
+                      <input type="range" min="0" max="90" step="1"
                              class="options-streamdeck__brightness-slider"
                              t-att-value="borderSliderValue(row.info.deckId, 'h')"
                              t-on-input="(ev) => this.onBorderRatioInput(ev, row.info.deckId, 'h')" />
@@ -508,7 +508,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         const input = ev.target as HTMLInputElement;
         const x100 = parseInt(input.value, 10);
         if (Number.isNaN(x100)) return;
-        const v = Math.max(0, Math.min(0.4, x100 / 100));
+        const v = Math.max(0, Math.min(0.9, x100 / 100));
         const streamer = (this.env as any).streamDeckCameraStreamer;
         if (!streamer) return;
         const row = this.state.decks.find((r) => r.info.deckId === deckId);

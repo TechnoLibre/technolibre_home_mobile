@@ -48,32 +48,42 @@ export class StreamDeckCameraStreamer {
     // 0.1 by default keeps USB drain low and the WebView JPEG encoder
     // fast — visible blocks but a totally usable preview.
     private static readonly DEFAULT_JPEG_QUALITY = 0.1;
-    // Physical bezel between keys, expressed as a fraction of the key
-    // edge. The ratio is unit-free — gap_mm / key_mm equals gap_px /
-    // key_px because both share the deck LCD's DPI — so we don't need
-    // to know the camera's resolution. drawImage handles the camera→
-    // composite downsample, then we apply the ratio against the key's
-    // native pixel size (deck.keyImage.w/h).
+    // Physical bezel between keys, expressed as a fraction of the
+    // visible LCD image edge. The ratio is unit-free, so we don't need
+    // the camera's resolution: drawImage handles the camera→composite
+    // downscale, then we apply the ratio against deck.keyImage.{w,h}
+    // (the LCD's native pixel size).
     //
-    // Some models have asymmetric bezels — Plus is a clear case (~10 mm
-    // between columns, ~5 mm between rows). Hence per-direction ratios.
+    // Subtle calibration point — deck.keyImage.w is the pixel count of
+    // the LCD's *visible image area*, not the whole key cap. Adjacent
+    // LCD viewports are separated by:
+    //   plastic bezel of cap A  +  air gap between caps  +  plastic bezel of cap B
+    // So the gap to skip in image-pixel space corresponds to the full
+    // LCD-to-LCD distance, not just the inter-cap air gap. Initial
+    // estimates used cap-edge / cap-edge which sat too low; revised
+    // here to LCD-edge / LCD-edge geometry.
     //
-    // Values measured against published external dimensions:
-    //   original_v1/v2/mk2 — 30 mm key, ~3 mm gap   → 0.10 / 0.10
-    //   xl                — 30 mm key, ~7 mm gap   → 0.23 / 0.23
-    //   mini              — 24 mm key, ~3 mm gap   → 0.12 / 0.12
-    //   plus              — 32 mm key, 10 / 5 mm   → 0.31 / 0.16
-    //   neo               — 30 mm key, ~5 mm gap   → 0.17 / 0.17
+    // Values are best-effort measurements from external dims and the
+    // assumption that each cap has ~3 mm of plastic around the LCD.
+    // Hardware variance + that assumption mean the per-deck slider in
+    // the diagnostic panel is the authoritative tuning surface; these
+    // defaults just put the user in the neighbourhood.
+    //
+    //   original_v1/v2/mk2 — 30 mm cap, ~24 mm LCD,  3+3+3 mm gap → 0.40 / 0.40
+    //   xl                — 30 mm cap, ~24 mm LCD,  3+7+3 mm gap → 0.54 / 0.54
+    //   mini              — 24 mm cap, ~20 mm LCD,  2+3+2 mm gap → 0.30 / 0.30
+    //   plus              — 32 mm cap, ~25 mm LCD, h:3+10+3, v:3+5+3 → 0.68 / 0.48
+    //   neo               — 30 mm cap, ~24 mm LCD,  3+5+3 mm gap → 0.40 / 0.40
     private static readonly BORDER_RATIO_BY_MODEL: Record<DeckModel, { w: number; h: number }> = {
-        original_v1: { w: 0.10, h: 0.10 },
-        original_v2: { w: 0.10, h: 0.10 },
-        mini:        { w: 0.12, h: 0.12 },
-        mk2:         { w: 0.10, h: 0.10 },
-        xl:          { w: 0.23, h: 0.23 },
-        plus:        { w: 0.31, h: 0.16 },
-        neo:         { w: 0.17, h: 0.17 },
+        original_v1: { w: 0.40, h: 0.40 },
+        original_v2: { w: 0.40, h: 0.40 },
+        mini:        { w: 0.30, h: 0.30 },
+        mk2:         { w: 0.40, h: 0.40 },
+        xl:          { w: 0.54, h: 0.54 },
+        plus:        { w: 0.68, h: 0.48 },
+        neo:         { w: 0.40, h: 0.40 },
     };
-    private static readonly BORDER_RATIO_FALLBACK = { w: 0.15, h: 0.15 };
+    private static readonly BORDER_RATIO_FALLBACK = { w: 0.40, h: 0.40 };
 
     private quality = StreamDeckCameraStreamer.DEFAULT_JPEG_QUALITY;
     private fps = StreamDeckCameraStreamer.DEFAULT_FPS;
@@ -212,10 +222,12 @@ export class StreamDeckCameraStreamer {
     }
 
     /** Override the bezel ratio for one deck. Triggers a cache rebuild
-     *  on the next paint so the new gap takes effect within one tick. */
+     *  on the next paint so the new gap takes effect within one tick.
+     *  Upper bound at 0.9 — beyond that the gap eats almost all of the
+     *  composite and the per-key crop becomes one or two pixels wide. */
     setBorderRatio(deckId: string, w: number, h: number): void {
-        const cw = Math.max(0, Math.min(0.4, w));
-        const ch = Math.max(0, Math.min(0.4, h));
+        const cw = Math.max(0, Math.min(0.9, w));
+        const ch = Math.max(0, Math.min(0.9, h));
         this.borderRatioOverride.set(deckId, { w: cw, h: ch });
         this.deckCache.delete(deckId);
     }
