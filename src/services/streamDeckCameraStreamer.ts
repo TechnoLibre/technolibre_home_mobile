@@ -40,10 +40,18 @@ interface DeckCanvasCache {
  *     per key actually gets written.
  */
 export class StreamDeckCameraStreamer {
-    private static readonly TICK_MS = 200; // 5 fps target — actual rate depends on encode + USB drain
-    private static readonly DEFAULT_JPEG_QUALITY = 0.8;
+    private static readonly DEFAULT_FPS = 5;
+    // 0.1 by default keeps USB drain low and the WebView JPEG encoder
+    // fast — visible blocks but a totally usable preview.
+    private static readonly DEFAULT_JPEG_QUALITY = 0.1;
 
     private quality = StreamDeckCameraStreamer.DEFAULT_JPEG_QUALITY;
+    private fps = StreamDeckCameraStreamer.DEFAULT_FPS;
+    private facingMode: "environment" | "user" = "environment";
+    private skipIdentical = false;
+    private lastFrameHash = 0;
+    private hashCanvas: HTMLCanvasElement | null = null;
+    private hashCtx: CanvasRenderingContext2D | null = null;
     private active = false;
     private stream: MediaStream | null = null;
     private video: HTMLVideoElement | null = null;
@@ -67,6 +75,72 @@ export class StreamDeckCameraStreamer {
     setQuality(q: number): void {
         if (Number.isNaN(q)) return;
         this.quality = Math.max(0.1, Math.min(1.0, q));
+    }
+
+    getFps(): number { return this.fps; }
+
+    /** Live-update tick interval. While streaming, swap the timer in
+     *  place so the new rate kicks in next tick — no need to stop and
+     *  restart the camera. */
+    setFps(fps: number): void {
+        const clamped = Math.max(1, Math.min(30, Math.round(fps)));
+        if (clamped === this.fps) return;
+        this.fps = clamped;
+        if (this.active && this.timer !== null) {
+            clearInterval(this.timer);
+            this.timer = setInterval(() => {
+                try { this.tick(); }
+                catch (e) { console.warn("[camera-streamer] tick:", e); }
+            }, this.tickMs());
+        }
+    }
+
+    getFacingMode(): "environment" | "user" { return this.facingMode; }
+
+    /** Switch front/back camera. While streaming, swaps MediaStream in
+     *  place — gets a new track from getUserMedia and points the
+     *  hidden <video> element at it. The encode pipeline keeps running
+     *  through the swap; first new frame appears within one tick. */
+    async setFacingMode(mode: "environment" | "user"): Promise<void> {
+        if (this.facingMode === mode) return;
+        this.facingMode = mode;
+        if (!this.active || !this.video) return;
+        const old = this.stream;
+        const next = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: this.facingMode,
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+            },
+            audio: false,
+        });
+        this.stream = next;
+        this.video.srcObject = next;
+        await this.video.play().catch(() => { /* autoplay best-effort */ });
+        // Stop old tracks AFTER the new stream is wired so we never
+        // hand the encoder a black frame between swaps.
+        if (old) {
+            for (const t of old.getTracks()) {
+                try { t.stop(); } catch { /* ignore */ }
+            }
+        }
+        // Reset hash so the first post-swap frame doesn't get skipped
+        // as "identical" — different camera, different sensor noise.
+        this.lastFrameHash = 0;
+    }
+
+    getSkipIdentical(): boolean { return this.skipIdentical; }
+
+    setSkipIdentical(on: boolean): void {
+        this.skipIdentical = !!on;
+        // Reset on toggle so the very next frame is always painted —
+        // otherwise enabling the option mid-still-scene leaves the deck
+        // showing whatever was there before.
+        this.lastFrameHash = 0;
+    }
+
+    private tickMs(): number {
+        return Math.max(33, Math.round(1000 / this.fps));
     }
 
     onActiveChange(cb: ListenerLike): () => void {
@@ -99,7 +173,7 @@ export class StreamDeckCameraStreamer {
 
         this.stream = await navigator.mediaDevices.getUserMedia({
             video: {
-                facingMode: "environment",
+                facingMode: this.facingMode,
                 width: { ideal: 1280 },
                 height: { ideal: 720 },
             },
@@ -129,9 +203,10 @@ export class StreamDeckCameraStreamer {
         this.timer = setInterval(() => {
             try { this.tick(); }
             catch (e) { console.warn("[camera-streamer] tick:", e); }
-        }, StreamDeckCameraStreamer.TICK_MS);
+        }, this.tickMs());
         this.tickCount = 0;
         this.lastTickStart = 0;
+        this.lastFrameHash = 0;
 
         // Track decks attaching/detaching while we stream so we keep
         // every connected surface in sync.
@@ -200,6 +275,10 @@ export class StreamDeckCameraStreamer {
         if (this.video.readyState < 2 /* HAVE_CURRENT_DATA */) return;
         if (this.video.videoWidth === 0 || this.video.videoHeight === 0) return;
 
+        // Cheap "static scene" skip — sample the video into a 32×16
+        // canvas, fold the bytes into an int, compare to last. ~0.3 ms.
+        if (this.skipIdentical && this.frameUnchanged()) return;
+
         this.inFlight = true;
         const t0 = performance.now();
         try {
@@ -221,6 +300,37 @@ export class StreamDeckCameraStreamer {
             }
             this.lastTickStart = t0;
         }
+    }
+
+    private frameUnchanged(): boolean {
+        const v = this.video;
+        if (!v) return true;
+        if (!this.hashCanvas) {
+            this.hashCanvas = document.createElement("canvas");
+            this.hashCanvas.width = 32;
+            this.hashCanvas.height = 16;
+            this.hashCtx = this.hashCanvas.getContext("2d", {
+                alpha: false,
+                willReadFrequently: true,
+            });
+        }
+        const ctx = this.hashCtx;
+        if (!ctx) return false;
+        ctx.drawImage(v, 0, 0, 32, 16);
+        let h = 0;
+        try {
+            const img = ctx.getImageData(0, 0, 32, 16).data;
+            for (let i = 0; i < img.length; i += 4) {
+                h = ((h * 31) + img[i] + img[i + 1] * 7 + img[i + 2] * 13) | 0;
+            }
+        } catch {
+            // SecurityError on tainted canvas (shouldn't happen with
+            // same-origin getUserMedia) — disable the hash path.
+            return false;
+        }
+        if (h === this.lastFrameHash) return true;
+        this.lastFrameHash = h;
+        return false;
     }
 
     private getCache(deck: DeckInfo): DeckCanvasCache | null {

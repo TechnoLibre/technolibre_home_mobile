@@ -54,8 +54,8 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
 
             <!-- Streaming options. Visible whether or not streaming is
                  active so the user can preview/tune defaults before
-                 hitting Activer; the slider's onInput applies live to
-                 in-flight frames when active. -->
+                 hitting Activer; setters apply live mid-stream when
+                 it's running (timer swap, MediaStream swap, etc.). -->
             <div class="options-camera-stream__settings">
               <div class="options-camera-stream__setting">
                 <label class="options-camera-stream__setting-label">
@@ -68,7 +68,50 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
                        t-on-input="onQualityInput" />
                 <p class="options-camera-stream__setting-hint">
                   Plus haut = image plus nette mais plus lent à transmettre.
-                  Défaut 0.8.
+                  Défaut 0.10.
+                </p>
+              </div>
+
+              <div class="options-camera-stream__setting">
+                <label class="options-camera-stream__setting-label">
+                  Images par seconde — <strong t-esc="state.fps" /> i/s
+                </label>
+                <input type="range" min="1" max="30" step="1"
+                       class="options-camera-stream__slider"
+                       t-att-value="state.fps"
+                       t-on-input="onFpsInput" />
+                <p class="options-camera-stream__setting-hint">
+                  Plafond effectif limité par le temps d'encodage et le
+                  drain USB. Défaut 5 i/s.
+                </p>
+              </div>
+
+              <div class="options-camera-stream__setting">
+                <label class="options-camera-stream__setting-label">Caméra</label>
+                <div class="options-camera-stream__row">
+                  <button class="options-camera-stream__refresh"
+                          t-att-class="{ 'options-camera-stream__button--on': state.facingMode === 'environment' }"
+                          t-on-click="() => this.applyFacingMode('environment')">
+                    📷 Arrière
+                  </button>
+                  <button class="options-camera-stream__refresh"
+                          t-att-class="{ 'options-camera-stream__button--on': state.facingMode === 'user' }"
+                          t-on-click="() => this.applyFacingMode('user')">
+                    🤳 Avant
+                  </button>
+                </div>
+              </div>
+
+              <div class="options-camera-stream__setting">
+                <label class="options-camera-stream__checkbox-label">
+                  <input type="checkbox"
+                         t-att-checked="state.skipIdentical"
+                         t-on-change="onSkipIdenticalChange" />
+                  Sauter les images identiques
+                </label>
+                <p class="options-camera-stream__setting-hint">
+                  Hash 32×16 du flux vidéo. Si la scène n'a pas changé,
+                  on saute encodage + USB. Gratuit pour scènes statiques.
                 </p>
               </div>
             </div>
@@ -84,8 +127,11 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
         // Slider works on integers, the streamer wants 0.1–1.0. Keep
         // both representations in state so t-att-value reads cleanly
         // and the label can reuse the float form.
-        qualityX100: 80,
-        qualityLabel: "0.80",
+        qualityX100: 10,
+        qualityLabel: "0.10",
+        fps: 5,
+        facingMode: "environment" as "environment" | "user",
+        skipIdentical: false,
     });
 
     private _listeners: PluginListenerHandle[] = [];
@@ -98,10 +144,10 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
     setup(): void {
         onMounted(async () => {
             this.state.active = this.streamer.isActive();
-            // Sync slider to whatever the streamer currently has — same
-            // singleton survives navigation, so a value tuned earlier
-            // shouldn't reset when the panel re-mounts.
-            this.syncQualityFromStreamer();
+            // Sync every slider/toggle to whatever the streamer currently
+            // has — the singleton survives navigation, so a value tuned
+            // earlier shouldn't reset when the panel re-mounts.
+            this.syncFromStreamer();
             this._unsubActive = this.streamer.onActiveChange((active) => {
                 this.state.active = active;
                 if (!active) this.state.error = "";
@@ -163,13 +209,41 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
         if (Number.isNaN(x100)) return;
         const q = Math.max(0.1, Math.min(1.0, x100 / 100));
         this.streamer.setQuality(q);
-        this.syncQualityFromStreamer();
+        this.syncFromStreamer();
     }
 
-    private syncQualityFromStreamer(): void {
+    onFpsInput(ev: Event): void {
+        const input = ev.target as HTMLInputElement;
+        const fps = parseInt(input.value, 10);
+        if (Number.isNaN(fps)) return;
+        this.streamer.setFps(fps);
+        this.syncFromStreamer();
+    }
+
+    async applyFacingMode(mode: "environment" | "user"): Promise<void> {
+        if (this.state.facingMode === mode) return;
+        this.state.error = "";
+        try {
+            await this.streamer.setFacingMode(mode);
+        } catch (e) {
+            this.state.error = e instanceof Error ? e.message : String(e);
+        }
+        this.syncFromStreamer();
+    }
+
+    onSkipIdenticalChange(ev: Event): void {
+        const input = ev.target as HTMLInputElement;
+        this.streamer.setSkipIdentical(input.checked);
+        this.syncFromStreamer();
+    }
+
+    private syncFromStreamer(): void {
         const q = this.streamer.getQuality();
         this.state.qualityX100 = Math.round(q * 100);
         this.state.qualityLabel = q.toFixed(2);
+        this.state.fps = this.streamer.getFps();
+        this.state.facingMode = this.streamer.getFacingMode();
+        this.state.skipIdentical = this.streamer.getSkipIdentical();
     }
 
     async refreshDeckCount(): Promise<void> {
