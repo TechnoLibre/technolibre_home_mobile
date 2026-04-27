@@ -71,8 +71,13 @@ export class StreamDeckCameraStreamer {
     //
     //   original_v1/v2/mk2 — 30 mm cap, ~24 mm LCD,  3+3+3 mm gap → 0.40 / 0.40
     //   xl                — 30 mm cap, ~24 mm LCD,  3+7+3 mm gap → 0.54 / 0.54
+    //                                       (confirmed empirically)
     //   mini              — 24 mm cap, ~20 mm LCD,  2+3+2 mm gap → 0.30 / 0.30
-    //   plus              — 32 mm cap, ~25 mm LCD, h:3+10+3, v:3+5+3 → 0.68 / 0.48
+    //   plus              — 0.68 W / 0.30 H (confirmed empirically)
+    //                       Vertical is lower than the geometry-only
+    //                       estimate (0.48) suggested — the Plus has a
+    //                       taller LCD viewport per cap than we
+    //                       assumed, so the denominator is larger.
     //   neo               — 30 mm cap, ~24 mm LCD,  3+5+3 mm gap → 0.40 / 0.40
     private static readonly BORDER_RATIO_BY_MODEL: Record<DeckModel, { w: number; h: number }> = {
         original_v1: { w: 0.40, h: 0.40 },
@@ -80,7 +85,7 @@ export class StreamDeckCameraStreamer {
         mini:        { w: 0.30, h: 0.30 },
         mk2:         { w: 0.40, h: 0.40 },
         xl:          { w: 0.54, h: 0.54 },
-        plus:        { w: 0.68, h: 0.48 },
+        plus:        { w: 0.68, h: 0.30 },
         neo:         { w: 0.40, h: 0.40 },
     };
     private static readonly BORDER_RATIO_FALLBACK = { w: 0.40, h: 0.40 };
