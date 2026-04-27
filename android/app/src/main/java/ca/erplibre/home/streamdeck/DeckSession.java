@@ -59,6 +59,12 @@ public final class DeckSession {
      *  snapshot every tick — without this we'd flood JS with one
      *  keyChanged per key per tick (~32 × 33 Hz ≈ 1056 events/s). */
     private boolean[] lastKeyPressed;
+    /** Last raw IN-report bytes. Used to dedupe rawInputReport debug
+     *  events so the journal only shows transitions, not the polled
+     *  snapshot stream. Crucial diagnostic: if NO line appears when
+     *  the user presses a key in polled mode, GET_REPORT is returning
+     *  cached data and polled is a dead end on that kernel. */
+    private byte[] lastRawBytes;
     /** When true the reader thread emits a `rawInputReport` event for every
      * successful bulkTransfer (stripped to first 32 bytes hex). Off by
      * default — flips on via StreamDeckPlugin.setDebugLogging. */
@@ -512,6 +518,21 @@ public final class DeckSession {
     }
 
     private void emitRaw(byte[] data, int got) {
+        // Dedupe — only emit when bytes actually changed since the
+        // last report. Polled mode floods us with the same snapshot
+        // every tick; the journal stays empty until something moves.
+        if (lastRawBytes != null && lastRawBytes.length == got) {
+            boolean same = true;
+            for (int i = 0; i < got; i++) {
+                if (lastRawBytes[i] != data[i]) { same = false; break; }
+            }
+            if (same) return;
+        }
+        if (lastRawBytes == null || lastRawBytes.length != got) {
+            lastRawBytes = new byte[got];
+        }
+        System.arraycopy(data, 0, lastRawBytes, 0, got);
+
         StringBuilder sb = new StringBuilder();
         int dump = Math.min(got, 32);
         for (int i = 0; i < dump; i++) {
@@ -519,6 +540,9 @@ public final class DeckSession {
             sb.append(String.format("%02x", data[i] & 0xFF));
         }
         if (got > dump) sb.append(" …");
+        // Log to logcat too so adb tcpip captures the diagnostic
+        // even when the user can't see the in-app journal.
+        Log.i(TAG, "raw[" + got + "]: " + sb);
         JSObject ev = new JSObject();
         ev.put("deckId", serial);
         ev.put("len", got);
