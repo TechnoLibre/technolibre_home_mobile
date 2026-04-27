@@ -186,6 +186,31 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         call.resolve(r);
     }
 
+    /**
+     * Ask the OS for permission on a USB device that hasn't been opened
+     * yet (so it's not in sessions/listDecks). Used by the diagnostic UI
+     * when an Elgato device shows up under listAllUsbDevices but
+     * permission was denied or never asked.
+     */
+    @PluginMethod
+    public void requestPermissionForUsb(PluginCall call) {
+        String deviceName = call.getString("deviceName");
+        if (deviceName == null) { call.reject("missing:deviceName"); return; }
+        UsbDevice dev = usb.getDeviceList().get(deviceName);
+        if (dev == null) { call.reject("no_such_device:" + deviceName); return; }
+        permissions.request(dev).whenComplete((granted, err) -> {
+            JSObject r = new JSObject();
+            r.put("granted", granted != null && granted);
+            if (err != null) r.put("error", err.getMessage());
+            call.resolve(r);
+            // If granted, kick off the same flow the hotplug receiver uses
+            // so the deck enters listDecks.
+            if (granted != null && granted && DeckRegistry.isElgato(dev.getVendorId())) {
+                onDeckAttached(dev);
+            }
+        });
+    }
+
     @PluginMethod
     public void reset(PluginCall call) {
         DeckSession s = requireSession(call); if (s == null) return;

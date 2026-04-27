@@ -123,6 +123,12 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                       <span t-if="dev.hasPermission">[permission OK]</span>
                       <span t-else="">[permission ?]</span>
                     </div>
+                    <div t-if="dev.isElgato and !dev.hasPermission" class="options-streamdeck__deck-line">
+                      <button class="options-streamdeck__retry"
+                              t-on-click="() => this.askPermissionForUsb(dev.deviceName)">
+                        🔓 Demander permission pour ce device
+                      </button>
+                    </div>
                   </div>
                 </t>
               </div>
@@ -202,6 +208,24 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             }
         } catch (e) {
             this._log(`listAllUsbDevices ERROR: ${e}`);
+        }
+    }
+
+    async askPermissionForUsb(deviceName: string): Promise<void> {
+        try {
+            const r = await StreamDeckPlugin.requestPermissionForUsb({ deviceName });
+            this._log(
+                `requestPermissionForUsb(${deviceName}) → granted=${r.granted}` +
+                (r.error ? ` error=${r.error}` : ""),
+            );
+            // Allow the OS dialog + onDeckAttached flow to settle, then
+            // refresh both lists.
+            setTimeout(async () => {
+                await this.refresh();
+                await this.scanAllUsb();
+            }, 800);
+        } catch (e) {
+            this._log(`requestPermissionForUsb ERROR: ${e}`);
         }
     }
 
