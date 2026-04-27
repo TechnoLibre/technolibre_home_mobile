@@ -82,25 +82,37 @@ export class NoteContentComponent extends EnhancedComponent {
 		onWillStart(() => this.getTags());
 		onMounted(this.onMounted.bind(this));
 
+		// Try to land the caret in the empty title several times — Android
+		// WebView occasionally needs the focus to happen after layout
+		// stabilizes (route transition, sibling components mounting…).
+		const tryFocusTitle = (): boolean => {
+			if (this.didAutoFocus) return true;
+			const el = this.titleRef.el as HTMLTextAreaElement | null;
+			if (!el || el.value.trim() !== "") return false;
+			// Set selection BEFORE focus — some WebViews ignore
+			// setSelectionRange when called during the focus event itself.
+			try { el.setSelectionRange(0, 0); } catch { /* ignore */ }
+			el.focus({ preventScroll: true });
+			try {
+				// Synthetic mousedown+mouseup so the WebView treats this
+				// the same as a real tap and shows the caret.
+				const opts = { bubbles: true, cancelable: true };
+				el.dispatchEvent(new MouseEvent("mousedown", opts));
+				el.dispatchEvent(new MouseEvent("mouseup", opts));
+				el.dispatchEvent(new MouseEvent("click", opts));
+			} catch { /* ignore */ }
+			try { el.setSelectionRange(0, 0); } catch { /* ignore */ }
+			this.didAutoFocus = true;
+			return true;
+		};
+
 		onPatched(() => {
 			if (this.didAutoFocus) return;
-			requestAnimationFrame(() => {
-				if (this.didAutoFocus) return;
-				const el = this.titleRef.el as HTMLTextAreaElement | null;
-				if (el && el.value.trim() === "") {
-					el.focus({ preventScroll: true });
-					// On Android WebView, .focus() alone places the textarea
-					// in focus state but the visible caret only appears after
-					// a real touch event. Dispatching a synthetic click +
-					// setSelectionRange(0, 0) gives us both: caret at
-					// position 0, ready for typing, no keyboard popped.
-					try {
-						el.click();
-						el.setSelectionRange(0, 0);
-					} catch { /* very old WebView: ignore */ }
-					this.didAutoFocus = true;
-				}
-			});
+			// Three attempts: rAF (right after current frame), 80 ms
+			// (typical layout-settle), and 400 ms (route-transition slack).
+			requestAnimationFrame(() => tryFocusTitle());
+			setTimeout(tryFocusTitle, 80);
+			setTimeout(tryFocusTitle, 400);
 		});
 	}
 

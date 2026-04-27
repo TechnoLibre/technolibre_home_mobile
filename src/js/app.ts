@@ -32,6 +32,8 @@ import { RepoExtractorService } from "../services/repoExtractorService";
 import { RepoEditService } from "../services/repoEditService";
 import { CodeStyleService } from "../services/codeStyleService";
 import { StreamDeckController } from "../services/streamDeckController";
+import { streamDeckEventLog } from "../services/streamDeckEventLog";
+import { StreamDeckPlugin } from "../plugins/streamDeckPlugin";
 import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
@@ -230,6 +232,39 @@ async function startApp() {
 	streamDeckController.start().catch((e) =>
 		console.warn("[boot] StreamDeckController.start failed:", e),
 	);
+
+	// Boot-time subscriptions to feed the singleton event log so the
+	// diagnostic Options panel keeps history across navigation.
+	StreamDeckPlugin.addListener("deckConnected", (ev) =>
+		streamDeckEventLog.add(`deckConnected: ${ev.deckId}`),
+	).catch(() => {});
+	StreamDeckPlugin.addListener("deckDisconnected", (ev) =>
+		streamDeckEventLog.add(`deckDisconnected: ${ev.deckId} (${ev.reason ?? "no reason"})`),
+	).catch(() => {});
+	StreamDeckPlugin.addListener("permissionDenied", (ev) =>
+		streamDeckEventLog.add(`permissionDenied: ${ev.reason ?? "no reason"}`),
+	).catch(() => {});
+	StreamDeckPlugin.addListener("keyChanged", (ev) => {
+		if (!ev.pressed) return;
+		streamDeckEventLog.add(`keyChanged: deck=${ev.deckId} key=${ev.key} pressed=true`);
+	}).catch(() => {});
+	StreamDeckPlugin.addListener("dialRotated", (ev) =>
+		streamDeckEventLog.add(`dialRotated: dial=${ev.dial} delta=${ev.delta}`),
+	).catch(() => {});
+	StreamDeckPlugin.addListener("dialPressed", (ev) => {
+		if (!ev.pressed) return;
+		streamDeckEventLog.add(`dialPressed: dial=${ev.dial}`);
+	}).catch(() => {});
+	StreamDeckPlugin.addListener("lcdTouched", (ev) =>
+		streamDeckEventLog.add(`lcdTouched: type=${ev.type} x=${ev.x} y=${ev.y}`),
+	).catch(() => {});
+	StreamDeckPlugin.addListener("neoTouched", (ev) => {
+		if (!ev.pressed) return;
+		streamDeckEventLog.add(`neoTouched: index=${ev.index}`);
+	}).catch(() => {});
+	StreamDeckPlugin.addListener("rawInputReport", (ev) =>
+		streamDeckEventLog.add(`raw[${ev.len}]: ${ev.bytes}`),
+	).catch(() => {});
 	notificationService.start();
 
 	// Re-schedule any reminders whose notification batch is expiring
