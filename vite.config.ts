@@ -10,7 +10,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 
@@ -39,6 +39,8 @@ interface ManifestProject {
 /**
  * Create a gzipped tar archive of the given source dir.
  * Uses the system `tar` command — fastest path; required at build time.
+ * Async variant lets the manifest-repo loop run several `tar` processes
+ * in parallel.
  */
 function createTarGz(srcDir: string, archivePath: string): void {
     try {
@@ -48,6 +50,46 @@ function createTarGz(srcDir: string, archivePath: string): void {
     } catch (e) {
         throw new Error(`tar -czf failed for ${srcDir} → ${archivePath}: ${e}`);
     }
+}
+
+function createTarGzAsync(srcDir: string, archivePath: string): Promise<void> {
+    return new Promise((resolveP, rejectP) => {
+        const child = spawn("tar", ["-czf", archivePath, "-C", srcDir, "."], {
+            stdio: ["ignore", "ignore", "pipe"],
+        });
+        let stderr = "";
+        child.stderr?.on("data", (d) => { stderr += d.toString(); });
+        child.on("error", rejectP);
+        child.on("exit", (code) => {
+            if (code === 0) resolveP();
+            else rejectP(new Error(`tar -czf exited ${code} for ${srcDir} → ${archivePath}\n${stderr}`));
+        });
+    });
+}
+
+/**
+ * Run `fn` over `items` with bounded concurrency. Workers pull from a
+ * shared cursor so slow tasks don't stall the queue.
+ */
+async function parallelMap<T, R>(
+    items: T[],
+    limit: number,
+    fn: (item: T, idx: number) => Promise<R>,
+): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let cursor = 0;
+    const workers = Array.from(
+        { length: Math.min(limit, items.length) },
+        async () => {
+            while (true) {
+                const i = cursor++;
+                if (i >= items.length) return;
+                results[i] = await fn(items[i], i);
+            }
+        },
+    );
+    await Promise.all(workers);
+    return results;
 }
 
 /**
@@ -286,7 +328,7 @@ function precompileOwlTemplatesPlugin(): Plugin {
 function bundleSourcePlugin(): Plugin {
     return {
         name: "bundle-source",
-        buildStart() {
+        async buildStart() {
             const root = process.cwd(); // mobile/erplibre_home_mobile/
 
             // ── 1. App source bundle (src/public/repo/) ───────────────────
@@ -374,7 +416,14 @@ function bundleSourcePlugin(): Plugin {
                     return false;
                 };
 
-                for (const proj of projects) {
+                // Parallelize the per-repo work (file walk → tar.gz). Tar
+                // processes run concurrently up to MANIFEST_PARALLEL workers.
+                const MANIFEST_PARALLEL = Number(
+                    process.env["BUNDLE_PARALLEL"] ?? "4",
+                );
+                const tManifestT0 = Date.now();
+
+                const results = await parallelMap(projects, MANIFEST_PARALLEL, async (proj) => {
                     const remoteFetch = remotes[proj.remote] ?? "";
                     const url = remoteFetch + proj.name;
                     const slug = urlToSlug(url);
@@ -382,7 +431,7 @@ function bundleSourcePlugin(): Plugin {
 
                     if (!existsSync(localPath)) {
                         console.log(`[bundle-manifest] skip (missing): ${localPath}`);
-                        continue;
+                        return null;
                     }
 
                     // Stage filtered files in a temp dir, then tar.gz them.
@@ -408,8 +457,8 @@ function bundleSourcePlugin(): Plugin {
                         JSON.stringify(projIndex, null, 2),
                     );
 
-                    // Also write a sidecar index.json next to the archive so the
-                    // runtime can show the directory tree without unpacking.
+                    // Sidecar next to the archive — the runtime fetches this
+                    // small JSON to render the dir tree without extracting.
                     const indexOutPath = join(reposOutDir, `${slug}.index.json`);
                     writeFileSync(indexOutPath, JSON.stringify(projIndex, null, 2));
 
@@ -425,30 +474,37 @@ function bundleSourcePlugin(): Plugin {
                         }, 0);
 
                     const archivePath = join(reposOutDir, `${slug}.tar.gz`);
-                    createTarGz(stage, archivePath);
+                    await createTarGzAsync(stage, archivePath);
 
                     const compressedBytes = statSync(archivePath).size;
 
-                    // Clean up the stage.
                     removeDirRobust(stage);
 
                     const name = proj.name.replace(/\.git$/, "");
-                    bundledProjects.push({
-                        url, name, path: proj.path, slug, revision: proj.revision,
-                        archive: `repos/${slug}.tar.gz`,
-                        indexUrl: `repos/${slug}.index.json`,
-                        fileCount: projStats.copied,
-                        uncompressedBytes,
-                        compressedBytes,
-                    });
-
                     console.log(
                         `[bundle-manifest] ${slug}.tar.gz: ${projStats.copied} files` +
                         `, ${(uncompressedBytes / 1024).toFixed(0)} KB → ` +
                         `${(compressedBytes / 1024).toFixed(0)} KB` +
                         `  (${Date.now() - projT0} ms)`,
                     );
+
+                    return {
+                        url, name, path: proj.path, slug, revision: proj.revision,
+                        archive: `repos/${slug}.tar.gz`,
+                        indexUrl: `repos/${slug}.index.json`,
+                        fileCount: projStats.copied,
+                        uncompressedBytes,
+                        compressedBytes,
+                    };
+                });
+
+                for (const r of results) {
+                    if (r) bundledProjects.push(r);
                 }
+                console.log(
+                    `[bundle-manifest] parallel pool=${MANIFEST_PARALLEL} ` +
+                    `total=${Date.now() - tManifestT0} ms`,
+                );
             }
 
             writeFileSync(
