@@ -37,6 +37,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     private final Map<String, DeckSession> sessionsByDevice = new HashMap<>();
     /** Map keyed by serial number. Filled once the device is opened. */
     private final Map<String, DeckSession> sessionsBySerial = new HashMap<>();
+    /** Last attach error per USB device name — surfaced via listAllUsbDevices
+     * so the diagnostic UI can show why a known device is not in listDecks
+     * even when the failure event was emitted before any listener attached. */
+    private final Map<String, String> lastAttachError = new HashMap<>();
 
     private final EventEmitter emitter = (name, data) -> notifyListeners(name, data);
 
@@ -70,26 +74,29 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     @Override
     public void onDeckAttached(UsbDevice device) {
+        final String name = device.getDeviceName();
         DeckSpec spec = DeckRegistry.lookup(device.getProductId());
         if (spec == null) {
             Log.w(TAG, "unknown Elgato product 0x" + Integer.toHexString(device.getProductId()));
-            // Surface to JS so the diagnostic UI can explain "permission OK
-            // but model not registered" instead of silently dropping.
-            JSObject ev = new JSObject();
-            ev.put("deckId", "");
-            ev.put("reason",
+            String reason =
                 "unknown_product:0x" + Integer.toHexString(device.getProductId())
                 + " (manufacturer=" + (device.getManufacturerName() != null ? device.getManufacturerName() : "?")
                 + ", product=" + (device.getProductName() != null ? device.getProductName() : "?")
-                + ")");
+                + ")";
+            recordAttachError(name, reason);
+            JSObject ev = new JSObject();
+            ev.put("deckId", "");
+            ev.put("reason", reason);
             emitter.emit("permissionDenied", ev);
             return;
         }
         permissions.request(device).whenComplete((granted, err) -> {
             if (err != null || granted == null || !granted) {
+                String reason = err != null ? err.getMessage() : "permission_denied";
+                recordAttachError(name, reason);
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
-                ev.put("reason", err != null ? err.getMessage() : "permission_denied");
+                ev.put("reason", reason);
                 emitter.emit("permissionDenied", ev);
                 return;
             }
@@ -97,18 +104,36 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             try {
                 session.open(usb);
                 synchronized (sessionsByDevice) {
-                    sessionsByDevice.put(device.getDeviceName(), session);
+                    sessionsByDevice.put(name, session);
                     if (!session.serial().isEmpty()) {
                         sessionsBySerial.put(session.serial(), session);
                     }
+                    lastAttachError.remove(name);
                 }
             } catch (DeckSession.DeckOpenException e) {
+                String reason = e.getMessage();
+                recordAttachError(name, reason);
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
-                ev.put("reason", e.getMessage());
+                ev.put("reason", reason);
+                emitter.emit("permissionDenied", ev);
+            } catch (Throwable t) {
+                String reason = "open_unexpected:" + t.getClass().getSimpleName()
+                    + ":" + t.getMessage();
+                recordAttachError(name, reason);
+                JSObject ev = new JSObject();
+                ev.put("deckId", "");
+                ev.put("reason", reason);
                 emitter.emit("permissionDenied", ev);
             }
         });
+    }
+
+    private void recordAttachError(String deviceName, String reason) {
+        synchronized (sessionsByDevice) {
+            lastAttachError.put(deviceName, reason);
+        }
+        Log.w(TAG, "attach failed for " + deviceName + ": " + reason);
     }
 
     @Override
@@ -163,10 +188,46 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             o.put("knownStreamDeck", DeckRegistry.lookup(d.getProductId()) != null
                 && DeckRegistry.isElgato(d.getVendorId()));
             o.put("hasPermission", usb.hasPermission(d));
+            // True if the plugin currently has an open DeckSession for this
+            // USB device path — i.e. the deck would also appear in listDecks.
+            boolean inSession;
+            String lastErr;
+            synchronized (sessionsByDevice) {
+                inSession = sessionsByDevice.containsKey(d.getDeviceName());
+                lastErr = lastAttachError.get(d.getDeviceName());
+            }
+            o.put("inSession", inSession);
+            o.put("lastAttachError", lastErr != null ? lastErr : "");
             arr.put(o);
         }
         JSObject r = new JSObject();
         r.put("devices", arr);
+        call.resolve(r);
+    }
+
+    /**
+     * Walk every USB device and re-run onDeckAttached for known Elgato
+     * Stream Decks that already have permission but aren't open. Useful
+     * when the diagnostic UI subscribes after the boot-time attach
+     * already failed silently.
+     */
+    @PluginMethod
+    public void retryAttach(PluginCall call) {
+        int retried = 0;
+        for (UsbDevice d : usb.getDeviceList().values()) {
+            if (!DeckRegistry.isElgato(d.getVendorId())) continue;
+            if (DeckRegistry.lookup(d.getProductId()) == null) continue;
+            boolean already;
+            synchronized (sessionsByDevice) {
+                already = sessionsByDevice.containsKey(d.getDeviceName());
+            }
+            if (already) continue;
+            if (!usb.hasPermission(d)) continue;
+            onDeckAttached(d);
+            retried++;
+        }
+        JSObject r = new JSObject();
+        r.put("retried", retried);
         call.resolve(r);
     }
 
