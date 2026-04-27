@@ -18,7 +18,6 @@ export class RepoEditService {
 
     constructor(
         private readonly extractor: RepoExtractorService,
-        private readonly archiveUrl: string,
         private readonly db: DbLike,
     ) {}
 
@@ -30,7 +29,7 @@ export class RepoEditService {
         return rows.length > 0;
     }
 
-    async promoteToEditable(slug: string): Promise<string> {
+    async promoteToEditable(slug: string, archiveUrl: string): Promise<string> {
         if (await this.isEditable(slug)) {
             const rows = await this.db.all<{ baseline_sha: string }>(
                 "SELECT baseline_sha FROM editable_repos WHERE slug = ?",
@@ -39,7 +38,7 @@ export class RepoEditService {
             return rows[0].baseline_sha;
         }
 
-        const cacheBase = await this.extractor.ensureExtracted(slug, this.archiveUrl);
+        const cacheBase = await this.extractor.ensureExtracted(slug, archiveUrl);
         const docsBase = `repos/${slug}`;
 
         // Recursive copy Cache → Documents.

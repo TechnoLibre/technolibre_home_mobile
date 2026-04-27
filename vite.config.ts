@@ -469,6 +469,9 @@ export default defineConfig(({ mode }) => ({
                     if (!id.includes("node_modules")) return undefined;
                     if (id.includes("@odoo/owl")) return "owl";
                     if (id.includes("@capacitor-community/sqlite")) return "sqlite";
+                    // Lazy-loaded heavy deps — keep them out of the vendor chunk
+                    // so dynamic import() boundaries are preserved.
+                    if (id.includes("isomorphic-git")) return undefined;
                     if (id.includes("@capacitor/") || id.includes("@capacitor-community/") ||
                         id.includes("capacitor-") || id.includes("@capawesome") ||
                         id.includes("@capgo")) {
