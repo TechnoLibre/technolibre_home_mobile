@@ -125,6 +125,17 @@ interface StreamDeckPluginApi {
         bytes: string; // base64
         format: "jpeg" | "png";
     }): Promise<ImageWriteResult>;
+    /**
+     * Streaming-friendly batch — queues every entry through a single
+     * JNI crossing. Each entry is fire-and-forget on the writer queue;
+     * the promise resolves once Java finishes Base64-decoding and
+     * offering, not when USB completes. Use for camera streaming.
+     */
+    setKeyImagesBatch(opts: {
+        deckId: string;
+        format: "jpeg" | "png";
+        entries: { key: number; bytes: string }[];
+    }): Promise<{ queued: number; dropped: number }>;
     clearKey(opts: { deckId: string; key: number }): Promise<ImageWriteResult>;
     clearAllKeys(opts: { deckId: string }): Promise<void>;
 
