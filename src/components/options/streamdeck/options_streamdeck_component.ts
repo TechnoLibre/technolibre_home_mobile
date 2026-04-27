@@ -161,6 +161,48 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                       au lieu d'être affichés sur la mauvaise touche.
                     </p>
 
+                    <t t-if="row.info.lcd">
+                      <div class="options-streamdeck__deck-params-header">📺 Texte LCD</div>
+                      <div class="options-streamdeck__deck-params-row">
+                        <input type="text"
+                               class="options-streamdeck__lcd-text"
+                               t-att-value="state.lcdText[row.info.deckId] ?? ''"
+                               t-on-input="(ev) => this.onLcdTextInput(ev, row.info.deckId)"
+                               placeholder="Tape ton texte ici…" />
+                      </div>
+
+                      <div class="options-streamdeck__deck-params-header">
+                        Taille de police —
+                        <strong t-esc="(state.lcdFontSize[row.info.deckId] ?? 48) + ' px'" />
+                      </div>
+                      <input type="range" min="12" max="96" step="2"
+                             class="options-streamdeck__brightness-slider"
+                             t-att-value="state.lcdFontSize[row.info.deckId] ?? 48"
+                             t-on-input="(ev) => this.onLcdFontSizeInput(ev, row.info.deckId)" />
+
+                      <div class="options-streamdeck__deck-params-header">
+                        Vitesse de défilement —
+                        <strong t-esc="(state.lcdScrollSpeed[row.info.deckId] ?? 2) + ' px/trame'" />
+                      </div>
+                      <p class="options-streamdeck__hint options-streamdeck__hint--inline">
+                        Le défilement n'apparaît que si le texte dépasse l'écran. 0 = arrêt.
+                      </p>
+                      <input type="range" min="0" max="20" step="1"
+                             class="options-streamdeck__brightness-slider"
+                             t-att-value="state.lcdScrollSpeed[row.info.deckId] ?? 2"
+                             t-on-input="(ev) => this.onLcdScrollSpeedInput(ev, row.info.deckId)" />
+
+                      <div class="options-streamdeck__deck-params-row">
+                        <label class="options-streamdeck__lcd-color-label">
+                          Couleur du texte
+                          <input type="color"
+                                 class="options-streamdeck__lcd-color"
+                                 t-att-value="state.lcdColor[row.info.deckId] ?? '#ffffff'"
+                                 t-on-input="(ev) => this.onLcdColorInput(ev, row.info.deckId)" />
+                        </label>
+                      </div>
+                    </t>
+
                     <t t-if="state.borderCompensation[row.info.deckId]">
                       <div class="options-streamdeck__deck-params-header">
                         Largeur bordure (entre colonnes) —
@@ -280,6 +322,13 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         // rendering. Cleared/refilled on every refresh.
         borderRatio: {} as Record<string, { w: number; h: number }>,
         borderHasOverride: {} as Record<string, boolean>,
+        // Per-deck LCD text settings (only relevant on LCD-equipped
+        // decks like Plus). Source of truth lives on the LCD text
+        // renderer; these mirrors drive the inputs reactively.
+        lcdText: {} as Record<string, string>,
+        lcdFontSize: {} as Record<string, number>,
+        lcdColor: {} as Record<string, string>,
+        lcdScrollSpeed: {} as Record<string, number>,
     });
 
     // Exposed to the template so the t-foreach over presets stays a
@@ -496,6 +545,56 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             this.state.borderCompensation[row.info.deckId] =
                 streamer.getBorderCompensation(row.info.deckId);
             this.syncBorderRatio(row.info.deckId, row.info.model);
+        }
+        this.syncLcdTextFromRenderer();
+    }
+
+    onLcdTextInput(ev: Event, deckId: string): void {
+        const input = ev.target as HTMLInputElement;
+        const renderer = (this.env as any).streamDeckLcdTextRenderer;
+        if (!renderer) return;
+        renderer.setText(deckId, input.value);
+        this.state.lcdText[deckId] = renderer.getText(deckId);
+    }
+
+    onLcdFontSizeInput(ev: Event, deckId: string): void {
+        const input = ev.target as HTMLInputElement;
+        const px = parseInt(input.value, 10);
+        if (Number.isNaN(px)) return;
+        const renderer = (this.env as any).streamDeckLcdTextRenderer;
+        if (!renderer) return;
+        renderer.setFontSize(deckId, px);
+        this.state.lcdFontSize[deckId] = renderer.getFontSize(deckId);
+    }
+
+    onLcdColorInput(ev: Event, deckId: string): void {
+        const input = ev.target as HTMLInputElement;
+        const renderer = (this.env as any).streamDeckLcdTextRenderer;
+        if (!renderer) return;
+        renderer.setColor(deckId, input.value);
+        this.state.lcdColor[deckId] = renderer.getColor(deckId);
+    }
+
+    onLcdScrollSpeedInput(ev: Event, deckId: string): void {
+        const input = ev.target as HTMLInputElement;
+        const px = parseInt(input.value, 10);
+        if (Number.isNaN(px)) return;
+        const renderer = (this.env as any).streamDeckLcdTextRenderer;
+        if (!renderer) return;
+        renderer.setScrollSpeed(deckId, px);
+        this.state.lcdScrollSpeed[deckId] = renderer.getScrollSpeed(deckId);
+    }
+
+    private syncLcdTextFromRenderer(): void {
+        const renderer = (this.env as any).streamDeckLcdTextRenderer;
+        if (!renderer) return;
+        for (const row of this.state.decks) {
+            if (!row.info.lcd) continue;
+            const id = row.info.deckId;
+            this.state.lcdText[id] = renderer.getText(id);
+            this.state.lcdFontSize[id] = renderer.getFontSize(id);
+            this.state.lcdColor[id] = renderer.getColor(id);
+            this.state.lcdScrollSpeed[id] = renderer.getScrollSpeed(id);
         }
     }
 
