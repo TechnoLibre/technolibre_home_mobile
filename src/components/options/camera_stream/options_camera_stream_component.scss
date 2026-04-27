@@ -19,8 +19,21 @@
     }
 
     &__row {
+        align-items: center;
         display: flex;
         gap: 0.5rem;
+    }
+
+    &__refresh {
+        background: var(--surface-btn);
+        border: none;
+        border-radius: 0.25rem;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 1rem;
+        padding: 0.4rem 0.6rem;
+
+        &:active { background: var(--surface-btn-active); }
     }
 
     &__button {
