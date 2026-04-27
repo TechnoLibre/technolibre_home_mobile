@@ -54,6 +54,11 @@ public final class DeckSession {
     private Thread readerThread;
     private Thread writerThread;
     private volatile boolean running = false;
+    /** Last known pressed-state per key. Used to dedupe keyChanged
+     *  emissions in polled mode where the device returns the full
+     *  snapshot every tick — without this we'd flood JS with one
+     *  keyChanged per key per tick (~32 × 33 Hz ≈ 1056 events/s). */
+    private boolean[] lastKeyPressed;
     /** When true the reader thread emits a `rawInputReport` event for every
      * successful bulkTransfer (stripped to first 32 bytes hex). Off by
      * default — flips on via StreamDeckPlugin.setDebugLogging. */
@@ -189,6 +194,7 @@ public final class DeckSession {
         }
 
         running = true;
+        lastKeyPressed = new boolean[spec.keyCount];
         readerThread = new Thread(this::readerLoop, "deck-reader-" + serial);
         writerThread = new Thread(this::writerLoop, "deck-writer-" + serial);
         readerThread.setDaemon(true);
@@ -446,6 +452,12 @@ public final class DeckSession {
         final int reqType = 0xA1;
         final int req     = 0x01;
         final int wValue  = (0x01 << 8) | 0x01;
+        // After a sustained starve (no data for >10 s), close the
+        // session so the plugin can re-attach. Observed on Plus: GET_
+        // REPORT on EP0 stops responding after ~3 s of polling and
+        // never recovers without a fresh open. The hotplug retryAttach
+        // / camera-streamer keepalive will reopen us within the second.
+        final long STARVE_RESET_MS = 10000L;
 
         while (running) {
             int got;
@@ -461,6 +473,16 @@ public final class DeckSession {
             if (!running) break;
             long now = System.currentTimeMillis();
             if (got <= 0) {
+                if (now - lastDataAt >= STARVE_RESET_MS) {
+                    // Firmware almost certainly latched up — close so the
+                    // plugin re-attaches us with a fresh GET_REPORT
+                    // pipeline. Avoids the user having to mash Restart
+                    // Sessions every 10 s.
+                    Log.w(TAG, "reader (polled) starved past reset threshold ("
+                        + (now - lastDataAt) + " ms) — closing for re-attach");
+                    close("polled_reset");
+                    return;
+                }
                 if (now - lastStarveLog >= 5000) {
                     Log.w(TAG, "reader (polled) starving — "
                         + (now - lastDataAt) + " ms since last data, last got=" + got);
@@ -531,10 +553,22 @@ public final class DeckSession {
 
         if (isKeyReport) {
             // Key report. Keys start at offset 4 for V2, 1 for V1.
+            // Polled mode delivers the full snapshot every tick; dedupe
+            // against lastKeyPressed so JS only sees actual transitions.
+            // Interrupt modes also benefit — the firmware sometimes
+            // resends the same delta if a tick is dropped.
             int offset = (spec.transport == DeckSpec.TransportKind.V2) ? 4 : 1;
             for (int k = 0; k < spec.keyCount; k++) {
                 if (offset + k >= len) break;
                 boolean pressed = buf[offset + k] != 0;
+                if (lastKeyPressed != null
+                    && k < lastKeyPressed.length
+                    && lastKeyPressed[k] == pressed) {
+                    continue;
+                }
+                if (lastKeyPressed != null && k < lastKeyPressed.length) {
+                    lastKeyPressed[k] = pressed;
+                }
                 JSObject ev = new JSObject();
                 ev.put("deckId", serial);
                 ev.put("key", k);
