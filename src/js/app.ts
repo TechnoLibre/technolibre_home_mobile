@@ -32,6 +32,7 @@ import { RepoExtractorService } from "../services/repoExtractorService";
 import { RepoEditService } from "../services/repoEditService";
 import { CodeStyleService } from "../services/codeStyleService";
 import { StreamDeckController } from "../services/streamDeckController";
+import { StreamDeckCameraStreamer } from "../services/streamDeckCameraStreamer";
 import { streamDeckEventLog } from "../services/streamDeckEventLog";
 import { StreamDeckPlugin } from "../plugins/streamDeckPlugin";
 import { TagService } from "../services/tagService";
@@ -232,6 +233,7 @@ async function startApp() {
 	streamDeckController.start().catch((e) =>
 		console.warn("[boot] StreamDeckController.start failed:", e),
 	);
+	const streamDeckCameraStreamer = new StreamDeckCameraStreamer(streamDeckController);
 
 	// Boot-time subscriptions to feed the singleton event log so the
 	// diagnostic Options panel keeps history across navigation.
@@ -272,7 +274,7 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService, repoExtractorService, repoEditService, codeStyleService, streamDeckController };
+	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, processService, repoExtractorService, repoEditService, codeStyleService, streamDeckController, streamDeckCameraStreamer };
 
 	setBootStep("Montage de l'interface…");
 	await mount(RootComponent, document.body, { env });
