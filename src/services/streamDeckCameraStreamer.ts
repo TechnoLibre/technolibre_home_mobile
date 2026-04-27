@@ -49,23 +49,31 @@ export class StreamDeckCameraStreamer {
     // fast — visible blocks but a totally usable preview.
     private static readonly DEFAULT_JPEG_QUALITY = 0.1;
     // Physical bezel between keys, expressed as a fraction of the key
-    // edge. Each Stream Deck model has its own gap-to-key ratio measured
-    // from the hardware:
-    //   original_v1/v2 / mk2 — ~30 mm key, ~5 mm gap → 0.17
-    //   xl              — ~30 mm key, ~7 mm gap → 0.23
-    //   mini            — ~25 mm key, ~3 mm gap → 0.12
-    //   plus            — ~32 mm key, ~5 mm gap → 0.16
-    //   neo             — ~30 mm key, ~5 mm gap → 0.17
+    // edge. The ratio is unit-free — gap_mm / key_mm equals gap_px /
+    // key_px because both share the deck LCD's DPI — so we don't need
+    // to know the camera's resolution. drawImage handles the camera→
+    // composite downsample, then we apply the ratio against the key's
+    // native pixel size (deck.keyImage.w/h).
+    //
+    // Some models have asymmetric bezels — Plus is a clear case (~10 mm
+    // between columns, ~5 mm between rows). Hence per-direction ratios.
+    //
+    // Values measured against published external dimensions:
+    //   original_v1/v2/mk2 — 30 mm key, ~3 mm gap   → 0.10 / 0.10
+    //   xl                — 30 mm key, ~7 mm gap   → 0.23 / 0.23
+    //   mini              — 24 mm key, ~3 mm gap   → 0.12 / 0.12
+    //   plus              — 32 mm key, 10 / 5 mm   → 0.31 / 0.16
+    //   neo               — 30 mm key, ~5 mm gap   → 0.17 / 0.17
     private static readonly BORDER_RATIO_BY_MODEL: Record<DeckModel, { w: number; h: number }> = {
-        original_v1: { w: 0.17, h: 0.17 },
-        original_v2: { w: 0.17, h: 0.17 },
+        original_v1: { w: 0.10, h: 0.10 },
+        original_v2: { w: 0.10, h: 0.10 },
         mini:        { w: 0.12, h: 0.12 },
-        mk2:         { w: 0.17, h: 0.17 },
+        mk2:         { w: 0.10, h: 0.10 },
         xl:          { w: 0.23, h: 0.23 },
-        plus:        { w: 0.16, h: 0.16 },
+        plus:        { w: 0.31, h: 0.16 },
         neo:         { w: 0.17, h: 0.17 },
     };
-    private static readonly BORDER_RATIO_FALLBACK = { w: 0.17, h: 0.17 };
+    private static readonly BORDER_RATIO_FALLBACK = { w: 0.15, h: 0.15 };
 
     private quality = StreamDeckCameraStreamer.DEFAULT_JPEG_QUALITY;
     private fps = StreamDeckCameraStreamer.DEFAULT_FPS;
