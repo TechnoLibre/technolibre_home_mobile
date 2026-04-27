@@ -19,7 +19,13 @@ export interface DeckInfo {
     rows: number;
     cols: number;
     keyCount: number;
-    keyImage: { w: number; h: number; format: DeckImageFormat };
+    keyImage: {
+        w: number;
+        h: number;
+        format: DeckImageFormat;
+        /** Degrees to rotate the rendered image clockwise before sending. */
+        rotation: number;
+    };
     dialCount: number;
     lcd?: { w: number; h: number };
     infoBars?: { w: number; h: number; count: number };

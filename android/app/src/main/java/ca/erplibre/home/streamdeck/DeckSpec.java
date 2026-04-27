@@ -19,6 +19,11 @@ public final class DeckSpec {
     public final int keyImageW;
     public final int keyImageH;
     public final ImageFormat keyImageFormat;
+    /** Degrees the rendered image must be rotated (CW) before sending to
+     * the device. The deck's LCD is sometimes mounted upside-down or 90°
+     * relative to the buttons. XL / XL v2 / MK.2 / Original v2 → 180°,
+     * Mini → 270° (handled by BMP_BGR_ROT270 already), Plus and Neo → 0°. */
+    public final int keyImageRotation;
     public final int dialCount;           // 0 except Plus (4)
     public final int lcdW;                // 0 if no LCD
     public final int lcdH;
@@ -38,6 +43,7 @@ public final class DeckSpec {
         this.keyImageW = b.keyImageW;
         this.keyImageH = b.keyImageH;
         this.keyImageFormat = b.keyImageFormat;
+        this.keyImageRotation = b.keyImageRotation;
         this.dialCount = b.dialCount;
         this.lcdW = b.lcdW;
         this.lcdH = b.lcdH;
@@ -54,6 +60,7 @@ public final class DeckSpec {
     public static final class Builder {
         String model; int productId; int rows; int cols;
         int keyImageW; int keyImageH; ImageFormat keyImageFormat;
+        int keyImageRotation;
         int dialCount; int lcdW; int lcdH; int infoBarW; int infoBarH;
         int infoBarCount; int touchPoints; TransportKind transport;
         java.util.ArrayList<String> capabilities = new java.util.ArrayList<>();
@@ -62,6 +69,7 @@ public final class DeckSpec {
         public Builder productId(int v) { this.productId = v; return this; }
         public Builder grid(int rows, int cols) { this.rows = rows; this.cols = cols; return this; }
         public Builder keyImage(int w, int h, ImageFormat f) { this.keyImageW = w; this.keyImageH = h; this.keyImageFormat = f; return this; }
+        public Builder keyImageRotation(int deg) { this.keyImageRotation = deg; return this; }
         public Builder dials(int n) { this.dialCount = n; return this; }
         public Builder lcd(int w, int h) { this.lcdW = w; this.lcdH = h; return this; }
         public Builder infoBars(int w, int h, int count) { this.infoBarW = w; this.infoBarH = h; this.infoBarCount = count; return this; }
