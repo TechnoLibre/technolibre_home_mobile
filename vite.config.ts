@@ -10,7 +10,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 
@@ -259,6 +259,30 @@ function parseManifestXml(xml: string): {
 // Default: ../../.repo/local_manifests/erplibre_manifest.xml
 //          (relative to mobile/erplibre_home_mobile/)
 
+/**
+ * Pre-compile Owl xml`...` templates → src/__owl-precompiled__.ts so the
+ * runtime never hits Owl's dynamic-eval path. Required because our CSP
+ * (script-src 'self' 'unsafe-inline', no 'unsafe-eval') blocks runtime
+ * Function-constructor template compilation. See doc/SECURITY_PLAN.md.
+ */
+function precompileOwlTemplatesPlugin(): Plugin {
+    return {
+        name: "precompile-owl-templates",
+        buildStart() {
+            const root = process.cwd();
+            const script = join(root, "scripts", "precompile-owl-templates.mjs");
+            if (!existsSync(script)) {
+                console.warn(`[owl-aot] script missing: ${script}`);
+                return;
+            }
+            const r = spawnSync("node", [script], { stdio: "inherit" });
+            if (r.status !== 0) {
+                throw new Error(`[owl-aot] precompile failed (exit ${r.status})`);
+            }
+        },
+    };
+}
+
 function bundleSourcePlugin(): Plugin {
     return {
         name: "bundle-source",
@@ -455,7 +479,18 @@ function bundleSourcePlugin(): Plugin {
 
 export default defineConfig(({ mode }) => ({
     root: "./src",
-    plugins: [bundleSourcePlugin()],
+    plugins: [precompileOwlTemplatesPlugin(), bundleSourcePlugin()],
+    resolve: {
+        alias: [
+            // Reroute the bare `@odoo/owl` import to our AOT wrapper so
+            // every component picks up the override of `xml`. Subpath
+            // imports (e.g. "@odoo/owl/dist/owl.es.js") bypass this rule.
+            {
+                find: /^@odoo\/owl$/,
+                replacement: resolve(__dirname, "src/js/owl-aot.ts"),
+            },
+        ],
+    },
     build: {
         outDir: "../dist",
         minify: "esbuild",
