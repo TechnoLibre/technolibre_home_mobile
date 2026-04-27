@@ -160,6 +160,34 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                       Les pixels qui tombent sur les bordures sont écartés
                       au lieu d'être affichés sur la mauvaise touche.
                     </p>
+
+                    <t t-if="state.borderCompensation[row.info.deckId]">
+                      <div class="options-streamdeck__deck-params-header">
+                        Largeur bordure (entre colonnes) —
+                        <strong t-esc="borderSliderLabel(row.info.deckId, 'w')" />
+                      </div>
+                      <input type="range" min="0" max="40" step="1"
+                             class="options-streamdeck__brightness-slider"
+                             t-att-value="borderSliderValue(row.info.deckId, 'w')"
+                             t-on-input="(ev) => this.onBorderRatioInput(ev, row.info.deckId, 'w')" />
+
+                      <div class="options-streamdeck__deck-params-header">
+                        Hauteur bordure (entre rangées) —
+                        <strong t-esc="borderSliderLabel(row.info.deckId, 'h')" />
+                      </div>
+                      <input type="range" min="0" max="40" step="1"
+                             class="options-streamdeck__brightness-slider"
+                             t-att-value="borderSliderValue(row.info.deckId, 'h')"
+                             t-on-input="(ev) => this.onBorderRatioInput(ev, row.info.deckId, 'h')" />
+
+                      <div class="options-streamdeck__deck-params-row">
+                        <button class="options-streamdeck__refresh"
+                                t-att-disabled="!state.borderHasOverride[row.info.deckId]"
+                                t-on-click="() => this.resetBorderRatio(row.info.deckId)">
+                          ↺ Valeurs par défaut du modèle
+                        </button>
+                      </div>
+                    </t>
                   </div>
                 </t>
               </div>
@@ -247,6 +275,11 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         // value lives on the camera streamer (singleton); this mirror
         // is only for the checkbox to render reactively.
         borderCompensation: {} as Record<string, boolean>,
+        // Per-deck effective bezel ratio (override when set, else
+        // per-model default). Mirrored from the streamer for slider
+        // rendering. Cleared/refilled on every refresh.
+        borderRatio: {} as Record<string, { w: number; h: number }>,
+        borderHasOverride: {} as Record<string, boolean>,
     });
 
     // Exposed to the template so the t-foreach over presets stays a
@@ -408,12 +441,61 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         this._log(`borderCompensation(${deckId}) → ${on ? "on" : "off"}`);
     }
 
+    /** Slider integer value (0–40) for axis 'w' or 'h'. Used directly
+     *  by t-att-value so the template never has to do float math. */
+    borderSliderValue(deckId: string, axis: "w" | "h"): number {
+        const r = this.state.borderRatio[deckId];
+        if (!r) return 0;
+        return Math.round((axis === "w" ? r.w : r.h) * 100);
+    }
+
+    borderSliderLabel(deckId: string, axis: "w" | "h"): string {
+        const r = this.state.borderRatio[deckId];
+        if (!r) return "0%";
+        return Math.round((axis === "w" ? r.w : r.h) * 100) + "%";
+    }
+
+    onBorderRatioInput(ev: Event, deckId: string, axis: "w" | "h"): void {
+        const input = ev.target as HTMLInputElement;
+        const x100 = parseInt(input.value, 10);
+        if (Number.isNaN(x100)) return;
+        const v = Math.max(0, Math.min(0.4, x100 / 100));
+        const streamer = (this.env as any).streamDeckCameraStreamer;
+        if (!streamer) return;
+        const row = this.state.decks.find((r) => r.info.deckId === deckId);
+        if (!row) return;
+        const current = streamer.getEffectiveBorderRatio(deckId, row.info.model);
+        const next = axis === "w"
+            ? { w: v, h: current.h }
+            : { w: current.w, h: v };
+        streamer.setBorderRatio(deckId, next.w, next.h);
+        this.syncBorderRatio(deckId, row.info.model);
+    }
+
+    resetBorderRatio(deckId: string): void {
+        const streamer = (this.env as any).streamDeckCameraStreamer;
+        if (!streamer) return;
+        const row = this.state.decks.find((r) => r.info.deckId === deckId);
+        if (!row) return;
+        streamer.clearBorderRatio(deckId);
+        this.syncBorderRatio(deckId, row.info.model);
+        this._log(`borderRatio(${deckId}) → reset to model default`);
+    }
+
+    private syncBorderRatio(deckId: string, model: any): void {
+        const streamer = (this.env as any).streamDeckCameraStreamer;
+        if (!streamer) return;
+        this.state.borderRatio[deckId] = streamer.getEffectiveBorderRatio(deckId, model);
+        this.state.borderHasOverride[deckId] = streamer.hasBorderRatioOverride(deckId);
+    }
+
     private syncBorderCompensationFromStreamer(): void {
         const streamer = (this.env as any).streamDeckCameraStreamer;
         if (!streamer) return;
         for (const row of this.state.decks) {
             this.state.borderCompensation[row.info.deckId] =
                 streamer.getBorderCompensation(row.info.deckId);
+            this.syncBorderRatio(row.info.deckId, row.info.model);
         }
     }
 

@@ -93,6 +93,11 @@ export class StreamDeckCameraStreamer {
      *  larger virtual size that includes inter-key gaps, and pixels
      *  falling on the bezels are simply not extracted into any tile. */
     private borderCompensation = new Map<string, boolean>();
+    /** Per-deck override of the bezel ratio. Empty = use the model
+     *  default from BORDER_RATIO_BY_MODEL. Lets the user fine-tune
+     *  hardware where the published spec doesn't quite match what
+     *  they observe. */
+    private borderRatioOverride = new Map<string, { w: number; h: number }>();
     private inFlight = false;
     private listenersOut = new Set<ListenerLike>();
     private lastTickStart = 0;
@@ -190,9 +195,35 @@ export class StreamDeckCameraStreamer {
 
     /** Per-model bezel ratio. Falls back to a generic value for any
      *  future model not yet enumerated in BORDER_RATIO_BY_MODEL. */
-    private borderRatio(model: DeckModel): { w: number; h: number } {
+    getDefaultBorderRatio(model: DeckModel): { w: number; h: number } {
         return StreamDeckCameraStreamer.BORDER_RATIO_BY_MODEL[model]
             ?? StreamDeckCameraStreamer.BORDER_RATIO_FALLBACK;
+    }
+
+    /** Effective ratio for a deck — override when present, else the
+     *  per-model default. */
+    getEffectiveBorderRatio(deckId: string, model: DeckModel): { w: number; h: number } {
+        return this.borderRatioOverride.get(deckId)
+            ?? this.getDefaultBorderRatio(model);
+    }
+
+    hasBorderRatioOverride(deckId: string): boolean {
+        return this.borderRatioOverride.has(deckId);
+    }
+
+    /** Override the bezel ratio for one deck. Triggers a cache rebuild
+     *  on the next paint so the new gap takes effect within one tick. */
+    setBorderRatio(deckId: string, w: number, h: number): void {
+        const cw = Math.max(0, Math.min(0.4, w));
+        const ch = Math.max(0, Math.min(0.4, h));
+        this.borderRatioOverride.set(deckId, { w: cw, h: ch });
+        this.deckCache.delete(deckId);
+    }
+
+    /** Drop the override and fall back to the per-model default. */
+    clearBorderRatio(deckId: string): void {
+        if (!this.borderRatioOverride.delete(deckId)) return;
+        this.deckCache.delete(deckId);
     }
 
     onActiveChange(cb: ListenerLike): () => void {
@@ -387,7 +418,8 @@ export class StreamDeckCameraStreamer {
 
     private getCache(deck: DeckInfo): DeckCanvasCache | null {
         const compensate = this.borderCompensation.get(deck.deckId) ?? false;
-        const ratio = this.borderRatio(deck.model);
+        const ratio = this.borderRatioOverride.get(deck.deckId)
+            ?? this.getDefaultBorderRatio(deck.model);
         const gapW = compensate ? Math.round(deck.keyImage.w * ratio.w) : 0;
         const gapH = compensate ? Math.round(deck.keyImage.h * ratio.h) : 0;
         const canvasW = deck.cols * deck.keyImage.w + (deck.cols - 1) * gapW;
