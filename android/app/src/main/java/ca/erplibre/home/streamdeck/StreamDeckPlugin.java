@@ -1,6 +1,7 @@
 package ca.erplibre.home.streamdeck;
 
 import android.content.Context;
+import android.content.Intent;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.util.Base64;
@@ -51,6 +52,16 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         permissions = new UsbPermissionRequester(ctx, usb);
         hotplug = new UsbHotplugReceiver(this);
         hotplug.attach(ctx);
+        // The lifecycle service runs only to receive onTaskRemoved on
+        // swipe-from-recents — the Activity lifecycle does not guarantee
+        // onDestroy on that path, so handleOnDestroy alone leaves the deck
+        // painted with the last tile. The service has no other duties.
+        StreamDeckLifecycleService.setTaskRemovedHandler(this::resetAllSessions);
+        try {
+            ctx.startService(new Intent(ctx, StreamDeckLifecycleService.class));
+        } catch (Throwable t) {
+            Log.w(TAG, "startService(StreamDeckLifecycleService) failed: " + t.getMessage());
+        }
         scanExistingDevices();
     }
 
@@ -58,21 +69,32 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     protected void handleOnDestroy() {
         if (hotplug != null) hotplug.detach(getContext());
         if (permissions != null) permissions.close();
+        resetAllSessions();
         synchronized (sessionsByDevice) {
-            // Clear every visible surface before tearing down USB. reset()
-            // is a synchronous feature-report write that drops in front of
-            // the writer queue's pending image jobs, so the deck goes dark
-            // even when key paints are still queued. Best-effort: a failure
-            // here must not block close().
+            for (DeckSession s : sessionsByDevice.values()) s.close("app_destroyed");
+            sessionsByDevice.clear();
+            sessionsBySerial.clear();
+        }
+        StreamDeckLifecycleService.setTaskRemovedHandler(null);
+    }
+
+    /**
+     * Best-effort blank-every-deck. Called on both handleOnDestroy and
+     * the lifecycle service's onTaskRemoved so a swipe-from-recents (which
+     * may skip onDestroy) still clears the LCDs. reset() is a synchronous
+     * feature-report write that bypasses the writer queue, so it lands
+     * even when image jobs are still pending. Failures are logged and
+     * never propagated — at this point we may be racing the OS killing
+     * the process and a crash here would surface as a misleading ANR.
+     */
+    private void resetAllSessions() {
+        synchronized (sessionsByDevice) {
             for (DeckSession s : sessionsByDevice.values()) {
                 try { s.reset(); }
                 catch (Throwable t) {
-                    Log.w(TAG, "reset on destroy failed for " + s.serial() + ": " + t.getMessage());
+                    Log.w(TAG, "reset failed for " + s.serial() + ": " + t.getMessage());
                 }
-                s.close("app_destroyed");
             }
-            sessionsByDevice.clear();
-            sessionsBySerial.clear();
         }
     }
 
