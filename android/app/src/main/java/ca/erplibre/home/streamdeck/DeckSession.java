@@ -160,7 +160,7 @@ public final class DeckSession {
         this.epOut = chosenOut;
         Log.i(TAG, "selected epIn=0x" + Integer.toHexString(epIn.getAddress())
             + " epOut=0x" + Integer.toHexString(epOut.getAddress())
-            + " readerUseBulk=" + readerUseBulk);
+            + " readerMode=" + readerMode);
 
         // HID class SET_IDLE 0 — tells the device to send reports only on
         // change, no idle re-transmission. On some Android kernels the
