@@ -33,14 +33,25 @@ export class StreamDeckController {
     ) {}
 
     async start(): Promise<void> {
+        // Repaint the home tile on every deck (re)connection — but only
+        // when the app is actually visible. Otherwise we'd flicker the
+        // deck during phone-sleep micro-wakeups: USB OTG briefly
+        // re-enumerates the device, the hotplug receiver fires
+        // deckConnected, and an unconditional paint flashes "Note" on
+        // the LCD before USB suspends again.
+        const repaintIfVisible = async (info: DeckInfo) => {
+            if (this._isHidden()) return;
+            await this._renderHome(info).catch((e) =>
+                console.warn(`[streamdeck] paint deckId=${info.deckId}:`, e),
+            );
+        };
+
         // Pick up decks already connected at boot time.
         try {
             const r = await StreamDeckPlugin.listDecks();
             for (const d of r.decks) {
                 this.decks.set(d.deckId, d);
-                await this._renderHome(d).catch((e) =>
-                    console.warn(`[streamdeck] paint deckId=${d.deckId}:`, e),
-                );
+                await repaintIfVisible(d);
             }
         } catch (e) {
             console.warn("[streamdeck] listDecks at boot failed:", e);
@@ -52,9 +63,7 @@ export class StreamDeckController {
                     deckId: ev.deckId,
                 }));
                 this.decks.set(info.deckId, info);
-                await this._renderHome(info).catch((e) =>
-                    console.warn(`[streamdeck] paint on connect:`, e),
-                );
+                await repaintIfVisible(info);
             }),
         );
 
@@ -74,6 +83,25 @@ export class StreamDeckController {
                 });
             }),
         );
+
+        // When the page becomes visible again (phone unlock, app brought
+        // back to foreground), repaint every known deck to recover from
+        // any background flicker that may have left the LCD blank.
+        document.addEventListener("visibilitychange", () => {
+            if (this._isHidden()) return;
+            for (const info of this.decks.values()) {
+                this._renderHome(info).catch((e) =>
+                    console.warn("[streamdeck] repaint on visible:", e),
+                );
+            }
+        });
+    }
+
+    private _isHidden(): boolean {
+        // Treat both 'hidden' and 'prerender' as "skip paint".
+        return typeof document !== "undefined"
+            && document.visibilityState !== undefined
+            && document.visibilityState !== "visible";
     }
 
     async stop(): Promise<void> {
