@@ -4,6 +4,7 @@ import { Device } from "@capacitor/device";
 import { App } from "@capacitor/app";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { NetworkScanPlugin } from "../../../plugins/networkScanPlugin";
 import { Events } from "../../../constants/events";
 import { StorageConstants } from "../../../constants/storage";
 
@@ -92,10 +93,11 @@ export class OptionsDeviceInfoComponent extends EnhancedComponent {
 		let message: string;
 
 		try {
-			const [info, lang, appInfo] = await Promise.all([
+			const [info, lang, appInfo, ifaces] = await Promise.all([
 				Device.getInfo(),
 				Device.getLanguageCode(),
 				App.getInfo().catch(() => null),
+				NetworkScanPlugin.listInterfaces().catch(() => ({ interfaces: [] })),
 			]);
 
 			const lines: string[] = [
@@ -111,6 +113,29 @@ export class OptionsDeviceInfoComponent extends EnhancedComponent {
 				lines.push(`App : ${appInfo.name}`);
 				lines.push(`Version : ${appInfo.version} (build ${appInfo.build})`);
 				lines.push(`ID : ${appInfo.id}`);
+			}
+
+			// Network interfaces — show only the ones that are up and
+			// have at least one address. Loopback shown last when
+			// nothing else is up so the user always gets some readout.
+			const upWithAddrs = ifaces.interfaces.filter(
+				(i) => i.up && !i.loopback && i.addresses.length > 0,
+			);
+			if (upWithAddrs.length > 0) {
+				lines.push("");
+				lines.push("Réseau :");
+				for (const iface of upWithAddrs) {
+					const label = iface.displayName && iface.displayName !== iface.name
+						? `${iface.name} (${iface.displayName})`
+						: iface.name;
+					lines.push(`  ${label}${iface.mac ? ` — ${iface.mac}` : ""}`);
+					for (const a of iface.addresses) {
+						lines.push(`    ${a.family === "ipv4" ? "v4" : "v6"} ${a.ip}/${a.prefixLength}`);
+					}
+				}
+			} else if (ifaces.interfaces.length > 0) {
+				lines.push("");
+				lines.push("Réseau : aucune interface active");
 			}
 
 			message = lines.join("\n");

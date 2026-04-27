@@ -13,6 +13,21 @@ export interface ScannedHost {
     hostname?: string;
 }
 
+export interface NetworkInterfaceAddress {
+    ip: string;
+    family: "ipv4" | "ipv6";
+    prefixLength: number;
+}
+
+export interface NetworkInterfaceInfo {
+    name: string;
+    displayName: string;
+    up: boolean;
+    loopback: boolean;
+    mac: string;
+    addresses: NetworkInterfaceAddress[];
+}
+
 interface NetworkScanPlugin {
     /**
      * Scan the local /24 subnet for SSH services.
@@ -22,6 +37,8 @@ interface NetworkScanPlugin {
     scan(opts?: { timeoutMs?: number }): Promise<{ hosts: ScannedHost[] }>;
     /** Cancel an in-progress scan. */
     cancelScan(): Promise<void>;
+    /** Enumerate every network interface on the device with its IPs. */
+    listInterfaces(): Promise<{ interfaces: NetworkInterfaceInfo[] }>;
     addListener(
         event: "hostFound",
         fn: (host: ScannedHost) => void

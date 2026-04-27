@@ -168,6 +168,75 @@ public class NetworkScanPlugin extends Plugin {
     }
 
     /**
+     * Enumerates every active network interface on the device and the
+     * IPv4 / IPv6 addresses bound to it. No permission required —
+     * NetworkInterface enumeration goes through the Java NIO stack.
+     *
+     * Each entry: { name, displayName, up, loopback, mac (or ""),
+     * addresses: [{ ip, family ("ipv4"|"ipv6"), prefixLength }] }
+     */
+    @PluginMethod
+    public void listInterfaces(PluginCall call) {
+        JSArray out = new JSArray();
+        try {
+            Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
+            if (ifaces != null) {
+                while (ifaces.hasMoreElements()) {
+                    NetworkInterface iface = ifaces.nextElement();
+                    JSObject row = new JSObject();
+                    row.put("name", iface.getName());
+                    row.put("displayName", iface.getDisplayName() != null ? iface.getDisplayName() : "");
+                    boolean up = false;
+                    try { up = iface.isUp(); } catch (Throwable ignored) { /* permission edge case */ }
+                    row.put("up", up);
+                    boolean loopback = false;
+                    try { loopback = iface.isLoopback(); } catch (Throwable ignored) {}
+                    row.put("loopback", loopback);
+                    String mac = "";
+                    try {
+                        byte[] hw = iface.getHardwareAddress();
+                        if (hw != null) {
+                            StringBuilder sb = new StringBuilder();
+                            for (int i = 0; i < hw.length; i++) {
+                                if (i > 0) sb.append(":");
+                                sb.append(String.format("%02x", hw[i] & 0xFF));
+                            }
+                            mac = sb.toString();
+                        }
+                    } catch (Throwable ignored) {}
+                    row.put("mac", mac);
+                    JSArray addrs = new JSArray();
+                    try {
+                        for (java.net.InterfaceAddress ia : iface.getInterfaceAddresses()) {
+                            InetAddress a = ia.getAddress();
+                            if (a == null) continue;
+                            JSObject ao = new JSObject();
+                            String host = a.getHostAddress();
+                            if (host == null) continue;
+                            // Strip the IPv6 zone id ("fe80::1%wlan0" → "fe80::1").
+                            int pct = host.indexOf('%');
+                            if (pct >= 0) host = host.substring(0, pct);
+                            ao.put("ip", host);
+                            ao.put("family", (a instanceof Inet4Address) ? "ipv4" : "ipv6");
+                            ao.put("prefixLength", ia.getNetworkPrefixLength());
+                            addrs.put(ao);
+                        }
+                    } catch (Throwable ignored) {}
+                    row.put("addresses", addrs);
+                    out.put(row);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "listInterfaces failed", e);
+            call.reject("listInterfaces:" + e.getMessage());
+            return;
+        }
+        JSObject r = new JSObject();
+        r.put("interfaces", out);
+        call.resolve(r);
+    }
+
+    /**
      * Returns the first non-loopback IPv4 address of an active network interface
      * (works for WiFi, Ethernet, USB-tethering — no special permission required).
      */
