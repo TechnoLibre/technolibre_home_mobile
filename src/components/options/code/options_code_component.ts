@@ -216,6 +216,20 @@ export class OptionsCodeComponent extends EnhancedComponent {
         <span class="code-browser__server-label" t-esc="state.serverLabel" />
         <span class="code-browser__branch" t-esc="state.currentBranch" />
       </div>
+      <t t-if="state.mode === 'ssh-url' and !state.isEditable">
+        <button class="code__btn code__btn--edit"
+                t-on-click="() => this.onPromoteEdit()"
+                t-att-disabled="state.promoting">
+          <t t-if="state.promoting">⏳ Promotion…</t>
+          <t t-else="">✏️ Activer édition</t>
+        </button>
+      </t>
+      <t t-if="state.mode === 'ssh-url' and state.isEditable">
+        <button class="code__btn code__btn--unpromote"
+                t-on-click="() => this.onUnpromote()">
+          🔒 Sortir édition
+        </button>
+      </t>
       <button class="code__btn code__btn--disconnect" t-on-click="() => this.onDisconnect()">
         ✕ Déconnecter
       </button>
@@ -540,6 +554,22 @@ export class OptionsCodeComponent extends EnhancedComponent {
             gitCommitMessage: "",
             gitLoading: false,
             gitOutput: "",
+
+            // Edit-mode (manifest repo promoted to Documents + git baseline)
+            currentSlug: "",
+            currentArchiveUrl: "",
+            isEditable: false,
+            promoting: false,
+            baselineMismatch: false,
+            shippedBuildId: "",
+            promotedBuildId: "",
+            // Editable git UI state
+            editGitStatus: { modified: [] as string[], untracked: [] as string[],
+                             staged: [] as string[], deleted: [] as string[] },
+            editGitDiff: "",
+            editGitDiffFile: "",
+            editGitCommitMessage: "",
+            editGitLog: [] as GitCommit[],
         });
 
         onWillDestroy(async () => { await this._codeService?.disconnect(); });
@@ -616,10 +646,80 @@ export class OptionsCodeComponent extends EnhancedComponent {
             this.env.repoExtractorService,
             this.env.repoEditService,
         );
+        this.state.currentSlug = project.slug;
+        this.state.currentArchiveUrl = `/${project.archive}`;
+        this.state.isEditable = await this.env.repoEditService.isEditable(project.slug);
         this.state.serverLabel = project.name;
-        this.state.currentBranch = project.revision;
+        this.state.currentBranch = this.state.isEditable
+            ? `${project.revision} (édition)` : `${project.revision} (lecture seule)`;
         await this._loadDir("");
         this.state.phase = "browser";
+    }
+
+    // ── Edit-mode promotion ────────────────────────────────────────────────────
+
+    async onPromoteEdit(): Promise<void> {
+        if (this.state.promoting || this.state.isEditable) return;
+        if (!this.state.currentSlug || !this.state.currentArchiveUrl) {
+            this.state.error = "Cannot promote: no current repo.";
+            return;
+        }
+        this.state.promoting = true;
+        this.state.error = "";
+        try {
+            await this.env.repoEditService.promoteToEditable(
+                this.state.currentSlug,
+                this.state.currentArchiveUrl,
+            );
+            // Switch _repoFs to EditableCodeService for this slug.
+            const project = this.state.manifestProjects.find(
+                (p) => p.slug === this.state.currentSlug,
+            );
+            if (project) {
+                this._repoFs = await getRepoFs(
+                    project,
+                    this.env.repoExtractorService,
+                    this.env.repoEditService,
+                );
+            }
+            this.state.isEditable = true;
+            this.state.currentBranch = this.state.currentBranch.replace(
+                "(lecture seule)", "(édition)",
+            );
+            await this._loadDir(this.state.currentDirPath);
+        } catch (e) {
+            this.state.error = `Promotion échouée: ${e instanceof Error ? e.message : String(e)}`;
+        } finally {
+            this.state.promoting = false;
+        }
+    }
+
+    async onUnpromote(): Promise<void> {
+        if (!this.state.isEditable || !this.state.currentSlug) return;
+        const ok = window.confirm(
+            "Annuler le mode édition? Toutes les modifications non commitées seront perdues.",
+        );
+        if (!ok) return;
+        try {
+            await this.env.repoEditService.unpromote(this.state.currentSlug);
+            this.state.isEditable = false;
+            this.state.currentBranch = this.state.currentBranch.replace(
+                "(édition)", "(lecture seule)",
+            );
+            const project = this.state.manifestProjects.find(
+                (p) => p.slug === this.state.currentSlug,
+            );
+            if (project) {
+                this._repoFs = await getRepoFs(
+                    project,
+                    this.env.repoExtractorService,
+                    this.env.repoEditService,
+                );
+            }
+            await this._loadDir(this.state.currentDirPath);
+        } catch (e) {
+            this.state.error = `Unpromote échoué: ${e instanceof Error ? e.message : String(e)}`;
+        }
     }
 
     private async _connectSshPath(): Promise<void> {
@@ -648,6 +748,10 @@ export class OptionsCodeComponent extends EnhancedComponent {
         this._codeService = null;
         this._bundleService = null;
         this._repoFs = null;
+        this.state.currentSlug = "";
+        this.state.currentArchiveUrl = "";
+        this.state.isEditable = false;
+        this.state.baselineMismatch = false;
         this.state.phase = "setup";
         this.state.error = "";
         this.state.currentFilePath = "";
