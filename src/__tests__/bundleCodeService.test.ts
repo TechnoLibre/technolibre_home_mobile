@@ -184,4 +184,27 @@ describe("BundleCodeService", () => {
             expect(svc.getFileUrl("images/icon.svg")).toBe("/repos/my-proj/images/icon.svg");
         });
     });
+
+    // ── Archive mode (tar.gz extracted to Cache) ──────────────────────────────
+
+    describe("archive mode", () => {
+        it("initializes via index.json sidecar + extractor", async () => {
+            const fetch = mockFetch({
+                "/repos/foo.index.json": [
+                    { path: "README.md", type: "file" },
+                    { path: "src", type: "dir" },
+                ],
+            });
+            globalThis.fetch = fetch as unknown as typeof globalThis.fetch;
+            const extractor = { ensureExtracted: vi.fn().mockResolvedValue("repos/foo") };
+            const svc = new BundleCodeService(
+                "/ignored",
+                { archiveUrl: "/repos/foo.tar.gz", indexUrl: "/repos/foo.index.json", slug: "foo" },
+                extractor as never,
+            );
+            const entries = await svc.listDir("");
+            expect(entries.map((e) => e.path)).toEqual(["README.md", "src"]);
+            expect(extractor.ensureExtracted).toHaveBeenCalledWith("foo", "/repos/foo.tar.gz");
+        });
+    });
 });
