@@ -23,6 +23,13 @@ export type FeatureDemo =
     /** Background service / no UI — explain why it can't be demoed */
     | { kind: "none"; reason?: FeatureI18n };
 
+export type FeatureStatus = "stable" | "experimental" | "deprecated" | "broken";
+
+/** Capacitor / Android permission strings used by a feature. Free-form
+ *  but recommended values: camera, microphone, storage, location,
+ *  notifications, biometric, usb-host, internet, foreground-service. */
+export type FeaturePermission = string;
+
 export interface FeatureNode {
     /** kebab-case unique id, dotted by hierarchy */
     id: string;
@@ -33,6 +40,16 @@ export interface FeatureNode {
     children?: FeatureNode[];
     /** Source files implementing the feature */
     files?: string[];
+    /** Test files covering the feature — paths checked on disk */
+    tests?: string[];
+    /** Other feature ids this one depends on (must exist in tree) */
+    dependsOn?: string[];
+    /** Known issues / limitations, surfaced in the detail panel */
+    issues?: FeatureI18n[];
+    /** OS-level permissions required */
+    permissions?: FeaturePermission[];
+    /** Maturity / health label, defaults to "stable" if absent */
+    status?: FeatureStatus;
     /** How a user can demo / launch the feature in the app */
     demo?: FeatureDemo;
 }
@@ -165,6 +182,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             en: "Capture current GPS position into the note.",
                             fr: "Capturer la position GPS courante dans la note.",
                         },
+                        permissions: ["location"],
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/geolocation/note_entry_geolocation_component.ts"],
                     },
@@ -305,6 +323,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 demo: NONE_PLUMBING,
                 files: ["src/plugins/streamDeckPlugin.ts"],
+                tests: ["src/__tests__/streamDeckPlugin.test.ts"],
             },
             {
                 id: "streamdeck.controller",
@@ -457,6 +476,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Stream phone camera onto deck keys (cover-fit, bezel-aware).",
                     fr: "Diffuse la caméra du téléphone sur les touches (cover-fit, bezels).",
                 },
+                status: "stable",
+                permissions: ["camera"],
+                dependsOn: ["streamdeck.controller", "streamdeck.writer-queue"],
+                issues: [
+                    { en: "Front camera mirror is off; user-facing scenes look reversed.",
+                      fr: "Caméra avant non miroitée; scène vue à l'envers." },
+                ],
                 howItWorks: {
                     en: "getUserMedia → hidden <video> → composite canvas "
                         + "cover-fit per deck (with bezel-gap padding) → tile "
@@ -485,6 +511,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "ML Kit detects faces, draws a green border on hit tiles.",
                     fr: "ML Kit détecte les visages, cadre vert sur les tuiles touchées.",
                 },
+                status: "experimental",
+                permissions: ["camera"],
+                dependsOn: ["streamdeck.camera-stream"],
                 howItWorks: {
                     en: "Per tick: downscale the live video to ~640 px on its "
                         + "long edge (aspect-preserving), JPEG-encode at q=0.5, "
@@ -840,6 +869,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "JNI bridge to whisper.cpp built via CMake.",
                     fr: "Bridge JNI vers whisper.cpp compilé via CMake.",
                 },
+                status: "stable",
+                permissions: ["microphone"],
                 howItWorks: {
                     en: "whisper.cpp is checked out under android/app/src/main/"
                         + "cpp/whisper and built as a static lib by CMake. The "
@@ -924,11 +955,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Gate the app behind fingerprint/face.",
                     fr: "Verrouiller l'app derrière empreinte/visage.",
                 },
+                permissions: ["biometric"],
                 demo: { kind: "route", url: "/options" },
                 files: [
                     "src/utils/biometryUtils.ts",
                     "src/components/options/options_toggle_biometry_component.ts/options_toggle_biometry_component.ts",
                 ],
+                tests: ["src/__tests__/biometryUtils.test.ts"],
             },
             {
                 id: "security.secure-storage",
@@ -986,6 +1019,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "FLAG_KEEP_SCREEN_ON to keep deck LCDs lit.",
                     fr: "FLAG_KEEP_SCREEN_ON pour garder les LCD allumées.",
                 },
+                status: "stable",
+                issues: [
+                    { en: "Battery drain: scales linearly with screen-on time.",
+                      fr: "Batterie : draine proportionnel au temps écran allumé." },
+                ],
                 howItWorks: {
                     en: "Plugin toggles FLAG_KEEP_SCREEN_ON on the activity "
                         + "window. While set, Android leaves the screen on "
@@ -1026,11 +1064,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Discover hosts on the local subnet.",
                     fr: "Découvre les hôtes du sous-réseau local.",
                 },
+                permissions: ["internet"],
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/NetworkScanPlugin.java",
                     "src/plugins/networkScanPlugin.ts",
                 ],
+                tests: ["src/__tests__/networkScanPlugin.test.ts"],
             },
             {
                 id: "system.permissions",
@@ -1409,6 +1449,38 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/options/erplibre/options_erplibre_component.ts",
                     "src/components/options/erplibre/options_erplibre_component.scss",
                 ],
+            },
+            {
+                id: "meta.feature-catalog",
+                label: { en: "Feature catalogue", fr: "Catalogue fonctionnalités" },
+                description: {
+                    en: "This very tree — bilingual feature map of the app.",
+                    fr: "Cet arbre — carte bilingue des fonctionnalités de l'app.",
+                },
+                howItWorks: {
+                    en: "FEATURE_TREE in src/data/featureCatalog.ts is the "
+                        + "source of truth. The /options/features page renders "
+                        + "it as a recursive tree component with search, "
+                        + "deep-link, and per-node detail. A vitest suite "
+                        + "enforces uniqueness, file existence, dependsOn "
+                        + "validity, and orphan detection (every src/ file "
+                        + "must be in some feature or allow-listed).",
+                    fr: "FEATURE_TREE dans src/data/featureCatalog.ts est la "
+                        + "source de vérité. /options/features rend l'arbre "
+                        + "via un composant récursif (recherche, deep-link, "
+                        + "détail par noeud). Suite vitest vérifie unicité, "
+                        + "existence des fichiers, validité dependsOn, et "
+                        + "détection d'orphelins.",
+                },
+                status: "experimental",
+                demo: { kind: "route", url: "/options/features" },
+                files: [
+                    "src/components/options/features/options_features_component.ts",
+                    "src/components/options/features/options_features_component.scss",
+                    "src/data/featureCatalog.ts",
+                    "src/utils/featureSection.ts",
+                ],
+                tests: ["src/__tests__/featureCatalog.test.ts"],
             },
             {
                 id: "meta.options",
