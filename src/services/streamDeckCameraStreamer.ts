@@ -145,8 +145,39 @@ export class StreamDeckCameraStreamer {
     private listenersOut = new Set<ListenerLike>();
     private lastTickStart = 0;
     private tickCount = 0;
+    /** True when we paused the streamer ourselves on visibility-hidden
+     *  and should auto-resume on visible. Distinguishes a user-driven
+     *  stop (button, key press) from a sleep-driven pause: only the
+     *  latter resumes. */
+    private resumeOnVisible = false;
+    private visibilityHandler: (() => void) | null = null;
 
-    constructor(private readonly controller: StreamDeckController) {}
+    constructor(private readonly controller: StreamDeckController) {
+        // Self-managed visibility handling. The MediaStream tracks die
+        // when the WebView pauses (Android browser policy), and the
+        // tick interval keeps firing into a dead video element until
+        // the user manually toggles streaming off. Pausing+resuming
+        // around the sleep cycle keeps the stream usable across phone
+        // lock without user intervention.
+        this.visibilityHandler = () => this.onVisibilityChange();
+        document.addEventListener("visibilitychange", this.visibilityHandler);
+    }
+
+    private onVisibilityChange(): void {
+        if (document.visibilityState === "hidden") {
+            if (this.active) {
+                this.resumeOnVisible = true;
+                this.stop().catch((e) =>
+                    console.warn("[camera-streamer] pause on hidden:", e));
+            }
+            return;
+        }
+        if (this.resumeOnVisible) {
+            this.resumeOnVisible = false;
+            this.start().catch((e) =>
+                console.warn("[camera-streamer] resume on visible:", e));
+        }
+    }
 
     isActive(): boolean { return this.active; }
 

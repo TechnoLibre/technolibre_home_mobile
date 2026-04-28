@@ -9,8 +9,15 @@ interface EventBusLike {
     trigger(name: string, payload: Record<string, unknown>): void;
 }
 
+interface NoteShape {
+    title?: string;
+    tags?: string[];
+    entries?: unknown[];
+}
+
 interface NoteServiceLike {
     getNewId(): string;
+    getMatch(noteId: string): Promise<NoteShape>;
 }
 
 /**
@@ -29,6 +36,16 @@ export class StreamDeckController {
     /** When true, the home tile and key-0 navigation are suspended so the
      * camera streamer (or any future taker-over) owns the deck surface. */
     private cameraStreaming = false;
+    /** Last user-set brightness per deck. Stream Deck firmware doesn't
+     *  expose getBrightness, so we cache the value at the moment we
+     *  send setBrightness — used to restore the deck's pre-sleep
+     *  brightness on visibility:visible after we dim to 0 on hidden. */
+    private lastBrightness = new Map<string, number>();
+    private static readonly DEFAULT_BRIGHTNESS = 50;
+    /** Debounce timestamp for the Note key. Rapid mash-fires used to
+     *  spawn unbounded route transitions and crash the app. */
+    private lastNotePressAt = 0;
+    private static readonly NOTE_DEBOUNCE_MS = 400;
 
     constructor(
         private readonly eventBus: EventBusLike,
@@ -37,6 +54,21 @@ export class StreamDeckController {
 
     setCameraStreaming(active: boolean): void {
         this.cameraStreaming = active;
+    }
+
+    /** Set deck brightness, remembering the value so we can restore it
+     *  after sleep. Callers that adjust brightness should use this
+     *  wrapper rather than StreamDeckPlugin.setBrightness directly,
+     *  otherwise their value is lost across the next sleep cycle. */
+    async setBrightness(deckId: string, percent: number): Promise<void> {
+        const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+        this.lastBrightness.set(deckId, clamped);
+        await StreamDeckPlugin.setBrightness({ deckId, percent: clamped });
+    }
+
+    getBrightness(deckId: string): number {
+        return this.lastBrightness.get(deckId)
+            ?? StreamDeckController.DEFAULT_BRIGHTNESS;
     }
 
     /** Repaint the home tile on every known deck. Used by the camera
@@ -94,13 +126,28 @@ export class StreamDeckController {
         );
 
         this.listeners.push(
-            await StreamDeckPlugin.addListener("keyChanged", (ev) => {
+            await StreamDeckPlugin.addListener("keyChanged", async (ev) => {
                 if (!ev.pressed) return;
                 // While the camera streamer owns the deck, the streamer
                 // itself listens to keyChanged to stop. Suppress home
                 // navigation so the press doesn't double-trigger.
                 if (this.cameraStreaming) return;
                 if (ev.key !== 0) return;
+
+                // Debounce — rapid mash on the deck used to fire dozens
+                // of route transitions in flight and crash the app.
+                const now = Date.now();
+                if (now - this.lastNotePressAt < StreamDeckController.NOTE_DEBOUNCE_MS) return;
+                this.lastNotePressAt = now;
+
+                // If we're already sitting on a blank note, stay put —
+                // the user intent for "press Note again" is "give me a
+                // fresh empty note" and the current one already qualifies.
+                // Pressing it on a note that has content does spawn a
+                // new note (that's the way to start a second one without
+                // walking back to the home screen).
+                if (await this._currentNoteIsBlank()) return;
+
                 const newId = this.noteService.getNewId();
                 this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
                     url: `/note/${newId}`,
@@ -108,27 +155,56 @@ export class StreamDeckController {
             }),
         );
 
-        // Blank every deck while the page is hidden (phone locked /
-        // app backgrounded). Key events don't reach JS during pause,
-        // so a still-painted LCD just shows a stale UI the user can't
-        // interact with — better to clear it. On the way back, we
-        // repaint Note as the home tile.
+        // Dim every deck to 0 while the page is hidden (phone locked /
+        // app backgrounded). setBrightness(0) hides the LCDs without
+        // touching the HID interface — earlier we used reset() here
+        // and the reader thread's interrupt-IN pipe was left in a
+        // state where post-wake key presses didn't surface, requiring
+        // a manual session restart. Brightness is a feature-report
+        // write that's safe to issue concurrently with the reader.
+        // On the way back, restore the user's brightness and repaint
+        // the home tile.
         document.addEventListener("visibilitychange", () => {
-            if (this.cameraStreaming) return;
             if (this._isHidden()) {
                 for (const info of this.decks.values()) {
-                    StreamDeckPlugin.reset({ deckId: info.deckId }).catch((e) =>
-                        console.warn("[streamdeck] blank on hidden:", e),
+                    StreamDeckPlugin.setBrightness({
+                        deckId: info.deckId, percent: 0,
+                    }).catch((e) =>
+                        console.warn("[streamdeck] dim on hidden:", e),
                     );
                 }
                 return;
             }
             for (const info of this.decks.values()) {
+                StreamDeckPlugin.setBrightness({
+                    deckId: info.deckId,
+                    percent: this.getBrightness(info.deckId),
+                }).catch((e) =>
+                    console.warn("[streamdeck] restore brightness:", e),
+                );
+                if (this.cameraStreaming) continue;
                 this._renderHome(info).catch((e) =>
                     console.warn("[streamdeck] repaint on visible:", e),
                 );
             }
         });
+    }
+
+    private async _currentNoteIsBlank(): Promise<boolean> {
+        if (typeof window === "undefined") return false;
+        const m = window.location.pathname.match(/^\/note\/([^/?#]+)/);
+        if (!m) return false;
+        try {
+            const note = await this.noteService.getMatch(m[1]);
+            const hasTitle = (note.title ?? "").trim().length > 0;
+            const hasTags = Array.isArray(note.tags) && note.tags.length > 0;
+            const hasEntries = Array.isArray(note.entries) && note.entries.length > 0;
+            return !(hasTitle || hasTags || hasEntries);
+        } catch {
+            // Note id in URL but no DB row yet — that's a freshly-spawned
+            // note the user hasn't typed into. Treat as blank.
+            return true;
+        }
     }
 
     private _isHidden(): boolean {

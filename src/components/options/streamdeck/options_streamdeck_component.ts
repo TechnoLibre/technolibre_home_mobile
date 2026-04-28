@@ -500,8 +500,13 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
     async applyBrightness(deckId: string, percent: number): Promise<void> {
         const clamped = Math.max(0, Math.min(100, Math.round(percent)));
         this.state.brightness[deckId] = clamped;
+        // Route through the controller so the value is remembered for
+        // the post-sleep restore path. Direct StreamDeckPlugin calls
+        // bypass that cache and the value gets reset to the default
+        // (50%) on the next visibility:visible event.
+        const controller = (this.env as any).streamDeckController;
         try {
-            await StreamDeckPlugin.setBrightness({ deckId, percent: clamped });
+            await controller.setBrightness(deckId, clamped);
             this._log(`setBrightness(${deckId}) → ${clamped}%`);
         } catch (e) {
             this._log(`setBrightness(${deckId}) ERROR: ${e}`);
