@@ -87,6 +87,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Browse notes, filter by tag, sort by priority/date.",
                     fr: "Parcourir, filtrer par tag, trier par priorité/date.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/notes" },
                 files: [
                     "src/components/note_list/note_list_component.ts",
@@ -103,6 +104,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Edit a single note with title, controls and entry list.",
                     fr: "Édition d'une note : titre, contrôles, liste d'entrées.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/note/demo" },
                 files: [
                     "src/components/note/note_component.ts",
@@ -128,6 +130,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             en: "Plain-text entry with autosave.",
                             fr: "Entrée texte avec autosave.",
                         },
+                        status: "stable",
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/text/note_entry_text_component.ts"],
                     },
@@ -139,6 +142,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             fr: "Capturer ou choisir une photo, l'attacher à la note.",
                         },
                         permissions: ["camera"],
+                        status: "stable",
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/photo/note_entry_photo_component.ts"],
                     },
@@ -150,6 +154,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             fr: "Enregistrer/attacher une vidéo, générer une miniature.",
                         },
                         permissions: ["camera", "microphone"],
+                        status: "stable",
                         demo: { kind: "route", url: "/note/demo" },
                         files: [
                             "src/components/note_entry/video/note_entry_video_component.ts",
@@ -166,6 +171,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         },
                         permissions: ["microphone"],
                         dependsOn: ["transcription.bridge"],
+                        status: "stable",
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/audio/note_entry_audio_component.ts"],
                     },
@@ -176,6 +182,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             en: "Pin a date to the note (deadline, event, etc).",
                             fr: "Associer une date à la note (échéance, événement…).",
                         },
+                        status: "stable",
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/date/note_entry_date_component.ts"],
                     },
@@ -187,6 +194,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             fr: "Capturer la position GPS courante dans la note.",
                         },
                         permissions: ["location"],
+                        status: "stable",
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/geolocation/note_entry_geolocation_component.ts"],
                     },
@@ -197,6 +205,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             en: "Shared shell wrapping every entry type.",
                             fr: "Coquille commune qui enveloppe chaque type d'entrée.",
                         },
+                        status: "stable",
                         demo: { kind: "route", url: "/note/demo" },
                         files: [
                             "src/components/note_entry/note_entry_component.ts",
@@ -231,6 +240,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "1–4 priority badge to surface critical notes.",
                     fr: "Badge de priorité 1–4 pour faire ressortir l'urgent.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/note/demo" },
                 files: [
                     "src/components/note/top_controls/note_top_controls_component.ts",
@@ -244,6 +254,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Calendar popover for date entries.",
                     fr: "Popover calendrier pour les entrées de date.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/note/demo" },
                 files: [
                     "src/components/note/date_picker/date_picker_component.ts",
@@ -285,6 +296,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "MIME route vers le bon handler qui écrit l'entrée et "
                         + "navigue vers la nouvelle note.",
                 },
+                status: "stable",
                 demo: NONE_BG,
                 files: [
                     "src/components/intent/intent_component.ts",
@@ -314,6 +326,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Capacitor plugin: USB session, key reads, image writes.",
                     fr: "Plugin Capacitor : session USB, lectures touches, écriture images.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
@@ -329,6 +342,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Typed surface used by JS-side services.",
                     fr: "Surface typée utilisée par les services JS.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: ["src/plugins/streamDeckPlugin.ts"],
                 tests: ["src/__tests__/streamDeckPlugin.test.ts"],
@@ -354,6 +368,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + ">5 s déclenchent un restartSessions complet pour "
                         + "réveiller le reader silencieux après wake.",
                 },
+                status: "stable",
                 demo: NONE_BG,
                 files: ["src/services/streamDeckController.ts"],
             },
@@ -364,6 +379,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Listen for attach/detach, request OS permission per device.",
                     fr: "Écoute attach/detach, demande la permission OS par appareil.",
                 },
+                status: "stable",
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbHotplugReceiver.java",
@@ -391,6 +407,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "epIn.maxPacketSize (fix clé: 64 B retournait "
                         + "EOVERFLOW sur Pixel 6 / ThinkPhone XL).",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
             },
@@ -415,6 +432,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "LCD à ~1 Hz. Coût faible (endpoint séparé, pas "
                         + "de contention).",
                 },
+                status: "stable",
                 demo: NONE_BG,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
             },
@@ -438,6 +456,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "via bulk-OUT. clearPendingWrites() vide la queue "
                         + "sans la fermer — utilisé par le streamer sur stop.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/WriterQueue.java",
@@ -454,6 +473,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Per-model image format used over USB.",
                     fr: "Format image USB selon le modèle.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/encoder"],
             },
@@ -464,6 +484,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Pagination + USB framing per protocol generation.",
                     fr: "Pagination et framing USB selon la génération.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/transport"],
             },
@@ -474,6 +495,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Catches swipe-from-recents to blank decks.",
                     fr: "Capte le swipe-recents pour blanker les decks.",
                 },
+                status: "stable",
                 demo: NONE_BG,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckLifecycleService.java"],
             },
@@ -560,6 +582,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "Si le texte est plus large que la LCD, il scroll "
                         + "avec un double-draw décalé pour la boucle.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["src/services/streamDeckLcdTextRenderer.ts"],
             },
@@ -570,6 +593,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Ring-buffer of plugin events for the diagnostic panel.",
                     fr: "Ring-buffer des événements pour le panel diagnostique.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["src/services/streamDeckEventLog.ts"],
             },
@@ -580,6 +604,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Per-deck brightness, reader mode, bezel sliders, restart.",
                     fr: "Brightness, reader mode, sliders bezels, redémarrage.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: [
                     "src/components/options/streamdeck/options_streamdeck_component.ts",
@@ -604,6 +629,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Aperçu live avec overlay OCR.",
                 },
                 permissions: ["camera"],
+                status: "stable",
                 demo: NONE_BG,
                 files: [
                     "src/components/video_camera/video_camera_component.ts",
@@ -672,6 +698,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Configure which server to sync each note with.",
                     fr: "Configurer quel serveur synchronise chaque note.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "sync" },
                 files: ["src/components/options/sync/options_sync_component.ts"],
             },
@@ -682,6 +709,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "DB schema additions for sync metadata.",
                     fr: "Ajouts schéma DB pour les métadonnées sync.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/migrations/addSyncColumns.ts",
@@ -698,6 +726,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Le serveur envoie un trigger sync via ntfy.sh.",
                 },
                 permissions: ["internet", "notifications"],
+                status: "stable",
                 demo: NONE_BG,
                 files: [
                     "src/services/ntfyService.ts",
@@ -739,6 +768,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Run formatters against a file or repo.",
                     fr: "Lance les formatteurs sur un fichier ou un repo.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "code-style" },
                 files: [
                     "src/services/codeStyleService.ts",
@@ -819,6 +849,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "Flags BUNDLE_SKIP_REPOS et BUNDLE_SKIP_ERPLIBRE "
                         + "réduisent la taille APK en dev.",
                 },
+                status: "stable",
                 demo: NONE_BG,
                 files: ["vite.config.ts"],
             },
@@ -829,6 +860,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Resolve a path inside a bundled tarball at runtime.",
                     fr: "Résout un path dans un tarball bundlé à l'exécution.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: ["src/services/bundleCodeService.ts"],
                 tests: ["src/__tests__/bundleCodeService.test.ts"],
@@ -840,6 +872,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Stream-extract files from tar.gz on demand.",
                     fr: "Extrait fichiers d'un tar.gz à la volée.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/repoExtractorService.ts",
@@ -859,6 +892,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Mutate a file inside a bundle and persist it.",
                     fr: "Modifier un fichier dans un bundle et persister.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: ["src/services/repoEditService.ts"],
                 tests: ["src/__tests__/repoEditService.test.ts"],
@@ -870,6 +904,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Choose between bundle FS, edit FS or native FS.",
                     fr: "Sélectionne FS bundle / édit / natif selon le contexte.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: ["src/services/repoFsFactory.ts"],
             },
@@ -880,6 +915,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "TypeScript shape for a manifest project entry.",
                     fr: "Forme TypeScript d'une entrée projet du manifest.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: ["src/models/manifestProject.ts"],
             },
@@ -930,6 +966,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Download whisper models with resume + WakeLock.",
                     fr: "Télécharge les modèles whisper (resume + WakeLock).",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/options/transcription" },
                 files: ["android/app/src/main/java/ca/erplibre/home/WhisperDownloadService.java"],
             },
@@ -940,6 +977,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Re-encode recorded audio into whisper-compatible PCM.",
                     fr: "Réencode l'audio enregistré en PCM compatible whisper.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: ["android/app/src/main/java/ca/erplibre/home/AudioConverter.java"],
             },
@@ -951,6 +989,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Lance une transcription depuis JS, attend le résultat.",
                 },
                 permissions: ["microphone"],
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: [
                     "src/plugins/whisperPlugin.ts",
@@ -965,6 +1004,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Pick a model, monitor download, run a quick test.",
                     fr: "Choisir un modèle, suivre le download, tester.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/options/transcription" },
                 files: [
                     "src/components/options/transcription/options_transcription_component.ts",
@@ -990,6 +1030,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Verrouiller l'app derrière empreinte/visage.",
                 },
                 permissions: ["biometric"],
+                status: "stable",
                 demo: { kind: "route", url: "/options" },
                 files: [
                     "src/utils/biometryUtils.ts",
@@ -1016,6 +1057,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "premier run via encryptExistingCredentials.ts. "
                         + "Get sur clé manquante throw — wrap try/catch.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "secure-storage" },
                 files: [
                     "src/components/options/secure_storage/options_secure_storage_component.ts",
@@ -1032,6 +1074,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Tap-counter on device-info row reveals debug screens.",
                     fr: "Tap-counter sur la ligne info appareil débloque les écrans debug.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "device-info" },
                 files: ["src/components/options/device_info/options_device_info_component.ts"],
             },
@@ -1084,6 +1127,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "RAM/CPU/IPv4/IPv6, network interfaces.",
                     fr: "RAM/CPU/IPv4/IPv6, interfaces réseau.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "device-info" },
                 files: [
                     "src/components/options/device_info/options_device_info_component.ts",
@@ -1099,6 +1143,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Découvre les hôtes du sous-réseau local.",
                 },
                 permissions: ["internet"],
+                status: "stable",
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/NetworkScanPlugin.java",
@@ -1113,6 +1158,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Inspect/grant runtime permissions.",
                     fr: "Inspecter/accorder les permissions runtime.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "permissions" },
                 files: ["src/components/options/permissions/options_permissions_component.ts"],
             },
@@ -1125,6 +1171,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 permissions: ["internet"],
                 dependsOn: ["deployment.ssh"],
+                status: "stable",
                 demo: { kind: "route", url: "/options/resources" },
                 files: [
                     "src/components/options/resources/options_resources_component.ts",
@@ -1186,6 +1233,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "SSH exec/sftp basé sur JSch.",
                 },
                 permissions: ["internet"],
+                status: "stable",
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/SshPlugin.java",
@@ -1200,6 +1248,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "HTTP au niveau TCP pour endpoints Odoo self-signed.",
                 },
                 permissions: ["internet"],
+                status: "stable",
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/RawHttpPlugin.java",
@@ -1213,6 +1262,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Live deploy log with retry-from-step.",
                     fr: "Log déploiement live avec retry-from-step.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/applications" },
                 files: [
                     "src/components/servers/deploy/servers_deploy_component.ts",
@@ -1312,6 +1362,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Browse tables, run SQL, see DB size.",
                     fr: "Parcourir tables, exécuter SQL, voir la taille DB.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/options/database" },
                 files: [
                     "src/components/options/database/options_database_component.ts",
@@ -1326,6 +1377,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "List of applied migrations with timestamps.",
                     fr: "Liste des migrations appliquées avec timestamps.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "migration-history" },
                 files: ["src/components/options/migration_history/options_migration_history_component.ts"],
             },
@@ -1336,6 +1388,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Reset the app's local DB and bundles.",
                     fr: "Réinitialise la DB locale et les bundles.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "clear-cache" },
                 files: ["src/components/options/clear_cache/options_clear_cache_component.ts"],
             },
@@ -1409,6 +1462,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Heading, content shell, root layout.",
                     fr: "Heading, coquille content, layout root.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: [
                     "src/components/heading/heading_component.ts",
@@ -1437,6 +1491,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(`owl-templates`) pour parsing parallèle de "
                         + "l'entry et des templates par le WebView.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: [
                     "src/js/owl-aot.ts",
@@ -1450,6 +1505,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Centralised error labels and helpers.",
                     fr: "Libellés d'erreurs et helpers centralisés.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: [
                     "src/js/errors.ts",
@@ -1485,6 +1541,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "ensuite (secondes droppées) — inutile de réveiller "
                         + "le WebView 60×/min pour rien.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/" },
                 files: [
                     "src/components/home/home_component.ts",
@@ -1498,6 +1555,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Show recent app updates.",
                     fr: "Affiche les mises à jour récentes.",
                 },
+                status: "stable",
                 demo: { kind: "options", sectionId: "changelog" },
                 files: ["src/components/options/changelog/options_changelog_component.ts"],
             },
@@ -1508,6 +1566,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Browse the workspace bundle (full source tree).",
                     fr: "Parcourir le bundle workspace (arbre source complet).",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/options/erplibre" },
                 files: [
                     "src/components/options/erplibre/options_erplibre_component.ts",
@@ -1558,6 +1617,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Parent component listing every options sub-feature.",
                     fr: "Composant parent listant chaque sous-option.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/options" },
                 files: [
                     "src/components/options/options_component.ts",
@@ -1571,11 +1631,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Wire env, services and mount root component.",
                     fr: "Configure env, services et monte le composant root.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: [
                     "src/js/app.ts",
                     "src/js/helpers.ts",
                 ],
+                tests: ["src/__tests__/appService.test.ts"],
             },
             {
                 id: "meta.build-id",
@@ -1584,6 +1646,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Per-build hash + timestamp for crash triage.",
                     fr: "Hash + timestamp par build pour le triage.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: ["src/public/build_id.json"],
             },
