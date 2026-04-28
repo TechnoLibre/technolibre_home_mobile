@@ -51,6 +51,61 @@ function pickLabel(value: FeatureI18n | undefined, lang: Lang, fallback = ""): s
     return value[lang] || value.fr || value.en || fallback;
 }
 
+/** Reverse-dependency index: maps node id → ids of nodes that
+ *  declare it in their `dependsOn`. Built once per render of the
+ *  detail panel. */
+function buildUsedByIndex(nodes: FeatureNode[]): Map<string, string[]> {
+    const idx = new Map<string, string[]>();
+    const all = flatten(nodes);
+    for (const n of all) {
+        for (const dep of n.dependsOn ?? []) {
+            const list = idx.get(dep) ?? [];
+            list.push(n.id);
+            idx.set(dep, list);
+        }
+    }
+    return idx;
+}
+
+/** Scored fuzzy match. Higher = better. 0 = no match. Looks for the
+ *  query as a (case-insensitive) substring AND as a subsequence;
+ *  weights: id > label > description > files > howItWorks > issues. */
+function fuzzyScore(node: FeatureNode, q: string, lang: Lang): number {
+    if (!q) return 1;
+    const qLower = q.toLowerCase();
+    let score = 0;
+    const hit = (text: string | undefined, weight: number): void => {
+        if (!text) return;
+        const t = text.toLowerCase();
+        const idx = t.indexOf(qLower);
+        if (idx === 0) score += weight * 3;        // prefix match
+        else if (idx > 0) score += weight * 2;     // substring
+        else if (subsequence(t, qLower)) score += weight; // gappy
+    };
+    hit(node.id, 8);
+    hit(pickLabel(node.label, lang), 6);
+    hit(pickLabel(node.description, lang), 3);
+    for (const f of node.files ?? []) hit(f, 2);
+    hit(pickLabel(node.howItWorks, lang), 1);
+    for (const i of node.issues ?? []) hit(pickLabel(i, lang), 1);
+    return score;
+}
+
+function subsequence(haystack: string, needle: string): boolean {
+    let j = 0;
+    for (let i = 0; i < haystack.length && j < needle.length; i++) {
+        if (haystack[i] === needle[j]) j++;
+    }
+    return j === needle.length;
+}
+
+const STATUS_LABEL: Record<string, FeatureI18n> = {
+    stable:       { en: "Stable",       fr: "Stable" },
+    experimental: { en: "Experimental", fr: "Expérimental" },
+    deprecated:   { en: "Deprecated",   fr: "Déprécié" },
+    broken:       { en: "Broken",       fr: "Cassé" },
+};
+
 interface SharedTreeState {
     lang: Lang;
     /** id → true when expanded. Plain object for Owl 2 reactivity. */
@@ -83,6 +138,9 @@ class FeatureTreeNodeComponent extends Component<NodeProps> {
                     <t t-esc="isExpanded ? '▾' : '▸'"/>
                 </button>
                 <span t-else="" class="features__toggle-spacer">·</span>
+                <span t-if="statusBadge" class="features__status"
+                      t-att-class="'features__status--' + statusBadge"
+                      aria-hidden="true"/>
                 <button class="features__label"
                         t-on-click="() => this.props.onSelect(this.props.node.id)">
                     <t t-esc="labelText"/>
@@ -107,6 +165,9 @@ class FeatureTreeNodeComponent extends Component<NodeProps> {
     `;
     static components = { /* self-reference set below */ };
 
+    get statusBadge(): string {
+        return this.props.node.status ?? "";
+    }
     get hasChildren(): boolean {
         return !!(this.props.node.children && this.props.node.children.length > 0);
     }
@@ -139,6 +200,11 @@ class FeatureTreeNodeComponent extends Component<NodeProps> {
 interface State extends SharedTreeState {
     query: string;
     counts: { features: number; files: number; demoable: number };
+    /** "tree" = collapsible hierarchy, "graph" = flat list grouped by
+     *  status with depends-on edges shown inline. */
+    view: "tree" | "graph";
+    /** Optional status filter (empty string = no filter). */
+    statusFilter: string;
 }
 
 export class OptionsFeaturesComponent extends EnhancedComponent {
@@ -164,14 +230,34 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                 <span><t t-esc="state.counts.demoable"/> demos</span>
             </div>
 
-            <input class="features__search"
-                   type="search"
-                   placeholder="Rechercher…"
-                   t-att-value="state.query"
-                   t-on-input="onSearch" />
+            <div class="features__filters">
+                <input class="features__search"
+                       type="search"
+                       placeholder="Rechercher (fuzzy)…"
+                       t-att-value="state.query"
+                       t-on-input="onSearch" />
+                <select class="features__status-filter"
+                        t-att-value="state.statusFilter"
+                        t-on-change="onStatusFilterChange">
+                    <option value="">Tous statuts</option>
+                    <option value="stable">Stable</option>
+                    <option value="experimental">Expérimental</option>
+                    <option value="deprecated">Déprécié</option>
+                    <option value="broken">Cassé</option>
+                </select>
+                <div class="features__view-toggle" role="tablist">
+                    <button role="tab" t-att-aria-selected="state.view === 'tree' ? 'true' : 'false'"
+                            t-att-class="{ 'features__view-toggle--active': state.view === 'tree' }"
+                            t-on-click="() => this.onViewChange('tree')">Arbre</button>
+                    <button role="tab" t-att-aria-selected="state.view === 'graph' ? 'true' : 'false'"
+                            t-att-class="{ 'features__view-toggle--active': state.view === 'graph' }"
+                            t-on-click="() => this.onViewChange('graph')">Graphe</button>
+                </div>
+            </div>
 
             <div class="features__layout">
-                <ul class="features__tree" role="tree" aria-label="Arbre des fonctionnalités">
+                <ul t-if="state.view === 'tree'"
+                    class="features__tree" role="tree" aria-label="Arbre des fonctionnalités">
                     <t t-foreach="filteredRoots" t-as="root" t-key="root.id">
                         <FeatureTreeNodeComponent
                             node="root"
@@ -182,16 +268,78 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                     </t>
                 </ul>
 
+                <div t-elif="state.view === 'graph'" class="features__graph"
+                     aria-label="Vue graphe par statut">
+                    <t t-foreach="graphGroups" t-as="grp" t-key="grp.status">
+                        <div class="features__graph-group">
+                            <h3 class="features__graph-status"
+                                t-att-class="'features__graph-status--' + grp.status">
+                                <span class="features__status"
+                                      t-att-class="'features__status--' + grp.status"
+                                      aria-hidden="true"/>
+                                <t t-esc="statusLabel(grp.status)"/>
+                                <span class="features__graph-count" t-esc="grp.nodes.length"/>
+                            </h3>
+                            <ul class="features__graph-list">
+                                <li t-foreach="grp.nodes" t-as="n" t-key="n.id"
+                                    class="features__graph-node"
+                                    t-att-class="{ 'features__graph-node--selected': state.selectedId === n.id }">
+                                    <button class="features__label"
+                                            t-on-click="() => this.onSelect(n.id)">
+                                        <t t-esc="label(n.label)"/>
+                                    </button>
+                                    <t t-if="n.dependsOn and n.dependsOn.length > 0">
+                                        <span class="features__graph-arrow" aria-hidden="true">→</span>
+                                        <span class="features__graph-deps">
+                                            <t t-foreach="n.dependsOn" t-as="depId" t-key="depId">
+                                                <button class="features__dep"
+                                                        t-on-click="() => this.onSelect(depId)">
+                                                    <t t-esc="labelOfId(depId)"/>
+                                                </button><t t-if="!depId_last">, </t>
+                                            </t>
+                                        </span>
+                                    </t>
+                                </li>
+                            </ul>
+                        </div>
+                    </t>
+                </div>
+
                 <div class="features__detail" t-if="state.selectedId">
                     <t t-if="selectedNode">
-                        <h2 t-esc="label(selectedNode.label)"/>
+                        <div class="features__detail-head">
+                            <h2 t-esc="label(selectedNode.label)"/>
+                            <span t-if="selectedNode.status"
+                                  class="features__status-chip"
+                                  t-att-class="'features__status-chip--' + selectedNode.status">
+                                <t t-esc="statusLabel(selectedNode.status)"/>
+                            </span>
+                        </div>
                         <p t-if="selectedNode.description"
                            class="features__description"
                            t-esc="label(selectedNode.description)"/>
+
+                        <t t-if="selectedNode.permissions and selectedNode.permissions.length > 0">
+                            <h3>Permissions</h3>
+                            <div class="features__perms">
+                                <span t-foreach="selectedNode.permissions" t-as="perm" t-key="perm"
+                                      class="features__perm-chip" t-esc="perm"/>
+                            </div>
+                        </t>
+
                         <t t-if="selectedNode.howItWorks">
                             <h3>How it works</h3>
                             <p t-esc="label(selectedNode.howItWorks)"/>
                         </t>
+
+                        <t t-if="selectedNode.issues and selectedNode.issues.length > 0">
+                            <h3>Limitations connues</h3>
+                            <ul class="features__issues">
+                                <li t-foreach="selectedNode.issues" t-as="issue" t-key="issue_index"
+                                    t-esc="label(issue)"/>
+                            </ul>
+                        </t>
+
                         <t t-if="selectedNode.demo">
                             <h3>Démo</h3>
                             <button class="features__demo-btn"
@@ -208,6 +356,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                                 </t>
                             </button>
                         </t>
+
                         <t t-if="selectedNode.files and selectedNode.files.length > 0">
                             <h3>Code</h3>
                             <ul class="features__files">
@@ -219,6 +368,42 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                                     <button class="features__copy"
                                             t-on-click="() => this.onCopyPath(path)"
                                             aria-label="Copier le chemin">📋</button>
+                                </li>
+                            </ul>
+                        </t>
+
+                        <t t-if="selectedNode.tests and selectedNode.tests.length > 0">
+                            <h3>Tests</h3>
+                            <ul class="features__files">
+                                <li t-foreach="selectedNode.tests" t-as="path" t-key="path">
+                                    <button class="features__file"
+                                            t-on-click="() => this.onFileClick(path)">
+                                        <t t-esc="path"/>
+                                    </button>
+                                </li>
+                            </ul>
+                        </t>
+
+                        <t t-if="selectedNode.dependsOn and selectedNode.dependsOn.length > 0">
+                            <h3>Dépend de</h3>
+                            <ul class="features__deps">
+                                <li t-foreach="selectedNode.dependsOn" t-as="depId" t-key="depId">
+                                    <button class="features__dep"
+                                            t-on-click="() => this.onSelect(depId)">
+                                        <t t-esc="labelOfId(depId)"/>
+                                    </button>
+                                </li>
+                            </ul>
+                        </t>
+
+                        <t t-if="usedByIds.length > 0">
+                            <h3>Utilisé par</h3>
+                            <ul class="features__deps">
+                                <li t-foreach="usedByIds" t-as="depId" t-key="depId">
+                                    <button class="features__dep"
+                                            t-on-click="() => this.onSelect(depId)">
+                                        <t t-esc="labelOfId(depId)"/>
+                                    </button>
                                 </li>
                             </ul>
                         </t>
@@ -240,24 +425,72 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
     }
 
     get filteredRoots(): FeatureNode[] {
-        const q = this.state.query.trim().toLowerCase();
-        if (!q) return FEATURE_TREE;
-        const matches = (n: FeatureNode): boolean => {
-            const hit = pickLabel(n.label, this.state.lang).toLowerCase().includes(q)
-                || (!!n.description && pickLabel(n.description, this.state.lang).toLowerCase().includes(q))
-                || (n.files?.some((f) => f.toLowerCase().includes(q)) ?? false)
-                || n.id.toLowerCase().includes(q);
-            const childMatch = n.children?.some(matches) ?? false;
-            return hit || childMatch;
+        const q = this.state.query.trim();
+        const sf = this.state.statusFilter;
+        if (!q && !sf) return FEATURE_TREE;
+        // Fuzzy + scored: a node is kept if itself or any descendant
+        // both scores >0 (when q set) and matches the status filter
+        // (when sf set). Recursion preserves the original tree shape.
+        const matchSelf = (n: FeatureNode): number => {
+            const score = q ? fuzzyScore(n, q, this.state.lang) : 1;
+            if (score === 0) return 0;
+            // Status filter only applies to leaves — internal nodes
+            // pass through if any descendant matches.
+            const isLeaf = !n.children || n.children.length === 0;
+            if (sf && isLeaf && (n.status ?? "") !== sf) return 0;
+            return score;
         };
+        const subtreeScore = new Map<string, number>();
+        const compute = (n: FeatureNode): number => {
+            const self = matchSelf(n);
+            const childMax = n.children?.reduce((m, c) => Math.max(m, compute(c)), 0) ?? 0;
+            const s = Math.max(self, childMax);
+            subtreeScore.set(n.id, s);
+            return s;
+        };
+        FEATURE_TREE.forEach(compute);
         const filterNode = (n: FeatureNode): FeatureNode | null => {
-            if (!matches(n)) return null;
+            if ((subtreeScore.get(n.id) ?? 0) === 0) return null;
             return {
                 ...n,
                 children: n.children?.map(filterNode).filter((c): c is FeatureNode => c !== null),
             };
         };
         return FEATURE_TREE.map(filterNode).filter((n): n is FeatureNode => n !== null);
+    }
+
+    /** Reverse-dep map for the currently-selected node only.
+     *  Cheap (one walk) and avoids passing the whole index around. */
+    get usedByIds(): string[] {
+        if (!this.state.selectedId) return [];
+        return buildUsedByIndex(FEATURE_TREE).get(this.state.selectedId) ?? [];
+    }
+
+    /** Flat groups for the graph view: each group buckets nodes by
+     *  status, optionally filtered by query and statusFilter. Order
+     *  is health-relevant: broken first, then experimental, stable,
+     *  deprecated. */
+    get graphGroups(): { status: string; nodes: FeatureNode[] }[] {
+        const order = ["broken", "experimental", "stable", "deprecated", "unknown"];
+        const buckets: Record<string, FeatureNode[]> = {};
+        for (const k of order) buckets[k] = [];
+        const q = this.state.query.trim();
+        for (const n of this.allNodes) {
+            // Only leaf nodes in graph view — group/parent nodes
+            // would clutter without adding info.
+            if (n.children && n.children.length > 0) continue;
+            const status = n.status ?? "unknown";
+            if (this.state.statusFilter && status !== this.state.statusFilter) continue;
+            if (q && fuzzyScore(n, q, this.state.lang) === 0) continue;
+            buckets[status].push(n);
+        }
+        return order
+            .filter((s) => buckets[s].length > 0)
+            .map((status) => ({ status, nodes: buckets[status] }));
+    }
+
+    nodeById(id: string): FeatureNode | undefined {
+        return this.allNodes.find((n) => n.id === id);
     }
 
     setup() {
@@ -294,12 +527,23 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
             selectedId: initialSelectedId,
             query: "",
             counts,
+            view: "tree",
+            statusFilter: "",
         });
         onMounted(() => { /* no-op */ });
     }
 
     label(value: FeatureI18n | undefined): string {
         return pickLabel(value, this.state.lang);
+    }
+
+    labelOfId(id: string): string {
+        const n = this.nodeById(id);
+        return n ? pickLabel(n.label, this.state.lang) : id;
+    }
+
+    statusLabel(status: string): string {
+        return pickLabel(STATUS_LABEL[status], this.state.lang, status);
     }
 
     reasonOf(demo: FeatureDemo): string {
@@ -318,6 +562,14 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
 
     onSearch(ev: Event): void {
         this.state.query = (ev.target as HTMLInputElement).value;
+    }
+
+    onStatusFilterChange(ev: Event): void {
+        this.state.statusFilter = (ev.target as HTMLSelectElement).value;
+    }
+
+    onViewChange(view: "tree" | "graph"): void {
+        this.state.view = view;
     }
 
     onToggle(id: string): void {
