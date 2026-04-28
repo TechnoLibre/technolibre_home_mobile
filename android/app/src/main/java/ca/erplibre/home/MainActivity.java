@@ -42,6 +42,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DeviceStatsPlugin.class);
         registerPlugin(StreamDeckPlugin.class);
         registerPlugin(FaceDetectionPlugin.class);
+        registerPlugin(KeepAwakePlugin.class);
         super.onCreate(savedInstanceState);
         CastContext.getSharedInstance(this);
     }
