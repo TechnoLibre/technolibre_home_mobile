@@ -726,6 +726,28 @@ export class OptionsCodeComponent extends EnhancedComponent {
             const res = await fetch("/repos/manifest.json");
             if (res.ok) this.state.manifestProjects = await res.json();
         } catch { /* dev server: no manifest */ }
+
+        // Deep-link from /options/features (or any other caller):
+        //   /options/code?target=mobile&path=src/services/foo.ts
+        //   /options/code?target=erplibre&path=mobile/erplibre_home_mobile/android/...
+        // Auto-connect the requested bundle and jump straight to the file.
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const wantPath = params.get("path");
+            const wantTarget = params.get("target");
+            if (wantPath) {
+                this.state.mode = "bundle";
+                this.state.bundleTarget = wantTarget === "erplibre" ? "erplibre" : "mobile";
+                await this._connectBundle();
+                const slash = wantPath.lastIndexOf("/");
+                const dir = slash >= 0 ? wantPath.slice(0, slash) : "";
+                const name = slash >= 0 ? wantPath.slice(slash + 1) : wantPath;
+                if (dir) await this._loadDir(dir);
+                await this._loadFile(wantPath, name);
+            }
+        } catch (e) {
+            this.state.error = e instanceof Error ? e.message : String(e);
+        }
     }
 
     // ── Mode / server ─────────────────────────────────────────────────────────
