@@ -281,5 +281,13 @@
 	font-size: 0.68rem;
 	margin-top: auto;
 	margin-bottom: 0.75rem;
-	text-align: center;
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 0.75rem;
+	padding: 0 1rem;
+
+	.startup-time__uptime {
+		font-variant-numeric: tabular-nums;
+	}
 }
