@@ -479,6 +479,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Plugin Capacitor : session USB, lectures touches, écriture images.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Capacitor plugin (Java) wrapping the USB host stack. DeckRegistry "
+                        + "keeps one DeckSession per attached device; DeckSpec carries product "
+                        + "id → key count, image size, transport version. The bridge surface is "
+                        + "JSON over the Capacitor JS↔Java pipe; binary frames travel as base64 "
+                        + "batched on a single JNI call per deck.",
+                    fr: "Plugin Capacitor (Java) qui enveloppe le stack USB host. DeckRegistry "
+                        + "garde une DeckSession par appareil branché; DeckSpec porte product id "
+                        + "→ nb touches, taille image, version transport. La surface bridge est "
+                        + "JSON sur le pipe Capacitor JS↔Java; les frames binaires passent en "
+                        + "base64 batchées en un seul appel JNI par deck.",
+                },
                 demo: NONE_PLUMBING,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
@@ -495,6 +507,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Surface typée utilisée par les services JS.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Thin TypeScript wrapper around the Capacitor plugin. Hides the "
+                        + "camelCase↔kebab-case JSON quirks, normalises base64↔ArrayBuffer for "
+                        + "image writes, and exposes typed events (keyChanged, attached, "
+                        + "detached) so consumers don't import the plugin directly.",
+                    fr: "Wrapper TypeScript fin sur le plugin Capacitor. Cache les bizarreries "
+                        + "camelCase↔kebab-case du JSON, normalise base64↔ArrayBuffer pour les "
+                        + "écritures images, et expose des events typés (keyChanged, attached, "
+                        + "detached) pour éviter aux consommateurs d'importer le plugin "
+                        + "directement.",
+                },
                 demo: NONE_PLUMBING,
                 files: ["src/plugins/streamDeckPlugin.ts"],
                 tests: ["src/__tests__/streamDeckPlugin.test.ts"],
@@ -532,6 +555,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Écoute attach/detach, demande la permission OS par appareil.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "UsbHotplugReceiver listens for ACTION_USB_DEVICE_ATTACHED / DETACHED "
+                        + "intents from the OS. UsbPermissionRequester wraps the per-device "
+                        + "PendingIntent flow: first attach prompts the user; the grant is "
+                        + "sticky per Android session. Detach immediately tears down the "
+                        + "DeckSession to release the FileDescriptor.",
+                    fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
+                        + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
+                        + "appareil : premier attach prompt l'utilisateur; l'autorisation est "
+                        + "sticky pour la session Android. Détach démantèle immédiatement la "
+                        + "DeckSession pour libérer le FileDescriptor.",
+                },
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbHotplugReceiver.java",
@@ -626,6 +661,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Format image USB selon le modèle.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Per-model image encoder picked by DeckSpec: V1 decks accept BMP raw, "
+                        + "V2 decks accept JPEG (better compression, faster USB transfer). "
+                        + "Encoders run on a worker thread so the main thread isn't blocked "
+                        + "during a full-deck refresh.",
+                    fr: "Encoder image par modèle choisi par DeckSpec : decks V1 acceptent du "
+                        + "BMP brut, decks V2 du JPEG (meilleure compression, transfert USB plus "
+                        + "rapide). Les encoders tournent sur un thread worker pour ne pas "
+                        + "bloquer le main thread lors d'un refresh complet.",
+                },
                 demo: NONE_PLUMBING,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/encoder"],
             },
@@ -637,6 +682,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Pagination et framing USB selon la génération.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "V1 transport (Original Stream Deck) writes 16 KiB pages with a "
+                        + "prepended report id and page index; V2 transport (Mk.2, XL, Plus, "
+                        + "Neo, Pedal) writes 1024-byte pages with the new framing. Choice is "
+                        + "driven by DeckSpec.transportVersion — encoders never see the wire "
+                        + "format directly.",
+                    fr: "Transport V1 (Stream Deck Original) écrit des pages de 16 KiB avec "
+                        + "report id + index de page en préfixe; transport V2 (Mk.2, XL, Plus, "
+                        + "Neo, Pedal) écrit des pages 1024 bytes avec le nouveau framing. Le "
+                        + "choix est piloté par DeckSpec.transportVersion — les encoders ne "
+                        + "voient pas le format wire directement.",
+                },
                 demo: NONE_PLUMBING,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/transport"],
             },
@@ -648,6 +705,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Capte le swipe-recents pour blanker les decks.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Foreground service started with FLAG_FOREGROUND_SERVICE_DATA_SYNC. "
+                        + "Its onTaskRemoved fires when the user swipes the app from Recents — "
+                        + "we use that hook to blank every connected deck before exit so the "
+                        + "keys don't keep showing the last frame after the WebView is gone.",
+                    fr: "Foreground service démarré avec FLAG_FOREGROUND_SERVICE_DATA_SYNC. "
+                        + "Son onTaskRemoved fire quand l'user swipe l'app depuis Recents — on "
+                        + "utilise ce hook pour blanker chaque deck connecté avant de quitter, "
+                        + "sinon les touches gardent la dernière frame après que le WebView soit "
+                        + "mort.",
+                },
                 demo: NONE_BG,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckLifecycleService.java"],
             },
@@ -746,6 +814,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Ring-buffer des événements pour le panel diagnostique.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "In-memory ring-buffer (cap 200) of (timestamp, deck, event, data) "
+                        + "tuples. Append is O(1) with index wrap; the diagnostic panel reads a "
+                        + "snapshot via getRecent(). Cleared on plugin restart but not on deck "
+                        + "reconnect — useful for diagnosing flaky USB after a device comes back.",
+                    fr: "Ring-buffer mémoire (cap 200) de tuples (timestamp, deck, event, "
+                        + "data). Append O(1) avec wrap d'index; le panel diagnostique lit un "
+                        + "snapshot via getRecent(). Vidé au restart du plugin mais pas à la "
+                        + "reconnexion d'un deck — utile pour diagnostiquer un USB flaky après "
+                        + "qu'un appareil revienne.",
+                },
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["src/services/streamDeckEventLog.ts"],
             },
@@ -757,6 +836,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Brightness, reader mode, sliders bezels, redémarrage.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Owl panel listing every connected deck with: brightness slider "
+                        + "(persisted localStorage), reader-mode dropdown (request/bulk/polled), "
+                        + "bezel-gap sliders for the camera-stream cover-fit, and a manual "
+                        + "restart button that triggers restartSessions to recover from the "
+                        + "post-sleep silent-reader state.",
+                    fr: "Panel Owl listant chaque deck connecté avec : slider brightness "
+                        + "(persisté localStorage), dropdown reader-mode (request/bulk/polled), "
+                        + "sliders gap de bezels pour le cover-fit camera-stream, et un bouton "
+                        + "restart manuel qui déclenche restartSessions pour récupérer du state "
+                        + "reader-silencieux post-sleep.",
+                },
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: [
                     "src/components/options/streamdeck/options_streamdeck_component.ts",
@@ -782,6 +873,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 permissions: ["camera"],
                 status: "stable",
+                howItWorks: {
+                    en: "getUserMedia opens the device camera into a hidden <video>; the OCR "
+                        + "overlay is a positioned <canvas> matching the video's intrinsic "
+                        + "resolution. Scan toggling lives in the component state; the actual "
+                        + "recognition runs in the OcrPlugin (ML Kit) on a tick.",
+                    fr: "getUserMedia ouvre la caméra dans un <video> caché; l'overlay OCR est "
+                        + "un <canvas> positionné qui matche la résolution intrinsèque de la "
+                        + "vidéo. Le toggle de scan est dans le state du composant; la "
+                        + "reconnaissance tourne dans OcrPlugin (ML Kit) à chaque tick.",
+                },
                 demo: NONE_BG,
                 files: [
                     "src/components/video_camera/video_camera_component.ts",
@@ -797,6 +898,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 status: "stable",
                 permissions: ["camera"],
+                howItWorks: {
+                    en: "Native plugin (OcrPlugin.java) wraps Google ML Kit text recognition. "
+                        + "JS sends a base64-encoded JPEG; the plugin decodes via "
+                        + "InputImage.fromBitmap, runs TextRecognition.process and returns "
+                        + "blocks with normalised bounding boxes. ML Kit downloads its model "
+                        + "lazily on first use — on-device after that.",
+                    fr: "Plugin natif (OcrPlugin.java) qui enveloppe la reconnaissance de "
+                        + "texte de Google ML Kit. JS envoie un JPEG base64; le plugin décode "
+                        + "via InputImage.fromBitmap, run TextRecognition.process et retourne "
+                        + "des blocs avec bbox normalisées. ML Kit télécharge son modèle "
+                        + "paresseusement à la 1re utilisation — sur-appareil ensuite.",
+                },
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/OcrPlugin.java",
@@ -851,6 +964,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Configurer quel serveur synchronise chaque note.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Lists every Application configured in the app, with toggles per note "
+                        + "for which servers it should sync to. The selection is stored in "
+                        + "note.selected_sync_config_ids (CSV of ids) so a single note can "
+                        + "target multiple Odoo instances. Saving here triggers "
+                        + "notificationService.reload().",
+                    fr: "Liste chaque Application configurée, avec des toggles par note pour "
+                        + "quels serveurs synchroniser. La sélection est stockée dans "
+                        + "note.selected_sync_config_ids (CSV d'ids) pour qu'une note puisse "
+                        + "cibler plusieurs instances Odoo. Sauvegarder ici déclenche "
+                        + "notificationService.reload().",
+                },
                 demo: { kind: "options", sectionId: "sync" },
                 files: ["src/components/options/sync/options_sync_component.ts"],
             },
@@ -862,6 +987,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Ajouts schéma DB pour les métadonnées sync.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Versioned schema steps that grew the sync feature: addSyncColumns "
+                        + "(initial odoo_id + sync_status), addSyncConfigId (per-server "
+                        + "binding), addSyncPerServerStatus (separate sync_status row per "
+                        + "target), addSelectedSyncConfigIds (multi-select). Each migration is "
+                        + "idempotent and re-runs safely on app start.",
+                    fr: "Étapes de schéma versionnées qui ont fait grandir la sync : "
+                        + "addSyncColumns (odoo_id + sync_status initiaux), addSyncConfigId "
+                        + "(binding par serveur), addSyncPerServerStatus (ligne sync_status par "
+                        + "cible), addSelectedSyncConfigIds (multi-select). Chaque migration est "
+                        + "idempotente et se ré-exécute sans risque au boot.",
+                },
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/migrations/addSyncColumns.ts",
@@ -879,6 +1016,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 permissions: ["internet", "notifications"],
                 status: "stable",
+                howItWorks: {
+                    en: "NTFY (self-hosted SSE push) lets Odoo notify the app when something "
+                        + "changed without a poll. NtfyService opens the SSE stream (with "
+                        + "optional Bearer token); on each message NotificationService.poll is "
+                        + "fired so the user sees the change without waiting for the next timer "
+                        + "tick. Falls back to interval polling if NTFY isn't configured.",
+                    fr: "NTFY (push SSE self-hosted) permet à Odoo de notifier l'app sans "
+                        + "poll. NtfyService ouvre le stream SSE (avec token Bearer optionnel); "
+                        + "à chaque message NotificationService.poll est déclenché pour que "
+                        + "l'user voie le changement sans attendre le prochain tick. Fallback "
+                        + "sur polling périodique si NTFY n'est pas configuré.",
+                },
                 demo: NONE_BG,
                 files: [
                     "src/services/ntfyService.ts",
@@ -909,6 +1058,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Parcourir repos, éditer, sauvegarder en place.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Tree-on-the-left + content-on-the-right Owl page. The right pane "
+                        + "calls into syntax_highlight.ts which detects file lang from extension "
+                        + "and runs Prism per line; soft-wrap and tab-width are localStorage "
+                        + "prefs. URL deep-link (?target=&path=) auto-opens a specific bundle "
+                        + "and selects a file at boot.",
+                    fr: "Page Owl arbre-à-gauche + contenu-à-droite. Le pane de droite appelle "
+                        + "syntax_highlight.ts qui détecte la lang du fichier par extension et "
+                        + "fait tourner Prism par ligne; soft-wrap et tab-width sont des prefs "
+                        + "localStorage. Deep-link URL (?target=&path=) ouvre un bundle précis "
+                        + "et sélectionne un fichier au boot.",
+                },
                 demo: { kind: "route", url: "/options/code" },
                 files: [
                     "src/components/options/code/options_code_component.ts",
@@ -925,6 +1086,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Lance les formatteurs sur un fichier ou un repo.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Customisable colour overrides for the code-tool buttons + git-status "
+                        + "hues. Each entry maps a prefKey ↔ CSS custom property (read by SCSS "
+                        + "as var(--…, fallback)). Overrides live in user_graphic_prefs "
+                        + "(SQLite); applied on documentElement at boot via "
+                        + "CodeStyleService.loadAndApply.",
+                    fr: "Overrides de couleurs custom pour les boutons du code-tool + teintes "
+                        + "git-status. Chaque entrée mappe prefKey ↔ propriété CSS (lue par SCSS "
+                        + "via var(--…, fallback)). Les overrides vivent dans user_graphic_prefs "
+                        + "(SQLite); appliquées sur documentElement au boot via "
+                        + "CodeStyleService.loadAndApply.",
+                },
                 demo: { kind: "options", sectionId: "code-style" },
                 files: [
                     "src/services/codeStyleService.ts",
@@ -940,6 +1113,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Persiste les édits user dans un overlay SQLite.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "User edits are not written back to the bundled tarballs (read-only). "
+                        + "Instead EditableCodeService extracts a repo into Directory.Data/repos "
+                        + "on first edit and treats that copy as the working tree. "
+                        + "isomorphic-git operates on the overlay; bundle reads fall back to the "
+                        + "tarball when the overlay is absent.",
+                    fr: "Les édits user ne sont pas écrits dans les tarballs bundlés (lecture "
+                        + "seule). EditableCodeService extrait le repo dans Directory.Data/repos "
+                        + "à la 1re édition et traite cette copie comme le working tree. "
+                        + "isomorphic-git opère sur l'overlay; les lectures bundle retombent sur "
+                        + "le tarball si l'overlay est absent.",
+                },
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/editableCodeService.ts",
@@ -1018,6 +1203,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Résout un path dans un tarball bundlé à l'exécution.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Resolves a (target, path) pair to bytes at runtime. For target=mobile "
+                        + "it dispatches to the editable overlay if present, else to the "
+                        + "in-place bundle FS via repoFsFactory. Caches stat results in memory "
+                        + "so repeated tree expansions don't re-extract.",
+                    fr: "Résout une paire (target, path) en bytes au runtime. Pour "
+                        + "target=mobile dispatche vers l'overlay éditable s'il existe, sinon "
+                        + "vers le FS bundle in-place via repoFsFactory. Cache les résultats "
+                        + "stat en mémoire pour ne pas re-extraire à chaque expansion d'arbre.",
+                },
                 demo: NONE_PLUMBING,
                 files: ["src/services/bundleCodeService.ts"],
                 tests: ["src/__tests__/bundleCodeService.test.ts"],
@@ -1030,6 +1225,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Extrait fichiers d'un tar.gz à la volée.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Streams a tar.gz from a fetched ArrayBuffer through decompressGzip "
+                        + "(pure-JS DEFLATE) into tarParser, which walks the 512-byte block "
+                        + "format and yields { name, size, type, data } records. Lazy: a single "
+                        + "getFileBytes(path) only inflates and parses up to the matching entry, "
+                        + "then bails.",
+                    fr: "Stream un tar.gz depuis un ArrayBuffer via decompressGzip (DEFLATE "
+                        + "pure-JS) vers tarParser qui parcourt le format en blocs de 512 bytes "
+                        + "et yield des records { name, size, type, data }. Paresseux : un "
+                        + "getFileBytes(path) n'inflate et parse que jusqu'à l'entrée qui "
+                        + "matche, puis sort.",
+                },
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/repoExtractorService.ts",
@@ -1050,6 +1257,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Modifier un fichier dans un bundle et persister.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Wraps the editable-overlay FS for one repo: writeFile / deleteFile / "
+                        + "stat / listDir, all rooted at Directory.Data/repos/<repo>/. Used by "
+                        + "code.viewer when promoting a read-only bundle to editable, and by "
+                        + "code.git for the working tree behind isomorphic-git.",
+                    fr: "Enveloppe le FS overlay éditable pour un repo : writeFile / "
+                        + "deleteFile / stat / listDir, tous racinés à "
+                        + "Directory.Data/repos/<repo>/. Utilisé par code.viewer pour promouvoir "
+                        + "un bundle read-only en éditable, et par code.git comme working tree "
+                        + "derrière isomorphic-git.",
+                },
                 demo: NONE_PLUMBING,
                 files: ["src/services/repoEditService.ts"],
                 tests: ["src/__tests__/repoEditService.test.ts"],
@@ -1062,6 +1280,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Sélectionne FS bundle / édit / natif selon le contexte.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Single entry point for everything that wants a repo FS handle. Picks "
+                        + "BundleFs (read-only tar) by default, swaps to EditableFs (Documents "
+                        + "overlay) when the user has promoted the repo. Hides the choice from "
+                        + "callers — both implementations expose the same readFile/listDir/stat "
+                        + "surface.",
+                    fr: "Point d'entrée unique pour tout ce qui veut un FS de repo. Pick "
+                        + "BundleFs (tar read-only) par défaut, swap vers EditableFs (overlay "
+                        + "Documents) si l'user a promu le repo. Cache le choix aux appelants — "
+                        + "les deux implémentations exposent la même surface "
+                        + "readFile/listDir/stat.",
+                },
                 demo: NONE_PLUMBING,
                 files: ["src/services/repoFsFactory.ts"],
             },
@@ -1073,6 +1303,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Forme TypeScript d'une entrée projet du manifest.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "TypeScript shape mirroring an entry from the Google-Repo XML manifest "
+                        + "(name, path, remote, revision, groups). Built by the vite plugin at "
+                        + "bundle-time and embedded in src/public/repos/manifest.json so the "
+                        + "runtime can list and resolve projects without parsing XML.",
+                    fr: "Forme TypeScript qui mirroir une entrée du manifest XML Google-Repo "
+                        + "(name, path, remote, revision, groups). Construit par le plugin vite "
+                        + "au bundle-time et embarqué dans src/public/repos/manifest.json — le "
+                        + "runtime peut lister et résoudre les projets sans parser de XML.",
+                },
                 demo: NONE_PLUMBING,
                 files: ["src/models/manifestProject.ts"],
             },
@@ -1124,6 +1364,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Télécharge les modèles whisper (resume + WakeLock).",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Foreground service downloading whisper .bin model files (50 MB to 1 "
+                        + "GB) with HTTP Range resume, MD5 checksum verification and a WakeLock "
+                        + "so the download survives screen-off. Progress is broadcast via "
+                        + "LocalNotification so the user can monitor outside the app.",
+                    fr: "Foreground service qui télécharge les fichiers .bin whisper (50 MB à "
+                        + "1 GB) avec resume HTTP Range, vérif checksum MD5 et un WakeLock pour "
+                        + "que le download survive l'écran off. Le progrès est diffusé via "
+                        + "LocalNotification pour que l'user puisse suivre hors de l'app.",
+                },
                 demo: { kind: "route", url: "/options/transcription" },
                 files: ["android/app/src/main/java/ca/erplibre/home/WhisperDownloadService.java"],
             },
@@ -1135,6 +1385,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Réencode l'audio enregistré en PCM compatible whisper.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Whisper expects 16 kHz mono PCM. Recordings come in as WebM/Opus or "
+                        + "AAC; AudioConverter.java uses MediaCodec to decode → resample → "
+                        + "encode raw PCM, all on a worker thread. Saves to a tmp file the "
+                        + "WhisperPlugin reads, then deletes after transcription.",
+                    fr: "Whisper attend du PCM 16 kHz mono. Les enregistrements arrivent en "
+                        + "WebM/Opus ou AAC; AudioConverter.java utilise MediaCodec pour decode "
+                        + "→ resample → encode PCM brut, tout sur un thread worker. Sauve vers "
+                        + "un fichier tmp que WhisperPlugin lit, supprimé après la transcription.",
+                },
                 demo: NONE_PLUMBING,
                 files: ["android/app/src/main/java/ca/erplibre/home/AudioConverter.java"],
             },
@@ -1147,6 +1407,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 permissions: ["microphone"],
                 status: "stable",
+                howItWorks: {
+                    en: "TS surface around WhisperPlugin : isEnabled / setEnabled gates the "
+                        + "feature, getSelectedModel + isModelDownloaded drive the picker UI, "
+                        + "and transcribe(audioPath) returns the inferred text. The service "
+                        + "never blocks the UI — long jobs go through the processService queue "
+                        + "and emit progress events.",
+                    fr: "Surface TS autour de WhisperPlugin : isEnabled / setEnabled protègent "
+                        + "la feature, getSelectedModel + isModelDownloaded pilotent l'UI "
+                        + "picker, et transcribe(audioPath) retourne le texte inféré. Le service "
+                        + "ne bloque jamais l'UI — les jobs longs passent par la queue "
+                        + "processService et émettent des events de progression.",
+                },
                 demo: NONE_PLUMBING,
                 files: [
                     "src/plugins/whisperPlugin.ts",
@@ -1162,6 +1434,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Choisir un modèle, suivre le download, tester.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Lists every available whisper model with size + language coverage. "
+                        + "Tapping one downloads it (queues a process), shows live progress, and "
+                        + "selects it when complete. Includes a 'test transcription' recorder "
+                        + "that runs a short clip end-to-end so the user can verify the pipeline "
+                        + "works.",
+                    fr: "Liste chaque modèle whisper disponible avec taille + langues "
+                        + "couvertes. Tap un modèle déclenche le download (queue un process), "
+                        + "affiche le progrès live, et le sélectionne au complete. Inclut un "
+                        + "enregistreur 'test de transcription' qui run un clip court end-to-end "
+                        + "pour vérifier le pipeline.",
+                },
                 demo: { kind: "route", url: "/options/transcription" },
                 files: [
                     "src/components/options/transcription/options_transcription_component.ts",
@@ -1188,6 +1472,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 permissions: ["biometric"],
                 status: "stable",
+                howItWorks: {
+                    en: "@aparajita/capacitor-biometric-auth wraps Android BiometricPrompt. "
+                        + "isEnabledByUser is a separate localStorage flag — biometry can be "
+                        + "available on the device but not asked for by this user. "
+                        + "authenticateForDatabase short-circuits when the OS reports no "
+                        + "enrolled biometric, so a fresh device doesn't soft-lock.",
+                    fr: "@aparajita/capacitor-biometric-auth enveloppe Android "
+                        + "BiometricPrompt. isEnabledByUser est un flag localStorage séparé — la "
+                        + "biométrie peut être disponible sur l'appareil mais pas demandée par "
+                        + "cet user. authenticateForDatabase short-circuit quand l'OS reporte "
+                        + "aucune biométrie enrolée — pas de soft-lock sur device vierge.",
+                },
                 demo: { kind: "route", url: "/options" },
                 files: [
                     "src/utils/biometryUtils.ts",
@@ -1232,6 +1528,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Tap-counter sur la ligne info appareil débloque les écrans debug.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Tap the device-info row 7 times within 3 s to flip a localStorage "
+                        + "flag that exposes the developer screens (DB inspector, raw HTTP "
+                        + "plugin tester, processes panel). Counter resets on each render so "
+                        + "taps must be rapid. No restart required.",
+                    fr: "Tap la ligne info-appareil 7 fois en 3 s pour flipper un flag "
+                        + "localStorage qui expose les écrans dev (DB inspector, testeur plugin "
+                        + "HTTP brut, panel processus). Le compteur reset à chaque render — les "
+                        + "taps doivent être rapides. Pas besoin de restart.",
+                },
                 demo: { kind: "options", sectionId: "device-info" },
                 files: ["src/components/options/device_info/options_device_info_component.ts"],
             },
@@ -1285,6 +1591,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "RAM/CPU/IPv4/IPv6, interfaces réseau.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "DeviceStatsPlugin (Java) reads ActivityManager.MemoryInfo for RAM, "
+                        + "/proc/stat for CPU, and NetworkInterface.getNetworkInterfaces() for "
+                        + "IPv4/IPv6. Refreshes every 2 s while the panel is mounted; the plugin "
+                        + "throttles its own JNI calls so a tighter UI tick wouldn't actually "
+                        + "fetch faster.",
+                    fr: "DeviceStatsPlugin (Java) lit ActivityManager.MemoryInfo pour la RAM, "
+                        + "/proc/stat pour le CPU, et NetworkInterface.getNetworkInterfaces() "
+                        + "pour IPv4/IPv6. Refresh chaque 2 s pendant que le panel est monté; le "
+                        + "plugin throttle ses propres appels JNI — un tick UI plus serré ne "
+                        + "fetch pas plus vite.",
+                },
                 demo: { kind: "options", sectionId: "device-info" },
                 files: [
                     "src/components/options/device_info/options_device_info_component.ts",
@@ -1301,6 +1619,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 permissions: ["internet"],
                 status: "stable",
+                howItWorks: {
+                    en: "NetworkScanPlugin (Java) walks the local /24 subnet via "
+                        + "InetAddress.isReachable on a fixed thread pool. Reports each "
+                        + "reachable host (IP + RTT) back through the Capacitor event bus. "
+                        + "Cancellable mid-scan; the plugin shuts the pool down on disconnect.",
+                    fr: "NetworkScanPlugin (Java) parcourt le sous-réseau /24 local via "
+                        + "InetAddress.isReachable sur un pool de threads fixe. Reporte chaque "
+                        + "hôte joignable (IP + RTT) via l'event bus Capacitor. Annulable en "
+                        + "cours; le plugin shutdown le pool à la déconnexion.",
+                },
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/NetworkScanPlugin.java",
@@ -1316,6 +1644,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Inspecter/accorder les permissions runtime.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Lists the runtime permissions the app declares (camera, microphone, "
+                        + "location, biometric, notifications) with their current grant state "
+                        + "read via Capacitor's per-plugin checkPermissions(). Tapping a denied "
+                        + "perm calls requestPermissions() — the OS dialog handles the rest.",
+                    fr: "Liste les permissions runtime déclarées par l'app (caméra, micro, "
+                        + "localisation, biométrie, notifications) avec leur état actuel lu via "
+                        + "checkPermissions() par plugin Capacitor. Tap sur une perm refusée "
+                        + "appelle requestPermissions() — la dialogue OS fait le reste.",
+                },
                 demo: { kind: "options", sectionId: "permissions" },
                 files: ["src/components/options/permissions/options_permissions_component.ts"],
             },
@@ -1329,6 +1667,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                 permissions: ["internet"],
                 dependsOn: ["deployment.ssh"],
                 status: "stable",
+                howItWorks: {
+                    en: "Pulls free/df/uptime/sensors/who/etc over SSH against a configured "
+                        + "server, then runs serverResourceParsers (small dedicated parsers per "
+                        + "command — fmtKb, parseMem, parseDisk, parseNet…) to turn raw output "
+                        + "into structured rows the UI renders as cards + bars.",
+                    fr: "Tire free/df/uptime/sensors/who/etc en SSH vers un serveur configuré, "
+                        + "puis run serverResourceParsers (petits parsers dédiés par commande — "
+                        + "fmtKb, parseMem, parseDisk, parseNet…) qui transforment la sortie "
+                        + "brute en lignes structurées rendues en cartes + barres.",
+                },
                 demo: { kind: "route", url: "/options/resources" },
                 files: [
                     "src/components/options/resources/options_resources_component.ts",
@@ -1346,6 +1694,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Suivre et inspecter les tâches d'arrière-plan.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Long-running tasks (transcription, model download, deployment) are "
+                        + "persisted as rows in the processes table with progress, debug_log and "
+                        + "result columns. The processes panel subscribes via ProcessService and "
+                        + "re-renders on each notify; ring-buffer 50 trimmed on each append to "
+                        + "keep the DB small.",
+                    fr: "Les tâches longues (transcription, download de modèle, déploiement) "
+                        + "sont persistées en lignes de la table processes avec colonnes "
+                        + "progress, debug_log et result. Le panel processes s'abonne via "
+                        + "ProcessService et re-rend à chaque notify; ring-buffer 50 trimmé à "
+                        + "chaque append pour garder la DB petite.",
+                },
                 demo: { kind: "route", url: "/options/processes" },
                 files: [
                     "src/components/options/processes/options_processes_component.ts",
@@ -1378,6 +1738,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 status: "stable",
                 permissions: ["internet"],
                 dependsOn: ["deployment.ssh"],
+                howItWorks: {
+                    en: "State machine of named steps (validateSsh, scpPayload, runScript, "
+                        + "restart, healthCheck …). Each step is idempotent and can be retried "
+                        + "from any point. Progress and per-step status persist as rows under "
+                        + "processes (system.processes), so closing the app mid-deploy doesn't "
+                        + "lose the trail.",
+                    fr: "Machine d'états avec steps nommées (validateSsh, scpPayload, "
+                        + "runScript, restart, healthCheck …). Chaque step est idempotente et "
+                        + "retriable depuis n'importe quel point. Progrès et statut par step "
+                        + "persistés en lignes processes (system.processes), donc fermer l'app "
+                        + "en plein deploy ne perd pas la trace.",
+                },
                 demo: NONE_BG,
                 files: ["src/services/deploymentService.ts"],
                 tests: ["src/__tests__/deploymentService.test.ts"],
@@ -1391,6 +1763,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 permissions: ["internet"],
                 status: "stable",
+                howItWorks: {
+                    en: "SshPlugin wraps JSch (Java SSH library). exec() runs a one-shot "
+                        + "command and returns stdout+stderr+exitCode; sftpPut/sftpGet stream a "
+                        + "file with chunked progress events. Auth is keyboard-interactive or "
+                        + "public-key (PEM stored in secure-storage).",
+                    fr: "SshPlugin enveloppe JSch (lib SSH Java). exec() lance une commande "
+                        + "one-shot et retourne stdout+stderr+exitCode; sftpPut/sftpGet "
+                        + "streament un fichier avec events de progrès par chunk. Auth "
+                        + "clavier-interactif ou clé publique (PEM stocké en secure-storage).",
+                },
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/SshPlugin.java",
@@ -1406,6 +1788,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 permissions: ["internet"],
                 status: "stable",
+                howItWorks: {
+                    en: "For Odoo endpoints behind self-signed TLS that the Android system "
+                        + "trust store rejects, RawHttpPlugin uses Java's HttpsURLConnection "
+                        + "with a custom TrustManager that accepts the user-provided cert. Used "
+                        + "only for healthchecks and pin-then-trust workflows — main sync still "
+                        + "uses the WebView's regular fetch.",
+                    fr: "Pour les endpoints Odoo derrière TLS self-signed que le trust store "
+                        + "Android rejette, RawHttpPlugin utilise HttpsURLConnection Java avec "
+                        + "un TrustManager custom qui accepte le cert fourni par l'user. Utilisé "
+                        + "seulement pour healthchecks et workflows pin-then-trust — la sync "
+                        + "principale passe par le fetch normal.",
+                },
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/RawHttpPlugin.java",
@@ -1420,6 +1814,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Log déploiement live avec retry-from-step.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Live deploy view bound to the Process row driving the deployment. "
+                        + "Each step renders as a row with status icon, elapsed time, and "
+                        + "toggleable debug log. Failed steps show a 'retry from here' button "
+                        + "that re-enters the state machine at that step.",
+                    fr: "Vue deploy live bindée à la ligne Process qui pilote le déploiement. "
+                        + "Chaque step rendue en ligne avec icône statut, temps écoulé, et debug "
+                        + "log toggleable. Les steps en échec affichent un bouton 'retry from "
+                        + "here' qui rentre dans la state machine à cette step.",
+                },
                 demo: { kind: "route", url: "/applications" },
                 files: [
                     "src/components/servers/deploy/servers_deploy_component.ts",
@@ -1434,6 +1838,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 description: {
                     en: "Create/edit/delete servers and their workspaces.",
                     fr: "Créer/éditer/supprimer serveurs et workspaces.",
+                },
+                howItWorks: {
+                    en: "Each Server has its own workspaces (db_url + ssh creds + odoo "
+                        + "version). Stored in the servers table with the keys-of-secrets "
+                        + "pattern: only references to secure-storage keys, not the values. "
+                        + "Workspace switching pivots the active context for SSH and Odoo sync "
+                        + "without restarting.",
+                    fr: "Chaque Server a ses workspaces (db_url + creds SSH + version odoo). "
+                        + "Stocké en table servers avec le pattern keys-of-secrets : seulement "
+                        + "des références aux clés secure-storage, pas les valeurs. Switcher de "
+                        + "workspace pivote le contexte actif pour SSH et sync Odoo sans "
+                        + "redémarrer.",
                 },
                 demo: { kind: "route", url: "/applications" },
                 files: [
@@ -1457,6 +1873,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 description: {
                     en: "Manage Odoo instances (URL, version, sync flags).",
                     fr: "Gérer les instances Odoo (URL, version, flags sync).",
+                },
+                howItWorks: {
+                    en: "An Application links a Server to a specific Odoo URL + database + "
+                        + "version. Sync flags (autoSync, pollIntervalMinutes, ntfyTopic, "
+                        + "selectedSyncConfigIds) live here so multiple instances on the same "
+                        + "server stay independent. addOdooVersionToApplications migration "
+                        + "backfills the version column.",
+                    fr: "Une Application lie un Server à une URL Odoo + database + version "
+                        + "précise. Les flags sync (autoSync, pollIntervalMinutes, ntfyTopic, "
+                        + "selectedSyncConfigIds) vivent ici pour que plusieurs instances sur le "
+                        + "même serveur restent indépendantes. Migration "
+                        + "addOdooVersionToApplications backfille la colonne version.",
                 },
                 demo: { kind: "route", url: "/applications" },
                 files: [
@@ -1489,6 +1917,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Wrapper connexion unique, chiffré au repos.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Single SQLite connection wrapper around @capacitor-community/sqlite. "
+                        + "Encryption key is generated on first init and stored in "
+                        + "secure-storage; subsequent boots open the encrypted DB with that key. "
+                        + "All other services receive the DatabaseService instance via app.ts — "
+                        + "no duplicate connections.",
+                    fr: "Wrapper de connexion SQLite unique autour de "
+                        + "@capacitor-community/sqlite. La clé de chiffrement est générée à la "
+                        + "1re init et stockée en secure-storage; les boots suivants ouvrent la "
+                        + "DB chiffrée avec cette clé. Tous les autres services reçoivent "
+                        + "l'instance DatabaseService via app.ts — pas de connexions dupliquées.",
+                },
                 demo: NONE_PLUMBING,
                 files: ["src/services/databaseService.ts"],
                 tests: ["src/__tests__/databaseService.test.ts"],
@@ -1501,6 +1941,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Migrations de schéma versionnées au démarrage.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "MigrationService runs an ordered list of (version, fn) at boot. "
+                        + "Current version is read from a meta row; each fn that hasn't yet run "
+                        + "is invoked, then the version is bumped after the last success. "
+                        + "Failure aborts the boot with a popup (migrationPopup) so the user has "
+                        + "explicit context.",
+                    fr: "MigrationService run une liste ordonnée de (version, fn) au boot. La "
+                        + "version courante est lue depuis une ligne meta; chaque fn pas encore "
+                        + "exécutée est invoquée, puis la version est bumpée après le dernier "
+                        + "succès. Un échec abort le boot avec un popup (migrationPopup) pour "
+                        + "que l'user ait le contexte explicite.",
+                },
                 demo: NONE_BG,
                 files: [
                     "src/services/migrationService.ts",
@@ -1520,6 +1972,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Parcourir tables, exécuter SQL, voir la taille DB.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Read-only panel listing every table with row count and on-disk size, "
+                        + "plus a free-form SQL prompt that runs SELECT-only queries (rejected "
+                        + "with an error otherwise) against the active DatabaseService. Useful "
+                        + "for diagnosing sync conflicts and migration-history rows on device.",
+                    fr: "Panel read-only listant chaque table avec row count et taille sur "
+                        + "disque, plus un prompt SQL libre qui run uniquement des requêtes "
+                        + "SELECT (rejet avec erreur sinon) sur la DatabaseService active. Utile "
+                        + "pour diagnostiquer les conflits sync et les lignes migration-history "
+                        + "sur device.",
+                },
                 demo: { kind: "route", url: "/options/database" },
                 files: [
                     "src/components/options/database/options_database_component.ts",
@@ -1535,6 +1998,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Liste des migrations appliquées avec timestamps.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Lists every migration that ran on the local DB with its timestamp and "
+                        + "result counts. Read-only — populated by MigrationService as each step "
+                        + "runs at boot. Surfaces silent migrations the user didn't notice (e.g. "
+                        + "backfills for sync columns).",
+                    fr: "Liste chaque migration qui a tourné sur la DB locale avec son "
+                        + "timestamp et ses compteurs de résultat. Read-only — peuplé par "
+                        + "MigrationService au boot pendant que chaque step tourne. Surfacie les "
+                        + "migrations silencieuses (ex. backfills pour les colonnes sync).",
+                },
                 demo: { kind: "options", sectionId: "migration-history" },
                 files: ["src/components/options/migration_history/options_migration_history_component.ts"],
             },
@@ -1546,6 +2019,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Réinitialise la DB locale et les bundles.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Drops every SQLite table and unlinks the editable-overlay directory, "
+                        + "then asks the user to relaunch. Bundle tarballs in src/public/repos/ "
+                        + "are not touched — they ship with the APK and can't change. Behind a "
+                        + "typed-confirmation dialog because there's no undo.",
+                    fr: "Drop chaque table SQLite et délie le dossier overlay éditable, puis "
+                        + "demande à l'user de relancer. Les tarballs bundles dans "
+                        + "src/public/repos/ ne sont pas touchés — ils sont livrés avec l'APK et "
+                        + "ne peuvent pas changer. Derrière une dialogue de confirmation tapée "
+                        + "parce qu'il n'y a pas d'undo.",
+                },
                 demo: { kind: "options", sectionId: "clear-cache" },
                 files: ["src/components/options/clear_cache/options_clear_cache_component.ts"],
             },
@@ -1568,6 +2052,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Hash-based router with route table and navbar.",
                     fr: "Router à hash avec table de routes et navbar.",
                 },
+                howItWorks: {
+                    en: "SimpleRouter is a tiny home-grown router (<200 lines) that maps "
+                        + "location.pathname to a component class. Supports dynamic segments "
+                        + "(/note/:id) parsed by getRouteParams, and event-bus navigation "
+                        + "(Events.ROUTER_NAVIGATION) so non-UI services can redirect.",
+                    fr: "SimpleRouter est un mini-routeur maison (<200 lignes) qui mappe "
+                        + "location.pathname à une classe de composant. Supporte les segments "
+                        + "dynamiques (/note/:id) parsés par getRouteParams, et la navigation "
+                        + "par event-bus (Events.ROUTER_NAVIGATION) pour que les services non-UI "
+                        + "puissent rediriger.",
+                },
                 demo: NONE_PLUMBING,
                 files: [
                     "src/js/router.ts",
@@ -1584,6 +2079,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                 description: {
                     en: "Colours, fonts, motion preferences stored in DB.",
                     fr: "Couleurs, polices, motion stockées en DB.",
+                },
+                howItWorks: {
+                    en: "GraphicPrefs reads a small set of localStorage keys (color theme, "
+                        + "font scale, density) and applies them as CSS custom properties on "
+                        + "documentElement at boot. Writers update both localStorage and the "
+                        + "live var() so the change is instant — no reload required.",
+                    fr: "GraphicPrefs lit un petit set de clés localStorage (color theme, font "
+                        + "scale, density) et les applique comme propriétés CSS sur "
+                        + "documentElement au boot. Les writers updatent à la fois localStorage "
+                        + "et la var() live — le changement est instant, pas de reload.",
                 },
                 demo: { kind: "options", sectionId: "graphic" },
                 files: [
@@ -1603,6 +2108,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 status: "stable",
                 permissions: ["notifications"],
+                howItWorks: {
+                    en: "Reminders schedule a LocalNotification at a future timestamp via "
+                        + "@capacitor/local-notifications. addReminderCreatedAt migration adds "
+                        + "the column for ordering. Cleared from the OS notification tray as "
+                        + "soon as the user opens the matching note.",
+                    fr: "Les rappels schedulent une LocalNotification à un timestamp futur via "
+                        + "@capacitor/local-notifications. La migration addReminderCreatedAt "
+                        + "ajoute la colonne pour l'ordre. Effacé de la barre OS dès que l'user "
+                        + "ouvre la note correspondante.",
+                },
                 demo: { kind: "options", sectionId: "reminders" },
                 files: [
                     "src/components/options/reminders/options_reminders_component.ts",
@@ -1620,6 +2135,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Heading, coquille content, layout root.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "HeadingComponent renders the top safe-area + title bar; "
+                        + "ContentComponent is the scrollable shell every page mounts into; "
+                        + "RootComponent is the single Owl root that hosts the SimpleRouter. "
+                        + "Pages don't import these directly — the route resolver wraps them "
+                        + "automatically.",
+                    fr: "HeadingComponent rend la safe-area du haut + la barre de titre; "
+                        + "ContentComponent est la coquille scrollable où chaque page se monte; "
+                        + "RootComponent est l'unique root Owl qui héberge le SimpleRouter. Les "
+                        + "pages n'importent pas ces composants — le resolver de route les "
+                        + "enveloppe automatiquement.",
+                },
                 demo: NONE_PLUMBING,
                 files: [
                     "src/components/heading/heading_component.ts",
@@ -1663,6 +2190,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Libellés d'erreurs et helpers centralisés.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Bilingual error labels (errorMessages.ts) and typed Error subclasses "
+                        + "(errors.ts) shared across the app — UndefinedNoteList, NoNoteMatch, "
+                        + "NoteKeyNotFound, etc. Catch-blocks throw the typed variant; the UI "
+                        + "looks up the matching message instead of hard-coding strings.",
+                    fr: "Libellés d'erreur bilingues (errorMessages.ts) et sous-classes Error "
+                        + "typées (errors.ts) partagées dans l'app — UndefinedNoteList, "
+                        + "NoNoteMatch, NoteKeyNotFound, etc. Les catch-blocks throw la variante "
+                        + "typée; l'UI lookup le message qui matche au lieu de hardcoder.",
+                },
                 demo: NONE_PLUMBING,
                 files: [
                     "src/js/errors.ts",
@@ -1713,6 +2250,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Affiche les mises à jour récentes.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Reads CHANGELOG.md from the bundle at boot, parses the H2 sections by "
+                        + "date, and renders the most recent entries in a popover. No network — "
+                        + "what's there is what shipped in the APK. Useful for users on field "
+                        + "devices that can't easily check the website.",
+                    fr: "Lit CHANGELOG.md depuis le bundle au boot, parse les sections H2 par "
+                        + "date, et rend les entrées les plus récentes dans un popover. Pas de "
+                        + "réseau — ce qui est là est ce qui a été livré dans l'APK. Utile pour "
+                        + "les users sur appareils terrain qui ne peuvent pas checker le site "
+                        + "facilement.",
+                },
                 demo: { kind: "options", sectionId: "changelog" },
                 files: ["src/components/options/changelog/options_changelog_component.ts"],
             },
@@ -1724,6 +2272,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Parcourir le bundle workspace (arbre source complet).",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Same browser as code.viewer, opened on the workspace bundle "
+                        + "(target=erplibre instead of target=mobile). Lets a curious user "
+                        + "explore the full ERPLibre source tree (Odoo addons + scripts) without "
+                        + "leaving the app — read-only, no edit overlay.",
+                    fr: "Même browser que code.viewer, ouvert sur le bundle workspace "
+                        + "(target=erplibre au lieu de target=mobile). Permet à un user curieux "
+                        + "d'explorer l'arbre source ERPLibre complet (addons Odoo + scripts) "
+                        + "sans quitter l'app — read-only, pas d'overlay d'édition.",
+                },
                 demo: { kind: "route", url: "/options/erplibre" },
                 files: [
                     "src/components/options/erplibre/options_erplibre_component.ts",
@@ -1775,6 +2333,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Composant parent listant chaque sous-option.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Routes-style options listing using URL hash sections "
+                        + "(/options#streamdeck) so deep-links from the catalogue, the changelog "
+                        + "or external sources can scroll the page to the right row. Each "
+                        + "sub-feature mounts on demand to keep the initial render cheap.",
+                    fr: "Liste options style routes utilisant les sections hash URL "
+                        + "(/options#streamdeck) — les deep-links depuis le catalogue, le "
+                        + "changelog ou des sources externes peuvent scroller la page sur la "
+                        + "bonne ligne. Chaque sous-feature monte à la demande pour garder le "
+                        + "render initial léger.",
+                },
                 demo: { kind: "route", url: "/options" },
                 files: [
                     "src/components/options/options_component.ts",
@@ -1789,6 +2358,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Configure env, services et monte le composant root.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "app.ts is the Vite entry: reads VITE_* env, instantiates "
+                        + "DatabaseService → runs migrations → spins up syncService, appService, "
+                        + "intentService, notificationService, and finally mounts RootComponent "
+                        + "on #app. Order matters because some services subscribe to events "
+                        + "emitted during others' init.",
+                    fr: "app.ts est l'entrée Vite : lit les VITE_* env, instancie "
+                        + "DatabaseService → run les migrations → instancie syncService, "
+                        + "appService, intentService, notificationService, puis monte "
+                        + "RootComponent sur #app. L'ordre compte car certains services "
+                        + "s'abonnent à des events émis pendant l'init d'autres.",
+                },
                 demo: NONE_PLUMBING,
                 files: [
                     "src/js/app.ts",
@@ -1803,6 +2384,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Hash + timestamp par build pour le triage.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Vite plugin generates a (gitShortSha + timestamp) on every build and "
+                        + "writes it to src/public/build_id.json. Surfaced in Options → Device "
+                        + "info so a bug report from the field always carries the exact APK "
+                        + "build, not a vague version.",
+                    fr: "Plugin Vite génère un (gitShortSha + timestamp) à chaque build et "
+                        + "l'écrit dans src/public/build_id.json. Surfacé dans Options → Info "
+                        + "appareil pour qu'un rapport de bug du terrain transporte toujours le "
+                        + "build APK exact, pas une version vague.",
+                },
                 demo: NONE_PLUMBING,
                 files: ["src/public/build_id.json"],
             },
