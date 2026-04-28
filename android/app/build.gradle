@@ -83,6 +83,7 @@ dependencies {
     implementation "com.google.mlkit:text-recognition:16.0.1"
     // MarianMT on-device translation: ONNX Runtime for encoder/decoder inference
     implementation "com.microsoft.onnxruntime:onnxruntime-android:1.20.0"
+    implementation "com.google.mlkit:face-detection:16.1.7"
 }
 
 apply from: 'capacitor.build.gradle'

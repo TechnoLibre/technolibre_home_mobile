@@ -1,6 +1,7 @@
 import type { PluginListenerHandle } from "@capacitor/core";
 import { Camera } from "@capacitor/camera";
 import { StreamDeckPlugin, DeckInfo, DeckModel } from "../plugins/streamDeckPlugin";
+import { FaceDetectionPlugin } from "../plugins/faceDetectionPlugin";
 import type { StreamDeckController } from "./streamDeckController";
 
 interface ListenerLike {
@@ -97,14 +98,22 @@ export class StreamDeckCameraStreamer {
     private lastFrameHash = 0;
     private hashCanvas: HTMLCanvasElement | null = null;
     private hashCtx: CanvasRenderingContext2D | null = null;
-    /** Face detection — when true, run window.FaceDetector against the
-     *  hidden video element each tick (best-effort, async, cached) and
-     *  draw a green border on any deck tile whose composite rect
-     *  overlaps a face bounding box. */
+    /** Face detection — when true, downscale a JPEG of the live video
+     *  each tick and ship it to the ML Kit Java plugin. Returned bbox
+     *  list is cached in `lastFaces` (normalised 0..1) and reprojected
+     *  per-deck inside paintDeck to draw a green border on any tile
+     *  framing a face. */
     private faceDetect = false;
-    private faceDetector: { detect(src: HTMLVideoElement | HTMLCanvasElement): Promise<{ boundingBox: DOMRectReadOnly }[]> } | null = null;
     private faceDetectInFlight = false;
+    /** Bounding boxes in normalised video coordinates (0..1). */
     private lastFaces: { x: number; y: number; w: number; h: number }[] = [];
+    /** Reused 320×180 canvas for the detection JPEG. ML Kit downscales
+     *  its input internally, so feeding it a smaller frame trims our
+     *  encode + JNI cost without hurting detection quality. */
+    private faceCanvas: HTMLCanvasElement | null = null;
+    private faceCtx: CanvasRenderingContext2D | null = null;
+    private static readonly FACE_DETECT_W = 320;
+    private static readonly FACE_DETECT_H = 180;
     private active = false;
     private stream: MediaStream | null = null;
     private video: HTMLVideoElement | null = null;
@@ -203,33 +212,13 @@ export class StreamDeckCameraStreamer {
 
     getFaceDetect(): boolean { return this.faceDetect; }
 
-    /** Toggle face detection. Lazy-instantiates the FaceDetector on
-     *  first enable. Stays a no-op (just sets the flag) on browsers
-     *  without the API — the per-tick path checks `faceDetector` and
-     *  skips the overlap test silently. */
+    /** Toggle face detection. The native ML Kit plugin is always
+     *  registered on Android, so the only failure mode is "no Capacitor
+     *  bridge" (web preview / unit tests) — we let the per-tick call
+     *  surface that as a console warning rather than gating the toggle. */
     setFaceDetect(on: boolean): void {
         this.faceDetect = !!on;
-        if (!this.faceDetect) {
-            this.lastFaces = [];
-            return;
-        }
-        if (this.faceDetector) return;
-        const Ctor = (window as unknown as { FaceDetector?: new (opts: { fastMode?: boolean; maxDetectedFaces?: number }) => StreamDeckCameraStreamer["faceDetector"] }).FaceDetector;
-        if (!Ctor) {
-            console.warn("[camera-streamer] FaceDetector API not available in this WebView");
-            return;
-        }
-        try {
-            this.faceDetector = new Ctor({ fastMode: true, maxDetectedFaces: 4 });
-        } catch (e) {
-            console.warn("[camera-streamer] FaceDetector init:", e);
-        }
-    }
-
-    /** True only when the API exists in this WebView. The UI uses this
-     *  to gray out the toggle on platforms without FaceDetector. */
-    isFaceDetectSupported(): boolean {
-        return typeof (window as unknown as { FaceDetector?: unknown }).FaceDetector === "function";
+        if (!this.faceDetect) this.lastFaces = [];
     }
 
     private tickMs(): number {
@@ -447,33 +436,50 @@ export class StreamDeckCameraStreamer {
         }
     }
 
-    /** Fire-and-forget face detect against the live video. We dedupe
-     *  with `faceDetectInFlight` so a slow detector tick can't pile up
-     *  promises behind a fast encode loop — the next ready tick takes
-     *  another snapshot. Bounding boxes stay in video pixel space;
-     *  paintDeck reprojects per-deck via the same cover-fit transform
-     *  used to draw the camera into the composite. */
+    /** Fire-and-forget face detect via the native ML Kit plugin.
+     *  Pipeline per call:
+     *    video → 320×180 JPEG (toDataURL, q=0.5)
+     *          → base64 → JNI → ML Kit FaceDetection
+     *          → normalised bbox list → lastFaces
+     *  In-flight dedupe ensures a slow tick can't pile up promises;
+     *  bounding boxes stay in normalised [0,1] coords so paintDeck
+     *  reprojects by simply multiplying by canvasW/canvasH. */
     private kickFaceDetect(): void {
-        if (!this.faceDetect || !this.faceDetector || !this.video) return;
+        if (!this.faceDetect || !this.video) return;
         if (this.faceDetectInFlight) return;
         if (this.video.readyState < 2) return;
+        if (!this.faceCanvas) {
+            this.faceCanvas = document.createElement("canvas");
+            this.faceCanvas.width = StreamDeckCameraStreamer.FACE_DETECT_W;
+            this.faceCanvas.height = StreamDeckCameraStreamer.FACE_DETECT_H;
+            this.faceCtx = this.faceCanvas.getContext("2d", { alpha: false });
+        }
+        const ctx = this.faceCtx;
+        const cv = this.faceCanvas;
+        if (!ctx || !cv) return;
+        try {
+            ctx.drawImage(this.video, 0, 0, cv.width, cv.height);
+        } catch (e) {
+            console.warn("[camera-streamer] face frame draw:", e);
+            return;
+        }
+        const dataUrl = cv.toDataURL("image/jpeg", 0.5);
+        const comma = dataUrl.indexOf(",");
+        if (comma < 0) return;
+        const b64 = dataUrl.substring(comma + 1);
+
         this.faceDetectInFlight = true;
-        const detector = this.faceDetector;
-        const v = this.video;
-        detector.detect(v).then((faces) => {
-            this.lastFaces = faces.map((f) => ({
-                x: f.boundingBox.x,
-                y: f.boundingBox.y,
-                w: f.boundingBox.width,
-                h: f.boundingBox.height,
-            }));
-            this.faceDetectInFlight = false;
-        }).catch((e) => {
-            // InvalidStateError happens during track swap or before
-            // the video has any data; swallow and try again next tick.
-            this.faceDetectInFlight = false;
-            console.warn("[camera-streamer] face detect:", e);
-        });
+        FaceDetectionPlugin.detectFaces({ jpegBase64: b64 })
+            .then((r) => {
+                this.lastFaces = r.faces.map((f) => ({
+                    x: f.x, y: f.y, w: f.width, h: f.height,
+                }));
+                this.faceDetectInFlight = false;
+            })
+            .catch((e) => {
+                this.faceDetectInFlight = false;
+                console.warn("[camera-streamer] face detect:", e);
+            });
     }
 
     private frameUnchanged(): boolean {
@@ -573,18 +579,18 @@ export class StreamDeckCameraStreamer {
         const strideW = kw + gapW;
         const strideH = kh + gapH;
 
-        // Project face bboxes from video pixel space into composite
-        // pixel space using the same cover-fit transform applied above.
-        // Done once per deck per tick (cheap) so the inner overlap test
-        // is a pure AABB check.
+        // Project face bboxes (normalised 0..1 in video space) into
+        // composite pixel space using the same cover-fit transform
+        // applied above. Done once per deck per tick so the inner
+        // overlap test is a pure AABB check.
         const offsetX = (canvasW - dw) / 2;
         const offsetY = (canvasH - dh) / 2;
         const facesOnComposite = (this.faceDetect && this.lastFaces.length > 0)
             ? this.lastFaces.map((f) => ({
-                x: f.x * scale + offsetX,
-                y: f.y * scale + offsetY,
-                w: f.w * scale,
-                h: f.h * scale,
+                x: f.x * vw * scale + offsetX,
+                y: f.y * vh * scale + offsetY,
+                w: f.w * vw * scale,
+                h: f.h * vh * scale,
             }))
             : [];
 
