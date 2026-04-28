@@ -14,7 +14,7 @@ const RESET_DELAY_MS = 2000;
 export class OptionsDeviceInfoComponent extends EnhancedComponent {
 	static template = xml`
     <t>
-      <li class="options-list__item">
+      <li id="device-info" class="options-list__item">
         <a href="#" t-on-click.stop.prevent="onShowDeviceInfoClick">
           📱 Infos appareil
         </a>

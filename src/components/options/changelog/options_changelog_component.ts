@@ -7,7 +7,7 @@ const CURRENT_VERSION = 2026031801;
 
 export class OptionsChangelogComponent extends EnhancedComponent {
   static template = xml`
-    <li class="options-list__item">
+    <li id="changelog" class="options-list__item">
       <a href="#" t-on-click.stop.prevent="onChangelogClick">
         📋 Version <t t-esc="currentVersion"/>
       </a>

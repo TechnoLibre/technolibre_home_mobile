@@ -23,7 +23,7 @@ interface CodeStyleRow {
  */
 export class OptionsCodeStyleComponent extends EnhancedComponent {
     static template = xml`
-        <li class="options-list__item options-code-style">
+        <li id="code-style" class="options-list__item options-code-style">
           <div
               class="options-code-style__header"
               role="button"

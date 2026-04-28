@@ -4,7 +4,7 @@ import { ReminderService, Reminder, INTERVAL_OPTIONS } from "../../../services/r
 
 export class OptionsRemindersComponent extends EnhancedComponent {
   static template = xml`
-    <li class="options-list__item options-reminders">
+    <li id="reminders" class="options-list__item options-reminders">
       <div class="options-reminders__header" t-on-click="toggleExpanded">
         <span>🔔 Rappels personnels</span>
         <span class="options-reminders__count" t-if="activeCount > 0">

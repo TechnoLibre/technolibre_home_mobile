@@ -13,7 +13,7 @@ function formatDate(iso: string): string {
 
 export class OptionsMigrationHistoryComponent extends EnhancedComponent {
   static template = xml`
-    <li class="options-list__item">
+    <li id="migration-history" class="options-list__item">
       <a href="#" t-on-click.stop.prevent="onShowHistoryClick">
         🗃️ Historique migrations
       </a>

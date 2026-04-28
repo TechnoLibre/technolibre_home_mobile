@@ -17,7 +17,7 @@ function label(status: string): string {
 
 export class OptionsPermissionsComponent extends EnhancedComponent {
 	static template = xml`
-    <li class="options-list__item">
+    <li id="permissions" class="options-list__item">
       <a href="#" t-on-click.stop.prevent="onShowPermissionsClick">
         🛡️ Permissions
       </a>

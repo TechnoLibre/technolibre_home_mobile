@@ -30,6 +30,22 @@ function flatten(nodes: FeatureNode[]): FeatureNode[] {
     return out;
 }
 
+/** Walk the tree to find every ancestor id of `targetId` (excluding
+ *  the target itself). Returns null if `targetId` doesn't exist. */
+function ancestorIdsOf(targetId: string, nodes: FeatureNode[]): string[] | null {
+    const dfs = (list: FeatureNode[], path: string[]): string[] | null => {
+        for (const n of list) {
+            if (n.id === targetId) return path;
+            if (n.children) {
+                const r = dfs(n.children, [...path, n.id]);
+                if (r !== null) return r;
+            }
+        }
+        return null;
+    };
+    return dfs(nodes, []);
+}
+
 function pickLabel(value: FeatureI18n | undefined, lang: Lang, fallback = ""): string {
     if (!value) return fallback;
     return value[lang] || value.fr || value.en || fallback;
@@ -40,6 +56,9 @@ interface SharedTreeState {
     /** id → true when expanded. Plain object for Owl 2 reactivity. */
     expanded: Record<string, boolean>;
     selectedId: string;
+    /** When non-empty, force-expand every visible node so the user
+     *  sees match context regardless of manual collapse state. */
+    query: string;
 }
 
 interface NodeProps {
@@ -53,7 +72,7 @@ interface NodeProps {
 class FeatureTreeNodeComponent extends Component<NodeProps> {
     static template = xml`
         <li role="treeitem"
-            t-att-aria-expanded="hasChildren ? (props.shared.expanded[props.node.id] ? 'true' : 'false') : null"
+            t-att-aria-expanded="hasChildren ? (isExpanded ? 'true' : 'false') : null"
             t-att-aria-selected="props.shared.selectedId === props.node.id ? 'true' : 'false'">
             <div class="features__row"
                  t-att-class="{ 'features__row--selected': props.shared.selectedId === props.node.id }"
@@ -61,16 +80,20 @@ class FeatureTreeNodeComponent extends Component<NodeProps> {
                 <button t-if="hasChildren"
                         class="features__toggle"
                         t-on-click="() => this.props.onToggle(this.props.node.id)">
-                    <t t-esc="props.shared.expanded[props.node.id] ? '▾' : '▸'"/>
+                    <t t-esc="isExpanded ? '▾' : '▸'"/>
                 </button>
                 <span t-else="" class="features__toggle-spacer">·</span>
                 <button class="features__label"
                         t-on-click="() => this.props.onSelect(this.props.node.id)">
                     <t t-esc="labelText"/>
                 </button>
+                <span t-if="childCount > 0" class="features__count" aria-hidden="true"
+                      t-esc="childCount"/>
+                <span t-elif="fileCount > 0" class="features__count features__count--files"
+                      aria-hidden="true" t-esc="fileCount"/>
                 <span t-if="hasDemo" class="features__has-demo" aria-hidden="true">▶</span>
             </div>
-            <ul t-if="hasChildren and props.shared.expanded[props.node.id]" role="group">
+            <ul t-if="hasChildren and isExpanded" role="group">
                 <t t-foreach="props.node.children" t-as="child" t-key="child.id">
                     <FeatureTreeNodeComponent
                         node="child"
@@ -87,6 +110,12 @@ class FeatureTreeNodeComponent extends Component<NodeProps> {
     get hasChildren(): boolean {
         return !!(this.props.node.children && this.props.node.children.length > 0);
     }
+    get childCount(): number {
+        return this.props.node.children?.length ?? 0;
+    }
+    get fileCount(): number {
+        return this.props.node.files?.length ?? 0;
+    }
     get hasDemo(): boolean {
         return !!(this.props.node.demo && this.props.node.demo.kind !== "none");
     }
@@ -95,6 +124,13 @@ class FeatureTreeNodeComponent extends Component<NodeProps> {
     }
     get rowStyle(): string {
         return `padding-left:${this.props.depth * 1.1 + 0.5}rem`;
+    }
+    /** Expanded if the user toggled it OR a search is active (we
+     *  want every match-ancestor visible without forcing the user
+     *  to manually expand on every keystroke). */
+    get isExpanded(): boolean {
+        if (this.props.shared.query.length > 0) return true;
+        return !!this.props.shared.expanded[this.props.node.id];
     }
 }
 // Owl 2 needs a self-reference for recursive components.
@@ -236,10 +272,26 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
         };
         const expandedInit: Record<string, boolean> = {};
         for (const r of FEATURE_TREE) expandedInit[r.id] = true;
+
+        // Deep-link via /options/features?id=<feature-id>: pre-select
+        // the feature and expand every ancestor so the row is visible
+        // on first paint.
+        let initialSelectedId = "";
+        try {
+            const wantId = new URLSearchParams(window.location.search).get("id");
+            if (wantId) {
+                const ancestors = ancestorIdsOf(wantId, FEATURE_TREE);
+                if (ancestors !== null) {
+                    initialSelectedId = wantId;
+                    for (const a of ancestors) expandedInit[a] = true;
+                }
+            }
+        } catch { /* ignore — feature still works without deep-link */ }
+
         this.state = useState<State>({
             lang,
             expanded: expandedInit,
-            selectedId: "",
+            selectedId: initialSelectedId,
             query: "",
             counts,
         });
@@ -284,7 +336,12 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
             return;
         }
         if (node.demo.kind === "options") {
-            this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: "/options" });
+            // Pass the sectionId in the URL hash so the matching panel
+            // can scroll itself into view and auto-expand on mount.
+            const url = node.demo.sectionId
+                ? `/options#${node.demo.sectionId}`
+                : "/options";
+            this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url });
         }
     }
 
