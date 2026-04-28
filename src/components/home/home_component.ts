@@ -1,4 +1,4 @@
-import {onMounted, useState, xml} from "@odoo/owl";
+import {onMounted, onWillUnmount, useState, xml} from "@odoo/owl";
 
 import {EnhancedComponent} from "../../js/enhancedComponent";
 import {Events} from "../../constants/events";
@@ -17,7 +17,12 @@ const ENV = {
     DEBUG_DEV: import.meta.env.VITE_DEBUG_DEV === "true",
 };
 
-const STARTUP_TIME = new Date().toLocaleTimeString([], {
+// Captured at module load — first time this file is evaluated, which
+// happens on the very first render of the home component (also the
+// app's startup point). We keep both the formatted string for display
+// and the timestamp for live uptime math.
+const STARTUP_AT = Date.now();
+const STARTUP_TIME = new Date(STARTUP_AT).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -32,6 +37,7 @@ interface HomeState {
     quickNotes: Note[];
     rootTags: Tag[];
     loaded: boolean;
+    uptime: string;
 }
 
 export class HomeComponent extends EnhancedComponent {
@@ -150,9 +156,15 @@ export class HomeComponent extends EnhancedComponent {
         </ul>
       </div>
 
-      <p id="startup-time" aria-hidden="true">Ouvert à <t t-esc="startupTime"/></p>
+      <p id="startup-time" aria-hidden="true">
+        <span>Ouvert à <t t-esc="startupTime"/></span>
+        <span class="startup-time__uptime" t-esc="state.uptime" />
+      </p>
     </div>
   `;
+
+    private _uptimeTimer: ReturnType<typeof setInterval> | null = null;
+    private _uptimePeriodMs = 1000;
 
     setup() {
         this.state = useState<HomeState>({
@@ -164,8 +176,58 @@ export class HomeComponent extends EnhancedComponent {
             quickNotes: [],
             rootTags: [],
             loaded: false,
+            uptime: this._formatUptime(0),
         });
-        onMounted(() => this.loadStats());
+        onMounted(() => {
+            this.loadStats();
+            this._tickUptime();
+            this._uptimeTimer = setInterval(() => this._tickUptime(), this._uptimePeriodMs);
+        });
+        onWillUnmount(() => {
+            if (this._uptimeTimer !== null) {
+                clearInterval(this._uptimeTimer);
+                this._uptimeTimer = null;
+            }
+        });
+    }
+
+    private _tickUptime(): void {
+        const sec = Math.floor((Date.now() - STARTUP_AT) / 1000);
+        this.state.uptime = this._formatUptime(sec);
+        // Once we cross the one-minute boundary, drop to a per-minute
+        // tick — seconds are no longer shown so refreshing every
+        // second would burn battery for no visible change. Re-arming
+        // the interval keeps the timer aligned to roughly each new
+        // displayed minute.
+        if (sec >= 60 && this._uptimePeriodMs !== 60000) {
+            if (this._uptimeTimer !== null) clearInterval(this._uptimeTimer);
+            this._uptimePeriodMs = 60000;
+            this._uptimeTimer = setInterval(() => this._tickUptime(), this._uptimePeriodMs);
+        }
+    }
+
+    /** Compose a short uptime label. Under one minute we show only
+     *  seconds; above we drop seconds entirely and show the two most
+     *  significant units (minutes / hours / days / months / years).
+     *  Months and years are approximations (30 d, 365 d) — at that
+     *  scale "the app has been running for 3 months" is informative,
+     *  exact day counts aren't. */
+    private _formatUptime(sec: number): string {
+        if (sec < 60) return `${sec} s`;
+        const min = Math.floor(sec / 60);
+        if (min < 60) return `${min} min`;
+        const hour = Math.floor(min / 60);
+        const remMin = min - hour * 60;
+        if (hour < 24) return `${hour} h ${remMin} min`;
+        const day = Math.floor(hour / 24);
+        const remHour = hour - day * 24;
+        if (day < 30) return `${day} j ${remHour} h`;
+        const month = Math.floor(day / 30);
+        const remDay = day - month * 30;
+        if (month < 12) return `${month} mois ${remDay} j`;
+        const year = Math.floor(month / 12);
+        const remMonth = month - year * 12;
+        return `${year} an${year > 1 ? "s" : ""} ${remMonth} mois`;
     }
 
     async loadStats() {
