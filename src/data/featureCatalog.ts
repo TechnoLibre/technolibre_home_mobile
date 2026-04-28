@@ -100,6 +100,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "d'ids qui AND avec la query texte. Garde biométrique (BiometryUtils) "
                         + "protège les actions risquées (suppression).",
                 },
+                dependsOn: ["security.biometry"],
                 demo: { kind: "route", url: "/notes" },
                 files: [
                     "src/components/note_list/note_list_component.ts",
@@ -129,6 +130,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "L'état est miroité dans NoteService à chaque modif; les flags sync "
                         + "écrivent vers la table sync_status par serveur.",
                 },
+                dependsOn: [
+                    "notes.service",
+                    "notes.tags",
+                    "notes.priority",
+                    "notes.date-picker",
+                    "notes.entries.framework",
+                ],
                 demo: { kind: "route", url: "/note/demo" },
                 files: [
                     "src/components/note/note_component.ts",
@@ -164,6 +172,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                                 + "le tableau d'entrées et persiste au patch. Composant sans état, "
                                 + "compatible AOT.",
                         },
+                        dependsOn: ["notes.entries.framework"],
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/text/note_entry_text_component.ts"],
                     },
@@ -186,6 +195,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                                 + "stocké comme payload — pas de copie native; le rendu utilise le "
                                 + "dataUrl directement dans <img>.",
                         },
+                        dependsOn: ["notes.entries.framework"],
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/photo/note_entry_photo_component.ts"],
                     },
@@ -210,6 +220,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                                 + "migrateVideoThumbnails backfille les posters pour les entrées créées "
                                 + "avant l'ajout du champ.",
                         },
+                        dependsOn: ["notes.entries.framework"],
                         demo: { kind: "route", url: "/note/demo" },
                         files: [
                             "src/components/note_entry/video/note_entry_video_component.ts",
@@ -225,7 +236,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                             fr: "Enregistrer un clip audio, transcription optionnelle.",
                         },
                         permissions: ["microphone"],
-                        dependsOn: ["transcription.bridge"],
+                        dependsOn: [
+                            "transcription.bridge",
+                            "notes.entries.framework",
+                        ],
                         status: "stable",
                         howItWorks: {
                             en: "capacitor-voice-recorder records into base64 (in-memory) and "
@@ -261,6 +275,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                                 + "DATE_SELECTED. Une seule instance de picker pour toutes les entrées "
                                 + "date.",
                         },
+                        dependsOn: [
+                            "notes.entries.framework",
+                            "notes.date-picker",
+                        ],
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/date/note_entry_date_component.ts"],
                     },
@@ -283,6 +301,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                                 + "formatées et rayon de precision. La capture se fait dans le composant "
                                 + "note parent via Geolocation.getCurrentPosition.",
                         },
+                        dependsOn: ["notes.entries.framework"],
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/geolocation/note_entry_geolocation_component.ts"],
                     },
@@ -448,6 +467,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "navigue vers la nouvelle note.",
                 },
                 status: "stable",
+                dependsOn: ["notes.service"],
                 demo: NONE_BG,
                 files: [
                     "src/components/intent/intent_component.ts",
@@ -518,6 +538,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "detached) pour éviter aux consommateurs d'importer le plugin "
                         + "directement.",
                 },
+                dependsOn: ["streamdeck.plugin-native"],
                 demo: NONE_PLUMBING,
                 files: ["src/plugins/streamDeckPlugin.ts"],
                 tests: ["src/__tests__/streamDeckPlugin.test.ts"],
@@ -544,6 +565,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "réveiller le reader silencieux après wake.",
                 },
                 status: "stable",
+                dependsOn: [
+                    "streamdeck.bridge-ts",
+                    "streamdeck.lifecycle-service",
+                ],
                 demo: NONE_BG,
                 files: ["src/services/streamDeckController.ts"],
             },
@@ -595,6 +620,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "EOVERFLOW sur Pixel 6 / ThinkPhone XL).",
                 },
                 status: "stable",
+                dependsOn: [
+                    "streamdeck.plugin-native",
+                    "streamdeck.usb",
+                ],
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
             },
@@ -620,6 +649,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "de contention).",
                 },
                 status: "stable",
+                dependsOn: ["streamdeck.plugin-native"],
                 demo: NONE_BG,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
             },
@@ -644,6 +674,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "sans la fermer — utilisé par le streamer sur stop.",
                 },
                 status: "stable",
+                dependsOn: [
+                    "streamdeck.transports",
+                    "streamdeck.encoders",
+                ],
                 demo: NONE_PLUMBING,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/WriterQueue.java",
@@ -803,6 +837,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "avec un double-draw décalé pour la boucle.",
                 },
                 status: "stable",
+                dependsOn: [
+                    "streamdeck.writer-queue",
+                    "streamdeck.controller",
+                ],
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["src/services/streamDeckLcdTextRenderer.ts"],
             },
@@ -825,6 +863,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "reconnexion d'un deck — utile pour diagnostiquer un USB flaky après "
                         + "qu'un appareil revienne.",
                 },
+                dependsOn: ["streamdeck.bridge-ts"],
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["src/services/streamDeckEventLog.ts"],
             },
@@ -848,6 +887,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "restart manuel qui déclenche restartSessions pour récupérer du state "
                         + "reader-silencieux post-sleep.",
                 },
+                dependsOn: [
+                    "streamdeck.controller",
+                    "streamdeck.event-log",
+                ],
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: [
                     "src/components/options/streamdeck/options_streamdeck_component.ts",
@@ -950,6 +993,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "en last-modified-wins par champ ; les conflits "
                         + "remontent en UI pour résolution explicite.",
                 },
+                dependsOn: ["deployment.applications"],
                 demo: NONE_BG,
                 files: [
                     "src/services/syncService.ts",
@@ -976,6 +1020,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "cibler plusieurs instances Odoo. Sauvegarder ici déclenche "
                         + "notificationService.reload().",
                 },
+                dependsOn: ["sync.service"],
                 demo: { kind: "options", sectionId: "sync" },
                 files: ["src/components/options/sync/options_sync_component.ts"],
             },
@@ -999,6 +1044,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "cible), addSelectedSyncConfigIds (multi-select). Chaque migration est "
                         + "idempotente et se ré-exécute sans risque au boot.",
                 },
+                dependsOn: ["data.migrations"],
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/migrations/addSyncColumns.ts",
@@ -1028,6 +1074,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "l'user voie le changement sans attendre le prochain tick. Fallback "
                         + "sur polling périodique si NTFY n'est pas configuré.",
                 },
+                dependsOn: [
+                    "sync.service",
+                    "system.processes",
+                ],
                 demo: NONE_BG,
                 files: [
                     "src/services/ntfyService.ts",
@@ -1070,6 +1120,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "localStorage. Deep-link URL (?target=&path=) ouvre un bundle précis "
                         + "et sélectionne un fichier au boot.",
                 },
+                dependsOn: [
+                    "repos.bundle-code",
+                    "repos.fs-factory",
+                ],
                 demo: { kind: "route", url: "/options/code" },
                 files: [
                     "src/components/options/code/options_code_component.ts",
@@ -1098,6 +1152,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(SQLite); appliquées sur documentElement au boot via "
                         + "CodeStyleService.loadAndApply.",
                 },
+                dependsOn: ["ui.theme"],
                 demo: { kind: "options", sectionId: "code-style" },
                 files: [
                     "src/services/codeStyleService.ts",
@@ -1125,6 +1180,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "isomorphic-git opère sur l'overlay; les lectures bundle retombent sur "
                         + "le tarball si l'overlay est absent.",
                 },
+                dependsOn: [
+                    "repos.edit",
+                    "code.viewer",
+                ],
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/editableCodeService.ts",
@@ -1151,6 +1210,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "libgit2 natif.",
                 },
                 status: "stable",
+                dependsOn: [
+                    "code.editable",
+                    "repos.fs-factory",
+                ],
                 demo: { kind: "route", url: "/options/code" },
                 files: [
                     "src/services/codeService.ts",
@@ -1213,6 +1276,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "vers le FS bundle in-place via repoFsFactory. Cache les résultats "
                         + "stat en mémoire pour ne pas re-extraire à chaque expansion d'arbre.",
                 },
+                dependsOn: [
+                    "repos.extractor",
+                    "repos.fs-factory",
+                ],
                 demo: NONE_PLUMBING,
                 files: ["src/services/bundleCodeService.ts"],
                 tests: ["src/__tests__/bundleCodeService.test.ts"],
@@ -1237,6 +1304,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "getFileBytes(path) n'inflate et parse que jusqu'à l'entrée qui "
                         + "matche, puis sort.",
                 },
+                dependsOn: ["repos.bundle-source"],
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/repoExtractorService.ts",
@@ -1268,6 +1336,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "un bundle read-only en éditable, et par code.git comme working tree "
                         + "derrière isomorphic-git.",
                 },
+                dependsOn: [
+                    "repos.fs-factory",
+                    "repos.extractor",
+                ],
                 demo: NONE_PLUMBING,
                 files: ["src/services/repoEditService.ts"],
                 tests: ["src/__tests__/repoEditService.test.ts"],
@@ -1374,6 +1446,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "que le download survive l'écran off. Le progrès est diffusé via "
                         + "LocalNotification pour que l'user puisse suivre hors de l'app.",
                 },
+                dependsOn: ["system.processes"],
                 demo: { kind: "route", url: "/options/transcription" },
                 files: ["android/app/src/main/java/ca/erplibre/home/WhisperDownloadService.java"],
             },
@@ -1419,6 +1492,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "ne bloque jamais l'UI — les jobs longs passent par la queue "
                         + "processService et émettent des events de progression.",
                 },
+                dependsOn: ["transcription.native"],
                 demo: NONE_PLUMBING,
                 files: [
                     "src/plugins/whisperPlugin.ts",
@@ -1446,6 +1520,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "enregistreur 'test de transcription' qui run un clip court end-to-end "
                         + "pour vérifier le pipeline.",
                 },
+                dependsOn: [
+                    "transcription.bridge",
+                    "transcription.download",
+                    "system.processes",
+                ],
                 demo: { kind: "route", url: "/options/transcription" },
                 files: [
                     "src/components/options/transcription/options_transcription_component.ts",
@@ -1484,6 +1563,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "cet user. authenticateForDatabase short-circuit quand l'OS reporte "
                         + "aucune biométrie enrolée — pas de soft-lock sur device vierge.",
                 },
+                dependsOn: ["security.secure-storage"],
                 demo: { kind: "route", url: "/options" },
                 files: [
                     "src/utils/biometryUtils.ts",
@@ -1538,6 +1618,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "HTTP brut, panel processus). Le compteur reset à chaque render — les "
                         + "taps doivent être rapides. Pas besoin de restart.",
                 },
+                dependsOn: ["system.device-info"],
                 demo: { kind: "options", sectionId: "device-info" },
                 files: ["src/components/options/device_info/options_device_info_component.ts"],
             },
@@ -1737,7 +1818,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 status: "stable",
                 permissions: ["internet"],
-                dependsOn: ["deployment.ssh"],
+                dependsOn: [
+                    "deployment.ssh",
+                    "system.processes",
+                ],
                 howItWorks: {
                     en: "State machine of named steps (validateSsh, scpPayload, runScript, "
                         + "restart, healthCheck …). Each step is idempotent and can be retried "
@@ -1824,6 +1908,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "log toggleable. Les steps en échec affichent un bouton 'retry from "
                         + "here' qui rentre dans la state machine à cette step.",
                 },
+                dependsOn: ["deployment.service"],
                 demo: { kind: "route", url: "/applications" },
                 files: [
                     "src/components/servers/deploy/servers_deploy_component.ts",
@@ -1851,6 +1936,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "workspace pivote le contexte actif pour SSH et sync Odoo sans "
                         + "redémarrer.",
                 },
+                dependsOn: ["security.secure-storage"],
                 demo: { kind: "route", url: "/applications" },
                 files: [
                     "src/components/servers/add/servers_add_component.ts",
@@ -1886,6 +1972,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "même serveur restent indépendantes. Migration "
                         + "addOdooVersionToApplications backfille la colonne version.",
                 },
+                dependsOn: ["deployment.servers"],
                 demo: { kind: "route", url: "/applications" },
                 files: [
                     "src/components/applications/applications_component.ts",
@@ -2008,6 +2095,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "MigrationService au boot pendant que chaque step tourne. Surfacie les "
                         + "migrations silencieuses (ex. backfills pour les colonnes sync).",
                 },
+                dependsOn: ["data.migrations"],
                 demo: { kind: "options", sectionId: "migration-history" },
                 files: ["src/components/options/migration_history/options_migration_history_component.ts"],
             },
@@ -2030,6 +2118,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "ne peuvent pas changer. Derrière une dialogue de confirmation tapée "
                         + "parce qu'il n'y a pas d'undo.",
                 },
+                dependsOn: ["repos.edit"],
                 demo: { kind: "options", sectionId: "clear-cache" },
                 files: ["src/components/options/clear_cache/options_clear_cache_component.ts"],
             },
@@ -2118,6 +2207,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "ajoute la colonne pour l'ordre. Effacé de la barre OS dès que l'user "
                         + "ouvre la note correspondante.",
                 },
+                dependsOn: ["notes.service"],
                 demo: { kind: "options", sectionId: "reminders" },
                 files: [
                     "src/components/options/reminders/options_reminders_component.ts",
