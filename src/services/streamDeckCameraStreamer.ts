@@ -247,7 +247,11 @@ export class StreamDeckCameraStreamer {
     }
 
     getBorderCompensation(deckId: string): boolean {
-        return this.borderCompensation.get(deckId) ?? false;
+        // Default ON — inter-key gaps are physically present on every
+        // Stream Deck, so a contiguous-grid composite always misaligns
+        // the camera image across cap edges. Users can still turn it
+        // off per deck if they prefer the legacy look.
+        return this.borderCompensation.get(deckId) ?? true;
     }
 
     setBorderCompensation(deckId: string, on: boolean): void {
@@ -559,7 +563,7 @@ export class StreamDeckCameraStreamer {
     }
 
     private getCache(deck: DeckInfo): DeckCanvasCache | null {
-        const compensate = this.borderCompensation.get(deck.deckId) ?? false;
+        const compensate = this.borderCompensation.get(deck.deckId) ?? true;
         const ratio = this.borderRatioOverride.get(deck.deckId)
             ?? this.getDefaultBorderRatio(deck.model);
         const gapW = compensate ? Math.round(deck.keyImage.w * ratio.w) : 0;
