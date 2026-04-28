@@ -302,6 +302,23 @@ export class OptionsCodeComponent extends EnhancedComponent {
               <t t-else="">🖼 Image</t>
             </button>
           </t>
+          <!-- Settings menu (gear) — far right -->
+          <div class="code-viewer__settings">
+            <button class="code__btn code-viewer__settings-btn"
+                    t-att-aria-expanded="state.settingsOpen ? 'true' : 'false'"
+                    aria-label="Paramètres d'affichage"
+                    t-on-click="onToggleSettings">⚙</button>
+            <ul t-if="state.settingsOpen" class="code-viewer__settings-menu" role="menu">
+              <li role="menuitemcheckbox" t-att-aria-checked="state.softWrap ? 'true' : 'false'">
+                <label class="code-viewer__settings-row">
+                  <input type="checkbox"
+                         t-att-checked="state.softWrap"
+                         t-on-change="onToggleSoftWrap" />
+                  <span>Retour à la ligne (soft-wrap)</span>
+                </label>
+              </li>
+            </ul>
+          </div>
         </div>
 
         <t t-if="state.fileLoading">
@@ -327,7 +344,8 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
         <!-- Code view (plain or highlighted) -->
         <t t-else="">
-          <div class="code-viewer__code">
+          <div class="code-viewer__code"
+               t-att-class="{ 'code-viewer__code--soft-wrap': state.softWrap }">
             <t t-if="state.fileLines.length === 0">
               <div class="code__empty">Fichier vide.</div>
             </t>
@@ -716,6 +734,10 @@ export class OptionsCodeComponent extends EnhancedComponent {
             editGitDiffFile: "",
             editGitCommitMessage: "",
             editGitLog: [] as GitCommit[],
+
+            // Display settings (gear menu in the file viewer)
+            settingsOpen: false,
+            softWrap: this._readSoftWrapPref(),
         });
 
         onWillDestroy(async () => { await this._codeService?.disconnect(); });
@@ -1168,6 +1190,30 @@ export class OptionsCodeComponent extends EnhancedComponent {
         } else if (this.state.fileLang === "image") {
             this.state.fileViewMode = this.state.fileViewMode === "image" ? "code" : "image";
         }
+    }
+
+    // ── Display settings (gear menu) ──────────────────────────────────────────
+
+    onToggleSettings(): void {
+        this.state.settingsOpen = !this.state.settingsOpen;
+    }
+
+    onToggleSoftWrap(): void {
+        this.state.softWrap = !this.state.softWrap;
+        this._writeSoftWrapPref(this.state.softWrap);
+    }
+
+    private _readSoftWrapPref(): boolean {
+        try {
+            return localStorage.getItem("options.code.softWrap") === "true";
+        } catch {
+            return false;
+        }
+    }
+
+    private _writeSoftWrapPref(v: boolean): void {
+        try { localStorage.setItem("options.code.softWrap", v ? "true" : "false"); }
+        catch { /* ignore */ }
     }
 
     // ── Line editing (ssh-path only) ──────────────────────────────────────────
