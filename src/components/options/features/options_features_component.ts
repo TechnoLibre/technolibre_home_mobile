@@ -314,6 +314,9 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                                   t-att-class="'features__status-chip--' + selectedNode.status">
                                 <t t-esc="statusLabel(selectedNode.status)"/>
                             </span>
+                            <button class="features__detail-close"
+                                    aria-label="Fermer le détail"
+                                    t-on-click="onCloseDetail">✕</button>
                         </div>
                         <p t-if="selectedNode.description"
                            class="features__description"
@@ -578,6 +581,10 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
 
     onSelect(id: string): void {
         this.state.selectedId = id;
+    }
+
+    onCloseDetail(): void {
+        this.state.selectedId = "";
     }
 
     onDemo(): void {
