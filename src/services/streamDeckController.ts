@@ -108,12 +108,21 @@ export class StreamDeckController {
             }),
         );
 
-        // When the page becomes visible again (phone unlock, app brought
-        // back to foreground), repaint every known deck to recover from
-        // any background flicker that may have left the LCD blank.
+        // Blank every deck while the page is hidden (phone locked /
+        // app backgrounded). Key events don't reach JS during pause,
+        // so a still-painted LCD just shows a stale UI the user can't
+        // interact with — better to clear it. On the way back, we
+        // repaint Note as the home tile.
         document.addEventListener("visibilitychange", () => {
             if (this.cameraStreaming) return;
-            if (this._isHidden()) return;
+            if (this._isHidden()) {
+                for (const info of this.decks.values()) {
+                    StreamDeckPlugin.reset({ deckId: info.deckId }).catch((e) =>
+                        console.warn("[streamdeck] blank on hidden:", e),
+                    );
+                }
+                return;
+            }
             for (const info of this.decks.values()) {
                 this._renderHome(info).catch((e) =>
                     console.warn("[streamdeck] repaint on visible:", e),

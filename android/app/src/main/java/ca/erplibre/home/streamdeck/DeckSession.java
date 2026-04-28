@@ -53,6 +53,17 @@ public final class DeckSession {
 
     private Thread readerThread;
     private Thread writerThread;
+    /** Heartbeat sends a benign GET_REPORT on EP0 every HEARTBEAT_MS
+     *  while the session is open. Without it, the USB bus enters
+     *  selective suspend within ~1 s after the phone screen turns off
+     *  (PARTIAL_WAKE_LOCK keeps the CPU awake but doesn't drive bus
+     *  traffic), and the deck firmware reacts to the SOF starvation
+     *  by pulsing LCD brightness at ~1 Hz — visible as fast dim
+     *  flicker on Plus + XL during sleep. A control transfer is the
+     *  cheapest activity we can produce; reader interrupt-IN tokens
+     *  alone aren't enough on at least Pixel 6 / ThinkPhone kernels. */
+    private Thread heartbeatThread;
+    private static final long HEARTBEAT_MS = 700;
     private volatile boolean running = false;
     /** Last known pressed-state per key. Used to dedupe keyChanged
      *  emissions in polled mode where the device returns the full
@@ -203,10 +214,13 @@ public final class DeckSession {
         lastKeyPressed = new boolean[spec.keyCount];
         readerThread = new Thread(this::readerLoop, "deck-reader-" + serial);
         writerThread = new Thread(this::writerLoop, "deck-writer-" + serial);
+        heartbeatThread = new Thread(this::heartbeatLoop, "deck-heartbeat-" + serial);
         readerThread.setDaemon(true);
         writerThread.setDaemon(true);
+        heartbeatThread.setDaemon(true);
         readerThread.start();
         writerThread.start();
+        heartbeatThread.start();
 
         emitLifecycle("deckConnected", null);
     }
@@ -217,6 +231,7 @@ public final class DeckSession {
         queue.closeAndDrainAsDropped();
         if (readerThread != null) readerThread.interrupt();
         if (writerThread != null) writerThread.interrupt();
+        if (heartbeatThread != null) heartbeatThread.interrupt();
         if (connection != null) {
             try { connection.releaseInterface(iface); } catch (Exception ignored) {}
             try { connection.close(); } catch (Exception ignored) {}
@@ -270,6 +285,39 @@ public final class DeckSession {
         int wValue = (0x03 << 8) | (payload[0] & 0xFF);
         int sent = connection.controlTransfer(0x21, 0x09, wValue, 0, payload, payload.length, 1000);
         if (sent < 0) throw new DeckIoException("reset_failed:" + sent);
+    }
+
+    /** Periodic GET_REPORT on EP0 to keep the USB bus visibly active.
+     *  Without it, kernels implementing aggressive USB selective
+     *  suspend (Pixel 6, Lenovo ThinkPhone, Motorola Edge 50 — observed
+     *  on all three) stop sending SOFs after ~1 s of phone screen-off
+     *  and the deck firmware pulses LCD brightness at ~1 Hz. The
+     *  control transfer is read-only (firmware-version feature report)
+     *  and shares no endpoint with the reader (which polls
+     *  interrupt-IN) or the writer (which sends bulk-OUT), so the
+     *  three threads don't contend.
+     *
+     *  Heartbeat failures are logged and swallowed — the deck might
+     *  briefly hang during high writer queue pressure (e.g., camera
+     *  streaming saturating bulk-OUT) and we don't want to tear the
+     *  session down for what's almost always a transient stall. */
+    private void heartbeatLoop() {
+        int reportId = (spec.transport == DeckSpec.TransportKind.V2) ? 0x05 : 0x04;
+        byte[] buf = new byte[32];
+        while (running) {
+            try {
+                Thread.sleep(HEARTBEAT_MS);
+            } catch (InterruptedException e) {
+                return;
+            }
+            if (!running) return;
+            try {
+                connection.controlTransfer(0xa1, 0x01,
+                    (0x03 << 8) | reportId, 0, buf, buf.length, 500);
+            } catch (Throwable t) {
+                Log.w(TAG, "heartbeat failed (continuing)", t);
+            }
+        }
     }
 
     private String readSerial() throws DeckIoException {
