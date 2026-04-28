@@ -423,6 +423,23 @@ export class StreamDeckCameraStreamer {
     async stop(): Promise<void> {
         if (!this.active) return;
         this.active = false;
+        // Flip the controller flag *synchronously* up front. The async
+        // tail of this method (listener removal, repaintAll) takes
+        // 200–500 ms; without this, presses during that window would
+        // still be swallowed by the controller's "while streaming,
+        // ignore Note key" guard, forcing the user to mash the deck
+        // until cleanup finished.
+        this.controller.setCameraStreaming(false);
+        // Drop every pending camera frame from the writer queue on each
+        // deck. ~32 keys × N frames worth of bulk-OUT was pinning the
+        // firmware busy for ~300 ms after stop, during which Note-key
+        // presses got swallowed by the firmware itself (not just our
+        // listener race above). Fire-and-forget — failure here just
+        // means a few stale frames will paint, which is harmless.
+        for (const deckId of this.decks.keys()) {
+            StreamDeckPlugin.clearPendingWrites({ deckId }).catch((e) =>
+                console.warn(`[camera-streamer] clearPendingWrites deck=${deckId}:`, e));
+        }
         if (this.timer !== null) {
             clearInterval(this.timer);
             this.timer = null;
@@ -444,7 +461,6 @@ export class StreamDeckCameraStreamer {
             }
             this.stream = null;
         }
-        this.controller.setCameraStreaming(false);
         this.notifyActive();
         // Repaint Note on every deck so the user lands back on the
         // familiar home tile.

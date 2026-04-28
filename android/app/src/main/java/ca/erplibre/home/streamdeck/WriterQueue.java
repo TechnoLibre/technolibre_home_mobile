@@ -47,4 +47,17 @@ public final class WriterQueue {
         latest.clear();
         notifyAll();
     }
+
+    /** Drop every queued job without closing the queue. Used when the
+     *  camera streamer ends and we don't want the writer thread to
+     *  spend the next few hundred ms draining stale frames — that
+     *  bulk-OUT pressure makes the deck firmware miss button presses
+     *  long after the user expects the deck back to "Note". */
+    public synchronized int dropPending() {
+        int n = queue.size();
+        for (WriteJob j : queue) j.resolveDropped();
+        queue.clear();
+        latest.clear();
+        return n;
+    }
 }

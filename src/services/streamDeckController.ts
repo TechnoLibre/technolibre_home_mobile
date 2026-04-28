@@ -128,16 +128,23 @@ export class StreamDeckController {
         this.listeners.push(
             await StreamDeckPlugin.addListener("keyChanged", async (ev) => {
                 if (!ev.pressed) return;
+                console.info(`[streamdeck-ctrl] keyChanged key=${ev.key} streaming=${this.cameraStreaming}`);
                 // While the camera streamer owns the deck, the streamer
                 // itself listens to keyChanged to stop. Suppress home
                 // navigation so the press doesn't double-trigger.
-                if (this.cameraStreaming) return;
+                if (this.cameraStreaming) {
+                    console.info("[streamdeck-ctrl] bail: cameraStreaming");
+                    return;
+                }
                 if (ev.key !== 0) return;
 
                 // Debounce — rapid mash on the deck used to fire dozens
                 // of route transitions in flight and crash the app.
                 const now = Date.now();
-                if (now - this.lastNotePressAt < StreamDeckController.NOTE_DEBOUNCE_MS) return;
+                if (now - this.lastNotePressAt < StreamDeckController.NOTE_DEBOUNCE_MS) {
+                    console.info(`[streamdeck-ctrl] bail: debounce ${now - this.lastNotePressAt}ms`);
+                    return;
+                }
                 this.lastNotePressAt = now;
 
                 // If we're already sitting on a blank note, stay put —
@@ -146,9 +153,13 @@ export class StreamDeckController {
                 // Pressing it on a note that has content does spawn a
                 // new note (that's the way to start a second one without
                 // walking back to the home screen).
-                if (await this._currentNoteIsBlank()) return;
+                if (await this._currentNoteIsBlank()) {
+                    console.info(`[streamdeck-ctrl] bail: current note blank (path=${window.location.pathname})`);
+                    return;
+                }
 
                 const newId = this.noteService.getNewId();
+                console.info(`[streamdeck-ctrl] navigate → /note/${newId}`);
                 this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
                     url: `/note/${newId}`,
                 });
