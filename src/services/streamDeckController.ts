@@ -35,14 +35,23 @@ export class StreamDeckController {
      *  brightness on visibility:visible after we dim to 0 on hidden. */
     private lastBrightness = new Map<string, number>();
     private static readonly DEFAULT_BRIGHTNESS = 50;
-    /** Minimum ms between Note-key navigations. Set just high enough
-     *  to keep WebView's IME show/hide pipeline from eating itself
-     *  when the user mashes — we observed a SIGSEGV in HWUI's
-     *  RenderThread after 3+ keyboard show/hide cycles in under
-     *  one second on Pixel 6. 250 ms allows ~4 presses/s, plenty
-     *  for intentional rapid use without triggering the crash. */
+    /** When the page became hidden — used to decide whether to do a
+     *  full session restart on visible. Brief hides (<5 s, e.g. a
+     *  notification briefly waking the screen) don't need it; a real
+     *  sleep cycle does, because the reader's interrupt-IN endpoint
+     *  consistently goes silent for ~10 s post-wake even though the
+     *  USB bus stayed alive via the heartbeat. */
+    private hiddenAt = 0;
+    private static readonly RESTART_AFTER_HIDDEN_MS = 5000;
+    /** Minimum ms between Note-key navigations. Tuned to stay below
+     *  the ~8 keyboard-show/hide cycles per second threshold that
+     *  reproduced a SIGSEGV in HWUI's RenderThread on Pixel 6, while
+     *  still letting an intentional 100–150 ms double-tap register
+     *  both presses. 250 ms felt laggy on a deliberate two-tap;
+     *  150 ms passes both clicks through and still caps mash at
+     *  ~6.6/s — well under the crash threshold. */
     private lastNotePressAt = 0;
-    private static readonly NOTE_DEBOUNCE_MS = 250;
+    private static readonly NOTE_DEBOUNCE_MS = 150;
 
     constructor(
         private readonly eventBus: EventBusLike,
@@ -88,8 +97,18 @@ export class StreamDeckController {
         // deckConnected, and an unconditional paint flashes "Note" on
         // the LCD before USB suspends again.
         const repaintIfVisible = async (info: DeckInfo) => {
-            if (this.cameraStreaming) return;
             if (this._isHidden()) return;
+            // Re-applied unconditionally on every (re)connect so
+            // restartSessions on visibility:visible picks up the
+            // user's pre-sleep brightness — the firmware resets to
+            // its default on session reopen.
+            StreamDeckPlugin.setBrightness({
+                deckId: info.deckId,
+                percent: this.getBrightness(info.deckId),
+            }).catch((e) =>
+                console.warn(`[streamdeck] brightness on attach deckId=${info.deckId}:`, e),
+            );
+            if (this.cameraStreaming) return;
             await this._renderHome(info).catch((e) =>
                 console.warn(`[streamdeck] paint deckId=${info.deckId}:`, e),
             );
@@ -155,6 +174,7 @@ export class StreamDeckController {
         // the home tile.
         document.addEventListener("visibilitychange", () => {
             if (this._isHidden()) {
+                this.hiddenAt = Date.now();
                 for (const info of this.decks.values()) {
                     StreamDeckPlugin.setBrightness({
                         deckId: info.deckId, percent: 0,
@@ -162,6 +182,24 @@ export class StreamDeckController {
                         console.warn("[streamdeck] dim on hidden:", e),
                     );
                 }
+                return;
+            }
+            const hiddenFor = this.hiddenAt > 0 ? Date.now() - this.hiddenAt : 0;
+            this.hiddenAt = 0;
+            // After a real sleep cycle (>5 s), the deck's reader pipe
+            // can sit silent for ~10 s post-wake even with the
+            // heartbeat keeping the bus active. A full session
+            // restart re-creates the reader/writer threads from
+            // scratch and the next press lands instantly. The
+            // deckConnected listener above will repaint Note for each
+            // re-attached deck, so we don't repaint here. Brightness
+            // is reset to the firmware default on restart, so the
+            // restore call on the post-restart attach path picks up
+            // the user's value via the cache.
+            if (hiddenFor > StreamDeckController.RESTART_AFTER_HIDDEN_MS) {
+                StreamDeckPlugin.restartSessions().catch((e) =>
+                    console.warn("[streamdeck] restartSessions on visible:", e),
+                );
                 return;
             }
             for (const info of this.decks.values()) {
