@@ -38,16 +38,18 @@ public class FaceDetectionPlugin extends Plugin {
 
     private static final String TAG = "FaceDetectionPlugin";
 
-    // FAST mode + no landmarks/contours — we only need bounding boxes,
-    // and FAST roughly halves inference time vs. ACCURATE on Pixel-class
-    // hardware. min face size 0.15 trims noise from background blobs.
+    // ACCURATE mode + small minFaceSize. FAST returned 0/0/0/… on a
+    // Lenovo ThinkPhone test setup (well-lit indoor selfie); ACCURATE
+    // catches the same scene every tick. The 5 fps streamer cadence
+    // gives us a ~150 ms budget per detection — well above ACCURATE's
+    // ~50 ms median on a Snapdragon 7-class chip.
     private final FaceDetector detector = FaceDetection.getClient(
         new FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
             .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
-            .setMinFaceSize(0.15f)
+            .setMinFaceSize(0.02f)
             .build());
 
     @PluginMethod
@@ -74,6 +76,7 @@ public class FaceDetectionPlugin extends Plugin {
         InputImage image = InputImage.fromBitmap(bmp, 0);
         detector.process(image)
             .addOnSuccessListener(faces -> {
+                Log.d(TAG, "detect(" + w + "×" + h + ") → " + faces.size() + " faces");
                 JSArray arr = new JSArray();
                 for (Face f : faces) {
                     Rect r = f.getBoundingBox();

@@ -107,13 +107,24 @@ export class StreamDeckCameraStreamer {
     private faceDetectInFlight = false;
     /** Bounding boxes in normalised video coordinates (0..1). */
     private lastFaces: { x: number; y: number; w: number; h: number }[] = [];
-    /** Reused 320×180 canvas for the detection JPEG. ML Kit downscales
-     *  its input internally, so feeding it a smaller frame trims our
-     *  encode + JNI cost without hurting detection quality. */
+    /** How many detections have run since enable — surfaced in the UI
+     *  so the user can confirm the JNI round-trip is firing. */
+    private faceDetectCalls = 0;
+    /** How many of those returned ≥1 face. */
+    private faceDetectHits = 0;
+    /** Reused canvas for the detection JPEG. Sized to match the video
+     *  aspect ratio (long edge = FACE_DETECT_LONG_EDGE) so faces aren't
+     *  squashed when the user holds the phone portrait — getUserMedia
+     *  reports videoWidth/videoHeight in display orientation, and a
+     *  fixed-landscape canvas would non-uniformly stretch a portrait
+     *  feed enough to break ML Kit on selfie distance. */
     private faceCanvas: HTMLCanvasElement | null = null;
     private faceCtx: CanvasRenderingContext2D | null = null;
-    private static readonly FACE_DETECT_W = 320;
-    private static readonly FACE_DETECT_H = 180;
+    // 640 px on the long edge keeps ML Kit happy on small/distant faces
+    // — 320 shrunk a 1 m subject below the practical detector floor.
+    // Encoder cost stays negligible at q=0.5 (~25 KB JPEG, <2 ms
+    // toDataURL on Android WebView).
+    private static readonly FACE_DETECT_LONG_EDGE = 640;
     private active = false;
     private stream: MediaStream | null = null;
     private video: HTMLVideoElement | null = null;
@@ -219,6 +230,16 @@ export class StreamDeckCameraStreamer {
     setFaceDetect(on: boolean): void {
         this.faceDetect = !!on;
         if (!this.faceDetect) this.lastFaces = [];
+        this.faceDetectCalls = 0;
+        this.faceDetectHits = 0;
+    }
+
+    getFaceDetectStats(): { calls: number; hits: number; lastCount: number } {
+        return {
+            calls: this.faceDetectCalls,
+            hits: this.faceDetectHits,
+            lastCount: this.lastFaces.length,
+        };
     }
 
     private tickMs(): number {
@@ -448,10 +469,22 @@ export class StreamDeckCameraStreamer {
         if (!this.faceDetect || !this.video) return;
         if (this.faceDetectInFlight) return;
         if (this.video.readyState < 2) return;
-        if (!this.faceCanvas) {
+        const vw = this.video.videoWidth;
+        const vh = this.video.videoHeight;
+        if (vw === 0 || vh === 0) return;
+
+        // Size the detect canvas to the video aspect, long edge fixed.
+        // Reallocate when the aspect changes (camera flip, orientation
+        // change) so faces stay un-squashed on every frame.
+        const longEdge = StreamDeckCameraStreamer.FACE_DETECT_LONG_EDGE;
+        const cw = vw >= vh ? longEdge : Math.round(longEdge * vw / vh);
+        const ch = vh > vw ? longEdge : Math.round(longEdge * vh / vw);
+        if (!this.faceCanvas
+            || this.faceCanvas.width !== cw
+            || this.faceCanvas.height !== ch) {
             this.faceCanvas = document.createElement("canvas");
-            this.faceCanvas.width = StreamDeckCameraStreamer.FACE_DETECT_W;
-            this.faceCanvas.height = StreamDeckCameraStreamer.FACE_DETECT_H;
+            this.faceCanvas.width = cw;
+            this.faceCanvas.height = ch;
             this.faceCtx = this.faceCanvas.getContext("2d", { alpha: false });
         }
         const ctx = this.faceCtx;
@@ -469,12 +502,24 @@ export class StreamDeckCameraStreamer {
         const b64 = dataUrl.substring(comma + 1);
 
         this.faceDetectInFlight = true;
+        this.faceDetectCalls++;
         FaceDetectionPlugin.detectFaces({ jpegBase64: b64 })
             .then((r) => {
                 this.lastFaces = r.faces.map((f) => ({
                     x: f.x, y: f.y, w: f.width, h: f.height,
                 }));
+                if (this.lastFaces.length > 0) this.faceDetectHits++;
                 this.faceDetectInFlight = false;
+                // Throttled trace so logcat shows the pipeline alive
+                // without flooding when the camera is empty.
+                if (this.faceDetectCalls % 10 === 1
+                    || this.lastFaces.length > 0) {
+                    console.info(`[camera-streamer] face detect #${this.faceDetectCalls}`
+                        + ` → ${this.lastFaces.length} face(s)`
+                        + (this.lastFaces.length > 0
+                            ? ` first=${JSON.stringify(this.lastFaces[0])}`
+                            : ""));
+                }
             })
             .catch((e) => {
                 this.faceDetectInFlight = false;

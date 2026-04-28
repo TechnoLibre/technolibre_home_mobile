@@ -127,6 +127,11 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
                   reçoivent un cadre vert. Détection asynchrone, cadence
                   alignée sur le FPS du stream.
                 </p>
+                <p t-if="state.faceDetect" class="options-camera-stream__setting-hint">
+                  Diagnostic — appels: <strong t-esc="state.faceCalls" />,
+                  hits: <strong t-esc="state.faceHits" />,
+                  visages courants: <strong t-esc="state.faceLast" />
+                </p>
               </div>
             </div>
           </div>
@@ -147,10 +152,14 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
         facingMode: "environment" as "environment" | "user",
         skipIdentical: false,
         faceDetect: false,
+        faceCalls: 0,
+        faceHits: 0,
+        faceLast: 0,
     });
 
     private _listeners: PluginListenerHandle[] = [];
     private _unsubActive: (() => void) | null = null;
+    private _faceStatsTimer: ReturnType<typeof setInterval> | null = null;
 
     private get streamer(): StreamDeckCameraStreamer {
         return (this.env as any).streamDeckCameraStreamer;
@@ -180,7 +189,30 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
                 try { await h.remove(); } catch { /* ignore */ }
             }
             this._unsubActive?.();
+            if (this._faceStatsTimer !== null) {
+                clearInterval(this._faceStatsTimer);
+                this._faceStatsTimer = null;
+            }
         });
+    }
+
+    /** Sync the face-detect counters from the streamer at 1 Hz while
+     *  detection is on. Cheap getter, no DOM thrash since Owl diffs the
+     *  three numbers and only repaints if they change. */
+    private startFaceStatsPoll(): void {
+        if (this._faceStatsTimer !== null) return;
+        this._faceStatsTimer = setInterval(() => {
+            const s = this.streamer.getFaceDetectStats();
+            this.state.faceCalls = s.calls;
+            this.state.faceHits = s.hits;
+            this.state.faceLast = s.lastCount;
+        }, 1000);
+    }
+
+    private stopFaceStatsPoll(): void {
+        if (this._faceStatsTimer === null) return;
+        clearInterval(this._faceStatsTimer);
+        this._faceStatsTimer = null;
     }
 
     get isToggleDisabled(): boolean {
@@ -256,6 +288,8 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
         const input = ev.target as HTMLInputElement;
         this.streamer.setFaceDetect(input.checked);
         this.syncFromStreamer();
+        if (input.checked) this.startFaceStatsPoll();
+        else this.stopFaceStatsPoll();
     }
 
     private syncFromStreamer(): void {
