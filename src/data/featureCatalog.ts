@@ -88,6 +88,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Parcourir, filtrer par tag, trier par priorité/date.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Owl component renders the notes array as Sortable.js list — drag "
+                        + "handles reorder via persistDisplayOrder. Search filters client-side "
+                        + "on title and entry text; tag chips toggle a Set of active tag ids "
+                        + "that AND with the text query. Biometry gate (BiometryUtils) wraps "
+                        + "risky actions like delete.",
+                    fr: "Composant Owl rend les notes en liste Sortable.js — handles de drag "
+                        + "réordonnent via persistDisplayOrder. La recherche filtre côté client "
+                        + "sur titre + texte des entrées; les chips de tags togglent un Set "
+                        + "d'ids qui AND avec la query texte. Garde biométrique (BiometryUtils) "
+                        + "protège les actions risquées (suppression).",
+                },
                 demo: { kind: "route", url: "/notes" },
                 files: [
                     "src/components/note_list/note_list_component.ts",
@@ -105,6 +117,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Édition d'une note : titre, contrôles, liste d'entrées.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Top-level component compositing NoteTopControls (title, tags, "
+                        + "priority, date), NoteContent (entry list), NoteBottomControls (add "
+                        + "buttons) and the shared TagManager + DatePicker popovers. State is "
+                        + "mirrored into NoteService on every change; sync flags write through "
+                        + "to the per-server sync_status table.",
+                    fr: "Composant top-level qui compose NoteTopControls (titre, tags, "
+                        + "priorité, date), NoteContent (liste d'entrées), NoteBottomControls "
+                        + "(boutons d'ajout) et les popovers partagés TagManager + DatePicker. "
+                        + "L'état est miroité dans NoteService à chaque modif; les flags sync "
+                        + "écrivent vers la table sync_status par serveur.",
+                },
                 demo: { kind: "route", url: "/note/demo" },
                 files: [
                     "src/components/note/note_component.ts",
@@ -131,6 +155,15 @@ export const FEATURE_TREE: FeatureNode[] = [
                             fr: "Entrée texte avec autosave.",
                         },
                         status: "stable",
+                        howItWorks: {
+                            en: "Bare <textarea> with t-model two-way binding to params.text. No "
+                                + "autosave loop — the parent NoteContent watches the entry array and "
+                                + "persists on patch. Keeps the component zero-state, AOT-friendly.",
+                            fr: "<textarea> simple avec liaison t-model bidirectionnelle sur "
+                                + "params.text. Pas de boucle d'autosave — le parent NoteContent observe "
+                                + "le tableau d'entrées et persiste au patch. Composant sans état, "
+                                + "compatible AOT.",
+                        },
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/text/note_entry_text_component.ts"],
                     },
@@ -143,6 +176,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                         },
                         permissions: ["camera"],
                         status: "stable",
+                        howItWorks: {
+                            en: "@capacitor/camera opens either the camera (CameraSource.Camera) or "
+                                + "the gallery picker via a Dialog choice. The result is a base64 "
+                                + "dataUrl stored as the entry payload — no native file copy; rendering "
+                                + "uses the dataUrl directly in <img>.",
+                            fr: "@capacitor/camera ouvre soit la caméra (CameraSource.Camera) soit le "
+                                + "sélecteur de galerie via un Dialog. Le résultat est un dataUrl base64 "
+                                + "stocké comme payload — pas de copie native; le rendu utilise le "
+                                + "dataUrl directement dans <img>.",
+                        },
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/photo/note_entry_photo_component.ts"],
                     },
@@ -155,6 +198,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                         },
                         permissions: ["camera", "microphone"],
                         status: "stable",
+                        howItWorks: {
+                            en: "Capacitor Camera in video mode returns a file URI; "
+                                + "generateVideoThumbnail (videoThumbnailUtils) decodes the first frame "
+                                + "to a poster image stored alongside the URI. The "
+                                + "migrateVideoThumbnails migration backfills posters for entries "
+                                + "created before that field existed.",
+                            fr: "@capacitor/camera en mode vidéo retourne un URI de fichier; "
+                                + "generateVideoThumbnail (videoThumbnailUtils) décode la première frame "
+                                + "comme poster stocké à côté de l'URI. La migration "
+                                + "migrateVideoThumbnails backfille les posters pour les entrées créées "
+                                + "avant l'ajout du champ.",
+                        },
                         demo: { kind: "route", url: "/note/demo" },
                         files: [
                             "src/components/note_entry/video/note_entry_video_component.ts",
@@ -172,6 +227,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                         permissions: ["microphone"],
                         dependsOn: ["transcription.bridge"],
                         status: "stable",
+                        howItWorks: {
+                            en: "capacitor-voice-recorder records into base64 (in-memory) and "
+                                + "writeFile() into Directory.Data under audio/<noteId>/<entryId>. The "
+                                + "entry stores the relative path; playback reads through convertFileSrc "
+                                + "to bypass the WebView origin check. If transcription is enabled, the "
+                                + "path is passed to TranscriptionService on stop.",
+                            fr: "capacitor-voice-recorder enregistre en base64 (mémoire) puis "
+                                + "writeFile() dans Directory.Data sous audio/<noteId>/<entryId>. "
+                                + "L'entrée stocke le path relatif; la lecture passe par convertFileSrc "
+                                + "pour contourner le check d'origine WebView. Si la transcription est "
+                                + "activée, le path est envoyé à TranscriptionService au stop.",
+                        },
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/audio/note_entry_audio_component.ts"],
                     },
@@ -183,6 +250,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                             fr: "Associer une date à la note (échéance, événement…).",
                         },
                         status: "stable",
+                        howItWorks: {
+                            en: "Click the formatted date button → emits OPEN_DATEPICKER on the event "
+                                + "bus with the entry id. The shared DatePickerComponent listens, opens "
+                                + "its popover anchored to the button, and writes back via "
+                                + "DATE_SELECTED. One picker instance is shared across all date entries.",
+                            fr: "Clic sur le bouton de date formaté → émet OPEN_DATEPICKER sur l'event "
+                                + "bus avec l'id de l'entrée. Le DatePickerComponent partagé écoute, "
+                                + "ouvre son popover ancré au bouton, et écrit en retour via "
+                                + "DATE_SELECTED. Une seule instance de picker pour toutes les entrées "
+                                + "date.",
+                        },
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/date/note_entry_date_component.ts"],
                     },
@@ -195,6 +273,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                         },
                         permissions: ["location"],
                         status: "stable",
+                        howItWorks: {
+                            en: "Stores latitude/longitude/accuracy as a JSON string. Display button "
+                                + "opens an HTML popover (browser-native popover API) showing formatted "
+                                + "coords and accuracy radius. Capture happens in the parent note editor "
+                                + "via Geolocation.getCurrentPosition.",
+                            fr: "Stocke latitude/longitude/precision comme JSON. Le bouton d'affichage "
+                                + "ouvre un popover HTML (API popover native du browser) avec coords "
+                                + "formatées et rayon de precision. La capture se fait dans le composant "
+                                + "note parent via Geolocation.getCurrentPosition.",
+                        },
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/geolocation/note_entry_geolocation_component.ts"],
                     },
@@ -206,6 +294,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                             fr: "Coquille commune qui enveloppe chaque type d'entrée.",
                         },
                         status: "stable",
+                        howItWorks: {
+                            en: "NoteEntryComponent dispatches to the right concrete entry component "
+                                + "by props.type ('text', 'photo', 'video' …) — the parent only renders "
+                                + "<NoteEntryComponent type='photo'> and lets the framework pick. "
+                                + "NoteEntryDrag and NoteEntryDelete are shared affordances rendered by "
+                                + "the framework, not the entry components themselves.",
+                            fr: "NoteEntryComponent dispatche vers le bon composant d'entrée concret "
+                                + "selon props.type ('text', 'photo', 'video' …) — le parent rend juste "
+                                + "<NoteEntryComponent type='photo'> et laisse le framework choisir. "
+                                + "NoteEntryDrag et NoteEntryDelete sont des affordances partagées "
+                                + "rendues par le framework, pas par les entrées elles-mêmes.",
+                        },
                         demo: { kind: "route", url: "/note/demo" },
                         files: [
                             "src/components/note_entry/note_entry_component.ts",
@@ -223,6 +323,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Étiquetage hiérarchique, couleur, filtre par tag.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Tags form a tree (parent_id self-reference) with a colour per tag. "
+                        + "TagManager popover shows a search box + flat list with indentation by "
+                        + "depth. TagService caches the full set in memory; invalidateCache() is "
+                        + "called on add/edit/delete so subsequent reads hit SQLite again. "
+                        + "getAllDescendantIds is used when filtering by a parent tag (matches "
+                        + "every descendant).",
+                    fr: "Tags forment un arbre (auto-référence parent_id) avec une couleur par "
+                        + "tag. Le popover TagManager affiche une recherche + liste plate "
+                        + "indentée par profondeur. TagService cache l'ensemble en mémoire; "
+                        + "invalidateCache() est appelé à add/edit/delete pour forcer la "
+                        + "prochaine lecture vers SQLite. getAllDescendantIds est utilisé pour "
+                        + "filtrer par tag parent (matche tous les descendants).",
+                },
                 demo: { kind: "route", url: "/notes" },
                 files: [
                     "src/components/tags/tag_notes_component.ts",
@@ -241,6 +355,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Badge de priorité 1–4 pour faire ressortir l'urgent.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Eisenhower quadrant: 1 = urgent+important, 2 = important, 3 = urgent, "
+                        + "4 = neither. Stored as an INTEGER in notes.priority (NULL = unset). "
+                        + "NoteList sorts by priority asc then date desc when the priority "
+                        + "filter chip is active. addNotePriority migration adds the column to "
+                        + "existing DBs.",
+                    fr: "Quadrant Eisenhower : 1 = urgent+important, 2 = important, 3 = "
+                        + "urgent, 4 = ni l'un ni l'autre. Stocké en INTEGER dans notes.priority "
+                        + "(NULL = absent). NoteList trie par priority asc puis date desc quand "
+                        + "le chip filtre priorité est actif. Migration addNotePriority ajoute "
+                        + "la colonne aux DB existantes.",
+                },
                 demo: { kind: "route", url: "/note/demo" },
                 files: [
                     "src/components/note/top_controls/note_top_controls_component.ts",
@@ -255,6 +381,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Popover calendrier pour les entrées de date.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Picks renderer based on Capacitor.isNativePlatform(): on Android the "
+                        + "native @capawesome-team/capacitor-datetime-picker spinner; on web the "
+                        + "air-datepicker calendar inside an HTML popover. Both emit a unified "
+                        + "DATE_SELECTED on the event bus so callers don't branch.",
+                    fr: "Sélectionne le renderer selon Capacitor.isNativePlatform() : sur "
+                        + "Android le spinner natif @capawesome-team/capacitor-datetime-picker; "
+                        + "sur web le calendrier air-datepicker dans un popover HTML. Les deux "
+                        + "émettent un DATE_SELECTED unifié sur l'event bus pour éviter de "
+                        + "brancher chez l'appelant.",
+                },
                 demo: { kind: "route", url: "/note/demo" },
                 files: [
                     "src/components/note/date_picker/date_picker_component.ts",
@@ -269,6 +406,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     fr: "Opérations DB sur les notes et sous-services.",
                 },
                 status: "stable",
+                howItWorks: {
+                    en: "Single connection wrapper composing three subservices: "
+                        + "NoteCrudSubservice (add/edit/delete/clear), NoteEntrySubservice "
+                        + "(per-entry add/remove/reorder) and NoteIntentSubservice "
+                        + "(newNoteWithText/Image/Video — used by the share-intent handlers). "
+                        + "All three share the same DatabaseService instance and broadcast "
+                        + "NOTES_CHANGED on the event bus after writes.",
+                    fr: "Wrapper de connexion unique composant 3 sous-services : "
+                        + "NoteCrudSubservice (add/edit/delete/clear), NoteEntrySubservice "
+                        + "(add/remove/reorder par entrée) et NoteIntentSubservice "
+                        + "(newNoteWithText/Image/Video — utilisés par les handlers de "
+                        + "share-intent). Les 3 partagent la même DatabaseService et émettent "
+                        + "NOTES_CHANGED sur l'event bus après écriture.",
+                },
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/note/noteService.ts",
