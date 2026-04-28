@@ -65,6 +65,11 @@ export class OptionsComponent extends EnhancedComponent {
           </a>
         </li>
         <li class="options-list__item">
+          <a href="#" role="button" aria-label="Fonctionnalités" t-on-click.stop.prevent="onFeaturesClick">
+            🗺️ Fonctionnalités ›
+          </a>
+        </li>
+        <li class="options-list__item">
           <a href="#" role="button" aria-label="ERPLibre" t-on-click.stop.prevent="onErplibreClick">
             🏠 ERPLibre ›
           </a>
@@ -111,6 +116,10 @@ export class OptionsComponent extends EnhancedComponent {
 
 	onCodeClick() {
 		this.navigate("/options/code");
+	}
+
+	onFeaturesClick() {
+		this.navigate("/options/features");
 	}
 
 	onErplibreClick() {

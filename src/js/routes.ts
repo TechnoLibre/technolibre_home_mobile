@@ -18,6 +18,7 @@ import { OptionsTranscriptionComponent } from "../components/options/transcripti
 import { OptionsProcessesComponent } from "../components/options/processes/options_processes_component";
 import { OptionsResourcesComponent } from "../components/options/resources/options_resources_component";
 import { OptionsCodeComponent } from "../components/options/code/options_code_component";
+import { OptionsFeaturesComponent } from "../components/options/features/options_features_component";
 import { TagNotesComponent } from "../components/tags/tag_notes_component";
 
 export interface Route {
@@ -47,6 +48,7 @@ export const routes: Route[] = [
 	{ pathname: "/options/processes", component: OptionsProcessesComponent },
 	{ pathname: "/options/resources", component: OptionsResourcesComponent },
 	{ pathname: "/options/code", component: OptionsCodeComponent },
+	{ pathname: "/options/features", component: OptionsFeaturesComponent },
 	{ pathname: "/options", component: OptionsComponent },
 	{ pathname: "*", component: HomeComponent }
 ];

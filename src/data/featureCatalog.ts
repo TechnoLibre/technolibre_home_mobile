@@ -1,0 +1,1250 @@
+/**
+ * Feature catalogue — single source of truth for the "what's in this
+ * app" tree rendered under Options → Fonctionnalités. Every leaf MUST
+ * have at least one path in `files`; paths are relative to the
+ * mobile/erplibre_home_mobile/ directory.
+ *
+ * When you add or move a feature, update this file in the same
+ * commit. See .claude/rules/01-feature-catalog.md for the full rule.
+ *
+ * `howItWorks` is intentionally left empty for now — to be filled in
+ * a follow-up pass once each entry has been reviewed.
+ */
+export interface FeatureI18n {
+    en: string;
+    fr: string;
+}
+
+export type FeatureDemo =
+    /** Navigate to an in-app route to demo the feature */
+    | { kind: "route"; url: string }
+    /** Open the options screen and let the user expand a section */
+    | { kind: "options"; sectionId?: string }
+    /** Background service / no UI — explain why it can't be demoed */
+    | { kind: "none"; reason?: FeatureI18n };
+
+export interface FeatureNode {
+    /** kebab-case unique id, dotted by hierarchy */
+    id: string;
+    label: FeatureI18n;
+    description?: FeatureI18n;
+    /** Longer explanation of internals — fill in incrementally */
+    howItWorks?: FeatureI18n;
+    children?: FeatureNode[];
+    /** Source files implementing the feature */
+    files?: string[];
+    /** How a user can demo / launch the feature in the app */
+    demo?: FeatureDemo;
+}
+
+const NONE_BG: FeatureDemo = {
+    kind: "none",
+    reason: {
+        en: "Background service — no direct UI demo.",
+        fr: "Service en arrière-plan — pas de démo UI directe.",
+    },
+};
+
+const NONE_PLUMBING: FeatureDemo = {
+    kind: "none",
+    reason: {
+        en: "Internal plumbing — used by other features.",
+        fr: "Tuyauterie interne — utilisée par d'autres fonctionnalités.",
+    },
+};
+
+export const FEATURE_TREE: FeatureNode[] = [
+    {
+        id: "notes",
+        label: { en: "Notes", fr: "Notes" },
+        description: {
+            en: "Multi-entry note-taking with tags, priorities and share intents.",
+            fr: "Prise de note multi-entrées avec tags, priorités et partage.",
+        },
+        demo: { kind: "route", url: "/notes" },
+        children: [
+            {
+                id: "notes.list",
+                label: { en: "List & filters", fr: "Liste & filtres" },
+                description: {
+                    en: "Browse notes, filter by tag, sort by priority/date.",
+                    fr: "Parcourir, filtrer par tag, trier par priorité/date.",
+                },
+                demo: { kind: "route", url: "/notes" },
+                files: [
+                    "src/components/note_list/note_list_component.ts",
+                    "src/components/note_list/note_list_component.scss",
+                    "src/components/note_list/controls/note_list_controls_component.ts",
+                    "src/components/note_list/item/note_list_item_component.ts",
+                    "src/components/note_list/item/handle/note_list_item_handle_component.ts",
+                ],
+            },
+            {
+                id: "notes.editor",
+                label: { en: "Note editor", fr: "Éditeur de note" },
+                description: {
+                    en: "Edit a single note with title, controls and entry list.",
+                    fr: "Édition d'une note : titre, contrôles, liste d'entrées.",
+                },
+                demo: { kind: "route", url: "/note/demo" },
+                files: [
+                    "src/components/note/note_component.ts",
+                    "src/components/note/note_component.scss",
+                    "src/components/note/content/note_content_component.ts",
+                    "src/components/note/top_controls/note_top_controls_component.ts",
+                    "src/components/note/bottom_controls/note_bottom_controls_component.ts",
+                ],
+            },
+            {
+                id: "notes.entries",
+                label: { en: "Entry types", fr: "Types d'entrées" },
+                description: {
+                    en: "Heterogeneous entries inside a note: text, photo, video…",
+                    fr: "Entrées hétérogènes dans une note : texte, photo, vidéo…",
+                },
+                demo: { kind: "route", url: "/note/demo" },
+                children: [
+                    {
+                        id: "notes.entries.text",
+                        label: { en: "Text", fr: "Texte" },
+                        description: {
+                            en: "Plain-text entry with autosave.",
+                            fr: "Entrée texte avec autosave.",
+                        },
+                        demo: { kind: "route", url: "/note/demo" },
+                        files: ["src/components/note_entry/text/note_entry_text_component.ts"],
+                    },
+                    {
+                        id: "notes.entries.photo",
+                        label: { en: "Photo", fr: "Photo" },
+                        description: {
+                            en: "Capture or pick a photo, store in note.",
+                            fr: "Capturer ou choisir une photo, l'attacher à la note.",
+                        },
+                        demo: { kind: "route", url: "/note/demo" },
+                        files: ["src/components/note_entry/photo/note_entry_photo_component.ts"],
+                    },
+                    {
+                        id: "notes.entries.video",
+                        label: { en: "Video", fr: "Vidéo" },
+                        description: {
+                            en: "Record/attach a video, generate thumbnail.",
+                            fr: "Enregistrer/attacher une vidéo, générer une miniature.",
+                        },
+                        demo: { kind: "route", url: "/note/demo" },
+                        files: [
+                            "src/components/note_entry/video/note_entry_video_component.ts",
+                            "src/utils/videoThumbnailUtils.ts",
+                            "src/services/migrations/migrateVideoThumbnails.ts",
+                        ],
+                    },
+                    {
+                        id: "notes.entries.audio",
+                        label: { en: "Audio", fr: "Audio" },
+                        description: {
+                            en: "Record an audio clip, optional transcription.",
+                            fr: "Enregistrer un clip audio, transcription optionnelle.",
+                        },
+                        demo: { kind: "route", url: "/note/demo" },
+                        files: ["src/components/note_entry/audio/note_entry_audio_component.ts"],
+                    },
+                    {
+                        id: "notes.entries.date",
+                        label: { en: "Date", fr: "Date" },
+                        description: {
+                            en: "Pin a date to the note (deadline, event, etc).",
+                            fr: "Associer une date à la note (échéance, événement…).",
+                        },
+                        demo: { kind: "route", url: "/note/demo" },
+                        files: ["src/components/note_entry/date/note_entry_date_component.ts"],
+                    },
+                    {
+                        id: "notes.entries.geolocation",
+                        label: { en: "Geolocation", fr: "Géolocalisation" },
+                        description: {
+                            en: "Capture current GPS position into the note.",
+                            fr: "Capturer la position GPS courante dans la note.",
+                        },
+                        demo: { kind: "route", url: "/note/demo" },
+                        files: ["src/components/note_entry/geolocation/note_entry_geolocation_component.ts"],
+                    },
+                    {
+                        id: "notes.entries.framework",
+                        label: { en: "Framework (drag, delete)", fr: "Cadre commun (drag, delete)" },
+                        description: {
+                            en: "Shared shell wrapping every entry type.",
+                            fr: "Coquille commune qui enveloppe chaque type d'entrée.",
+                        },
+                        demo: { kind: "route", url: "/note/demo" },
+                        files: [
+                            "src/components/note_entry/note_entry_component.ts",
+                            "src/components/note_entry/drag/note_entry_drag_component.ts",
+                            "src/components/note_entry/delete/note_entry_delete_component.ts",
+                        ],
+                    },
+                ],
+            },
+            {
+                id: "notes.tags",
+                label: { en: "Tags", fr: "Tags" },
+                description: {
+                    en: "Hierarchical labelling, colour, filtering by tag.",
+                    fr: "Étiquetage hiérarchique, couleur, filtre par tag.",
+                },
+                demo: { kind: "route", url: "/notes" },
+                files: [
+                    "src/components/tags/tag_notes_component.ts",
+                    "src/components/note/tag_manager/tag_manager_component.ts",
+                    "src/services/tagService.ts",
+                    "src/services/migrations/addTagsTable.ts",
+                    "src/models/tag.ts",
+                ],
+            },
+            {
+                id: "notes.priority",
+                label: { en: "Priority", fr: "Priorité" },
+                description: {
+                    en: "1–4 priority badge to surface critical notes.",
+                    fr: "Badge de priorité 1–4 pour faire ressortir l'urgent.",
+                },
+                demo: { kind: "route", url: "/note/demo" },
+                files: [
+                    "src/components/note/top_controls/note_top_controls_component.ts",
+                    "src/services/migrations/addNotePriority.ts",
+                ],
+            },
+            {
+                id: "notes.date-picker",
+                label: { en: "Date picker", fr: "Sélecteur de date" },
+                description: {
+                    en: "Calendar popover for date entries.",
+                    fr: "Popover calendrier pour les entrées de date.",
+                },
+                demo: { kind: "route", url: "/note/demo" },
+                files: [
+                    "src/components/note/date_picker/date_picker_component.ts",
+                    "src/css/datepicker.scss",
+                ],
+            },
+            {
+                id: "notes.service",
+                label: { en: "Service & CRUD", fr: "Service & CRUD" },
+                description: {
+                    en: "DB-level note operations and subservices.",
+                    fr: "Opérations DB sur les notes et sous-services.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/note/noteService.ts",
+                    "src/services/note/noteCrudSubservice.ts",
+                    "src/services/note/noteEntrySubservice.ts",
+                    "src/services/note/noteIntentSubservice.ts",
+                    "src/models/note.ts",
+                ],
+            },
+            {
+                id: "notes.share-intent",
+                label: { en: "Share intent (Android)", fr: "Réception via Share intent" },
+                description: {
+                    en: "Receive text/image/video from another app, create a note.",
+                    fr: "Recevoir texte/image/vidéo d'une autre app, créer une note.",
+                },
+                demo: NONE_BG,
+                files: [
+                    "src/components/intent/intent_component.ts",
+                    "src/components/intent-handler/note/text/note_text_intent_handler_component.ts",
+                    "src/components/intent-handler/note/image/note_image_intent_handler_component.ts",
+                    "src/components/intent-handler/note/video/note_video_intent_handler_component.ts",
+                    "src/services/intentService.ts",
+                    "src/models/intent.ts",
+                    "android/app/src/main/java/ca/erplibre/home/CustomSendIntentActivity.java",
+                ],
+            },
+        ],
+    },
+    {
+        id: "streamdeck",
+        label: { en: "Stream Deck", fr: "Stream Deck" },
+        description: {
+            en: "Drive Elgato Stream Deck devices over USB host.",
+            fr: "Pilote les Elgato Stream Deck via USB host.",
+        },
+        demo: { kind: "options", sectionId: "streamdeck" },
+        children: [
+            {
+                id: "streamdeck.plugin-native",
+                label: { en: "Native plugin (Java)", fr: "Plugin natif Java" },
+                description: {
+                    en: "Capacitor plugin: USB session, key reads, image writes.",
+                    fr: "Plugin Capacitor : session USB, lectures touches, écriture images.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSpec.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckRegistry.java",
+                ],
+            },
+            {
+                id: "streamdeck.bridge-ts",
+                label: { en: "TypeScript bridge", fr: "Bridge TypeScript" },
+                description: {
+                    en: "Typed surface used by JS-side services.",
+                    fr: "Surface typée utilisée par les services JS.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["src/plugins/streamDeckPlugin.ts"],
+            },
+            {
+                id: "streamdeck.controller",
+                label: { en: "Controller", fr: "Contrôleur" },
+                description: {
+                    en: "Wires Note key, sleep cycle, brightness restore.",
+                    fr: "Relie la touche Note, le cycle veille, restore brightness.",
+                },
+                demo: NONE_BG,
+                files: ["src/services/streamDeckController.ts"],
+            },
+            {
+                id: "streamdeck.usb",
+                label: { en: "USB hotplug & permission", fr: "USB hotplug & permission" },
+                description: {
+                    en: "Listen for attach/detach, request OS permission per device.",
+                    fr: "Écoute attach/detach, demande la permission OS par appareil.",
+                },
+                demo: NONE_BG,
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbHotplugReceiver.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbPermissionRequester.java",
+                ],
+            },
+            {
+                id: "streamdeck.reader",
+                label: { en: "Reader strategies", fr: "Stratégies reader" },
+                description: {
+                    en: "UsbRequest / bulk / polled fallbacks for diverse kernels.",
+                    fr: "Repli UsbRequest / bulk / polled selon le kernel.",
+                },
+                demo: { kind: "options", sectionId: "streamdeck" },
+                files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
+            },
+            {
+                id: "streamdeck.heartbeat",
+                label: { en: "USB heartbeat", fr: "Heartbeat USB" },
+                description: {
+                    en: "700 ms control transfer keeping the bus active.",
+                    fr: "Control transfer 700 ms pour garder le bus actif.",
+                },
+                demo: NONE_BG,
+                files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
+            },
+            {
+                id: "streamdeck.writer-queue",
+                label: { en: "Writer queue", fr: "Writer queue" },
+                description: {
+                    en: "Coalesced image-write jobs flushed by a single thread.",
+                    fr: "Files d'écriture images coalescées, drainées par un thread.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/WriterQueue.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/WriteJob.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ImageWriteJob.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/LcdWriteJob.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/NeoInfoBarWriteJob.java",
+                ],
+            },
+            {
+                id: "streamdeck.encoders",
+                label: { en: "Image encoders (JPEG/BMP)", fr: "Encoders image (JPEG/BMP)" },
+                description: {
+                    en: "Per-model image format used over USB.",
+                    fr: "Format image USB selon le modèle.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/encoder"],
+            },
+            {
+                id: "streamdeck.transports",
+                label: { en: "Transports V1 / V2", fr: "Transports V1 / V2" },
+                description: {
+                    en: "Pagination + USB framing per protocol generation.",
+                    fr: "Pagination et framing USB selon la génération.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/transport"],
+            },
+            {
+                id: "streamdeck.lifecycle-service",
+                label: { en: "Lifecycle service", fr: "Service de cycle de vie" },
+                description: {
+                    en: "Catches swipe-from-recents to blank decks.",
+                    fr: "Capte le swipe-recents pour blanker les decks.",
+                },
+                demo: NONE_BG,
+                files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckLifecycleService.java"],
+            },
+            {
+                id: "streamdeck.camera-stream",
+                label: { en: "Camera streaming → deck", fr: "Streaming caméra → deck" },
+                description: {
+                    en: "Stream phone camera onto deck keys (cover-fit, bezel-aware).",
+                    fr: "Diffuse la caméra du téléphone sur les touches (cover-fit, bezels).",
+                },
+                demo: { kind: "options", sectionId: "camera-stream" },
+                files: [
+                    "src/services/streamDeckCameraStreamer.ts",
+                    "src/components/options/camera_stream/options_camera_stream_component.ts",
+                    "src/components/options/camera_stream/options_camera_stream_component.scss",
+                ],
+            },
+            {
+                id: "streamdeck.face-detection",
+                label: { en: "Face detection", fr: "Détection de visage" },
+                description: {
+                    en: "ML Kit detects faces, draws a green border on hit tiles.",
+                    fr: "ML Kit détecte les visages, cadre vert sur les tuiles touchées.",
+                },
+                demo: { kind: "options", sectionId: "camera-stream" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/FaceDetectionPlugin.java",
+                    "src/plugins/faceDetectionPlugin.ts",
+                ],
+            },
+            {
+                id: "streamdeck.lcd-text",
+                label: { en: "LCD text marquee (Plus)", fr: "Texte LCD défilant (Plus)" },
+                description: {
+                    en: "Render scrolling text on the Plus LCD strip.",
+                    fr: "Affiche un texte défilant sur la bande LCD du Plus.",
+                },
+                demo: { kind: "options", sectionId: "streamdeck" },
+                files: ["src/services/streamDeckLcdTextRenderer.ts"],
+            },
+            {
+                id: "streamdeck.event-log",
+                label: { en: "Event journal", fr: "Journal d'événements" },
+                description: {
+                    en: "Ring-buffer of plugin events for the diagnostic panel.",
+                    fr: "Ring-buffer des événements pour le panel diagnostique.",
+                },
+                demo: { kind: "options", sectionId: "streamdeck" },
+                files: ["src/services/streamDeckEventLog.ts"],
+            },
+            {
+                id: "streamdeck.options-panel",
+                label: { en: "Diagnostic panel", fr: "Panel diagnostique" },
+                description: {
+                    en: "Per-deck brightness, reader mode, bezel sliders, restart.",
+                    fr: "Brightness, reader mode, sliders bezels, redémarrage.",
+                },
+                demo: { kind: "options", sectionId: "streamdeck" },
+                files: [
+                    "src/components/options/streamdeck/options_streamdeck_component.ts",
+                    "src/components/options/streamdeck/options_streamdeck_component.scss",
+                ],
+            },
+        ],
+    },
+    {
+        id: "camera",
+        label: { en: "Camera", fr: "Caméra" },
+        description: {
+            en: "Camera viewer and ML Kit OCR.",
+            fr: "Visionneuse caméra et OCR ML Kit.",
+        },
+        children: [
+            {
+                id: "camera.viewer",
+                label: { en: "Camera viewer", fr: "Visionneuse caméra" },
+                description: {
+                    en: "Live preview with OCR overlay.",
+                    fr: "Aperçu live avec overlay OCR.",
+                },
+                demo: NONE_BG,
+                files: [
+                    "src/components/video_camera/video_camera_component.ts",
+                    "src/components/video_camera/video_camera_component.scss",
+                ],
+            },
+            {
+                id: "camera.ocr",
+                label: { en: "OCR (ML Kit)", fr: "OCR (ML Kit)" },
+                description: {
+                    en: "On-device text recognition over the camera stream.",
+                    fr: "Reconnaissance de texte sur le flux caméra (sur appareil).",
+                },
+                demo: NONE_BG,
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/OcrPlugin.java",
+                    "src/plugins/ocrPlugin.ts",
+                ],
+            },
+        ],
+    },
+    {
+        id: "sync",
+        label: { en: "Odoo sync", fr: "Sync Odoo" },
+        description: {
+            en: "Push/pull notes between the app and Odoo servers.",
+            fr: "Push/pull des notes entre l'app et les serveurs Odoo.",
+        },
+        demo: { kind: "options", sectionId: "sync" },
+        children: [
+            {
+                id: "sync.service",
+                label: { en: "Sync service", fr: "Service de synchronisation" },
+                description: {
+                    en: "Per-server status, conflict resolution, retry.",
+                    fr: "Statut par serveur, résolution conflits, retry.",
+                },
+                demo: NONE_BG,
+                files: [
+                    "src/services/syncService.ts",
+                    "src/models/syncConfig.ts",
+                ],
+            },
+            {
+                id: "sync.options",
+                label: { en: "Sync options panel", fr: "Panel sync (options)" },
+                description: {
+                    en: "Configure which server to sync each note with.",
+                    fr: "Configurer quel serveur synchronise chaque note.",
+                },
+                demo: { kind: "options", sectionId: "sync" },
+                files: ["src/components/options/sync/options_sync_component.ts"],
+            },
+            {
+                id: "sync.migrations",
+                label: { en: "Sync migrations", fr: "Migrations sync" },
+                description: {
+                    en: "DB schema additions for sync metadata.",
+                    fr: "Ajouts schéma DB pour les métadonnées sync.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/migrations/addSyncColumns.ts",
+                    "src/services/migrations/addSyncConfigId.ts",
+                    "src/services/migrations/addSyncPerServerStatus.ts",
+                    "src/services/migrations/addSelectedSyncConfigIds.ts",
+                ],
+            },
+            {
+                id: "sync.notifications",
+                label: { en: "Push notifications (ntfy)", fr: "Notifications push (ntfy)" },
+                description: {
+                    en: "Server pushes a sync trigger via ntfy.sh.",
+                    fr: "Le serveur envoie un trigger sync via ntfy.sh.",
+                },
+                demo: NONE_BG,
+                files: [
+                    "src/services/ntfyService.ts",
+                    "src/services/notificationService.ts",
+                    "src/services/migrations/addNtfyTokenColumn.ts",
+                ],
+            },
+        ],
+    },
+    {
+        id: "code",
+        label: { en: "Code", fr: "Code" },
+        description: {
+            en: "View, edit and format source files in repo bundles.",
+            fr: "Voir, éditer et formater les fichiers source dans les bundles.",
+        },
+        demo: { kind: "route", url: "/options/code" },
+        children: [
+            {
+                id: "code.viewer",
+                label: { en: "Viewer / editor", fr: "Visionneuse / éditeur" },
+                description: {
+                    en: "Browse repos, edit files, save back to in-place store.",
+                    fr: "Parcourir repos, éditer, sauvegarder en place.",
+                },
+                demo: { kind: "route", url: "/options/code" },
+                files: [
+                    "src/components/options/code/options_code_component.ts",
+                    "src/components/options/code/options_code_component.scss",
+                    "src/components/options/code/syntax_highlight.ts",
+                ],
+            },
+            {
+                id: "code.style",
+                label: { en: "Code style (black/prettier)", fr: "Style (black/prettier)" },
+                description: {
+                    en: "Run formatters against a file or repo.",
+                    fr: "Lance les formatteurs sur un fichier ou un repo.",
+                },
+                demo: { kind: "options", sectionId: "code-style" },
+                files: [
+                    "src/services/codeStyleService.ts",
+                    "src/components/options/code_style/options_code_style_component.ts",
+                ],
+            },
+            {
+                id: "code.editable",
+                label: { en: "Editable code repos", fr: "Repos éditables" },
+                description: {
+                    en: "Persist user edits in a SQLite-backed overlay.",
+                    fr: "Persiste les édits user dans un overlay SQLite.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/editableCodeService.ts",
+                    "src/services/migrations/addEditableReposTable.ts",
+                ],
+            },
+            {
+                id: "code.git",
+                label: { en: "Git ops (isomorphic-git)", fr: "Git ops (isomorphic-git)" },
+                description: {
+                    en: "Git status / diff / commit on bundled repos.",
+                    fr: "Status / diff / commit Git sur repos bundlés.",
+                },
+                demo: { kind: "route", url: "/options/code" },
+                files: [
+                    "src/services/codeService.ts",
+                    "src/services/git/capacitorFsAdapter.ts",
+                    "src/models/gitTypes.ts",
+                ],
+            },
+        ],
+    },
+    {
+        id: "repos",
+        label: { en: "Repos & bundles", fr: "Repos & bundles" },
+        description: {
+            en: "Manifest tarballs of source repos shipped with the APK.",
+            fr: "Tarballs de repos source bundlés avec l'APK.",
+        },
+        children: [
+            {
+                id: "repos.bundle-source",
+                label: { en: "Build-time bundler", fr: "Bundler au build" },
+                description: {
+                    en: "Vite plugin: pack manifest repos into tar.gz at build.",
+                    fr: "Plugin Vite : packe les repos manifests en tar.gz au build.",
+                },
+                demo: NONE_BG,
+                files: ["vite.config.ts"],
+            },
+            {
+                id: "repos.bundle-code",
+                label: { en: "Bundle code service", fr: "Service bundle code" },
+                description: {
+                    en: "Resolve a path inside a bundled tarball at runtime.",
+                    fr: "Résout un path dans un tarball bundlé à l'exécution.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["src/services/bundleCodeService.ts"],
+            },
+            {
+                id: "repos.extractor",
+                label: { en: "Repo extractor", fr: "Extracteur de repo" },
+                description: {
+                    en: "Stream-extract files from tar.gz on demand.",
+                    fr: "Extrait fichiers d'un tar.gz à la volée.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/repoExtractorService.ts",
+                    "src/utils/tarParser.ts",
+                    "src/utils/decompressGzip.ts",
+                ],
+            },
+            {
+                id: "repos.edit",
+                label: { en: "Repo in-place edit", fr: "Édition repo en place" },
+                description: {
+                    en: "Mutate a file inside a bundle and persist it.",
+                    fr: "Modifier un fichier dans un bundle et persister.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["src/services/repoEditService.ts"],
+            },
+            {
+                id: "repos.fs-factory",
+                label: { en: "FS factory", fr: "FS factory" },
+                description: {
+                    en: "Choose between bundle FS, edit FS or native FS.",
+                    fr: "Sélectionne FS bundle / édit / natif selon le contexte.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["src/services/repoFsFactory.ts"],
+            },
+            {
+                id: "repos.manifest",
+                label: { en: "Manifest model", fr: "Modèle manifest" },
+                description: {
+                    en: "TypeScript shape for a manifest project entry.",
+                    fr: "Forme TypeScript d'une entrée projet du manifest.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["src/models/manifestProject.ts"],
+            },
+        ],
+    },
+    {
+        id: "transcription",
+        label: { en: "Whisper transcription", fr: "Transcription Whisper" },
+        description: {
+            en: "On-device speech-to-text via whisper.cpp.",
+            fr: "Speech-to-text sur appareil via whisper.cpp.",
+        },
+        demo: { kind: "route", url: "/options/transcription" },
+        children: [
+            {
+                id: "transcription.native",
+                label: { en: "Native plugin (NDK)", fr: "Plugin natif (NDK)" },
+                description: {
+                    en: "JNI bridge to whisper.cpp built via CMake.",
+                    fr: "Bridge JNI vers whisper.cpp compilé via CMake.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "android/app/src/main/cpp/whisper_jni.cpp",
+                    "android/app/src/main/cpp/CMakeLists.txt",
+                    "android/app/src/main/java/ca/erplibre/home/WhisperPlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/WhisperLib.java",
+                ],
+            },
+            {
+                id: "transcription.download",
+                label: { en: "Model download", fr: "Téléchargement modèles" },
+                description: {
+                    en: "Download whisper models with resume + WakeLock.",
+                    fr: "Télécharge les modèles whisper (resume + WakeLock).",
+                },
+                demo: { kind: "route", url: "/options/transcription" },
+                files: ["android/app/src/main/java/ca/erplibre/home/WhisperDownloadService.java"],
+            },
+            {
+                id: "transcription.audio-converter",
+                label: { en: "Audio converter", fr: "Convertisseur audio" },
+                description: {
+                    en: "Re-encode recorded audio into whisper-compatible PCM.",
+                    fr: "Réencode l'audio enregistré en PCM compatible whisper.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["android/app/src/main/java/ca/erplibre/home/AudioConverter.java"],
+            },
+            {
+                id: "transcription.bridge",
+                label: { en: "TS bridge & service", fr: "Bridge TS & service" },
+                description: {
+                    en: "Run a transcription job from JS, await result.",
+                    fr: "Lance une transcription depuis JS, attend le résultat.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/plugins/whisperPlugin.ts",
+                    "src/services/transcriptionService.ts",
+                ],
+            },
+            {
+                id: "transcription.options",
+                label: { en: "Options panel", fr: "Panel options" },
+                description: {
+                    en: "Pick a model, monitor download, run a quick test.",
+                    fr: "Choisir un modèle, suivre le download, tester.",
+                },
+                demo: { kind: "route", url: "/options/transcription" },
+                files: [
+                    "src/components/options/transcription/options_transcription_component.ts",
+                    "src/components/options/transcription/options_transcription_component.scss",
+                ],
+            },
+        ],
+    },
+    {
+        id: "security",
+        label: { en: "Security", fr: "Sécurité" },
+        description: {
+            en: "Biometry, secure storage, dev-mode unlock.",
+            fr: "Biométrie, secure storage, déverrouillage dev.",
+        },
+        demo: { kind: "route", url: "/options" },
+        children: [
+            {
+                id: "security.biometry",
+                label: { en: "Biometric auth", fr: "Authentification biométrique" },
+                description: {
+                    en: "Gate the app behind fingerprint/face.",
+                    fr: "Verrouiller l'app derrière empreinte/visage.",
+                },
+                demo: { kind: "route", url: "/options" },
+                files: [
+                    "src/utils/biometryUtils.ts",
+                    "src/components/options/options_toggle_biometry_component.ts/options_toggle_biometry_component.ts",
+                ],
+            },
+            {
+                id: "security.secure-storage",
+                label: { en: "Secure storage", fr: "Secure storage" },
+                description: {
+                    en: "Encrypted KV (passwords, tokens) in Android keystore.",
+                    fr: "KV chiffré (mots de passe, tokens) via keystore Android.",
+                },
+                demo: { kind: "options", sectionId: "secure-storage" },
+                files: [
+                    "src/components/options/secure_storage/options_secure_storage_component.ts",
+                    "src/utils/storageUtils.ts",
+                    "src/utils/secureFileUtils.ts",
+                    "src/utils/cryptoUtils.ts",
+                    "src/services/migrations/encryptExistingCredentials.ts",
+                ],
+            },
+            {
+                id: "security.dev-mode",
+                label: { en: "Dev mode unlock", fr: "Déverrouillage dev mode" },
+                description: {
+                    en: "Tap-counter on device-info row reveals debug screens.",
+                    fr: "Tap-counter sur la ligne info appareil débloque les écrans debug.",
+                },
+                demo: { kind: "options", sectionId: "device-info" },
+                files: ["src/components/options/device_info/options_device_info_component.ts"],
+            },
+        ],
+    },
+    {
+        id: "system",
+        label: { en: "System", fr: "Système" },
+        description: {
+            en: "Power management, device info, network probes.",
+            fr: "Gestion énergie, info appareil, sondes réseau.",
+        },
+        demo: { kind: "route", url: "/options" },
+        children: [
+            {
+                id: "system.keep-awake",
+                label: { en: "Keep awake", fr: "Empêcher la veille" },
+                description: {
+                    en: "FLAG_KEEP_SCREEN_ON to keep deck LCDs lit.",
+                    fr: "FLAG_KEEP_SCREEN_ON pour garder les LCD allumées.",
+                },
+                demo: { kind: "options", sectionId: "keep-awake" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/KeepAwakePlugin.java",
+                    "src/plugins/keepAwakePlugin.ts",
+                    "src/components/options/keep_awake/options_keep_awake_component.ts",
+                ],
+            },
+            {
+                id: "system.device-info",
+                label: { en: "Device info & IP", fr: "Info appareil & IP" },
+                description: {
+                    en: "RAM/CPU/IPv4/IPv6, network interfaces.",
+                    fr: "RAM/CPU/IPv4/IPv6, interfaces réseau.",
+                },
+                demo: { kind: "options", sectionId: "device-info" },
+                files: [
+                    "src/components/options/device_info/options_device_info_component.ts",
+                    "android/app/src/main/java/ca/erplibre/home/DeviceStatsPlugin.java",
+                    "src/plugins/deviceStatsPlugin.ts",
+                ],
+            },
+            {
+                id: "system.network-scan",
+                label: { en: "LAN network scan", fr: "Scan réseau local" },
+                description: {
+                    en: "Discover hosts on the local subnet.",
+                    fr: "Découvre les hôtes du sous-réseau local.",
+                },
+                demo: NONE_BG,
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/NetworkScanPlugin.java",
+                    "src/plugins/networkScanPlugin.ts",
+                ],
+            },
+            {
+                id: "system.permissions",
+                label: { en: "Permissions panel", fr: "Panel permissions" },
+                description: {
+                    en: "Inspect/grant runtime permissions.",
+                    fr: "Inspecter/accorder les permissions runtime.",
+                },
+                demo: { kind: "options", sectionId: "permissions" },
+                files: ["src/components/options/permissions/options_permissions_component.ts"],
+            },
+            {
+                id: "system.resources",
+                label: { en: "Resources (server)", fr: "Ressources (serveur)" },
+                description: {
+                    en: "Read RAM/CPU/disk of a remote server over SSH.",
+                    fr: "Lit RAM/CPU/disk d'un serveur distant via SSH.",
+                },
+                demo: { kind: "route", url: "/options/resources" },
+                files: [
+                    "src/components/options/resources/options_resources_component.ts",
+                    "src/components/options/resources/options_resources_component.scss",
+                    "src/components/servers/resources/servers_resources_component.ts",
+                    "src/utils/serverResourceParsers.ts",
+                ],
+            },
+            {
+                id: "system.processes",
+                label: { en: "Processes (long jobs)", fr: "Processus (tâches longues)" },
+                description: {
+                    en: "Track and inspect background jobs.",
+                    fr: "Suivre et inspecter les tâches d'arrière-plan.",
+                },
+                demo: { kind: "route", url: "/options/processes" },
+                files: [
+                    "src/components/options/processes/options_processes_component.ts",
+                    "src/services/processService.ts",
+                    "src/models/process.ts",
+                    "src/services/migrations/addProcessesTable.ts",
+                    "src/services/migrations/addProcessDebugLogColumn.ts",
+                    "src/services/migrations/addProcessResultColumn.ts",
+                ],
+            },
+        ],
+    },
+    {
+        id: "deployment",
+        label: { en: "Deployment", fr: "Déploiement" },
+        description: {
+            en: "Provision and update Odoo servers from the phone.",
+            fr: "Provisionner et mettre à jour les serveurs Odoo depuis le tel.",
+        },
+        demo: { kind: "route", url: "/applications" },
+        children: [
+            {
+                id: "deployment.service",
+                label: { en: "Deployment service", fr: "Service de déploiement" },
+                description: {
+                    en: "Multi-step pipeline (SSH, scp, restart) with progress.",
+                    fr: "Pipeline multi-étapes (SSH, scp, restart) avec progression.",
+                },
+                demo: NONE_BG,
+                files: ["src/services/deploymentService.ts"],
+            },
+            {
+                id: "deployment.ssh",
+                label: { en: "SSH plugin", fr: "Plugin SSH" },
+                description: {
+                    en: "JSch-backed SSH exec/sftp.",
+                    fr: "SSH exec/sftp basé sur JSch.",
+                },
+                demo: NONE_BG,
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/SshPlugin.java",
+                    "src/plugins/sshPlugin.ts",
+                ],
+            },
+            {
+                id: "deployment.raw-http",
+                label: { en: "Raw HTTP plugin", fr: "Plugin HTTP brut" },
+                description: {
+                    en: "TCP-level HTTP for self-signed Odoo endpoints.",
+                    fr: "HTTP au niveau TCP pour endpoints Odoo self-signed.",
+                },
+                demo: NONE_BG,
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/RawHttpPlugin.java",
+                    "src/plugins/rawHttpPlugin.ts",
+                ],
+            },
+            {
+                id: "deployment.deploy-ui",
+                label: { en: "Deploy UI", fr: "UI déploiement" },
+                description: {
+                    en: "Live deploy log with retry-from-step.",
+                    fr: "Log déploiement live avec retry-from-step.",
+                },
+                demo: { kind: "route", url: "/applications" },
+                files: [
+                    "src/components/servers/deploy/servers_deploy_component.ts",
+                    "src/components/servers/deploy/servers_deploy_component.scss",
+                ],
+            },
+            {
+                id: "deployment.servers",
+                label: { en: "Server CRUD", fr: "CRUD serveurs" },
+                description: {
+                    en: "Create/edit/delete servers and their workspaces.",
+                    fr: "Créer/éditer/supprimer serveurs et workspaces.",
+                },
+                demo: { kind: "route", url: "/applications" },
+                files: [
+                    "src/components/servers/add/servers_add_component.ts",
+                    "src/components/servers/edit/servers_edit_component.ts",
+                    "src/components/servers/item/servers_item_component.ts",
+                    "src/components/servers/settings/servers_settings_component.ts",
+                    "src/components/servers/workspace/servers_workspace_component.ts",
+                    "src/services/serverService.ts",
+                    "src/models/server.ts",
+                    "src/models/workspace.ts",
+                    "src/services/migrations/addServersTable.ts",
+                    "src/services/migrations/addServerWorkspacesTable.ts",
+                ],
+            },
+            {
+                id: "deployment.applications",
+                label: { en: "Odoo apps CRUD", fr: "CRUD applications Odoo" },
+                description: {
+                    en: "Manage Odoo instances (URL, version, sync flags).",
+                    fr: "Gérer les instances Odoo (URL, version, flags sync).",
+                },
+                demo: { kind: "route", url: "/applications" },
+                files: [
+                    "src/components/applications/applications_component.ts",
+                    "src/components/applications/add/applications_add_component.ts",
+                    "src/components/applications/edit/applications_edit_component.ts",
+                    "src/components/applications/item/applications_item_component.ts",
+                    "src/services/appService.ts",
+                    "src/models/application.ts",
+                    "src/services/migrations/addApplicationSyncFields.ts",
+                    "src/services/migrations/addOdooVersionToApplications.ts",
+                ],
+            },
+        ],
+    },
+    {
+        id: "data",
+        label: { en: "Data / DB", fr: "Données / DB" },
+        description: {
+            en: "SQLite store, migrations, debug viewers.",
+            fr: "Stockage SQLite, migrations, viewers debug.",
+        },
+        demo: { kind: "route", url: "/options/database" },
+        children: [
+            {
+                id: "data.database",
+                label: { en: "DB service (SQLite)", fr: "Service DB (SQLite)" },
+                description: {
+                    en: "Single connection wrapper, encrypted at rest.",
+                    fr: "Wrapper connexion unique, chiffré au repos.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["src/services/databaseService.ts"],
+            },
+            {
+                id: "data.migrations",
+                label: { en: "Migration runner", fr: "Runner de migrations" },
+                description: {
+                    en: "Versioned schema upgrades on app launch.",
+                    fr: "Migrations de schéma versionnées au démarrage.",
+                },
+                demo: NONE_BG,
+                files: [
+                    "src/services/migrationService.ts",
+                    "src/services/dataMigration.ts",
+                ],
+            },
+            {
+                id: "data.inspector",
+                label: { en: "DB inspector", fr: "Inspecteur DB" },
+                description: {
+                    en: "Browse tables, run SQL, see DB size.",
+                    fr: "Parcourir tables, exécuter SQL, voir la taille DB.",
+                },
+                demo: { kind: "route", url: "/options/database" },
+                files: [
+                    "src/components/options/database/options_database_component.ts",
+                    "src/components/options/sqlite_tables/options_sqlite_tables_component.ts",
+                    "src/components/options/db_size/options_db_size_component.ts",
+                ],
+            },
+            {
+                id: "data.migration-history",
+                label: { en: "Migration history", fr: "Historique migrations" },
+                description: {
+                    en: "List of applied migrations with timestamps.",
+                    fr: "Liste des migrations appliquées avec timestamps.",
+                },
+                demo: { kind: "options", sectionId: "migration-history" },
+                files: ["src/components/options/migration_history/options_migration_history_component.ts"],
+            },
+            {
+                id: "data.clear-cache",
+                label: { en: "Clear cache", fr: "Vider le cache" },
+                description: {
+                    en: "Reset the app's local DB and bundles.",
+                    fr: "Réinitialise la DB locale et les bundles.",
+                },
+                demo: { kind: "options", sectionId: "clear-cache" },
+                files: ["src/components/options/clear_cache/options_clear_cache_component.ts"],
+            },
+        ],
+    },
+    {
+        id: "ui",
+        label: { en: "UI / UX", fr: "UI / UX" },
+        description: {
+            en: "Routing, theming, reminders, shared components.",
+            fr: "Routing, thème, rappels, composants partagés.",
+        },
+        children: [
+            {
+                id: "ui.router",
+                label: { en: "Router & navigation", fr: "Router & navigation" },
+                description: {
+                    en: "Hash-based router with route table and navbar.",
+                    fr: "Router à hash avec table de routes et navbar.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/js/router.ts",
+                    "src/js/routes.ts",
+                    "src/components/navbar/navbar_component.ts",
+                    "src/components/navbar/item/navbar_item_component.ts",
+                ],
+            },
+            {
+                id: "ui.theme",
+                label: { en: "Theme & graphic prefs", fr: "Thème & préférences graphiques" },
+                description: {
+                    en: "Colours, fonts, motion preferences stored in DB.",
+                    fr: "Couleurs, polices, motion stockées en DB.",
+                },
+                demo: { kind: "options", sectionId: "graphic" },
+                files: [
+                    "src/components/options/graphic/options_graphic_component.ts",
+                    "src/services/migrations/addUserGraphicPrefs.ts",
+                    "src/models/graphicPrefs.ts",
+                    "src/css/vars.scss",
+                    "src/css/style.scss",
+                ],
+            },
+            {
+                id: "ui.reminders",
+                label: { en: "Reminders", fr: "Rappels" },
+                description: {
+                    en: "Local notifications scheduled per note.",
+                    fr: "Notifications locales planifiées par note.",
+                },
+                demo: { kind: "options", sectionId: "reminders" },
+                files: [
+                    "src/components/options/reminders/options_reminders_component.ts",
+                    "src/services/reminderService.ts",
+                    "src/models/reminder.ts",
+                    "src/services/migrations/addReminderCreatedAt.ts",
+                ],
+            },
+            {
+                id: "ui.shared-components",
+                label: { en: "Shared components", fr: "Composants partagés" },
+                description: {
+                    en: "Heading, content shell, root layout.",
+                    fr: "Heading, coquille content, layout root.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/components/heading/heading_component.ts",
+                    "src/components/content/content_component.ts",
+                    "src/components/root/root_component.ts",
+                ],
+            },
+            {
+                id: "ui.owl-aot",
+                label: { en: "Owl AOT bridge", fr: "Bridge Owl AOT" },
+                description: {
+                    en: "Pre-compile templates at build for fast startup.",
+                    fr: "Pré-compile les templates au build pour boot rapide.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/js/owl-aot.ts",
+                    "src/js/enhancedComponent.ts",
+                ],
+            },
+            {
+                id: "ui.errors",
+                label: { en: "Error handling", fr: "Gestion d'erreurs" },
+                description: {
+                    en: "Centralised error labels and helpers.",
+                    fr: "Libellés d'erreurs et helpers centralisés.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/js/errors.ts",
+                    "src/constants/errorMessages.ts",
+                ],
+            },
+        ],
+    },
+    {
+        id: "meta",
+        label: { en: "Meta", fr: "Méta" },
+        description: {
+            en: "Home page, options shell, build metadata.",
+            fr: "Accueil, coquille options, métadonnées de build.",
+        },
+        children: [
+            {
+                id: "meta.home",
+                label: { en: "Home page + uptime", fr: "Accueil + uptime" },
+                description: {
+                    en: "Stats, quick notes, live uptime counter.",
+                    fr: "Stats, accès rapide notes, compteur uptime live.",
+                },
+                demo: { kind: "route", url: "/" },
+                files: [
+                    "src/components/home/home_component.ts",
+                    "src/components/home/home_component.scss",
+                ],
+            },
+            {
+                id: "meta.changelog",
+                label: { en: "Changelog", fr: "Changelog" },
+                description: {
+                    en: "Show recent app updates.",
+                    fr: "Affiche les mises à jour récentes.",
+                },
+                demo: { kind: "options", sectionId: "changelog" },
+                files: ["src/components/options/changelog/options_changelog_component.ts"],
+            },
+            {
+                id: "meta.erplibre",
+                label: { en: "Open ERPLibre source", fr: "Ouvrir source ERPLibre" },
+                description: {
+                    en: "Browse the workspace bundle (full source tree).",
+                    fr: "Parcourir le bundle workspace (arbre source complet).",
+                },
+                demo: { kind: "route", url: "/options/erplibre" },
+                files: [
+                    "src/components/options/erplibre/options_erplibre_component.ts",
+                    "src/components/options/erplibre/options_erplibre_component.scss",
+                ],
+            },
+            {
+                id: "meta.options",
+                label: { en: "Options shell", fr: "Coquille Options" },
+                description: {
+                    en: "Parent component listing every options sub-feature.",
+                    fr: "Composant parent listant chaque sous-option.",
+                },
+                demo: { kind: "route", url: "/options" },
+                files: [
+                    "src/components/options/options_component.ts",
+                    "src/components/options/options_component.scss",
+                ],
+            },
+            {
+                id: "meta.app-bootstrap",
+                label: { en: "App bootstrap", fr: "Bootstrap app" },
+                description: {
+                    en: "Wire env, services and mount root component.",
+                    fr: "Configure env, services et monte le composant root.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/js/app.ts",
+                    "src/js/helpers.ts",
+                ],
+            },
+            {
+                id: "meta.build-id",
+                label: { en: "Build ID", fr: "Build ID" },
+                description: {
+                    en: "Per-build hash + timestamp for crash triage.",
+                    fr: "Hash + timestamp par build pour le triage.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["src/public/build_id.json"],
+            },
+        ],
+    },
+];
