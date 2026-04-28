@@ -197,15 +197,25 @@ class FeatureTreeNodeComponent extends Component<NodeProps> {
 // Owl 2 needs a self-reference for recursive components.
 (FeatureTreeNodeComponent as any).components = { FeatureTreeNodeComponent };
 
+type ViewMode = "tree" | "graph" | "matrix" | "cards" | "dashboard";
+
 interface State extends SharedTreeState {
     query: string;
     counts: { features: number; files: number; demoable: number };
-    /** "tree" = collapsible hierarchy, "graph" = flat list grouped by
-     *  status with depends-on edges shown inline. */
-    view: "tree" | "graph";
+    view: ViewMode;
+    /** Whether the "view picker" menu (the … button) is expanded. */
+    viewMenuOpen: boolean;
     /** Optional status filter (empty string = no filter). */
     statusFilter: string;
 }
+
+const VIEW_LABELS: Record<ViewMode, FeatureI18n> = {
+    tree:      { en: "Tree",      fr: "Arbre" },
+    graph:     { en: "Graph",     fr: "Graphe" },
+    matrix:    { en: "Matrix",    fr: "Matrice" },
+    cards:     { en: "Cards",     fr: "Cartes" },
+    dashboard: { en: "Dashboard", fr: "Tableau" },
+};
 
 export class OptionsFeaturesComponent extends EnhancedComponent {
     static components = { FeatureTreeNodeComponent };
@@ -245,13 +255,21 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                     <option value="deprecated">Déprécié</option>
                     <option value="broken">Cassé</option>
                 </select>
-                <div class="features__view-toggle" role="tablist">
-                    <button role="tab" t-att-aria-selected="state.view === 'tree' ? 'true' : 'false'"
-                            t-att-class="{ 'features__view-toggle--active': state.view === 'tree' }"
-                            t-on-click="() => this.onViewChange('tree')">Arbre</button>
-                    <button role="tab" t-att-aria-selected="state.view === 'graph' ? 'true' : 'false'"
-                            t-att-class="{ 'features__view-toggle--active': state.view === 'graph' }"
-                            t-on-click="() => this.onViewChange('graph')">Graphe</button>
+                <div class="features__view-picker">
+                    <button class="features__view-picker-btn"
+                            t-att-aria-expanded="state.viewMenuOpen ? 'true' : 'false'"
+                            aria-haspopup="menu"
+                            t-on-click="onToggleViewMenu">
+                        <t t-esc="currentViewLabel"/> ⋯
+                    </button>
+                    <ul t-if="state.viewMenuOpen" class="features__view-menu" role="menu">
+                        <li t-foreach="viewModes" t-as="mode" t-key="mode" role="menuitem"
+                            t-att-class="{ 'features__view-menu-item--active': state.view === mode }">
+                            <button t-on-click="() => this.onViewChange(mode)">
+                                <t t-esc="viewLabel(mode)"/>
+                            </button>
+                        </li>
+                    </ul>
                 </div>
             </div>
 
@@ -267,6 +285,143 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                             onSelect.bind="onSelect"/>
                     </t>
                 </ul>
+
+                <div t-elif="state.view === 'matrix'" class="features__matrix-wrap">
+                    <table class="features__matrix">
+                        <thead>
+                            <tr>
+                                <th>Feature</th>
+                                <th>Status</th>
+                                <th>Tests</th>
+                                <th>Doc</th>
+                                <th>Démo</th>
+                                <th>Perms</th>
+                                <th>Files</th>
+                                <th>Deps</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr t-foreach="matrixRows" t-as="row" t-key="row.id"
+                                t-att-class="{ 'features__matrix-row--selected': state.selectedId === row.id }"
+                                t-on-click="() => this.onSelect(row.id)">
+                                <td class="features__matrix-label">
+                                    <span t-if="row.status" class="features__status"
+                                          t-att-class="'features__status--' + row.status"
+                                          aria-hidden="true"/>
+                                    <t t-esc="label(row.label)"/>
+                                </td>
+                                <td t-att-class="'features__matrix-status features__matrix-status--' + (row.status or 'none')"
+                                    t-esc="row.status or '—'"/>
+                                <td t-att-class="row.hasTests ? 'features__matrix-yes' : 'features__matrix-no'"
+                                    t-esc="row.hasTests ? '✓' : '—'"/>
+                                <td t-att-class="row.hasHowItWorks ? 'features__matrix-yes' : 'features__matrix-no'"
+                                    t-esc="row.hasHowItWorks ? '✓' : '—'"/>
+                                <td t-att-class="row.demoKind === 'none' ? 'features__matrix-no' : 'features__matrix-yes'"
+                                    t-esc="row.demoKind"/>
+                                <td t-esc="row.permsCount or '—'"/>
+                                <td t-esc="row.filesCount or '—'"/>
+                                <td t-esc="row.depsCount or '—'"/>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div t-elif="state.view === 'cards'" class="features__cards"
+                     aria-label="Vue cartes">
+                    <article t-foreach="cardItems" t-as="card" t-key="card.id"
+                             class="features__card"
+                             t-att-class="{ 'features__card--selected': state.selectedId === card.id }"
+                             t-on-click="() => this.onSelect(card.id)">
+                        <header class="features__card-head">
+                            <h3 t-esc="label(card.label)"/>
+                            <span t-if="card.status"
+                                  class="features__status-chip"
+                                  t-att-class="'features__status-chip--' + card.status">
+                                <t t-esc="statusLabel(card.status)"/>
+                            </span>
+                        </header>
+                        <p t-if="card.description"
+                           class="features__card-desc"
+                           t-esc="label(card.description)"/>
+                        <div t-if="card.permissions and card.permissions.length > 0"
+                             class="features__perms">
+                            <span t-foreach="card.permissions" t-as="perm" t-key="perm"
+                                  class="features__perm-chip" t-esc="perm"/>
+                        </div>
+                        <footer class="features__card-foot">
+                            <span t-if="card.files and card.files.length > 0">
+                                📄 <t t-esc="card.files.length"/>
+                            </span>
+                            <span t-if="card.tests and card.tests.length > 0">
+                                🧪 <t t-esc="card.tests.length"/>
+                            </span>
+                            <span t-if="card.dependsOn and card.dependsOn.length > 0">
+                                🔗 <t t-esc="card.dependsOn.length"/>
+                            </span>
+                            <span t-if="card.demo and card.demo.kind !== 'none'">▶ démo</span>
+                        </footer>
+                    </article>
+                </div>
+
+                <div t-elif="state.view === 'dashboard'" class="features__dashboard"
+                     aria-label="Tableau de bord">
+                    <div class="features__dashboard-grid">
+                        <div class="features__stat">
+                            <div class="features__stat-num" t-esc="dashboard.total"/>
+                            <div class="features__stat-label">Features</div>
+                        </div>
+                        <div class="features__stat">
+                            <div class="features__stat-num" t-esc="dashboard.testsCoverage + '%'"/>
+                            <div class="features__stat-label">Avec tests</div>
+                        </div>
+                        <div class="features__stat">
+                            <div class="features__stat-num" t-esc="dashboard.howItWorksCoverage + '%'"/>
+                            <div class="features__stat-label">Documentées</div>
+                        </div>
+                        <div class="features__stat">
+                            <div class="features__stat-num" t-esc="dashboard.demoCoverage + '%'"/>
+                            <div class="features__stat-label">Démontrables</div>
+                        </div>
+                    </div>
+
+                    <h3>Statut</h3>
+                    <div class="features__bar-chart">
+                        <div t-foreach="dashboard.byStatus" t-as="row" t-key="row.status"
+                             class="features__bar-row">
+                            <span class="features__bar-label">
+                                <span class="features__status"
+                                      t-att-class="'features__status--' + row.status"
+                                      aria-hidden="true"/>
+                                <t t-esc="statusLabel(row.status)"/>
+                            </span>
+                            <div class="features__bar"
+                                 t-att-style="'width:' + row.pct + '%'"
+                                 t-att-class="'features__bar--' + row.status"/>
+                            <span class="features__bar-num" t-esc="row.count"/>
+                        </div>
+                    </div>
+
+                    <h3>Permissions utilisées</h3>
+                    <div class="features__perms">
+                        <span t-foreach="dashboard.perms" t-as="p" t-key="p.name"
+                              class="features__perm-chip">
+                            <t t-esc="p.name"/> <small>(<t t-esc="p.count"/>)</small>
+                        </span>
+                    </div>
+
+                    <h3>À compléter</h3>
+                    <ul class="features__todo">
+                        <li t-foreach="dashboard.missing" t-as="grp" t-key="grp.kind">
+                            <strong t-esc="grp.kind"/> (<t t-esc="grp.ids.length"/>):
+                            <span t-foreach="grp.ids" t-as="id" t-key="id"
+                                  class="features__todo-id">
+                                <button class="features__dep"
+                                        t-on-click="() => this.onSelect(id)"
+                                        t-esc="id"/>
+                            </span>
+                        </li>
+                    </ul>
+                </div>
 
                 <div t-elif="state.view === 'graph'" class="features__graph"
                      aria-label="Vue graphe par statut">
@@ -469,6 +624,115 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
         return buildUsedByIndex(FEATURE_TREE).get(this.state.selectedId) ?? [];
     }
 
+    /** All view modes in display order. Used by the dropdown menu. */
+    get viewModes(): string[] {
+        return ["tree", "graph", "matrix", "cards", "dashboard"];
+    }
+
+    get currentViewLabel(): string {
+        return pickLabel(VIEW_LABELS[this.state.view], this.state.lang, this.state.view);
+    }
+
+    viewLabel(mode: string): string {
+        const v = VIEW_LABELS[mode as ViewMode];
+        return pickLabel(v, this.state.lang, mode);
+    }
+
+    /** Flat list of leaves for matrix/cards views, with status filter
+     *  and fuzzy search applied. Internal nodes are excluded — they
+     *  pollute analysis tables. */
+    get flatLeavesFiltered(): FeatureNode[] {
+        const q = this.state.query.trim();
+        const sf = this.state.statusFilter;
+        return this.allNodes.filter((n) => {
+            if (n.children && n.children.length > 0) return false;
+            if (sf && (n.status ?? "") !== sf) return false;
+            if (q && fuzzyScore(n, q, this.state.lang) === 0) return false;
+            return true;
+        });
+    }
+
+    get matrixRows(): Array<{
+        id: string; label: FeatureI18n; status: string;
+        hasTests: boolean; hasHowItWorks: boolean; demoKind: string;
+        permsCount: number; filesCount: number; depsCount: number;
+    }> {
+        return this.flatLeavesFiltered.map((n) => ({
+            id: n.id,
+            label: n.label,
+            status: n.status ?? "",
+            hasTests: (n.tests?.length ?? 0) > 0,
+            hasHowItWorks: !!n.howItWorks,
+            demoKind: n.demo ? n.demo.kind : "—",
+            permsCount: n.permissions?.length ?? 0,
+            filesCount: n.files?.length ?? 0,
+            depsCount: n.dependsOn?.length ?? 0,
+        }));
+    }
+
+    get cardItems(): FeatureNode[] {
+        return this.flatLeavesFiltered;
+    }
+
+    get dashboard(): {
+        total: number;
+        testsCoverage: number;
+        howItWorksCoverage: number;
+        demoCoverage: number;
+        byStatus: Array<{ status: string; count: number; pct: number }>;
+        perms: Array<{ name: string; count: number }>;
+        missing: Array<{ kind: string; ids: string[] }>;
+    } {
+        const leaves = this.allNodes.filter(
+            (n) => !n.children || n.children.length === 0,
+        );
+        const total = leaves.length || 1;
+        const pct = (n: number) => Math.round((n / total) * 100);
+
+        const statusCount: Record<string, number> = {};
+        const permCount: Record<string, number> = {};
+        const missingTests: string[] = [];
+        const missingHowItWorks: string[] = [];
+        const missingDescription: string[] = [];
+        const missingDemo: string[] = [];
+        for (const n of leaves) {
+            const st = n.status ?? "unknown";
+            statusCount[st] = (statusCount[st] ?? 0) + 1;
+            for (const p of n.permissions ?? []) permCount[p] = (permCount[p] ?? 0) + 1;
+            if (!n.tests || n.tests.length === 0) missingTests.push(n.id);
+            if (!n.howItWorks) missingHowItWorks.push(n.id);
+            if (!n.description) missingDescription.push(n.id);
+            if (!n.demo) missingDemo.push(n.id);
+        }
+
+        const order = ["broken", "experimental", "stable", "deprecated", "unknown"];
+        const byStatus = order
+            .filter((s) => (statusCount[s] ?? 0) > 0)
+            .map((status) => ({
+                status,
+                count: statusCount[status],
+                pct: pct(statusCount[status]),
+            }));
+        const perms = Object.entries(permCount)
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => b.count - a.count);
+
+        return {
+            total: leaves.length,
+            testsCoverage: pct(leaves.length - missingTests.length),
+            howItWorksCoverage: pct(leaves.length - missingHowItWorks.length),
+            demoCoverage: pct(leaves.length - missingDemo.length),
+            byStatus,
+            perms,
+            missing: [
+                { kind: "Sans test", ids: missingTests.slice(0, 20) },
+                { kind: "Sans description", ids: missingDescription.slice(0, 20) },
+                { kind: "Sans how-it-works", ids: missingHowItWorks.slice(0, 20) },
+                { kind: "Sans démo", ids: missingDemo.slice(0, 20) },
+            ].filter((g) => g.ids.length > 0),
+        };
+    }
+
     /** Flat groups for the graph view: each group buckets nodes by
      *  status, optionally filtered by query and statusFilter. Order
      *  is health-relevant: broken first, then experimental, stable,
@@ -531,6 +795,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
             query: "",
             counts,
             view: "tree",
+            viewMenuOpen: false,
             statusFilter: "",
         });
         onMounted(() => { /* no-op */ });
@@ -571,8 +836,13 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
         this.state.statusFilter = (ev.target as HTMLSelectElement).value;
     }
 
-    onViewChange(view: "tree" | "graph"): void {
-        this.state.view = view;
+    onViewChange(view: ViewMode | string): void {
+        this.state.view = view as ViewMode;
+        this.state.viewMenuOpen = false;
+    }
+
+    onToggleViewMenu(): void {
+        this.state.viewMenuOpen = !this.state.viewMenuOpen;
     }
 
     onToggle(id: string): void {
