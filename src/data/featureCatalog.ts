@@ -307,6 +307,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/models/intent.ts",
                     "android/app/src/main/java/ca/erplibre/home/CustomSendIntentActivity.java",
                 ],
+                tests: ["src/__tests__/intentService.test.ts"],
             },
         ],
     },
@@ -733,6 +734,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/notificationService.ts",
                     "src/services/migrations/addNtfyTokenColumn.ts",
                 ],
+                tests: [
+                    "src/__tests__/ntfyService.test.ts",
+                    "src/__tests__/notificationService.test.ts",
+                ],
             },
         ],
     },
@@ -774,6 +779,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/codeStyleService.ts",
                     "src/components/options/code_style/options_code_style_component.ts",
                 ],
+                tests: ["src/__tests__/codeStyleService.test.ts"],
             },
             {
                 id: "code.editable",
