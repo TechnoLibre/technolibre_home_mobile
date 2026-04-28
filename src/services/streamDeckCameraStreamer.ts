@@ -431,14 +431,21 @@ export class StreamDeckCameraStreamer {
         // until cleanup finished.
         this.controller.setCameraStreaming(false);
         // Drop every pending camera frame from the writer queue on each
-        // deck. ~32 keys × N frames worth of bulk-OUT was pinning the
-        // firmware busy for ~300 ms after stop, during which Note-key
-        // presses got swallowed by the firmware itself (not just our
-        // listener race above). Fire-and-forget — failure here just
-        // means a few stale frames will paint, which is harmless.
+        // deck, then reset the firmware. The queue drop alone leaves
+        // the deck firmware busy decoding the last 1–2 frames it
+        // already received, which makes Note-key presses miss the
+        // matrix scan for ~1 s after stop. reset() is a single
+        // feature-report write that interrupts firmware processing
+        // and flushes its internal queue, so the LCDs go blank
+        // immediately and the matrix scan resumes; the next
+        // repaintAll() call will paint the home tile from a clean
+        // slate. Fire-and-forget — failure here is harmless, the
+        // worst case is a stale image lingers a moment longer.
         for (const deckId of this.decks.keys()) {
             StreamDeckPlugin.clearPendingWrites({ deckId }).catch((e) =>
                 console.warn(`[camera-streamer] clearPendingWrites deck=${deckId}:`, e));
+            StreamDeckPlugin.reset({ deckId }).catch((e) =>
+                console.warn(`[camera-streamer] reset deck=${deckId}:`, e));
         }
         if (this.timer !== null) {
             clearInterval(this.timer);
