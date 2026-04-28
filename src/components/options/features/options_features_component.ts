@@ -7,9 +7,23 @@ import {
     type FeatureI18n,
     type FeatureDemo,
 } from "../../../data/featureCatalog";
+import {
+    type Lang,
+    flatten,
+    pickLabel,
+    ancestorIdsOf,
+    buildUsedByIndex,
+    fuzzyScore,
+    computeFlatLeaves,
+    computeFilteredRoots,
+    computeMatrix,
+    computeDashboard,
+    computeGraphGroups,
+    type MatrixRow,
+    type DashboardData,
+} from "./featureViewUtils";
 
 const STORAGE_LANG_KEY = "options.features.lang";
-type Lang = "fr" | "en";
 
 /** Pick the right code-bundle target for a path. Files inside src/
  *  are in the mobile bundle (`/repo`); anything else (android/,
@@ -18,85 +32,6 @@ type Lang = "fr" | "en";
 function targetAndBundlePath(relPath: string): { target: "mobile" | "erplibre"; path: string } {
     if (relPath.startsWith("src/")) return { target: "mobile", path: relPath };
     return { target: "erplibre", path: `mobile/erplibre_home_mobile/${relPath}` };
-}
-
-function flatten(nodes: FeatureNode[]): FeatureNode[] {
-    const out: FeatureNode[] = [];
-    const walk = (n: FeatureNode) => {
-        out.push(n);
-        n.children?.forEach(walk);
-    };
-    nodes.forEach(walk);
-    return out;
-}
-
-/** Walk the tree to find every ancestor id of `targetId` (excluding
- *  the target itself). Returns null if `targetId` doesn't exist. */
-function ancestorIdsOf(targetId: string, nodes: FeatureNode[]): string[] | null {
-    const dfs = (list: FeatureNode[], path: string[]): string[] | null => {
-        for (const n of list) {
-            if (n.id === targetId) return path;
-            if (n.children) {
-                const r = dfs(n.children, [...path, n.id]);
-                if (r !== null) return r;
-            }
-        }
-        return null;
-    };
-    return dfs(nodes, []);
-}
-
-function pickLabel(value: FeatureI18n | undefined, lang: Lang, fallback = ""): string {
-    if (!value) return fallback;
-    return value[lang] || value.fr || value.en || fallback;
-}
-
-/** Reverse-dependency index: maps node id → ids of nodes that
- *  declare it in their `dependsOn`. Built once per render of the
- *  detail panel. */
-function buildUsedByIndex(nodes: FeatureNode[]): Map<string, string[]> {
-    const idx = new Map<string, string[]>();
-    const all = flatten(nodes);
-    for (const n of all) {
-        for (const dep of n.dependsOn ?? []) {
-            const list = idx.get(dep) ?? [];
-            list.push(n.id);
-            idx.set(dep, list);
-        }
-    }
-    return idx;
-}
-
-/** Scored fuzzy match. Higher = better. 0 = no match. Looks for the
- *  query as a (case-insensitive) substring AND as a subsequence;
- *  weights: id > label > description > files > howItWorks > issues. */
-function fuzzyScore(node: FeatureNode, q: string, lang: Lang): number {
-    if (!q) return 1;
-    const qLower = q.toLowerCase();
-    let score = 0;
-    const hit = (text: string | undefined, weight: number): void => {
-        if (!text) return;
-        const t = text.toLowerCase();
-        const idx = t.indexOf(qLower);
-        if (idx === 0) score += weight * 3;        // prefix match
-        else if (idx > 0) score += weight * 2;     // substring
-        else if (subsequence(t, qLower)) score += weight; // gappy
-    };
-    hit(node.id, 8);
-    hit(pickLabel(node.label, lang), 6);
-    hit(pickLabel(node.description, lang), 3);
-    for (const f of node.files ?? []) hit(f, 2);
-    hit(pickLabel(node.howItWorks, lang), 1);
-    for (const i of node.issues ?? []) hit(pickLabel(i, lang), 1);
-    return score;
-}
-
-function subsequence(haystack: string, needle: string): boolean {
-    let j = 0;
-    for (let i = 0; i < haystack.length && j < needle.length; i++) {
-        if (haystack[i] === needle[j]) j++;
-    }
-    return j === needle.length;
 }
 
 const STATUS_LABEL: Record<string, FeatureI18n> = {
@@ -583,38 +518,11 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
     }
 
     get filteredRoots(): FeatureNode[] {
-        const q = this.state.query.trim();
-        const sf = this.state.statusFilter;
-        if (!q && !sf) return FEATURE_TREE;
-        // Fuzzy + scored: a node is kept if itself or any descendant
-        // both scores >0 (when q set) and matches the status filter
-        // (when sf set). Recursion preserves the original tree shape.
-        const matchSelf = (n: FeatureNode): number => {
-            const score = q ? fuzzyScore(n, q, this.state.lang) : 1;
-            if (score === 0) return 0;
-            // Status filter only applies to leaves — internal nodes
-            // pass through if any descendant matches.
-            const isLeaf = !n.children || n.children.length === 0;
-            if (sf && isLeaf && (n.status ?? "") !== sf) return 0;
-            return score;
-        };
-        const subtreeScore = new Map<string, number>();
-        const compute = (n: FeatureNode): number => {
-            const self = matchSelf(n);
-            const childMax = n.children?.reduce((m, c) => Math.max(m, compute(c)), 0) ?? 0;
-            const s = Math.max(self, childMax);
-            subtreeScore.set(n.id, s);
-            return s;
-        };
-        FEATURE_TREE.forEach(compute);
-        const filterNode = (n: FeatureNode): FeatureNode | null => {
-            if ((subtreeScore.get(n.id) ?? 0) === 0) return null;
-            return {
-                ...n,
-                children: n.children?.map(filterNode).filter((c): c is FeatureNode => c !== null),
-            };
-        };
-        return FEATURE_TREE.map(filterNode).filter((n): n is FeatureNode => n !== null);
+        return computeFilteredRoots(FEATURE_TREE, {
+            query: this.state.query,
+            statusFilter: this.state.statusFilter,
+            lang: this.state.lang,
+        });
     }
 
     /** Reverse-dep map for the currently-selected node only.
@@ -638,122 +546,32 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
         return pickLabel(v, this.state.lang, mode);
     }
 
-    /** Flat list of leaves for matrix/cards views, with status filter
-     *  and fuzzy search applied. Internal nodes are excluded — they
-     *  pollute analysis tables. */
-    get flatLeavesFiltered(): FeatureNode[] {
-        const q = this.state.query.trim();
-        const sf = this.state.statusFilter;
-        return this.allNodes.filter((n) => {
-            if (n.children && n.children.length > 0) return false;
-            if (sf && (n.status ?? "") !== sf) return false;
-            if (q && fuzzyScore(n, q, this.state.lang) === 0) return false;
-            return true;
-        });
+    private get filterOpts() {
+        return {
+            query: this.state.query,
+            statusFilter: this.state.statusFilter,
+            lang: this.state.lang,
+        };
     }
 
-    get matrixRows(): Array<{
-        id: string; label: FeatureI18n; status: string;
-        hasTests: boolean; hasHowItWorks: boolean; demoKind: string;
-        permsCount: number; filesCount: number; depsCount: number;
-    }> {
-        return this.flatLeavesFiltered.map((n) => ({
-            id: n.id,
-            label: n.label,
-            status: n.status ?? "",
-            hasTests: (n.tests?.length ?? 0) > 0,
-            hasHowItWorks: !!n.howItWorks,
-            demoKind: n.demo ? n.demo.kind : "—",
-            permsCount: n.permissions?.length ?? 0,
-            filesCount: n.files?.length ?? 0,
-            depsCount: n.dependsOn?.length ?? 0,
-        }));
+    get flatLeavesFiltered(): FeatureNode[] {
+        return computeFlatLeaves(FEATURE_TREE, this.filterOpts);
+    }
+
+    get matrixRows(): MatrixRow[] {
+        return computeMatrix(FEATURE_TREE, this.filterOpts);
     }
 
     get cardItems(): FeatureNode[] {
         return this.flatLeavesFiltered;
     }
 
-    get dashboard(): {
-        total: number;
-        testsCoverage: number;
-        howItWorksCoverage: number;
-        demoCoverage: number;
-        byStatus: Array<{ status: string; count: number; pct: number }>;
-        perms: Array<{ name: string; count: number }>;
-        missing: Array<{ kind: string; ids: string[] }>;
-    } {
-        const leaves = this.allNodes.filter(
-            (n) => !n.children || n.children.length === 0,
-        );
-        const total = leaves.length || 1;
-        const pct = (n: number) => Math.round((n / total) * 100);
-
-        const statusCount: Record<string, number> = {};
-        const permCount: Record<string, number> = {};
-        const missingTests: string[] = [];
-        const missingHowItWorks: string[] = [];
-        const missingDescription: string[] = [];
-        const missingDemo: string[] = [];
-        for (const n of leaves) {
-            const st = n.status ?? "unknown";
-            statusCount[st] = (statusCount[st] ?? 0) + 1;
-            for (const p of n.permissions ?? []) permCount[p] = (permCount[p] ?? 0) + 1;
-            if (!n.tests || n.tests.length === 0) missingTests.push(n.id);
-            if (!n.howItWorks) missingHowItWorks.push(n.id);
-            if (!n.description) missingDescription.push(n.id);
-            if (!n.demo) missingDemo.push(n.id);
-        }
-
-        const order = ["broken", "experimental", "stable", "deprecated", "unknown"];
-        const byStatus = order
-            .filter((s) => (statusCount[s] ?? 0) > 0)
-            .map((status) => ({
-                status,
-                count: statusCount[status],
-                pct: pct(statusCount[status]),
-            }));
-        const perms = Object.entries(permCount)
-            .map(([name, count]) => ({ name, count }))
-            .sort((a, b) => b.count - a.count);
-
-        return {
-            total: leaves.length,
-            testsCoverage: pct(leaves.length - missingTests.length),
-            howItWorksCoverage: pct(leaves.length - missingHowItWorks.length),
-            demoCoverage: pct(leaves.length - missingDemo.length),
-            byStatus,
-            perms,
-            missing: [
-                { kind: "Sans test", ids: missingTests.slice(0, 20) },
-                { kind: "Sans description", ids: missingDescription.slice(0, 20) },
-                { kind: "Sans how-it-works", ids: missingHowItWorks.slice(0, 20) },
-                { kind: "Sans démo", ids: missingDemo.slice(0, 20) },
-            ].filter((g) => g.ids.length > 0),
-        };
+    get dashboard(): DashboardData {
+        return computeDashboard(FEATURE_TREE);
     }
 
-    /** Flat groups for the graph view: each group buckets nodes by
-     *  status, optionally filtered by query and statusFilter. Order
-     *  is health-relevant: broken first, then experimental, stable,
-     *  deprecated. */
     get graphGroups(): { status: string; nodes: FeatureNode[] }[] {
-        const order = ["broken", "experimental", "stable", "deprecated", "unknown"];
-        const buckets: Record<string, FeatureNode[]> = {};
-        for (const k of order) buckets[k] = [];
-        const q = this.state.query.trim();
-        for (const n of this.allNodes) {
-            // Only leaf nodes in graph view — group/parent nodes
-            // would clutter without adding info.
-            if (n.children && n.children.length > 0) continue;
-            const status = n.status ?? "unknown";
-            if (this.state.statusFilter && status !== this.state.statusFilter) continue;
-            if (q && fuzzyScore(n, q, this.state.lang) === 0) continue;
-            buckets[status].push(n);
-        }
-        return order
-            .filter((s) => buckets[s].length > 0)
-            .map((status) => ({ status, nodes: buckets[status] }));
+        return computeGraphGroups(FEATURE_TREE, this.filterOpts);
     }
 
     nodeById(id: string): FeatureNode | undefined {

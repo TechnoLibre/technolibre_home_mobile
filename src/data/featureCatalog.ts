@@ -1541,6 +1541,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 files: [
                     "src/components/options/features/options_features_component.ts",
                     "src/components/options/features/options_features_component.scss",
+                    "src/components/options/features/featureViewUtils.ts",
                     "src/data/featureCatalog.ts",
                     "src/utils/featureSection.ts",
                 ],
