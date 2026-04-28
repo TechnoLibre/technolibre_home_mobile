@@ -97,6 +97,14 @@ export class StreamDeckCameraStreamer {
     private lastFrameHash = 0;
     private hashCanvas: HTMLCanvasElement | null = null;
     private hashCtx: CanvasRenderingContext2D | null = null;
+    /** Face detection — when true, run window.FaceDetector against the
+     *  hidden video element each tick (best-effort, async, cached) and
+     *  draw a green border on any deck tile whose composite rect
+     *  overlaps a face bounding box. */
+    private faceDetect = false;
+    private faceDetector: { detect(src: HTMLVideoElement | HTMLCanvasElement): Promise<{ boundingBox: DOMRectReadOnly }[]> } | null = null;
+    private faceDetectInFlight = false;
+    private lastFaces: { x: number; y: number; w: number; h: number }[] = [];
     private active = false;
     private stream: MediaStream | null = null;
     private video: HTMLVideoElement | null = null;
@@ -191,6 +199,37 @@ export class StreamDeckCameraStreamer {
         // otherwise enabling the option mid-still-scene leaves the deck
         // showing whatever was there before.
         this.lastFrameHash = 0;
+    }
+
+    getFaceDetect(): boolean { return this.faceDetect; }
+
+    /** Toggle face detection. Lazy-instantiates the FaceDetector on
+     *  first enable. Stays a no-op (just sets the flag) on browsers
+     *  without the API — the per-tick path checks `faceDetector` and
+     *  skips the overlap test silently. */
+    setFaceDetect(on: boolean): void {
+        this.faceDetect = !!on;
+        if (!this.faceDetect) {
+            this.lastFaces = [];
+            return;
+        }
+        if (this.faceDetector) return;
+        const Ctor = (window as unknown as { FaceDetector?: new (opts: { fastMode?: boolean; maxDetectedFaces?: number }) => StreamDeckCameraStreamer["faceDetector"] }).FaceDetector;
+        if (!Ctor) {
+            console.warn("[camera-streamer] FaceDetector API not available in this WebView");
+            return;
+        }
+        try {
+            this.faceDetector = new Ctor({ fastMode: true, maxDetectedFaces: 4 });
+        } catch (e) {
+            console.warn("[camera-streamer] FaceDetector init:", e);
+        }
+    }
+
+    /** True only when the API exists in this WebView. The UI uses this
+     *  to gray out the toggle on platforms without FaceDetector. */
+    isFaceDetectSupported(): boolean {
+        return typeof (window as unknown as { FaceDetector?: unknown }).FaceDetector === "function";
     }
 
     private tickMs(): number {
@@ -382,6 +421,12 @@ export class StreamDeckCameraStreamer {
         this.inFlight = true;
         const t0 = performance.now();
         try {
+            // Kick face detection asynchronously — result lands in
+            // `lastFaces` for the next tick. We deliberately don't await
+            // here so the encode pipeline isn't blocked on detector
+            // latency (~10–40 ms on Chromium).
+            this.kickFaceDetect();
+
             // Synchronous fan-out: paintDeck is fully sync now (toDataURL
             // is synchronous, setKeyImage is fire-and-forget). Sequential
             // by deck is fine — encoding is CPU-bound on a single thread
@@ -400,6 +445,35 @@ export class StreamDeckCameraStreamer {
             }
             this.lastTickStart = t0;
         }
+    }
+
+    /** Fire-and-forget face detect against the live video. We dedupe
+     *  with `faceDetectInFlight` so a slow detector tick can't pile up
+     *  promises behind a fast encode loop — the next ready tick takes
+     *  another snapshot. Bounding boxes stay in video pixel space;
+     *  paintDeck reprojects per-deck via the same cover-fit transform
+     *  used to draw the camera into the composite. */
+    private kickFaceDetect(): void {
+        if (!this.faceDetect || !this.faceDetector || !this.video) return;
+        if (this.faceDetectInFlight) return;
+        if (this.video.readyState < 2) return;
+        this.faceDetectInFlight = true;
+        const detector = this.faceDetector;
+        const v = this.video;
+        detector.detect(v).then((faces) => {
+            this.lastFaces = faces.map((f) => ({
+                x: f.boundingBox.x,
+                y: f.boundingBox.y,
+                w: f.boundingBox.width,
+                h: f.boundingBox.height,
+            }));
+            this.faceDetectInFlight = false;
+        }).catch((e) => {
+            // InvalidStateError happens during track swap or before
+            // the video has any data; swallow and try again next tick.
+            this.faceDetectInFlight = false;
+            console.warn("[camera-streamer] face detect:", e);
+        });
     }
 
     private frameUnchanged(): boolean {
@@ -499,6 +573,21 @@ export class StreamDeckCameraStreamer {
         const strideW = kw + gapW;
         const strideH = kh + gapH;
 
+        // Project face bboxes from video pixel space into composite
+        // pixel space using the same cover-fit transform applied above.
+        // Done once per deck per tick (cheap) so the inner overlap test
+        // is a pure AABB check.
+        const offsetX = (canvasW - dw) / 2;
+        const offsetY = (canvasH - dh) / 2;
+        const facesOnComposite = (this.faceDetect && this.lastFaces.length > 0)
+            ? this.lastFaces.map((f) => ({
+                x: f.x * scale + offsetX,
+                y: f.y * scale + offsetY,
+                w: f.w * scale,
+                h: f.h * scale,
+            }))
+            : [];
+
         const entries: { key: number; bytes: string }[] = new Array(rows * cols);
         let count = 0;
         for (let r = 0; r < rows; r++) {
@@ -510,6 +599,29 @@ export class StreamDeckCameraStreamer {
                     tctx.translate(-kw / 2, -kh / 2);
                 }
                 tctx.drawImage(composite, c * strideW, r * strideH, kw, kh, 0, 0, kw, kh);
+
+                if (facesOnComposite.length > 0) {
+                    const tx = c * strideW;
+                    const ty = r * strideH;
+                    let hit = false;
+                    for (const f of facesOnComposite) {
+                        if (f.x < tx + kw && f.x + f.w > tx
+                            && f.y < ty + kh && f.y + f.h > ty) {
+                            hit = true;
+                            break;
+                        }
+                    }
+                    if (hit) {
+                        // Border is drawn in tile-local identity space so
+                        // it stays on the visible LCD edges regardless of
+                        // the deck's rotation (Plus needs 180°, Mini 270°).
+                        tctx.setTransform(1, 0, 0, 1, 0, 0);
+                        const lw = Math.max(2, Math.round(Math.min(kw, kh) * 0.06));
+                        tctx.strokeStyle = "#00ff00";
+                        tctx.lineWidth = lw;
+                        tctx.strokeRect(lw / 2, lw / 2, kw - lw, kh - lw);
+                    }
+                }
 
                 // Synchronous JPEG encode — returns base64 in a data URL
                 // already. Strip the "data:image/jpeg;base64," prefix.

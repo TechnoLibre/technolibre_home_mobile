@@ -114,6 +114,24 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
                   on saute encodage + USB. Gratuit pour scènes statiques.
                 </p>
               </div>
+
+              <div class="options-camera-stream__setting">
+                <label class="options-camera-stream__checkbox-label">
+                  <input type="checkbox"
+                         t-att-checked="state.faceDetect"
+                         t-att-disabled="!state.faceDetectSupported"
+                         t-on-change="onFaceDetectChange" />
+                  Détection de visage (bordure verte)
+                </label>
+                <p t-if="state.faceDetectSupported" class="options-camera-stream__setting-hint">
+                  FaceDetector du WebView. Les touches contenant un visage
+                  reçoivent un cadre vert. Détection asynchrone, ~5 Hz.
+                </p>
+                <p t-else="" class="options-camera-stream__setting-hint">
+                  Indisponible — l'API FaceDetector n'est pas exposée par
+                  ce WebView.
+                </p>
+              </div>
             </div>
           </div>
         </li>
@@ -132,6 +150,8 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
         fps: 5,
         facingMode: "environment" as "environment" | "user",
         skipIdentical: false,
+        faceDetect: false,
+        faceDetectSupported: false,
     });
 
     private _listeners: PluginListenerHandle[] = [];
@@ -237,6 +257,12 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
         this.syncFromStreamer();
     }
 
+    onFaceDetectChange(ev: Event): void {
+        const input = ev.target as HTMLInputElement;
+        this.streamer.setFaceDetect(input.checked);
+        this.syncFromStreamer();
+    }
+
     private syncFromStreamer(): void {
         const q = this.streamer.getQuality();
         this.state.qualityX100 = Math.round(q * 100);
@@ -244,6 +270,8 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
         this.state.fps = this.streamer.getFps();
         this.state.facingMode = this.streamer.getFacingMode();
         this.state.skipIdentical = this.streamer.getSkipIdentical();
+        this.state.faceDetect = this.streamer.getFaceDetect();
+        this.state.faceDetectSupported = this.streamer.isFaceDetectSupported();
     }
 
     async refreshDeckCount(): Promise<void> {
