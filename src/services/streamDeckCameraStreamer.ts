@@ -430,23 +430,21 @@ export class StreamDeckCameraStreamer {
         // ignore Note key" guard, forcing the user to mash the deck
         // until cleanup finished.
         this.controller.setCameraStreaming(false);
-        // Drop every pending camera frame from the writer queue on each
-        // deck, then reset the firmware. The queue drop alone leaves
-        // the deck firmware busy decoding the last 1–2 frames it
-        // already received, which makes Note-key presses miss the
-        // matrix scan for ~1 s after stop. reset() is a single
-        // feature-report write that interrupts firmware processing
-        // and flushes its internal queue, so the LCDs go blank
-        // immediately and the matrix scan resumes; the next
-        // repaintAll() call will paint the home tile from a clean
-        // slate. Fire-and-forget — failure here is harmless, the
-        // worst case is a stale image lingers a moment longer.
+        // Drop every pending camera frame from the writer queue on
+        // each deck, then restart the sessions outright. A bare
+        // reset() left the firmware idle but the writer/reader
+        // threads still had stale state from the streaming burst —
+        // user-observed lag on the second and third Note presses.
+        // restartSessions closes the USB sessions and reopens them,
+        // so reader, writer and heartbeat all start from a clean
+        // slate. Slower (~200–500 ms) but eliminates the residual
+        // post-streaming sluggishness.
         for (const deckId of this.decks.keys()) {
             StreamDeckPlugin.clearPendingWrites({ deckId }).catch((e) =>
                 console.warn(`[camera-streamer] clearPendingWrites deck=${deckId}:`, e));
-            StreamDeckPlugin.reset({ deckId }).catch((e) =>
-                console.warn(`[camera-streamer] reset deck=${deckId}:`, e));
         }
+        StreamDeckPlugin.restartSessions().catch((e) =>
+            console.warn("[camera-streamer] restartSessions:", e));
         if (this.timer !== null) {
             clearInterval(this.timer);
             this.timer = null;
