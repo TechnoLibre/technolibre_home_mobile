@@ -9,15 +9,8 @@ interface EventBusLike {
     trigger(name: string, payload: Record<string, unknown>): void;
 }
 
-interface NoteShape {
-    title?: string;
-    tags?: string[];
-    entries?: unknown[];
-}
-
 interface NoteServiceLike {
     getNewId(): string;
-    getMatch(noteId: string): Promise<NoteShape>;
 }
 
 /**
@@ -42,10 +35,14 @@ export class StreamDeckController {
      *  brightness on visibility:visible after we dim to 0 on hidden. */
     private lastBrightness = new Map<string, number>();
     private static readonly DEFAULT_BRIGHTNESS = 50;
-    /** Debounce timestamp for the Note key. Rapid mash-fires used to
-     *  spawn unbounded route transitions and crash the app. */
+    /** Minimum ms between Note-key navigations. Set just high enough
+     *  to keep WebView's IME show/hide pipeline from eating itself
+     *  when the user mashes — we observed a SIGSEGV in HWUI's
+     *  RenderThread after 3+ keyboard show/hide cycles in under
+     *  one second on Pixel 6. 250 ms allows ~4 presses/s, plenty
+     *  for intentional rapid use without triggering the crash. */
     private lastNotePressAt = 0;
-    private static readonly NOTE_DEBOUNCE_MS = 400;
+    private static readonly NOTE_DEBOUNCE_MS = 250;
 
     constructor(
         private readonly eventBus: EventBusLike,
@@ -126,40 +123,21 @@ export class StreamDeckController {
         );
 
         this.listeners.push(
-            await StreamDeckPlugin.addListener("keyChanged", async (ev) => {
+            await StreamDeckPlugin.addListener("keyChanged", (ev) => {
                 if (!ev.pressed) return;
-                console.info(`[streamdeck-ctrl] keyChanged key=${ev.key} streaming=${this.cameraStreaming}`);
                 // While the camera streamer owns the deck, the streamer
                 // itself listens to keyChanged to stop. Suppress home
                 // navigation so the press doesn't double-trigger.
-                if (this.cameraStreaming) {
-                    console.info("[streamdeck-ctrl] bail: cameraStreaming");
-                    return;
-                }
+                if (this.cameraStreaming) return;
                 if (ev.key !== 0) return;
-
-                // Debounce — rapid mash on the deck used to fire dozens
-                // of route transitions in flight and crash the app.
+                // Throttle to ~4 presses/s — protects against the
+                // IME-storm WebView crash described above. Each press
+                // still creates a new note; the user can mash and the
+                // worst case is one press dropped per ~250 ms window.
                 const now = Date.now();
-                if (now - this.lastNotePressAt < StreamDeckController.NOTE_DEBOUNCE_MS) {
-                    console.info(`[streamdeck-ctrl] bail: debounce ${now - this.lastNotePressAt}ms`);
-                    return;
-                }
+                if (now - this.lastNotePressAt < StreamDeckController.NOTE_DEBOUNCE_MS) return;
                 this.lastNotePressAt = now;
-
-                // If we're already sitting on a blank note, stay put —
-                // the user intent for "press Note again" is "give me a
-                // fresh empty note" and the current one already qualifies.
-                // Pressing it on a note that has content does spawn a
-                // new note (that's the way to start a second one without
-                // walking back to the home screen).
-                if (await this._currentNoteIsBlank()) {
-                    console.info(`[streamdeck-ctrl] bail: current note blank (path=${window.location.pathname})`);
-                    return;
-                }
-
                 const newId = this.noteService.getNewId();
-                console.info(`[streamdeck-ctrl] navigate → /note/${newId}`);
                 this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
                     url: `/note/${newId}`,
                 });
@@ -199,23 +177,6 @@ export class StreamDeckController {
                 );
             }
         });
-    }
-
-    private async _currentNoteIsBlank(): Promise<boolean> {
-        if (typeof window === "undefined") return false;
-        const m = window.location.pathname.match(/^\/note\/([^/?#]+)/);
-        if (!m) return false;
-        try {
-            const note = await this.noteService.getMatch(m[1]);
-            const hasTitle = (note.title ?? "").trim().length > 0;
-            const hasTags = Array.isArray(note.tags) && note.tags.length > 0;
-            const hasEntries = Array.isArray(note.entries) && note.entries.length > 0;
-            return !(hasTitle || hasTags || hasEntries);
-        } catch {
-            // Note id in URL but no DB row yet — that's a freshly-spawned
-            // note the user hasn't typed into. Treat as blank.
-            return true;
-        }
     }
 
     private _isHidden(): boolean {
