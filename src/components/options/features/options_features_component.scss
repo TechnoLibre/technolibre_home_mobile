@@ -95,6 +95,22 @@
         color: var(--accent, #3884ff);
     }
 
+    .features__count {
+        background: var(--row-selected-bg, rgba(0, 0, 0, 0.08));
+        border-radius: 0.7rem;
+        color: var(--text-greyed-out, #888);
+        font-size: 0.65rem;
+        font-variant-numeric: tabular-nums;
+        padding: 0.05rem 0.4rem;
+        min-width: 1.1rem;
+        text-align: center;
+
+        &--files {
+            background: transparent;
+            opacity: 0.7;
+        }
+    }
+
     .features__detail {
         overflow: auto;
         padding: 0.75rem 1rem;

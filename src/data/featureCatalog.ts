@@ -249,6 +249,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Receive text/image/video from another app, create a note.",
                     fr: "Recevoir texte/image/vidéo d'une autre app, créer une note.",
                 },
+                howItWorks: {
+                    en: "CustomSendIntentActivity captures ACTION_SEND payloads "
+                        + "before Capacitor mounts. The MIME prefix routes to a "
+                        + "dedicated handler component which writes the entry "
+                        + "and navigates to the new note.",
+                    fr: "CustomSendIntentActivity intercepte les payloads "
+                        + "ACTION_SEND avant que Capacitor monte. Le préfixe "
+                        + "MIME route vers le bon handler qui écrit l'entrée et "
+                        + "navigue vers la nouvelle note.",
+                },
                 demo: NONE_BG,
                 files: [
                     "src/components/intent/intent_component.ts",
@@ -303,6 +313,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Wires Note key, sleep cycle, brightness restore.",
                     fr: "Relie la touche Note, le cycle veille, restore brightness.",
                 },
+                howItWorks: {
+                    en: "Subscribes to keyChanged on every connected deck, "
+                        + "throttled at 150 ms to dodge the WebView IME-storm "
+                        + "crash. On visibilitychange:hidden each deck dims to "
+                        + "0 %; brief hides only restore brightness, hides over "
+                        + "5 s trigger a full restartSessions to wake the "
+                        + "post-sleep-silent reader.",
+                    fr: "S'abonne à keyChanged sur chaque deck, throttlé à 150 "
+                        + "ms pour éviter le crash IME du WebView. Sur "
+                        + "visibilitychange:hidden chaque deck dimme à 0 %; "
+                        + "hides courtes restaurent juste la luminosité, hides "
+                        + ">5 s déclenchent un restartSessions complet pour "
+                        + "réveiller le reader silencieux après wake.",
+                },
                 demo: NONE_BG,
                 files: ["src/services/streamDeckController.ts"],
             },
@@ -326,6 +350,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "UsbRequest / bulk / polled fallbacks for diverse kernels.",
                     fr: "Repli UsbRequest / bulk / polled selon le kernel.",
                 },
+                howItWorks: {
+                    en: "Default UsbRequest async on interrupt-IN works on most "
+                        + "kernels. Some Android stacks shadow that endpoint, "
+                        + "so bulkTransfer is offered as a sync fallback, and "
+                        + "polled GET_REPORT on EP0 as last resort. Buffer "
+                        + "size matches epIn.maxPacketSize (key fix: 64 B "
+                        + "returned EOVERFLOW on Pixel 6 / ThinkPhone XL).",
+                    fr: "Par défaut UsbRequest async sur interrupt-IN. Certains "
+                        + "kernels Android cachent cet endpoint, on offre "
+                        + "bulkTransfer en repli sync, et polled GET_REPORT "
+                        + "sur EP0 en dernier recours. Buffer = "
+                        + "epIn.maxPacketSize (fix clé: 64 B retournait "
+                        + "EOVERFLOW sur Pixel 6 / ThinkPhone XL).",
+                },
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
             },
@@ -336,6 +374,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "700 ms control transfer keeping the bus active.",
                     fr: "Control transfer 700 ms pour garder le bus actif.",
                 },
+                howItWorks: {
+                    en: "Per-session daemon thread issuing GET_REPORT (firmware "
+                        + "version) every 700 ms. Without it, Android USB "
+                        + "selective suspend stops driving SOFs once the "
+                        + "screen goes off and the deck firmware reacts by "
+                        + "pulsing LCD brightness at ~1 Hz. Cheap (separate "
+                        + "endpoint from reader/writer, no contention).",
+                    fr: "Thread daemon par session qui envoie un GET_REPORT "
+                        + "(version firmware) toutes les 700 ms. Sans ça, "
+                        + "l'autosuspend USB Android arrête les SOFs dès "
+                        + "l'écran off et le firmware réagit en pulsant la "
+                        + "LCD à ~1 Hz. Coût faible (endpoint séparé, pas "
+                        + "de contention).",
+                },
                 demo: NONE_BG,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
             },
@@ -345,6 +397,19 @@ export const FEATURE_TREE: FeatureNode[] = [
                 description: {
                     en: "Coalesced image-write jobs flushed by a single thread.",
                     fr: "Files d'écriture images coalescées, drainées par un thread.",
+                },
+                howItWorks: {
+                    en: "Each (deck, key) is a slot; offering a new job for an "
+                        + "existing slot replaces the previous one (which "
+                        + "resolves as `dropped`). Single consumer thread "
+                        + "drains via bulk-OUT. clearPendingWrites() empties "
+                        + "the queue without closing it — used by the camera "
+                        + "streamer on stop to avoid the firmware-busy lag.",
+                    fr: "Chaque (deck, key) est un slot ; offrir un nouveau job "
+                        + "pour un slot existant remplace l'ancien (résolu "
+                        + "comme `dropped`). Thread consommateur unique drain "
+                        + "via bulk-OUT. clearPendingWrites() vide la queue "
+                        + "sans la fermer — utilisé par le streamer sur stop.",
                 },
                 demo: NONE_PLUMBING,
                 files: [
@@ -392,6 +457,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Stream phone camera onto deck keys (cover-fit, bezel-aware).",
                     fr: "Diffuse la caméra du téléphone sur les touches (cover-fit, bezels).",
                 },
+                howItWorks: {
+                    en: "getUserMedia → hidden <video> → composite canvas "
+                        + "cover-fit per deck (with bezel-gap padding) → tile "
+                        + "crop per key → toDataURL JPEG (sync, ~5–10× faster "
+                        + "than toBlob in WebView) → setKeyImagesBatch (one "
+                        + "JNI call per deck). Auto-pause on visibility hidden "
+                        + "and resume on visible.",
+                    fr: "getUserMedia → <video> caché → canvas composite "
+                        + "cover-fit par deck (avec gap bezels) → crop tile "
+                        + "par touche → toDataURL JPEG (sync, ~5–10× plus "
+                        + "rapide que toBlob dans WebView) → setKeyImagesBatch "
+                        + "(un seul JNI par deck). Auto-pause sur "
+                        + "visibility hidden, resume sur visible.",
+                },
                 demo: { kind: "options", sectionId: "camera-stream" },
                 files: [
                     "src/services/streamDeckCameraStreamer.ts",
@@ -406,6 +485,19 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "ML Kit detects faces, draws a green border on hit tiles.",
                     fr: "ML Kit détecte les visages, cadre vert sur les tuiles touchées.",
                 },
+                howItWorks: {
+                    en: "Per tick: downscale the live video to ~640 px on its "
+                        + "long edge (aspect-preserving), JPEG-encode at q=0.5, "
+                        + "ship to ML Kit FaceDetection in ACCURATE mode via a "
+                        + "JNI bridge. Bounding boxes come back as normalised "
+                        + "[0,1] coords; paintDeck reprojects them onto each "
+                        + "deck's composite cover-fit transform.",
+                    fr: "Par tick: downscale du flux à ~640 px sur la longue "
+                        + "arête (aspect préservé), encode JPEG q=0.5, envoie "
+                        + "à ML Kit FaceDetection ACCURATE via JNI. Bbox "
+                        + "retournés en coords normalisées [0,1] ; paintDeck "
+                        + "reproject sur le cover-fit composite de chaque deck.",
+                },
                 demo: { kind: "options", sectionId: "camera-stream" },
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/FaceDetectionPlugin.java",
@@ -418,6 +510,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 description: {
                     en: "Render scrolling text on the Plus LCD strip.",
                     fr: "Affiche un texte défilant sur la bande LCD du Plus.",
+                },
+                howItWorks: {
+                    en: "15 fps tick. Static frames are rendered once and "
+                        + "deduped via a hash of (text, font, colour, scrollX) "
+                        + "so a still text only writes once. When the text is "
+                        + "wider than the LCD it scrolls and the text is drawn "
+                        + "twice (offset by gap) for a wrap-around marquee.",
+                    fr: "Tick 15 fps. Frames statiques rendues une fois et "
+                        + "dédupées via hash (texte, police, couleur, "
+                        + "scrollX) — donc texte fixe = 1 seule écriture. "
+                        + "Si le texte est plus large que la LCD, il scroll "
+                        + "avec un double-draw décalé pour la boucle.",
                 },
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["src/services/streamDeckLcdTextRenderer.ts"],
@@ -498,6 +602,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 description: {
                     en: "Per-server status, conflict resolution, retry.",
                     fr: "Statut par serveur, résolution conflits, retry.",
+                },
+                howItWorks: {
+                    en: "Each note tracks (odoo_id, sync_status, "
+                        + "last_synced_at, sync_config_id) plus a multi-server "
+                        + "selection. Pull diffs are merged client-side using "
+                        + "last-modified-wins per field; conflicts surface in "
+                        + "the UI for explicit resolution.",
+                    fr: "Chaque note stocke (odoo_id, sync_status, "
+                        + "last_synced_at, sync_config_id) + sélection "
+                        + "multi-serveurs. Les diffs pull sont mergés client "
+                        + "en last-modified-wins par champ ; les conflits "
+                        + "remontent en UI pour résolution explicite.",
                 },
                 demo: NONE_BG,
                 files: [
@@ -602,6 +718,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Git status / diff / commit on bundled repos.",
                     fr: "Status / diff / commit Git sur repos bundlés.",
                 },
+                howItWorks: {
+                    en: "isomorphic-git operates on a virtual FS (capacitor "
+                        + "filesystem adapter for the in-place edit overlay, "
+                        + "or read-only tarball reader for shipped bundles). "
+                        + "Same JS git stack as the desktop, no native libgit2.",
+                    fr: "isomorphic-git tourne sur un FS virtuel (adapter "
+                        + "capacitor filesystem pour l'overlay d'édition, ou "
+                        + "lecteur tarball en lecture seule pour les bundles). "
+                        + "Même stack JS git que sur desktop, pas de "
+                        + "libgit2 natif.",
+                },
                 demo: { kind: "route", url: "/options/code" },
                 files: [
                     "src/services/codeService.ts",
@@ -625,6 +752,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 description: {
                     en: "Vite plugin: pack manifest repos into tar.gz at build.",
                     fr: "Plugin Vite : packe les repos manifests en tar.gz au build.",
+                },
+                howItWorks: {
+                    en: "Custom Vite plugin reads the Google-Repo manifest, "
+                        + "tars each project (parallel pool sized to nproc) "
+                        + "and writes them to src/public/repos/ alongside a "
+                        + "manifest.json. Build flags BUNDLE_SKIP_REPOS and "
+                        + "BUNDLE_SKIP_ERPLIBRE shave APK size for dev loops.",
+                    fr: "Plugin Vite custom : lit le manifest Google-Repo, "
+                        + "tar chaque projet (pool parallèle = nproc) et "
+                        + "écrit dans src/public/repos/ avec un manifest.json. "
+                        + "Flags BUNDLE_SKIP_REPOS et BUNDLE_SKIP_ERPLIBRE "
+                        + "réduisent la taille APK en dev.",
                 },
                 demo: NONE_BG,
                 files: ["vite.config.ts"],
@@ -700,6 +839,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 description: {
                     en: "JNI bridge to whisper.cpp built via CMake.",
                     fr: "Bridge JNI vers whisper.cpp compilé via CMake.",
+                },
+                howItWorks: {
+                    en: "whisper.cpp is checked out under android/app/src/main/"
+                        + "cpp/whisper and built as a static lib by CMake. The "
+                        + "JNI shim (whisper_jni.cpp) wraps it as "
+                        + "libwhisper_jni.so. WhisperLib statically loads the "
+                        + "library; WhisperPlugin exposes load/transcribe to JS.",
+                    fr: "whisper.cpp est cloné dans android/app/src/main/cpp/"
+                        + "whisper et compilé en lib statique par CMake. Le "
+                        + "shim JNI (whisper_jni.cpp) l'enveloppe en "
+                        + "libwhisper_jni.so. WhisperLib charge la lib en "
+                        + "static; WhisperPlugin expose load/transcribe à JS.",
                 },
                 demo: NONE_PLUMBING,
                 files: [
@@ -786,6 +937,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Encrypted KV (passwords, tokens) in Android keystore.",
                     fr: "KV chiffré (mots de passe, tokens) via keystore Android.",
                 },
+                howItWorks: {
+                    en: "Wraps capacitor-secure-storage-plugin which uses "
+                        + "Android Keystore for AES key derivation. Older "
+                        + "plain-text creds are migrated on first run via "
+                        + "encryptExistingCredentials.ts. Get-on-missing-key "
+                        + "throws — callers wrap in try/catch.",
+                    fr: "Wrap autour de capacitor-secure-storage-plugin qui "
+                        + "utilise Android Keystore pour dériver une clé AES. "
+                        + "Les credentials en clair existants sont migrés au "
+                        + "premier run via encryptExistingCredentials.ts. "
+                        + "Get sur clé manquante throw — wrap try/catch.",
+                },
                 demo: { kind: "options", sectionId: "secure-storage" },
                 files: [
                     "src/components/options/secure_storage/options_secure_storage_component.ts",
@@ -822,6 +985,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 description: {
                     en: "FLAG_KEEP_SCREEN_ON to keep deck LCDs lit.",
                     fr: "FLAG_KEEP_SCREEN_ON pour garder les LCD allumées.",
+                },
+                howItWorks: {
+                    en: "Plugin toggles FLAG_KEEP_SCREEN_ON on the activity "
+                        + "window. While set, Android leaves the screen on "
+                        + "indefinitely and the USB host stays at full power. "
+                        + "Pref persists in localStorage and re-applies on "
+                        + "app start.",
+                    fr: "Le plugin toggle FLAG_KEEP_SCREEN_ON sur la window "
+                        + "de l'activity. Tant qu'il est set, Android garde "
+                        + "l'écran on indéfiniment et l'USB host reste à "
+                        + "pleine puissance. La préf persiste localStorage "
+                        + "et se ré-applique au démarrage.",
                 },
                 demo: { kind: "options", sectionId: "keep-awake" },
                 files: [
@@ -1144,6 +1319,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Pre-compile templates at build for fast startup.",
                     fr: "Pré-compile les templates au build pour boot rapide.",
                 },
+                howItWorks: {
+                    en: "owl-aot.ts intercepts every xml`...` literal at build "
+                        + "time and replaces it with a pre-compiled render "
+                        + "function (no runtime template parsing). The "
+                        + "precompiled functions land in a single chunk "
+                        + "(`owl-templates`) so the WebView can parse the "
+                        + "main entry and the templates in parallel.",
+                    fr: "owl-aot.ts intercepte chaque xml`...` au build et "
+                        + "remplace par une fonction render pré-compilée (pas "
+                        + "de parsing template au runtime). Les fonctions "
+                        + "atterrissent dans un chunk unique "
+                        + "(`owl-templates`) pour parsing parallèle de "
+                        + "l'entry et des templates par le WebView.",
+                },
                 demo: NONE_PLUMBING,
                 files: [
                     "src/js/owl-aot.ts",
@@ -1179,6 +1368,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 description: {
                     en: "Stats, quick notes, live uptime counter.",
                     fr: "Stats, accès rapide notes, compteur uptime live.",
+                },
+                howItWorks: {
+                    en: "STARTUP_AT is captured at module load. The uptime "
+                        + "counter ticks every 1 s while under one minute "
+                        + "(seconds visible) and switches to a 60 s tick "
+                        + "afterwards (seconds dropped) — no point waking "
+                        + "the WebView 60×/min for invisible churn.",
+                    fr: "STARTUP_AT est capturé au load du module. Le "
+                        + "compteur uptime tick chaque 1 s sous une minute "
+                        + "(secondes visibles) et passe à un tick 60 s "
+                        + "ensuite (secondes droppées) — inutile de réveiller "
+                        + "le WebView 60×/min pour rien.",
                 },
                 demo: { kind: "route", url: "/" },
                 files: [

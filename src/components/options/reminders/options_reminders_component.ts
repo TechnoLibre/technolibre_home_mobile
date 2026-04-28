@@ -5,7 +5,7 @@ import { getCurrentLocale } from "../../../i18n";
 
 export class OptionsRemindersComponent extends EnhancedComponent {
   static template = xml`
-    <li class="options-list__item options-reminders">
+    <li id="reminders" class="options-list__item options-reminders">
       <div class="options-reminders__header" t-on-click="toggleExpanded">
         <span t-esc="t('button.reminders')"/>
         <span class="options-reminders__count" t-if="activeCount > 0">

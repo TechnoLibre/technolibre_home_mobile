@@ -3,6 +3,7 @@ import type { PluginListenerHandle } from "@capacitor/core";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { StreamDeckPlugin } from "../../../plugins/streamDeckPlugin";
 import { StreamDeckCameraStreamer } from "../../../services/streamDeckCameraStreamer";
+import { useFeatureSection } from "../../../utils/featureSection";
 
 /**
  * Options panel toggle: pump the rear camera onto every connected
@@ -12,7 +13,7 @@ import { StreamDeckCameraStreamer } from "../../../services/streamDeckCameraStre
  */
 export class OptionsCameraStreamComponent extends EnhancedComponent {
     static template = xml`
-        <li class="options-list__item options-camera-stream">
+        <li id="camera-stream" class="options-list__item options-camera-stream">
           <div
               class="options-camera-stream__header"
               role="button"
@@ -166,6 +167,7 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
     }
 
     setup(): void {
+        useFeatureSection("camera-stream", () => { this.state.expanded = true; });
         onMounted(async () => {
             this.state.active = this.streamer.isActive();
             // Sync every slider/toggle to whatever the streamer currently
