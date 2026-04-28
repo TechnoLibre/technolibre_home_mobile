@@ -1637,7 +1637,6 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/js/app.ts",
                     "src/js/helpers.ts",
                 ],
-                tests: ["src/__tests__/appService.test.ts"],
             },
             {
                 id: "meta.build-id",
