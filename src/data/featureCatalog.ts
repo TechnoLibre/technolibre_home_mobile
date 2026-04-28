@@ -1545,7 +1545,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/data/featureCatalog.ts",
                     "src/utils/featureSection.ts",
                 ],
-                tests: ["src/__tests__/featureCatalog.test.ts"],
+                tests: [
+                    "src/__tests__/featureCatalog.test.ts",
+                    "src/__tests__/featureViewUtils.test.ts",
+                    "src/__tests__/permissionsAudit.test.ts",
+                ],
             },
             {
                 id: "meta.options",
