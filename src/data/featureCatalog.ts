@@ -73,7 +73,7 @@ const NONE_PLUMBING: FeatureDemo = {
 export const FEATURE_TREE: FeatureNode[] = [
     {
         id: "notes",
-        label: { en: "Notes", fr: "Notes" },
+        label: { en: "📝 Notes", fr: "📝 Notes" },
         description: {
             en: "Multi-entry note-taking with tags, priorities and share intents.",
             fr: "Prise de note multi-entrées avec tags, priorités et partage.",
@@ -138,6 +138,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             en: "Capture or pick a photo, store in note.",
                             fr: "Capturer ou choisir une photo, l'attacher à la note.",
                         },
+                        permissions: ["camera"],
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/photo/note_entry_photo_component.ts"],
                     },
@@ -148,6 +149,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             en: "Record/attach a video, generate thumbnail.",
                             fr: "Enregistrer/attacher une vidéo, générer une miniature.",
                         },
+                        permissions: ["camera", "microphone"],
                         demo: { kind: "route", url: "/note/demo" },
                         files: [
                             "src/components/note_entry/video/note_entry_video_component.ts",
@@ -162,6 +164,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                             en: "Record an audio clip, optional transcription.",
                             fr: "Enregistrer un clip audio, transcription optionnelle.",
                         },
+                        permissions: ["microphone"],
+                        dependsOn: ["transcription.bridge"],
                         demo: { kind: "route", url: "/note/demo" },
                         files: ["src/components/note_entry/audio/note_entry_audio_component.ts"],
                     },
@@ -209,6 +213,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Hierarchical labelling, colour, filtering by tag.",
                     fr: "Étiquetage hiérarchique, couleur, filtre par tag.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/notes" },
                 files: [
                     "src/components/tags/tag_notes_component.ts",
@@ -217,6 +222,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addTagsTable.ts",
                     "src/models/tag.ts",
                 ],
+                tests: ["src/__tests__/tagService.test.ts"],
             },
             {
                 id: "notes.priority",
@@ -251,6 +257,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "DB-level note operations and subservices.",
                     fr: "Opérations DB sur les notes et sous-services.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/note/noteService.ts",
@@ -259,6 +266,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/note/noteIntentSubservice.ts",
                     "src/models/note.ts",
                 ],
+                tests: ["src/__tests__/noteService.test.ts"],
             },
             {
                 id: "notes.share-intent",
@@ -292,7 +300,7 @@ export const FEATURE_TREE: FeatureNode[] = [
     },
     {
         id: "streamdeck",
-        label: { en: "Stream Deck", fr: "Stream Deck" },
+        label: { en: "🎛️ Stream Deck", fr: "🎛️ Stream Deck" },
         description: {
             en: "Drive Elgato Stream Deck devices over USB host.",
             fr: "Pilote les Elgato Stream Deck via USB host.",
@@ -582,7 +590,7 @@ export const FEATURE_TREE: FeatureNode[] = [
     },
     {
         id: "camera",
-        label: { en: "Camera", fr: "Caméra" },
+        label: { en: "📷 Camera", fr: "📷 Caméra" },
         description: {
             en: "Camera viewer and ML Kit OCR.",
             fr: "Visionneuse caméra et OCR ML Kit.",
@@ -595,6 +603,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Live preview with OCR overlay.",
                     fr: "Aperçu live avec overlay OCR.",
                 },
+                permissions: ["camera"],
                 demo: NONE_BG,
                 files: [
                     "src/components/video_camera/video_camera_component.ts",
@@ -608,17 +617,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "On-device text recognition over the camera stream.",
                     fr: "Reconnaissance de texte sur le flux caméra (sur appareil).",
                 },
+                status: "stable",
+                permissions: ["camera"],
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/OcrPlugin.java",
                     "src/plugins/ocrPlugin.ts",
                 ],
+                tests: ["src/__tests__/ocrPlugin.test.ts"],
             },
         ],
     },
     {
         id: "sync",
-        label: { en: "Odoo sync", fr: "Sync Odoo" },
+        label: { en: "🔄 Odoo sync", fr: "🔄 Sync Odoo" },
         description: {
             en: "Push/pull notes between the app and Odoo servers.",
             fr: "Push/pull des notes entre l'app et les serveurs Odoo.",
@@ -632,6 +644,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Per-server status, conflict resolution, retry.",
                     fr: "Statut par serveur, résolution conflits, retry.",
                 },
+                status: "stable",
+                permissions: ["internet"],
+                tests: ["src/__tests__/syncService.test.ts"],
                 howItWorks: {
                     en: "Each note tracks (odoo_id, sync_status, "
                         + "last_synced_at, sync_config_id) plus a multi-server "
@@ -682,6 +697,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Server pushes a sync trigger via ntfy.sh.",
                     fr: "Le serveur envoie un trigger sync via ntfy.sh.",
                 },
+                permissions: ["internet", "notifications"],
                 demo: NONE_BG,
                 files: [
                     "src/services/ntfyService.ts",
@@ -693,7 +709,7 @@ export const FEATURE_TREE: FeatureNode[] = [
     },
     {
         id: "code",
-        label: { en: "Code", fr: "Code" },
+        label: { en: "💻 Code", fr: "💻 Code" },
         description: {
             en: "View, edit and format source files in repo bundles.",
             fr: "Voir, éditer et formater les fichiers source dans les bundles.",
@@ -707,12 +723,14 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Browse repos, edit files, save back to in-place store.",
                     fr: "Parcourir repos, éditer, sauvegarder en place.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/options/code" },
                 files: [
                     "src/components/options/code/options_code_component.ts",
                     "src/components/options/code/options_code_component.scss",
                     "src/components/options/code/syntax_highlight.ts",
                 ],
+                tests: ["src/__tests__/syntaxHighlight.test.ts"],
             },
             {
                 id: "code.style",
@@ -734,11 +752,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Persist user edits in a SQLite-backed overlay.",
                     fr: "Persiste les édits user dans un overlay SQLite.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/editableCodeService.ts",
                     "src/services/migrations/addEditableReposTable.ts",
                 ],
+                tests: ["src/__tests__/editableCodeService.test.ts"],
             },
             {
                 id: "code.git",
@@ -758,18 +778,23 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "Même stack JS git que sur desktop, pas de "
                         + "libgit2 natif.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/options/code" },
                 files: [
                     "src/services/codeService.ts",
                     "src/services/git/capacitorFsAdapter.ts",
                     "src/models/gitTypes.ts",
                 ],
+                tests: [
+                    "src/__tests__/codeService.test.ts",
+                    "src/__tests__/capacitorFsAdapter.test.ts",
+                ],
             },
         ],
     },
     {
         id: "repos",
-        label: { en: "Repos & bundles", fr: "Repos & bundles" },
+        label: { en: "📦 Repos & bundles", fr: "📦 Repos & bundles" },
         description: {
             en: "Manifest tarballs of source repos shipped with the APK.",
             fr: "Tarballs de repos source bundlés avec l'APK.",
@@ -806,6 +831,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 demo: NONE_PLUMBING,
                 files: ["src/services/bundleCodeService.ts"],
+                tests: ["src/__tests__/bundleCodeService.test.ts"],
             },
             {
                 id: "repos.extractor",
@@ -820,6 +846,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/utils/tarParser.ts",
                     "src/utils/decompressGzip.ts",
                 ],
+                tests: [
+                    "src/__tests__/repoExtractorService.test.ts",
+                    "src/__tests__/tarParser.test.ts",
+                    "src/__tests__/decompressGzip.test.ts",
+                ],
             },
             {
                 id: "repos.edit",
@@ -830,6 +861,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 demo: NONE_PLUMBING,
                 files: ["src/services/repoEditService.ts"],
+                tests: ["src/__tests__/repoEditService.test.ts"],
             },
             {
                 id: "repos.fs-factory",
@@ -855,7 +887,7 @@ export const FEATURE_TREE: FeatureNode[] = [
     },
     {
         id: "transcription",
-        label: { en: "Whisper transcription", fr: "Transcription Whisper" },
+        label: { en: "🎙️ Whisper transcription", fr: "🎙️ Transcription Whisper" },
         description: {
             en: "On-device speech-to-text via whisper.cpp.",
             fr: "Speech-to-text sur appareil via whisper.cpp.",
@@ -918,11 +950,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Run a transcription job from JS, await result.",
                     fr: "Lance une transcription depuis JS, attend le résultat.",
                 },
+                permissions: ["microphone"],
                 demo: NONE_PLUMBING,
                 files: [
                     "src/plugins/whisperPlugin.ts",
                     "src/services/transcriptionService.ts",
                 ],
+                tests: ["src/__tests__/transcriptionService.test.ts"],
             },
             {
                 id: "transcription.options",
@@ -941,7 +975,7 @@ export const FEATURE_TREE: FeatureNode[] = [
     },
     {
         id: "security",
-        label: { en: "Security", fr: "Sécurité" },
+        label: { en: "🔒 Security", fr: "🔒 Sécurité" },
         description: {
             en: "Biometry, secure storage, dev-mode unlock.",
             fr: "Biométrie, secure storage, déverrouillage dev.",
@@ -1005,7 +1039,7 @@ export const FEATURE_TREE: FeatureNode[] = [
     },
     {
         id: "system",
-        label: { en: "System", fr: "Système" },
+        label: { en: "📱 System", fr: "📱 Système" },
         description: {
             en: "Power management, device info, network probes.",
             fr: "Gestion énergie, info appareil, sondes réseau.",
@@ -1089,6 +1123,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Read RAM/CPU/disk of a remote server over SSH.",
                     fr: "Lit RAM/CPU/disk d'un serveur distant via SSH.",
                 },
+                permissions: ["internet"],
+                dependsOn: ["deployment.ssh"],
                 demo: { kind: "route", url: "/options/resources" },
                 files: [
                     "src/components/options/resources/options_resources_component.ts",
@@ -1096,6 +1132,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/servers/resources/servers_resources_component.ts",
                     "src/utils/serverResourceParsers.ts",
                 ],
+                tests: ["src/__tests__/serverResourceParsers.test.ts"],
             },
             {
                 id: "system.processes",
@@ -1104,6 +1141,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Track and inspect background jobs.",
                     fr: "Suivre et inspecter les tâches d'arrière-plan.",
                 },
+                status: "stable",
                 demo: { kind: "route", url: "/options/processes" },
                 files: [
                     "src/components/options/processes/options_processes_component.ts",
@@ -1113,12 +1151,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addProcessDebugLogColumn.ts",
                     "src/services/migrations/addProcessResultColumn.ts",
                 ],
+                tests: ["src/__tests__/processService.test.ts"],
             },
         ],
     },
     {
         id: "deployment",
-        label: { en: "Deployment", fr: "Déploiement" },
+        label: { en: "🚀 Deployment", fr: "🚀 Déploiement" },
         description: {
             en: "Provision and update Odoo servers from the phone.",
             fr: "Provisionner et mettre à jour les serveurs Odoo depuis le tel.",
@@ -1132,8 +1171,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Multi-step pipeline (SSH, scp, restart) with progress.",
                     fr: "Pipeline multi-étapes (SSH, scp, restart) avec progression.",
                 },
+                status: "stable",
+                permissions: ["internet"],
+                dependsOn: ["deployment.ssh"],
                 demo: NONE_BG,
                 files: ["src/services/deploymentService.ts"],
+                tests: ["src/__tests__/deploymentService.test.ts"],
             },
             {
                 id: "deployment.ssh",
@@ -1142,6 +1185,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "JSch-backed SSH exec/sftp.",
                     fr: "SSH exec/sftp basé sur JSch.",
                 },
+                permissions: ["internet"],
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/SshPlugin.java",
@@ -1155,6 +1199,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "TCP-level HTTP for self-signed Odoo endpoints.",
                     fr: "HTTP au niveau TCP pour endpoints Odoo self-signed.",
                 },
+                permissions: ["internet"],
                 demo: NONE_BG,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/RawHttpPlugin.java",
@@ -1177,6 +1222,8 @@ export const FEATURE_TREE: FeatureNode[] = [
             {
                 id: "deployment.servers",
                 label: { en: "Server CRUD", fr: "CRUD serveurs" },
+                status: "stable",
+                tests: ["src/__tests__/serverService.test.ts"],
                 description: {
                     en: "Create/edit/delete servers and their workspaces.",
                     fr: "Créer/éditer/supprimer serveurs et workspaces.",
@@ -1198,6 +1245,8 @@ export const FEATURE_TREE: FeatureNode[] = [
             {
                 id: "deployment.applications",
                 label: { en: "Odoo apps CRUD", fr: "CRUD applications Odoo" },
+                status: "stable",
+                tests: ["src/__tests__/appService.test.ts"],
                 description: {
                     en: "Manage Odoo instances (URL, version, sync flags).",
                     fr: "Gérer les instances Odoo (URL, version, flags sync).",
@@ -1218,7 +1267,7 @@ export const FEATURE_TREE: FeatureNode[] = [
     },
     {
         id: "data",
-        label: { en: "Data / DB", fr: "Données / DB" },
+        label: { en: "🗄️ Data / DB", fr: "🗄️ Données / DB" },
         description: {
             en: "SQLite store, migrations, debug viewers.",
             fr: "Stockage SQLite, migrations, viewers debug.",
@@ -1232,8 +1281,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Single connection wrapper, encrypted at rest.",
                     fr: "Wrapper connexion unique, chiffré au repos.",
                 },
+                status: "stable",
                 demo: NONE_PLUMBING,
                 files: ["src/services/databaseService.ts"],
+                tests: ["src/__tests__/databaseService.test.ts"],
             },
             {
                 id: "data.migrations",
@@ -1242,10 +1293,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Versioned schema upgrades on app launch.",
                     fr: "Migrations de schéma versionnées au démarrage.",
                 },
+                status: "stable",
                 demo: NONE_BG,
                 files: [
                     "src/services/migrationService.ts",
                     "src/services/dataMigration.ts",
+                ],
+                tests: [
+                    "src/__tests__/migrationService.test.ts",
+                    "src/__tests__/dataMigration.test.ts",
+                    "src/__tests__/migrationPopup.test.ts",
                 ],
             },
             {
@@ -1286,7 +1343,7 @@ export const FEATURE_TREE: FeatureNode[] = [
     },
     {
         id: "ui",
-        label: { en: "UI / UX", fr: "UI / UX" },
+        label: { en: "🎨 UI / UX", fr: "🎨 UI / UX" },
         description: {
             en: "Routing, theming, reminders, shared components.",
             fr: "Routing, thème, rappels, composants partagés.",
@@ -1295,6 +1352,8 @@ export const FEATURE_TREE: FeatureNode[] = [
             {
                 id: "ui.router",
                 label: { en: "Router & navigation", fr: "Router & navigation" },
+                status: "stable",
+                tests: ["src/__tests__/router.test.ts"],
                 description: {
                     en: "Hash-based router with route table and navbar.",
                     fr: "Router à hash avec table de routes et navbar.",
@@ -1310,6 +1369,8 @@ export const FEATURE_TREE: FeatureNode[] = [
             {
                 id: "ui.theme",
                 label: { en: "Theme & graphic prefs", fr: "Thème & préférences graphiques" },
+                status: "stable",
+                tests: ["src/__tests__/graphicPrefs.test.ts"],
                 description: {
                     en: "Colours, fonts, motion preferences stored in DB.",
                     fr: "Couleurs, polices, motion stockées en DB.",
@@ -1330,6 +1391,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Local notifications scheduled per note.",
                     fr: "Notifications locales planifiées par note.",
                 },
+                status: "stable",
+                permissions: ["notifications"],
                 demo: { kind: "options", sectionId: "reminders" },
                 files: [
                     "src/components/options/reminders/options_reminders_component.ts",
@@ -1337,6 +1400,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/models/reminder.ts",
                     "src/services/migrations/addReminderCreatedAt.ts",
                 ],
+                tests: ["src/__tests__/reminderService.test.ts"],
             },
             {
                 id: "ui.shared-components",
@@ -1396,7 +1460,7 @@ export const FEATURE_TREE: FeatureNode[] = [
     },
     {
         id: "meta",
-        label: { en: "Meta", fr: "Méta" },
+        label: { en: "ℹ️ Meta", fr: "ℹ️ Méta" },
         description: {
             en: "Home page, options shell, build metadata.",
             fr: "Accueil, coquille options, métadonnées de build.",

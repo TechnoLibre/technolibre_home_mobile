@@ -147,6 +147,16 @@
         &--selected { background: var(--row-selected-bg, rgba(56, 132, 255, 0.12)); }
     }
 
+    // Root features (depth 0) get a heavier visual weight so the
+    // "main features" stand out at a glance.
+    .features__tree > li > .features__row {
+        border-top: 1px solid var(--section-border-color, #eee);
+        font-size: 0.95rem;
+        font-weight: 600;
+        padding: 0.5rem 0.5rem;
+    }
+    .features__tree > li:first-child > .features__row { border-top: 0; }
+
     .features__toggle, .features__toggle-spacer {
         background: transparent;
         border: 0;
@@ -208,6 +218,20 @@
         align-items: baseline;
         display: flex;
         gap: 0.5rem;
+
+        h2 { flex: 1; margin: 0; }
+    }
+    .features__detail-close {
+        background: transparent;
+        border: 1px solid var(--border-color, #ddd);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        line-height: 1;
+        padding: 0.25rem 0.5rem;
+        flex-shrink: 0;
+
+        &:hover { background: var(--row-selected-bg, rgba(0, 0, 0, 0.05)); }
     }
     .features__status-chip {
         border-radius: 0.7rem;
