@@ -1,4 +1,4 @@
-import { onMounted, useState, xml } from "@odoo/owl";
+import { Component, onMounted, useState, xml } from "@odoo/owl";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { Events } from "../../../constants/events";
 import {
@@ -11,21 +11,13 @@ import {
 const STORAGE_LANG_KEY = "options.features.lang";
 type Lang = "fr" | "en";
 
-// Eagerly-keyed map from `/src/**/*` paths to a loader function. We
-// rely on Vite's import.meta.glob ?raw to bundle every TS/SCSS file
-// as a string-on-demand chunk. Non-src paths (Java, cpp, vite.config)
-// fall through to "not viewable in-app" — the user can still copy
-// the path to clipboard and open it on their workstation.
-const SRC_RAW_LOADERS = import.meta.glob("/src/**/*.{ts,tsx,scss,css,json,md}", {
-    query: "?raw",
-    import: "default",
-    eager: false,
-}) as Record<string, () => Promise<string>>;
-
-function loadSourceFor(relPath: string): Promise<string> | null {
-    const key = "/" + relPath;
-    const loader = SRC_RAW_LOADERS[key];
-    return loader ? loader() : null;
+/** Pick the right code-bundle target for a path. Files inside src/
+ *  are in the mobile bundle (`/repo`); anything else (android/,
+ *  vite.config.ts, etc.) lives in the workspace bundle (`/erplibre`)
+ *  under the mobile sub-directory. */
+function targetAndBundlePath(relPath: string): { target: "mobile" | "erplibre"; path: string } {
+    if (relPath.startsWith("src/")) return { target: "mobile", path: relPath };
+    return { target: "erplibre", path: `mobile/erplibre_home_mobile/${relPath}` };
 }
 
 function flatten(nodes: FeatureNode[]): FeatureNode[] {
@@ -43,26 +35,79 @@ function pickLabel(value: FeatureI18n | undefined, lang: Lang, fallback = ""): s
     return value[lang] || value.fr || value.en || fallback;
 }
 
-function demoLabel(demo: FeatureDemo | undefined, lang: Lang): string {
-    if (!demo) return "";
-    if (demo.kind === "none") return pickLabel(demo.reason, lang, "Pas de démo disponible");
-    if (demo.kind === "route") return demo.url;
-    if (demo.kind === "options") return demo.sectionId ? `options/${demo.sectionId}` : "options";
-    return "";
+interface SharedTreeState {
+    lang: Lang;
+    /** id → true when expanded. Plain object for Owl 2 reactivity. */
+    expanded: Record<string, boolean>;
+    selectedId: string;
 }
 
-interface State {
-    lang: Lang;
-    expanded: Set<string>;
-    selectedId: string;
+interface NodeProps {
+    node: FeatureNode;
+    depth: number;
+    shared: SharedTreeState;
+    onToggle: (id: string) => void;
+    onSelect: (id: string) => void;
+}
+
+class FeatureTreeNodeComponent extends Component<NodeProps> {
+    static template = xml`
+        <li role="treeitem"
+            t-att-aria-expanded="hasChildren ? (props.shared.expanded[props.node.id] ? 'true' : 'false') : null"
+            t-att-aria-selected="props.shared.selectedId === props.node.id ? 'true' : 'false'">
+            <div class="features__row"
+                 t-att-class="{ 'features__row--selected': props.shared.selectedId === props.node.id }"
+                 t-att-style="rowStyle">
+                <button t-if="hasChildren"
+                        class="features__toggle"
+                        t-on-click="() => this.props.onToggle(this.props.node.id)">
+                    <t t-esc="props.shared.expanded[props.node.id] ? '▾' : '▸'"/>
+                </button>
+                <span t-else="" class="features__toggle-spacer">·</span>
+                <button class="features__label"
+                        t-on-click="() => this.props.onSelect(this.props.node.id)">
+                    <t t-esc="labelText"/>
+                </button>
+                <span t-if="hasDemo" class="features__has-demo" aria-hidden="true">▶</span>
+            </div>
+            <ul t-if="hasChildren and props.shared.expanded[props.node.id]" role="group">
+                <t t-foreach="props.node.children" t-as="child" t-key="child.id">
+                    <FeatureTreeNodeComponent
+                        node="child"
+                        depth="props.depth + 1"
+                        shared="props.shared"
+                        onToggle="props.onToggle"
+                        onSelect="props.onSelect"/>
+                </t>
+            </ul>
+        </li>
+    `;
+    static components = { /* self-reference set below */ };
+
+    get hasChildren(): boolean {
+        return !!(this.props.node.children && this.props.node.children.length > 0);
+    }
+    get hasDemo(): boolean {
+        return !!(this.props.node.demo && this.props.node.demo.kind !== "none");
+    }
+    get labelText(): string {
+        return pickLabel(this.props.node.label, this.props.shared.lang);
+    }
+    get rowStyle(): string {
+        return `padding-left:${this.props.depth * 1.1 + 0.5}rem`;
+    }
+}
+// Owl 2 needs a self-reference for recursive components.
+(FeatureTreeNodeComponent as any).components = { FeatureTreeNodeComponent };
+
+interface State extends SharedTreeState {
     query: string;
-    sourcePath: string;
-    sourceContent: string;
-    sourceError: string;
     counts: { features: number; files: number; demoable: number };
 }
 
 export class OptionsFeaturesComponent extends EnhancedComponent {
+    static components = { FeatureTreeNodeComponent };
+
     static template = xml`
         <div id="options-features">
             <div class="features__header">
@@ -92,10 +137,12 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
             <div class="features__layout">
                 <ul class="features__tree" role="tree" aria-label="Arbre des fonctionnalités">
                     <t t-foreach="filteredRoots" t-as="root" t-key="root.id">
-                        <t t-call="OptionsFeaturesNode">
-                            <t t-set="node" t-value="root"/>
-                            <t t-set="depth" t-value="0"/>
-                        </t>
+                        <FeatureTreeNodeComponent
+                            node="root"
+                            depth="0"
+                            shared="state"
+                            onToggle.bind="onToggle"
+                            onSelect.bind="onSelect"/>
                     </t>
                 </ul>
 
@@ -143,45 +190,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                 </div>
             </div>
 
-            <div t-if="state.sourcePath" class="features__viewer" role="dialog">
-                <div class="features__viewer-header">
-                    <strong t-esc="state.sourcePath"/>
-                    <button t-on-click="onCloseViewer" aria-label="Fermer">✕</button>
-                </div>
-                <pre t-if="!state.sourceError" class="features__viewer-pre" t-esc="state.sourceContent"/>
-                <p t-if="state.sourceError" class="features__viewer-error" t-esc="state.sourceError"/>
-            </div>
         </div>
-
-        <t t-name="OptionsFeaturesNode">
-            <li role="treeitem"
-                t-att-aria-expanded="node.children ? (state.expanded.has(node.id) ? 'true' : 'false') : null"
-                t-att-aria-selected="state.selectedId === node.id ? 'true' : 'false'">
-                <div class="features__row"
-                     t-att-class="{ 'features__row--selected': state.selectedId === node.id }"
-                     t-att-style="'padding-left:' + (depth * 1.1 + 0.5) + 'rem'">
-                    <button t-if="node.children and node.children.length > 0"
-                            class="features__toggle"
-                            t-on-click="() => this.onToggle(node.id)">
-                        <t t-esc="state.expanded.has(node.id) ? '▾' : '▸'"/>
-                    </button>
-                    <span t-else="" class="features__toggle-spacer">·</span>
-                    <button class="features__label"
-                            t-on-click="() => this.onSelect(node.id)">
-                        <t t-esc="label(node.label)"/>
-                    </button>
-                    <span t-if="node.demo and node.demo.kind !== 'none'" class="features__has-demo" aria-hidden="true">▶</span>
-                </div>
-                <ul t-if="node.children and state.expanded.has(node.id)" role="group">
-                    <t t-foreach="node.children" t-as="child" t-key="child.id">
-                        <t t-call="OptionsFeaturesNode">
-                            <t t-set="node" t-value="child"/>
-                            <t t-set="depth" t-value="depth + 1"/>
-                        </t>
-                    </t>
-                </ul>
-            </li>
-        </t>
     `;
 
     state!: State;
@@ -199,7 +208,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
         if (!q) return FEATURE_TREE;
         const matches = (n: FeatureNode): boolean => {
             const hit = pickLabel(n.label, this.state.lang).toLowerCase().includes(q)
-                || (n.description && pickLabel(n.description, this.state.lang).toLowerCase().includes(q))
+                || (!!n.description && pickLabel(n.description, this.state.lang).toLowerCase().includes(q))
                 || (n.files?.some((f) => f.toLowerCase().includes(q)) ?? false)
                 || n.id.toLowerCase().includes(q);
             const childMatch = n.children?.some(matches) ?? false;
@@ -225,17 +234,16 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
             files: all.reduce((acc, n) => acc + (n.files?.length ?? 0), 0),
             demoable: all.filter((n) => n.demo && n.demo.kind !== "none").length,
         };
+        const expandedInit: Record<string, boolean> = {};
+        for (const r of FEATURE_TREE) expandedInit[r.id] = true;
         this.state = useState<State>({
             lang,
-            expanded: new Set(FEATURE_TREE.map((n) => n.id)),  // expand roots by default
+            expanded: expandedInit,
             selectedId: "",
             query: "",
-            sourcePath: "",
-            sourceContent: "",
-            sourceError: "",
             counts,
         });
-        onMounted(() => { /* nothing async needed at mount */ });
+        onMounted(() => { /* no-op */ });
     }
 
     label(value: FeatureI18n | undefined): string {
@@ -261,8 +269,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
     }
 
     onToggle(id: string): void {
-        if (this.state.expanded.has(id)) this.state.expanded.delete(id);
-        else this.state.expanded.add(id);
+        this.state.expanded[id] = !this.state.expanded[id];
     }
 
     onSelect(id: string): void {
@@ -277,39 +284,22 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
             return;
         }
         if (node.demo.kind === "options") {
-            // section id can be picked up by OptionsComponent if we
-            // wire that in later; for now, just navigate to /options.
             this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: "/options" });
         }
     }
 
-    async onFileClick(path: string): Promise<void> {
-        this.state.sourcePath = path;
-        this.state.sourceContent = "";
-        this.state.sourceError = "";
-        const loader = loadSourceFor(path);
-        if (!loader) {
-            this.state.sourceError = this.state.lang === "fr"
-                ? `Pas visible en-app : ${path}\n(copié, à ouvrir sur ton poste)`
-                : `Not viewable in-app: ${path}\n(path copied, open on your machine)`;
-            try { await navigator.clipboard?.writeText(path); } catch { /* ignore */ }
-            return;
-        }
-        try {
-            this.state.sourceContent = await loader();
-        } catch (e) {
-            this.state.sourceError = String(e);
-        }
+    onFileClick(path: string): void {
+        // Hand off to the existing code browser via deep-link query
+        // string. Setup() of OptionsCodeComponent picks up the params,
+        // auto-connects the right bundle and jumps straight to the
+        // file — same UX as if the user navigated there manually.
+        const { target, path: bundlePath } = targetAndBundlePath(path);
+        const url = `/options/code?target=${target}&path=${encodeURIComponent(bundlePath)}`;
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, { url });
     }
 
     async onCopyPath(path: string): Promise<void> {
         try { await navigator.clipboard?.writeText(path); }
         catch { /* ignore */ }
-    }
-
-    onCloseViewer(): void {
-        this.state.sourcePath = "";
-        this.state.sourceContent = "";
-        this.state.sourceError = "";
     }
 }
