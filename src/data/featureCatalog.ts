@@ -853,19 +853,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 status: "stable",
                 howItWorks: {
-                    en: "In-memory ring-buffer (cap 200) of (timestamp, deck, event, data) "
-                        + "tuples. Append is O(1) with index wrap; the diagnostic panel reads a "
-                        + "snapshot via getRecent(). Cleared on plugin restart but not on deck "
-                        + "reconnect — useful for diagnosing flaky USB after a device comes back.",
-                    fr: "Ring-buffer mémoire (cap 200) de tuples (timestamp, deck, event, "
-                        + "data). Append O(1) avec wrap d'index; le panel diagnostique lit un "
-                        + "snapshot via getRecent(). Vidé au restart du plugin mais pas à la "
-                        + "reconnexion d'un deck — utile pour diagnostiquer un USB flaky après "
-                        + "qu'un appareil revienne.",
+                    en: "In-memory ring-buffer (cap 500) of (timestamp, text) entries pushed "
+                        + "to the front so newest is index 0. Subscribers fire on every add or "
+                        + "clear; getAll() returns a snapshot the diagnostic panel renders "
+                        + "from. Listener exceptions are isolated so logging never breaks.",
+                    fr: "Ring-buffer mémoire (cap 500) d'entrées (timestamp, texte) poussées "
+                        + "en tête — newest à l'index 0. Les souscripteurs fire à chaque add "
+                        + "ou clear; getAll() retourne un snapshot que le panel diagnostique "
+                        + "rend. Les exceptions de listener sont isolées pour ne jamais "
+                        + "casser le logging.",
                 },
                 dependsOn: ["streamdeck.bridge-ts"],
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["src/services/streamDeckEventLog.ts"],
+                tests: ["src/__tests__/streamDeckEventLog.test.ts"],
             },
             {
                 id: "streamdeck.options-panel",
@@ -1598,6 +1599,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/utils/secureFileUtils.ts",
                     "src/utils/cryptoUtils.ts",
                     "src/services/migrations/encryptExistingCredentials.ts",
+                ],
+                tests: [
+                    "src/__tests__/cryptoUtils.test.ts",
+                    "src/__tests__/storageUtils.test.ts",
                 ],
             },
             {
