@@ -13,6 +13,13 @@ interface State {
     /** -1 = mosaic view; otherwise index into images for fullscreen. */
     fullscreenIdx: number;
     error:         string;
+    /** CSS transform driving the fullscreen image — scale from 1 (fit
+     *  screen) up to MAX_SCALE; tx/ty are pixels of pan applied on top
+     *  of the scale. Reactive so the inline style updates as the user
+     *  pinches / pans. */
+    scale:         number;
+    tx:            number;
+    ty:            number;
 }
 
 export class OptionsGalleryComponent extends EnhancedComponent {
@@ -47,7 +54,9 @@ export class OptionsGalleryComponent extends EnhancedComponent {
             <div t-else=""
                  class="gallery__viewer"
                  t-on-touchstart="onTouchStart"
+                 t-on-touchmove="onTouchMove"
                  t-on-touchend="onTouchEnd"
+                 t-on-touchcancel="onTouchEnd"
                  aria-label="Visionneuse plein écran">
                 <button class="gallery__viewer__btn gallery__viewer__btn--close"
                         aria-label="Retour à la mosaïque"
@@ -62,7 +71,8 @@ export class OptionsGalleryComponent extends EnhancedComponent {
                         t-on-click="next">›</button>
                 <img class="gallery__viewer__img"
                      t-att-src="webPath(state.images[state.fullscreenIdx].path)"
-                     t-att-alt="state.images[state.fullscreenIdx].noteTitle"/>
+                     t-att-alt="state.images[state.fullscreenIdx].noteTitle"
+                     t-att-style="imageTransform"/>
                 <div class="gallery__viewer__caption">
                     <span class="gallery__viewer__title"
                           t-esc="state.images[state.fullscreenIdx].noteTitle || 'Sans titre'"/>
@@ -77,7 +87,22 @@ export class OptionsGalleryComponent extends EnhancedComponent {
 
     state!: State;
     private _gallery!: GalleryService;
-    private _touchStartX = 0;
+    /** Gesture-machine state. Refs (not reactive) so a 60 fps stream of
+     *  touchmove deltas doesn't trigger Owl re-renders — only the
+     *  derived scale/tx/ty in `state` do. */
+    private _gesture: "idle" | "swipe" | "pinch" | "pan" = "idle";
+    private _swipeStartX = 0;
+    private _pinchStartDist = 0;
+    private _pinchStartScale = 1;
+    private _panStartX = 0;
+    private _panStartY = 0;
+    private _panStartTx = 0;
+    private _panStartTy = 0;
+    private _lastTapAt = 0;
+    private static readonly MAX_SCALE = 4;
+    private static readonly DOUBLE_TAP_MS = 300;
+    private static readonly DOUBLE_TAP_PX = 30;
+    private static readonly SWIPE_THRESHOLD_PX = 50;
 
     setup() {
         this.state = useState<State>({
@@ -85,6 +110,9 @@ export class OptionsGalleryComponent extends EnhancedComponent {
             loading: true,
             fullscreenIdx: -1,
             error: "",
+            scale: 1,
+            tx: 0,
+            ty: 0,
         });
         this._gallery = new GalleryService(this.databaseService);
 
@@ -163,32 +191,142 @@ export class OptionsGalleryComponent extends EnhancedComponent {
     openFullscreen(idx: number) {
         if (idx < 0 || idx >= this.state.images.length) return;
         this.state.fullscreenIdx = idx;
+        this._resetZoom();
     }
 
     closeFullscreen() {
         this.state.fullscreenIdx = -1;
+        this._resetZoom();
     }
 
     prev() {
         if (this.state.fullscreenIdx > 0) {
             this.state.fullscreenIdx--;
+            this._resetZoom();
         }
     }
 
     next() {
         if (this.state.fullscreenIdx < this.state.images.length - 1) {
             this.state.fullscreenIdx++;
+            this._resetZoom();
         }
     }
 
+    /** Inline transform for the fullscreen <img>. Translate is applied
+     *  *before* scale so the pan deltas stay in screen pixels — easier
+     *  to clamp later if we want bounded panning. */
+    get imageTransform(): string {
+        return `transform: translate(${this.state.tx}px, ${this.state.ty}px) `
+             + `scale(${this.state.scale});`
+             + ` transition: transform 0ms;`;
+    }
+
     onTouchStart(ev: TouchEvent) {
-        this._touchStartX = ev.touches[0]?.clientX ?? 0;
+        if (ev.touches.length >= 2) {
+            // Two fingers down — pinch. Cancels any pan/swipe in flight
+            // so the user can switch gestures mid-stream without
+            // lifting all fingers.
+            this._gesture = "pinch";
+            this._pinchStartDist = this._fingerDistance(ev);
+            this._pinchStartScale = this.state.scale;
+            return;
+        }
+        const t = ev.touches[0];
+        if (!t) return;
+        // Double-tap → toggle 1× ↔ 2×. Detected on the *second*
+        // touchstart whose timestamp + position fall inside the
+        // double-tap window. We bail early so the swipe machine
+        // doesn't also fire.
+        const now = Date.now();
+        if (now - this._lastTapAt < OptionsGalleryComponent.DOUBLE_TAP_MS) {
+            this._toggleZoom();
+            this._lastTapAt = 0;
+            this._gesture = "idle";
+            return;
+        }
+        this._lastTapAt = now;
+        if (this.state.scale > 1) {
+            // Already zoomed: one-finger drag pans the image.
+            this._gesture = "pan";
+            this._panStartX = t.clientX;
+            this._panStartY = t.clientY;
+            this._panStartTx = this.state.tx;
+            this._panStartTy = this.state.ty;
+        } else {
+            // Not zoomed: one-finger swipe steps prev/next.
+            this._gesture = "swipe";
+            this._swipeStartX = t.clientX;
+        }
+    }
+
+    onTouchMove(ev: TouchEvent) {
+        if (this._gesture === "pinch" && ev.touches.length >= 2) {
+            const dist = this._fingerDistance(ev);
+            if (this._pinchStartDist <= 0) return;
+            const ratio = dist / this._pinchStartDist;
+            const next = this._pinchStartScale * ratio;
+            this.state.scale = Math.max(
+                1, Math.min(OptionsGalleryComponent.MAX_SCALE, next),
+            );
+            // Keep the picture centred when pinching down to 1× —
+            // otherwise the residual pan from a previous zoom would
+            // leave the image stuck off-screen.
+            if (this.state.scale === 1) {
+                this.state.tx = 0;
+                this.state.ty = 0;
+            }
+            return;
+        }
+        if (this._gesture === "pan" && ev.touches.length === 1) {
+            const t = ev.touches[0];
+            this.state.tx = this._panStartTx + (t.clientX - this._panStartX);
+            this.state.ty = this._panStartTy + (t.clientY - this._panStartY);
+        }
     }
 
     onTouchEnd(ev: TouchEvent) {
-        const dx = (ev.changedTouches[0]?.clientX ?? 0) - this._touchStartX;
-        if (Math.abs(dx) < 50) return;
-        if (dx < 0) this.next(); else this.prev();
+        if (this._gesture === "pinch") {
+            // Snap back to 1× if the user pinched well below it — small
+            // numerical drift from float math (e.g. 0.998) shouldn't
+            // leave the viewer in a "barely zoomed" weird state.
+            if (this.state.scale < 1.05) {
+                this.state.scale = 1;
+                this.state.tx = 0;
+                this.state.ty = 0;
+            }
+            this._gesture = "idle";
+            return;
+        }
+        if (this._gesture === "swipe") {
+            const dx = (ev.changedTouches[0]?.clientX ?? 0) - this._swipeStartX;
+            this._gesture = "idle";
+            if (Math.abs(dx) < OptionsGalleryComponent.SWIPE_THRESHOLD_PX) return;
+            if (dx < 0) this.next(); else this.prev();
+            return;
+        }
+        this._gesture = "idle";
+    }
+
+    private _fingerDistance(ev: TouchEvent): number {
+        const a = ev.touches[0];
+        const b = ev.touches[1];
+        if (!a || !b) return 0;
+        return Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+    }
+
+    private _toggleZoom() {
+        if (this.state.scale > 1) {
+            this._resetZoom();
+        } else {
+            this.state.scale = 2;
+        }
+    }
+
+    private _resetZoom() {
+        this.state.scale = 1;
+        this.state.tx = 0;
+        this.state.ty = 0;
     }
 
 }
