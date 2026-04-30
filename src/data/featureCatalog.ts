@@ -982,6 +982,74 @@ export const FEATURE_TREE: FeatureNode[] = [
         ],
     },
     {
+        id: "gallery",
+        label: { en: "🖼️ Gallery", fr: "🖼️ Galerie" },
+        description: {
+            en: "Cross-note image browser — mosaic + fullscreen carousel.",
+            fr: "Visionneuse cross-notes — mosaïque + carrousel plein écran.",
+        },
+        demo: { kind: "route", url: "/options/gallery" },
+        children: [
+            {
+                id: "gallery.service",
+                label: { en: "Gallery service", fr: "Service Galerie" },
+                description: {
+                    en: "Aggregate every photo entry across the notes.",
+                    fr: "Agrège chaque entrée photo de toutes les notes.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Reads every note via DatabaseService.getAllNotes, "
+                        + "filters entries of type 'photo' with a non-empty "
+                        + "params.path, sorts by note date desc. No mutation "
+                        + "API — editing an image still goes through the "
+                        + "regular note editor. Read each call (no caching) "
+                        + "so the gallery always reflects the latest state.",
+                    fr: "Lit chaque note via DatabaseService.getAllNotes, "
+                        + "filtre les entrées de type 'photo' avec un "
+                        + "params.path non-vide, trie par date de note "
+                        + "desc. Pas d'API de mutation — l'édition d'une "
+                        + "image passe toujours par l'éditeur de note "
+                        + "habituel. Lecture à chaque appel (pas de "
+                        + "cache) pour toujours refléter l'état courant.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["src/services/galleryService.ts"],
+            },
+            {
+                id: "gallery.page",
+                label: { en: "Gallery page", fr: "Page galerie" },
+                description: {
+                    en: "Mosaic + swipe-able fullscreen viewer.",
+                    fr: "Mosaïque + visionneuse plein-écran swipe-able.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Default mosaic grid (3-6 columns by viewport "
+                        + "width) of square thumbnails. Tap a tile → "
+                        + "fullscreen carousel; swipe horizontally or use "
+                        + "the on-screen prev/next/close buttons to "
+                        + "navigate. The image path goes through "
+                        + "Capacitor.convertFileSrc so the WebView can "
+                        + "load it past the origin check.",
+                    fr: "Grille mosaïque par défaut (3-6 colonnes selon "
+                        + "viewport) de miniatures carrées. Tap sur une "
+                        + "tuile → carrousel plein écran; swipe "
+                        + "horizontal ou boutons prev/next/close pour "
+                        + "naviguer. Le path image passe par "
+                        + "Capacitor.convertFileSrc pour que le WebView "
+                        + "puisse le charger.",
+                },
+                dependsOn: ["gallery.service"],
+                demo: { kind: "route", url: "/options/gallery" },
+                files: [
+                    "src/components/options/gallery/options_gallery_component.ts",
+                    "src/components/options/gallery/options_gallery_component.scss",
+                ],
+            },
+        ],
+    },
+    {
         id: "sync",
         label: { en: "🔄 Odoo sync", fr: "🔄 Sync Odoo" },
         description: {
