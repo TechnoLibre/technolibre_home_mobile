@@ -1,7 +1,8 @@
-import { onMounted, useState, xml } from "@odoo/owl";
+import { onMounted, onWillDestroy, useState, xml } from "@odoo/owl";
 import { Capacitor } from "@capacitor/core";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
+import { Events } from "../../../constants/events";
 import { GalleryService, GalleryImage } from "../../../services/galleryService";
 
 import { HeadingComponent } from "../../heading/heading_component";
@@ -96,8 +97,61 @@ export class OptionsGalleryComponent extends EnhancedComponent {
             } finally {
                 this.state.loading = false;
             }
+            // Hand the deck the current image list so it can flip into
+            // remote mode and paint thumbnails. We pass the WebView URL
+            // (Capacitor.convertFileSrc) rather than the raw file://
+            // path so the controller's <img> can load it without
+            // tainting the canvas. Re-emitted on every successful load
+            // so the deck doesn't get stuck on a stale list if the
+            // user re-navigates here after adding photos elsewhere.
+            this._emitDeckPageActive(true);
+            this.eventBus.addEventListener(
+                Events.STREAMDECK_GALLERY_OPEN, this._onDeckOpen,
+            );
+            this.eventBus.addEventListener(
+                Events.STREAMDECK_GALLERY_BACK, this._onDeckBack,
+            );
+        });
+
+        onWillDestroy(() => {
+            this._emitDeckPageActive(false);
+            this.eventBus.removeEventListener(
+                Events.STREAMDECK_GALLERY_OPEN, this._onDeckOpen,
+            );
+            this.eventBus.removeEventListener(
+                Events.STREAMDECK_GALLERY_BACK, this._onDeckBack,
+            );
         });
     }
+
+    private _emitDeckPageActive(active: boolean) {
+        const images = active
+            ? this.state.images.map((im, i) => ({
+                  url: this.webPath(im.path),
+                  index: i,
+              }))
+            : [];
+        this.eventBus.trigger(Events.STREAMDECK_GALLERY_PAGE_ACTIVE, {
+            active, images,
+        });
+    }
+
+    private _onDeckOpen = (e: any) => {
+        const idx = e?.detail?.index;
+        if (typeof idx === "number") this.openFullscreen(idx);
+    };
+
+    private _onDeckBack = () => {
+        // Mobile-side mirror of the deck's back key: in fullscreen we
+        // first close the viewer (one tap = back to mosaic), and only
+        // route away from the page on a second press. Matches the
+        // expectations of someone using the deck as a remote.
+        if (this.state.fullscreenIdx !== -1) {
+            this.closeFullscreen();
+            return;
+        }
+        this.navigate("/options");
+    };
 
     /** Convert a stored entry path to a WebView-loadable URL. */
     webPath(p: string): string {
