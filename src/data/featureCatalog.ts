@@ -391,6 +391,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/note/top_controls/note_top_controls_component.ts",
                     "src/services/migrations/addNotePriority.ts",
                 ],
+                tests: ["src/__tests__/migrations.test.ts"],
             },
             {
                 id: "notes.date-picker",
@@ -1056,6 +1057,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addSyncPerServerStatus.ts",
                     "src/services/migrations/addSelectedSyncConfigIds.ts",
                 ],
+                tests: ["src/__tests__/migrations.test.ts"],
             },
             {
                 id: "sync.notifications",
@@ -1091,6 +1093,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 tests: [
                     "src/__tests__/ntfyService.test.ts",
                     "src/__tests__/notificationService.test.ts",
+                    "src/__tests__/migrations.test.ts",
                 ],
             },
         ],
@@ -1193,7 +1196,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/editableCodeService.ts",
                     "src/services/migrations/addEditableReposTable.ts",
                 ],
-                tests: ["src/__tests__/editableCodeService.test.ts"],
+                tests: [
+                    "src/__tests__/editableCodeService.test.ts",
+                    "src/__tests__/migrations.test.ts",
+                ],
             },
             {
                 id: "code.git",
@@ -1610,6 +1616,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 tests: [
                     "src/__tests__/cryptoUtils.test.ts",
                     "src/__tests__/storageUtils.test.ts",
+                    "src/__tests__/secureFileUtils.test.ts",
                 ],
             },
             {
@@ -1810,7 +1817,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addProcessDebugLogColumn.ts",
                     "src/services/migrations/addProcessResultColumn.ts",
                 ],
-                tests: ["src/__tests__/processService.test.ts"],
+                tests: [
+                    "src/__tests__/processService.test.ts",
+                    "src/__tests__/migrations.test.ts",
+                ],
             },
         ],
     },
@@ -1971,7 +1981,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "deployment.applications",
                 label: { en: "Odoo apps CRUD", fr: "CRUD applications Odoo" },
                 status: "stable",
-                tests: ["src/__tests__/appService.test.ts"],
+                tests: [
+                    "src/__tests__/appService.test.ts",
+                    "src/__tests__/migrations.test.ts",
+                ],
                 description: {
                     en: "Manage Odoo instances (URL, version, sync flags).",
                     fr: "Gérer les instances Odoo (URL, version, flags sync).",
@@ -2231,7 +2244,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/models/reminder.ts",
                     "src/services/migrations/addReminderCreatedAt.ts",
                 ],
-                tests: ["src/__tests__/reminderService.test.ts"],
+                tests: [
+                    "src/__tests__/reminderService.test.ts",
+                    "src/__tests__/migrations.test.ts",
+                ],
             },
             {
                 id: "ui.shared-components",
