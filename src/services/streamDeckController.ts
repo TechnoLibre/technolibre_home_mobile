@@ -55,14 +55,17 @@ export class StreamDeckController {
      *  USB bus stayed alive via the heartbeat. */
     private hiddenAt = 0;
     private static readonly RESTART_AFTER_HIDDEN_MS = 5000;
-    /** Minimum ms between Note-key navigations. Tuned to stay below
-     *  the ~8 keyboard-show/hide cycles per second threshold that
-     *  reproduced a SIGSEGV in HWUI's RenderThread on Pixel 6, while
-     *  still letting an intentional 100–150 ms double-tap register
-     *  both presses. 250 ms felt laggy on a deliberate two-tap;
-     *  150 ms passes both clicks through and still caps mash at
-     *  ~6.6/s — well under the crash threshold. */
-    private lastNotePressAt = 0;
+    /** Per-key timestamp of the last accepted press. The debounce
+     *  budget is per-key, not shared, because the original 150 ms
+     *  rule was put in place to protect against the IME-storm
+     *  WebView crash triggered by mashing key 0 (Note → opens a
+     *  textarea → keyboard show/hide cycles). Sharing the budget
+     *  across keys 1-3 had a bad side-effect: pressing Note then
+     *  immediately Audio dropped Audio because the Note press had
+     *  just consumed the budget — the user had to press Audio
+     *  twice. Per-key timestamps give the IME protection on key 0
+     *  without penalising legitimate cross-key sequences. */
+    private lastPressAt = new Map<number, number>();
     private static readonly NOTE_DEBOUNCE_MS = 150;
     /** True while a NoteComponent is mounted. Drives the paint of
      *  keys 1-3 (video/audio/location) and whether their presses
@@ -73,7 +76,29 @@ export class StreamDeckController {
     constructor(
         private readonly eventBus: EventBusLike,
         private readonly noteService: NoteServiceLike,
-    ) {}
+    ) {
+        // Register the note-page bus listener IMMEDIATELY, not after
+        // the awaits in start(). The previous version installed it at
+        // the end of start() — which on first boot can take 100+ ms
+        // because it awaits listDecks and three plugin addListener
+        // calls. If the user pressed the Note key (or otherwise
+        // navigated to a note) before start() finished, the
+        // STREAMDECK_NOTE_PAGE_ACTIVE event fired into a bus with no
+        // listener, noteActive stayed false, and keys 1-3 never
+        // painted. The user then had to navigate away and back to
+        // re-fire the event, by which point start() had finished.
+        if (this.eventBus.addEventListener) {
+            this.noteActiveListener = (e: any) => {
+                this.setNoteActive(!!e?.detail?.active).catch((err) =>
+                    console.warn("[streamdeck] setNoteActive:", err),
+                );
+            };
+            this.eventBus.addEventListener(
+                Events.STREAMDECK_NOTE_PAGE_ACTIVE,
+                this.noteActiveListener,
+            );
+        }
+    }
 
     setCameraStreaming(active: boolean): void {
         this.cameraStreaming = active;
@@ -187,14 +212,14 @@ export class StreamDeckController {
                 // itself listens to keyChanged to stop. Suppress every
                 // surface key so the press doesn't double-trigger.
                 if (this.cameraStreaming) return;
-                // Throttle to ~6.6 presses/s — protects against the
-                // IME-storm WebView crash described above. The same
-                // budget is shared across keys 0-3 since the crash
-                // trigger is keyboard-show/hide cycles, not per-key.
+                // Per-key throttle ~6.6 presses/s — protects key 0
+                // against the IME-storm WebView crash without blocking
+                // legit cross-key sequences. See lastPressAt comment.
                 const now = Date.now();
-                if (now - this.lastNotePressAt < StreamDeckController.NOTE_DEBOUNCE_MS) return;
+                const lastPress = this.lastPressAt.get(ev.key) ?? 0;
+                if (now - lastPress < StreamDeckController.NOTE_DEBOUNCE_MS) return;
                 if (ev.key === 0) {
-                    this.lastNotePressAt = now;
+                    this.lastPressAt.set(ev.key, now);
                     const newId = this.noteService.getNewId();
                     this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
                         url: `/note/${newId}`,
@@ -204,26 +229,14 @@ export class StreamDeckController {
                 if (this.noteActive) {
                     const tile = NOTE_PAGE_TILES[ev.key];
                     if (!tile) return;
-                    this.lastNotePressAt = now;
+                    this.lastPressAt.set(ev.key, now);
                     this.eventBus.trigger(tile.event, { deckId: ev.deckId });
                 }
             }),
         );
 
-        // Listen for note-page lifecycle events from NoteComponent. The
-        // component fires on mount with active=true and on willDestroy
-        // with active=false; we paint or blank keys 1-3 accordingly.
-        if (this.eventBus.addEventListener) {
-            this.noteActiveListener = (e: any) => {
-                this.setNoteActive(!!e.detail?.active).catch((err) =>
-                    console.warn("[streamdeck] setNoteActive:", err),
-                );
-            };
-            this.eventBus.addEventListener(
-                Events.STREAMDECK_NOTE_PAGE_ACTIVE,
-                this.noteActiveListener,
-            );
-        }
+        // The PAGE_ACTIVE bus listener is registered eagerly in the
+        // constructor — see the comment there.
 
         // Dim every deck to 0 while the page is hidden (phone locked /
         // app backgrounded). setBrightness(0) hides the LCDs without
