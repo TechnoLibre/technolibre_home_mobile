@@ -185,9 +185,9 @@ describe("StreamDeckController", () => {
             expect(trigger).not.toHaveBeenCalled();
         });
 
-        it("debounces rapid presses to ≤1 per 150 ms", async () => {
+        it("debounces rapid presses to ≤1 per 150 ms (same key)", async () => {
             vi.useFakeTimers();
-            // Avoid 0 — controller's initial lastNotePressAt is 0 too.
+            // Avoid 0 — controller's initial lastPressAt is 0 too.
             vi.setSystemTime(10_000);
             const { trigger } = await bootCtrl("Z");
             listeners["keyChanged"]({ deckId: "AL01", key: 0, pressed: true });
@@ -418,7 +418,12 @@ describe("StreamDeckController", () => {
             expect(trigger).not.toHaveBeenCalled();
         });
 
-        it("debounce shared with key 0 (rapid mash drops the second press)", async () => {
+        it("debounces presses on the same key but not across keys", async () => {
+            // Per-key budget: pressing key 1 then key 2 within 150 ms
+            // must fire both. Sharing the budget across keys was the
+            // bug behind the user-visible "I have to press multiple
+            // times" report — pressing Note (key 0) then Audio (key 2)
+            // dropped the Audio because key 0 had just consumed it.
             vi.useFakeTimers();
             vi.setSystemTime(10_000);
             const { bus, trigger } = makeBus();
@@ -428,13 +433,60 @@ describe("StreamDeckController", () => {
             await ctrl.setNoteActive(true);
             trigger.mockClear();
 
+            // Two different keys within 50 ms — both must fire.
             listeners["keyChanged"]({ deckId: "AL01", key: 1, pressed: true });
             vi.setSystemTime(10_050);
             listeners["keyChanged"]({ deckId: "AL01", key: 2, pressed: true });
-
             const fired = trigger.mock.calls.map((c: any) => c[0]);
             expect(fired).toContain("streamdeck_add_video");
-            expect(fired).not.toContain("streamdeck_add_audio");
+            expect(fired).toContain("streamdeck_add_audio");
+
+            // Same key (1) twice within the 150 ms window — second
+            // press is dropped. The earlier accepted press of key 1
+            // was at 10_000; 10_100 is 100 ms later, still < 150.
+            trigger.mockClear();
+            vi.setSystemTime(10_100);
+            listeners["keyChanged"]({ deckId: "AL01", key: 1, pressed: true });
+            const fired2 = trigger.mock.calls.map((c: any) => c[0]);
+            expect(fired2).not.toContain("streamdeck_add_video");
+        });
+
+        it("PAGE_ACTIVE fired before start() resolves still flips noteActive", async () => {
+            // Regression: previously the bus listener was added at the
+            // tail of start(), past three async addListener calls. A
+            // user pressing Note (or otherwise navigating to a note)
+            // before start() finished landed PAGE_ACTIVE on an empty
+            // bus and the keys stayed blank until they re-mounted.
+            const { bus, emit } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            // Listener must be live BEFORE start() — fire active=true
+            // and verify noteActive flips immediately, even though
+            // start() never ran.
+            emit("streamdeck_note_page_active", { active: true });
+            await Promise.resolve();
+            // _isHidden() returns false in this test setup so the paint
+            // path runs; with no decks registered yet, the loop is a
+            // no-op but noteActive must still be true.
+            expect((ctrl as any).noteActive).toBe(true);
+        });
+
+        it("Note-then-Audio works without delay (regression for the user-reported bug)", async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(10_000);
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            await ctrl.setNoteActive(true);
+            trigger.mockClear();
+
+            // Tap Note then immediately Audio — Audio must register.
+            listeners["keyChanged"]({ deckId: "AL01", key: 0, pressed: true });
+            vi.setSystemTime(10_020);
+            listeners["keyChanged"]({ deckId: "AL01", key: 2, pressed: true });
+            const fired = trigger.mock.calls.map((c: any) => c[0]);
+            expect(fired).toContain("routernav");
+            expect(fired).toContain("streamdeck_add_audio");
         });
 
         it("STREAMDECK_NOTE_PAGE_ACTIVE event drives setNoteActive", async () => {
