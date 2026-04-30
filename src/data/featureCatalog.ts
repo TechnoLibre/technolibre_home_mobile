@@ -817,6 +817,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/FaceDetectionPlugin.java",
                     "src/plugins/faceDetectionPlugin.ts",
                 ],
+                tests: ["src/__tests__/faceDetectionPlugin.test.ts"],
             },
             {
                 id: "streamdeck.lcd-text",
@@ -844,6 +845,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["src/services/streamDeckLcdTextRenderer.ts"],
+                tests: ["src/__tests__/streamDeckLcdTextRenderer.test.ts"],
             },
             {
                 id: "streamdeck.event-log",
@@ -1670,6 +1672,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/plugins/keepAwakePlugin.ts",
                     "src/components/options/keep_awake/options_keep_awake_component.ts",
                 ],
+                tests: ["src/__tests__/keepAwakePlugin.test.ts"],
             },
             {
                 id: "system.device-info",
@@ -1697,6 +1700,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/DeviceStatsPlugin.java",
                     "src/plugins/deviceStatsPlugin.ts",
                 ],
+                tests: ["src/__tests__/deviceStatsPlugin.test.ts"],
             },
             {
                 id: "system.network-scan",
