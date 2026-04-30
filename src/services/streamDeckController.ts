@@ -27,7 +27,7 @@ const NOTE_PAGE_KEYS = Object.keys(NOTE_PAGE_TILES).map(Number);
 
 /** Persistent Gallery shortcut — sits below the Note key (key 0) on a
  *  3-row × 5-col Stream Deck layout. Pressing it routes the mobile to
- *  /options/gallery so the deck doubles as a remote thumbnail picker. */
+ *  /applications/gallery so the deck doubles as a remote thumbnail picker. */
 const GALLERY_KEY = 5;
 const GALLERY_TILE = { icon: "🖼️", label: "Galerie", bg: "#0e7490" };
 
@@ -89,12 +89,21 @@ export class StreamDeckController {
      *  fire the STREAMDECK_ADD_* events. */
     private noteActive = false;
     private noteActiveListener?: (e: any) => void;
-    /** True while OptionsGalleryComponent is mounted. The deck's
-     *  layout flips to a thumb-grid + nav when this is on. */
+    /** True while the gallery page is mounted on the mobile. The
+     *  deck's layout flips to a thumb-grid + nav when this is on. */
     private galleryActive = false;
     private galleryImages: GalleryImageRef[] = [];
     private galleryPage = 0;
     private galleryActiveListener?: (e: any) => void;
+    /** "Keep deck lit while phone is in sleep" — driven by the Options
+     *  → Mise en veille checkbox via STREAMDECK_KEEP_AWAKE. When true,
+     *  visibilitychange:hidden does not dim the deck, the LCDs keep
+     *  their last image, and the wake-on-keypress native path (armed
+     *  via StreamDeckPlugin.setWakeOnKeyPress) brings the phone back
+     *  on. The flag is rehydrated from localStorage at boot so it
+     *  survives an app restart without relying on the toggle's mount. */
+    private keepDeckAwake = false;
+    private keepAwakeListener?: (e: any) => void;
 
     constructor(
         private readonly eventBus: EventBusLike,
@@ -133,7 +142,46 @@ export class StreamDeckController {
                 Events.STREAMDECK_GALLERY_PAGE_ACTIVE,
                 this.galleryActiveListener,
             );
+            this.keepAwakeListener = (e: any) => {
+                const next = !!e?.detail?.enabled;
+                if (next === this.keepDeckAwake) return;
+                this.keepDeckAwake = next;
+                // Apply immediately if the phone is currently hidden:
+                // turning the flag on while dimmed restores brightness
+                // (the deck is already idle, lighting it back up costs
+                // ~50 ms of USB traffic), turning it off goes back to
+                // dimmed so we don't drain power needlessly.
+                if (this._isHidden()) {
+                    for (const info of this.decks.values()) {
+                        const pct = next ? this.getBrightness(info.deckId) : 0;
+                        StreamDeckPlugin.setBrightness({
+                            deckId: info.deckId, percent: pct,
+                        }).catch((err) =>
+                            console.warn("[streamdeck] keep-awake re-apply:", err),
+                        );
+                    }
+                }
+            };
+            this.eventBus.addEventListener(
+                Events.STREAMDECK_KEEP_AWAKE,
+                this.keepAwakeListener,
+            );
         }
+        // Re-hydrate the user's "keep deck lit during sleep" choice
+        // from localStorage. We can't await an event from the
+        // checkbox component because by the time it mounts the
+        // controller may already have processed a visibilitychange
+        // (e.g. the phone briefly sleeps during the cold-start
+        // hardware probe). Reading the storage key directly avoids
+        // that race; the checkbox stays the single source of truth
+        // for the *user-facing* state.
+        try {
+            if (typeof localStorage !== "undefined") {
+                this.keepDeckAwake = localStorage.getItem(
+                    "options.keepAwake.deckEnabled",
+                ) === "true";
+            }
+        } catch { /* private browsing / SSR — ignore */ }
     }
 
     setCameraStreaming(active: boolean): void {
@@ -319,7 +367,7 @@ export class StreamDeckController {
                 if (ev.key === GALLERY_KEY) {
                     this.lastPressAt.set(ev.key, now);
                     this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
-                        url: "/options/gallery",
+                        url: "/applications/gallery",
                     });
                     return;
                 }
@@ -347,6 +395,15 @@ export class StreamDeckController {
         document.addEventListener("visibilitychange", () => {
             if (this._isHidden()) {
                 this.hiddenAt = Date.now();
+                if (this.keepDeckAwake) {
+                    // User opted in to "keep the deck lit during phone
+                    // sleep" — skip the dim so the LCDs keep their
+                    // last frame. The plugin's partial wake lock keeps
+                    // USB enumerated; the wake-on-keypress native path
+                    // (armed separately) takes care of bringing the
+                    // phone back on a press.
+                    return;
+                }
                 for (const info of this.decks.values()) {
                     StreamDeckPlugin.setBrightness({
                         deckId: info.deckId, percent: 0,
@@ -426,6 +483,13 @@ export class StreamDeckController {
                 this.galleryActiveListener,
             );
             this.galleryActiveListener = undefined;
+        }
+        if (this.keepAwakeListener && this.eventBus.removeEventListener) {
+            this.eventBus.removeEventListener(
+                Events.STREAMDECK_KEEP_AWAKE,
+                this.keepAwakeListener,
+            );
+            this.keepAwakeListener = undefined;
         }
     }
 

@@ -240,6 +240,37 @@
 	padding: 0;
 }
 
+#applications-component #services-tools {
+	border: none;
+	border-radius: 0.5rem;
+	margin: 0 auto;
+	max-width: 48rem;
+	padding: 0 1rem 1rem;
+}
+
+#applications-component #services-tools-list {
+	list-style: none;
+	margin: 0.5em 0 0 0;
+	padding: 0;
+}
+
+#applications-component .services-tools__item {
+	margin: 0.5em 0;
+	& > a {
+		background-color: var(--card-bg);
+		border-radius: 0.25em;
+		color: var(--text-primary, var(--btn-on-color-text));
+		display: block;
+		font-size: 1.05em;
+		padding: 0.85em 1em;
+		text-decoration: none;
+		transition: background-color 150ms ease-in-out;
+		&:hover, &:focus {
+			background-color: var(--btn-back-color);
+		}
+	}
+}
+
 #applications-component #servers-empty {
 	@include mixins.flex--center;
 	background-color: var(--btn-back-color);

@@ -140,6 +140,15 @@ interface StreamDeckPluginApi {
     clearPendingWrites(opts: { deckId: string }): Promise<{ dropped: number }>;
     setBrightness(opts: { deckId: string; percent: number }): Promise<void>;
 
+    /**
+     * When enabled, a key press while the host activity is paused (phone
+     * locked / app backgrounded) requests the screen to wake and brings
+     * MainActivity to the foreground. The deck reader stays alive across
+     * a phone sleep cycle thanks to the partial wake lock the plugin
+     * already holds — this method only arms the wake-on-press path.
+     */
+    setWakeOnKeyPress(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
+
     setKeyImage(opts: {
         deckId: string;
         key: number;

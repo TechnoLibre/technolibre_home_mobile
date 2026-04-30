@@ -22,12 +22,15 @@ export const Events: Record<string, string> = {
 	STREAMDECK_ADD_AUDIO: "streamdeck_add_audio",
 	STREAMDECK_ADD_VIDEO: "streamdeck_add_video",
 	STREAMDECK_ADD_LOCATION: "streamdeck_add_location",
-	/** Fired by OptionsGalleryComponent on mount/unmount with the
-	 *  current image list so the controller can paint deck thumbs. */
+	/** Fired by ApplicationsGalleryComponent on mount/unmount with
+	 *  the current image list so the controller can paint deck thumbs. */
 	STREAMDECK_GALLERY_PAGE_ACTIVE: "streamdeck_gallery_page_active",
 	/** Controller → component: open the image at the given index in
 	 *  fullscreen on the mobile. */
 	STREAMDECK_GALLERY_OPEN: "streamdeck_gallery_open",
 	/** Controller → component: close fullscreen / navigate back. */
 	STREAMDECK_GALLERY_BACK: "streamdeck_gallery_back",
+	/** Options keep-awake checkbox → controller: keep deck lit during
+	 *  phone sleep instead of dimming brightness to 0 on hidden. */
+	STREAMDECK_KEEP_AWAKE: "streamdeck_keep_awake",
 }

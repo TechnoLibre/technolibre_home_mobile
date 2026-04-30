@@ -20,6 +20,25 @@ import ca.erplibre.home.streamdeck.StreamDeckPlugin;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Cooperate with the StreamDeckPlugin wake-on-keypress path:
+        // when the activity is relaunched after a deck press during
+        // phone sleep, the OS needs explicit consent to display this
+        // window over the keyguard and to turn the screen on. Without
+        // these flags the wake-lock acquired by the plugin would only
+        // light the LCD and leave the lockscreen on top.
+        // setShowWhenLocked / setTurnScreenOn are API 27+. minSdk=24,
+        // so the older path falls back to FLAG_DISMISS_KEYGUARD +
+        // FLAG_TURN_SCREEN_ON on the window which has the same effect.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true);
+            setTurnScreenOn(true);
+        } else {
+            getWindow().addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                | android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                | android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            );
+        }
         registerPlugin(RawHttpPlugin.class);
         registerPlugin(SshPlugin.class);
         // Whisper plugin pulls in libwhisper_jni.so / libggml.so. When the
