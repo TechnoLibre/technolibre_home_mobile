@@ -65,6 +65,11 @@ export class OptionsComponent extends EnhancedComponent {
           </a>
         </li>
         <li class="options-list__item">
+          <a href="#" role="button" aria-label="Galerie" t-on-click.stop.prevent="onGalleryClick">
+            🖼️ Galerie ›
+          </a>
+        </li>
+        <li class="options-list__item">
           <a href="#" role="button" aria-label="Fonctionnalités" t-on-click.stop.prevent="onFeaturesClick">
             🗺️ Fonctionnalités ›
           </a>
@@ -120,6 +125,10 @@ export class OptionsComponent extends EnhancedComponent {
 
 	onFeaturesClick() {
 		this.navigate("/options/features");
+	}
+
+	onGalleryClick() {
+		this.navigate("/options/gallery");
 	}
 
 	onErplibreClick() {
