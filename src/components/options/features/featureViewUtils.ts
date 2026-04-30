@@ -245,6 +245,56 @@ export function computeDashboard(nodes: FeatureNode[]): DashboardData {
     };
 }
 
+/** Map each leaf id to a "freshness bucket" based on last-touch ts.
+ *  - hot:   touched in last 14 days
+ *  - warm:  14–60 days
+ *  - cold:  60–180 days
+ *  - stale: >180 days
+ *  - unknown: no timestamp
+ *  Plus a sorted list of the staleest leaves for surfacing.
+ */
+export interface FreshnessData {
+    buckets: Array<{ kind: string; count: number; ids: string[] }>;
+    staleest: Array<{ id: string; ts: number; ageDays: number }>;
+}
+
+const DAY = 86400 * 1000;
+
+export function computeFreshness(
+    nodes: FeatureNode[],
+    touchMap: Record<string, { ts: number }>,
+    now: number = Date.now(),
+): FreshnessData {
+    const leaves = flatten(nodes).filter(
+        (n) => !n.children || n.children.length === 0,
+    );
+    const hot: string[] = [];
+    const warm: string[] = [];
+    const cold: string[] = [];
+    const stale: string[] = [];
+    const unknown: string[] = [];
+    const ages: Array<{ id: string; ts: number; ageDays: number }> = [];
+    for (const n of leaves) {
+        const t = touchMap[n.id]?.ts;
+        if (!t) { unknown.push(n.id); continue; }
+        const ageDays = Math.floor((now - t) / DAY);
+        ages.push({ id: n.id, ts: t, ageDays });
+        if (ageDays <= 14) hot.push(n.id);
+        else if (ageDays <= 60) warm.push(n.id);
+        else if (ageDays <= 180) cold.push(n.id);
+        else stale.push(n.id);
+    }
+    const buckets = [
+        { kind: "Récent (≤14j)",       count: hot.length,     ids: hot },
+        { kind: "Tiède (14–60j)",      count: warm.length,    ids: warm },
+        { kind: "Froid (60–180j)",     count: cold.length,    ids: cold },
+        { kind: "Périmé (>180j)",      count: stale.length,   ids: stale },
+        { kind: "Inconnu",             count: unknown.length, ids: unknown },
+    ].filter((b) => b.count > 0);
+    const staleest = ages.sort((a, b) => b.ageDays - a.ageDays).slice(0, 10);
+    return { buckets, staleest };
+}
+
 export function computeGraphGroups(
     nodes: FeatureNode[],
     opts: FilterOpts = {},

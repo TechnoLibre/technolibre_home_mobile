@@ -12,6 +12,7 @@ import {
     computeMatrix,
     computeDashboard,
     computeGraphGroups,
+    computeFreshness,
 } from "../components/options/features/featureViewUtils";
 
 // Synthetic tree used across tests — small but exercises every
@@ -250,5 +251,40 @@ describe("computeGraphGroups", () => {
     it("respects fuzzy query", () => {
         const groups = computeGraphGroups(TREE, { query: "alpha.one" });
         expect(groups.flatMap((g) => g.nodes.map((n) => n.id))).toEqual(["alpha.one"]);
+    });
+});
+
+describe("computeFreshness", () => {
+    const NOW = 1_000_000_000_000; // arbitrary fixed reference
+    const day = 86400 * 1000;
+
+    it("buckets by age and surfaces the staleest 10", () => {
+        const map = {
+            "alpha.one":  { ts: NOW - 5 * day },        // hot
+            "alpha.two":  { ts: NOW - 30 * day },       // warm
+            "beta.one":   { ts: NOW - 200 * day },      // stale
+        };
+        const r = computeFreshness(TREE, map, NOW);
+        const byKind = Object.fromEntries(r.buckets.map((b) => [b.kind, b.ids]));
+        expect(byKind["Récent (≤14j)"]).toEqual(["alpha.one"]);
+        expect(byKind["Tiède (14–60j)"]).toEqual(["alpha.two"]);
+        expect(byKind["Périmé (>180j)"]).toEqual(["beta.one"]);
+        expect(r.staleest[0].id).toBe("beta.one");
+        expect(r.staleest[0].ageDays).toBe(200);
+    });
+
+    it("collects leaves with no timestamp under 'Inconnu'", () => {
+        const r = computeFreshness(TREE, {}, NOW);
+        const unknown = r.buckets.find((b) => b.kind === "Inconnu");
+        expect(unknown!.count).toBe(3);
+    });
+
+    it("omits buckets that are empty", () => {
+        const map = { "alpha.one":  { ts: NOW - 1 * day },
+                      "alpha.two":  { ts: NOW - 2 * day },
+                      "beta.one":   { ts: NOW - 3 * day } };
+        const r = computeFreshness(TREE, map, NOW);
+        expect(r.buckets.every((b) => b.count > 0)).toBe(true);
+        expect(r.buckets.some((b) => b.kind === "Périmé (>180j)")).toBe(false);
     });
 });

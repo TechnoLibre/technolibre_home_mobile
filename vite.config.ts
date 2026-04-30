@@ -607,11 +607,84 @@ function bundleSourcePlugin(): Plugin {
     };
 }
 
+/**
+ * Last-touched timestamps per feature.
+ *
+ * Reads featureCatalog.ts at build time, extracts id + files[], runs
+ * `git log -1 --format=%ct -- <path>` for every file, takes the max
+ * per feature, writes src/public/feature_touched.json. The dashboard
+ * uses this to surface stale features.
+ */
+function featureTouchedPlugin(): Plugin {
+    return {
+        name: "feature-touched",
+        buildStart() {
+            const root = process.cwd();
+            const catalogPath = join(root, "src", "data", "featureCatalog.ts");
+            if (!existsSync(catalogPath)) return;
+            const src = readFileSync(catalogPath, "utf8");
+
+            // Slice into per-leaf blocks: each `id: "x.y"` starts a block
+            // that runs until the next id or EOF. Within, capture files[].
+            const idRe = /\bid:\s*"([^"]+)"/g;
+            const ids: { id: string; idx: number }[] = [];
+            let m: RegExpExecArray | null;
+            while ((m = idRe.exec(src)) !== null) ids.push({ id: m[1], idx: m.index });
+
+            const filesByFeature = new Map<string, string[]>();
+            for (let i = 0; i < ids.length; i++) {
+                const start = ids[i].idx;
+                const end = i + 1 < ids.length ? ids[i + 1].idx : src.length;
+                const block = src.slice(start, end);
+                const filesMatch = /\bfiles:\s*\[([^\]]*)\]/s.exec(block);
+                if (!filesMatch) continue;
+                const paths = Array.from(filesMatch[1].matchAll(/"([^"]+)"/g))
+                    .map((mm) => mm[1])
+                    .filter((p) => /\.(ts|tsx|js|scss|css|java)$/.test(p));
+                if (paths.length) filesByFeature.set(ids[i].id, paths);
+            }
+
+            // mobile/erplibre_home_mobile is its own sub-repo (symlinked
+            // .git). Run git from this directory with paths relative to
+            // it, not relative to the outer ERPLibre repo.
+            const result: Record<string, { ts: number; iso: string }> = {};
+            const memo = new Map<string, number>();
+            const lookup = (rel: string): number => {
+                if (memo.has(rel)) return memo.get(rel)!;
+                let ts = 0;
+                const r = spawnSync(
+                    "git",
+                    ["log", "-1", "--format=%ct", "--", rel],
+                    { cwd: root, stdio: ["ignore", "pipe", "ignore"], encoding: "utf-8" },
+                );
+                if (r.status === 0 && r.stdout) {
+                    const out = r.stdout.trim();
+                    if (out) ts = parseInt(out, 10) * 1000;
+                }
+                memo.set(rel, ts);
+                return ts;
+            };
+            for (const [id, paths] of filesByFeature) {
+                let maxTs = 0;
+                for (const p of paths) maxTs = Math.max(maxTs, lookup(p));
+                if (maxTs > 0) result[id] = { ts: maxTs, iso: new Date(maxTs).toISOString() };
+            }
+
+            const outPath = join(root, "src", "public", "feature_touched.json");
+            writeFileSync(outPath, JSON.stringify(result, null, 2));
+            console.log(
+                `[feature-touched] ${Object.keys(result).length} features → ` +
+                `src/public/feature_touched.json`,
+            );
+        },
+    };
+}
+
 // ── Vite config ───────────────────────────────────────────────────────────────
 
 export default defineConfig(({ mode }) => ({
     root: "./src",
-    plugins: [precompileOwlTemplatesPlugin(), bundleSourcePlugin()],
+    plugins: [precompileOwlTemplatesPlugin(), bundleSourcePlugin(), featureTouchedPlugin()],
     resolve: {
         alias: [
             // Reroute the bare `@odoo/owl` import to our AOT wrapper so

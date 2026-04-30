@@ -1367,6 +1367,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 demo: NONE_PLUMBING,
                 files: ["src/services/repoFsFactory.ts"],
+                tests: ["src/__tests__/repoFsFactory.test.ts"],
             },
             {
                 id: "repos.manifest",
@@ -2396,14 +2397,19 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "it as a recursive tree component with search, "
                         + "deep-link, and per-node detail. A vitest suite "
                         + "enforces uniqueness, file existence, dependsOn "
-                        + "validity, and orphan detection (every src/ file "
-                        + "must be in some feature or allow-listed).",
+                        + "validity, and orphan detection. The vite plugin "
+                        + "feature-touched runs git log -1 per file at "
+                        + "build time and writes feature_touched.json so the "
+                        + "dashboard can surface stale features.",
                     fr: "FEATURE_TREE dans src/data/featureCatalog.ts est la "
                         + "source de vérité. /options/features rend l'arbre "
                         + "via un composant récursif (recherche, deep-link, "
                         + "détail par noeud). Suite vitest vérifie unicité, "
                         + "existence des fichiers, validité dependsOn, et "
-                        + "détection d'orphelins.",
+                        + "détection d'orphelins. Le plugin vite "
+                        + "feature-touched run git log -1 par fichier au "
+                        + "build et écrit feature_touched.json pour que le "
+                        + "dashboard puisse surfacier les features périmées.",
                 },
                 status: "experimental",
                 demo: { kind: "route", url: "/options/features" },
@@ -2470,6 +2476,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/js/app.ts",
                     "src/js/helpers.ts",
                 ],
+                tests: ["src/__tests__/helpers.test.ts"],
             },
             {
                 id: "meta.build-id",
