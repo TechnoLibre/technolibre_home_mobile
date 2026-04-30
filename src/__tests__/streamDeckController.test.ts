@@ -35,7 +35,22 @@ const DECK = {
 
 function makeBus() {
     const trigger = vi.fn();
-    return { bus: { trigger }, trigger };
+    const handlers = new Map<string, Set<(e: any) => void>>();
+    const bus = {
+        trigger,
+        addEventListener(name: string, fn: (e: any) => void) {
+            const set = handlers.get(name) ?? new Set();
+            set.add(fn);
+            handlers.set(name, set);
+        },
+        removeEventListener(name: string, fn: (e: any) => void) {
+            handlers.get(name)?.delete(fn);
+        },
+    };
+    function emit(name: string, detail: any) {
+        for (const fn of handlers.get(name) ?? []) fn({ detail });
+    }
+    return { bus, trigger, emit };
 }
 
 function makeNoteService(id = "new-id-1") {
@@ -290,6 +305,161 @@ describe("StreamDeckController", () => {
             await ctrl.start();
             await ctrl.stop();
             expect(remove).toHaveBeenCalledTimes(3);
+        });
+    });
+
+    describe("note-page action keys", () => {
+        it("paints keys 1-3 when setNoteActive(true)", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            // Mount-time visible (will paint key 0 once via _renderHome
+            // — let it run, we filter by key below).
+            visibilityState = "visible";
+            // Stub canvas just enough for _renderTile to resolve a Blob.
+            vi.stubGlobal("document", {
+                get visibilityState() { return visibilityState; },
+                addEventListener: vi.fn(),
+                createElement: () => ({
+                    width: 0, height: 0,
+                    getContext: () => ({
+                        translate: vi.fn(), rotate: vi.fn(),
+                        fillRect: vi.fn(), fillText: vi.fn(),
+                        set fillStyle(_: string) {},
+                        set font(_: string) {},
+                        set textAlign(_: string) {},
+                        set textBaseline(_: string) {},
+                    }),
+                    toBlob: (cb: any) => cb(new Blob([new Uint8Array([1, 2])])),
+                }),
+            });
+            await ctrl.start();
+            mockPlugin.setKeyImage.mockClear();
+            await ctrl.setNoteActive(true);
+            const keysPainted = mockPlugin.setKeyImage.mock.calls
+                .map((c: any) => c[0].key)
+                .sort();
+            expect(keysPainted).toEqual([1, 2, 3]);
+        });
+
+        it("blanks keys 1-3 when setNoteActive(false)", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            visibilityState = "visible";
+            vi.stubGlobal("document", {
+                get visibilityState() { return visibilityState; },
+                addEventListener: vi.fn(),
+                createElement: () => ({
+                    width: 0, height: 0,
+                    getContext: () => ({
+                        translate: vi.fn(), rotate: vi.fn(),
+                        fillRect: vi.fn(), fillText: vi.fn(),
+                        set fillStyle(_: string) {},
+                        set font(_: string) {},
+                        set textAlign(_: string) {},
+                        set textBaseline(_: string) {},
+                    }),
+                    toBlob: (cb: any) => cb(new Blob([new Uint8Array([1])])),
+                }),
+            });
+            await ctrl.start();
+            await ctrl.setNoteActive(true);
+            mockPlugin.setKeyImage.mockClear();
+            await ctrl.setNoteActive(false);
+            // Same three keys repainted (with the blank tile).
+            const keysPainted = mockPlugin.setKeyImage.mock.calls
+                .map((c: any) => c[0].key)
+                .sort();
+            expect(keysPainted).toEqual([1, 2, 3]);
+        });
+
+        it("press on keys 1-3 fires the matching ADD_* event when active", async () => {
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";  // skip paints
+            await ctrl.start();
+            await ctrl.setNoteActive(true);
+            trigger.mockClear();
+
+            vi.useFakeTimers();
+            vi.setSystemTime(10_000);
+            listeners["keyChanged"]({ deckId: "AL01", key: 1, pressed: true });
+            vi.setSystemTime(10_200);
+            listeners["keyChanged"]({ deckId: "AL01", key: 2, pressed: true });
+            vi.setSystemTime(10_400);
+            listeners["keyChanged"]({ deckId: "AL01", key: 3, pressed: true });
+
+            const fired = trigger.mock.calls.map((c: any) => c[0]);
+            expect(fired).toContain("streamdeck_add_video");
+            expect(fired).toContain("streamdeck_add_audio");
+            expect(fired).toContain("streamdeck_add_location");
+        });
+
+        it("press on keys 1-3 is ignored when noteActive=false", async () => {
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            trigger.mockClear();
+            listeners["keyChanged"]({ deckId: "AL01", key: 1, pressed: true });
+            listeners["keyChanged"]({ deckId: "AL01", key: 2, pressed: true });
+            listeners["keyChanged"]({ deckId: "AL01", key: 3, pressed: true });
+            expect(trigger).not.toHaveBeenCalled();
+        });
+
+        it("camera-streaming suppresses press on keys 1-3", async () => {
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            await ctrl.setNoteActive(true);
+            ctrl.setCameraStreaming(true);
+            trigger.mockClear();
+            listeners["keyChanged"]({ deckId: "AL01", key: 1, pressed: true });
+            expect(trigger).not.toHaveBeenCalled();
+        });
+
+        it("debounce shared with key 0 (rapid mash drops the second press)", async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(10_000);
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            await ctrl.setNoteActive(true);
+            trigger.mockClear();
+
+            listeners["keyChanged"]({ deckId: "AL01", key: 1, pressed: true });
+            vi.setSystemTime(10_050);
+            listeners["keyChanged"]({ deckId: "AL01", key: 2, pressed: true });
+
+            const fired = trigger.mock.calls.map((c: any) => c[0]);
+            expect(fired).toContain("streamdeck_add_video");
+            expect(fired).not.toContain("streamdeck_add_audio");
+        });
+
+        it("STREAMDECK_NOTE_PAGE_ACTIVE event drives setNoteActive", async () => {
+            const { bus, trigger, emit } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+
+            // Active=true via the bus → press on key 1 should now fire.
+            emit("streamdeck_note_page_active", { active: true });
+            // micro-flush — setNoteActive is async (paints).
+            await Promise.resolve();
+            await Promise.resolve();
+            trigger.mockClear();
+            listeners["keyChanged"]({ deckId: "AL01", key: 1, pressed: true });
+            expect(trigger.mock.calls.map((c: any) => c[0]))
+                .toContain("streamdeck_add_video");
+
+            // Active=false via the bus → press on key 1 ignored.
+            emit("streamdeck_note_page_active", { active: false });
+            await Promise.resolve();
+            trigger.mockClear();
+            vi.setSystemTime(Date.now() + 1000);
+            listeners["keyChanged"]({ deckId: "AL01", key: 1, pressed: true });
+            expect(trigger).not.toHaveBeenCalled();
         });
     });
 });

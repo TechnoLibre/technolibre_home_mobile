@@ -18,4 +18,8 @@ export const Events: Record<string, string> = {
 	SET_ENTRY_TRANSCRIPTION: "set_entry_transcription",
 	NOTE_TAGS_UPDATED: "note_tags_updated",
 	TAGS_UPDATED: "tags_updated",
+	STREAMDECK_NOTE_PAGE_ACTIVE: "streamdeck_note_page_active",
+	STREAMDECK_ADD_AUDIO: "streamdeck_add_audio",
+	STREAMDECK_ADD_VIDEO: "streamdeck_add_video",
+	STREAMDECK_ADD_LOCATION: "streamdeck_add_location",
 }

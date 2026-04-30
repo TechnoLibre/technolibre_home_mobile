@@ -971,12 +971,27 @@ export class NoteComponent extends EnhancedComponent {
 				this.state.note.tags = e?.detail?.tagIds ?? [];
 			}
 		};
+		// Stream Deck remote-add: keys 1-3 fire while a note page is
+		// mounted. Reuse the same handlers the bottom-controls bar
+		// uses so the deck and the on-screen buttons stay equivalent.
+		const onDeckAddVideo    = () => { void this.addVideo(); };
+		const onDeckAddAudio    = () => { void this.addAudio(); };
+		const onDeckAddLocation = () => { void this.addLocation(); };
+
 		this.eventBus.addEventListener(Events.SET_AUDIO_RECORDING,    onAudio);
 		this.eventBus.addEventListener(Events.SET_VIDEO_RECORDING,    onVideo);
 		this.eventBus.addEventListener(Events.SET_PHOTO,              onPhoto);
 		this.eventBus.addEventListener(Events.ADD_TRANSCRIPTION_TEXT, onTranscription);
 		this.eventBus.addEventListener(Events.SET_ENTRY_TRANSCRIPTION, onSetTranscript);
 		this.eventBus.addEventListener(Events.NOTE_TAGS_UPDATED,       onTagsUpdated);
+		this.eventBus.addEventListener(Events.STREAMDECK_ADD_VIDEO,    onDeckAddVideo);
+		this.eventBus.addEventListener(Events.STREAMDECK_ADD_AUDIO,    onDeckAddAudio);
+		this.eventBus.addEventListener(Events.STREAMDECK_ADD_LOCATION, onDeckAddLocation);
+
+		// Tell the StreamDeckController this page is mounted so it
+		// paints keys 1-3. The matching false fires on willDestroy.
+		this.eventBus.trigger(Events.STREAMDECK_NOTE_PAGE_ACTIVE, { active: true });
+
 		onWillDestroy(() => {
 			this.eventBus.removeEventListener(Events.SET_AUDIO_RECORDING,    onAudio);
 			this.eventBus.removeEventListener(Events.SET_VIDEO_RECORDING,    onVideo);
@@ -984,6 +999,10 @@ export class NoteComponent extends EnhancedComponent {
 			this.eventBus.removeEventListener(Events.ADD_TRANSCRIPTION_TEXT, onTranscription);
 			this.eventBus.removeEventListener(Events.SET_ENTRY_TRANSCRIPTION, onSetTranscript);
 			this.eventBus.removeEventListener(Events.NOTE_TAGS_UPDATED,       onTagsUpdated);
+			this.eventBus.removeEventListener(Events.STREAMDECK_ADD_VIDEO,    onDeckAddVideo);
+			this.eventBus.removeEventListener(Events.STREAMDECK_ADD_AUDIO,    onDeckAddAudio);
+			this.eventBus.removeEventListener(Events.STREAMDECK_ADD_LOCATION, onDeckAddLocation);
+			this.eventBus.trigger(Events.STREAMDECK_NOTE_PAGE_ACTIVE, { active: false });
 		});
 	}
 
