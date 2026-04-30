@@ -70,14 +70,26 @@
     justify-content: center;
     overflow: hidden;
     position: relative;
-    touch-action: pan-y;
+    // The component owns every gesture (pinch / pan / swipe) — disable
+    // the browser's native pan & zoom so it doesn't fight us.
+    touch-action: none;
     user-select: none;
 }
 
 .gallery__viewer__img {
+    // Default: fit the screen (object-fit: contain on the largest box
+    // the layout allows). Pinch-zoom layers a CSS transform on top —
+    // the inline t-att-style overrides the identity transform, never
+    // the size. transform-origin centres the scale on the image's
+    // middle, matching where the pinch midpoint lives most of the
+    // time and avoiding the picture flying off to one corner.
+    height: auto;
     max-height: calc(100% - 4rem);
     max-width: 100%;
     object-fit: contain;
+    transform-origin: center center;
+    width: auto;
+    will-change: transform;
 }
 
 .gallery__viewer__btn {
