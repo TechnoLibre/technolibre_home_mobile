@@ -1,4 +1,6 @@
 import { Capacitor } from "@capacitor/core";
+import { Directory, Filesystem } from "@capacitor/filesystem";
+import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import type { PluginListenerHandle } from "@capacitor/core";
 import { DatabaseService } from "./databaseService";
 import { WhisperPlugin, WhisperModel } from "../plugins/whisperPlugin";
@@ -8,6 +10,11 @@ import { Events } from "../constants/events";
 interface EventBusLike {
     trigger(name: string, payload: Record<string, unknown>): void;
 }
+
+const GROQ_KEY_STORAGE = "whisper_groq_api_key";
+const GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
+/** Default Groq Whisper model — multilingual, free tier covers ~30 req/min. */
+const GROQ_MODEL = "whisper-large-v3";
 
 // ---------------------------------------------------------------------------
 // Model metadata
@@ -157,6 +164,67 @@ export class TranscriptionService {
         this._transcriptionProgressSubs.get(audioPath)?.forEach(cb => cb(percent));
     }
 
+    /** Upload the audio file to Groq's Whisper endpoint and return the
+     *  transcribed text. Reads the file via the Capacitor filesystem
+     *  (audio recordings live under Directory.Data) when the path is
+     *  relative; if the caller passed an absolute file:// URL we just
+     *  fetch it directly through the WebView. */
+    private async _transcribeViaGroq(
+        audioPath: string,
+        lang: string,
+        apiKey: string,
+        dbg: (msg: string) => void,
+    ): Promise<string> {
+        // Read the audio bytes. Recordings produced by VoiceRecorder
+        // sit under Directory.Data with a relative path; everything
+        // else is taken as an absolute path resolvable via convertFileSrc.
+        let bytes: Uint8Array;
+        let filename = audioPath.split("/").pop() ?? "audio.m4a";
+        if (audioPath.startsWith("/") || audioPath.startsWith("file:")) {
+            const url = audioPath.startsWith("file:")
+                ? Capacitor.convertFileSrc(audioPath)
+                : Capacitor.convertFileSrc(audioPath);
+            const r = await fetch(url);
+            if (!r.ok) throw new Error(`Lecture audio échouée : HTTP ${r.status}`);
+            bytes = new Uint8Array(await r.arrayBuffer());
+        } else {
+            const { data } = await Filesystem.readFile({
+                path: audioPath,
+                directory: Directory.Data,
+            });
+            if (data instanceof Blob) {
+                bytes = new Uint8Array(await data.arrayBuffer());
+            } else {
+                // base64 string
+                const bin = atob(data as string);
+                bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            }
+        }
+
+        dbg(`Audio lu          : ${bytes.length} octets`);
+
+        const form = new FormData();
+        form.append("file", new Blob([bytes]), filename);
+        form.append("model", GROQ_MODEL);
+        if (lang) form.append("language", lang);
+        form.append("response_format", "json");
+
+        dbg("Appel Groq…");
+        const resp = await fetch(GROQ_URL, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${apiKey}` },
+            body: form,
+        });
+        if (!resp.ok) {
+            const txt = await resp.text().catch(() => "");
+            throw new Error(`Groq HTTP ${resp.status}: ${txt.slice(0, 200)}`);
+        }
+        const json = await resp.json();
+        const text = (json?.text ?? "").toString();
+        return text;
+    }
+
     private _notifyTranscriptionDone(audioPath: string): void {
         const subs = this._transcriptionSubs.get(audioPath);
         if (subs) {
@@ -185,6 +253,38 @@ export class TranscriptionService {
 
     async setSelectedModel(model: WhisperModel): Promise<void> {
         await this.db.setUserGraphicPref("whisper_model", model);
+    }
+
+    /** Whether the user has enabled the Groq cloud transcription path.
+     *  When true and a key is configured, transcribe() calls the Groq
+     *  Whisper API instead of the on-device whisper.cpp model. */
+    async isGroqEnabled(): Promise<boolean> {
+        const val = await this.db.getUserGraphicPref("whisper_groq_enabled");
+        return val === "true";
+    }
+
+    async setGroqEnabled(enabled: boolean): Promise<void> {
+        await this.db.setUserGraphicPref(
+            "whisper_groq_enabled", enabled ? "true" : "false",
+        );
+    }
+
+    /** API key kept in secure-storage (Android Keystore) — never logged
+     *  and never persisted in graphic-prefs alongside other settings. */
+    async getGroqApiKey(): Promise<string> {
+        try {
+            const { value } = await SecureStoragePlugin.get({ key: GROQ_KEY_STORAGE });
+            return value ?? "";
+        } catch { return ""; }
+    }
+
+    async setGroqApiKey(key: string): Promise<void> {
+        if (!key) {
+            try { await SecureStoragePlugin.remove({ key: GROQ_KEY_STORAGE }); }
+            catch { /* not present */ }
+            return;
+        }
+        await SecureStoragePlugin.set({ key: GROQ_KEY_STORAGE, value: key });
     }
 
     async getDownloadMode(): Promise<"wakelock" | "foreground"> {
@@ -366,6 +466,27 @@ export class TranscriptionService {
 
         let progressListener: PluginListenerHandle | null = null;
         try {
+            // Cloud Groq path — when the user has enabled it AND set a
+            // key, route there instead of the local model. Skips the
+            // whisper.cpp listener wiring entirely (no per-segment
+            // progress event to subscribe to — Groq returns one shot).
+            const groqEnabled = await this.isGroqEnabled();
+            const groqKey = groqEnabled ? await this.getGroqApiKey() : "";
+            if (groqEnabled && groqKey) {
+                dbg("Backend           : Groq Whisper API (cloud)");
+                const text = await this._transcribeViaGroq(
+                    audioPath, lang, groqKey, dbg,
+                );
+                dbg(`Résultat (${text.trim().length} car.) : ${text.trim().slice(0, 80)}`);
+                if (processId) await this._processService?.completeProcess(processId, undefined, text);
+                if (this._eventBus && entryId) {
+                    this._eventBus.trigger(Events.SET_ENTRY_TRANSCRIPTION, {
+                        entryId, text, noteId, audioPath,
+                    });
+                }
+                return text;
+            }
+
             // Listen for Whisper segment-by-segment progress (ratio 0→1).
             progressListener = await WhisperPlugin.addListener("progress", (data) => {
                 const percent = Math.round(data.ratio * 100);
