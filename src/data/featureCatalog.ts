@@ -2274,7 +2274,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/heading/heading_component.ts",
                     "src/components/content/content_component.ts",
                     "src/components/root/root_component.ts",
+                    "src/utils/webViewUtils.ts",
                 ],
+                tests: ["src/__tests__/webViewUtils.test.ts"],
             },
             {
                 id: "ui.owl-aot",
@@ -2327,6 +2329,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/js/errors.ts",
                     "src/constants/errorMessages.ts",
                 ],
+                tests: ["src/__tests__/errors.test.ts"],
             },
         ],
     },
