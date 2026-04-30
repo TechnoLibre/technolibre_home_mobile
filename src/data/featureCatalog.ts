@@ -1503,7 +1503,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/plugins/whisperPlugin.ts",
                     "src/services/transcriptionService.ts",
                 ],
-                tests: ["src/__tests__/transcriptionService.test.ts"],
+                tests: [
+                    "src/__tests__/transcriptionService.test.ts",
+                    "src/__tests__/whisperPlugin.test.ts",
+                ],
             },
             {
                 id: "transcription.options",
@@ -1873,6 +1876,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/SshPlugin.java",
                     "src/plugins/sshPlugin.ts",
                 ],
+                tests: ["src/__tests__/sshPlugin.test.ts"],
             },
             {
                 id: "deployment.raw-http",
@@ -1900,6 +1904,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/RawHttpPlugin.java",
                     "src/plugins/rawHttpPlugin.ts",
                 ],
+                tests: ["src/__tests__/rawHttpPlugin.test.ts"],
             },
             {
                 id: "deployment.deploy-ui",
