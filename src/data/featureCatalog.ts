@@ -571,6 +571,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
                 demo: NONE_BG,
                 files: ["src/services/streamDeckController.ts"],
+                tests: ["src/__tests__/streamDeckController.test.ts"],
             },
             {
                 id: "streamdeck.usb",
