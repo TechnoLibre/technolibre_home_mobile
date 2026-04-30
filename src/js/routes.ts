@@ -21,7 +21,7 @@ import { OptionsResourcesComponent } from "../components/options/resources/optio
 import { OptionsCodeComponent } from "../components/options/code/options_code_component";
 import { OptionsLanguageComponent } from "../components/options/language/options_language_component";
 import { OptionsFeaturesComponent } from "../components/options/features/options_features_component";
-import { OptionsGalleryComponent } from "../components/options/gallery/options_gallery_component";
+import { ApplicationsGalleryComponent } from "../components/applications/gallery/applications_gallery_component";
 import { TagNotesComponent } from "../components/tags/tag_notes_component";
 
 export interface Route {
@@ -33,6 +33,7 @@ export const routes: Route[] = [
 	{ pathname: "/", component: HomeComponent },
 	{ pathname: "/applications/edit/:url/:username", component: ApplicationsEditComponent },
 	{ pathname: "/applications/add", component: ApplicationsAddComponent },
+	{ pathname: "/applications/gallery", component: ApplicationsGalleryComponent },
 	{ pathname: "/applications", component: ApplicationsComponent },
 	{ pathname: "/servers/edit", component: ServersEditComponent },
 	{ pathname: "/servers/add", component: ServersAddComponent },
@@ -54,7 +55,6 @@ export const routes: Route[] = [
 	{ pathname: "/options/resources", component: OptionsResourcesComponent },
 	{ pathname: "/options/code", component: OptionsCodeComponent },
 	{ pathname: "/options/features", component: OptionsFeaturesComponent },
-	{ pathname: "/options/gallery", component: OptionsGalleryComponent },
 	{ pathname: "/options", component: OptionsComponent },
 	{ pathname: "*", component: HomeComponent }
 ];

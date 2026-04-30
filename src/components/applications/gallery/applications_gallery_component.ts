@@ -22,10 +22,10 @@ interface State {
     ty:            number;
 }
 
-export class OptionsGalleryComponent extends EnhancedComponent {
+export class ApplicationsGalleryComponent extends EnhancedComponent {
     static template = xml`
-        <div id="options-gallery-component">
-            <HeadingComponent title="'Options › Galerie'" backUrl="'/options'"/>
+        <div id="applications-gallery-component">
+            <HeadingComponent title="'Services › Galerie'" backUrl="'/applications'"/>
 
             <div t-if="state.loading" class="gallery__status">
                 Chargement…
@@ -178,7 +178,7 @@ export class OptionsGalleryComponent extends EnhancedComponent {
             this.closeFullscreen();
             return;
         }
-        this.navigate("/options");
+        this.navigate("/applications");
     };
 
     /** Convert a stored entry path to a WebView-loadable URL. */
@@ -239,7 +239,7 @@ export class OptionsGalleryComponent extends EnhancedComponent {
         // double-tap window. We bail early so the swipe machine
         // doesn't also fire.
         const now = Date.now();
-        if (now - this._lastTapAt < OptionsGalleryComponent.DOUBLE_TAP_MS) {
+        if (now - this._lastTapAt < ApplicationsGalleryComponent.DOUBLE_TAP_MS) {
             this._toggleZoom();
             this._lastTapAt = 0;
             this._gesture = "idle";
@@ -267,7 +267,7 @@ export class OptionsGalleryComponent extends EnhancedComponent {
             const ratio = dist / this._pinchStartDist;
             const next = this._pinchStartScale * ratio;
             this.state.scale = Math.max(
-                1, Math.min(OptionsGalleryComponent.MAX_SCALE, next),
+                1, Math.min(ApplicationsGalleryComponent.MAX_SCALE, next),
             );
             // Keep the picture centred when pinching down to 1× —
             // otherwise the residual pan from a previous zoom would
@@ -301,7 +301,7 @@ export class OptionsGalleryComponent extends EnhancedComponent {
         if (this._gesture === "swipe") {
             const dx = (ev.changedTouches[0]?.clientX ?? 0) - this._swipeStartX;
             this._gesture = "idle";
-            if (Math.abs(dx) < OptionsGalleryComponent.SWIPE_THRESHOLD_PX) return;
+            if (Math.abs(dx) < ApplicationsGalleryComponent.SWIPE_THRESHOLD_PX) return;
             if (dx < 0) this.next(); else this.prev();
             return;
         }

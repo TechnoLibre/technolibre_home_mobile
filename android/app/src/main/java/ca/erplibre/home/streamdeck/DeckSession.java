@@ -115,6 +115,13 @@ public final class DeckSession {
      *  perceptible gain. */
     private static final int POLLED_INTERVAL_MS = 30;
 
+    /** Optional hook invoked after every keyChanged emit. Used by the
+     *  plugin to request a screen-wake when the host activity is
+     *  paused — kept as a static plain Runnable so DeckSession does
+     *  not have to import Android lifecycle types. */
+    private static volatile Runnable keyPressHook;
+    public static void setKeyPressHook(Runnable hook) { keyPressHook = hook; }
+
     public DeckSession(DeckSpec spec, UsbDevice device, EventEmitter emitter) {
         this.spec = spec;
         this.device = device;
@@ -666,6 +673,11 @@ public final class DeckSession {
                 ev.put("key", k);
                 ev.put("pressed", pressed);
                 emitter.emit("keyChanged", ev);
+                Runnable hook = keyPressHook;
+                if (hook != null && pressed) {
+                    try { hook.run(); }
+                    catch (Throwable t) { Log.w(TAG, "keyPressHook: " + t.getMessage()); }
+                }
             }
         } else if (reportId == 0x01 && subType == 0x03 && spec.dialCount > 0) {
             // Plus dial. byte 4 = type (0=press, 1=rotate); subsequent bytes per dial.

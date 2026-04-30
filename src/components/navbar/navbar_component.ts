@@ -20,7 +20,7 @@ export class NavbarComponent extends EnhancedComponent {
 					displayName="t('nav.services')"
 					currentRoute="state.currentRoute"
 					path="'/applications'"
-					subpaths="['/applications/add', '/applications/edit/:url/:username']"
+					subpaths="['/applications/add', '/applications/edit/:url/:username', '/applications/gallery']"
 					onItemClick.bind="onNavListItemClick"
 				/>
 				<NavbarItemComponent

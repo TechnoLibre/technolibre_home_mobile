@@ -61,6 +61,17 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      *  interrupt-IN event. Released when the last session closes. */
     private PowerManager.WakeLock wakeLock;
 
+    /** "Wake the phone on a deck press while the host activity is
+     *  paused" — armed by the JS-side Mise en veille checkbox via
+     *  setWakeOnKeyPress. Static so the per-session keyPressHook can
+     *  read it without holding a reference to the plugin. */
+    private static volatile boolean wakeOnKeyPress = false;
+    /** True between handleOnPause and handleOnResume — the only window
+     *  where the wake-on-press path should actually fire an intent.
+     *  Without this gate every press would relaunch MainActivity even
+     *  while the user is already looking at the app. */
+    private static volatile boolean activityPaused = false;
+
     private final EventEmitter emitter = (name, data) -> notifyListeners(name, data);
 
     @Override
@@ -81,6 +92,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // swipe-from-recents — the Activity lifecycle does not guarantee
         // onDestroy on that path, so handleOnDestroy alone leaves the deck
         // painted with the last tile. The service has no other duties.
+        // Arm the wake-on-keypress path: every keyChanged in DeckSession
+        // calls this hook, which only does something when the user
+        // opted in (wakeOnKeyPress) and the activity is currently
+        // paused (locked screen / backgrounded).
+        DeckSession.setKeyPressHook(this::onDeckKeyPressed);
         StreamDeckLifecycleService.setTaskRemovedHandler(this::resetAllSessions);
         try {
             ctx.startService(new Intent(ctx, StreamDeckLifecycleService.class));
@@ -91,7 +107,14 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     @Override
+    protected void handleOnPause() { activityPaused = true; super.handleOnPause(); }
+
+    @Override
+    protected void handleOnResume() { activityPaused = false; super.handleOnResume(); }
+
+    @Override
     protected void handleOnDestroy() {
+        DeckSession.setKeyPressHook(null);
         if (hotplug != null) hotplug.detach(getContext());
         if (permissions != null) permissions.close();
         resetAllSessions();
@@ -511,6 +534,68 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         int pct = call.getInt("percent", 50);
         try { s.setBrightness(pct); call.resolve(); }
         catch (DeckSession.DeckIoException e) { call.reject(e.getMessage()); }
+    }
+
+    /**
+     * Arm or disarm the wake-on-keypress path. When armed, every key
+     * press while the host activity is paused (phone screen off /
+     * MainActivity backgrounded) acquires a screen-bright wake lock
+     * and re-launches MainActivity so the user lands back where the
+     * deck press would normally take them.
+     */
+    @PluginMethod
+    public void setWakeOnKeyPress(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled"));
+        wakeOnKeyPress = enabled;
+        JSObject r = new JSObject();
+        r.put("enabled", enabled);
+        call.resolve(r);
+    }
+
+    /**
+     * keyPressHook from DeckSession. Fires on every accepted key down
+     * (release events are filtered upstream). Cheap fast-path: bail
+     * unless both the user opted in and the activity is currently
+     * paused — otherwise this runs on every press and we don't want
+     * to relaunch the activity while the user is already in it.
+     */
+    @SuppressWarnings("deprecation")
+    private void onDeckKeyPressed() {
+        if (!wakeOnKeyPress) return;
+        if (!activityPaused) return;
+        Context ctx = getContext();
+        if (ctx == null) return;
+        try {
+            // SCREEN_BRIGHT_WAKE_LOCK + ACQUIRE_CAUSES_WAKEUP +
+            // ON_AFTER_RELEASE is the smallest API surface that
+            // actually wakes the display from off — modern guidance
+            // is FLAG_TURN_SCREEN_ON on the activity, but that only
+            // works if the activity is *being launched* into the
+            // foreground. We need the wake to happen even when the
+            // OS is throttling activity launches, so the deprecated
+            // wake lock combo is the right tool here.
+            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                int flags = PowerManager.SCREEN_BRIGHT_WAKE_LOCK
+                          | PowerManager.ACQUIRE_CAUSES_WAKEUP
+                          | PowerManager.ON_AFTER_RELEASE;
+                PowerManager.WakeLock wl = pm.newWakeLock(flags, "ErpLibre:DeckWake");
+                wl.acquire(3000L);  // 3 s — plenty for the activity to pull focus
+            }
+            // Bring MainActivity back to the front so the press lands
+            // on a live UI. SINGLE_TOP avoids a duplicate instance,
+            // REORDER_TO_FRONT covers the case where the activity is
+            // still in the back stack but not on top.
+            Intent i = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
+            if (i != null) {
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                         | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                         | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                ctx.startActivity(i);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "wake-on-press failed: " + t.getMessage());
+        }
     }
 
     @PluginMethod

@@ -489,7 +489,7 @@ describe("StreamDeckController", () => {
             expect(fired).toContain("streamdeck_add_audio");
         });
 
-        it("press on key 5 navigates to /options/gallery (gallery shortcut)", async () => {
+        it("press on key 5 navigates to /applications/gallery (gallery shortcut)", async () => {
             const { bus, trigger } = makeBus();
             const ctrl = new StreamDeckController(bus, makeNoteService());
             visibilityState = "hidden";
@@ -497,7 +497,7 @@ describe("StreamDeckController", () => {
             trigger.mockClear();
             listeners["keyChanged"]({ deckId: "AL01", key: 5, pressed: true });
             expect(trigger).toHaveBeenCalledWith(
-                Events.ROUTER_NAVIGATION, { url: "/options/gallery" },
+                Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
             );
         });
 

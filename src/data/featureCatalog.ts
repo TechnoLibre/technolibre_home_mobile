@@ -1006,7 +1006,7 @@ export const FEATURE_TREE: FeatureNode[] = [
             en: "Cross-note image browser — mosaic + fullscreen carousel.",
             fr: "Visionneuse cross-notes — mosaïque + carrousel plein écran.",
         },
-        demo: { kind: "route", url: "/options/gallery" },
+        demo: { kind: "route", url: "/applications/gallery" },
         children: [
             {
                 id: "gallery.service",
@@ -1074,10 +1074,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "puisse le charger.",
                 },
                 dependsOn: ["gallery.service"],
-                demo: { kind: "route", url: "/options/gallery" },
+                demo: { kind: "route", url: "/applications/gallery" },
                 files: [
-                    "src/components/options/gallery/options_gallery_component.ts",
-                    "src/components/options/gallery/options_gallery_component.scss",
+                    "src/components/applications/gallery/applications_gallery_component.ts",
+                    "src/components/applications/gallery/applications_gallery_component.scss",
                 ],
             },
             {
@@ -1102,7 +1102,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "a thumb fires STREAMDECK_GALLERY_OPEN with the "
                         + "absolute index — the mobile opens the viewer. "
                         + "Pressing back closes fullscreen first, then "
-                        + "navigates to /options on a second press. When "
+                        + "navigates to /applications on a second press. When "
                         + "the page unmounts, the deck repaints its "
                         + "default Note + Galerie surface. Outside the "
                         + "gallery page, key 5 sits below the Note key "
@@ -1118,17 +1118,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "émet STREAMDECK_GALLERY_OPEN avec l'index "
                         + "absolu — le mobile ouvre la visionneuse. "
                         + "Retour ferme le plein écran d'abord, puis "
-                        + "navigue à /options à la 2e pression. Au "
+                        + "navigue à /applications à la 2e pression. Au "
                         + "démontage, le deck repeint sa surface "
                         + "Note + Galerie par défaut. Hors page "
                         + "galerie, la touche 5 reste un raccourci "
                         + "permanent vers /options/gallery.",
                 },
                 dependsOn: ["gallery.page", "streamdeck.controller"],
-                demo: { kind: "route", url: "/options/gallery" },
+                demo: { kind: "route", url: "/applications/gallery" },
                 files: [
                     "src/services/streamDeckController.ts",
-                    "src/components/options/gallery/options_gallery_component.ts",
+                    "src/components/applications/gallery/applications_gallery_component.ts",
                 ],
             },
         ],
@@ -1827,8 +1827,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "system.keep-awake",
                 label: { en: "Keep awake", fr: "Empêcher la veille" },
                 description: {
-                    en: "FLAG_KEEP_SCREEN_ON to keep deck LCDs lit.",
-                    fr: "FLAG_KEEP_SCREEN_ON pour garder les LCD allumées.",
+                    en: "FLAG_KEEP_SCREEN_ON + deck-lit-during-sleep + wake-on-deck-press.",
+                    fr: "FLAG_KEEP_SCREEN_ON + deck-allumé-en-veille + réveil-sur-touche.",
                 },
                 status: "stable",
                 issues: [
@@ -1836,21 +1836,53 @@ export const FEATURE_TREE: FeatureNode[] = [
                       fr: "Batterie : draine proportionnel au temps écran allumé." },
                 ],
                 howItWorks: {
-                    en: "Plugin toggles FLAG_KEEP_SCREEN_ON on the activity "
-                        + "window. While set, Android leaves the screen on "
-                        + "indefinitely and the USB host stays at full power. "
-                        + "Pref persists in localStorage and re-applies on "
-                        + "app start.",
-                    fr: "Le plugin toggle FLAG_KEEP_SCREEN_ON sur la window "
-                        + "de l'activity. Tant qu'il est set, Android garde "
-                        + "l'écran on indéfiniment et l'USB host reste à "
-                        + "pleine puissance. La préf persiste localStorage "
-                        + "et se ré-applique au démarrage.",
+                    en: "Two independent toggles, each persisted in "
+                        + "localStorage and re-applied on boot. "
+                        + "(1) Empêcher la mise en veille — KeepAwakePlugin "
+                        + "sets FLAG_KEEP_SCREEN_ON on the activity window, "
+                        + "Android leaves the screen on, USB stays at full "
+                        + "power. (2) Garder le Stream Deck allumé en veille "
+                        + "— signals StreamDeckController to skip the "
+                        + "brightness=0 dim on visibilitychange:hidden, AND "
+                        + "calls StreamDeckPlugin.setWakeOnKeyPress(true) "
+                        + "which arms a native keyPressHook in DeckSession. "
+                        + "When a key is pressed while MainActivity is "
+                        + "paused, the plugin acquires SCREEN_BRIGHT_WAKE_LOCK | "
+                        + "ACQUIRE_CAUSES_WAKEUP and starts the launch intent "
+                        + "with REORDER_TO_FRONT. MainActivity's "
+                        + "setShowWhenLocked / setTurnScreenOn (or the "
+                        + "FLAG_SHOW_WHEN_LOCKED window flag on pre-27) lets "
+                        + "it cover the lockscreen so the user lands on the "
+                        + "live UI.",
+                    fr: "Deux toggles indépendants, persistés en "
+                        + "localStorage et réappliqués au boot. "
+                        + "(1) Empêcher la mise en veille — KeepAwakePlugin "
+                        + "pose FLAG_KEEP_SCREEN_ON sur la window de "
+                        + "l'activity, Android garde l'écran on, l'USB "
+                        + "reste à pleine puissance. (2) Garder le Stream "
+                        + "Deck allumé en veille — indique à "
+                        + "StreamDeckController de sauter le dim "
+                        + "brightness=0 sur visibilitychange:hidden, ET "
+                        + "appelle StreamDeckPlugin.setWakeOnKeyPress(true) "
+                        + "qui arme un keyPressHook natif dans "
+                        + "DeckSession. Sur pression touche pendant que "
+                        + "MainActivity est en pause, le plugin acquiert "
+                        + "SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP "
+                        + "et lance l'intent avec REORDER_TO_FRONT. Le "
+                        + "setShowWhenLocked / setTurnScreenOn de "
+                        + "MainActivity (ou FLAG_SHOW_WHEN_LOCKED window "
+                        + "flag sur pre-27) lui permet de couvrir l'écran "
+                        + "verrouillé pour que l'utilisateur retrouve l'UI "
+                        + "vivante.",
                 },
                 demo: { kind: "options", sectionId: "keep-awake" },
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/KeepAwakePlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java",
+                    "android/app/src/main/java/ca/erplibre/home/MainActivity.java",
                     "src/plugins/keepAwakePlugin.ts",
+                    "src/services/streamDeckController.ts",
                     "src/components/options/keep_awake/options_keep_awake_component.ts",
                 ],
                 tests: ["src/__tests__/keepAwakePlugin.test.ts"],

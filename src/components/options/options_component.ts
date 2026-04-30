@@ -72,18 +72,13 @@ export class OptionsComponent extends EnhancedComponent {
           </a>
         </li>
         <li class="options-list__item">
-<<<<<<< HEAD
           <a href="#" role="button" t-att-aria-label="t('options.language')" t-on-click.stop.prevent="onLanguageClick">
             🌐 <t t-esc="t('options.language')"/> ›
-=======
-          <a href="#" role="button" aria-label="Galerie" t-on-click.stop.prevent="onGalleryClick">
-            🖼️ Galerie ›
           </a>
         </li>
         <li class="options-list__item">
           <a href="#" role="button" aria-label="Fonctionnalités" t-on-click.stop.prevent="onFeaturesClick">
             🗺️ Fonctionnalités ›
->>>>>>> theirs
           </a>
         </li>
         <li class="options-list__item">
@@ -141,10 +136,6 @@ export class OptionsComponent extends EnhancedComponent {
 
 	onLanguageClick() {
 		this.navigate("/options/language");
-	}
-
-	onGalleryClick() {
-		this.navigate("/options/gallery");
 	}
 
 	onErplibreClick() {
