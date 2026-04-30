@@ -227,6 +227,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "src/utils/videoThumbnailUtils.ts",
                             "src/services/migrations/migrateVideoThumbnails.ts",
                         ],
+                        tests: ["src/__tests__/videoThumbnailUtils.test.ts"],
                     },
                     {
                         id: "notes.entries.audio",
