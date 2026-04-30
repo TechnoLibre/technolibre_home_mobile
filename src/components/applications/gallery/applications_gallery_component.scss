@@ -77,18 +77,19 @@
 }
 
 .gallery__viewer__img {
-    // Default: fit the screen (object-fit: contain on the largest box
-    // the layout allows). Pinch-zoom layers a CSS transform on top —
-    // the inline t-att-style overrides the identity transform, never
-    // the size. transform-origin centres the scale on the image's
-    // middle, matching where the pinch midpoint lives most of the
-    // time and avoiding the picture flying off to one corner.
-    height: auto;
-    max-height: calc(100% - 4rem);
-    max-width: 100%;
+    // First-load default: fit-to-screen with aspect ratio preserved.
+    // The box is forced to the full viewer width and viewer height
+    // minus the caption strip; object-fit: contain then scales the
+    // image content inside that box. Note: max-width/max-height with
+    // width:auto/height:auto did not produce a fit-to-screen because
+    // when both dimensions are auto the box matches intrinsic image
+    // size and object-fit has no box to fit within. Pinch-zoom layers
+    // a CSS transform on top — the inline t-att-style replaces the
+    // identity transform, never the underlying size.
+    height: calc(100% - 4rem);
     object-fit: contain;
     transform-origin: center center;
-    width: auto;
+    width: 100%;
     will-change: transform;
 }
 
