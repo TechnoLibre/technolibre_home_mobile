@@ -3,6 +3,11 @@ import type { PluginListenerHandle } from "@capacitor/core";
 import { DatabaseService } from "./databaseService";
 import { WhisperPlugin, WhisperModel } from "../plugins/whisperPlugin";
 import type { ProcessService } from "./processService";
+import { Events } from "../constants/events";
+
+interface EventBusLike {
+    trigger(name: string, payload: Record<string, unknown>): void;
+}
 
 // ---------------------------------------------------------------------------
 // Model metadata
@@ -53,6 +58,7 @@ export interface DownloadProgress {
 export class TranscriptionService {
     private db: DatabaseService;
     private _processService: ProcessService | null;
+    private _eventBus: EventBusLike | null;
 
     /** Per-model download progress — survives component remounts. */
     private _activeDownloads = new Map<WhisperModel, DownloadProgress>();
@@ -65,9 +71,14 @@ export class TranscriptionService {
     private _transcriptionSubs = new Map<string, Set<() => void>>();
     private _transcriptionProgressSubs = new Map<string, Set<(percent: number) => void>>();
 
-    constructor(db: DatabaseService, processService?: ProcessService) {
+    constructor(
+        db: DatabaseService,
+        processService?: ProcessService,
+        eventBus?: EventBusLike,
+    ) {
         this.db = db;
         this._processService = processService ?? null;
+        this._eventBus = eventBus ?? null;
     }
 
     /** All currently active downloads (read-only). */
@@ -322,6 +333,10 @@ export class TranscriptionService {
      *                   for audio recordings produced by VoiceRecorder.
      * @param lang       BCP-47 language code (default "fr")
      * @param noteId     ID of the note that owns this entry (for navigation)
+     * @param entryId    ID of the audio entry inside the note. When set together
+     *                   with the eventBus injected at construction, the service
+     *                   fires SET_ENTRY_TRANSCRIPTION on success — survives the
+     *                   audio component being unmounted (user navigated away).
      * @param rawPath    Original path before any JS normalisation — logged in
      *                   the debug panel, has no effect on behaviour.
      */
@@ -329,6 +344,7 @@ export class TranscriptionService {
         audioPath: string,
         lang = "fr",
         noteId?: string,
+        entryId?: string,
         rawPath?: string,
     ): Promise<string> {
         if (!Capacitor.isNativePlatform()) {
@@ -377,6 +393,18 @@ export class TranscriptionService {
             dbg(`Résultat (${text.trim().length} car.) : ${preview}${text.trim().length > 80 ? "…" : ""}`);
 
             if (processId) await this._processService?.completeProcess(processId, undefined, text);
+
+            // Fire-and-forget completion event — survives the audio
+            // component being unmounted (user navigated to another
+            // route while transcription was in flight). A boot-time
+            // listener on noteService writes the text back to the
+            // entry so the user sees it on next visit.
+            if (this._eventBus && entryId) {
+                this._eventBus.trigger(Events.SET_ENTRY_TRANSCRIPTION, {
+                    entryId, text, noteId, audioPath,
+                });
+            }
+
             return text;
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
