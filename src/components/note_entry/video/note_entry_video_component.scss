@@ -42,6 +42,13 @@
 		grid-template-rows: 1fr;
 		width: 8.75rem;
 	}
+	// White-stroked off-state SVG would vanish on the near-white light
+	// theme background; --icon-filter inverts it on light themes. The
+	// real video poster (thumbnail__img) is excluded — it's a real
+	// JPEG we never want to invert.
+	& img:not(.note-entry__video__thumbnail__img) {
+		filter: var(--icon-filter, none);
+	}
 }
 
 .note-entry-video-component .note-entry__video__data {
