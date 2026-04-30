@@ -178,26 +178,44 @@ export const FEATURE_TREE: FeatureNode[] = [
                     },
                     {
                         id: "notes.entries.photo",
-                        label: { en: "Photo", fr: "Photo" },
+                        label: { en: "Photo / Image", fr: "Photo / Image" },
                         description: {
-                            en: "Capture or pick a photo, store in note.",
-                            fr: "Capturer ou choisir une photo, l'attacher à la note.",
+                            en: "Capture (camera) or pick (gallery), kept distinct.",
+                            fr: "Capturer (caméra) ou choisir (galerie), distincts.",
                         },
                         permissions: ["camera"],
                         status: "stable",
                         howItWorks: {
-                            en: "@capacitor/camera opens either the camera (CameraSource.Camera) or "
-                                + "the gallery picker via a Dialog choice. The result is a base64 "
-                                + "dataUrl stored as the entry payload — no native file copy; rendering "
-                                + "uses the dataUrl directly in <img>.",
-                            fr: "@capacitor/camera ouvre soit la caméra (CameraSource.Camera) soit le "
-                                + "sélecteur de galerie via un Dialog. Le résultat est un dataUrl base64 "
-                                + "stocké comme payload — pas de copie native; le rendu utilise le "
-                                + "dataUrl directement dans <img>.",
+                            en: "Both flows produce a `photo`-typed entry, but the "
+                                + "factory tags it with params.source — \"camera\" for "
+                                + "the bottom-bar 📷 Photo button (CameraSource.Camera, "
+                                + "needs the camera permission), \"gallery\" for the "
+                                + "🖼️ Image button (CameraSource.Photos, no runtime "
+                                + "permission — the system photo picker handles "
+                                + "consent). On re-edit, the entry component reads "
+                                + "the source and renders the matching button so the "
+                                + "user re-opens the same surface they originally "
+                                + "used. Path is the Capacitor file URI; the WebView "
+                                + "loads it via Capacitor.convertFileSrc.",
+                            fr: "Les deux flux produisent une entrée de type `photo`, "
+                                + "mais le factory marque params.source — \"camera\" "
+                                + "pour le bouton 📷 Photo de la barre du bas "
+                                + "(CameraSource.Camera, requiert la permission "
+                                + "caméra), \"gallery\" pour le bouton 🖼️ Image "
+                                + "(CameraSource.Photos, pas de permission — le "
+                                + "sélecteur photo système gère le consentement). À "
+                                + "la ré-édition, le composant entry lit la source "
+                                + "et affiche le bon bouton, pour que l'utilisateur "
+                                + "rouvre la même surface qu'à la création. Path = "
+                                + "URI Capacitor; le WebView charge via "
+                                + "Capacitor.convertFileSrc.",
                         },
                         dependsOn: ["notes.entries.framework"],
                         demo: { kind: "route", url: "/note/demo" },
-                        files: ["src/components/note_entry/photo/note_entry_photo_component.ts"],
+                        files: [
+                            "src/components/note_entry/photo/note_entry_photo_component.ts",
+                            "src/services/note/noteEntrySubservice.ts",
+                        ],
                     },
                     {
                         id: "notes.entries.video",
