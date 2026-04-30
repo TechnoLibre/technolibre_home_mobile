@@ -2305,6 +2305,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/js/owl-aot.ts",
                     "src/js/enhancedComponent.ts",
                 ],
+                tests: ["src/__tests__/enhancedComponent.test.ts"],
             },
             {
                 id: "ui.errors",
@@ -2453,6 +2454,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/featureCatalog.test.ts",
                     "src/__tests__/featureViewUtils.test.ts",
                     "src/__tests__/permissionsAudit.test.ts",
+                    "src/__tests__/featureSection.test.ts",
                 ],
             },
             {
