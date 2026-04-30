@@ -23,11 +23,18 @@ export function xml(
     strings: TemplateStringsArray,
     ...values: unknown[]
 ): string {
-    // Reconstruct the source string the same way Owl's xml does internally.
-    const xmlSrc = String.raw(
-        { raw: strings as unknown as string[] } as TemplateStringsArray,
-        ...values,
-    );
+    // Reconstruct the RAW source string. The precompiler indexes
+    // entries by what `source.slice(...)` extracted between the
+    // backticks — i.e. the raw chars including escape sequences like
+    // `\'`. Passing the full strings array to String.raw makes it
+    // read `strings.raw[i]` rather than the cooked element, which is
+    // the same byte sequence the precompiler saw at build time. A
+    // previous version built `{ raw: strings }` which silently passed
+    // the cooked array and caused runtime lookups to miss whenever a
+    // template contained any escape sequence — that landed every
+    // affected component on Owl's runtime compile path, blocked by
+    // our `unsafe-eval`-free CSP, and blanked the page.
+    const xmlSrc = String.raw(strings, ...values);
     const name = origXml(strings, ...values);
     const fn = PRECOMPILED[xmlSrc];
     if (fn) {

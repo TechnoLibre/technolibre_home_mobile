@@ -20,3 +20,20 @@ export function reactive<T extends object>(obj: T): T {
 
 export const useState = reactive;
 export function xml(_strings: TemplateStringsArray, ..._values: any[]): string { return ""; }
+
+// Lifecycle hooks: callable from a fake setup() invocation in tests so
+// component code that relies on them doesn't throw at import / setup
+// time. They never fire here — tests that need to exercise the body of
+// onMounted / onWillDestroy capture the callback before calling.
+export function onMounted(_cb: () => void): void {}
+export function onWillStart(_cb: () => Promise<void> | void): void {}
+export function onPatched(_cb: () => void): void {}
+export function onWillDestroy(_cb: () => void): void {}
+export function onWillUnmount(_cb: () => void): void {}
+
+// Refs and the mount entry-point — accept any args, return harmless
+// stubs. Real Owl behaviour (DOM mounting, reactive refs) is exercised
+// in browser builds, not vitest.
+export function useRef(_name: string): { el: null } { return { el: null }; }
+export async function mount(..._args: unknown[]): Promise<unknown> { return null; }
+export const App: any = class { static registerTemplate() {} };

@@ -16,32 +16,38 @@ export default defineConfig({
       "dist/**",
       "src/public/**",
     ],
-    alias: {
-      "capacitor-secure-storage-plugin": resolve(
-        __dirname,
-        "src/__mocks__/capacitor-secure-storage-plugin.ts"
-      ),
-      "@odoo/owl": resolve(__dirname, "src/__mocks__/@odoo/owl.ts"),
-      "@capacitor/core": resolve(
-        __dirname,
-        "src/__mocks__/@capacitor/core.ts"
-      ),
-      "@capacitor-community/sqlite": resolve(
-        __dirname,
-        "src/__mocks__/@capacitor-community/sqlite.ts"
-      ),
-      "@capacitor/dialog": resolve(
-        __dirname,
-        "src/__mocks__/@capacitor/dialog.ts"
-      ),
-      "@aparajita/capacitor-biometric-auth": resolve(
-        __dirname,
-        "src/__mocks__/@aparajita/capacitor-biometric-auth.ts"
-      ),
-      "@capacitor/local-notifications": resolve(
-        __dirname,
-        "src/__mocks__/@capacitor/local-notifications.ts"
-      ),
-    },
+    alias: [
+      {
+        find: "capacitor-secure-storage-plugin",
+        replacement: resolve(__dirname, "src/__mocks__/capacitor-secure-storage-plugin.ts"),
+      },
+      // Match both the bare `@odoo/owl` import and the full subpath
+      // `@odoo/owl/dist/owl.es.js` used by owl-aot.ts to avoid an
+      // alias self-loop in production. Tests target the mock for both.
+      {
+        find: /^@odoo\/owl(\/dist\/owl\.es\.js)?$/,
+        replacement: resolve(__dirname, "src/__mocks__/@odoo/owl.ts"),
+      },
+      {
+        find: "@capacitor/core",
+        replacement: resolve(__dirname, "src/__mocks__/@capacitor/core.ts"),
+      },
+      {
+        find: "@capacitor-community/sqlite",
+        replacement: resolve(__dirname, "src/__mocks__/@capacitor-community/sqlite.ts"),
+      },
+      {
+        find: "@capacitor/dialog",
+        replacement: resolve(__dirname, "src/__mocks__/@capacitor/dialog.ts"),
+      },
+      {
+        find: "@aparajita/capacitor-biometric-auth",
+        replacement: resolve(__dirname, "src/__mocks__/@aparajita/capacitor-biometric-auth.ts"),
+      },
+      {
+        find: "@capacitor/local-notifications",
+        replacement: resolve(__dirname, "src/__mocks__/@capacitor/local-notifications.ts"),
+      },
+    ],
   },
 });
