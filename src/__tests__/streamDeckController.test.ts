@@ -489,6 +489,18 @@ describe("StreamDeckController", () => {
             expect(fired).toContain("streamdeck_add_audio");
         });
 
+        it("press on key 5 navigates to /options/gallery (gallery shortcut)", async () => {
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            trigger.mockClear();
+            listeners["keyChanged"]({ deckId: "AL01", key: 5, pressed: true });
+            expect(trigger).toHaveBeenCalledWith(
+                Events.ROUTER_NAVIGATION, { url: "/options/gallery" },
+            );
+        });
+
         it("STREAMDECK_NOTE_PAGE_ACTIVE event drives setNoteActive", async () => {
             const { bus, trigger, emit } = makeBus();
             const ctrl = new StreamDeckController(bus, makeNoteService());
@@ -512,6 +524,140 @@ describe("StreamDeckController", () => {
             vi.setSystemTime(Date.now() + 1000);
             listeners["keyChanged"]({ deckId: "AL01", key: 1, pressed: true });
             expect(trigger).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("gallery remote mode", () => {
+        function makeImages(n: number) {
+            return Array.from({ length: n }, (_, i) => ({
+                url: `cap://thumb/${i}.jpg`,
+                index: i,
+            }));
+        }
+
+        async function bootGalleryCtrl() {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
+            const { bus, trigger, emit } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            // _isHidden=true → setGalleryActive paint loop is a no-op,
+            // letting us probe the state machine without canvas stubs.
+            visibilityState = "hidden";
+            await ctrl.start();
+            // Prime the keyChanged handler with the deck cache via
+            // listDecks; hidden=true means no paint side-effects.
+            return { ctrl, trigger, emit };
+        }
+
+        it("STREAMDECK_GALLERY_PAGE_ACTIVE flips into remote mode", async () => {
+            const { ctrl, emit } = await bootGalleryCtrl();
+            emit("streamdeck_gallery_page_active", {
+                active: true, images: makeImages(3),
+            });
+            await Promise.resolve();
+            expect((ctrl as any).galleryActive).toBe(true);
+            expect((ctrl as any).galleryImages.length).toBe(3);
+            expect((ctrl as any).galleryPage).toBe(0);
+        });
+
+        it("thumb press fires STREAMDECK_GALLERY_OPEN with absolute index", async () => {
+            const { trigger, emit } = await bootGalleryCtrl();
+            emit("streamdeck_gallery_page_active", {
+                active: true, images: makeImages(5),
+            });
+            await Promise.resolve();
+            trigger.mockClear();
+            // 15-key deck → thumbCount = 12. Key 2 maps to image 2 on
+            // page 0.
+            listeners["keyChanged"]({ deckId: "AL01", key: 2, pressed: true });
+            expect(trigger).toHaveBeenCalledWith(
+                "streamdeck_gallery_open", { index: 2 },
+            );
+        });
+
+        it("back key (last) fires STREAMDECK_GALLERY_BACK", async () => {
+            const { trigger, emit } = await bootGalleryCtrl();
+            emit("streamdeck_gallery_page_active", {
+                active: true, images: makeImages(3),
+            });
+            await Promise.resolve();
+            trigger.mockClear();
+            // 15-key deck → back key = 14.
+            listeners["keyChanged"]({ deckId: "AL01", key: 14, pressed: true });
+            expect(trigger).toHaveBeenCalledWith(
+                "streamdeck_gallery_back", {},
+            );
+        });
+
+        it("next/prev page keys flip galleryPage", async () => {
+            // Pin fake time before the first press so debounce
+            // accounting (lastPressAt) uses the same clock as the
+            // subsequent setSystemTime calls.
+            vi.useFakeTimers();
+            vi.setSystemTime(20_000);
+            const { ctrl, emit } = await bootGalleryCtrl();
+            // 30 images → 3 pages of 12 (last page = 6 images).
+            emit("streamdeck_gallery_page_active", {
+                active: true, images: makeImages(30),
+            });
+            await Promise.resolve();
+            // Next key = 13.
+            listeners["keyChanged"]({ deckId: "AL01", key: 13, pressed: true });
+            expect((ctrl as any).galleryPage).toBe(1);
+            vi.setSystemTime(20_500);
+            listeners["keyChanged"]({ deckId: "AL01", key: 13, pressed: true });
+            expect((ctrl as any).galleryPage).toBe(2);
+            // Cap at last page.
+            vi.setSystemTime(21_000);
+            listeners["keyChanged"]({ deckId: "AL01", key: 13, pressed: true });
+            expect((ctrl as any).galleryPage).toBe(2);
+            // Prev key = 12.
+            vi.setSystemTime(21_500);
+            listeners["keyChanged"]({ deckId: "AL01", key: 12, pressed: true });
+            expect((ctrl as any).galleryPage).toBe(1);
+        });
+
+        it("thumb index uses page offset", async () => {
+            const { trigger, ctrl, emit } = await bootGalleryCtrl();
+            emit("streamdeck_gallery_page_active", {
+                active: true, images: makeImages(20),
+            });
+            await Promise.resolve();
+            (ctrl as any).galleryPage = 1;
+            trigger.mockClear();
+            // Page 1, key 0 → image 12.
+            listeners["keyChanged"]({ deckId: "AL01", key: 0, pressed: true });
+            expect(trigger).toHaveBeenCalledWith(
+                "streamdeck_gallery_open", { index: 12 },
+            );
+        });
+
+        it("note key 0 navigation suppressed while gallery active", async () => {
+            const { trigger, emit } = await bootGalleryCtrl();
+            emit("streamdeck_gallery_page_active", {
+                active: true, images: makeImages(3),
+            });
+            await Promise.resolve();
+            trigger.mockClear();
+            // Press key 0 — would normally fire ROUTER_NAVIGATION /note/<id>.
+            // In gallery mode, key 0 is a thumb (image 0).
+            listeners["keyChanged"]({ deckId: "AL01", key: 0, pressed: true });
+            const events = trigger.mock.calls.map((c: any) => c[0]);
+            expect(events).not.toContain("routernav");
+            expect(events).toContain("streamdeck_gallery_open");
+        });
+
+        it("deactivation clears images and resets page", async () => {
+            const { ctrl, emit } = await bootGalleryCtrl();
+            emit("streamdeck_gallery_page_active", {
+                active: true, images: makeImages(20),
+            });
+            await Promise.resolve();
+            (ctrl as any).galleryPage = 1;
+            emit("streamdeck_gallery_page_active", { active: false });
+            await Promise.resolve();
+            expect((ctrl as any).galleryActive).toBe(false);
+            expect((ctrl as any).galleryImages.length).toBe(0);
+            expect((ctrl as any).galleryPage).toBe(0);
         });
     });
 });

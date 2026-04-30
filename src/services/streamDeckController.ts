@@ -25,6 +25,23 @@ const NOTE_PAGE_TILES: Record<number, { icon: string; label: string; bg: string;
 };
 const NOTE_PAGE_KEYS = Object.keys(NOTE_PAGE_TILES).map(Number);
 
+/** Persistent Gallery shortcut — sits below the Note key (key 0) on a
+ *  3-row × 5-col Stream Deck layout. Pressing it routes the mobile to
+ *  /options/gallery so the deck doubles as a remote thumbnail picker. */
+const GALLERY_KEY = 5;
+const GALLERY_TILE = { icon: "🖼️", label: "Galerie", bg: "#0e7490" };
+
+/** While the gallery page is mounted on the mobile, the deck switches
+ *  to a remote-control layout: thumbnail tiles fill the top of the
+ *  deck, with the last three keys reserved for prev / next / back. */
+interface GalleryImageRef {
+    /** Remote URL the WebView (and the controller's <img>) can load. */
+    url: string;
+    /** Index in the full image list — sent to the mobile on press so
+     *  it knows which image to open in fullscreen. */
+    index: number;
+}
+
 /**
  * Minimal Stream Deck controller — wires the deck's first key to the
  * "create new note" flow. When a deck (re)connects, key 0 is repainted
@@ -72,6 +89,12 @@ export class StreamDeckController {
      *  fire the STREAMDECK_ADD_* events. */
     private noteActive = false;
     private noteActiveListener?: (e: any) => void;
+    /** True while OptionsGalleryComponent is mounted. The deck's
+     *  layout flips to a thumb-grid + nav when this is on. */
+    private galleryActive = false;
+    private galleryImages: GalleryImageRef[] = [];
+    private galleryPage = 0;
+    private galleryActiveListener?: (e: any) => void;
 
     constructor(
         private readonly eventBus: EventBusLike,
@@ -97,6 +120,19 @@ export class StreamDeckController {
                 Events.STREAMDECK_NOTE_PAGE_ACTIVE,
                 this.noteActiveListener,
             );
+            this.galleryActiveListener = (e: any) => {
+                const active = !!e?.detail?.active;
+                const images: GalleryImageRef[] = active
+                    ? (e?.detail?.images ?? [])
+                    : [];
+                this.setGalleryActive(active, images).catch((err) =>
+                    console.warn("[streamdeck] setGalleryActive:", err),
+                );
+            };
+            this.eventBus.addEventListener(
+                Events.STREAMDECK_GALLERY_PAGE_ACTIVE,
+                this.galleryActiveListener,
+            );
         }
     }
 
@@ -112,10 +148,42 @@ export class StreamDeckController {
         if (this.noteActive === active) return;
         this.noteActive = active;
         if (this.cameraStreaming || this._isHidden()) return;
+        if (this.galleryActive) return;
         for (const info of this.decks.values()) {
             await this._paintNotePageKeys(info).catch((e) =>
                 console.warn(`[streamdeck] note-page paint deckId=${info.deckId}:`, e),
             );
+        }
+    }
+
+    /** Switch the deck into / out of gallery-remote mode. When `active`
+     *  is true and `images` is non-empty, the entire deck flips to a
+     *  thumbnail-grid layout: keys 0..N-4 paint the current page of
+     *  thumbs, the last three keys are reserved for prev / next /
+     *  back navigation. When deactivated, the deck repaints its
+     *  default surface (Note + Gallery shortcut + note-page tiles). */
+    async setGalleryActive(active: boolean, images: GalleryImageRef[] = []): Promise<void> {
+        const wasActive = this.galleryActive;
+        this.galleryActive = active;
+        this.galleryImages = active ? images.slice() : [];
+        this.galleryPage = 0;
+        if (this.cameraStreaming || this._isHidden()) return;
+        for (const info of this.decks.values()) {
+            if (active) {
+                await this._paintGallery(info).catch((e) =>
+                    console.warn(`[streamdeck] gallery paint deckId=${info.deckId}:`, e),
+                );
+            } else if (wasActive) {
+                await this._renderHome(info).catch((e) =>
+                    console.warn(`[streamdeck] home repaint after gallery deckId=${info.deckId}:`, e),
+                );
+                await this._paintGalleryKey(info).catch((e) =>
+                    console.warn(`[streamdeck] gallery shortcut deckId=${info.deckId}:`, e),
+                );
+                await this._paintNotePageKeys(info).catch((e) =>
+                    console.warn(`[streamdeck] note keys after gallery deckId=${info.deckId}:`, e),
+                );
+            }
         }
     }
 
@@ -141,8 +209,17 @@ export class StreamDeckController {
         if (this.cameraStreaming) return;
         if (this._isHidden()) return;
         for (const info of this.decks.values()) {
+            if (this.galleryActive) {
+                await this._paintGallery(info).catch((e) =>
+                    console.warn(`[streamdeck] repaintAll gallery deckId=${info.deckId}:`, e),
+                );
+                continue;
+            }
             await this._renderHome(info).catch((e) =>
                 console.warn(`[streamdeck] repaintAll deckId=${info.deckId}:`, e),
+            );
+            await this._paintGalleryKey(info).catch((e) =>
+                console.warn(`[streamdeck] repaintAll gallery key deckId=${info.deckId}:`, e),
             );
             await this._paintNotePageKeys(info).catch((e) =>
                 console.warn(`[streamdeck] repaintAll note keys deckId=${info.deckId}:`, e),
@@ -170,8 +247,17 @@ export class StreamDeckController {
                 console.warn(`[streamdeck] brightness on attach deckId=${info.deckId}:`, e),
             );
             if (this.cameraStreaming) return;
+            if (this.galleryActive) {
+                await this._paintGallery(info).catch((e) =>
+                    console.warn(`[streamdeck] gallery paint on attach deckId=${info.deckId}:`, e),
+                );
+                return;
+            }
             await this._renderHome(info).catch((e) =>
                 console.warn(`[streamdeck] paint deckId=${info.deckId}:`, e),
+            );
+            await this._paintGalleryKey(info).catch((e) =>
+                console.warn(`[streamdeck] gallery key on attach deckId=${info.deckId}:`, e),
             );
             await this._paintNotePageKeys(info).catch((e) =>
                 console.warn(`[streamdeck] note-page paint on attach deckId=${info.deckId}:`, e),
@@ -218,11 +304,22 @@ export class StreamDeckController {
                 const now = Date.now();
                 const lastPress = this.lastPressAt.get(ev.key) ?? 0;
                 if (now - lastPress < StreamDeckController.NOTE_DEBOUNCE_MS) return;
+                if (this.galleryActive) {
+                    this._handleGalleryKey(ev.deckId, ev.key, now);
+                    return;
+                }
                 if (ev.key === 0) {
                     this.lastPressAt.set(ev.key, now);
                     const newId = this.noteService.getNewId();
                     this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
                         url: `/note/${newId}`,
+                    });
+                    return;
+                }
+                if (ev.key === GALLERY_KEY) {
+                    this.lastPressAt.set(ev.key, now);
+                    this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
+                        url: "/options/gallery",
                     });
                     return;
                 }
@@ -285,8 +382,17 @@ export class StreamDeckController {
                     console.warn("[streamdeck] restore brightness:", e),
                 );
                 if (this.cameraStreaming) continue;
+                if (this.galleryActive) {
+                    this._paintGallery(info).catch((e) =>
+                        console.warn("[streamdeck] gallery repaint on visible:", e),
+                    );
+                    continue;
+                }
                 this._renderHome(info).catch((e) =>
                     console.warn("[streamdeck] repaint on visible:", e),
+                );
+                this._paintGalleryKey(info).catch((e) =>
+                    console.warn("[streamdeck] gallery key repaint on visible:", e),
                 );
                 this._paintNotePageKeys(info).catch((e) =>
                     console.warn("[streamdeck] note-page repaint on visible:", e),
@@ -313,6 +419,13 @@ export class StreamDeckController {
                 this.noteActiveListener,
             );
             this.noteActiveListener = undefined;
+        }
+        if (this.galleryActiveListener && this.eventBus.removeEventListener) {
+            this.eventBus.removeEventListener(
+                Events.STREAMDECK_GALLERY_PAGE_ACTIVE,
+                this.galleryActiveListener,
+            );
+            this.galleryActiveListener = undefined;
         }
     }
 
@@ -415,5 +528,218 @@ export class StreamDeckController {
         let bin = "";
         for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
         return btoa(bin);
+    }
+
+    /** Paint the persistent Gallery shortcut on key 5. Called whenever
+     *  the home surface is repainted (deck attach, visibility:visible,
+     *  exit-from-gallery). Skipped while a gallery remote is active —
+     *  in that mode key 5 is owned by `_paintGallery`. */
+    private async _paintGalleryKey(deck: DeckInfo): Promise<void> {
+        const { w, h, format, rotation } = deck.keyImage;
+        const blob = await this._renderTile(
+            w, h, rotation ?? 0,
+            GALLERY_TILE.icon, GALLERY_TILE.label, GALLERY_TILE.bg,
+        );
+        const bytes = await this._blobToBase64(blob);
+        await StreamDeckPlugin.setKeyImage({
+            deckId: deck.deckId,
+            key: GALLERY_KEY,
+            bytes,
+            format: format === "jpeg" ? "jpeg" : "png",
+        });
+    }
+
+    /** Paint the gallery-remote layout on `deck`: thumbs for the
+     *  current page on the first N-3 keys, then prev / next / back
+     *  on the last three. The thumb count per page adapts to the
+     *  deck's geometry (Mk.2 = 12, XL = 29, Original v2 = 12, etc.). */
+    private async _paintGallery(deck: DeckInfo): Promise<void> {
+        const total = deck.keyCount;
+        const thumbCount = Math.max(0, total - 3);
+        if (thumbCount === 0) {
+            // Tiny decks (Mini = 6 keys, Pedal = 3). Reserve last 2
+            // keys for back / page-flip rather than crashing.
+            return;
+        }
+        const start = this.galleryPage * thumbCount;
+        const end = Math.min(start + thumbCount, this.galleryImages.length);
+        for (let slot = 0; slot < thumbCount; slot++) {
+            const key = slot;
+            const img = this.galleryImages[start + slot];
+            if (img) {
+                await this._renderThumbnailKey(deck, key, img.url, start + slot)
+                    .catch((e) =>
+                        console.warn(`[streamdeck] thumb deckId=${deck.deckId} key=${key}:`, e),
+                    );
+            } else {
+                await this._blankKey(deck, key).catch(() => { /* ignore */ });
+            }
+        }
+        const prevKey = total - 3;
+        const nextKey = total - 2;
+        const backKey = total - 1;
+        const pageMax = Math.max(0, Math.ceil(this.galleryImages.length / thumbCount) - 1);
+        const prevAvail = this.galleryPage > 0;
+        const nextAvail = this.galleryPage < pageMax;
+        const dim = "#374151";
+        await this._paintTile(
+            deck, prevKey, "‹", "Préc.",
+            prevAvail ? "#0e7490" : dim,
+        );
+        await this._paintTile(
+            deck, nextKey, "›", "Suiv.",
+            nextAvail ? "#0e7490" : dim,
+        );
+        await this._paintTile(deck, backKey, "←", "Retour", "#475569");
+    }
+
+    private async _paintTile(
+        deck: DeckInfo,
+        key: number,
+        icon: string,
+        label: string,
+        bg: string,
+    ): Promise<void> {
+        const { w, h, format, rotation } = deck.keyImage;
+        const blob = await this._renderTile(w, h, rotation ?? 0, icon, label, bg);
+        const bytes = await this._blobToBase64(blob);
+        await StreamDeckPlugin.setKeyImage({
+            deckId: deck.deckId, key, bytes,
+            format: format === "jpeg" ? "jpeg" : "png",
+        });
+    }
+
+    /** Paint a single thumbnail key. Loads the image via <img>, draws
+     *  a "cover" crop onto a deck-sized canvas, and ships JPEG bytes
+     *  to the deck. Fallback on load failure: a placeholder tile with
+     *  the image's gallery index. Errors during paint never bubble —
+     *  one bad path should not freeze the whole grid. */
+    private async _renderThumbnailKey(
+        deck: DeckInfo,
+        key: number,
+        url: string,
+        index: number,
+    ): Promise<void> {
+        const { w, h, format, rotation } = deck.keyImage;
+        let blob: Blob;
+        try {
+            blob = await this._renderThumbnailTile(w, h, rotation ?? 0, url);
+        } catch {
+            blob = await this._renderTile(
+                w, h, rotation ?? 0, "🖼️", `#${index + 1}`, "#1f2937",
+            );
+        }
+        const bytes = await this._blobToBase64(blob);
+        await StreamDeckPlugin.setKeyImage({
+            deckId: deck.deckId, key, bytes,
+            format: format === "jpeg" ? "jpeg" : "png",
+        });
+    }
+
+    private async _renderThumbnailTile(
+        w: number, h: number, rotationDeg: number, url: string,
+    ): Promise<Blob> {
+        const img = await this._loadImage(url);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("canvas 2d context unavailable");
+        if (rotationDeg !== 0) {
+            ctx.translate(w / 2, h / 2);
+            ctx.rotate((rotationDeg * Math.PI) / 180);
+            ctx.translate(-w / 2, -h / 2);
+        }
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, w, h);
+        // "cover" crop — zoom the smaller axis, centre the larger.
+        const srcRatio = img.naturalWidth / img.naturalHeight;
+        const dstRatio = w / h;
+        let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
+        if (srcRatio > dstRatio) {
+            sw = img.naturalHeight * dstRatio;
+            sx = (img.naturalWidth - sw) / 2;
+        } else {
+            sh = img.naturalWidth / dstRatio;
+            sy = (img.naturalHeight - sh) / 2;
+        }
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+        return await new Promise<Blob>((resolve, reject) => {
+            canvas.toBlob(
+                (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
+                "image/jpeg",
+                0.85,
+            );
+        });
+    }
+
+    private _loadImage(url: string): Promise<HTMLImageElement> {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            // Capacitor file:// URLs are same-origin to the WebView via
+            // its custom scheme — no CORS attribute needed and toBlob()
+            // does not taint the canvas. http(s) thumbs would need this
+            // but the gallery only ships local note images today.
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error(`load failed: ${url}`));
+            img.src = url;
+        });
+    }
+
+    /** Handle a key press while the gallery remote is active. Thumb
+     *  keys fire STREAMDECK_GALLERY_OPEN with the absolute index;
+     *  the trailing prev / next / back keys flip pages locally or
+     *  fire STREAMDECK_GALLERY_BACK to let the mobile decide whether
+     *  to exit fullscreen or navigate back to /options. */
+    private _handleGalleryKey(deckId: string, key: number, now: number): void {
+        const deck = this.decks.get(deckId);
+        if (!deck) return;
+        const total = deck.keyCount;
+        const thumbCount = Math.max(0, total - 3);
+        const prevKey = total - 3;
+        const nextKey = total - 2;
+        const backKey = total - 1;
+        if (key === backKey) {
+            this.lastPressAt.set(key, now);
+            this.eventBus.trigger(Events.STREAMDECK_GALLERY_BACK, {});
+            return;
+        }
+        if (key === prevKey) {
+            if (this.galleryPage > 0) {
+                this.lastPressAt.set(key, now);
+                this.galleryPage--;
+                if (!this._isHidden()) {
+                    this._paintGallery(deck).catch((e) =>
+                        console.warn("[streamdeck] page prev paint:", e),
+                    );
+                }
+            }
+            return;
+        }
+        if (key === nextKey) {
+            const pageMax = Math.max(
+                0,
+                Math.ceil(this.galleryImages.length / Math.max(1, thumbCount)) - 1,
+            );
+            if (this.galleryPage < pageMax) {
+                this.lastPressAt.set(key, now);
+                this.galleryPage++;
+                if (!this._isHidden()) {
+                    this._paintGallery(deck).catch((e) =>
+                        console.warn("[streamdeck] page next paint:", e),
+                    );
+                }
+            }
+            return;
+        }
+        if (key < thumbCount) {
+            const absoluteIdx = this.galleryPage * thumbCount + key;
+            const img = this.galleryImages[absoluteIdx];
+            if (!img) return;
+            this.lastPressAt.set(key, now);
+            this.eventBus.trigger(Events.STREAMDECK_GALLERY_OPEN, {
+                index: img.index,
+            });
+        }
     }
 }

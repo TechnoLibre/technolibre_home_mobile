@@ -1047,6 +1047,57 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/options/gallery/options_gallery_component.scss",
                 ],
             },
+            {
+                id: "gallery.streamdeck-remote",
+                label: {
+                    en: "Stream Deck remote",
+                    fr: "Télécommande Stream Deck",
+                },
+                description: {
+                    en: "Browse the gallery from the deck — every key is a thumbnail.",
+                    fr: "Parcourir la galerie depuis le deck — chaque touche est une miniature.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "When the gallery page is mounted, the Owl "
+                        + "component fires STREAMDECK_GALLERY_PAGE_ACTIVE "
+                        + "with the current image list (URLs + indices). "
+                        + "The controller flips into remote mode: keys "
+                        + "0..N-4 paint a JPEG thumbnail per slot (loaded "
+                        + "via <img> + canvas cover-crop), and the last "
+                        + "three keys become prev / next / back. Pressing "
+                        + "a thumb fires STREAMDECK_GALLERY_OPEN with the "
+                        + "absolute index — the mobile opens the viewer. "
+                        + "Pressing back closes fullscreen first, then "
+                        + "navigates to /options on a second press. When "
+                        + "the page unmounts, the deck repaints its "
+                        + "default Note + Galerie surface. Outside the "
+                        + "gallery page, key 5 sits below the Note key "
+                        + "as a permanent shortcut to /options/gallery.",
+                    fr: "Quand la page galerie est montée, le composant "
+                        + "Owl émet STREAMDECK_GALLERY_PAGE_ACTIVE avec "
+                        + "la liste d'images (URLs + index). Le "
+                        + "contrôleur bascule en mode télécommande : "
+                        + "touches 0..N-4 affichent une miniature JPEG "
+                        + "par tuile (chargée via <img> + canvas crop "
+                        + "cover), les 3 dernières touches deviennent "
+                        + "préc / suiv / retour. Une miniature pressée "
+                        + "émet STREAMDECK_GALLERY_OPEN avec l'index "
+                        + "absolu — le mobile ouvre la visionneuse. "
+                        + "Retour ferme le plein écran d'abord, puis "
+                        + "navigue à /options à la 2e pression. Au "
+                        + "démontage, le deck repeint sa surface "
+                        + "Note + Galerie par défaut. Hors page "
+                        + "galerie, la touche 5 reste un raccourci "
+                        + "permanent vers /options/gallery.",
+                },
+                dependsOn: ["gallery.page", "streamdeck.controller"],
+                demo: { kind: "route", url: "/options/gallery" },
+                files: [
+                    "src/services/streamDeckController.ts",
+                    "src/components/options/gallery/options_gallery_component.ts",
+                ],
+            },
         ],
     },
     {
