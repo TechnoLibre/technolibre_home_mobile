@@ -138,6 +138,7 @@ export class NoteComponent extends EnhancedComponent {
 				addDateEntry.bind="addDateEntry"
 				addPhoto.bind="addPhoto"
 				addVideo.bind="addVideo"
+				addImage.bind="addImage"
 			/>
 		</div>
 		<DatePickerComponent
@@ -812,6 +813,33 @@ export class NoteComponent extends EnhancedComponent {
 		this.saveNoteData();
 		this.scrollToLastEntry();
 		await this.takePhoto(newEntry.id);
+	}
+
+	/** Pick an image from the device gallery (CameraSource.Photos) and
+	 *  attach it to a fresh photo entry. Same shape as addPhoto but
+	 *  skips the camera viewfinder — useful for a screenshot or an
+	 *  image already on the phone. */
+	async addImage() {
+		const newEntry = this.noteService.entry.getNewPhotoEntry();
+		this.state.note.entries.push(newEntry);
+		this.saveNoteData();
+		this.scrollToLastEntry();
+		await this.pickImage(newEntry.id);
+	}
+
+	async pickImage(entryId: string) {
+		try {
+			const photo = await Camera.getPhoto({
+				quality: 90,
+				allowEditing: false,
+				resultType: CameraResultType.Uri,
+				source: CameraSource.Photos,
+			});
+			if (!photo.path) return;
+			this.eventBus.trigger(Events.SET_PHOTO, { entryId, path: photo.path });
+		} catch {
+			// User cancelled — nothing to do
+		}
 	}
 
 	addText() {
