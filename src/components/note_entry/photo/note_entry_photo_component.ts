@@ -8,6 +8,7 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { Events } from "../../../constants/events";
 
 import CameraIcon from "../../../assets/icon/flip_camera_android.svg";
+import ImageIcon from "../../../assets/icon/image.svg";
 import OpenIcon from "../../../assets/icon/open.svg";
 import PhotoOffIcon from "../../../assets/icon/photo_off.svg";
 import CloseIcon from "../../../assets/icon/close.svg";
@@ -17,6 +18,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
     // literal stays interpolation-free and AOT-precompilable.
     photoOffIcon = PhotoOffIcon;
     cameraIcon = CameraIcon;
+    imageIcon = ImageIcon;
     openIcon = OpenIcon;
     closeIcon = CloseIcon;
 
@@ -43,6 +45,16 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 			</div>
 			<div class="note-entry__photo__data">
 				<button
+					t-if="isGallery"
+					class="note-entry__photo__button note-entry__photo__open-gallery"
+					aria-label="Choisir une image dans la galerie"
+					t-on-click.stop.prevent="onClickPickImage"
+				>
+					<img t-att-src="imageIcon" alt="" aria-hidden="true" />
+					<span>Image</span>
+				</button>
+				<button
+					t-else=""
 					class="note-entry__photo__button note-entry__photo__open-camera"
 					aria-label="Prendre une photo"
 					t-on-click.stop.prevent="onClickOpenCamera"
@@ -111,6 +123,36 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 		} catch {
 			// User cancelled — no alert needed
 		}
+	}
+
+	async onClickPickImage() {
+		// Gallery-source entries skip the camera permission prompt —
+		// CameraSource.Photos drives the system photo picker, which
+		// has its own per-pick consent UI on Android 14+ and needs no
+		// runtime permission of ours.
+		try {
+			const photo = await Camera.getPhoto({
+				quality: 90,
+				allowEditing: false,
+				resultType: CameraResultType.Uri,
+				source: CameraSource.Photos,
+			});
+			if (!photo.path) return;
+			this.eventBus.trigger(Events.SET_PHOTO, {
+				entryId: this.props.id,
+				path: photo.path,
+			});
+		} catch {
+			// User cancelled — nothing to do
+		}
+	}
+
+	/** Does this entry hold a gallery-picked image (vs a camera shot)?
+	 *  Drives which edit button the template renders. Undefined source
+	 *  is treated as "camera" — pre-existing photo entries had no
+	 *  source field and we don't migrate them. */
+	get isGallery(): boolean {
+		return this.props.params?.source === "gallery";
 	}
 
 	onClickOpenPhoto() {

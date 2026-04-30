@@ -820,7 +820,7 @@ export class NoteComponent extends EnhancedComponent {
 	 *  skips the camera viewfinder — useful for a screenshot or an
 	 *  image already on the phone. */
 	async addImage() {
-		const newEntry = this.noteService.entry.getNewPhotoEntry();
+		const newEntry = this.noteService.entry.getNewPhotoEntry("gallery");
 		this.state.note.entries.push(newEntry);
 		this.saveNoteData();
 		this.scrollToLastEntry();

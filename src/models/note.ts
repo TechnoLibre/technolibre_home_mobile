@@ -23,6 +23,11 @@ export interface NoteEntryDateParams {
 
 export interface NoteEntryPhotoParams {
 	path: string;
+	/** Where the image came from. "camera" → re-edit reopens the
+	 *  device camera; "gallery" → re-edit reopens the gallery picker.
+	 *  Undefined is treated as "camera" for legacy entries created
+	 *  before this field existed. */
+	source?: "camera" | "gallery";
 }
 
 export interface NoteEntryTextParams {

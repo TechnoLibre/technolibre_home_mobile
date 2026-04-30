@@ -28,12 +28,13 @@ export class NoteEntrySubservice {
 		}
 	}
 
-	public getNewPhotoEntry(): NoteEntry {
+	public getNewPhotoEntry(source: "camera" | "gallery" = "camera"): NoteEntry {
 		return {
 			id: this._noteService.getNewId(),
 			type: "photo",
 			params: {
-				path: ""
+				path: "",
+				source,
 			}
 		}
 	}
