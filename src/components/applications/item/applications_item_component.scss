@@ -52,7 +52,10 @@
 	&__action {
 		border: none;
 		border-radius: 0.25rem;
-		color: var(--text);
+		// __action sits over a saturated brand fill via __edit/__delete
+		// — white text reads on every theme; the open variant uses a
+		// muted grey fill but its content is an icon, not text.
+		color: var(--btn-on-color-text);
 		cursor: pointer;
 		outline: none;
 		padding: 0.75rem;
