@@ -533,3 +533,28 @@
         cursor: not-allowed;
     }
 }
+
+.transcription-groq-key {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+    padding: 0 0.5rem;
+
+    label {
+        color: var(--text-greyed-out);
+        font-size: 0.78rem;
+    }
+
+    input {
+        background: var(--input-bg);
+        border: 1px solid var(--input-border);
+        border-radius: 0.4rem;
+        color: var(--text);
+        font-family: monospace;
+        font-size: 0.85rem;
+        outline: none;
+        padding: 0.5rem 0.7rem;
+        &:focus { border-color: var(--btn-blue-color); }
+    }
+}

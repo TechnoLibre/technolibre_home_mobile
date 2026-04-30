@@ -141,6 +141,59 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
 
                     <t t-if="state.enabled">
 
+                        <!-- ── Groq cloud (alternative to local whisper.cpp) ── -->
+                        <div class="transcription-section">
+                            <p class="transcription-section__title">☁️ Groq (cloud)</p>
+                            <p class="transcription-section__hint">
+                                Si activé, les transcriptions sont envoyées à
+                                l'API Groq (whisper-large-v3) au lieu du modèle
+                                local. Plus rapide et précis, mais nécessite
+                                une connexion réseau et une clé API
+                                <a href="https://console.groq.com/keys"
+                                   target="_blank" rel="noopener">groq.com</a>.
+                                Free tier ≈ 30 req/min.
+                            </p>
+                            <div class="transcription-row transcription-row--toggle">
+                                <div class="transcription-row__label">
+                                    <span class="transcription-row__title">
+                                        Utiliser Groq Whisper (cloud)
+                                    </span>
+                                </div>
+                                <div class="transcription-toggle-wrap">
+                                    <span class="transcription-toggle-state"
+                                        t-att-class="{ 'transcription-toggle-state--on': state.groqEnabled }"
+                                        t-esc="state.groqEnabled ? 'Activée' : 'Désactivée'"/>
+                                    <label class="transcription-switch">
+                                        <input type="checkbox"
+                                            t-att-checked="state.groqEnabled"
+                                            t-on-change="onToggleGroq"/>
+                                        <span class="transcription-switch__slider"/>
+                                    </label>
+                                </div>
+                            </div>
+                            <t t-if="state.groqEnabled">
+                                <div class="transcription-groq-key">
+                                    <label for="transcription-groq-key__input">
+                                        Clé API Groq
+                                    </label>
+                                    <input
+                                        id="transcription-groq-key__input"
+                                        type="password"
+                                        autocomplete="off"
+                                        autocapitalize="off"
+                                        spellcheck="false"
+                                        placeholder="gsk_…"
+                                        t-att-value="state.groqApiKey"
+                                        t-on-change="onGroqKeyChange"
+                                        t-on-blur="onGroqKeyChange"/>
+                                    <p class="transcription-section__hint" t-if="state.groqEnabled and !state.groqApiKey">
+                                        ⚠ Clé manquante — la transcription
+                                        retombera sur le modèle local.
+                                    </p>
+                                </div>
+                            </t>
+                        </div>
+
                         <!-- ── Model selector ──────────────────────────────── -->
                         <div class="transcription-section">
                             <p class="transcription-section__title">Modèle Whisper</p>
@@ -385,6 +438,8 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
             deleteError:      "",
             recentDownloads:  [] as ProcessRecord[],
             expandedHistoryId: null as string | null,
+            groqEnabled:      false,
+            groqApiKey:       "",
         });
 
         let unsubscribeProgress:  (() => void) | null = null;
@@ -471,7 +526,21 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
         this.state.enabled       = await this.transcriptionService.isEnabled();
         this.state.selectedModel = await this.transcriptionService.getSelectedModel();
         this.state.downloadMode  = await this.transcriptionService.getDownloadMode();
+        this.state.groqEnabled   = await this.transcriptionService.isGroqEnabled();
+        this.state.groqApiKey    = await this.transcriptionService.getGroqApiKey();
         await this.refreshModelStatus();
+    }
+
+    async onToggleGroq() {
+        this.state.groqEnabled = !this.state.groqEnabled;
+        await this.transcriptionService.setGroqEnabled(this.state.groqEnabled);
+    }
+
+    async onGroqKeyChange(ev: Event) {
+        const v = (ev.target as HTMLInputElement).value.trim();
+        if (v === this.state.groqApiKey) return;
+        this.state.groqApiKey = v;
+        await this.transcriptionService.setGroqApiKey(v);
     }
 
     private async refreshModelStatus() {

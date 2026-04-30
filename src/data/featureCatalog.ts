@@ -1508,13 +1508,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                 howItWorks: {
                     en: "TS surface around WhisperPlugin : isEnabled / setEnabled gates the "
                         + "feature, getSelectedModel + isModelDownloaded drive the picker UI, "
-                        + "and transcribe(audioPath) returns the inferred text. The service "
-                        + "never blocks the UI — long jobs go through the processService queue "
-                        + "and emit progress events.",
+                        + "and transcribe(audioPath) returns the inferred text. Two backends: "
+                        + "the on-device whisper.cpp model by default, or the Groq cloud "
+                        + "whisper-large-v3 endpoint when the user enables it (key kept in "
+                        + "secure-storage). The service never blocks the UI — long jobs go "
+                        + "through the processService queue and emit progress events.",
                     fr: "Surface TS autour de WhisperPlugin : isEnabled / setEnabled protègent "
                         + "la feature, getSelectedModel + isModelDownloaded pilotent l'UI "
-                        + "picker, et transcribe(audioPath) retourne le texte inféré. Le service "
-                        + "ne bloque jamais l'UI — les jobs longs passent par la queue "
+                        + "picker, et transcribe(audioPath) retourne le texte inféré. Deux "
+                        + "backends : le modèle on-device whisper.cpp par défaut, ou le cloud "
+                        + "Groq whisper-large-v3 quand activé (clé en secure-storage). Le "
+                        + "service ne bloque jamais l'UI — les jobs longs passent par la queue "
                         + "processService et émettent des events de progression.",
                 },
                 dependsOn: ["transcription.native"],
@@ -1526,6 +1530,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 tests: [
                     "src/__tests__/transcriptionService.test.ts",
                     "src/__tests__/whisperPlugin.test.ts",
+                    "src/__tests__/transcriptionGroq.test.ts",
                 ],
             },
             {
