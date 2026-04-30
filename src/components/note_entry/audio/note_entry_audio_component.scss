@@ -34,12 +34,18 @@
 	}
 }
 
+// The play and record buttons inherit the theme background, which on
+// the light themes is near-white. The base SVG icons are exported in
+// white, so without a theme-aware filter they vanish on light themes.
+// --icon-filter is `invert(1)` on light themes, `none` on dark.
 .note-entry-audio-component .note-entry--audio__play {
 	background-color: var(--background);
+	& img { filter: var(--icon-filter, none); }
 }
 
 .note-entry-audio-component .note-entry--audio__record {
 	background-color: var(--background);
+	& img { filter: var(--icon-filter, none); }
 }
 
 .note-entry-audio-component .note-entry--audio__stop-recording {

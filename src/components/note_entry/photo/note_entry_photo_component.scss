@@ -50,6 +50,9 @@
 		grid-template-rows: 1fr;
 		width: 8.75rem;
 	}
+	// White-stroked SVG would be invisible on the near-white light
+	// theme background; --icon-filter inverts it on light themes.
+	& img { filter: var(--icon-filter, none); }
 }
 
 .note-entry-photo-component .note-entry__photo__data {
