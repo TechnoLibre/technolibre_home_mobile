@@ -231,13 +231,16 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 		);
 
 		try {
-			const text = await this.transcriptionService.transcribe(path, "fr", noteId);
-			if (text) {
-				this.eventBus.trigger(Events.SET_ENTRY_TRANSCRIPTION, {
-					entryId: this.props.id,
-					text,
-				});
-			}
+			// Pass entryId so the service can fire SET_ENTRY_TRANSCRIPTION
+			// on completion regardless of whether this component is still
+			// mounted by then. The previous version fired the event from
+			// here, after the await — but if the user navigated away
+			// (e.g. to /options/processes) the audio component was
+			// destroyed, the parent NoteComponent's listener was gone, and
+			// the result was silently dropped.
+			await this.transcriptionService.transcribe(
+				path, "fr", noteId, this.props.id,
+			);
 		} catch (e: unknown) {
 			const msg = e instanceof Error ? e.message : String(e);
 			Dialog.alert({ message: `Transcription échouée : ${msg}` });

@@ -221,7 +221,34 @@ async function startApp() {
 	const deploymentService = new DeploymentService(serverService);
 	const processService = new ProcessService(db);
 	await processService.initialize();
-	const transcriptionService = new TranscriptionService(db, processService);
+	const transcriptionService = new TranscriptionService(db, processService, eventBus);
+
+	// Service-level transcription persistence — survives the audio
+	// component (or its parent note) being unmounted. The audio
+	// component used to fire SET_ENTRY_TRANSCRIPTION itself after the
+	// transcribe() await, but if the user navigated to /options/processes
+	// (or another note) before the model finished, that listener chain
+	// was already torn down and the text was silently dropped. Now the
+	// service fires it; this listener writes the text into the matching
+	// entry's params and persists. NoteComponent's own listener still
+	// updates in-memory state when the user is on the note.
+	eventBus.addEventListener(Events.SET_ENTRY_TRANSCRIPTION, (e: any) => {
+		const detail = e?.detail;
+		if (!detail?.entryId || !detail?.text || !detail?.noteId) return;
+		(async () => {
+			try {
+				const note = await noteService.getMatch(detail.noteId);
+				const entry = note.entries.find((en: any) => en.id === detail.entryId);
+				if (!entry || entry.type !== "audio") return;
+				const params = entry.params as { transcription?: string };
+				if (params.transcription === detail.text) return;
+				params.transcription = detail.text;
+				await noteService.crud.edit(note.id, note);
+			} catch (err) {
+				console.warn("[boot] persist transcription failed:", err);
+			}
+		})();
+	});
 	const repoExtractorService = new RepoExtractorService();
 	const repoEditService = new RepoEditService(repoExtractorService, {
 		run: (sql: string, params?: unknown[]) => db.rawRun(sql, (params ?? []) as any[]),
