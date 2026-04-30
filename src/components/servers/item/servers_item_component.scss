@@ -46,7 +46,9 @@
     &__btn {
         border: none;
         border-radius: 0.25rem;
-        color: var(--text);
+        // delete/edit/settings variants all sit on saturated fills —
+        // white reads on every theme.
+        color: var(--btn-on-color-text);
         cursor: pointer;
         font-size: 0.85rem;
         outline: none;

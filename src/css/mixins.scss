@@ -3,7 +3,16 @@
 	@include ellipsis;
 	background-color: var(--btn-#{$color}-color);
 	border-radius: 0.5rem;
-	color: var(--text);
+	// White on saturated brand fills (blue/red/green); follow the
+	// theme's text colour for muted fills (back/grey) whose
+	// background already follows the theme. Picking var(--text)
+	// across the board broke the light themes — dark text on a
+	// dark blue button was barely readable.
+	@if $color == "blue" or $color == "red" or $color == "green" {
+		color: var(--btn-on-color-text);
+	} @else {
+		color: var(--text);
+	}
 	cursor: pointer;
 	padding: 0.75rem 1rem;
 	&:hover {
