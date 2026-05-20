@@ -1,4 +1,4 @@
-import { onMounted, onWillDestroy, useState, xml } from "@odoo/owl";
+import { onMounted, onWillDestroy, useRef, useState, xml } from "@odoo/owl";
 import { Capacitor } from "@capacitor/core";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
@@ -20,6 +20,23 @@ interface State {
     scale:         number;
     tx:            number;
     ty:            number;
+    /** Chrome-on means the close / prev / next buttons and the caption
+     *  strip are visible. A clean tap on the image toggles it so the
+     *  user can see the picture without the controls obstructing it. */
+    chrome:        boolean;
+    /** When true, the viewer auto-rotates landscape photos in a
+     *  portrait viewport (and vice versa) so the image fills the
+     *  screen without being letterboxed. User-toggleable, persisted
+     *  in localStorage. */
+    autoRotate:    boolean;
+    /** Rotation applied to the current image (0 or 90 degrees).
+     *  Recomputed every time a new image loads or the toggle flips. */
+    imageRotation: number;
+    /** Pixel size of the viewer area minus the caption strip — used
+     *  to size the rotated image's box so its rotated bounding box
+     *  fills the available area. Updated on each image load. */
+    viewerW:       number;
+    viewerH:       number;
 }
 
 export class ApplicationsGalleryComponent extends EnhancedComponent {
@@ -53,27 +70,37 @@ export class ApplicationsGalleryComponent extends EnhancedComponent {
             <!-- ── Fullscreen carousel ─────────────────────────────── -->
             <div t-else=""
                  class="gallery__viewer"
+                 t-ref="viewer"
                  t-on-touchstart="onTouchStart"
                  t-on-touchmove="onTouchMove"
                  t-on-touchend="onTouchEnd"
                  t-on-touchcancel="onTouchEnd"
                  aria-label="Visionneuse plein écran">
-                <button class="gallery__viewer__btn gallery__viewer__btn--close"
+                <button t-if="state.chrome"
+                        class="gallery__viewer__btn gallery__viewer__btn--rotate"
+                        t-att-class="{ 'gallery__viewer__btn--rotate-on': state.autoRotate }"
+                        t-att-aria-label="state.autoRotate ? 'Auto-rotation activée' : 'Auto-rotation désactivée'"
+                        t-on-click="toggleAutoRotate">⤢</button>
+                <button t-if="state.chrome"
+                        class="gallery__viewer__btn gallery__viewer__btn--close"
                         aria-label="Retour à la mosaïque"
                         t-on-click="closeFullscreen">×</button>
-                <button class="gallery__viewer__btn gallery__viewer__btn--prev"
+                <button t-if="state.chrome"
+                        class="gallery__viewer__btn gallery__viewer__btn--prev"
                         t-att-disabled="state.fullscreenIdx === 0 ? 'true' : null"
                         aria-label="Image précédente"
                         t-on-click="prev">‹</button>
-                <button class="gallery__viewer__btn gallery__viewer__btn--next"
+                <button t-if="state.chrome"
+                        class="gallery__viewer__btn gallery__viewer__btn--next"
                         t-att-disabled="state.fullscreenIdx >= state.images.length - 1 ? 'true' : null"
                         aria-label="Image suivante"
                         t-on-click="next">›</button>
                 <img class="gallery__viewer__img"
                      t-att-src="webPath(state.images[state.fullscreenIdx].path)"
                      t-att-alt="state.images[state.fullscreenIdx].noteTitle"
-                     t-att-style="imageTransform"/>
-                <div class="gallery__viewer__caption">
+                     t-att-style="imageTransform"
+                     t-on-load="onImageLoad"/>
+                <div t-if="state.chrome" class="gallery__viewer__caption">
                     <span class="gallery__viewer__title"
                           t-esc="state.images[state.fullscreenIdx].noteTitle || 'Sans titre'"/>
                     <span class="gallery__viewer__counter"
@@ -87,11 +114,19 @@ export class ApplicationsGalleryComponent extends EnhancedComponent {
 
     state!: State;
     private _gallery!: GalleryService;
+    /** Ref to the .gallery__viewer element so we can read its
+     *  client dimensions when computing rotated-image box size. */
+    private _viewerRef = useRef("viewer");
+    /** Storage key for the autoRotate preference. */
+    private static readonly AUTO_ROTATE_KEY = "gallery.autoRotate";
+    /** Caption strip height in px (4rem ≈ 64px on default root size). */
+    private static readonly CAPTION_PX = 64;
     /** Gesture-machine state. Refs (not reactive) so a 60 fps stream of
      *  touchmove deltas doesn't trigger Owl re-renders — only the
      *  derived scale/tx/ty in `state` do. */
     private _gesture: "idle" | "swipe" | "pinch" | "pan" = "idle";
     private _swipeStartX = 0;
+    private _swipeStartY = 0;
     private _pinchStartDist = 0;
     private _pinchStartScale = 1;
     private _panStartX = 0;
@@ -103,8 +138,21 @@ export class ApplicationsGalleryComponent extends EnhancedComponent {
     private static readonly DOUBLE_TAP_MS = 300;
     private static readonly DOUBLE_TAP_PX = 30;
     private static readonly SWIPE_THRESHOLD_PX = 50;
+    /** A touch that ends with less than this much total movement is
+     *  treated as a clean tap. Above this, it's a swipe / drag. */
+    private static readonly TAP_MAX_DRIFT_PX = 10;
 
     setup() {
+        // autoRotate defaults to true; localStorage may override it
+        // with a previous opt-out. Reading once at setup is enough —
+        // the toggle handler is the only writer in this component.
+        let autoRotate = true;
+        try {
+            const stored = localStorage.getItem(
+                ApplicationsGalleryComponent.AUTO_ROTATE_KEY,
+            );
+            if (stored === "false") autoRotate = false;
+        } catch { /* private mode — ignore */ }
         this.state = useState<State>({
             images: [],
             loading: true,
@@ -113,6 +161,11 @@ export class ApplicationsGalleryComponent extends EnhancedComponent {
             scale: 1,
             tx: 0,
             ty: 0,
+            chrome: true,
+            autoRotate,
+            imageRotation: 0,
+            viewerW: 0,
+            viewerH: 0,
         });
         this._gallery = new GalleryService(this.databaseService);
 
@@ -192,6 +245,11 @@ export class ApplicationsGalleryComponent extends EnhancedComponent {
         if (idx < 0 || idx >= this.state.images.length) return;
         this.state.fullscreenIdx = idx;
         this._resetZoom();
+        // Each new viewing session starts with the chrome visible —
+        // the user opted in to fullscreen by tapping a tile, they
+        // need the close button at hand. Within a session, prev/next
+        // preserves whatever chrome state the user picked.
+        this.state.chrome = true;
     }
 
     closeFullscreen() {
@@ -213,13 +271,100 @@ export class ApplicationsGalleryComponent extends EnhancedComponent {
         }
     }
 
-    /** Inline transform for the fullscreen <img>. Translate is applied
-     *  *before* scale so the pan deltas stay in screen pixels — easier
-     *  to clamp later if we want bounded panning. */
+    /** Inline style for the fullscreen <img>. Drives both the box
+     *  dimensions (so a rotated image's bounding box matches the
+     *  viewer area, no overflow) and the transform stack (translate
+     *  first → rotation → scale, applied right-to-left so pan stays
+     *  in screen pixels and zoom centres on the rotated content). */
     get imageTransform(): string {
-        return `transform: translate(${this.state.tx}px, ${this.state.ty}px) `
-             + `scale(${this.state.scale});`
-             + ` transition: transform 0ms;`;
+        const rot = this.state.imageRotation;
+        const tf = `translate(${this.state.tx}px, ${this.state.ty}px) `
+                 + `rotate(${rot}deg) `
+                 + `scale(${this.state.scale})`;
+        const captionPx = ApplicationsGalleryComponent.CAPTION_PX;
+        let boxW: string;
+        let boxH: string;
+        if (rot === 0) {
+            boxW = `100%`;
+            boxH = `calc(100% - ${captionPx}px)`;
+        } else {
+            // Swap so the rotated bounding box matches the viewer
+            // area. We need pixel values here because percentages
+            // refer to parent width/height respectively — there's no
+            // way to say "width = parent's height" in pure CSS.
+            // Falls back to 100%/calc on first paint before the
+            // first measurement lands.
+            const w = this.state.viewerH || 0;
+            const h = this.state.viewerW || 0;
+            boxW = w > 0 ? `${w - captionPx}px` : `calc(100% - ${captionPx}px)`;
+            boxH = h > 0 ? `${h}px` : `100%`;
+        }
+        return `width: ${boxW}; height: ${boxH}; `
+             + `transform: ${tf}; `
+             + `transition: transform 0ms;`;
+    }
+
+    /** Fired by the <img> on every successful load (each navigation
+     *  re-mounts the underlying network/file fetch). Measures the
+     *  viewer area and recomputes whether this particular image
+     *  should be auto-rotated to fill the screen. */
+    onImageLoad(ev: Event): void {
+        const img = ev.target as HTMLImageElement;
+        this._measureViewer();
+        this._updateRotationFor(img);
+    }
+
+    toggleAutoRotate(): void {
+        this.state.autoRotate = !this.state.autoRotate;
+        try {
+            localStorage.setItem(
+                ApplicationsGalleryComponent.AUTO_ROTATE_KEY,
+                this.state.autoRotate ? "true" : "false",
+            );
+        } catch { /* ignore */ }
+        // Re-evaluate the current image with the new preference. We
+        // can't read natural dimensions from the DOM cheaply, so go
+        // through the actual <img> element via the viewer ref.
+        const img = this._viewerRef.el?.querySelector(
+            "img.gallery__viewer__img",
+        ) as HTMLImageElement | null;
+        if (img) {
+            this._measureViewer();
+            this._updateRotationFor(img);
+        }
+    }
+
+    private _measureViewer(): void {
+        const el = this._viewerRef.el as HTMLElement | null;
+        if (!el) return;
+        this.state.viewerW = el.clientWidth;
+        this.state.viewerH = el.clientHeight;
+    }
+
+    private _updateRotationFor(img: HTMLImageElement): void {
+        if (!this.state.autoRotate) {
+            this.state.imageRotation = 0;
+            return;
+        }
+        const iw = img.naturalWidth;
+        const ih = img.naturalHeight;
+        if (!iw || !ih) {
+            this.state.imageRotation = 0;
+            return;
+        }
+        const vw = this.state.viewerW;
+        const vh = this.state.viewerH;
+        // Both areas have an orientation. Mismatch = rotate 90 to
+        // align them; equal = no rotation. Square images (ratio ≈ 1)
+        // are left unrotated since there is nothing to gain.
+        const imgLandscape = iw > ih;
+        const viewerLandscape = vw > vh;
+        const square = Math.abs(iw - ih) / Math.max(iw, ih) < 0.05;
+        if (square || imgLandscape === viewerLandscape) {
+            this.state.imageRotation = 0;
+        } else {
+            this.state.imageRotation = 90;
+        }
     }
 
     onTouchStart(ev: TouchEvent) {
@@ -254,9 +399,14 @@ export class ApplicationsGalleryComponent extends EnhancedComponent {
             this._panStartTx = this.state.tx;
             this._panStartTy = this.state.ty;
         } else {
-            // Not zoomed: one-finger swipe steps prev/next.
+            // Not zoomed: one-finger gesture is either a swipe (prev /
+            // next) or a tap-on-image (toggle chrome). Track both axes
+            // so onTouchEnd can tell them apart with a movement
+            // threshold; horizontal-only tracking would let a small
+            // vertical drift register as a tap.
             this._gesture = "swipe";
             this._swipeStartX = t.clientX;
+            this._swipeStartY = t.clientY;
         }
     }
 
@@ -299,9 +449,26 @@ export class ApplicationsGalleryComponent extends EnhancedComponent {
             return;
         }
         if (this._gesture === "swipe") {
-            const dx = (ev.changedTouches[0]?.clientX ?? 0) - this._swipeStartX;
+            const t = ev.changedTouches[0];
+            const dx = (t?.clientX ?? 0) - this._swipeStartX;
+            const dy = (t?.clientY ?? 0) - this._swipeStartY;
+            const drift = Math.hypot(dx, dy);
             this._gesture = "idle";
+            if (drift < ApplicationsGalleryComponent.TAP_MAX_DRIFT_PX) {
+                // Clean tap. Only toggle chrome if the touch landed on
+                // the image itself — taps that hit the close / prev /
+                // next buttons or the caption already do their own
+                // thing and the user did not ask for a chrome toggle.
+                const tgt = ev.target as HTMLElement | null;
+                if (tgt?.tagName === "IMG") {
+                    this.state.chrome = !this.state.chrome;
+                }
+                return;
+            }
             if (Math.abs(dx) < ApplicationsGalleryComponent.SWIPE_THRESHOLD_PX) return;
+            // Reject diagonal drags as swipes — preserves the tap-vs-
+            // swipe distinction for users who scroll a bit vertically.
+            if (Math.abs(dy) > Math.abs(dx)) return;
             if (dx < 0) this.next(); else this.prev();
             return;
         }
@@ -327,6 +494,12 @@ export class ApplicationsGalleryComponent extends EnhancedComponent {
         this.state.scale = 1;
         this.state.tx = 0;
         this.state.ty = 0;
+        // Each new image starts unrotated; onImageLoad recomputes
+        // immediately after the natural size lands. Clearing here
+        // (instead of leaving the previous image's rotation) avoids
+        // a brief flash where a portrait shot inherits a rotation
+        // from a landscape predecessor.
+        this.state.imageRotation = 0;
     }
 
 }
