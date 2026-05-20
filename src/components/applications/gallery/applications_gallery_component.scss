@@ -121,6 +121,14 @@
         right: 0.5rem;
         top: 0.5rem;
     }
+    &--rotate {
+        font-size: 1.4rem;
+        left: 0.5rem;
+        top: 0.5rem;
+    }
+    &--rotate-on {
+        background: rgba(14, 116, 144, 0.85);  // teal — feature on
+    }
     &--prev {
         left: 0.5rem;
         top: 50%;
