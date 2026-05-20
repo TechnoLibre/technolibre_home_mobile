@@ -67,6 +67,12 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                       t-on-click="() => this.restartSessions()">
                 🔄 Redémarrer sessions
               </button>
+              <button class="options-streamdeck__refresh"
+                      t-att-class="{ 'options-streamdeck__debug--on': state.autoRefresh }"
+                      t-on-click="() => this.toggleAutoRefresh()">
+                <t t-if="state.autoRefresh">⏱ Auto-refresh ON</t>
+                <t t-else="">⏱ Auto-refresh OFF</t>
+              </button>
             </div>
 
             <t t-if="state.error">
@@ -317,6 +323,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         error: "",
         debugLogging: false,
         readerMode: "userequest" as "userequest" | "bulk" | "polled",
+        autoRefresh: false,
         // Which deck row's parameter panel is open (deckId, "" = none).
         // Single-open at a time keeps the diagnostic panel scannable.
         expandedDeckId: "",
@@ -351,6 +358,14 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
 
     private _logUnsubscribe?: () => void;
 
+    /** Auto-refresh tick. Re-runs `refresh()` on a 5 s cadence so the
+     *  panel reflects deck (re)connects, USB device list, and last-
+     *  attach errors without the user pressing Rafraîchir. Off by
+     *  default — listDecks + listAllUsbDevices are not free, and the
+     *  diagnostic UI is the only consumer that benefits from polling. */
+    private _autoRefreshTimer?: ReturnType<typeof setInterval>;
+    private static readonly AUTO_REFRESH_MS = 5000;
+
     setup(): void {
         // Pull existing entries from the singleton ring buffer first, then
         // subscribe so subsequent additions show up live. Both happen on
@@ -374,7 +389,39 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                 try { await h.remove(); } catch { /* ignore */ }
             }
             this._logUnsubscribe?.();
+            this._stopAutoRefresh();
         });
+    }
+
+    toggleAutoRefresh(): void {
+        if (this.state.autoRefresh) {
+            this._stopAutoRefresh();
+            this.state.autoRefresh = false;
+            this._log("auto-refresh → OFF");
+        } else {
+            this._startAutoRefresh();
+            this.state.autoRefresh = true;
+            this._log(`auto-refresh → ON (${OptionsStreamDeckComponent.AUTO_REFRESH_MS} ms)`);
+        }
+    }
+
+    private _startAutoRefresh(): void {
+        if (this._autoRefreshTimer) return;
+        this._autoRefreshTimer = setInterval(() => {
+            // Skip the tick if the panel is collapsed — the user can't
+            // see the data anyway and listDecks/listAllUsb are not free
+            // (each round-trips through JNI + USB enumeration).
+            if (!this.state.expanded) return;
+            this.refresh().catch((e) =>
+                this._log(`auto-refresh ERROR: ${e instanceof Error ? e.message : e}`),
+            );
+        }, OptionsStreamDeckComponent.AUTO_REFRESH_MS);
+    }
+
+    private _stopAutoRefresh(): void {
+        if (!this._autoRefreshTimer) return;
+        clearInterval(this._autoRefreshTimer);
+        this._autoRefreshTimer = undefined;
     }
 
     toggle(): void { this.state.expanded = !this.state.expanded; }
