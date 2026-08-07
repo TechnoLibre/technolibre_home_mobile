@@ -22,6 +22,7 @@ import { OptionsCodeComponent } from "../components/options/code/options_code_co
 import { OptionsLanguageComponent } from "../components/options/language/options_language_component";
 import { OptionsFeaturesComponent } from "../components/options/features/options_features_component";
 import { ApplicationsGalleryComponent } from "../components/applications/gallery/applications_gallery_component";
+import { OptionsSmsGatewayComponent } from "../components/options/sms_gateway/options_sms_gateway_component";
 import { TagNotesComponent } from "../components/tags/tag_notes_component";
 
 export interface Route {
@@ -47,6 +48,7 @@ export const routes: Route[] = [
 	{ pathname: "/note/:id", component: NoteComponent },
 	{ pathname: "/intent/:type", component: IntentComponent },
 	{ pathname: "/options/language", component: OptionsLanguageComponent },
+	{ pathname: "/options/sms_gateway", component: OptionsSmsGatewayComponent },
 	{ pathname: "/options/database", component: OptionsDatabaseComponent },
 	{ pathname: "/options/erplibre", component: OptionsErplibreComponent },
 	{ pathname: "/options/transcription", component: OptionsTranscriptionComponent },

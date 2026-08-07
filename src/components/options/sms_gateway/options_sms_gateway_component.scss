@@ -1,0 +1,164 @@
+#options-sms-gateway-component {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  padding-bottom: 2rem;
+}
+
+.sms-gateway__section {
+  padding: 0 1rem 1rem;
+}
+
+.sms-gateway__subtitle {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1rem 0 0.5rem;
+  color: var(--text-primary, inherit);
+}
+
+/* L'état se lit d'un coup d'œil : sur un canal d'alerte, savoir que la
+   passerelle est muette compte plus que n'importe quel réglage. */
+.sms-gateway__banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.sms-gateway__dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: currentColor;
+}
+
+.sms-gateway__banner--ok {
+  color: #1b7f4d;
+  background: rgba(27, 127, 77, 0.12);
+  border-color: rgba(27, 127, 77, 0.35);
+}
+
+.sms-gateway__banner--error {
+  color: #b3261e;
+  background: rgba(179, 38, 30, 0.12);
+  border-color: rgba(179, 38, 30, 0.35);
+
+  .sms-gateway__dot {
+    animation: sms-gateway-pulse 1.4s ease-in-out infinite;
+  }
+}
+
+.sms-gateway__banner--off {
+  color: var(--text-secondary, #6b6b6b);
+  background: rgba(128, 128, 128, 0.12);
+  border-color: rgba(128, 128, 128, 0.3);
+}
+
+@keyframes sms-gateway-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+.sms-gateway__facts {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem 1rem;
+  margin: 0;
+  font-size: 0.9rem;
+
+  dt {
+    color: var(--text-secondary, #6b6b6b);
+  }
+
+  dd {
+    margin: 0;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary, inherit);
+  }
+}
+
+.sms-gateway__error {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.4rem;
+  font-size: 0.85rem;
+  color: #b3261e;
+  background: rgba(179, 38, 30, 0.1);
+  word-break: break-word;
+}
+
+.sms-gateway__warning {
+  margin: 0 1rem 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-left: 3px solid rgba(217, 154, 6, 0.8);
+  background: rgba(217, 154, 6, 0.1);
+  border-radius: 0 0.4rem 0.4rem 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--text-primary, inherit);
+}
+
+.sms-gateway__note {
+  margin: 0.5rem 1rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary, #6b6b6b);
+  line-height: 1.4;
+}
+
+.sms-gateway__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.sms-gateway__btn {
+  flex: 1 1 auto;
+  min-height: 2.75rem;
+  padding: 0.6rem 1rem;
+  border-radius: 0.45rem;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
+  background: var(--surface-raised, rgba(128, 128, 128, 0.08));
+  color: var(--text-primary, inherit);
+  font-size: 0.95rem;
+  cursor: pointer;
+
+  &:active {
+    opacity: 0.7;
+  }
+}
+
+.sms-gateway__btn--danger {
+  color: #b3261e;
+  border-color: rgba(179, 38, 30, 0.45);
+}
+
+.sms-gateway__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.85rem;
+
+  span {
+    font-size: 0.85rem;
+    color: var(--text-secondary, #6b6b6b);
+  }
+
+  input,
+  select {
+    min-height: 2.75rem;
+    padding: 0.5rem 0.65rem;
+    border-radius: 0.4rem;
+    border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
+    background: var(--surface, transparent);
+    color: var(--text-primary, inherit);
+    font-size: 0.95rem;
+  }
+}
