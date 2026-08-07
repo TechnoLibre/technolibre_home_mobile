@@ -59,11 +59,35 @@ public class OdooReporter {
         return payload;
     }
 
-    /** Met en file puis tente l'expédition immédiate. */
+    /**
+     * Met en file puis tente l'expédition immédiate, hors thread principal.
+     *
+     * <p>Les deux appelants sont des BroadcastReceiver : {@code onReceive}
+     * s'exécute sur le thread principal, où Android interdit tout accès réseau
+     * — d'où le NetworkOnMainThreadException observé sur appareil réel.
+     *
+     * <p>La mise en file, elle, reste synchrone : c'est une écriture SQLite
+     * locale, rapide et autorisée. C'est aussi ce qui rend l'expédition
+     * différée sans risque — si le processus meurt avant l'envoi, le cycle
+     * suivant du service reprend la file. On n'a donc pas besoin de goAsync()
+     * pour garantir la remise : la durabilité vient de la file, pas du thread.
+     */
     public void submit(String endpoint, JSONObject payload) {
         outbox.spool(endpoint, payload.toString());
-        flush();
+        NETWORK.execute(this::flush);
     }
+
+    /**
+     * Un seul thread : les envois restent sérialisés, comme le veut flush()
+     * qui est synchronized. Deux accusés reçus coup sur coup ne se marchent
+     * pas dessus, ils se suivent.
+     */
+    private static final java.util.concurrent.ExecutorService NETWORK =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "erplibre-sms-report");
+                t.setDaemon(true);
+                return t;
+            });
 
     /** Vide la file des rapports en attente. */
     public synchronized void flush() {
