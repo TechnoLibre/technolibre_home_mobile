@@ -73,9 +73,11 @@ android {
             // code. Il sert à obtenir une application installable pour tester
             // le reste. La solution durable — réduire ce qui est embarqué, ou
             // le servir autrement — est une décision de produit.
-            def slim = project.hasProperty('slimApk')
+            def slim = !project.hasProperty('slimApk') || project.property('slimApk').toString() != 'false'
             if (slim) {
                 logger.lifecycle("slimApk : dépôts de code embarqués exclus de l'APK")
+            } else {
+                logger.warn("slimApk=false : l'empaquetage va échouer, 124 000 entrées pour 65 535 permises.")
             }
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~' +
                     (slim ? ':repos:repo' : '')
