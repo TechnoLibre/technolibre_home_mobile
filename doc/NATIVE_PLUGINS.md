@@ -390,3 +390,89 @@ older ones resolve their Promise with `{dropped: true}`.
 ### Manual tests
 
 See `doc/streamdeck_test_matrix.md` — a checklist per physical model.
+
+## SmsGatewayPlugin
+
+**Fichiers :**
+- Bridge TS : `src/plugins/smsGatewayPlugin.ts`
+- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/SmsGatewayPlugin.java`
+- Service : `SmsGatewayService.java` — Foreground Service de type `specialUse`
+- Récepteurs : `SmsResultReceiver.java`, `SmsInboundReceiver.java`, `SmsBootReceiver.java`
+- File persistante : `SmsOutbox.java` (SQLite `erplibre_sms.db`)
+- Configuration et compteurs : `SmsGatewayConfig.java` (SharedPreferences)
+- Transport vers Odoo : `OdooReporter.java`
+- Logique pure testable : `src/utils/smsGatewayUtils.ts`
+- Écran : `src/components/options/sms_gateway/` — route `/options/sms_gateway`
+
+**Nom d'enregistrement :** `SmsGateway` (et non `SmsGatewayPlugin`).
+
+Transforme le téléphone en passerelle SMS pour un serveur Odoo distant. Odoo
+publie une demande d'envoi sur un sujet **ntfy** ; le service, abonné en sortant,
+la consomme et envoie par la carte SIM, puis rend compte en HTTPS. Aucune URL
+publique n'est exposée : le serveur n'a jamais besoin de joindre le téléphone,
+ce qui fonctionne derrière une IP dynamique et un NAT d'opérateur.
+
+### API
+
+| Méthode | Description |
+|---------|-------------|
+| `getCapabilities()` | Permissions, état de la SIM, liste des cartes SIM, version d'Android, limite système de segments, et si l'app est le gestionnaire de SMS par défaut. |
+| `requestSmsPermissions()` | Demande `SEND_SMS` et `RECEIVE_SMS` à l'exécution. Résout avec l'état obtenu. |
+| `configure(options)` | Enregistre URL ntfy, sujet, jeton, URL Odoo, secret HMAC, identifiant d'appareil, SIM. **Refuse toute URL non HTTPS.** |
+| `startGateway()` / `stopGateway()` | Démarre ou arrête le service. Refuse de démarrer sans permission ou sans configuration. |
+| `getStatus()` | État complet : service actif, abonnement ntfy, file d'attente, rapports en attente, segments de la minute écoulée, dernière erreur. |
+| `kick()` | Force un tour de boucle après reconfiguration. |
+| `clearLastError()` | Efface la dernière erreur affichée. |
+
+### Trois points de conception à connaître avant d'y toucher
+
+**L'action des intentions d'accusé est FIXE.** Un `IntentFilter` apparie par
+égalité exacte de chaîne : une action construite par travail
+(`…SMS_SENT/<job>/<index>`) ne serait appariée par aucun filtre, et **100 % des
+accusés seraient perdus**. Odoo conclurait à un échec pour des SMS réellement
+partis, puis republierait — fausses alertes et doublons systématiques. L'unicité
+entre segments vient d'un **code de requête persisté**
+(`SmsGatewayConfig.nextRequestCode()`), que `filterEquals` ignore mais qui rend
+chaque `PendingIntent` distinct. Un compteur en mémoire repartirait à 1 après un
+redémarrage et mélangerait les statuts entre destinataires.
+
+**La file est persistante, et l'ordre est invariant.** Un travail est inséré dans
+SQLite *avant* que l'identifiant du dernier événement ntfy ne soit avancé.
+L'inverse perdrait des messages sans trace : après une mort du processus, la
+reprise `?since=` sauterait un message qui n'existait plus qu'en mémoire.
+
+**Le type de service est `specialUse`, pas `dataSync`.** Android 15 plafonne
+`dataSync` à six heures par période de vingt-quatre heures, ce qui est
+incompatible avec un canal d'alerte permanent. L'application n'étant pas
+distribuée par Google Play, la justification que Play exigerait ne s'applique
+pas.
+
+### Limite de débit d'Android
+
+Vérifiée dans les sources AOSP (`SmsUsageMonitor.java`, étiquettes
+`android-15.0.0_r36` et `android-16.0.0_r3`) : `DEFAULT_SMS_MAX_COUNT = 30` sur
+`DEFAULT_SMS_CHECK_PERIOD = 60000` ms, compté **par nom de paquet** et **en
+segments**. Au-delà, le système empile un dialogue de confirmation — sur un
+téléphone que personne ne regarde, cela signifie que rien ne part.
+
+Le service s'étale donc sous la limite, avec un intervalle minimal de 2,5 s et un
+budget par défaut de 24 segments par minute. Conséquence à annoncer :
+**40 destinataires prennent environ 100 secondes en GSM-7, et plus de trois
+minutes en UCS-2.** Un seul `ç` minuscule suffit à faire basculer un message en
+UCS-2 : il n'est pas dans l'alphabet GSM 03.38, contrairement au `Ç` majuscule.
+
+### Permissions ajoutées au manifeste
+
+`SEND_SMS`, `RECEIVE_SMS`, `READ_PHONE_STATE` (facultative, pour nommer les
+SIM), `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE_SPECIAL_USE`.
+
+Le secret HMAC et les numéros en attente sont exclus des sauvegardes Android par
+`res/xml/backup_rules.xml` et `res/xml/data_extraction_rules.xml`.
+
+### Prérequis serveur
+
+Le module Odoo `erplibre_sms` doit être installé, une passerelle déclarée, et le
+secret HMAC présent dans l'environnement du processus Odoo. **Le serveur ntfy
+doit avoir TLS et l'authentification activés** : le script d'installation fourni
+avec ERPLibre les laisse désactivés, et les numéros comme le contenu des messages
+transiteraient en clair sur un sujet lisible par quiconque en connaît le nom.
