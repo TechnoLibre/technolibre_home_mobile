@@ -89,6 +89,32 @@ public class OdooReporter {
                 return t;
             });
 
+
+    /**
+     * Journalise les CHANGEMENTS de joignabilité, pas chaque échec.
+     *
+     * <p>Une panne de serveur se répète à chaque cycle : à vingt secondes
+     * d'intervalle, tout consigner produirait plus de quatre mille entrées par
+     * jour et noierait le reste. Ce qu'un exploitant a besoin de lire, c'est
+     * « injoignable depuis 14 h 03 » puis « revenu à 14 h 52 » — deux lignes.
+     *
+     * <p>L'état précédent est déduit de {@code lastError} plutôt que d'un champ
+     * en mémoire : le service peut être tué et relancé entre deux cycles, et une
+     * variable d'instance rejournaliserait la même panne à chaque redémarrage.
+     */
+    private void noteReachable(boolean reachable, String reason) {
+        boolean wasFailing = !config.getLastError().isEmpty();
+        if (reachable == !wasFailing) {
+            return;
+        }
+        SmsJournal journal = new SmsJournal(context);
+        if (reachable) {
+            journal.info(SmsJournal.CAT_NETWORK, "Odoo de nouveau joignable");
+        } else {
+            journal.warn(SmsJournal.CAT_NETWORK, "Odoo injoignable : " + reason, null);
+        }
+    }
+
     /** Vide la file des rapports en attente. */
     public synchronized void flush() {
         if (!config.isConfigured()) {
@@ -152,6 +178,7 @@ public class OdooReporter {
 
             int status = connection.getResponseCode();
             if (status >= 200 && status < 300) {
+                noteReachable(true, null);
                 config.setLastError("");
                 return readBody(connection.getInputStream());
             }
@@ -161,10 +188,12 @@ public class OdooReporter {
                 Log.i(TAG, "Requête déjà reçue par le serveur (nonce rejoué)");
                 return "";
             }
+            noteReachable(false, "HTTP " + status + " sur " + endpoint);
             config.setLastError("HTTP " + status + " sur " + endpoint);
             Log.w(TAG, "Requête refusée : HTTP " + status + " sur " + endpoint);
             return null;
         } catch (Exception e) {
+            noteReachable(false, e.getClass().getSimpleName() + " : " + e.getMessage());
             config.setLastError(e.getClass().getSimpleName() + " : " + e.getMessage());
             Log.w(TAG, "Requête non acheminée : " + e.getMessage());
             return null;
