@@ -129,8 +129,19 @@ public class SmsResultReceiver extends BroadcastReceiver {
             JSONObject payload = reporter.envelope();
             payload.put("events", events);
             reporter.submit(OdooReporter.ENDPOINT_REPORT, payload);
+
+            SmsJournal journal = new SmsJournal(context);
+            String note = "Accusé « " + state + " »"
+                    + (code == null ? "" : " (" + code + ")");
+            if (SmsOutbox.STATE_FAILED.equals(state)) {
+                journal.error(SmsJournal.CAT_RECEIPT, note, smsUuid);
+            } else {
+                journal.info(SmsJournal.CAT_RECEIPT, note, smsUuid);
+            }
         } catch (Exception e) {
             Log.e(TAG, "Rapport impossible pour " + smsUuid + " : " + e.getMessage());
+            new SmsJournal(context).error(SmsJournal.CAT_RECEIPT,
+                    "Rapport impossible : " + e.getMessage(), smsUuid);
         }
     }
 

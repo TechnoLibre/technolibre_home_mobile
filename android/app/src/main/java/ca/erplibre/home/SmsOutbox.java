@@ -27,7 +27,8 @@ public class SmsOutbox extends SQLiteOpenHelper {
 
     private static final String TAG = "SmsOutbox";
     private static final String DB_NAME = "erplibre_sms.db";
-    private static final int DB_VERSION = 1;
+    /** 2 : ajout de la table {@code event}, journal local de la passerelle. */
+    private static final int DB_VERSION = 2;
 
     public static final String STATE_PENDING = "pending";
     public static final String STATE_SENDING = "sending";
@@ -105,11 +106,47 @@ public class SmsOutbox extends SQLiteOpenHelper {
                 + "body TEXT NOT NULL,"
                 + "received_at INTEGER NOT NULL,"
                 + "reported INTEGER NOT NULL DEFAULT 0)");
+
+        createEventTable(db);
     }
 
+    /**
+     * Journal local de la passerelle — voir {@link SmsJournal}.
+     *
+     * <p>Odoo garde la vue métier des envois ; cette table garde ce que seul
+     * l'appareil sait : permission retirée, SIM absente, réseau coupé, cycle
+     * non déclenché. L'écran n'affichait que l'état courant, qui disparaît au
+     * bout de trente secondes.
+     *
+     * <p>{@code detail} ne reçoit le corps des messages que si l'exploitant a
+     * élevé le niveau de journalisation ; par défaut il reste vide.
+     */
+    static void createEventTable(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE event ("
+                + "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                + "at INTEGER NOT NULL,"
+                + "level TEXT NOT NULL,"
+                + "category TEXT NOT NULL,"
+                + "message TEXT NOT NULL,"
+                + "sms_uuid TEXT,"
+                + "detail TEXT)");
+        db.execSQL("CREATE INDEX idx_event_uuid ON event(sms_uuid)");
+    }
+
+    /**
+     * Migrations.
+     *
+     * <p>Chaque palier est appliqué à la suite, sans {@code break} : une base en
+     * version 1 traverse tous les paliers jusqu'à la version courante. Ne jamais
+     * supprimer une table ici — la file d'attente est le chemin critique, et une
+     * migration destructrice perdrait des SMS jamais envoyés.
+     */
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        Log.w(TAG, "Migration " + oldVersion + " -> " + newVersion + " non implémentée");
+        Log.i(TAG, "Migration " + oldVersion + " -> " + newVersion);
+        if (oldVersion < 2) {
+            createEventTable(db);
+        }
     }
 
     // ------------------------------------------------------------------

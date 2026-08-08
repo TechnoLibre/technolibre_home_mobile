@@ -75,6 +75,9 @@ public class SmsInboundReceiver extends BroadcastReceiver {
                     + "-" + receivedAt;
             if (outbox.recordInbound(id, from, body, receivedAt)) {
                 Log.i(TAG, "SMS entrant enregistré de " + from);
+                new SmsJournal(context).withDetail(SmsJournal.LEVEL_INFO,
+                        SmsJournal.CAT_INBOUND, "SMS entrant reçu", null,
+                        from + " : " + body);
             }
         }
 
@@ -109,6 +112,8 @@ public class SmsInboundReceiver extends BroadcastReceiver {
             outbox.markInboundReported(ids);
         } catch (Exception e) {
             Log.e(TAG, "Remontée des entrants impossible : " + e.getMessage());
+            new SmsJournal(context).error(SmsJournal.CAT_INBOUND,
+                    "Remontée des entrants impossible : " + e.getMessage(), null);
         }
     }
 }

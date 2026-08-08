@@ -114,6 +114,9 @@ public class SmsGatewayService extends Service {
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private SmsGatewayConfig config;
     private SmsOutbox outbox;
+    private SmsJournal journal;
+    /** Voir l'usage : évite de rejournaliser un état qui ne change pas. */
+    private static boolean exactAlarmsReported = false;
     private OdooReporter reporter;
     private SmsResultReceiver resultReceiver;
     private ExecutorService worker;
@@ -151,6 +154,7 @@ public class SmsGatewayService extends Service {
         super.onCreate();
         config = new SmsGatewayConfig(this);
         outbox = SmsOutbox.get(this);
+        journal = new SmsJournal(this);
         reporter = new OdooReporter(this);
         alarmManager = getSystemService(AlarmManager.class);
         powerManager = getSystemService(PowerManager.class);
@@ -171,6 +175,7 @@ public class SmsGatewayService extends Service {
 
         if (!config.isConfigured()) {
             Log.w(TAG, "Passerelle non configurée, arrêt");
+            journal.warn(SmsJournal.CAT_CONFIG, "Passerelle non configurée, arrêt du service", null);
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -347,6 +352,7 @@ public class SmsGatewayService extends Service {
             @Override
             public void onAvailable(Network network) {
                 Log.i(TAG, "Réseau disponible, cycle immédiat");
+                journal.info(SmsJournal.CAT_NETWORK, "Réseau revenu, cycle immédiat");
                 consecutiveFailures = 0;
                 triggerCycle();
             }
@@ -402,6 +408,15 @@ public class SmsGatewayService extends Service {
                 alarmManager.setAndAllowWhileIdle(
                         AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pending);
                 Log.i(TAG, "Alarmes exactes non autorisées, cadencement approché");
+                // Un état permanent, pas un événement : le journaliser à chaque
+                // cycle produirait des milliers d'entrées identiques et noierait
+                // ce qui change vraiment. Une seule ligne par vie du processus.
+                if (!exactAlarmsReported) {
+                    exactAlarmsReported = true;
+                    journal.warn(SmsJournal.CAT_CYCLE,
+                            "Alarmes exactes refusées : cadencement approché, les cycles peuvent glisser",
+                            null);
+                }
             }
         } catch (SecurityException e) {
             alarmManager.setAndAllowWhileIdle(
@@ -450,6 +465,7 @@ public class SmsGatewayService extends Service {
                 drainOutbox();
             } catch (Exception e) {
                 Log.e(TAG, "Cycle interrompu : " + e.getMessage());
+                journal.error(SmsJournal.CAT_CYCLE, "Cycle interrompu : " + e.getMessage(), null);
                 config.setLastError("Cycle : " + e.getMessage());
                 nextDelayMs = RETRY_BACKOFF_MS[
                         Math.min(consecutiveFailures, RETRY_BACKOFF_MS.length - 1)];
@@ -501,6 +517,7 @@ public class SmsGatewayService extends Service {
             int inserted = enqueueResponse(body);
             if (inserted > 0) {
                 Log.i(TAG, inserted + " SMS ajoutés à la file");
+                journal.info(SmsJournal.CAT_CYCLE, inserted + " SMS reçus d'Odoo");
             }
             return true;
         } catch (Exception e) {
@@ -508,6 +525,7 @@ public class SmsGatewayService extends Service {
             lastSubscriptionError = e.getClass().getSimpleName() + " : " + e.getMessage();
             config.setLastError(lastSubscriptionError);
             Log.w(TAG, "Interrogation échouée : " + e.getMessage());
+            journal.warn(SmsJournal.CAT_NETWORK, "Interrogation d'Odoo échouée : " + e.getMessage(), null);
             return false;
         }
     }
@@ -671,9 +689,13 @@ public class SmsGatewayService extends Service {
             manager.sendMultipartTextMessage(
                     job.number, null, parts, sentIntents, deliveryIntents);
             Log.i(TAG, "Envoyé à " + job.number + " en " + parts.size() + " segment(s)");
+            journal.withDetail(SmsJournal.LEVEL_INFO, SmsJournal.CAT_SEND,
+                    "Remis au réseau en " + parts.size() + " segment(s)", job.smsUuid,
+                    job.number + " : " + job.body);
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Envoi impossible vers " + job.number + " : " + e.getMessage());
+            journal.error(SmsJournal.CAT_SEND, "Envoi impossible : " + e.getMessage(), job.smsUuid);
             outbox.markState(job.smsUuid, SmsOutbox.STATE_FAILED,
                     "GATEWAY_SEND_EXCEPTION", e.getMessage());
             if (outbox.attemptsOf(job.smsUuid) >= SmsOutbox.MAX_ATTEMPTS) {
@@ -710,6 +732,7 @@ public class SmsGatewayService extends Service {
     private void expireOverdue() {
         for (SmsOutbox.Job job : outbox.expiredJobs()) {
             Log.w(TAG, "Travail expiré sans envoi : " + job.smsUuid);
+            journal.warn(SmsJournal.CAT_SEND, "Expiré sans avoir été envoyé", job.smsUuid);
             reportSimple(job.smsUuid, "failed", "GATEWAY_DEADLINE",
                     "Échéance dépassée avant envoi");
             outbox.remove(job.smsUuid);
@@ -767,6 +790,7 @@ public class SmsGatewayService extends Service {
                     : SmsManager.getDefault();
         } catch (Exception e) {
             Log.e(TAG, "SmsManager indisponible : " + e.getMessage());
+            journal.error(SmsJournal.CAT_SEND, "SmsManager indisponible : " + e.getMessage(), null);
             return null;
         }
     }

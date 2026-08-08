@@ -25,6 +25,7 @@ public class SmsGatewayConfig {
     private static final String KEY_SEGMENTS_PER_MINUTE = "segments_per_minute";
     private static final String KEY_POLL_SECONDS = "poll_seconds";
     private static final String KEY_LAST_ERROR = "last_error";
+    private static final String KEY_JOURNAL_BODIES = "journal_bodies";
 
     private final SharedPreferences prefs;
 
@@ -35,6 +36,23 @@ public class SmsGatewayConfig {
 
     public boolean isEnabled() {
         return prefs.getBoolean(KEY_ENABLED, false);
+    }
+
+    /**
+     * Le journal retient-il le corps des messages et les numéros complets ?
+     *
+     * <p>Faux par défaut, et le défaut compte : activer ceci écrit des données
+     * de membres — noms, numéros, contenu — sur un téléphone qui peut être perdu
+     * ou volé. Le diagnostic devient plus facile, mais ce n'est pas à l'outil de
+     * prendre ce risque tout seul. Les métadonnées et les états, eux, sont
+     * toujours journalisés : ils suffisent à la quasi-totalité des pannes.
+     */
+    public boolean journalKeepsBodies() {
+        return prefs.getBoolean(KEY_JOURNAL_BODIES, false);
+    }
+
+    public void setJournalKeepsBodies(boolean keep) {
+        prefs.edit().putBoolean(KEY_JOURNAL_BODIES, keep).apply();
     }
 
     public void setEnabled(boolean enabled) {
