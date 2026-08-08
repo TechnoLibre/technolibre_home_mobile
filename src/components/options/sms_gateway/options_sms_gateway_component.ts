@@ -4,7 +4,12 @@ import { Dialog } from "@capacitor/dialog";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { HeadingComponent } from "../../heading/heading_component";
 import { SmsGatewayPlugin } from "../../../plugins/smsGatewayPlugin";
-import type { SmsCapabilities, SmsGatewayStatus } from "../../../plugins/smsGatewayPlugin";
+import type {
+	SmsCapabilities,
+	SmsGatewayStatus,
+	SmsJournalCategory,
+	SmsJournalEntry,
+} from "../../../plugins/smsGatewayPlugin";
 import { SmsGatewayUtils } from "../../../utils/smsGatewayUtils";
 
 const BREADCRUMBS = [{ label: "Options", url: "/options" }];
@@ -146,6 +151,55 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
           </div>
         </section>
 
+        <section class="sms-gateway__section" t-att-aria-label="t('sms_gateway.journal_title')">
+          <h2 class="sms-gateway__subtitle" t-esc="t('sms_gateway.journal_title')" />
+          <p class="sms-gateway__hint" t-esc="t('sms_gateway.journal_hint')" />
+
+          <label class="sms-gateway__check">
+            <input type="checkbox" t-att-checked="state.keepsBodies"
+                   t-on-change="onToggleBodies" />
+            <span t-esc="t('sms_gateway.journal_keep_bodies')" />
+          </label>
+          <p class="sms-gateway__warning" t-if="state.keepsBodies"
+             t-esc="t('sms_gateway.journal_keep_bodies_warning')" />
+
+          <div class="sms-gateway__filters">
+            <button type="button" class="sms-gateway__chip"
+                    t-att-class="{ 'sms-gateway__chip--on': state.category === '' }"
+                    t-on-click="() => this.onCategory('')"
+                    t-esc="t('sms_gateway.journal_all')" />
+            <t t-foreach="categories" t-as="cat" t-key="cat">
+              <button type="button" class="sms-gateway__chip"
+                      t-att-class="{ 'sms-gateway__chip--on': state.category === cat }"
+                      t-on-click="() => this.onCategory(cat)"
+                      t-esc="t('sms_gateway.journal_cat_' + cat)" />
+            </t>
+          </div>
+
+          <p class="sms-gateway__note" t-esc="journalSummary" />
+
+          <ul class="sms-gateway__journal" t-if="state.journal.length > 0">
+            <t t-foreach="state.journal" t-as="entry" t-key="entry.id">
+              <li t-att-class="'sms-gateway__event sms-gateway__event--' + entry.level">
+                <span class="sms-gateway__event-at" t-esc="formatAt(entry.at)" />
+                <span class="sms-gateway__event-msg" t-esc="entry.message" />
+                <span class="sms-gateway__event-uuid" t-if="entry.smsUuid"
+                      t-esc="entry.smsUuid" />
+                <span class="sms-gateway__event-detail" t-if="entry.detail"
+                      t-esc="entry.detail" />
+              </li>
+            </t>
+          </ul>
+          <p class="sms-gateway__hint" t-if="state.journal.length === 0"
+             t-esc="t('sms_gateway.journal_empty')" />
+
+          <div class="sms-gateway__actions">
+            <button type="button" class="sms-gateway__btn sms-gateway__btn--danger"
+                    t-on-click="onClearJournal"
+                    t-esc="t('sms_gateway.journal_clear')" />
+          </div>
+        </section>
+
         <p class="sms-gateway__note" t-esc="deviceSummary" />
       </t>
     </div>
@@ -170,6 +224,11 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 				deviceId: "",
 				subscriptionId: -1,
 			} as FormState,
+			journal: [] as SmsJournalEntry[],
+			journalCount: 0,
+			journalBytes: 0,
+			keepsBodies: false,
+			category: "",
 		});
 
 		onMounted(async () => {
@@ -177,6 +236,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 				return;
 			}
 			await this.refresh();
+			await this.loadJournal();
 			this.timer = setInterval(() => void this.refresh(), POLL_MS);
 		});
 
@@ -204,6 +264,75 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 			lastError: "",
 			connectionError: "",
 		};
+	}
+
+	static readonly CATEGORIES: SmsJournalCategory[] = [
+		"cycle", "send", "receipt", "inbound", "network", "config",
+	];
+
+	/** Seuil haut de la purge côté Android, pour la jauge d'occupation. */
+	static readonly JOURNAL_HIGH_WATER = 10 * 1024 * 1024;
+
+	get categories(): SmsJournalCategory[] {
+		return OptionsSmsGatewayComponent.CATEGORIES;
+	}
+
+	/** Nombre d'entrées et place occupée, sur une ligne. */
+	get journalSummary(): string {
+		const used = SmsGatewayUtils.formatBytes(this.state.journalBytes as number);
+		return `${this.state.journalCount} ${this.t("sms_gateway.journal_entries")} — ${used}`;
+	}
+
+	/** Heure locale seule : le journal se lit dans la journée en cours. */
+	formatAt(at: number): string {
+		return new Date(at).toLocaleTimeString();
+	}
+
+	async loadJournal(): Promise<void> {
+		try {
+			const page = await SmsGatewayPlugin.journalEntries({
+				category: (this.state.category as SmsJournalCategory) || undefined,
+				limit: 200,
+			});
+			this.state.journal = page.entries ?? [];
+			this.state.journalCount = page.count ?? 0;
+			this.state.journalBytes = page.usedBytes ?? 0;
+			this.state.keepsBodies = page.keepsBodies ?? false;
+		} catch {
+			// Un journal illisible ne doit pas masquer l'état de la passerelle,
+			// qui est la raison d'être de l'écran.
+			this.state.journal = [];
+		}
+	}
+
+	async onCategory(category: string): Promise<void> {
+		this.state.category = category;
+		await this.loadJournal();
+	}
+
+	async onToggleBodies(ev: Event): Promise<void> {
+		const keep = (ev.target as HTMLInputElement).checked;
+		const form = this.state.form as FormState;
+		await SmsGatewayPlugin.configure({ ...form, journalKeepsBodies: keep });
+		this.state.keepsBodies = keep;
+	}
+
+	/**
+	 * Efface le journal, après confirmation.
+	 *
+	 * L'effacement est irréversible et c'est précisément ce qu'on garde pour
+	 * diagnostiquer une panne : la confirmation n'est pas une politesse.
+	 */
+	async onClearJournal(): Promise<void> {
+		const { value } = await Dialog.confirm({
+			title: this.t("sms_gateway.journal_clear"),
+			message: this.t("sms_gateway.journal_clear_confirm"),
+		});
+		if (!value) {
+			return;
+		}
+		await SmsGatewayPlugin.clearJournal();
+		await this.loadJournal();
 	}
 
 	get isDevelopmentUrl(): boolean {

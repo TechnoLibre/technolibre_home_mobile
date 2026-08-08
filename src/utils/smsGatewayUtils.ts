@@ -78,4 +78,46 @@ export class SmsGatewayUtils {
 		return SmsGatewayUtils.isSecureUrl(url)
 			&& !String(url ?? "").trim().toLowerCase().startsWith("https://");
 	}
+
+	/**
+	 * Taille lisible, en unités binaires.
+	 *
+	 * Les seuils de purge du journal sont exprimés en mébioctets — 10 Mo au
+	 * déclenchement, 7 Mo à l'arrêt — donc on divise par 1024 et non par 1000,
+	 * sans quoi l'écran afficherait 10,5 Mo au moment précis où le service
+	 * considère avoir atteint 10.
+	 */
+	public static formatBytes(bytes: number): string {
+		const value = Number(bytes);
+		if (!Number.isFinite(value) || value < 0) {
+			return "—";
+		}
+		if (value < 1024) {
+			return `${Math.round(value)} o`;
+		}
+		const units = ["Kio", "Mio", "Gio"];
+		let scaled = value / 1024;
+		let unit = 0;
+		while (scaled >= 1024 && unit < units.length - 1) {
+			scaled /= 1024;
+			unit += 1;
+		}
+		return `${scaled.toFixed(scaled < 10 ? 1 : 0)} ${units[unit]}`;
+	}
+
+	/**
+	 * Part du seuil haut déjà consommée, entre 0 et 1.
+	 *
+	 * Sert à la jauge de l'écran. Bornée à 1 : la vérification n'ayant lieu
+	 * qu'une insertion sur deux cents, le journal peut dépasser brièvement le
+	 * seuil, et une jauge au-delà de son maximum donnerait à croire à une fuite.
+	 */
+	public static journalFill(usedBytes: number, highWaterBytes: number): number {
+		const used = Number(usedBytes);
+		const high = Number(highWaterBytes);
+		if (!Number.isFinite(used) || !Number.isFinite(high) || high <= 0) {
+			return 0;
+		}
+		return Math.min(1, Math.max(0, used / high));
+	}
 }

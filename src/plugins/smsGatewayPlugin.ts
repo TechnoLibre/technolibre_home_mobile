@@ -37,6 +37,50 @@ export interface SmsConfigureOptions {
     deviceId: string;
     /** SIM à utiliser sur un appareil multi-SIM. -1 pour la SIM par défaut. */
     subscriptionId?: number;
+    /**
+     * Le journal retient-il le corps des messages et les numéros complets ?
+     *
+     * Faux par défaut. L'activer écrit des données de membres sur un appareil
+     * qui peut être perdu ou volé ; les métadonnées et les états, eux, sont
+     * toujours journalisés et suffisent à presque toutes les pannes.
+     */
+    journalKeepsBodies?: boolean;
+}
+
+/** Catégories d'entrées du journal, telles que les écrit le service Android. */
+export type SmsJournalCategory =
+    | "cycle"
+    | "send"
+    | "receipt"
+    | "inbound"
+    | "network"
+    | "config";
+
+export interface SmsJournalEntry {
+    id: number;
+    /** Horodatage en millisecondes. */
+    at: number;
+    level: "info" | "warn" | "error";
+    category: SmsJournalCategory;
+    message: string;
+    /** Envoi concerné, quand il y en a un. */
+    smsUuid: string | null;
+    /** Détail sensible — vide tant que `journalKeepsBodies` est faux. */
+    detail: string | null;
+}
+
+export interface SmsJournalPage {
+    entries: SmsJournalEntry[];
+    /** Nombre total d'entrées conservées, au-delà de celles renvoyées. */
+    count: number;
+    /** Octets réellement occupés par la base de la passerelle. */
+    usedBytes: number;
+    keepsBodies: boolean;
+}
+
+export interface SmsJournalQuery {
+    category?: SmsJournalCategory;
+    limit?: number;
 }
 
 export interface SmsGatewayStatus {
@@ -67,6 +111,8 @@ export interface SmsGatewayPlugin {
     getStatus(): Promise<SmsGatewayStatus>;
     kick(): Promise<void>;
     clearLastError(): Promise<void>;
+    journalEntries(query?: SmsJournalQuery): Promise<SmsJournalPage>;
+    clearJournal(): Promise<{ deleted: number }>;
 }
 
 export const SmsGatewayPlugin = registerPlugin<SmsGatewayPlugin>("SmsGateway");

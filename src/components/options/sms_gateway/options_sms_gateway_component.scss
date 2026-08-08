@@ -162,3 +162,96 @@
     font-size: 0.95rem;
   }
 }
+
+.sms-gateway__hint {
+  font-size: 0.85rem;
+  color: var(--text-secondary, #6b6b6b);
+  margin: 0 0 0.75rem;
+}
+
+.sms-gateway__check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.9rem;
+
+  input {
+    // Cible tactile confortable : la case bascule la journalisation du
+    // contenu des messages, un réglage qu'on ne veut pas voir coché par
+    // mégarde avec le pouce.
+    width: 1.35rem;
+    height: 1.35rem;
+    flex: 0 0 auto;
+  }
+}
+
+.sms-gateway__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.6rem;
+}
+
+.sms-gateway__chip {
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
+  background: transparent;
+  color: var(--text-secondary, #6b6b6b);
+  font-size: 0.8rem;
+  cursor: pointer;
+
+  &--on {
+    background: var(--primary, #2d6cdf);
+    border-color: var(--primary, #2d6cdf);
+    color: #fff;
+  }
+}
+
+.sms-gateway__journal {
+  list-style: none;
+  margin: 0 0 0.85rem;
+  padding: 0;
+  // Le journal peut compter des centaines d'entrées : on le borne pour que
+  // les commandes du bas de page restent atteignables sans défilement infini.
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+.sms-gateway__event {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-left: 3px solid var(--border-color, rgba(128, 128, 128, 0.35));
+  margin-bottom: 0.3rem;
+  font-size: 0.85rem;
+  background: var(--surface, rgba(128, 128, 128, 0.05));
+
+  &--warn {
+    border-left-color: var(--warning, #d98324);
+  }
+
+  &--error {
+    border-left-color: var(--danger, #c0392b);
+  }
+}
+
+.sms-gateway__event-at {
+  color: var(--text-secondary, #6b6b6b);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sms-gateway__event-msg {
+  color: var(--text-primary, inherit);
+}
+
+.sms-gateway__event-uuid,
+.sms-gateway__event-detail {
+  grid-column: 2;
+  font-size: 0.78rem;
+  color: var(--text-secondary, #6b6b6b);
+  word-break: break-word;
+}

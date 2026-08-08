@@ -168,3 +168,41 @@ describe("Capacitor plugin mock registry", () => {
 		expect(typeof plugin.post).toBe("function");
 	});
 });
+
+describe("SmsGatewayUtils.formatBytes", () => {
+	it("reste en octets sous le kibioctet", () => {
+		expect(SmsGatewayUtils.formatBytes(0)).toBe("0 o");
+		expect(SmsGatewayUtils.formatBytes(999)).toBe("999 o");
+	});
+
+	it("utilise des unites binaires, pas decimales", () => {
+		// 10 Mio exactement : c'est le seuil haut de la purge. Une division par
+		// 1000 afficherait 10,5 Mo au moment ou le service en compte 10.
+		expect(SmsGatewayUtils.formatBytes(10 * 1024 * 1024)).toBe("10 Mio");
+		expect(SmsGatewayUtils.formatBytes(7 * 1024 * 1024)).toBe("7.0 Mio");
+	});
+
+	it("refuse les valeurs absurdes plutot que d'afficher NaN", () => {
+		expect(SmsGatewayUtils.formatBytes(-1)).toBe("—");
+		expect(SmsGatewayUtils.formatBytes(Number.NaN)).toBe("—");
+	});
+});
+
+describe("SmsGatewayUtils.journalFill", () => {
+	const high = 10 * 1024 * 1024;
+
+	it("rend la part consommee", () => {
+		expect(SmsGatewayUtils.journalFill(high / 2, high)).toBeCloseTo(0.5);
+	});
+
+	it("borne a 1 quand le journal a depasse le seuil", () => {
+		// La verification n'a lieu qu'une insertion sur deux cents : un
+		// depassement bref est normal et ne doit pas afficher une jauge pleine
+		// a 130 %.
+		expect(SmsGatewayUtils.journalFill(high * 1.3, high)).toBe(1);
+	});
+
+	it("ne divise pas par zero", () => {
+		expect(SmsGatewayUtils.journalFill(1000, 0)).toBe(0);
+	});
+});

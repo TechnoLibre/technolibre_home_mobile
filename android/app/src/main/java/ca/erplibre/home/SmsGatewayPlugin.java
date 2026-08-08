@@ -125,7 +125,53 @@ public class SmsGatewayPlugin extends Plugin {
                 deviceId,
                 call.getInt("subscriptionId", -1)
         );
+        Boolean keepBodies = call.getBoolean("journalKeepsBodies");
+        if (keepBodies != null) {
+            config.setJournalKeepsBodies(keepBodies);
+        }
         call.resolve();
+    }
+
+    /**
+     * Les entrées du journal, plus récentes d'abord.
+     *
+     * <p>{@code category} filtre facultativement ; {@code limit} borne le
+     * volume renvoyé au pont, qui sérialise en JSON — inutile d'en passer
+     * dix mille à une liste qui en affiche cinquante.
+     */
+    @PluginMethod
+    public void journalEntries(PluginCall call) {
+        SmsJournal journal = new SmsJournal(getContext());
+        List<SmsJournal.Entry> entries =
+                journal.entries(call.getString("category"), call.getInt("limit", 200));
+
+        JSArray array = new JSArray();
+        for (SmsJournal.Entry entry : entries) {
+            JSObject item = new JSObject();
+            item.put("id", entry.id);
+            item.put("at", entry.at);
+            item.put("level", entry.level);
+            item.put("category", entry.category);
+            item.put("message", entry.message);
+            item.put("smsUuid", entry.smsUuid);
+            item.put("detail", entry.detail);
+            array.put(item);
+        }
+
+        JSObject result = new JSObject();
+        result.put("entries", array);
+        result.put("count", journal.size());
+        result.put("usedBytes", journal.usedBytes());
+        result.put("keepsBodies", config.journalKeepsBodies());
+        call.resolve(result);
+    }
+
+    /** Efface le journal. Ne touche ni à la file d'envoi ni aux rapports. */
+    @PluginMethod
+    public void clearJournal(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("deleted", new SmsJournal(getContext()).clear());
+        call.resolve(result);
     }
 
     @PluginMethod
