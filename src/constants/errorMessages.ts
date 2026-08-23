@@ -1,7 +1,10 @@
 import { t } from "../i18n";
 
 // @ts-ignore
-const LABEL_NOTE: string = import.meta.env.VITE_LABEL_NOTE ?? "note";
+// « Note » avec une majuscule, comme avant la migration i18n et comme
+// noteIntentSubservice : la valeur sert au marquage blanc, et un nom de
+// produit se capitalise. Le passage en minuscule etait involontaire.
+const LABEL_NOTE: string = import.meta.env.VITE_LABEL_NOTE ?? "Note";
 
 /**
  * Error messages resolved at access time so they reflect the current locale.
