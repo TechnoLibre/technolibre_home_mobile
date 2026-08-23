@@ -6,6 +6,12 @@ const { mockApp, ntfyHolder } = vi.hoisted(() => ({
 }));
 
 vi.mock("@capacitor/app", () => ({ App: mockApp }));
+// notificationService ne s'abonne au cycle de vie que sur une plateforme
+// native (garde ajoute cote main). Sans ce mock, addListener n'est jamais
+// appele et le test attend une fonction qui n'a pas ete enregistree.
+vi.mock("@capacitor/core", () => ({
+    Capacitor: { isNativePlatform: () => true },
+}));
 vi.mock("../services/ntfyService", () => {
     class FakeNtfyService {
         connect = vi.fn();
