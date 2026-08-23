@@ -2489,4 +2489,96 @@ export const FEATURE_TREE: FeatureNode[] = [
             },
         ],
     },
+    {
+        id: "i18n",
+        label: { en: "🌐 Language", fr: "🌐 Langue" },
+        description: {
+            en: "Interface in French or English, switched at runtime from Options.",
+            fr: "Interface en français ou en anglais, changée à chaud depuis Options.",
+        },
+        demo: { kind: "route", url: "/options/language" },
+        children: [
+            {
+                id: "i18n.catalogues",
+                label: { en: "fr-CA / en-CA catalogues", fr: "Catalogues fr-CA / en-CA" },
+                description: {
+                    en: "Flat key/string tables read through t(), with parameter substitution.",
+                    fr: "Tables plates clé/chaîne lues par t(), avec substitution de paramètres.",
+                },
+                howItWorks: {
+                    en: "t(key, params) looks the key up in the active catalogue and replaces "
+                        + "{name} placeholders. Keys are English sentences turned into dotted "
+                        + "identifiers, so a missing translation degrades to the key itself "
+                        + "rather than to an empty string.",
+                    fr: "t(cle, params) cherche la cle dans le catalogue actif et remplace les "
+                        + "marqueurs {nom}. Les cles sont des phrases anglaises transformees en "
+                        + "identifiants pointes : une traduction absente degrade vers la cle "
+                        + "elle-meme, pas vers une chaine vide.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["src/i18n/index.ts", "src/i18n/fr.ts", "src/i18n/en.ts"],
+            },
+            {
+                id: "i18n.picker",
+                label: { en: "Language picker", fr: "Sélecteur de langue" },
+                description: {
+                    en: "Options entry that switches the interface language without a restart.",
+                    fr: "Entrée d'Options qui change la langue de l'interface sans redémarrage.",
+                },
+                demo: { kind: "route", url: "/options/language" },
+                files: [
+                    "src/components/options/language/options_language_component.ts",
+                    "src/components/options/language/options_language_component.scss",
+                ],
+            },
+        ],
+    },
+    {
+        id: "translation",
+        label: { en: "🔤 Translation", fr: "🔤 Traduction" },
+        description: {
+            en: "French ↔ English translation, on-device or through a backend.",
+            fr: "Traduction français ↔ anglais, sur l'appareil ou via un service.",
+        },
+        demo: { kind: "route", url: "/options/translation" },
+        children: [
+            {
+                id: "translation.backends",
+                label: { en: "Pluggable backends", fr: "Services interchangeables" },
+                description: {
+                    en: "One of several translation backends, chosen in Options and persisted.",
+                    fr: "Un service de traduction parmi plusieurs, choisi dans Options et conservé.",
+                },
+                demo: { kind: "route", url: "/options/translation" },
+                files: [
+                    "src/services/translationService.ts",
+                    "src/components/options/translation/options_translation_component.ts",
+                    "src/components/options/translation/options_translation_component.scss",
+                ],
+            },
+            {
+                id: "translation.marian",
+                label: { en: "MarianMT on device", fr: "MarianMT sur l'appareil" },
+                description: {
+                    en: "Helsinki-NLP MarianMT ONNX models translating with no network at all.",
+                    fr: "Modèles ONNX MarianMT d'Helsinki-NLP traduisant sans aucun réseau.",
+                },
+                howItWorks: {
+                    en: "The Java plugin tokenises with SentencePiece, runs the ONNX encoder, "
+                        + "then beam-search decodes. MarianLib.isAvailable() returns false when "
+                        + "libmarian_jni.so failed to load, so the app still runs when "
+                        + "sentencepiece was never compiled.",
+                    fr: "Le plugin Java tokenise avec SentencePiece, execute l'encodeur ONNX, "
+                        + "puis decode en recherche par faisceau. MarianLib.isAvailable() rend "
+                        + "faux quand libmarian_jni.so n'a pas pu etre charge : l'application "
+                        + "tourne quand meme si sentencepiece n'a jamais ete compile.",
+                },
+                demo: { kind: "route", url: "/options/translation" },
+                files: [
+                    "src/services/marianService.ts",
+                    "src/plugins/marianPlugin.ts",
+                ],
+            },
+        ],
+    },
 ];
