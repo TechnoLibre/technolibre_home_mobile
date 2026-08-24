@@ -1304,12 +1304,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "calls into syntax_highlight.ts which detects file lang from extension "
                         + "and runs Prism per line; soft-wrap and tab-width are localStorage "
                         + "prefs. URL deep-link (?target=&path=) auto-opens a specific bundle "
-                        + "and selects a file at boot.",
+                        + "and selects a file at boot. Markdown goes through markdown.ts, which "
+                        + "renders tables, six heading levels and nested lists — the repo's own "
+                        + "documentation is made of tables.",
                     fr: "Page Owl arbre-à-gauche + contenu-à-droite. Le pane de droite appelle "
                         + "syntax_highlight.ts qui détecte la lang du fichier par extension et "
                         + "fait tourner Prism par ligne; soft-wrap et tab-width sont des prefs "
                         + "localStorage. Deep-link URL (?target=&path=) ouvre un bundle précis "
-                        + "et sélectionne un fichier au boot.",
+                        + "et sélectionne un fichier au boot. Le markdown passe par markdown.ts, "
+                        + "qui rend les tableaux, six niveaux de titre et les listes imbriquées — "
+                        + "la documentation du dépôt est faite de tableaux.",
                 },
                 dependsOn: [
                     "repos.bundle-code",
@@ -1320,8 +1324,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/options/code/options_code_component.ts",
                     "src/components/options/code/options_code_component.scss",
                     "src/components/options/code/syntax_highlight.ts",
+                    "src/components/options/code/markdown.ts",
                 ],
-                tests: ["src/__tests__/syntaxHighlight.test.ts"],
+                tests: [
+                    "src/__tests__/syntaxHighlight.test.ts",
+                    "src/__tests__/markdown.test.ts",
+                ],
             },
             {
                 id: "code.style",

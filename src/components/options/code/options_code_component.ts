@@ -8,6 +8,7 @@ import { ManifestProject as ManifestProjectModel } from "../../../models/manifes
 import {
     detectFileLang, imageMime, supportsHighlight, highlightLine, FileLang,
 } from "./syntax_highlight";
+import { renderMarkdown } from "./markdown";
 import { Server } from "../../../models/server";
 import { Workspace } from "../../../models/workspace";
 import { Note } from "../../../models/note";
@@ -18,71 +19,6 @@ type BrowserTab = "files" | "git";
 type FileViewMode = "code" | "markdown" | "image";
 
 type ManifestProject = ManifestProjectModel;
-
-// ── Markdown renderer ─────────────────────────────────────────────────────────
-
-function escHtml(s: string): string {
-    return s
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-}
-
-function applyInline(s: string): string {
-    return s
-        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/\*(.+?)\*/g, "<em>$1</em>")
-        .replace(/`(.+?)`/g, '<code class="md-inline-code">$1</code>')
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '<span class="md-link">$1</span>');
-}
-
-function renderMarkdown(text: string): string {
-    const lines = text.split("\n");
-    const out: string[] = [];
-    let inCode = false;
-    let codeLines: string[] = [];
-    let codeLang = "";
-
-    for (const raw of lines) {
-        if (raw.startsWith("```")) {
-            if (inCode) {
-                out.push(
-                    `<pre class="md-code-block" data-lang="${escHtml(codeLang)}"><code>${escHtml(codeLines.join("\n"))}</code></pre>`,
-                );
-                codeLines = [];
-                codeLang = "";
-                inCode = false;
-            } else {
-                codeLang = raw.slice(3).trim();
-                inCode = true;
-            }
-            continue;
-        }
-        if (inCode) { codeLines.push(raw); continue; }
-
-        const l = escHtml(raw);
-        if (l.startsWith("### "))       out.push(`<h3 class="md-h3">${applyInline(l.slice(4))}</h3>`);
-        else if (l.startsWith("## "))   out.push(`<h2 class="md-h2">${applyInline(l.slice(3))}</h2>`);
-        else if (l.startsWith("# "))    out.push(`<h1 class="md-h1">${applyInline(l.slice(2))}</h1>`);
-        else if (l === "---" || l === "***" || l === "___") out.push('<hr class="md-hr" />');
-        else if (l.startsWith("- ") || l.startsWith("* ")) out.push(`<div class="md-li">•&nbsp;${applyInline(l.slice(2))}</div>`);
-        else if (/^\d+\. /.test(l)) {
-            const m = l.match(/^(\d+)\. (.*)/);
-            if (m) out.push(`<div class="md-li">${m[1]}.&nbsp;${applyInline(m[2])}</div>`);
-        } else if (l.startsWith("&gt; ")) {
-            out.push(`<blockquote class="md-blockquote">${applyInline(l.slice(5))}</blockquote>`);
-        } else if (l === "") {
-            out.push('<div class="md-spacer"></div>');
-        } else {
-            out.push(`<p class="md-p">${applyInline(l)}</p>`);
-        }
-    }
-    if (inCode && codeLines.length > 0) {
-        out.push(`<pre class="md-code-block"><code>${escHtml(codeLines.join("\n"))}</code></pre>`);
-    }
-    return out.join("");
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 

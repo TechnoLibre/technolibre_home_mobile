@@ -745,13 +745,49 @@
         margin: 1rem 0 0.4rem;
         padding-bottom: 0.2rem;
     }
+    h4.md-h4, h5.md-h5, h6.md-h6 {
+        font-weight: 700;
+        margin: 0.8rem 0 0.3rem;
+    }
     h1.md-h1 { font-size: 1.4rem; }
     h2.md-h2 { font-size: 1.15rem; }
     h3.md-h3 { font-size: 1rem; }
+    h4.md-h4 { font-size: 0.95rem; }
+    h5.md-h5 { font-size: 0.9rem; }
+    h6.md-h6 { font-size: 0.85rem; opacity: 0.85; }
 
     p.md-p { line-height: 1.6; margin: 0.3rem 0; }
 
-    .md-li { line-height: 1.6; margin: 0.15rem 0; padding-left: 0.3rem; }
+    // Le padding-left des puces est posé en ligne par le rendu, pour porter la
+    // profondeur d'imbrication ; ne pas le fixer ici, il l'écraserait.
+    .md-li { line-height: 1.6; margin: 0.15rem 0; }
+
+    // Un tableau de documentation est plus large qu'un téléphone : il défile
+    // dans son propre cadre plutôt que d'élargir la page.
+    .md-table-wrap {
+        margin: 0.5rem 0;
+        max-width: 100%;
+        overflow-x: auto;
+    }
+    table.md-table {
+        border-collapse: collapse;
+        font-size: 0.85rem;
+        width: max-content;
+        min-width: 100%;
+    }
+    .md-td {
+        border: 1px solid var(--section-border-color);
+        line-height: 1.5;
+        padding: 0.25rem 0.5rem;
+        vertical-align: top;
+    }
+    th.md-td { font-weight: 700; }
+    .md-td--left   { text-align: left; }
+    .md-td--center { text-align: center; }
+    .md-td--right  { text-align: right; }
+    table.md-table tbody tr:nth-child(even) .md-td {
+        background: var(--code-row-alt-bg, rgba(127, 127, 127, 0.07));
+    }
 
     .md-spacer { height: 0.4rem; }
 
