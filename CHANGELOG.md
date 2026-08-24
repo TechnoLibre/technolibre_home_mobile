@@ -1,3 +1,4 @@
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -6,9 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Summary of development on the `quality_functionnality_test` branch: 159
-commits rebased onto `main`. Test suite goes from 854 to 979 tests across
-63 files.
+## [2026.08.24.01] - 2026-08-24
+
+Summary of development since release `2026.04.14.01` (April 14, 2026).
+Integrates the `quality_functionnality_test` branch: 160 commits merged
+into `main` as ten stacked pull requests. Test suite goes from 854 to 979
+tests across 63 files.
 
 ### Added
 - **Elgato Stream Deck support** — a native Android USB stack, written from
