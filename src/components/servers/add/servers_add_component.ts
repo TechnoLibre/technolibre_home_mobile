@@ -9,44 +9,44 @@ import { HeadingComponent } from "../../heading/heading_component";
 export class ServersAddComponent extends EnhancedComponent {
     static template = xml`
       <div id="servers-add-component">
-        <HeadingComponent title="'Ajouter un serveur'"
+        <HeadingComponent title="t('heading.add_server')"
           breadcrumbs="[{label: 'Applications', url: '/applications'}]" />
         <form id="server-add__form" t-on-submit="event => this.onSubmit(event)">
 
           <div class="server-add__form-group">
-            <label for="server-add__label">Nom du serveur (optionnel)</label>
+            <label for="server-add__label"><t t-esc="t('label.server_name_optional')"/></label>
             <input type="text" id="server-add__label" autocomplete="off"
-                   placeholder="ex: Serveur Production" t-model="state.server.label" />
+                   t-att-placeholder="t('placeholder.server_example')" t-model="state.server.label" />
           </div>
 
           <div class="server-add__form-group">
-            <label for="server-add__host">Hôte SSH</label>
+            <label for="server-add__host"><t t-esc="t('label.ssh_host')"/></label>
             <input type="text" id="server-add__host" autocomplete="off" autocapitalize="off"
-                   placeholder="ex: 192.168.1.10 ou mon-serveur.com" required="true"
+                   t-att-placeholder="t('placeholder.host_example')" required="true"
                    t-model="state.server.host" />
           </div>
 
           <div class="server-add__form-group">
-            <label for="server-add__port">Port SSH</label>
+            <label for="server-add__port"><t t-esc="t('label.ssh_port')"/></label>
             <input type="number" id="server-add__port" min="1" max="65535"
                    placeholder="22" t-model="state.server.port" />
           </div>
 
           <div class="server-add__form-group">
-            <label for="server-add__username">Nom d'utilisateur SSH</label>
+            <label for="server-add__username"><t t-esc="t('label.ssh_username')"/></label>
             <input type="text" id="server-add__username" autocomplete="off" autocapitalize="off"
-                   placeholder="ex: ubuntu" required="true"
+                   t-att-placeholder="t('placeholder.user_example')" required="true"
                    t-model="state.server.username" />
           </div>
 
           <div class="server-add__form-group">
-            <label for="server-add__deploy-path">Chemin de déploiement</label>
+            <label for="server-add__deploy-path"><t t-esc="t('label.deploy_path')"/></label>
             <input type="text" id="server-add__deploy-path" autocomplete="off" autocapitalize="off"
                    placeholder="~/erplibre" t-model="state.server.deployPath" />
           </div>
 
           <div class="server-add__form-group">
-            <label>Type d'authentification</label>
+            <label><t t-esc="t('label.auth_type')"/></label>
             <div class="server-add__auth-type">
               <label class="server-add__radio-label">
                 <input type="radio" name="authType" value="password"
@@ -65,31 +65,31 @@ export class ServersAddComponent extends EnhancedComponent {
 
           <t t-if="state.server.authType === 'password'">
             <div class="server-add__form-group">
-              <label for="server-add__password">Mot de passe SSH</label>
+              <label for="server-add__password"><t t-esc="t('label.ssh_password')"/></label>
               <input type="password" id="server-add__password" autocomplete="off"
-                     placeholder="mot_de_passe" required="true"
+                     t-att-placeholder="t('placeholder.password')" required="true"
                      t-model="state.server.password" />
             </div>
           </t>
 
           <t t-if="state.server.authType === 'key'">
             <div class="server-add__form-group">
-              <label for="server-add__private-key">Clé privée (contenu PEM)</label>
+              <label for="server-add__private-key"><t t-esc="t('label.private_key_pem')"/></label>
               <textarea id="server-add__private-key" rows="6"
                         placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----"
                         t-model="state.server.privateKey" />
             </div>
             <div class="server-add__form-group">
-              <label for="server-add__passphrase">Passphrase (optionnel)</label>
+              <label for="server-add__passphrase"><t t-esc="t('label.passphrase_optional')"/></label>
               <input type="password" id="server-add__passphrase" autocomplete="off"
-                     placeholder="passphrase de la clé"
+                     t-att-placeholder="t('placeholder.key_passphrase')"
                      t-model="state.server.passphrase" />
             </div>
           </t>
 
           <div class="server-add__form-group server-add__form-actions">
             <input type="submit" id="server-add__submit" value="Ajouter" />
-            <button type="button" id="server-add__cancel" t-on-click="onCancelClick">Annuler</button>
+            <button type="button" id="server-add__cancel" t-on-click="onCancelClick"><t t-esc="t('button.cancel')"/></button>
           </div>
 
         </form>

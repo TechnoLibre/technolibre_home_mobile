@@ -164,7 +164,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
         <div id="options-features">
             <div class="features__header">
                 <button class="features__back" t-on-click="onBack" t-att-aria-label="t('aria.back')">←</button>
-                <h1>Fonctionnalités</h1>
+                <h1><t t-esc="t('aria.features')"/></h1>
                 <button class="features__lang-toggle"
                         t-on-click="onLangToggle"
                         t-att-aria-label="state.lang === 'fr' ? 'Switch to English' : 'Basculer en français'">
@@ -324,7 +324,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                         </div>
                     </div>
 
-                    <h3>Statut</h3>
+                    <h3><t t-esc="t('label.status')"/></h3>
                     <div class="features__bar-chart">
                         <div t-foreach="dashboard.byStatus" t-as="row" t-key="row.status"
                              class="features__bar-row">
@@ -441,7 +441,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                            t-esc="label(selectedNode.description)"/>
 
                         <t t-if="selectedNode.permissions and selectedNode.permissions.length > 0">
-                            <h3>Permissions</h3>
+                            <h3><t t-esc="t('dialog.title.permissions')"/></h3>
                             <div class="features__perms">
                                 <span t-foreach="selectedNode.permissions" t-as="perm" t-key="perm"
                                       class="features__perm-chip" t-esc="perm"/>
@@ -479,7 +479,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                         </t>
 
                         <t t-if="selectedNode.files and selectedNode.files.length > 0">
-                            <h3>Code</h3>
+                            <h3><t t-esc="t('aria.code')"/></h3>
                             <ul class="features__files">
                                 <li t-foreach="selectedNode.files" t-as="path" t-key="path">
                                     <button class="features__file"

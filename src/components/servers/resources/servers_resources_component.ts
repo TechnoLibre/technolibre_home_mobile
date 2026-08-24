@@ -18,7 +18,7 @@ import {
 export class ServersResourcesComponent extends EnhancedComponent {
     static template = xml`
       <div id="servers-resources-component">
-        <HeadingComponent title="'Ressources'" breadcrumbs="breadcrumbs" />
+        <HeadingComponent title="t('heading.resources')" breadcrumbs="breadcrumbs" />
 
         <!-- ── Toolbar ─────────────────────────────────────────── -->
         <div class="res__toolbar">
@@ -28,7 +28,7 @@ export class ServersResourcesComponent extends EnhancedComponent {
             <t t-if="state.status === 'loading'">
               <span class="res__spinner">◌</span> Chargement…
             </t>
-            <t t-else="">↻ Actualiser</t>
+            <t t-else="">↻ <t t-esc="t('button.refresh_resources')"/></t>
           </button>
           <span class="res__updated" t-if="state.updatedAt">
             <t t-esc="state.updatedAt" />
@@ -47,7 +47,7 @@ export class ServersResourcesComponent extends EnhancedComponent {
             <!-- RAM -->
             <t t-if="state.mem">
               <div class="res__section">
-                <div class="res__section-title">Mémoire RAM</div>
+                <div class="res__section-title"><t t-esc="t('section.ram')"/></div>
                 <div class="res__bar-row">
                   <div class="res__bar">
                     <div class="res__bar-fill res__bar-fill--used"
@@ -58,10 +58,10 @@ export class ServersResourcesComponent extends EnhancedComponent {
                   <span class="res__bar-pct" t-esc="memTrulyUsedPct + '%'" />
                 </div>
                 <div class="res__metrics">
-                  <span class="res__metric">Total <span class="res__val" t-esc="fmtKb(state.mem.totalKb)" /></span>
-                  <span class="res__metric"><span class="res__legend res__legend--used"></span>Utilisée <span class="res__val" t-esc="fmtKb(state.mem.trulyUsedKb)" /></span>
-                  <span class="res__metric"><span class="res__legend res__legend--cache"></span>Cache <span class="res__val res__val--cache" t-esc="fmtKb(state.mem.cachedKb)" /></span>
-                  <span class="res__metric">Disponible <span class="res__val res__val--ok" t-esc="fmtKb(state.mem.availableKb)" /></span>
+                  <span class="res__metric"><t t-esc="t('label.total')"/><span class="res__val" t-esc="fmtKb(state.mem.totalKb)" /></span>
+                  <span class="res__metric"><span class="res__legend res__legend--used"></span><t t-esc="t('label.used_f')"/><span class="res__val" t-esc="fmtKb(state.mem.trulyUsedKb)" /></span>
+                  <span class="res__metric"><span class="res__legend res__legend--cache"></span><t t-esc="t('label.cache')"/><span class="res__val res__val--cache" t-esc="fmtKb(state.mem.cachedKb)" /></span>
+                  <span class="res__metric"><t t-esc="t('label.available')"/><span class="res__val res__val--ok" t-esc="fmtKb(state.mem.availableKb)" /></span>
                 </div>
               </div>
             </t>
@@ -69,9 +69,9 @@ export class ServersResourcesComponent extends EnhancedComponent {
             <!-- Swap -->
             <t t-if="state.mem">
               <div class="res__section">
-                <div class="res__section-title">Swap</div>
+                <div class="res__section-title"><t t-esc="t('section.swap')"/></div>
                 <t t-if="state.mem.swapTotalKb === 0">
-                  <div class="res__empty">Aucun swap configuré.</div>
+                  <div class="res__empty"><t t-esc="t('message.no_swap')"/></div>
                 </t>
                 <t t-else="">
                   <div class="res__bar-row">
@@ -82,9 +82,9 @@ export class ServersResourcesComponent extends EnhancedComponent {
                     <span class="res__bar-pct" t-esc="swapUsedPct + '%'" />
                   </div>
                   <div class="res__metrics">
-                    <span class="res__metric">Total <span class="res__val" t-esc="fmtKb(state.mem.swapTotalKb)" /></span>
-                    <span class="res__metric">Utilisé <span class="res__val" t-esc="fmtKb(state.mem.swapTotalKb - state.mem.swapFreeKb)" /></span>
-                    <span class="res__metric">Libre <span class="res__val res__val--ok" t-esc="fmtKb(state.mem.swapFreeKb)" /></span>
+                    <span class="res__metric"><t t-esc="t('label.total')"/><span class="res__val" t-esc="fmtKb(state.mem.swapTotalKb)" /></span>
+                    <span class="res__metric"><t t-esc="t('label.used_m')"/><span class="res__val" t-esc="fmtKb(state.mem.swapTotalKb - state.mem.swapFreeKb)" /></span>
+                    <span class="res__metric"><t t-esc="t('label.free')"/><span class="res__val res__val--ok" t-esc="fmtKb(state.mem.swapFreeKb)" /></span>
                   </div>
                 </t>
               </div>
@@ -102,14 +102,14 @@ export class ServersResourcesComponent extends EnhancedComponent {
                   <span class="res__bar-pct" t-esc="cpuUsedPct + '%'" />
                 </div>
                 <div class="res__metrics">
-                  <span class="res__metric">Utilisateur <span class="res__val" t-esc="state.cpu.userPct.toFixed(1) + '%'" /></span>
-                  <span class="res__metric">Système <span class="res__val" t-esc="state.cpu.sysPct.toFixed(1) + '%'" /></span>
-                  <span class="res__metric">I/O wait <span class="res__val" t-esc="state.cpu.ioPct.toFixed(1) + '%'" /></span>
-                  <span class="res__metric">Inactif <span class="res__val res__val--ok" t-esc="state.cpu.idlePct.toFixed(1) + '%'" /></span>
+                  <span class="res__metric"><t t-esc="t('label.cpu_user')"/><span class="res__val" t-esc="state.cpu.userPct.toFixed(1) + '%'" /></span>
+                  <span class="res__metric"><t t-esc="t('label.cpu_system')"/><span class="res__val" t-esc="state.cpu.sysPct.toFixed(1) + '%'" /></span>
+                  <span class="res__metric"><t t-esc="t('label.cpu_iowait')"/><span class="res__val" t-esc="state.cpu.ioPct.toFixed(1) + '%'" /></span>
+                  <span class="res__metric"><t t-esc="t('label.cpu_idle')"/><span class="res__val res__val--ok" t-esc="state.cpu.idlePct.toFixed(1) + '%'" /></span>
                 </div>
                 <t t-if="state.loadAvg">
                   <div class="res__load-row">
-                    <span class="res__load-label">Load avg</span>
+                    <span class="res__load-label"><t t-esc="t('label.load_avg')"/></span>
                     <span class="res__load-entry">
                       <span class="res__load-val" t-esc="state.loadAvg.l1.toFixed(2)" />
                       <span class="res__load-period"> 1m</span>
@@ -129,9 +129,9 @@ export class ServersResourcesComponent extends EnhancedComponent {
 
             <!-- Températures -->
             <div class="res__section" t-if="state.temps.length > 0 or state.status === 'done'">
-              <div class="res__section-title">Températures</div>
+              <div class="res__section-title"><t t-esc="t('section.temperatures')"/></div>
               <t t-if="state.temps.length === 0">
-                <div class="res__empty">sensors non disponible ou aucun capteur détecté.</div>
+                <div class="res__empty"><t t-esc="t('message.no_sensors')"/></div>
               </t>
               <t t-foreach="sensorsByChip" t-as="group" t-key="group.chip">
                 <div class="res__temp-chip">
@@ -150,31 +150,31 @@ export class ServersResourcesComponent extends EnhancedComponent {
 
             <!-- Réseau -->
             <div class="res__section">
-              <div class="res__section-title">Réseau</div>
+              <div class="res__section-title"><t t-esc="t('section.network')"/></div>
               <t t-if="state.net">
                 <div class="res__net-row">
-                  <span class="res__net-label res__net-label--rx">↓ Téléchargement</span>
+                  <span class="res__net-label res__net-label--rx">↓ <t t-esc="t('label.download')"/></span>
                   <span class="res__net-val" t-esc="fmtSpeed(state.net.rxBytesPerSec)" />
                 </div>
                 <div class="res__net-row">
-                  <span class="res__net-label res__net-label--tx">↑ Envoi</span>
+                  <span class="res__net-label res__net-label--tx">↑ <t t-esc="t('label.upload')"/></span>
                   <span class="res__net-val" t-esc="fmtSpeed(state.net.txBytesPerSec)" />
                 </div>
               </t>
-              <div t-else="" class="res__empty">Données réseau indisponibles.</div>
+              <div t-else="" class="res__empty"><t t-esc="t('message.no_network_data')"/></div>
             </div>
 
             <!-- Disques -->
             <div class="res__section">
-              <div class="res__section-title">Disques</div>
+              <div class="res__section-title"><t t-esc="t('section.disks')"/></div>
               <t t-if="state.disks.length === 0">
-                <div class="res__empty">Aucune partition détectée.</div>
+                <div class="res__empty"><t t-esc="t('message.no_partition')"/></div>
               </t>
               <t t-foreach="state.disks" t-as="disk" t-key="disk.mount + disk.filesystem">
                 <div class="res__disk">
                   <div class="res__disk-header">
                     <span class="res__disk-mount" t-esc="disk.mount" />
-                    <span t-if="disk.encrypted" class="res__disk-badge res__disk-badge--crypt">🔒 chiffré</span>
+                    <span t-if="disk.encrypted" class="res__disk-badge res__disk-badge--crypt">🔒 <t t-esc="t('label.encrypted_disk')"/></span>
                     <span class="res__disk-fs" t-esc="disk.filesystem" />
                   </div>
                   <div class="res__bar-row">
@@ -185,9 +185,9 @@ export class ServersResourcesComponent extends EnhancedComponent {
                     <span class="res__bar-pct" t-esc="disk.usePct + '%'" />
                   </div>
                   <div class="res__metrics">
-                    <span class="res__metric">Taille <span class="res__val" t-esc="disk.size" /></span>
-                    <span class="res__metric">Utilisé <span class="res__val" t-esc="disk.used" /></span>
-                    <span class="res__metric">Libre <span class="res__val res__val--ok" t-esc="disk.avail" /></span>
+                    <span class="res__metric"><t t-esc="t('label.marian_size')"/><span class="res__val" t-esc="disk.size" /></span>
+                    <span class="res__metric"><t t-esc="t('label.used_m')"/><span class="res__val" t-esc="disk.used" /></span>
+                    <span class="res__metric"><t t-esc="t('label.free')"/><span class="res__val res__val--ok" t-esc="disk.avail" /></span>
                   </div>
                 </div>
               </t>
@@ -195,21 +195,21 @@ export class ServersResourcesComponent extends EnhancedComponent {
 
             <!-- Disponibilité -->
             <div class="res__section">
-              <div class="res__section-title">Disponibilité</div>
+              <div class="res__section-title"><t t-esc="t('section.uptime')"/></div>
               <t t-if="state.uptime !== null">
                 <div class="res__uptime">
-                  <span class="res__uptime-label">En ligne depuis</span>
+                  <span class="res__uptime-label"><t t-esc="t('label.online_since')"/></span>
                   <span class="res__uptime-val" t-esc="fmtUptime(state.uptime)" />
                 </div>
               </t>
-              <div t-else="" class="res__empty">Uptime indisponible.</div>
+              <div t-else="" class="res__empty"><t t-esc="t('message.no_uptime')"/></div>
             </div>
 
             <!-- Utilisateurs connectés -->
             <div class="res__section">
-              <div class="res__section-title">Utilisateurs connectés</div>
+              <div class="res__section-title"><t t-esc="t('section.logged_users')"/></div>
               <t t-if="state.users.length === 0">
-                <div class="res__empty">Aucun utilisateur connecté.</div>
+                <div class="res__empty"><t t-esc="t('message.no_logged_user')"/></div>
               </t>
               <div class="res__users" t-if="state.users.length > 0">
                 <t t-foreach="state.users" t-as="u" t-key="u.username">

@@ -38,7 +38,7 @@ function fmtPct(n: number): string {
 export class OptionsResourcesComponent extends EnhancedComponent {
     static template = xml`
         <div id="options-resources-component">
-            <HeadingComponent title="'Ressources'" breadcrumbs="breadcrumbs" />
+            <HeadingComponent title="t('heading.resources')" breadcrumbs="breadcrumbs" />
 
             <div class="devres__body">
 
@@ -54,7 +54,7 @@ export class OptionsResourcesComponent extends EnhancedComponent {
                     <!-- ── Refresh rate selector ────────────────────── -->
                     <div class="devres__rate-section">
                         <div class="devres__rate-header">
-                            <span class="devres__rate-title">Rafraîchissement</span>
+                            <span class="devres__rate-title"><t t-esc="t('label.refresh_rate')"/></span>
                             <span class="devres__updated" t-if="state.updatedAt" t-esc="state.updatedAt" />
                         </div>
                         <div class="devres__rate-list">
@@ -63,7 +63,7 @@ export class OptionsResourcesComponent extends EnhancedComponent {
                                     data-sec="1"
                                     t-on-click="onRateClick">
                                 <span class="devres__rate-dot"></span>
-                                <span class="devres__rate-label">1 seconde</span>
+                                <span class="devres__rate-label"><t t-esc="t('label.one_second')"/></span>
                                 <span class="devres__rate-check">✓</span>
                             </button>
                             <button class="devres__rate-row"
@@ -71,7 +71,7 @@ export class OptionsResourcesComponent extends EnhancedComponent {
                                     data-sec="5"
                                     t-on-click="onRateClick">
                                 <span class="devres__rate-dot"></span>
-                                <span class="devres__rate-label">5 secondes</span>
+                                <span class="devres__rate-label"><t t-esc="t('label.five_seconds')"/></span>
                                 <span class="devres__rate-check">✓</span>
                             </button>
                             <button class="devres__rate-row"
@@ -79,7 +79,7 @@ export class OptionsResourcesComponent extends EnhancedComponent {
                                     data-sec="30"
                                     t-on-click="onRateClick">
                                 <span class="devres__rate-dot"></span>
-                                <span class="devres__rate-label">30 secondes</span>
+                                <span class="devres__rate-label"><t t-esc="t('label.thirty_seconds')"/></span>
                                 <span class="devres__rate-check">✓</span>
                             </button>
                         </div>
@@ -101,11 +101,11 @@ export class OptionsResourcesComponent extends EnhancedComponent {
                                  t-att-style="'width:' + state.ramPct + '%'" />
                         </div>
                         <div class="devres__metrics">
-                            <span><span class="devres__label">Utilisée</span>
+                            <span><span class="devres__label"><t t-esc="t('label.used_f')"/></span>
                                   <span class="devres__val" t-esc="fmtBytes(state.ramUsed)" /></span>
-                            <span><span class="devres__label">Libre</span>
+                            <span><span class="devres__label"><t t-esc="t('label.free')"/></span>
                                   <span class="devres__val devres__val--ok" t-esc="fmtBytes(state.ramAvail)" /></span>
-                            <span><span class="devres__label">Total</span>
+                            <span><span class="devres__label"><t t-esc="t('label.total')"/></span>
                                   <span class="devres__val" t-esc="fmtBytes(state.ramTotal)" /></span>
                         </div>
                         <svg class="devres__chart devres__chart--ram"
@@ -142,16 +142,16 @@ export class OptionsResourcesComponent extends EnhancedComponent {
                     <!-- ── Réseau ───────────────────────────────────── -->
                     <div class="devres__card">
                         <div class="devres__card-header">
-                            <span class="devres__card-title">Réseau</span>
+                            <span class="devres__card-title"><t t-esc="t('section.network')"/></span>
                         </div>
                         <div class="devres__net-row">
                             <div class="devres__net-col">
-                                <span class="devres__net-dir">↓ Téléch.</span>
+                                <span class="devres__net-dir">↓ <t t-esc="t('label.download_short')"/></span>
                                 <span class="devres__net-val devres__net-val--rx"
                                       t-esc="fmtSpeed(state.netRx)" />
                             </div>
                             <div class="devres__net-col">
-                                <span class="devres__net-dir">↑ Envoi</span>
+                                <span class="devres__net-dir">↑ <t t-esc="t('label.upload')"/></span>
                                 <span class="devres__net-val devres__net-val--tx"
                                       t-esc="fmtSpeed(state.netTx)" />
                             </div>

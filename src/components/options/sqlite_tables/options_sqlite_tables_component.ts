@@ -40,9 +40,9 @@ export class OptionsSQLiteTablesComponent extends EnhancedComponent {
 
 	static template = xml`
 		<li class="options-list__item options-sqlite-tables">
-			<div class="options-sqlite-tables__header">Tables SQLite</div>
+			<div class="options-sqlite-tables__header"><t t-esc="t('section.sqlite_tables')"/></div>
 			<ul class="options-sqlite-tables__list">
-				<li t-if="state.loading" class="options-sqlite-tables__loading">Chargement…</li>
+				<li t-if="state.loading" class="options-sqlite-tables__loading"><t t-esc="t('label.loading')"/></li>
 				<li
 					t-foreach="state.tables"
 					t-as="tbl"

@@ -53,7 +53,7 @@ export class NoteListComponent extends EnhancedComponent {
 					<button
 						type="button"
 						class="breadcrumb__options-btn"
-						title="Options"
+						t-att-title="t('nav.options')"
 						t-att-aria-label="t('aria.options')"
 						aria-haspopup="menu"
 						t-att-aria-expanded="state.showOptionsMenu ? 'true' : 'false'"

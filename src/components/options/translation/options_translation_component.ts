@@ -85,7 +85,7 @@ export class OptionsTranslationComponent extends EnhancedComponent {
                                                       t-esc="'✓ ' + t('label.downloaded')"/>
                                                 <button class="tr-model__delete-btn"
                                                         t-on-click.stop="() => this.deleteMarian(info.model)"
-                                                        title="Supprimer">🗑</button>
+                                                        t-att-title="t('button.delete')">🗑</button>
                                             </div>
                                         </t>
                                         <t t-elif="state.models[info.model].downloading">
@@ -159,7 +159,7 @@ export class OptionsTranslationComponent extends EnhancedComponent {
                                                       t-esc="'✓ ' + t('label.downloaded')"/>
                                                 <button class="tr-model__delete-btn"
                                                         t-on-click.stop="() => this.deleteMarian(info.model)"
-                                                        title="Supprimer">🗑</button>
+                                                        t-att-title="t('button.delete')">🗑</button>
                                             </div>
                                         </t>
                                         <t t-elif="state.models[info.model].downloading">
@@ -283,7 +283,7 @@ export class OptionsTranslationComponent extends EnhancedComponent {
                             t-att-disabled="state.isTesting"
                             t-on-click="runTest">
                         <t t-if="state.isTesting">…</t>
-                        <t t-else="">🧪 Test (3 phrases)</t>
+                        <t t-else="">🧪 <t t-esc="t('button.test_three_sentences')"/></t>
                     </button>
                     <pre t-if="state.testResult"
                          t-att-class="'tr-test__result'

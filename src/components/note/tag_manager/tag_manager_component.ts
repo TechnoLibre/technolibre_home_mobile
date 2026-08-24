@@ -44,7 +44,7 @@ export class TagManagerComponent extends EnhancedComponent {
                     <!-- Applied tags -->
                     <section id="tag-manager__applied" t-if="getAppliedTags().length > 0" t-att-aria-label="t('aria.applied_tags')">
 
-                        <p class="tag-manager__section-label" aria-hidden="true">Tags appliqués</p>
+                        <p class="tag-manager__section-label" aria-hidden="true"><t t-esc="t('aria.applied_tags')"/></p>
                         <div class="tag-manager__chips" role="list">
                             <button
                                 t-foreach="getAppliedTags()"
@@ -131,7 +131,7 @@ export class TagManagerComponent extends EnhancedComponent {
                             </div>
                             <div class="tag-manager__color-hex-row">
                                 <div class="tag-manager__color-preview" aria-hidden="true" t-att-style="'background-color:' + state.editingColor" />
-                                <label for="tag-manager__edit-hex" class="sr-only">Code couleur hexadécimal</label>
+                                <label for="tag-manager__edit-hex" class="sr-only"><t t-esc="t('aria.hex_color_code')"/></label>
                                 <input
                                     id="tag-manager__edit-hex"
                                     type="text"
@@ -166,7 +166,7 @@ export class TagManagerComponent extends EnhancedComponent {
                             Créer « <t t-esc="state.search.trim()" /> »
                         </p>
                         <div class="tag-manager__create-row">
-                            <label for="tag-manager__parent-select" class="sr-only">Tag parent</label>
+                            <label for="tag-manager__parent-select" class="sr-only"><t t-esc="t('label.parent_tag')"/></label>
                             <select id="tag-manager__parent-select" t-model="state.newParentId" class="tag-manager__parent-select">
                                 <option value="" t-esc="t('label.no_parent')"/>
                                 <t t-foreach="state.allTags" t-as="pt" t-key="pt.id">
@@ -191,7 +191,7 @@ export class TagManagerComponent extends EnhancedComponent {
                             </div>
                             <div class="tag-manager__color-hex-row">
                                 <div class="tag-manager__color-preview" aria-hidden="true" t-att-style="'background-color:' + state.newColor" />
-                                <label for="tag-manager__new-hex" class="sr-only">Code couleur hexadécimal</label>
+                                <label for="tag-manager__new-hex" class="sr-only"><t t-esc="t('aria.hex_color_code')"/></label>
                                 <input
                                     id="tag-manager__new-hex"
                                     type="text"

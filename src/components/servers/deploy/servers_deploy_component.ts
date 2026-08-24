@@ -7,7 +7,7 @@ import type { ActiveDeployment } from "../../../services/deploymentService";
 export class ServersDeployComponent extends EnhancedComponent {
     static template = xml`
       <div id="servers-deploy-component">
-        <HeadingComponent title="'Déploiement ERPLibre'" breadcrumbs="breadcrumbs" />
+        <HeadingComponent title="t('heading.deploy_erplibre')" breadcrumbs="breadcrumbs" />
 
         <!-- ── Wizard ───────────────────────────────────────── -->
         <t t-if="state.phase === 'wizard'">
@@ -20,7 +20,7 @@ export class ServersDeployComponent extends EnhancedComponent {
             </div>
 
             <div class="deploy__wizard-form">
-              <label for="deploy__path-input">Chemin de déploiement</label>
+              <label for="deploy__path-input"><t t-esc="t('label.deploy_path')"/></label>
               <input
                 type="text"
                 id="deploy__path-input"
@@ -90,16 +90,16 @@ export class ServersDeployComponent extends EnhancedComponent {
                   <summary>
                     Journaux (<t t-esc="step.logs.length" /> lignes)
                     <span class="deploy__log-lock-indicator"
-                          t-if="step.autoScroll">⬇ suivi</span>
+                          t-if="step.autoScroll">⬇ <t t-esc="t('button.follow_tail')"/></span>
                   </summary>
                   <div class="deploy__log-toolbar">
                     <button class="deploy__log-nav-btn"
-                            title="Aller au début"
+                            t-att-title="t('button.go_to_start')"
                             t-on-click="() => this.scrollLogToTop(step_index)">
                       ↑ Haut
                     </button>
                     <button class="deploy__log-nav-btn deploy__log-nav-btn--bottom"
-                            title="Aller à la fin"
+                            t-att-title="t('button.go_to_end')"
                             t-on-click="() => this.scrollLogToBottom(step_index)">
                       ↓ Bas
                     </button>

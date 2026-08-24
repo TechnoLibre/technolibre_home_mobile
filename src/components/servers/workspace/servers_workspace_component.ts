@@ -16,14 +16,14 @@ interface TerminalEntry {
 export class ServersWorkspaceComponent extends EnhancedComponent {
     static template = xml`
       <div id="servers-workspace-component">
-        <HeadingComponent title="'Workspace'" breadcrumbs="breadcrumbs" />
+        <HeadingComponent title="t('heading.workspace')" breadcrumbs="breadcrumbs" />
 
         <!-- ── Loading / Connecting ──────────────────────────────── -->
         <t t-if="state.phase === 'loading' or state.phase === 'connecting'">
           <div class="workspace__loading">
             <span class="workspace__spinner">◌</span>
-            <t t-if="state.phase === 'loading'">Connexion en cours…</t>
-            <t t-if="state.phase === 'connecting'">Ouverture du terminal…</t>
+            <t t-if="state.phase === 'loading'"><t t-esc="t('message.connecting')"/></t>
+            <t t-if="state.phase === 'connecting'"><t t-esc="t('message.opening_terminal')"/></t>
           </div>
         </t>
 
@@ -40,7 +40,7 @@ export class ServersWorkspaceComponent extends EnhancedComponent {
             </div>
 
             <div class="workspace__info-field">
-              <span class="workspace__info-label">Chemin</span>
+              <span class="workspace__info-label"><t t-esc="t('label.path')"/></span>
               <span class="workspace__info-value workspace__info-value--mono"
                     t-esc="state.workspacePath" />
             </div>
@@ -102,14 +102,14 @@ export class ServersWorkspaceComponent extends EnhancedComponent {
 
           <div class="workspace__terminal-toolbar">
             <button class="workspace__terminal-nav-btn"
-                    title="Aller au début"
+                    t-att-title="t('button.go_to_start')"
                     t-on-click="() => this.scrollTerminalToTop()">
               ↑ Haut
             </button>
             <span class="workspace__terminal-lock-indicator"
-                  t-if="state.autoScroll">⬇ suivi</span>
+                  t-if="state.autoScroll">⬇ <t t-esc="t('button.follow_tail')"/></span>
             <button class="workspace__terminal-nav-btn workspace__terminal-nav-btn--bottom"
-                    title="Aller à la fin"
+                    t-att-title="t('button.go_to_end')"
                     t-on-click="() => this.scrollTerminalToBottom()">
               ↓ Bas
             </button>
@@ -172,7 +172,7 @@ export class ServersWorkspaceComponent extends EnhancedComponent {
         <t t-if="state.phase === 'cd-picker'">
 
           <div class="workspace__cd-header">
-            <span class="workspace__cd-title">Choisir un répertoire</span>
+            <span class="workspace__cd-title"><t t-esc="t('button.pick_directory')"/></span>
             <button class="workspace__cd-cancel"
                     t-on-click="() => this.onCdCancel()">
               Annuler

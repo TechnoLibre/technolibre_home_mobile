@@ -24,7 +24,7 @@ export class NoteEntryTextComponent extends EnhancedComponent {
 					t-on-click.stop.prevent="() => this.translateText('fr', 'en')"
 				>
 					<t t-if="state.translatingTarget === 'en'">…</t>
-					<t t-else="">FR→EN</t>
+					<t t-else=""><t t-esc="t('button.translate_fr_en')"/></t>
 				</button>
 				<button
 					type="button"
@@ -35,7 +35,7 @@ export class NoteEntryTextComponent extends EnhancedComponent {
 					t-on-click.stop.prevent="() => this.translateText('en', 'fr')"
 				>
 					<t t-if="state.translatingTarget === 'fr'">…</t>
-					<t t-else="">EN→FR</t>
+					<t t-else=""><t t-esc="t('button.translate_en_fr')"/></t>
 				</button>
 			</div>
 			<div t-if="props.params.translation" class="note-entry-text__translation">

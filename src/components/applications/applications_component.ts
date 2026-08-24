@@ -157,7 +157,7 @@ export class ApplicationsComponent extends EnhancedComponent {
           </t>
         </section>
 
-        <HeadingComponent title="'Outils'" />
+        <HeadingComponent title="t('heading.tools')" />
         <section id="services-tools">
           <ul id="services-tools-list" t-att-aria-label="t('aria.tools')">
             <li class="services-tools__item">

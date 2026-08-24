@@ -11,7 +11,7 @@ const BREADCRUMBS = [{ label: "Options", url: "/options" }];
 export class OptionsDatabaseComponent extends EnhancedComponent {
 	static template = xml`
     <div id="options-component">
-      <HeadingComponent title="'Base de données'" breadcrumbs="breadcrumbs" />
+      <HeadingComponent title="t('heading.database')" breadcrumbs="breadcrumbs" />
       <ul id="options-list">
         <OptionsSQLiteTablesComponent />
         <OptionsDbSizeComponent />

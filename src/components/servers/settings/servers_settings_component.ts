@@ -14,7 +14,7 @@ type DiscoverStatus = "idle" | "connecting" | "running" | "done" | "error";
 export class ServersSettingsComponent extends EnhancedComponent {
     static template = xml`
       <div id="servers-settings-component">
-        <HeadingComponent title="'Paramètres du serveur'" breadcrumbs="breadcrumbs" />
+        <HeadingComponent title="t('heading.server_settings')" breadcrumbs="breadcrumbs" />
 
         <div class="settings__server-info" t-if="state.server">
           <span class="settings__server-label"
@@ -36,9 +36,7 @@ export class ServersSettingsComponent extends EnhancedComponent {
             Discover
           </button>
           <button class="settings__btn-resources"
-                  t-on-click="() => this.onResourcesClick()">
-            Ressources
-          </button>
+                  t-on-click="() => this.onResourcesClick()"><t t-esc="t('heading.resources')"/></button>
           <button class="settings__btn-back"
                   t-on-click="() => window.history.back()">
             Retour
@@ -53,7 +51,7 @@ export class ServersSettingsComponent extends EnhancedComponent {
 
         <!-- ── Active deployments ────────────────────────────────── -->
         <div class="settings__workspace-section" t-if="this.activeDeployments.length > 0">
-          <div class="settings__workspace-title">Déploiements en cours</div>
+          <div class="settings__workspace-title"><t t-esc="t('section.running_deployments')"/></div>
           <ul class="settings__workspace-list">
             <t t-foreach="this.activeDeployments" t-as="dep" t-key="dep.path">
               <li class="settings__workspace-item settings__deployment-item"
@@ -75,7 +73,7 @@ export class ServersSettingsComponent extends EnhancedComponent {
 
         <!-- ── Workspace list ────────────────────────────────────── -->
         <div class="settings__workspace-section">
-          <div class="settings__workspace-title">Workspaces</div>
+          <div class="settings__workspace-title"><t t-esc="t('section.workspaces')"/></div>
           <p class="settings__workspace-empty"
              t-if="state.workspaces.length === 0">
             Aucun workspace enregistré.

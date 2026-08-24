@@ -74,7 +74,7 @@ export class NoteEntryVideoComponent extends EnhancedComponent {
 						class="note-entry__video__processes-link"
 						t-if="state.isTranscribing or props.params.transcription"
 						t-on-click.stop.prevent="goToProcesses"
-						title="Voir les processus"
+						t-att-title="t('button.view_processes')"
 					>↗</button>
 				</div>
 				<div t-if="props.params.transcription" class="note-entry__video__transcription">

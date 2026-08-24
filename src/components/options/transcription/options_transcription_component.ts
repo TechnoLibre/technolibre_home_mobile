@@ -117,7 +117,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                     <!-- ── Enable / disable ─────────────────────────────────── -->
                     <div class="transcription-row transcription-row--toggle">
                         <div class="transcription-row__label">
-                            <span class="transcription-row__title">🎙️ Transcription audio</span>
+                            <span class="transcription-row__title">🎙️ <t t-esc="t('options.transcription')"/></span>
                             <span class="transcription-row__desc">
                                 Convertit les enregistrements audio en texte via Whisper —
                                 entièrement local, aucun serveur, aucun abonnement.
@@ -143,7 +143,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
 
                         <!-- ── Groq cloud (alternative to local whisper.cpp) ── -->
                         <div class="transcription-section">
-                            <p class="transcription-section__title">☁️ Groq (cloud)</p>
+                            <p class="transcription-section__title">☁️ <t t-esc="t('label.groq_cloud')"/></p>
                             <p class="transcription-section__hint">
                                 Si activé, les transcriptions sont envoyées à
                                 l'API Groq (whisper-large-v3) au lieu du modèle
@@ -231,14 +231,14 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                         <!-- Metrics: speed + quality -->
                                         <div class="transcription-model__metrics">
                                             <span class="transcription-model__metric">
-                                                <span class="transcription-model__metric-label">Vitesse</span>
+                                                <span class="transcription-model__metric-label"><t t-esc="t('label.marian_speed')"/></span>
                                                 <span class="transcription-model__metric-dots"
                                                       t-esc="speedDots(m)" />
                                                 <span class="transcription-model__metric-text"
                                                       t-esc="m.speedLabel" />
                                             </span>
                                             <span class="transcription-model__metric">
-                                                <span class="transcription-model__metric-label">Qualité FR</span>
+                                                <span class="transcription-model__metric-label"><t t-esc="t('label.fr_quality')"/></span>
                                                 <span class="transcription-model__metric-dots transcription-model__metric-dots--quality"
                                                       t-esc="qualityDots(m)" />
                                                 <span class="transcription-model__metric-text"
@@ -248,7 +248,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
 
                                         <!-- RAM + heavy warning -->
                                         <div class="transcription-model__meta">
-                                            <span class="transcription-model__ram">RAM : <t t-esc="m.ram"/></span>
+                                            <span class="transcription-model__ram"><t t-esc="t('label.ram_colon')"/><t t-esc="m.ram"/></span>
                                             <span t-if="m.heavy" class="transcription-model__heavy">
                                                 ⚠ Appareil récent conseillé
                                             </span>
@@ -265,7 +265,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                                         t-att-data-model-key="m.key"
                                                         t-att-disabled="state.isDeleting"
                                                         t-on-click.stop="onModelDeleteClick"
-                                                        title="Supprimer">🗑</button>
+                                                        t-att-title="t('button.delete')">🗑</button>
                                             </div>
                                         </t>
                                         <t t-elif="state.downloadingModels[m.key]">
@@ -356,10 +356,10 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                                   t-esc="dl.model || dl.label" />
                                             <span t-if="dl.downloadMode === 'foreground'"
                                                   class="transcription-history__mode"
-                                                  title="Service de fond">📲</span>
+                                                  t-att-title="t('button.background_service')">📲</span>
                                             <span t-elif="dl.downloadMode"
                                                   class="transcription-history__mode"
-                                                  title="WakeLock + reprise">🔋</span>
+                                                  t-att-title="t('button.wakelock_resume')">🔋</span>
                                             <span
                                                 class="transcription-history__status"
                                                 t-att-class="{
@@ -396,7 +396,7 @@ export class OptionsTranscriptionComponent extends EnhancedComponent {
                                                 <!-- Static info for completed/failed -->
                                                 <t t-if="dl.status !== 'running'">
                                                     <span class="transcription-history__detail-status">
-                                                        <t t-if="dl.status === 'done'">Téléchargement terminé</t>
+                                                        <t t-if="dl.status === 'done'"><t t-esc="t('message.download_done')"/></t>
                                                         <t t-elif="dl.status === 'error'" t-esc="dl.errorMessage || 'Erreur inconnue'" />
                                                     </span>
                                                 </t>

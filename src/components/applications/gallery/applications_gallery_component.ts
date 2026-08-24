@@ -42,7 +42,7 @@ interface State {
 export class ApplicationsGalleryComponent extends EnhancedComponent {
     static template = xml`
         <div id="applications-gallery-component">
-            <HeadingComponent title="'Services › Galerie'" backUrl="'/applications'"/>
+            <HeadingComponent title="t('heading.gallery')" backUrl="'/applications'"/>
 
             <div t-if="state.loading" class="gallery__status">
                 Chargement…

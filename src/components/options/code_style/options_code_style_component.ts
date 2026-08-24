@@ -31,7 +31,7 @@ export class OptionsCodeStyleComponent extends EnhancedComponent {
               t-att-aria-expanded="state.expanded ? 'true' : 'false'"
               t-on-click="toggle"
               t-on-keydown="onHeaderKey">
-            <span>🎨 Style — outil Code</span>
+            <span>🎨 <t t-esc="t('section.code_style')"/></span>
             <span t-esc="state.expanded ? '▲' : '▼'"/>
           </div>
 

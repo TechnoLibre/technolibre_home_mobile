@@ -91,14 +91,14 @@ const BREADCRUMBS = [{ label: "Options", url: "/options" }];
 export class OptionsCodeComponent extends EnhancedComponent {
     static template = xml`
 <div id="options-code-component">
-  <HeadingComponent title="'Code'" breadcrumbs="breadcrumbs" />
+  <HeadingComponent title="t('heading.code')" breadcrumbs="breadcrumbs" />
 
   <!-- ══════════════════ SETUP ══════════════════ -->
   <t t-if="state.phase === 'setup'">
     <div class="code-setup">
 
       <!-- Mode selector -->
-      <div class="code-setup__label">Mode</div>
+      <div class="code-setup__label"><t t-esc="t('label.mode')"/></div>
       <div class="code-setup__mode-row">
         <button class="code-setup__mode-btn"
                 t-att-class="{ 'code-setup__mode-btn--active': state.mode === 'bundle' }"
@@ -118,8 +118,8 @@ export class OptionsCodeComponent extends EnhancedComponent {
       </div>
 
       <t t-if="state.mode === 'bundle'">
-        <div class="code-setup__hint">Sources embarquées à la compilation. Lecture seule, aucun serveur requis.</div>
-        <div class="code-setup__label">Cible du bundle</div>
+        <div class="code-setup__hint"><t t-esc="t('hint.bundle_mode')"/></div>
+        <div class="code-setup__label"><t t-esc="t('label.bundle_target')"/></div>
         <div class="code-setup__modes">
           <button class="code-setup__mode-btn"
                   t-att-class="{ 'code-setup__mode-btn--active': state.bundleTarget === 'mobile' }"
@@ -134,19 +134,19 @@ export class OptionsCodeComponent extends EnhancedComponent {
         </div>
       </t>
       <t t-if="state.mode === 'ssh-path'">
-        <div class="code-setup__hint">Naviguez un workspace sur un serveur SSH.</div>
+        <div class="code-setup__hint"><t t-esc="t('hint.ssh_path_mode')"/></div>
       </t>
       <t t-if="state.mode === 'ssh-url'">
-        <div class="code-setup__hint">Naviguez un dépôt git du manifest ERPLibre (embarqué à la compilation).</div>
+        <div class="code-setup__hint"><t t-esc="t('hint.ssh_url_mode')"/></div>
       </t>
 
       <!-- ── SSH PATH ── -->
       <t t-if="state.mode === 'ssh-path'">
-        <div class="code-setup__label">Serveur SSH</div>
+        <div class="code-setup__label"><t t-esc="t('label.ssh_server')"/></div>
         <select class="code-setup__select"
                 t-model="state.selectedServerId"
                 t-on-change="onServerChange">
-          <option value="">-- Choisir un serveur --</option>
+          <option value="">-- <t t-esc="t('label.pick_server')"/></option>
           <t t-foreach="state.servers" t-as="srv" t-key="srv.host + '|' + srv.username">
             <option t-att-value="srv.host + '|' + srv.username"
                     t-esc="(srv.label || srv.host) + ' (' + srv.username + '@' + srv.host + ')'" />
@@ -154,9 +154,9 @@ export class OptionsCodeComponent extends EnhancedComponent {
         </select>
 
         <t t-if="state.selectedServerId">
-          <div class="code-setup__label">Workspace</div>
+          <div class="code-setup__label"><t t-esc="t('label.workspace')"/></div>
           <t t-if="state.workspacesLoading">
-            <div class="code__spinner">Chargement des workspaces…</div>
+            <div class="code__spinner"><t t-esc="t('message.loading_workspaces')"/></div>
           </t>
           <t t-elif="state.serverWorkspaces.length > 0">
             <ul class="code-setup__workspace-list">
@@ -171,13 +171,13 @@ export class OptionsCodeComponent extends EnhancedComponent {
             </ul>
           </t>
           <t t-else="">
-            <div class="code__empty">Aucun workspace configuré pour ce serveur.</div>
+            <div class="code__empty"><t t-esc="t('message.no_workspace')"/></div>
           </t>
 
-          <div class="code-setup__label">Chemin personnalisé</div>
+          <div class="code-setup__label"><t t-esc="t('label.custom_path')"/></div>
           <input class="code-setup__input" type="text"
                  t-model="state.repoPath"
-                 placeholder="ex: ~/git/erplibre_mobile2/mobile/erplibre_home_mobile"
+                 t-att-placeholder="t('placeholder.custom_path')"
                  autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" />
         </t>
       </t>
@@ -185,7 +185,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
       <!-- ── SSH URL (offline manifest repos) ── -->
       <t t-if="state.mode === 'ssh-url'">
         <t t-if="state.manifestProjects.length > 0">
-          <div class="code-setup__label">Dépôts disponibles</div>
+          <div class="code-setup__label"><t t-esc="t('label.available_repos')"/></div>
           <div class="code-setup__chips">
             <t t-foreach="state.manifestProjects" t-as="proj" t-key="proj.slug">
               <button class="code-setup__chip"
@@ -198,10 +198,10 @@ export class OptionsCodeComponent extends EnhancedComponent {
           </div>
         </t>
         <t t-else="">
-          <div class="code__empty">Aucun dépôt disponible dans le bundle. Recompilez l'application.</div>
+          <div class="code__empty"><t t-esc="t('message.no_bundled_repo')"/></div>
         </t>
 
-        <div class="code-setup__label">URL Git</div>
+        <div class="code-setup__label"><t t-esc="t('label.git_url')"/></div>
         <input class="code-setup__input" type="text"
                t-model="state.repoPath"
                placeholder="https://github.com/user/repo.git"
@@ -216,8 +216,8 @@ export class OptionsCodeComponent extends EnhancedComponent {
       <button class="code__btn code__btn--primary"
               t-att-disabled="state.loading or this.connectDisabled"
               t-on-click="() => this.onConnect()">
-        <t t-if="state.loading">Connexion…</t>
-        <t t-else="">Connecter</t>
+        <t t-if="state.loading"><t t-esc="t('message.connecting_short')"/></t>
+        <t t-else=""><t t-esc="t('button.connect')"/></t>
       </button>
 
     </div>
@@ -235,8 +235,8 @@ export class OptionsCodeComponent extends EnhancedComponent {
         <button class="code__btn code__btn--edit"
                 t-on-click="() => this.onPromoteEdit()"
                 t-att-disabled="state.promoting">
-          <t t-if="state.promoting">⏳ Promotion…</t>
-          <t t-else="">✏️ Activer édition</t>
+          <t t-if="state.promoting">⏳ <t t-esc="t('button.promoting')"/></t>
+          <t t-else="">✏️ <t t-esc="t('button.enable_editing')"/></t>
         </button>
       </t>
       <t t-if="state.mode === 'ssh-url' and state.isEditable">
@@ -252,7 +252,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
     <t t-if="state.baselineMismatch">
       <div class="code__warning code__warning--baseline">
-        <strong>⚠ Baseline modifié</strong> —
+        <strong>⚠ <t t-esc="t('label.baseline_drifted')"/></strong> —
         l'application a été recompilée depuis que tu as activé l'édition de ce repo.
         Ton historique git est basé sur l'ancien baseline (<em t-esc="state.promotedBuildId" />),
         le nouveau est <em t-esc="state.shippedBuildId" />.
@@ -266,11 +266,11 @@ export class OptionsCodeComponent extends EnhancedComponent {
     <div class="code-browser__tabs">
       <button class="code-browser__tab"
               t-att-class="{ 'code-browser__tab--active': state.tab === 'files' }"
-              t-on-click="() => this.onTabFiles()">📂 Fichiers</button>
+              t-on-click="() => this.onTabFiles()">📂 <t t-esc="t('tab.files')"/></button>
       <button class="code-browser__tab"
               t-if="state.mode === 'ssh-path' or state.isEditable"
               t-att-class="{ 'code-browser__tab--active': state.tab === 'git' }"
-              t-on-click="() => this.onTabGit()">🔀 Git</button>
+              t-on-click="() => this.onTabGit()">🔀 <t t-esc="t('tab.git')"/></button>
     </div>
 
     <t t-if="state.error">
@@ -284,7 +284,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
       <t t-if="state.currentFilePath">
 
         <div class="code-viewer__header">
-          <button class="code__btn code__btn--back" t-on-click="() => this.onCloseFile()">← Retour</button>
+          <button class="code__btn code__btn--back" t-on-click="() => this.onCloseFile()">← <t t-esc="t('aria.back')"/></button>
           <span class="code-viewer__filename" t-esc="state.currentFileName" />
           <!-- language badge -->
           <t t-if="state.fileLang and state.fileLang !== 'image' and state.fileLang !== 'markdown' and state.fileLang !== ''">
@@ -293,15 +293,15 @@ export class OptionsCodeComponent extends EnhancedComponent {
           <!-- Markdown toggle -->
           <t t-if="state.fileLang === 'markdown'">
             <button class="code__btn code__btn--mode" t-on-click="() => this.onToggleViewMode()">
-              <t t-if="state.fileViewMode === 'markdown'">⌨ Code</t>
-              <t t-else="">👁 Aperçu</t>
+              <t t-if="state.fileViewMode === 'markdown'">⌨ <t t-esc="t('aria.code')"/></t>
+              <t t-else="">👁 <t t-esc="t('tab.preview')"/></t>
             </button>
           </t>
           <!-- Image toggle -->
           <t t-if="state.fileLang === 'image'">
             <button class="code__btn code__btn--mode" t-on-click="() => this.onToggleViewMode()">
-              <t t-if="state.fileViewMode === 'image'">⌨ Brut</t>
-              <t t-else="">🖼 Image</t>
+              <t t-if="state.fileViewMode === 'image'">⌨ <t t-esc="t('tab.raw')"/></t>
+              <t t-else="">🖼 <t t-esc="t('tab.image')"/></t>
             </button>
           </t>
           <!-- Settings menu (gear) — far right -->
@@ -316,7 +316,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
                   <input type="checkbox"
                          t-att-checked="state.softWrap"
                          t-on-change="onToggleSoftWrap" />
-                  <span>Retour à la ligne (soft-wrap)</span>
+                  <span><t t-esc="t('label.soft_wrap')"/></span>
                 </label>
               </li>
             </ul>
@@ -324,7 +324,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
         </div>
 
         <t t-if="state.fileLoading">
-          <div class="code__spinner">Chargement…</div>
+          <div class="code__spinner"><t t-esc="t('label.loading')"/></div>
         </t>
 
         <!-- Image view -->
@@ -334,7 +334,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
               <img t-att-src="state.fileImageSrc" class="code-viewer__image" alt="" />
             </t>
             <t t-else="">
-              <div class="code__spinner">Chargement de l'image…</div>
+              <div class="code__spinner"><t t-esc="t('message.loading_image')"/></div>
             </t>
           </div>
         </t>
@@ -349,7 +349,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
           <div class="code-viewer__code"
                t-att-class="{ 'code-viewer__code--soft-wrap': state.softWrap }">
             <t t-if="state.fileLines.length === 0">
-              <div class="code__empty">Fichier vide.</div>
+              <div class="code__empty"><t t-esc="t('message.empty_file')"/></div>
             </t>
             <t t-foreach="state.fileLines" t-as="line" t-key="line_index">
 
@@ -393,7 +393,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
                         t-esc="line"
                         t-on-click="() => state.mode === 'ssh-path' and this.onEditLine(line_index, line)" />
                   <button class="code-line__add-note"
-                          title="Créer une note depuis cette ligne"
+                          t-att-title="t('button.note_from_line')"
                           t-on-click.stop="() => this.onAddNoteFromLine(line_index, line)">+</button>
                 </div>
               </t>
@@ -415,7 +415,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
         </div>
 
         <t t-if="state.dirLoading">
-          <div class="code__spinner">Chargement…</div>
+          <div class="code__spinner"><t t-esc="t('label.loading')"/></div>
         </t>
         <t t-else="">
           <ul class="code-tree__list">
@@ -430,7 +430,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
                 <span class="code-tree__name" t-esc="entry.name" />
               </li>
             </t>
-            <li class="code-tree__empty" t-if="state.dirEntries.length === 0">Répertoire vide.</li>
+            <li class="code-tree__empty" t-if="state.dirEntries.length === 0"><t t-esc="t('message.empty_directory')"/></li>
           </ul>
         </t>
 
@@ -445,10 +445,10 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
         <div class="code-git__section">
           <div class="code-git__section-header">
-            <span>Statut — <em t-esc="state.currentBranch" /></span>
+            <span><t t-esc="t('section.git_status')"/><em t-esc="state.currentBranch" /></span>
             <div class="code-git__header-btns">
               <button class="code__btn code__btn--refresh"
-                      t-on-click="() => this.onEditGitRefresh()">↻ Rafraîchir</button>
+                      t-on-click="() => this.onEditGitRefresh()">↻ <t t-esc="t('button.git_refresh')"/></button>
               <button class="code__btn code__btn--reset-all"
                       t-on-click="() => this.onEditGitResetAll()"
                       t-att-disabled="state.editGitStatus.modified.length === 0 and state.editGitStatus.untracked.length === 0 and state.editGitStatus.deleted.length === 0">
@@ -458,12 +458,12 @@ export class OptionsCodeComponent extends EnhancedComponent {
           </div>
 
           <t t-if="state.editGitStatus.modified.length === 0 and state.editGitStatus.untracked.length === 0 and state.editGitStatus.staged.length === 0 and state.editGitStatus.deleted.length === 0">
-            <div class="code-git__empty">Working tree propre.</div>
+            <div class="code-git__empty"><t t-esc="t('message.clean_tree')"/></div>
           </t>
 
           <t t-if="state.editGitStatus.modified.length > 0">
             <div class="code-git__group">
-              <div class="code-git__group-header">Modifié (<t t-esc="state.editGitStatus.modified.length" />)</div>
+              <div class="code-git__group-header"><t t-esc="t('section.git_modified')"/><t t-esc="state.editGitStatus.modified.length" />)</div>
               <t t-foreach="state.editGitStatus.modified" t-as="fp" t-key="fp">
                 <div class="code-git__file">
                   <button class="code-git__file-name code-git__file-name--modified"
@@ -479,7 +479,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
           <t t-if="state.editGitStatus.staged.length > 0">
             <div class="code-git__group">
-              <div class="code-git__group-header">Stagé (<t t-esc="state.editGitStatus.staged.length" />)</div>
+              <div class="code-git__group-header"><t t-esc="t('section.git_staged')"/><t t-esc="state.editGitStatus.staged.length" />)</div>
               <t t-foreach="state.editGitStatus.staged" t-as="fp" t-key="fp">
                 <div class="code-git__file">
                   <button class="code-git__file-name code-git__file-name--staged"
@@ -493,7 +493,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
           <t t-if="state.editGitStatus.untracked.length > 0">
             <div class="code-git__group">
-              <div class="code-git__group-header">Non suivis (<t t-esc="state.editGitStatus.untracked.length" />)</div>
+              <div class="code-git__group-header"><t t-esc="t('section.git_untracked')"/><t t-esc="state.editGitStatus.untracked.length" />)</div>
               <t t-foreach="state.editGitStatus.untracked" t-as="fp" t-key="fp">
                 <div class="code-git__file">
                   <span class="code-git__file-name code-git__file-name--untracked" t-esc="fp" />
@@ -504,7 +504,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
           <t t-if="state.editGitStatus.deleted.length > 0">
             <div class="code-git__group">
-              <div class="code-git__group-header">Supprimés (<t t-esc="state.editGitStatus.deleted.length" />)</div>
+              <div class="code-git__group-header"><t t-esc="t('section.git_deleted')"/><t t-esc="state.editGitStatus.deleted.length" />)</div>
               <t t-foreach="state.editGitStatus.deleted" t-as="fp" t-key="fp">
                 <div class="code-git__file">
                   <span class="code-git__file-name code-git__file-name--deleted" t-esc="fp" />
@@ -519,7 +519,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
         <t t-if="state.editGitDiff">
           <div class="code-git__section">
             <div class="code-git__section-header">
-              <span>Diff — <em t-esc="state.editGitDiffFile" /></span>
+              <span><t t-esc="t('section.git_diff')"/><em t-esc="state.editGitDiffFile" /></span>
             </div>
             <pre class="code-git__diff" t-esc="state.editGitDiff" />
           </div>
@@ -527,10 +527,10 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
         <div class="code-git__section">
           <div class="code-git__section-header">
-            <span>Commit</span>
+            <span><t t-esc="t('label.commit')"/></span>
           </div>
           <input class="code-git__commit-input" type="text"
-                 placeholder="Message de commit"
+                 t-att-placeholder="t('placeholder.commit_message')"
                  t-model="state.editGitCommitMessage" />
           <button class="code__btn code__btn--commit"
                   t-on-click="() => this.onEditGitCommit()"
@@ -541,10 +541,10 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
         <div class="code-git__section">
           <div class="code-git__section-header">
-            <span>Historique (<t t-esc="state.editGitLog.length" />)</span>
+            <span><t t-esc="t('section.git_history')"/><t t-esc="state.editGitLog.length" />)</span>
           </div>
           <t t-if="state.editGitLog.length === 0">
-            <div class="code-git__empty">Aucun commit.</div>
+            <div class="code-git__empty"><t t-esc="t('message.no_commit')"/></div>
           </t>
           <t t-foreach="state.editGitLog" t-as="commit" t-key="commit.sha">
             <div class="code-git__commit">
@@ -563,26 +563,26 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
         <div class="code-git__section">
           <div class="code-git__section-header">
-            <span>Statut — <em t-esc="state.currentBranch" /></span>
+            <span><t t-esc="t('section.git_status')"/><em t-esc="state.currentBranch" /></span>
             <div class="code-git__header-btns">
               <button class="code__btn code__btn--refresh"
                       t-att-disabled="state.gitLoading"
-                      t-on-click="() => this.onGitRefresh()">↻ Rafraîchir</button>
+                      t-on-click="() => this.onGitRefresh()">↻ <t t-esc="t('button.git_refresh')"/></button>
             </div>
           </div>
           <t t-if="state.gitLoading and !state.gitStatus">
-            <div class="code__spinner">Chargement…</div>
+            <div class="code__spinner"><t t-esc="t('label.loading')"/></div>
           </t>
           <t t-elif="state.gitStatus">
             <pre class="code-git__status" t-esc="state.gitStatus" />
           </t>
           <t t-else="">
-            <div class="code-git__clean">Aucun changement.</div>
+            <div class="code-git__clean"><t t-esc="t('message.no_change')"/></div>
           </t>
         </div>
 
         <div class="code-git__section">
-          <div class="code-git__section-header">Branches</div>
+          <div class="code-git__section-header"><t t-esc="t('section.git_branches')"/></div>
           <ul class="code-git__branches">
             <t t-foreach="state.gitBranches" t-as="branch" t-key="branch.name">
               <li class="code-git__branch" t-att-class="{ 'code-git__branch--current': branch.current }">
@@ -591,34 +591,34 @@ export class OptionsCodeComponent extends EnhancedComponent {
                 <button class="code__btn code__btn--checkout"
                         t-if="!branch.current"
                         t-att-disabled="state.gitLoading"
-                        t-on-click="() => this.onGitCheckout(branch.name)">Checkout</button>
+                        t-on-click="() => this.onGitCheckout(branch.name)"><t t-esc="t('button.checkout')"/></button>
               </li>
             </t>
           </ul>
         </div>
 
         <div class="code-git__section">
-          <div class="code-git__section-header">Commit (git add -A)</div>
+          <div class="code-git__section-header"><t t-esc="t('label.commit_add_all')"/></div>
           <textarea class="code-git__msg-input"
-                    placeholder="Message de commit…"
+                    t-att-placeholder="t('placeholder.commit_message_dots')"
                     t-model="state.gitCommitMessage"
                     rows="3" />
           <button class="code__btn code__btn--primary"
                   t-att-disabled="state.gitLoading or !state.gitCommitMessage.trim()"
                   t-on-click="() => this.onGitCommit()">
-            <t t-if="state.gitLoading">En cours…</t><t t-else="">📦 Committer</t>
+            <t t-if="state.gitLoading"><t t-esc="t('label.in_progress')"/></t><t t-else="">📦 <t t-esc="t('button.do_commit')"/></t>
           </button>
         </div>
 
         <t t-if="state.gitOutput">
           <div class="code-git__section">
-            <div class="code-git__section-header">Sortie</div>
+            <div class="code-git__section-header"><t t-esc="t('section.output')"/></div>
             <pre class="code-git__output" t-esc="state.gitOutput" />
           </div>
         </t>
 
         <div class="code-git__section">
-          <div class="code-git__section-header">Historique</div>
+          <div class="code-git__section-header"><t t-esc="t('section.history')"/></div>
           <ul class="code-git__log">
             <t t-foreach="state.gitLog" t-as="commit" t-key="commit.hash">
               <li class="code-git__commit">
@@ -631,11 +631,11 @@ export class OptionsCodeComponent extends EnhancedComponent {
                 </div>
                 <button class="code__btn code__btn--checkout code__btn--sm"
                         t-att-disabled="state.gitLoading"
-                        t-on-click="() => this.onGitCheckout(commit.hash)">Checkout</button>
+                        t-on-click="() => this.onGitCheckout(commit.hash)"><t t-esc="t('button.checkout')"/></button>
               </li>
             </t>
             <li class="code-git__empty"
-                t-if="state.gitLog.length === 0 and !state.gitLoading">Aucun commit.</li>
+                t-if="state.gitLog.length === 0 and !state.gitLoading"><t t-esc="t('message.no_commit')"/></li>
           </ul>
         </div>
 

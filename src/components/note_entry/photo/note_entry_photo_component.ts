@@ -33,7 +33,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 				<t t-if="props.params.path">
 					<img
 						class="note-entry__photo__thumbnail"
-						alt="Aperçu de la photo"
+						t-att-alt="t('aria.photo_preview')"
 						t-att-src="image"
 					/>
 				</t>
@@ -89,7 +89,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 			</button>
 			<img
 				class="note-entry__photo__overlay__img"
-				alt="Photo en plein écran"
+				t-att-alt="t('dialog.fullscreen_photo')"
 				t-att-src="image"
 			/>
 		</div>
