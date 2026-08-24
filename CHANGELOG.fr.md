@@ -11,8 +11,10 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Résumé du développement depuis la publication `2026.04.14.01` (14 avril 2026).
 Intègre la branche `quality_functionnality_test` : 160 commits fusionnés dans
-`main` sous forme de dix demandes de tirage empilées. La suite de tests passe
-de 854 à 979 tests répartis sur 63 fichiers.
+`main` sous forme de dix demandes de tirage empilées, puis 11 commits de plus
+portant la documentation bilingue, cette publication et les libellés
+d'accessibilité. La suite de tests passe de 854 à 1000 tests répartis sur 66
+fichiers.
 
 ### Ajouté
 - **Prise en charge de l'Elgato Stream Deck** — une pile USB Android native,
@@ -74,6 +76,11 @@ de 854 à 979 tests répartis sur 63 fichiers.
 - **Documentation** — le plugin Stream Deck, le pipeline de bundle et le mode
   édition, un script de test de fumée et la matrice matérielle manuelle qu'il ne
   peut pas remplacer, et comment déboguer une compilation Android par wifi
+- **Documentation bilingue** — chaque document de `doc/`, les deux README et
+  ce journal ont désormais une source `.base.md` générant un fichier anglais
+  et un fichier français via mmg, selon la convention du dépôt racine. La
+  moitié de la documentation n'existait qu'en français et l'autre qu'en
+  anglais ; aucune moitié n'était atteignable dans l'autre langue.
 
 ### Modifié
 - **La couverture AOT d'Owl est désormais complète** — les gabarits de note ont
@@ -91,6 +98,14 @@ de 854 à 979 tests répartis sur 63 fichiers.
   générateur de vignettes vidéo comme son rattrapage
 - **Les permissions du catalogue** sont maintenant auditées contre le manifeste
   Android par un test
+- **Libellés d'accessibilité** — 62 aria-label qui portaient du français en
+  dur passent désormais par les dictionnaires de traduction. Un test collecte
+  chaque appel statique à `t()` dans le code et échoue si une clé manque d'un
+  côté, ce qu'aucun rendu de gabarit n'aurait attrapé
+- **Changelog intégré** — lit le `CHANGELOG.md` embarqué au lieu de porter sa
+  propre copie du texte et une constante de version en dur. La version
+  affichée est le premier titre daté du fichier, dans la langue du lecteur ;
+  une publication n'exige donc plus de l'incrémenter à la main
 
 ### Corrigé
 - **Fiabilité du Stream Deck** — des touches qui fonctionnaient une fois puis
@@ -114,11 +129,20 @@ de 854 à 979 tests répartis sur 63 fichiers.
 - **`usesCleartextTraffic`** gagne la fusion du manifeste Android
 - **Dépréciations Gradle** d'affectation par espace réduites au silence
 - **Un lien symbolique périmé** sous `repos/` ne casse plus la compilation
+- **Le `versionCode` Android** n'avait jamais bougé de 1 depuis le premier
+  commit. Android refuse d'installer un APK dont le code n'est pas supérieur
+  à l'installé : aucune publication n'était donc installable par-dessus la
+  précédente. Il suit désormais l'entier CalVer qu'emploient déjà les
+  migrations
 
 ### Retiré
 - **`debug.keystore`** retiré du dépôt
 - **Le mode lecteur USBDEVFS natif** — abandonné après que le chemin
   `UsbRequest` s'est révélé suffisant
+- **`build_id.json` et `feature_touched.json`** quittent le contrôle de
+  version. Les deux sont des sorties de compilation ; le second dérive des
+  dates de modification du système de fichiers, si bien qu'un rebase
+  estampillait toutes les fonctionnalités de la même date fausse
 
 ### Sécurité
 - **Quatre constats d'audit critiques** clos, puis ceux de gravité moyenne et
