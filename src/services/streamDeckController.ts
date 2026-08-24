@@ -29,6 +29,29 @@ export class StreamDeckController {
     /** When true, the home tile and key-0 navigation are suspended so the
      * camera streamer (or any future taker-over) owns the deck surface. */
     private cameraStreaming = false;
+    /** Last user-set brightness per deck. Stream Deck firmware doesn't
+     *  expose getBrightness, so we cache the value at the moment we
+     *  send setBrightness — used to restore the deck's pre-sleep
+     *  brightness on visibility:visible after we dim to 0 on hidden. */
+    private lastBrightness = new Map<string, number>();
+    private static readonly DEFAULT_BRIGHTNESS = 50;
+    /** When the page became hidden — used to decide whether to do a
+     *  full session restart on visible. Brief hides (<5 s, e.g. a
+     *  notification briefly waking the screen) don't need it; a real
+     *  sleep cycle does, because the reader's interrupt-IN endpoint
+     *  consistently goes silent for ~10 s post-wake even though the
+     *  USB bus stayed alive via the heartbeat. */
+    private hiddenAt = 0;
+    private static readonly RESTART_AFTER_HIDDEN_MS = 5000;
+    /** Minimum ms between Note-key navigations. Tuned to stay below
+     *  the ~8 keyboard-show/hide cycles per second threshold that
+     *  reproduced a SIGSEGV in HWUI's RenderThread on Pixel 6, while
+     *  still letting an intentional 100–150 ms double-tap register
+     *  both presses. 250 ms felt laggy on a deliberate two-tap;
+     *  150 ms passes both clicks through and still caps mash at
+     *  ~6.6/s — well under the crash threshold. */
+    private lastNotePressAt = 0;
+    private static readonly NOTE_DEBOUNCE_MS = 150;
 
     constructor(
         private readonly eventBus: EventBusLike,
@@ -37,6 +60,21 @@ export class StreamDeckController {
 
     setCameraStreaming(active: boolean): void {
         this.cameraStreaming = active;
+    }
+
+    /** Set deck brightness, remembering the value so we can restore it
+     *  after sleep. Callers that adjust brightness should use this
+     *  wrapper rather than StreamDeckPlugin.setBrightness directly,
+     *  otherwise their value is lost across the next sleep cycle. */
+    async setBrightness(deckId: string, percent: number): Promise<void> {
+        const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+        this.lastBrightness.set(deckId, clamped);
+        await StreamDeckPlugin.setBrightness({ deckId, percent: clamped });
+    }
+
+    getBrightness(deckId: string): number {
+        return this.lastBrightness.get(deckId)
+            ?? StreamDeckController.DEFAULT_BRIGHTNESS;
     }
 
     /** Repaint the home tile on every known deck. Used by the camera
@@ -59,8 +97,18 @@ export class StreamDeckController {
         // deckConnected, and an unconditional paint flashes "Note" on
         // the LCD before USB suspends again.
         const repaintIfVisible = async (info: DeckInfo) => {
-            if (this.cameraStreaming) return;
             if (this._isHidden()) return;
+            // Re-applied unconditionally on every (re)connect so
+            // restartSessions on visibility:visible picks up the
+            // user's pre-sleep brightness — the firmware resets to
+            // its default on session reopen.
+            StreamDeckPlugin.setBrightness({
+                deckId: info.deckId,
+                percent: this.getBrightness(info.deckId),
+            }).catch((e) =>
+                console.warn(`[streamdeck] brightness on attach deckId=${info.deckId}:`, e),
+            );
+            if (this.cameraStreaming) return;
             await this._renderHome(info).catch((e) =>
                 console.warn(`[streamdeck] paint deckId=${info.deckId}:`, e),
             );
@@ -101,6 +149,13 @@ export class StreamDeckController {
                 // navigation so the press doesn't double-trigger.
                 if (this.cameraStreaming) return;
                 if (ev.key !== 0) return;
+                // Throttle to ~4 presses/s — protects against the
+                // IME-storm WebView crash described above. Each press
+                // still creates a new note; the user can mash and the
+                // worst case is one press dropped per ~250 ms window.
+                const now = Date.now();
+                if (now - this.lastNotePressAt < StreamDeckController.NOTE_DEBOUNCE_MS) return;
+                this.lastNotePressAt = now;
                 const newId = this.noteService.getNewId();
                 this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
                     url: `/note/${newId}`,
@@ -108,13 +163,53 @@ export class StreamDeckController {
             }),
         );
 
-        // When the page becomes visible again (phone unlock, app brought
-        // back to foreground), repaint every known deck to recover from
-        // any background flicker that may have left the LCD blank.
+        // Dim every deck to 0 while the page is hidden (phone locked /
+        // app backgrounded). setBrightness(0) hides the LCDs without
+        // touching the HID interface — earlier we used reset() here
+        // and the reader thread's interrupt-IN pipe was left in a
+        // state where post-wake key presses didn't surface, requiring
+        // a manual session restart. Brightness is a feature-report
+        // write that's safe to issue concurrently with the reader.
+        // On the way back, restore the user's brightness and repaint
+        // the home tile.
         document.addEventListener("visibilitychange", () => {
-            if (this.cameraStreaming) return;
-            if (this._isHidden()) return;
+            if (this._isHidden()) {
+                this.hiddenAt = Date.now();
+                for (const info of this.decks.values()) {
+                    StreamDeckPlugin.setBrightness({
+                        deckId: info.deckId, percent: 0,
+                    }).catch((e) =>
+                        console.warn("[streamdeck] dim on hidden:", e),
+                    );
+                }
+                return;
+            }
+            const hiddenFor = this.hiddenAt > 0 ? Date.now() - this.hiddenAt : 0;
+            this.hiddenAt = 0;
+            // After a real sleep cycle (>5 s), the deck's reader pipe
+            // can sit silent for ~10 s post-wake even with the
+            // heartbeat keeping the bus active. A full session
+            // restart re-creates the reader/writer threads from
+            // scratch and the next press lands instantly. The
+            // deckConnected listener above will repaint Note for each
+            // re-attached deck, so we don't repaint here. Brightness
+            // is reset to the firmware default on restart, so the
+            // restore call on the post-restart attach path picks up
+            // the user's value via the cache.
+            if (hiddenFor > StreamDeckController.RESTART_AFTER_HIDDEN_MS) {
+                StreamDeckPlugin.restartSessions().catch((e) =>
+                    console.warn("[streamdeck] restartSessions on visible:", e),
+                );
+                return;
+            }
             for (const info of this.decks.values()) {
+                StreamDeckPlugin.setBrightness({
+                    deckId: info.deckId,
+                    percent: this.getBrightness(info.deckId),
+                }).catch((e) =>
+                    console.warn("[streamdeck] restore brightness:", e),
+                );
+                if (this.cameraStreaming) continue;
                 this._renderHome(info).catch((e) =>
                     console.warn("[streamdeck] repaint on visible:", e),
                 );

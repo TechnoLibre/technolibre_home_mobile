@@ -491,6 +491,20 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         catch (DeckSession.DeckIoException e) { call.reject(e.getMessage()); }
     }
 
+    /** Drop every queued image-write for a deck without disturbing the
+     *  reader. Called by the camera streamer right after it stops, so
+     *  the writer thread doesn't spend the next ~300 ms draining stale
+     *  frames — that bulk-OUT pressure makes the deck firmware miss
+     *  Note-key presses long after the user expects the home tile back. */
+    @PluginMethod
+    public void clearPendingWrites(PluginCall call) {
+        DeckSession s = requireSession(call); if (s == null) return;
+        int dropped = s.queue().dropPending();
+        JSObject ret = new JSObject();
+        ret.put("dropped", dropped);
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void setBrightness(PluginCall call) {
         DeckSession s = requireSession(call); if (s == null) return;

@@ -1,6 +1,7 @@
 import type { PluginListenerHandle } from "@capacitor/core";
 import { Camera } from "@capacitor/camera";
 import { StreamDeckPlugin, DeckInfo, DeckModel } from "../plugins/streamDeckPlugin";
+import { FaceDetectionPlugin } from "../plugins/faceDetectionPlugin";
 import type { StreamDeckController } from "./streamDeckController";
 
 interface ListenerLike {
@@ -97,6 +98,33 @@ export class StreamDeckCameraStreamer {
     private lastFrameHash = 0;
     private hashCanvas: HTMLCanvasElement | null = null;
     private hashCtx: CanvasRenderingContext2D | null = null;
+    /** Face detection — when true, downscale a JPEG of the live video
+     *  each tick and ship it to the ML Kit Java plugin. Returned bbox
+     *  list is cached in `lastFaces` (normalised 0..1) and reprojected
+     *  per-deck inside paintDeck to draw a green border on any tile
+     *  framing a face. */
+    private faceDetect = false;
+    private faceDetectInFlight = false;
+    /** Bounding boxes in normalised video coordinates (0..1). */
+    private lastFaces: { x: number; y: number; w: number; h: number }[] = [];
+    /** How many detections have run since enable — surfaced in the UI
+     *  so the user can confirm the JNI round-trip is firing. */
+    private faceDetectCalls = 0;
+    /** How many of those returned ≥1 face. */
+    private faceDetectHits = 0;
+    /** Reused canvas for the detection JPEG. Sized to match the video
+     *  aspect ratio (long edge = FACE_DETECT_LONG_EDGE) so faces aren't
+     *  squashed when the user holds the phone portrait — getUserMedia
+     *  reports videoWidth/videoHeight in display orientation, and a
+     *  fixed-landscape canvas would non-uniformly stretch a portrait
+     *  feed enough to break ML Kit on selfie distance. */
+    private faceCanvas: HTMLCanvasElement | null = null;
+    private faceCtx: CanvasRenderingContext2D | null = null;
+    // 640 px on the long edge keeps ML Kit happy on small/distant faces
+    // — 320 shrunk a 1 m subject below the practical detector floor.
+    // Encoder cost stays negligible at q=0.5 (~25 KB JPEG, <2 ms
+    // toDataURL on Android WebView).
+    private static readonly FACE_DETECT_LONG_EDGE = 640;
     private active = false;
     private stream: MediaStream | null = null;
     private video: HTMLVideoElement | null = null;
@@ -117,8 +145,39 @@ export class StreamDeckCameraStreamer {
     private listenersOut = new Set<ListenerLike>();
     private lastTickStart = 0;
     private tickCount = 0;
+    /** True when we paused the streamer ourselves on visibility-hidden
+     *  and should auto-resume on visible. Distinguishes a user-driven
+     *  stop (button, key press) from a sleep-driven pause: only the
+     *  latter resumes. */
+    private resumeOnVisible = false;
+    private visibilityHandler: (() => void) | null = null;
 
-    constructor(private readonly controller: StreamDeckController) {}
+    constructor(private readonly controller: StreamDeckController) {
+        // Self-managed visibility handling. The MediaStream tracks die
+        // when the WebView pauses (Android browser policy), and the
+        // tick interval keeps firing into a dead video element until
+        // the user manually toggles streaming off. Pausing+resuming
+        // around the sleep cycle keeps the stream usable across phone
+        // lock without user intervention.
+        this.visibilityHandler = () => this.onVisibilityChange();
+        document.addEventListener("visibilitychange", this.visibilityHandler);
+    }
+
+    private onVisibilityChange(): void {
+        if (document.visibilityState === "hidden") {
+            if (this.active) {
+                this.resumeOnVisible = true;
+                this.stop().catch((e) =>
+                    console.warn("[camera-streamer] pause on hidden:", e));
+            }
+            return;
+        }
+        if (this.resumeOnVisible) {
+            this.resumeOnVisible = false;
+            this.start().catch((e) =>
+                console.warn("[camera-streamer] resume on visible:", e));
+        }
+    }
 
     isActive(): boolean { return this.active; }
 
@@ -193,12 +252,37 @@ export class StreamDeckCameraStreamer {
         this.lastFrameHash = 0;
     }
 
+    getFaceDetect(): boolean { return this.faceDetect; }
+
+    /** Toggle face detection. The native ML Kit plugin is always
+     *  registered on Android, so the only failure mode is "no Capacitor
+     *  bridge" (web preview / unit tests) — we let the per-tick call
+     *  surface that as a console warning rather than gating the toggle. */
+    setFaceDetect(on: boolean): void {
+        this.faceDetect = !!on;
+        if (!this.faceDetect) this.lastFaces = [];
+        this.faceDetectCalls = 0;
+        this.faceDetectHits = 0;
+    }
+
+    getFaceDetectStats(): { calls: number; hits: number; lastCount: number } {
+        return {
+            calls: this.faceDetectCalls,
+            hits: this.faceDetectHits,
+            lastCount: this.lastFaces.length,
+        };
+    }
+
     private tickMs(): number {
         return Math.max(33, Math.round(1000 / this.fps));
     }
 
     getBorderCompensation(deckId: string): boolean {
-        return this.borderCompensation.get(deckId) ?? false;
+        // Default ON — inter-key gaps are physically present on every
+        // Stream Deck, so a contiguous-grid composite always misaligns
+        // the camera image across cap edges. Users can still turn it
+        // off per deck if they prefer the legacy look.
+        return this.borderCompensation.get(deckId) ?? true;
     }
 
     setBorderCompensation(deckId: string, on: boolean): void {
@@ -339,6 +423,28 @@ export class StreamDeckCameraStreamer {
     async stop(): Promise<void> {
         if (!this.active) return;
         this.active = false;
+        // Flip the controller flag *synchronously* up front. The async
+        // tail of this method (listener removal, repaintAll) takes
+        // 200–500 ms; without this, presses during that window would
+        // still be swallowed by the controller's "while streaming,
+        // ignore Note key" guard, forcing the user to mash the deck
+        // until cleanup finished.
+        this.controller.setCameraStreaming(false);
+        // Drop every pending camera frame from the writer queue on
+        // each deck, then restart the sessions outright. A bare
+        // reset() left the firmware idle but the writer/reader
+        // threads still had stale state from the streaming burst —
+        // user-observed lag on the second and third Note presses.
+        // restartSessions closes the USB sessions and reopens them,
+        // so reader, writer and heartbeat all start from a clean
+        // slate. Slower (~200–500 ms) but eliminates the residual
+        // post-streaming sluggishness.
+        for (const deckId of this.decks.keys()) {
+            StreamDeckPlugin.clearPendingWrites({ deckId }).catch((e) =>
+                console.warn(`[camera-streamer] clearPendingWrites deck=${deckId}:`, e));
+        }
+        StreamDeckPlugin.restartSessions().catch((e) =>
+            console.warn("[camera-streamer] restartSessions:", e));
         if (this.timer !== null) {
             clearInterval(this.timer);
             this.timer = null;
@@ -360,7 +466,6 @@ export class StreamDeckCameraStreamer {
             }
             this.stream = null;
         }
-        this.controller.setCameraStreaming(false);
         this.notifyActive();
         // Repaint Note on every deck so the user lands back on the
         // familiar home tile.
@@ -382,6 +487,12 @@ export class StreamDeckCameraStreamer {
         this.inFlight = true;
         const t0 = performance.now();
         try {
+            // Kick face detection asynchronously — result lands in
+            // `lastFaces` for the next tick. We deliberately don't await
+            // here so the encode pipeline isn't blocked on detector
+            // latency (~10–40 ms on Chromium).
+            this.kickFaceDetect();
+
             // Synchronous fan-out: paintDeck is fully sync now (toDataURL
             // is synchronous, setKeyImage is fire-and-forget). Sequential
             // by deck is fine — encoding is CPU-bound on a single thread
@@ -400,6 +511,76 @@ export class StreamDeckCameraStreamer {
             }
             this.lastTickStart = t0;
         }
+    }
+
+    /** Fire-and-forget face detect via the native ML Kit plugin.
+     *  Pipeline per call:
+     *    video → 320×180 JPEG (toDataURL, q=0.5)
+     *          → base64 → JNI → ML Kit FaceDetection
+     *          → normalised bbox list → lastFaces
+     *  In-flight dedupe ensures a slow tick can't pile up promises;
+     *  bounding boxes stay in normalised [0,1] coords so paintDeck
+     *  reprojects by simply multiplying by canvasW/canvasH. */
+    private kickFaceDetect(): void {
+        if (!this.faceDetect || !this.video) return;
+        if (this.faceDetectInFlight) return;
+        if (this.video.readyState < 2) return;
+        const vw = this.video.videoWidth;
+        const vh = this.video.videoHeight;
+        if (vw === 0 || vh === 0) return;
+
+        // Size the detect canvas to the video aspect, long edge fixed.
+        // Reallocate when the aspect changes (camera flip, orientation
+        // change) so faces stay un-squashed on every frame.
+        const longEdge = StreamDeckCameraStreamer.FACE_DETECT_LONG_EDGE;
+        const cw = vw >= vh ? longEdge : Math.round(longEdge * vw / vh);
+        const ch = vh > vw ? longEdge : Math.round(longEdge * vh / vw);
+        if (!this.faceCanvas
+            || this.faceCanvas.width !== cw
+            || this.faceCanvas.height !== ch) {
+            this.faceCanvas = document.createElement("canvas");
+            this.faceCanvas.width = cw;
+            this.faceCanvas.height = ch;
+            this.faceCtx = this.faceCanvas.getContext("2d", { alpha: false });
+        }
+        const ctx = this.faceCtx;
+        const cv = this.faceCanvas;
+        if (!ctx || !cv) return;
+        try {
+            ctx.drawImage(this.video, 0, 0, cv.width, cv.height);
+        } catch (e) {
+            console.warn("[camera-streamer] face frame draw:", e);
+            return;
+        }
+        const dataUrl = cv.toDataURL("image/jpeg", 0.5);
+        const comma = dataUrl.indexOf(",");
+        if (comma < 0) return;
+        const b64 = dataUrl.substring(comma + 1);
+
+        this.faceDetectInFlight = true;
+        this.faceDetectCalls++;
+        FaceDetectionPlugin.detectFaces({ jpegBase64: b64 })
+            .then((r) => {
+                this.lastFaces = r.faces.map((f) => ({
+                    x: f.x, y: f.y, w: f.width, h: f.height,
+                }));
+                if (this.lastFaces.length > 0) this.faceDetectHits++;
+                this.faceDetectInFlight = false;
+                // Throttled trace so logcat shows the pipeline alive
+                // without flooding when the camera is empty.
+                if (this.faceDetectCalls % 10 === 1
+                    || this.lastFaces.length > 0) {
+                    console.info(`[camera-streamer] face detect #${this.faceDetectCalls}`
+                        + ` → ${this.lastFaces.length} face(s)`
+                        + (this.lastFaces.length > 0
+                            ? ` first=${JSON.stringify(this.lastFaces[0])}`
+                            : ""));
+                }
+            })
+            .catch((e) => {
+                this.faceDetectInFlight = false;
+                console.warn("[camera-streamer] face detect:", e);
+            });
     }
 
     private frameUnchanged(): boolean {
@@ -434,7 +615,7 @@ export class StreamDeckCameraStreamer {
     }
 
     private getCache(deck: DeckInfo): DeckCanvasCache | null {
-        const compensate = this.borderCompensation.get(deck.deckId) ?? false;
+        const compensate = this.borderCompensation.get(deck.deckId) ?? true;
         const ratio = this.borderRatioOverride.get(deck.deckId)
             ?? this.getDefaultBorderRatio(deck.model);
         const gapW = compensate ? Math.round(deck.keyImage.w * ratio.w) : 0;
@@ -499,6 +680,21 @@ export class StreamDeckCameraStreamer {
         const strideW = kw + gapW;
         const strideH = kh + gapH;
 
+        // Project face bboxes (normalised 0..1 in video space) into
+        // composite pixel space using the same cover-fit transform
+        // applied above. Done once per deck per tick so the inner
+        // overlap test is a pure AABB check.
+        const offsetX = (canvasW - dw) / 2;
+        const offsetY = (canvasH - dh) / 2;
+        const facesOnComposite = (this.faceDetect && this.lastFaces.length > 0)
+            ? this.lastFaces.map((f) => ({
+                x: f.x * vw * scale + offsetX,
+                y: f.y * vh * scale + offsetY,
+                w: f.w * vw * scale,
+                h: f.h * vh * scale,
+            }))
+            : [];
+
         const entries: { key: number; bytes: string }[] = new Array(rows * cols);
         let count = 0;
         for (let r = 0; r < rows; r++) {
@@ -510,6 +706,29 @@ export class StreamDeckCameraStreamer {
                     tctx.translate(-kw / 2, -kh / 2);
                 }
                 tctx.drawImage(composite, c * strideW, r * strideH, kw, kh, 0, 0, kw, kh);
+
+                if (facesOnComposite.length > 0) {
+                    const tx = c * strideW;
+                    const ty = r * strideH;
+                    let hit = false;
+                    for (const f of facesOnComposite) {
+                        if (f.x < tx + kw && f.x + f.w > tx
+                            && f.y < ty + kh && f.y + f.h > ty) {
+                            hit = true;
+                            break;
+                        }
+                    }
+                    if (hit) {
+                        // Border is drawn in tile-local identity space so
+                        // it stays on the visible LCD edges regardless of
+                        // the deck's rotation (Plus needs 180°, Mini 270°).
+                        tctx.setTransform(1, 0, 0, 1, 0, 0);
+                        const lw = Math.max(2, Math.round(Math.min(kw, kh) * 0.06));
+                        tctx.strokeStyle = "#00ff00";
+                        tctx.lineWidth = lw;
+                        tctx.strokeRect(lw / 2, lw / 2, kw - lw, kh - lw);
+                    }
+                }
 
                 // Synchronous JPEG encode — returns base64 in a data URL
                 // already. Strip the "data:image/jpeg;base64," prefix.

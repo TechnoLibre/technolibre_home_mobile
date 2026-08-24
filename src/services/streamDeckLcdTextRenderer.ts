@@ -46,6 +46,7 @@ export class StreamDeckLcdTextRenderer {
     private listeners: PluginListenerHandle[] = [];
     private timer: ReturnType<typeof setInterval> | null = null;
     private started = false;
+    private visibilityHandler: (() => void) | null = null;
 
     /** Wire up plugin listeners and seed the deck cache from the
      *  current snapshot. Idempotent — calling twice is a no-op. */
@@ -85,6 +86,17 @@ export class StreamDeckLcdTextRenderer {
             try { this.tick(); }
             catch (e) { console.warn("[lcd-text] tick:", e); }
         }, StreamDeckLcdTextRenderer.TICK_MS);
+
+        // The streamDeckController issues reset() on every deck during
+        // visibilitychange:hidden, which wipes the LCD strip too. Our
+        // dedupe via lastDirtyHash would then keep skipping the next
+        // tick because the hash didn't change. Clear the hashes on
+        // visible so the upcoming tick re-paints from scratch.
+        this.visibilityHandler = () => {
+            if (document.visibilityState !== "visible") return;
+            for (const c of this.configs.values()) c.lastDirtyHash = "";
+        };
+        document.addEventListener("visibilitychange", this.visibilityHandler);
     }
 
     async stop(): Promise<void> {
@@ -98,6 +110,10 @@ export class StreamDeckLcdTextRenderer {
             try { await h.remove(); } catch { /* ignore */ }
         }
         this.listeners = [];
+        if (this.visibilityHandler) {
+            document.removeEventListener("visibilitychange", this.visibilityHandler);
+            this.visibilityHandler = null;
+        }
     }
 
     /** Returns true when the deck has an LCD surface we can paint to. */

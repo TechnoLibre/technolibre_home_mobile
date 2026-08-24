@@ -134,6 +134,10 @@ interface StreamDeckPluginApi {
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
     requestPermission(opts: { deckId: string }): Promise<{ granted: boolean }>;
     reset(opts: { deckId: string }): Promise<void>;
+    /** Drop every queued image write for a deck. Used to flush the
+     *  WriterQueue at the end of camera streaming so leftover frames
+     *  don't keep the firmware busy and miss the next button press. */
+    clearPendingWrites(opts: { deckId: string }): Promise<{ dropped: number }>;
     setBrightness(opts: { deckId: string; percent: number }): Promise<void>;
 
     setKeyImage(opts: {
