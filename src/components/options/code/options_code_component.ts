@@ -308,7 +308,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
           <div class="code-viewer__settings">
             <button class="code__btn code-viewer__settings-btn"
                     t-att-aria-expanded="state.settingsOpen ? 'true' : 'false'"
-                    aria-label="Paramètres d'affichage"
+                    t-att-aria-label="t('aria.display_settings')"
                     t-on-click="onToggleSettings">⚙</button>
             <ul t-if="state.settingsOpen" class="code-viewer__settings-menu" role="menu">
               <li role="menuitemcheckbox" t-att-aria-checked="state.softWrap ? 'true' : 'false'">

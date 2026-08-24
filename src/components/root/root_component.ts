@@ -41,7 +41,7 @@ export class RootComponent extends EnhancedComponent {
 		<div t-if="state.syncBanner" class="sync-banner" role="alert" aria-live="assertive">
 			<span>☁ <t t-esc="state.syncBannerCount"/> modification(s) disponible(s) depuis Odoo</span>
 			<button class="sync-banner__btn" t-on-click="onSyncBannerSync">Synchroniser</button>
-			<button class="sync-banner__close" t-on-click="onSyncBannerDismiss" aria-label="Fermer la notification">✕</button>
+			<button class="sync-banner__close" t-on-click="onSyncBannerDismiss" t-att-aria-label="t('aria.close_notification')">✕</button>
 		</div>
 		<VideoCameraComponent
 			t-if="state.isCameraOpen"

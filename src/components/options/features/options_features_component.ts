@@ -163,7 +163,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
     static template = xml`
         <div id="options-features">
             <div class="features__header">
-                <button class="features__back" t-on-click="onBack" aria-label="Retour">←</button>
+                <button class="features__back" t-on-click="onBack" t-att-aria-label="t('aria.back')">←</button>
                 <h1>Fonctionnalités</h1>
                 <button class="features__lang-toggle"
                         t-on-click="onLangToggle"
@@ -215,7 +215,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
 
             <div class="features__layout">
                 <ul t-if="state.view === 'tree'"
-                    class="features__tree" role="tree" aria-label="Arbre des fonctionnalités">
+                    class="features__tree" role="tree" t-att-aria-label="t('aria.feature_tree')">
                     <t t-foreach="filteredRoots" t-as="root" t-key="root.id">
                         <FeatureTreeNodeComponent
                             node="root"
@@ -267,7 +267,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                 </div>
 
                 <div t-elif="state.view === 'cards'" class="features__cards"
-                     aria-label="Vue cartes">
+                     t-att-aria-label="t('aria.cards_view')">
                     <article t-foreach="cardItems" t-as="card" t-key="card.id"
                              class="features__card"
                              t-att-class="{ 'features__card--selected': state.selectedId === card.id }"
@@ -304,7 +304,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                 </div>
 
                 <div t-elif="state.view === 'dashboard'" class="features__dashboard"
-                     aria-label="Tableau de bord">
+                     t-att-aria-label="t('aria.dashboard')">
                     <div class="features__dashboard-grid">
                         <div class="features__stat">
                             <div class="features__stat-num" t-esc="dashboard.total"/>
@@ -387,7 +387,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                 </div>
 
                 <div t-elif="state.view === 'graph'" class="features__graph"
-                     aria-label="Vue graphe par statut">
+                     t-att-aria-label="t('aria.status_graph_view')">
                     <t t-foreach="graphGroups" t-as="grp" t-key="grp.status">
                         <div class="features__graph-group">
                             <h3 class="features__graph-status"
@@ -433,7 +433,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                                 <t t-esc="statusLabel(selectedNode.status)"/>
                             </span>
                             <button class="features__detail-close"
-                                    aria-label="Fermer le détail"
+                                    t-att-aria-label="t('aria.close_detail')"
                                     t-on-click="onCloseDetail">✕</button>
                         </div>
                         <p t-if="selectedNode.description"
@@ -488,7 +488,7 @@ export class OptionsFeaturesComponent extends EnhancedComponent {
                                     </button>
                                     <button class="features__copy"
                                             t-on-click="() => this.onCopyPath(path)"
-                                            aria-label="Copier le chemin">📋</button>
+                                            t-att-aria-label="t('aria.copy_path')">📋</button>
                                 </li>
                             </ul>
                         </t>

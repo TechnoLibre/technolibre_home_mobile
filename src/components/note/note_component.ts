@@ -32,22 +32,22 @@ export class NoteComponent extends EnhancedComponent {
 				aria-atomic="true"
 				t-esc="state.syncAnnouncement"
 			/>
-			<nav class="breadcrumb" aria-label="Fil d'ariane de la note">
-				<a href="#" role="button" aria-label="Retour à la liste des notes" t-on-click.stop.prevent="onBackToNotesClick">Notes</a>
+			<nav class="breadcrumb" t-att-aria-label="t('aria.note_breadcrumb')">
+				<a href="#" role="button" t-att-aria-label="t('aria.back_to_notes')" t-on-click.stop.prevent="onBackToNotesClick">Notes</a>
 				<span class="breadcrumb__sep">›</span>
 				<span class="breadcrumb__current" t-esc="state.note.title or 'Nouvelle note'"/>
 				<div class="breadcrumb__note-nav">
 					<button
 						type="button"
 						class="breadcrumb__note-nav-btn"
-						aria-label="Note précédente"
+						t-att-aria-label="t('aria.previous_note')"
 						t-att-disabled="!hasPrevious"
 						t-on-click.stop.prevent="navigatePrevious"
 					>‹</button>
 					<button
 						type="button"
 						class="breadcrumb__note-nav-btn"
-						aria-label="Note suivante"
+						t-att-aria-label="t('aria.next_note')"
 						t-att-disabled="!hasNext"
 						t-on-click.stop.prevent="navigateNext"
 					>›</button>
@@ -102,7 +102,7 @@ export class NoteComponent extends EnhancedComponent {
 							class="breadcrumb__options-btn"
 							t-att-disabled="state.newNote"
 							title="Options"
-							aria-label="Options"
+							t-att-aria-label="t('aria.options')"
 							aria-haspopup="menu"
 							t-att-aria-expanded="state.showOptionsMenu ? 'true' : 'false'"
 							t-on-click.stop.prevent="toggleOptionsMenu"

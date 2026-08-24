@@ -58,10 +58,10 @@ export class ApplicationsGalleryComponent extends EnhancedComponent {
 
             <!-- ── Mosaic ───────────────────────────────────────────── -->
             <div t-elif="state.fullscreenIdx === -1" class="gallery__mosaic"
-                 aria-label="Mosaïque d'images">
+                 t-att-aria-label="t('aria.image_grid')">
                 <button t-foreach="state.images" t-as="img" t-key="img.entryId"
                         class="gallery__tile"
-                        t-att-aria-label="'Ouvrir : ' + (img.noteTitle || 'note sans titre')"
+                        t-att-aria-label="t('aria.open_image', { title: img.noteTitle || t('aria.untitled_note') })"
                         t-on-click="() => this.openFullscreen(img_index)">
                     <img t-att-src="webPath(img.path)" alt=""/>
                 </button>
@@ -75,25 +75,25 @@ export class ApplicationsGalleryComponent extends EnhancedComponent {
                  t-on-touchmove="onTouchMove"
                  t-on-touchend="onTouchEnd"
                  t-on-touchcancel="onTouchEnd"
-                 aria-label="Visionneuse plein écran">
+                 t-att-aria-label="t('aria.fullscreen_viewer')">
                 <button t-if="state.chrome"
                         class="gallery__viewer__btn gallery__viewer__btn--rotate"
                         t-att-class="{ 'gallery__viewer__btn--rotate-on': state.autoRotate }"
-                        t-att-aria-label="state.autoRotate ? 'Auto-rotation activée' : 'Auto-rotation désactivée'"
+                        t-att-aria-label="state.autoRotate ? t('aria.autorotate_on') : t('aria.autorotate_off')"
                         t-on-click="toggleAutoRotate">⤢</button>
                 <button t-if="state.chrome"
                         class="gallery__viewer__btn gallery__viewer__btn--close"
-                        aria-label="Retour à la mosaïque"
+                        t-att-aria-label="t('aria.back_to_grid')"
                         t-on-click="closeFullscreen">×</button>
                 <button t-if="state.chrome"
                         class="gallery__viewer__btn gallery__viewer__btn--prev"
                         t-att-disabled="state.fullscreenIdx === 0 ? 'true' : null"
-                        aria-label="Image précédente"
+                        t-att-aria-label="t('aria.previous_image')"
                         t-on-click="prev">‹</button>
                 <button t-if="state.chrome"
                         class="gallery__viewer__btn gallery__viewer__btn--next"
                         t-att-disabled="state.fullscreenIdx >= state.images.length - 1 ? 'true' : null"
-                        aria-label="Image suivante"
+                        t-att-aria-label="t('aria.next_image')"
                         t-on-click="next">›</button>
                 <img class="gallery__viewer__img"
                      t-att-src="webPath(state.images[state.fullscreenIdx].path)"

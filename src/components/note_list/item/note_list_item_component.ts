@@ -28,7 +28,7 @@ export class NotesItemComponent extends EnhancedComponent {
 			}"
 			role="button"
 			tabindex="0"
-			t-att-aria-label="'Ouvrir la note : ' + (props.note.title || '(Sans titre)')"
+			t-att-aria-label="t('aria.open_note_named', { title: props.note.title || t('label.untitled') })"
 			t-on-click="() => this.props.openNote(props.note.id)"
 			t-on-keydown="(ev) => (ev.key === 'Enter' || ev.key === ' ') ? this.props.openNote(props.note.id) : null"
 		>
@@ -68,7 +68,7 @@ export class NotesItemComponent extends EnhancedComponent {
 					<div
 						class="notes-item__sync-badge"
 						t-if="props.syncSynced > 0 || props.syncError > 0"
-						t-att-aria-label="(props.syncSynced > 0 ? props.syncSynced + ' sync' : '') + (props.syncError > 0 ? ' ' + props.syncError + ' erreur(s)' : '')"
+						t-att-aria-label="(props.syncSynced > 0 ? t('aria.sync_synced', { count: props.syncSynced }) : '') + (props.syncError > 0 ? ' ' + t('aria.sync_errors', { count: props.syncError }) : '')"
 					>
 						<img t-att-src="cloudSyncIcon" alt="" aria-hidden="true"/>
 						<span
@@ -95,7 +95,7 @@ export class NotesItemComponent extends EnhancedComponent {
 				<button
 					type="button"
 					class="notes-item__action notes-item__delete"
-					t-att-aria-label="'Supprimer : ' + (props.note.title || '(Sans titre)')"
+					t-att-aria-label="t('aria.delete_named', { title: props.note.title || t('label.untitled') })"
 					t-on-click.stop.prevent="() => this.props.deleteNote(props.note.id)"
 				>
 					<img t-att-src="deleteIcon" alt="" aria-hidden="true"/>

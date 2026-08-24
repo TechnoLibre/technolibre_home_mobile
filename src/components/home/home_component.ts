@@ -91,7 +91,7 @@ export class HomeComponent extends EnhancedComponent {
 
       <div id="home-actions" role="list">
         <button class="home-action-card" role="listitem" t-on-click="onNotesClick"
-                t-att-aria-label="state.noteCount + ' note' + (state.noteCount !== 1 ? 's' : '') + ' — ouvrir la liste'">
+                t-att-aria-label="state.noteCount === 1 ? t('aria.open_note_list_one', { count: state.noteCount }) : t('aria.open_note_list_many', { count: state.noteCount })">
           <span class="home-action-card__icon" aria-hidden="true">📝</span>
           <span class="home-action-card__label"><t t-esc="labelNote"/>s</span>
           <span t-if="state.noteCount > 0" class="home-action-card__badge"
@@ -147,7 +147,7 @@ export class HomeComponent extends EnhancedComponent {
             <button
               class="home-tag-chip"
               t-att-style="'background-color:' + tag.color"
-              t-att-aria-label="'Tag : ' + tag.name"
+              t-att-aria-label="t('aria.tag_named', { name: tag.name })"
               t-on-click="() => this.onTagClick(tag.id)"
             >
               <t t-esc="tag.name" />

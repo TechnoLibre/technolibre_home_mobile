@@ -54,7 +54,7 @@ export class NoteListComponent extends EnhancedComponent {
 						type="button"
 						class="breadcrumb__options-btn"
 						title="Options"
-						aria-label="Options"
+						t-att-aria-label="t('aria.options')"
 						aria-haspopup="menu"
 						t-att-aria-expanded="state.showOptionsMenu ? 'true' : 'false'"
 						t-on-click.stop.prevent="toggleOptionsMenu"

@@ -10,7 +10,7 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 		<button
 			type="button"
 			class="geolocation__open-popover"
-			aria-label="Voir les données de géolocalisation"
+			t-att-aria-label="t('aria.view_geolocation')"
 			t-on-click.stop.prevent="showPopover"
 		>
 			<t t-esc="props.params.text"></t>
