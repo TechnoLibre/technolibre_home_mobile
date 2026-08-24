@@ -1,0 +1,14 @@
+{
+  "nom": "bundle de test",
+  "version": "1.0.0",
+  "actif": true,
+  "compteur": 42,
+  "ratio": 0.75,
+  "vide": null,
+  "liste": [1, "deux", false, null],
+  "imbrique": {
+    "accents": "éàçùî",
+    "echappement": "guillemet \" et antislash \\",
+    "profond": { "encore": { "bas": [] } }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "demo-javascript",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "File d'attente à concurrence bornée",
+  "license": "AGPL-3.0-or-later",
+  "scripts": { "test": "node --test" },
+  "engines": { "node": ">=20" }
+}

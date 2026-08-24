@@ -469,6 +469,39 @@ function bundleSourcePlugin(): Plugin {
                 removeDirRobust(join(root, "src", "public", "erplibre"));
             }
 
+            // ── 1c. Display-test bundle (src/public/test/) ────────────────
+            // Unlike the two above, this one is not derived from sources: the
+            // fixtures ARE the content, so they live in test-bundle/ and are
+            // copied verbatim. No size limit and no skip list — the whole tree
+            // is under 400 KB, and a fixture that got filtered out would
+            // silently stop testing the format it was there for.
+            const testSrcDir = join(root, "test-bundle");
+            const testOutDir = join(root, "src", "public", "test");
+            removeDirRobust(testOutDir);
+            if (existsSync(testSrcDir)) {
+                mkdirSync(testOutDir, { recursive: true });
+                const testIndex: BundleEntry[] = [];
+                const testStats: CopyStats = {
+                    copied: 0, skippedName: 0, skippedExclude: 0,
+                    skippedSize: 0, errors: 0,
+                };
+                const testT0 = Date.now();
+                copyDirToBundle(
+                    testSrcDir, "", testOutDir, testIndex, undefined,
+                    undefined, undefined, testStats,
+                );
+                writeFileSync(
+                    join(testOutDir, "index.json"),
+                    JSON.stringify(testIndex, null, 2),
+                );
+                console.log(
+                    `[bundle-source] ${testStats.copied} files → src/public/test/` +
+                    `  (${Date.now() - testT0} ms` +
+                    (testStats.errors ? `  ⚠ ${testStats.errors} errors` : "") +
+                    `)`
+                );
+            }
+
             // ── 2. ERPLibre manifest repos (src/public/repos/) ────────────
             const manifestPath = resolve(
                 process.env["ERPLIBRE_MANIFEST_PATH"] ??

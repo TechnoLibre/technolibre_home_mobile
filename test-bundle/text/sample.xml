@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data noupdate="1">
+    <record id="vue_test" model="ir.ui.view">
+      <field name="name">test.vue</field>
+      <field name="arch" type="xml">
+        <form string="Test &amp; accents">
+          <sheet>
+            <field name="name" placeholder="Été"/>
+          </sheet>
+        </form>
+      </field>
+    </record>
+    <!-- un commentaire -->
+  </data>
+</odoo>

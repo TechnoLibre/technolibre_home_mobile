@@ -60,14 +60,21 @@ export class OptionsCodeComponent extends EnhancedComponent {
           <button class="code-setup__mode-btn"
                   t-att-class="{ 'code-setup__mode-btn--active': state.bundleTarget === 'mobile' }"
                   t-on-click="() => state.bundleTarget = 'mobile'">
-            📱 Mobile
+            📱 <t t-esc="t('label.bundle_mobile')"/>
           </button>
           <button class="code-setup__mode-btn"
                   t-att-class="{ 'code-setup__mode-btn--active': state.bundleTarget === 'erplibre' }"
                   t-on-click="() => state.bundleTarget = 'erplibre'">
-            🏠 ERPLibre (racine)
+            🏠 <t t-esc="t('label.bundle_erplibre')"/>
+          </button>
+          <button class="code-setup__mode-btn"
+                  t-att-class="{ 'code-setup__mode-btn--active': state.bundleTarget === 'test' }"
+                  t-on-click="() => state.bundleTarget = 'test'">
+            🧪 <t t-esc="t('label.bundle_test')"/>
           </button>
         </div>
+        <div class="code-setup__hint" t-if="state.bundleTarget === 'test'"
+             t-esc="t('hint.bundle_test')"/>
       </t>
       <t t-if="state.mode === 'ssh-path'">
         <div class="code-setup__hint"><t t-esc="t('hint.ssh_path_mode')"/></div>
@@ -628,7 +635,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
             serverWorkspaces: [] as Workspace[],
             workspacesLoading: false,
             manifestProjects: [] as ManifestProject[],
-            bundleTarget: "mobile" as "mobile" | "erplibre",
+            bundleTarget: "mobile" as "mobile" | "erplibre" | "test",
 
             tab: "files" as BrowserTab,
             serverLabel: "",
@@ -699,7 +706,10 @@ export class OptionsCodeComponent extends EnhancedComponent {
             const wantTarget = params.get("target");
             if (wantPath) {
                 this.state.mode = "bundle";
-                this.state.bundleTarget = wantTarget === "erplibre" ? "erplibre" : "mobile";
+                this.state.bundleTarget =
+                    wantTarget === "erplibre" || wantTarget === "test"
+                        ? wantTarget
+                        : "mobile";
                 await this._connectBundle();
                 const slash = wantPath.lastIndexOf("/");
                 const dir = slash >= 0 ? wantPath.slice(0, slash) : "";
@@ -756,13 +766,17 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
     private async _connectBundle(): Promise<void> {
         const target = this.state.bundleTarget;
-        const baseUrl = target === "erplibre" ? "/erplibre" : "/repo";
-        this._bundleService = new BundleCodeService(baseUrl);
+        // Une table plutôt qu'un ternaire imbriqué : la prochaine cible s'y
+        // ajoute sans relire la condition.
+        const BUNDLES = {
+            mobile: { url: "/repo", label: "label.bundle_mobile_desc" },
+            erplibre: { url: "/erplibre", label: "label.bundle_erplibre_desc" },
+            test: { url: "/test", label: "label.bundle_test_desc" },
+        } as const;
+        const bundle = BUNDLES[target] ?? BUNDLES.mobile;
+        this._bundleService = new BundleCodeService(bundle.url);
         await this._bundleService.initialize();
-        this.state.serverLabel =
-            target === "erplibre"
-                ? "Bundle ERPLibre (racine du workspace)"
-                : "Bundle Mobile (sources de l'app)";
+        this.state.serverLabel = this.t(bundle.label);
         this.state.currentBranch = "(lecture seule)";
         await this._loadDir("");
         this.state.phase = "browser";

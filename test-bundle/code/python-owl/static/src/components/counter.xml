@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+  <t t-name="python_owl.DemoCounter">
+    <div class="o_demo_counter d-flex align-items-center gap-2">
+      <span class="o_demo_counter__value" t-esc="state.value"/>
+      <button class="btn btn-primary btn-sm"
+              t-att-disabled="state.busy"
+              t-on-click="onIncrement">
+        <t t-if="state.busy">…</t>
+        <t t-else="">+</t>
+      </button>
+    </div>
+  </t>
+</templates>

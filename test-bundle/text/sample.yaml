@@ -1,0 +1,15 @@
+nom: bundle de test
+version: 1.0.0
+actif: true
+liste:
+  - un
+  - deux
+  - trois
+imbrique:
+  accents: éàçùî
+  multiligne: |
+    première ligne
+    seconde ligne
+  replie: >
+    ceci est replié
+    sur une seule ligne

@@ -1,0 +1,5 @@
+Un fichier texte sans extension parlante.
+
+Il sert à vérifier qu'un fichier sans coloration s'affiche quand même, avec
+ses lignes vides, ses     espaces multiples, et une ligne très longue qui doit
+défiler ou se replier selon le réglage : ----------------------------------------------------------------------------------------------------
