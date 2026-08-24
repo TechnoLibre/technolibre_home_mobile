@@ -43,22 +43,22 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
            class="note__control"
            href="#"
            role="button"
-           aria-label="Ajouter un lieu"
+           t-att-aria-label="t('button.add_location')"
            t-on-click.stop.prevent="props.addLocation"
         >
             <img t-att-src="globeLocationIcon" alt="" aria-hidden="true"/>
-            <span>Lieu</span>
+            <span t-esc="t('label.location')"/>
         </a>
         <a t-if="state.expanded"
            id="note__control__photo"
            class="note__control"
            href="#"
            role="button"
-           aria-label="Ajouter une photo"
+           t-att-aria-label="t('button.add_photo')"
            t-on-click.stop.prevent="props.addPhoto"
         >
             <img t-att-src="addPhotoIcon" alt="" aria-hidden="true"/>
-            <span>Photo</span>
+            <span t-esc="t('label.photo')"/>
         </a>
         <a id="note__control__image"
            class="note__control"
@@ -75,43 +75,43 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
            class="note__control"
            href="#"
            role="button"
-           aria-label="Ajouter une vidéo"
+           t-att-aria-label="t('button.add_video')"
            t-on-click.stop.prevent="props.addVideo"
         >
             <img t-att-src="addVideoIcon" alt="" aria-hidden="true"/>
-            <span>Vidéo</span>
+            <span t-esc="t('label.video')"/>
         </a>
         <a t-if="state.expanded"
            id="note__control__audio"
            class="note__control"
            href="#"
            role="button"
-           aria-label="Ajouter un audio"
+           t-att-aria-label="t('button.add_audio')"
            t-on-click.stop.prevent="props.addAudio"
         >
             <img t-att-src="audioIcon" alt="" aria-hidden="true"/>
-            <span>Audio</span>
+            <span t-esc="t('label.audio')"/>
         </a>
         <a id="note__control__text"
            class="note__control"
            href="#"
            role="button"
-           aria-label="Ajouter du texte"
+           t-att-aria-label="t('button.add_text')"
            t-on-click.stop.prevent="props.addText"
         >
             <img t-att-src="textIcon" alt="" aria-hidden="true"/>
-            <span>Texte</span>
+            <span t-esc="t('label.text')"/>
         </a>
         <a t-if="state.expanded"
            id="note__control__date"
            class="note__control"
            href="#"
            role="button"
-           aria-label="Ajouter une date"
+           t-att-aria-label="t('button.add_date')"
            t-on-click.stop.prevent="props.addDateEntry"
         >
             <img t-att-src="addDateIcon" alt="" aria-hidden="true"/>
-            <span>Date</span>
+            <span t-esc="t('label.date')"/>
         </a>
         <button type="button"
                 id="note__control__more"

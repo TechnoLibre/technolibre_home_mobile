@@ -182,6 +182,20 @@ describe("NoteService with SQLite", () => {
     });
   });
 
+  describe("entry.getNewPhotoEntry source", () => {
+    it("defaults source to 'camera' when none given", () => {
+      const entry = noteService.entry.getNewPhotoEntry();
+      expect(entry.type).toBe("photo");
+      expect((entry.params as { source?: string }).source).toBe("camera");
+    });
+
+    it("tags the entry with source='gallery' when requested", () => {
+      const entry = noteService.entry.getNewPhotoEntry("gallery");
+      expect(entry.type).toBe("photo");
+      expect((entry.params as { source?: string }).source).toBe("gallery");
+    });
+  });
+
   describe("intent.newNoteWithImage", () => {
     it("should create a note with a photo entry", async () => {
       await noteService.intent.newNoteWithImage({ url: "/path/to/img.jpg" });

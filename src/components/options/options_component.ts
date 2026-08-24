@@ -77,6 +77,11 @@ export class OptionsComponent extends EnhancedComponent {
           </a>
         </li>
         <li class="options-list__item">
+          <a href="#" role="button" aria-label="Fonctionnalités" t-on-click.stop.prevent="onFeaturesClick">
+            🗺️ Fonctionnalités ›
+          </a>
+        </li>
+        <li class="options-list__item">
           <a href="#" role="button" t-att-aria-label="t('options.erplibre')" t-on-click.stop.prevent="onErplibreClick">
             🏠 <t t-esc="t('options.erplibre')"/> ›
           </a>

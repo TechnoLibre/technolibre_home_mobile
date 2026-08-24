@@ -156,6 +156,20 @@ export class ApplicationsComponent extends EnhancedComponent {
             </div>
           </t>
         </section>
+
+        <HeadingComponent title="'Outils'" />
+        <section id="services-tools">
+          <ul id="services-tools-list" aria-label="Outils">
+            <li class="services-tools__item">
+              <a href="#"
+                 role="button"
+                 aria-label="Galerie d'images"
+                 t-on-click.stop.prevent="onGalleryClick">
+                🖼️ Galerie ›
+              </a>
+            </li>
+          </ul>
+        </section>
       </div>
     `;
 
@@ -268,6 +282,10 @@ export class ApplicationsComponent extends EnhancedComponent {
     onAppAddClick(event: Event) {
         event.preventDefault();
         this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/applications/add"});
+    }
+
+    onGalleryClick() {
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/applications/gallery"});
     }
 
     // ── Servers ───────────────────────────────────────────────────────────────

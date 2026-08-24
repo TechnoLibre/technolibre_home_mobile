@@ -6,6 +6,111 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Summary of development on the `quality_functionnality_test` branch: 159
+commits rebased onto `main`. Test suite goes from 854 to 979 tests across
+63 files.
+
+### Added
+- **Elgato Stream Deck support** — a native Android USB stack, written from
+  scratch in Java against `UsbDeviceConnection`, with no third-party HID
+  dependency:
+  - **Seven models** in `DeckRegistry` — Original, MK.2, XL, XL v2, Mini,
+    Plus and Neo — each with its own key grid, image format, rotation and
+    bezel geometry
+  - **Two wire protocols** — `TransportV1` and `TransportV2` pagination,
+    selected per model
+  - **Image pipeline** — `RgbaRotator` (pure-Java BGR rotation), BMP and
+    JPEG encoders per model, and `LcdEncoder` for the Plus touchscreen strip
+  - **`WriterQueue`** — per-slot coalescing, so a slow deck drops stale
+    frames instead of building a backlog
+  - **Multi-deck** — one `DeckSession` per open device, a `PendingIntent`
+    per device for permission, and USB hotplug restricted to the Elgato
+    vendor ID
+  - **Camera streaming** — the rear camera painted across every deck, with
+    frame rate, camera choice, JPEG quality, still-frame skipping and
+    per-axis bezel compensation
+  - **Face detection** — ML Kit marks the tiles that frame a face
+  - **Note integration** — action keys and note entries painted on the
+    keys; pressing a key drives the note
+  - **Diagnostic panel** (`/options/streamdeck`) — per-deck brightness, a
+    USB scanner listing every device, a raw HID byte dump, an event log
+    that survives navigation, and an auto-refresh toggle
+  - **LCD marquee** — scrolling text on the Plus touchscreen
+- **Code editing** (`/options/code`) — the browser becomes writable:
+  - **`RepoExtractorService`** — lazy `tar.gz` extraction to the Capacitor
+    filesystem, with an inline ustar parser and `DecompressionStream`
+    wrappers, so no archive library ships in the bundle
+  - **`EditableCodeService`** — git-backed edits through `isomorphic-git`
+    over a Capacitor `Filesystem` adapter; promoting a repo to editable
+    records a git baseline
+  - **Git panel** — status, a real diff from the `diff` package, and a
+    warning when the baseline has drifted
+  - **Workspace root** browsing, not just the app's own sources
+- **Photo gallery** — every photo from every note in one place, with pinch
+  to zoom, chrome that hides, and landscape shots rotated
+- **Feature catalogue** (`/options/features`) — a bilingual catalogue of
+  every feature with dependency edges, per-leaf status, how-it-works
+  blocks, search, deep links and matrix, card and dashboard views
+- **Bundle pipeline** — manifest repos shipped as one `tar.gz` each, built
+  in parallel at CPU-count concurrency, with `BUNDLE_SKIP_REPOS` for dev
+  iteration; Owl templates precompiled at build time into their own chunk;
+  `build_id.json` emitted from the git sha
+- **Groq transcription backend** — opt-in, alongside the existing SSH,
+  HTTP and on-device whisper bridges
+- **Keep-awake** — hold the phone screen on from Options
+- **Device dialog** — every network interface listed
+- **Uptime counter** beside the startup time on Home
+- **Documentation** — the Stream Deck plugin, the bundle pipeline and edit
+  mode, a smoke script and the manual hardware matrix it cannot replace,
+  and how to debug an Android build over wifi
+
+### Changed
+- **Owl AOT coverage is now complete** — note templates dropped template
+  interpolation, so every template is precompiled; lookup is by raw source
+- **Vendor bundle split** with `manualChunks`
+- **Android build** — one ABI by default and whisper skippable, cutting
+  local build time
+- **Dependencies** — patch, minor and major bumps; one dead dependency
+  dropped; `isomorphic-git` added for edit mode
+- **Test coverage** — the Stream Deck controller, event log, three
+  bridges, the LCD renderer, four untested services, the schema
+  migrations, encrypted file IO, the error classes, the WebView util, the
+  component base class, the section hook, and the video thumbnail
+  generator and its backfill
+- **Catalogue permissions** are now audited against the Android manifest
+  by a test
+
+### Fixed
+- **Stream Deck reliability** — buttons that worked once then stopped;
+  reads moved to `UsbRequest` to get past the kernel HID poll, surviving a
+  timeout with a poll as last resort; key reports parsed correctly for XL,
+  MK.2 and v2; events emitted only on change; the read buffer matched to
+  the endpoint packet size; every deck reset before USB teardown, on swipe
+  from recents, and when streaming stops; decks dimmed rather than reset on
+  sleep, keeping the bus alive; the writer queue drained when streaming
+  stops; Note presses throttled to dodge a WebView crash; no painting while
+  the app is hidden
+- **Note caret** — the caret lands in the note title on auto-focus, and
+  keeps trying while showing that it is waiting
+- **Transcription persistence** — a transcription is saved whatever the UI
+  is doing
+- **Note contrast** — entry icons inverted on light themes, and button
+  labels legible on saturated fills
+- **Photo and Image entries** are kept distinct
+- **`usesCleartextTraffic`** wins the Android manifest merge
+- **Gradle** space-assignment deprecations silenced
+- **Stale symlink** under `repos/` no longer breaks the build
+
+### Removed
+- **`debug.keystore`** removed from the repository
+- **Native USBDEVFS reader mode** — dropped after the `UsbRequest` path
+  proved sufficient
+
+### Security
+- **Four critical audit findings** closed, then the medium and low ones
+- **Credential encryption** and certificate pinning
+- **CSP**, bundled PWA elements, R8 shrinking, and a JSch fork
+
 ## [2026.04.14.01] - 2026-04-14
 
 Summary of development since release `2026.04.13.01` (April 13, 2026).

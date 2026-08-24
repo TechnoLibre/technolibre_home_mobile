@@ -178,26 +178,44 @@ export const FEATURE_TREE: FeatureNode[] = [
                     },
                     {
                         id: "notes.entries.photo",
-                        label: { en: "Photo", fr: "Photo" },
+                        label: { en: "Photo / Image", fr: "Photo / Image" },
                         description: {
-                            en: "Capture or pick a photo, store in note.",
-                            fr: "Capturer ou choisir une photo, l'attacher à la note.",
+                            en: "Capture (camera) or pick (gallery), kept distinct.",
+                            fr: "Capturer (caméra) ou choisir (galerie), distincts.",
                         },
                         permissions: ["camera"],
                         status: "stable",
                         howItWorks: {
-                            en: "@capacitor/camera opens either the camera (CameraSource.Camera) or "
-                                + "the gallery picker via a Dialog choice. The result is a base64 "
-                                + "dataUrl stored as the entry payload — no native file copy; rendering "
-                                + "uses the dataUrl directly in <img>.",
-                            fr: "@capacitor/camera ouvre soit la caméra (CameraSource.Camera) soit le "
-                                + "sélecteur de galerie via un Dialog. Le résultat est un dataUrl base64 "
-                                + "stocké comme payload — pas de copie native; le rendu utilise le "
-                                + "dataUrl directement dans <img>.",
+                            en: "Both flows produce a `photo`-typed entry, but the "
+                                + "factory tags it with params.source — \"camera\" for "
+                                + "the bottom-bar 📷 Photo button (CameraSource.Camera, "
+                                + "needs the camera permission), \"gallery\" for the "
+                                + "🖼️ Image button (CameraSource.Photos, no runtime "
+                                + "permission — the system photo picker handles "
+                                + "consent). On re-edit, the entry component reads "
+                                + "the source and renders the matching button so the "
+                                + "user re-opens the same surface they originally "
+                                + "used. Path is the Capacitor file URI; the WebView "
+                                + "loads it via Capacitor.convertFileSrc.",
+                            fr: "Les deux flux produisent une entrée de type `photo`, "
+                                + "mais le factory marque params.source — \"camera\" "
+                                + "pour le bouton 📷 Photo de la barre du bas "
+                                + "(CameraSource.Camera, requiert la permission "
+                                + "caméra), \"gallery\" pour le bouton 🖼️ Image "
+                                + "(CameraSource.Photos, pas de permission — le "
+                                + "sélecteur photo système gère le consentement). À "
+                                + "la ré-édition, le composant entry lit la source "
+                                + "et affiche le bon bouton, pour que l'utilisateur "
+                                + "rouvre la même surface qu'à la création. Path = "
+                                + "URI Capacitor; le WebView charge via "
+                                + "Capacitor.convertFileSrc.",
                         },
                         dependsOn: ["notes.entries.framework"],
                         demo: { kind: "route", url: "/note/demo" },
-                        files: ["src/components/note_entry/photo/note_entry_photo_component.ts"],
+                        files: [
+                            "src/components/note_entry/photo/note_entry_photo_component.ts",
+                            "src/services/note/noteEntrySubservice.ts",
+                        ],
                     },
                     {
                         id: "notes.entries.video",
@@ -982,6 +1000,158 @@ export const FEATURE_TREE: FeatureNode[] = [
         ],
     },
     {
+        id: "gallery",
+        label: { en: "🖼️ Gallery", fr: "🖼️ Galerie" },
+        description: {
+            en: "Cross-note image browser — mosaic + fullscreen carousel.",
+            fr: "Visionneuse cross-notes — mosaïque + carrousel plein écran.",
+        },
+        demo: { kind: "route", url: "/applications/gallery" },
+        children: [
+            {
+                id: "gallery.service",
+                label: { en: "Gallery service", fr: "Service Galerie" },
+                description: {
+                    en: "Aggregate every photo entry across the notes.",
+                    fr: "Agrège chaque entrée photo de toutes les notes.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Reads every note via DatabaseService.getAllNotes, "
+                        + "filters entries of type 'photo' with a non-empty "
+                        + "params.path, sorts by note date desc. No mutation "
+                        + "API — editing an image still goes through the "
+                        + "regular note editor. Read each call (no caching) "
+                        + "so the gallery always reflects the latest state.",
+                    fr: "Lit chaque note via DatabaseService.getAllNotes, "
+                        + "filtre les entrées de type 'photo' avec un "
+                        + "params.path non-vide, trie par date de note "
+                        + "desc. Pas d'API de mutation — l'édition d'une "
+                        + "image passe toujours par l'éditeur de note "
+                        + "habituel. Lecture à chaque appel (pas de "
+                        + "cache) pour toujours refléter l'état courant.",
+                },
+                demo: NONE_PLUMBING,
+                files: ["src/services/galleryService.ts"],
+            },
+            {
+                id: "gallery.page",
+                label: { en: "Gallery page", fr: "Page galerie" },
+                description: {
+                    en: "Mosaic + swipe-able fullscreen viewer.",
+                    fr: "Mosaïque + visionneuse plein-écran swipe-able.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Default mosaic grid (3-6 columns by viewport "
+                        + "width) of square thumbnails. Tap a tile → "
+                        + "fullscreen carousel; swipe horizontally or use "
+                        + "the on-screen prev/next/close buttons to "
+                        + "navigate. The fullscreen image is fit-to-"
+                        + "screen by default (object-fit: contain) and "
+                        + "supports two-finger pinch-zoom up to 4×, "
+                        + "one-finger pan once zoomed, double-tap to "
+                        + "toggle 1×↔2×, and a single tap on the image "
+                        + "to hide/show the close/prev/next chrome. "
+                        + "Auto-rotate (default on, ⤢ button) measures "
+                        + "the image's natural aspect against the "
+                        + "viewer's bounds on load and rotates the "
+                        + "image 90° when the orientations don't match, "
+                        + "swapping the box dimensions in JS so the "
+                        + "rotated bounding box matches the viewer "
+                        + "area without overflowing. CSS sets "
+                        + "touch-action: none on the viewer so the "
+                        + "component owns every gesture; navigation "
+                        + "between images resets the zoom. The image "
+                        + "path goes through Capacitor.convertFileSrc "
+                        + "so the WebView can load it past the origin "
+                        + "check.",
+                    fr: "Grille mosaïque par défaut (3-6 colonnes selon "
+                        + "viewport) de miniatures carrées. Tap sur une "
+                        + "tuile → carrousel plein écran; swipe "
+                        + "horizontal ou boutons prev/next/close pour "
+                        + "naviguer. L'image plein écran est ajustée à "
+                        + "l'écran par défaut (object-fit: contain) et "
+                        + "supporte le pinch-zoom à deux doigts jusqu'à "
+                        + "4×, le pan à un doigt une fois zoomée, le "
+                        + "double-tap pour basculer 1×↔2×, et un tap "
+                        + "simple sur l'image pour cacher/afficher les "
+                        + "boutons close/prev/next. Auto-rotation "
+                        + "(activée par défaut, bouton ⤢) compare "
+                        + "l'aspect naturel de l'image aux dimensions "
+                        + "de la visionneuse au chargement et tourne "
+                        + "l'image de 90° quand les orientations ne "
+                        + "correspondent pas, avec swap des dimensions "
+                        + "du box en JS pour que le bounding box "
+                        + "tourné colle à la zone disponible sans "
+                        + "déborder. CSS pose touch-action: none sur "
+                        + "la visionneuse pour que le composant capte "
+                        + "tous les gestes; naviguer entre images "
+                        + "réinitialise le zoom. Le path image passe "
+                        + "par Capacitor.convertFileSrc pour que le "
+                        + "WebView puisse le charger.",
+                },
+                dependsOn: ["gallery.service"],
+                demo: { kind: "route", url: "/applications/gallery" },
+                files: [
+                    "src/components/applications/gallery/applications_gallery_component.ts",
+                    "src/components/applications/gallery/applications_gallery_component.scss",
+                ],
+            },
+            {
+                id: "gallery.streamdeck-remote",
+                label: {
+                    en: "Stream Deck remote",
+                    fr: "Télécommande Stream Deck",
+                },
+                description: {
+                    en: "Browse the gallery from the deck — every key is a thumbnail.",
+                    fr: "Parcourir la galerie depuis le deck — chaque touche est une miniature.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "When the gallery page is mounted, the Owl "
+                        + "component fires STREAMDECK_GALLERY_PAGE_ACTIVE "
+                        + "with the current image list (URLs + indices). "
+                        + "The controller flips into remote mode: keys "
+                        + "0..N-4 paint a JPEG thumbnail per slot (loaded "
+                        + "via <img> + canvas cover-crop), and the last "
+                        + "three keys become prev / next / back. Pressing "
+                        + "a thumb fires STREAMDECK_GALLERY_OPEN with the "
+                        + "absolute index — the mobile opens the viewer. "
+                        + "Pressing back closes fullscreen first, then "
+                        + "navigates to /applications on a second press. When "
+                        + "the page unmounts, the deck repaints its "
+                        + "default Note + Galerie surface. Outside the "
+                        + "gallery page, key 5 sits below the Note key "
+                        + "as a permanent shortcut to /options/gallery.",
+                    fr: "Quand la page galerie est montée, le composant "
+                        + "Owl émet STREAMDECK_GALLERY_PAGE_ACTIVE avec "
+                        + "la liste d'images (URLs + index). Le "
+                        + "contrôleur bascule en mode télécommande : "
+                        + "touches 0..N-4 affichent une miniature JPEG "
+                        + "par tuile (chargée via <img> + canvas crop "
+                        + "cover), les 3 dernières touches deviennent "
+                        + "préc / suiv / retour. Une miniature pressée "
+                        + "émet STREAMDECK_GALLERY_OPEN avec l'index "
+                        + "absolu — le mobile ouvre la visionneuse. "
+                        + "Retour ferme le plein écran d'abord, puis "
+                        + "navigue à /applications à la 2e pression. Au "
+                        + "démontage, le deck repeint sa surface "
+                        + "Note + Galerie par défaut. Hors page "
+                        + "galerie, la touche 5 reste un raccourci "
+                        + "permanent vers /options/gallery.",
+                },
+                dependsOn: ["gallery.page", "streamdeck.controller"],
+                demo: { kind: "route", url: "/applications/gallery" },
+                files: [
+                    "src/services/streamDeckController.ts",
+                    "src/components/applications/gallery/applications_gallery_component.ts",
+                ],
+            },
+        ],
+    },
+    {
         id: "sync",
         label: { en: "🔄 Odoo sync", fr: "🔄 Sync Odoo" },
         description: {
@@ -1675,8 +1845,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "system.keep-awake",
                 label: { en: "Keep awake", fr: "Empêcher la veille" },
                 description: {
-                    en: "FLAG_KEEP_SCREEN_ON to keep deck LCDs lit.",
-                    fr: "FLAG_KEEP_SCREEN_ON pour garder les LCD allumées.",
+                    en: "FLAG_KEEP_SCREEN_ON + deck-lit-during-sleep + wake-on-deck-press.",
+                    fr: "FLAG_KEEP_SCREEN_ON + deck-allumé-en-veille + réveil-sur-touche.",
                 },
                 status: "stable",
                 issues: [
@@ -1684,21 +1854,53 @@ export const FEATURE_TREE: FeatureNode[] = [
                       fr: "Batterie : draine proportionnel au temps écran allumé." },
                 ],
                 howItWorks: {
-                    en: "Plugin toggles FLAG_KEEP_SCREEN_ON on the activity "
-                        + "window. While set, Android leaves the screen on "
-                        + "indefinitely and the USB host stays at full power. "
-                        + "Pref persists in localStorage and re-applies on "
-                        + "app start.",
-                    fr: "Le plugin toggle FLAG_KEEP_SCREEN_ON sur la window "
-                        + "de l'activity. Tant qu'il est set, Android garde "
-                        + "l'écran on indéfiniment et l'USB host reste à "
-                        + "pleine puissance. La préf persiste localStorage "
-                        + "et se ré-applique au démarrage.",
+                    en: "Two independent toggles, each persisted in "
+                        + "localStorage and re-applied on boot. "
+                        + "(1) Empêcher la mise en veille — KeepAwakePlugin "
+                        + "sets FLAG_KEEP_SCREEN_ON on the activity window, "
+                        + "Android leaves the screen on, USB stays at full "
+                        + "power. (2) Garder le Stream Deck allumé en veille "
+                        + "— signals StreamDeckController to skip the "
+                        + "brightness=0 dim on visibilitychange:hidden, AND "
+                        + "calls StreamDeckPlugin.setWakeOnKeyPress(true) "
+                        + "which arms a native keyPressHook in DeckSession. "
+                        + "When a key is pressed while MainActivity is "
+                        + "paused, the plugin acquires SCREEN_BRIGHT_WAKE_LOCK | "
+                        + "ACQUIRE_CAUSES_WAKEUP and starts the launch intent "
+                        + "with REORDER_TO_FRONT. MainActivity's "
+                        + "setShowWhenLocked / setTurnScreenOn (or the "
+                        + "FLAG_SHOW_WHEN_LOCKED window flag on pre-27) lets "
+                        + "it cover the lockscreen so the user lands on the "
+                        + "live UI.",
+                    fr: "Deux toggles indépendants, persistés en "
+                        + "localStorage et réappliqués au boot. "
+                        + "(1) Empêcher la mise en veille — KeepAwakePlugin "
+                        + "pose FLAG_KEEP_SCREEN_ON sur la window de "
+                        + "l'activity, Android garde l'écran on, l'USB "
+                        + "reste à pleine puissance. (2) Garder le Stream "
+                        + "Deck allumé en veille — indique à "
+                        + "StreamDeckController de sauter le dim "
+                        + "brightness=0 sur visibilitychange:hidden, ET "
+                        + "appelle StreamDeckPlugin.setWakeOnKeyPress(true) "
+                        + "qui arme un keyPressHook natif dans "
+                        + "DeckSession. Sur pression touche pendant que "
+                        + "MainActivity est en pause, le plugin acquiert "
+                        + "SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP "
+                        + "et lance l'intent avec REORDER_TO_FRONT. Le "
+                        + "setShowWhenLocked / setTurnScreenOn de "
+                        + "MainActivity (ou FLAG_SHOW_WHEN_LOCKED window "
+                        + "flag sur pre-27) lui permet de couvrir l'écran "
+                        + "verrouillé pour que l'utilisateur retrouve l'UI "
+                        + "vivante.",
                 },
                 demo: { kind: "options", sectionId: "keep-awake" },
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/KeepAwakePlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java",
+                    "android/app/src/main/java/ca/erplibre/home/MainActivity.java",
                     "src/plugins/keepAwakePlugin.ts",
+                    "src/services/streamDeckController.ts",
                     "src/components/options/keep_awake/options_keep_awake_component.ts",
                 ],
                 tests: ["src/__tests__/keepAwakePlugin.test.ts"],
