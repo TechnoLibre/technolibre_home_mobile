@@ -19,6 +19,10 @@ const ENV = {
 };
 
 export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    lABEL_NOTE = ENV.LABEL_NOTE;
+
 	static template = xml`
 		<div id="note-video-intent-handler-component">
 			<h1 class="intent__title">Ajouter une video</h1>
@@ -31,13 +35,13 @@ export class NoteVideoIntentHandlerComponent extends EnhancedComponent {
 			>
 				<source t-att-src="state.videoUri"/>
 			</video>
-			<h3 class="intent__notes__title">${ENV.LABEL_NOTE}s</h3>
+			<h3 class="intent__notes__title"><t t-esc="lABEL_NOTE"/>s</h3>
 			<ul class="intent__notes">
 				<li
 					class="intent__item intent__item--new"
 					t-on-click.stop.prevent="newNoteWithVideo"
 				>
-					Nouvelle ${ENV.LABEL_NOTE} avec cette video
+					Nouvelle <t t-esc="lABEL_NOTE"/> avec cette video
 				</li>
 				<li
 					class="intent__item"

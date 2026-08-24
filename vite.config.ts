@@ -10,6 +10,9 @@ import {
     writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { execFileSync, spawnSync, spawn } from "node:child_process";
+import { tmpdir, cpus } from "node:os";
+import { randomBytes } from "node:crypto";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -24,9 +27,87 @@ interface ManifestProject {
     path: string;
     slug: string;
     revision: string;
+    archive: string;
+    indexUrl: string;
+    fileCount: number;
+    uncompressedBytes: number;
+    compressedBytes: number;
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Create a gzipped tar archive of the given source dir.
+ * Uses the system `tar` command — fastest path; required at build time.
+ * Async variant lets the manifest-repo loop run several `tar` processes
+ * in parallel.
+ */
+function createTarGz(srcDir: string, archivePath: string): void {
+    try {
+        execFileSync("tar", ["-czf", archivePath, "-C", srcDir, "."], {
+            stdio: ["ignore", "ignore", "pipe"],
+        });
+    } catch (e) {
+        throw new Error(`tar -czf failed for ${srcDir} → ${archivePath}: ${e}`);
+    }
+}
+
+function createTarGzAsync(srcDir: string, archivePath: string): Promise<void> {
+    return new Promise((resolveP, rejectP) => {
+        const child = spawn("tar", ["-czf", archivePath, "-C", srcDir, "."], {
+            stdio: ["ignore", "ignore", "pipe"],
+        });
+        let stderr = "";
+        child.stderr?.on("data", (d) => { stderr += d.toString(); });
+        child.on("error", rejectP);
+        child.on("exit", (code) => {
+            if (code === 0) resolveP();
+            else rejectP(new Error(`tar -czf exited ${code} for ${srcDir} → ${archivePath}\n${stderr}`));
+        });
+    });
+}
+
+/**
+ * Run `fn` over `items` with bounded concurrency. Workers pull from a
+ * shared cursor so slow tasks don't stall the queue.
+ */
+async function parallelMap<T, R>(
+    items: T[],
+    limit: number,
+    fn: (item: T, idx: number) => Promise<R>,
+): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let cursor = 0;
+    const workers = Array.from(
+        { length: Math.min(limit, items.length) },
+        async () => {
+            while (true) {
+                const i = cursor++;
+                if (i >= items.length) return;
+                results[i] = await fn(items[i], i);
+            }
+        },
+    );
+    await Promise.all(workers);
+    return results;
+}
+
+/**
+ * rmSync with broken-symlink and ENOTEMPTY tolerance. The bundle pipeline
+ * has occasionally produced ENOTEMPTY when a previous build left stale
+ * symlinks under src/public/repos/{slug}/ — the recursive remove races
+ * with the kernel re-tagging dir entries. We retry up to 5 times.
+ */
+function removeDirRobust(dir: string): void {
+    if (!existsSync(dir)) return;
+    try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch (e) {
+        console.warn(`[bundle-warn] removeDirRobust failed once: ${dir} — ${e}`);
+        // One more attempt after a small backoff. If this still fails, propagate.
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
+    }
+}
 
 /** Derive a filesystem-safe slug from a git URL (mirrors CodeService._urlToSlug). */
 function urlToSlug(url: string): string {
@@ -220,15 +301,39 @@ function parseManifestXml(xml: string): {
 // Default: ../../.repo/local_manifests/erplibre_manifest.xml
 //          (relative to mobile/erplibre_home_mobile/)
 
+/**
+ * Pre-compile Owl xml`...` templates → src/__owl-precompiled__.ts so the
+ * runtime never hits Owl's dynamic-eval path. Required because our CSP
+ * (script-src 'self' 'unsafe-inline', no 'unsafe-eval') blocks runtime
+ * Function-constructor template compilation. See doc/SECURITY_PLAN.md.
+ */
+function precompileOwlTemplatesPlugin(): Plugin {
+    return {
+        name: "precompile-owl-templates",
+        buildStart() {
+            const root = process.cwd();
+            const script = join(root, "scripts", "precompile-owl-templates.mjs");
+            if (!existsSync(script)) {
+                console.warn(`[owl-aot] script missing: ${script}`);
+                return;
+            }
+            const r = spawnSync("node", [script], { stdio: "inherit" });
+            if (r.status !== 0) {
+                throw new Error(`[owl-aot] precompile failed (exit ${r.status})`);
+            }
+        },
+    };
+}
+
 function bundleSourcePlugin(): Plugin {
     return {
         name: "bundle-source",
-        buildStart() {
+        async buildStart() {
             const root = process.cwd(); // mobile/erplibre_home_mobile/
 
             // ── 1. App source bundle (src/public/repo/) ───────────────────
             const appOutDir = join(root, "src", "public", "repo");
-            if (existsSync(appOutDir)) rmSync(appOutDir, { recursive: true });
+            removeDirRobust(appOutDir);
             mkdirSync(appOutDir, { recursive: true });
 
             const appIndex: BundleEntry[] = [];
@@ -251,10 +356,16 @@ function bundleSourcePlugin(): Plugin {
             const ROOT_PATTERNS = [
                 /\.md$/i, /\.ts$/, /\.sh$/, /^LICENSE$/, /^\.gitignore$/, /^capacitor\.config\.json$/,
             ];
-            for (const name of readdirSync(root).sort()) {
+            let rootEntries: string[];
+            try { rootEntries = readdirSync(root).sort(); }
+            catch (e) { console.warn(`[bundle-warn] readdir(${root}) failed: ${e}`); rootEntries = []; }
+            for (const name of rootEntries) {
                 if (ROOT_SKIP_FILES.has(name)) continue;
                 const fullSrc = join(root, name);
-                if (!statSync(fullSrc).isFile()) continue;
+                let st;
+                try { st = statSync(fullSrc); }
+                catch (e) { dbg(`skip(stat) ${name} — ${e}`); continue; }
+                if (!st.isFile()) continue;
                 if (!ROOT_PATTERNS.some((re) => re.test(name))) continue;
                 copyFileSync(fullSrc, join(appOutDir, name));
                 appIndex.push({ path: name, type: "file" });
@@ -275,7 +386,7 @@ function bundleSourcePlugin(): Plugin {
                     join(root, "../../.repo/local_manifests/erplibre_manifest.xml"),
             );
             const reposOutDir = join(root, "src", "public", "repos");
-            if (existsSync(reposOutDir)) rmSync(reposOutDir, { recursive: true });
+            removeDirRobust(reposOutDir);
             mkdirSync(reposOutDir, { recursive: true });
 
             // Paths that must never be entered while walking a manifest project
@@ -287,7 +398,20 @@ function bundleSourcePlugin(): Plugin {
 
             const bundledProjects: ManifestProject[] = [];
 
-            if (!existsSync(manifestPath)) {
+            // Dev escape hatch: BUNDLE_SKIP_REPOS=1 skips the manifest-repo
+            // tar.gz creation entirely, leaving an empty manifest.json. Saves
+            // ~15 s of build + ~15 s of adb install (≈378 MB of assets gone).
+            // The Code tool's "browse a manifest repo" flow surfaces a clear
+            // error in this mode (BundleNotShippedError); use the full build
+            // when you actually need to browse those repos.
+            const skipRepos = process.env["BUNDLE_SKIP_REPOS"] === "1";
+
+            if (skipRepos) {
+                console.log(
+                    "[bundle-manifest] BUNDLE_SKIP_REPOS=1 — skipping all " +
+                    "manifest repos (Code tool's 'browse repo' will fail-soft).",
+                );
+            } else if (!existsSync(manifestPath)) {
                 console.log(`[bundle-manifest] manifest not found: ${manifestPath}`);
             } else {
                 const xml = readFileSync(manifestPath, "utf-8");
@@ -305,7 +429,15 @@ function bundleSourcePlugin(): Plugin {
                     return false;
                 };
 
-                for (const proj of projects) {
+                // Parallelize the per-repo work (file walk → tar.gz). Tar
+                // processes run concurrently up to MANIFEST_PARALLEL workers.
+                // Default = nproc (logical CPUs). Override via BUNDLE_PARALLEL.
+                const MANIFEST_PARALLEL = Number(
+                    process.env["BUNDLE_PARALLEL"] ?? cpus().length,
+                );
+                const tManifestT0 = Date.now();
+
+                const results = await parallelMap(projects, MANIFEST_PARALLEL, async (proj) => {
                     const remoteFetch = remotes[proj.remote] ?? "";
                     const url = remoteFetch + proj.name;
                     const slug = urlToSlug(url);
@@ -313,30 +445,80 @@ function bundleSourcePlugin(): Plugin {
 
                     if (!existsSync(localPath)) {
                         console.log(`[bundle-manifest] skip (missing): ${localPath}`);
-                        continue;
+                        return null;
                     }
 
-                    const projOutDir = join(reposOutDir, slug);
-                    mkdirSync(projOutDir, { recursive: true });
+                    // Stage filtered files in a temp dir, then tar.gz them.
+                    const stage = join(
+                        tmpdir(),
+                        `erplibre-bundle-${slug}-${randomBytes(4).toString("hex")}`,
+                    );
+                    mkdirSync(stage, { recursive: true });
+
                     const projIndex: BundleEntry[] = [];
-                    const projStats: CopyStats = { copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, errors: 0 };
+                    const projStats: CopyStats = {
+                        copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, errors: 0,
+                    };
                     const projT0 = Date.now();
-                    copyDirToBundle(localPath, "", projOutDir, projIndex, manifestExtraSkip, outputExclusions, MAX_BUNDLE_FILE_BYTES, projStats);
+                    copyDirToBundle(
+                        localPath, "", stage, projIndex, manifestExtraSkip,
+                        outputExclusions, MAX_BUNDLE_FILE_BYTES, projStats,
+                    );
+
+                    // Write index.json into the stage so it lands inside the archive.
                     writeFileSync(
-                        join(projOutDir, "index.json"),
+                        join(stage, "index.json"),
                         JSON.stringify(projIndex, null, 2),
                     );
 
+                    // Sidecar next to the archive — the runtime fetches this
+                    // small JSON to render the dir tree without extracting.
+                    const indexOutPath = join(reposOutDir, `${slug}.index.json`);
+                    writeFileSync(indexOutPath, JSON.stringify(projIndex, null, 2));
+
+                    // Compute uncompressed size.
+                    const uncompressedBytes = projIndex
+                        .filter((e) => e.type === "file")
+                        .reduce((sum, e) => {
+                            try {
+                                return sum + statSync(join(stage, e.path)).size;
+                            } catch {
+                                return sum;
+                            }
+                        }, 0);
+
+                    const archivePath = join(reposOutDir, `${slug}.tar.gz`);
+                    await createTarGzAsync(stage, archivePath);
+
+                    const compressedBytes = statSync(archivePath).size;
+
+                    removeDirRobust(stage);
+
                     const name = proj.name.replace(/\.git$/, "");
-                    bundledProjects.push({ url, name, path: proj.path, slug, revision: proj.revision });
                     console.log(
-                        `[bundle-manifest] ${slug}: ${projStats.copied} files` +
-                        `  skipped=${projStats.skippedName + projStats.skippedSize}` +
-                        `  (${Date.now() - projT0} ms` +
-                        (projStats.errors ? `  ⚠ ${projStats.errors} errors` : "") +
-                        `)`
+                        `[bundle-manifest] ${slug}.tar.gz: ${projStats.copied} files` +
+                        `, ${(uncompressedBytes / 1024).toFixed(0)} KB → ` +
+                        `${(compressedBytes / 1024).toFixed(0)} KB` +
+                        `  (${Date.now() - projT0} ms)`,
                     );
+
+                    return {
+                        url, name, path: proj.path, slug, revision: proj.revision,
+                        archive: `repos/${slug}.tar.gz`,
+                        indexUrl: `repos/${slug}.index.json`,
+                        fileCount: projStats.copied,
+                        uncompressedBytes,
+                        compressedBytes,
+                    };
+                });
+
+                for (const r of results) {
+                    if (r) bundledProjects.push(r);
                 }
+                console.log(
+                    `[bundle-manifest] parallel pool=${MANIFEST_PARALLEL} ` +
+                    `total=${Date.now() - tManifestT0} ms`,
+                );
             }
 
             writeFileSync(
@@ -344,6 +526,21 @@ function bundleSourcePlugin(): Plugin {
                 JSON.stringify(bundledProjects, null, 2),
             );
             console.log(`[bundle-manifest] ${bundledProjects.length} repos → src/public/repos/`);
+
+            // Build identifier — used as baseline tag in editable repos.
+            let buildId = "unknown";
+            try {
+                const sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+                    stdio: ["ignore", "pipe", "ignore"], encoding: "utf-8",
+                }).trim();
+                if (sha) buildId = sha;
+            } catch { /* outside git or git missing */ }
+            buildId += "_" + Date.now().toString(36);
+            writeFileSync(
+                join(root, "src", "public", "build_id.json"),
+                JSON.stringify({ buildId, generatedAt: new Date().toISOString() }, null, 2),
+            );
+            console.log(`[bundle-manifest] build_id=${buildId}`);
         },
     };
 }
@@ -352,11 +549,48 @@ function bundleSourcePlugin(): Plugin {
 
 export default defineConfig(({ mode }) => ({
     root: "./src",
-    plugins: [bundleSourcePlugin()],
+    plugins: [precompileOwlTemplatesPlugin(), bundleSourcePlugin()],
+    resolve: {
+        alias: [
+            // Reroute the bare `@odoo/owl` import to our AOT wrapper so
+            // every component picks up the override of `xml`. Subpath
+            // imports (e.g. "@odoo/owl/dist/owl.es.js") bypass this rule.
+            {
+                find: /^@odoo\/owl$/,
+                replacement: resolve(__dirname, "src/js/owl-aot.ts"),
+            },
+        ],
+    },
     build: {
         outDir: "../dist",
         minify: "esbuild",
         emptyOutDir: true,
+        rollupOptions: {
+            output: {
+                // Split vendor bundles so the WebView can parse chunks in
+                // parallel at startup. Heavy libs are isolated; everything
+                // else under node_modules lands in a generic "vendor" chunk.
+                manualChunks(id: string) {
+                    // Owl pre-compiled templates: ~400 KB of inlined function
+                    // expressions. Isolating them lets the WebView parse the
+                    // main entry and this chunk in parallel at boot.
+                    if (id.includes("__owl-precompiled__")) return "owl-templates";
+
+                    if (!id.includes("node_modules")) return undefined;
+                    if (id.includes("@odoo/owl")) return "owl";
+                    if (id.includes("@capacitor-community/sqlite")) return "sqlite";
+                    // Lazy-loaded heavy deps — keep them out of the vendor chunk
+                    // so dynamic import() boundaries are preserved.
+                    if (id.includes("isomorphic-git")) return undefined;
+                    if (id.includes("@capacitor/") || id.includes("@capacitor-community/") ||
+                        id.includes("capacitor-") || id.includes("@capawesome") ||
+                        id.includes("@capgo")) {
+                        return "capacitor";
+                    }
+                    return "vendor";
+                },
+            },
+        },
     },
     esbuild: {
         drop: mode === "production" ? ["console", "debugger"] : [],

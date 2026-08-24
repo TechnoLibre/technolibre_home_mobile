@@ -329,13 +329,15 @@ export class DatabaseService {
   }
 
   /** Direct query access for migrations. Returns raw row objects. */
-  async rawQuery(sql: string): Promise<any[]> {
-    const result = await this.db.query(sql);
+  async rawQuery(sql: string, values?: any[]): Promise<any[]> {
+    const result = values
+      ? await this.db.query(sql, values)
+      : await this.db.query(sql);
     return result.values ?? [];
   }
 
   /** Direct write access for migrations. */
-  async rawRun(sql: string, values: any[]): Promise<void> {
+  async rawRun(sql: string, values: any[] = []): Promise<void> {
     await this.db.run(sql, values);
   }
 
@@ -787,6 +789,22 @@ export class DatabaseService {
         result        TEXT,
         debug_log     TEXT
       )
+    `);
+  }
+
+  async createEditableReposTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS editable_repos (
+        slug          TEXT PRIMARY KEY,
+        baseline_sha  TEXT NOT NULL,
+        build_id      TEXT NOT NULL,
+        promoted_at   INTEGER NOT NULL,
+        head_sha      TEXT
+      )
+    `);
+    await this.db.execute(`
+      CREATE INDEX IF NOT EXISTS idx_editable_repos_promoted_at
+        ON editable_repos(promoted_at)
     `);
   }
 

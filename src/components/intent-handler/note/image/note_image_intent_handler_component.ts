@@ -24,6 +24,10 @@ interface ImageData {
 }
 
 export class NoteImageIntentHandlerComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    lABEL_NOTE = ENV.LABEL_NOTE;
+
 	static template = xml`
 		<div id="note-image-intent-handler-component">
 			<h1 class="intent__title">Ajouter une image</h1>
@@ -34,13 +38,13 @@ export class NoteImageIntentHandlerComponent extends EnhancedComponent {
 				t-att-data-orientation="imageData.orientation"
 				t-ref="image"
 			/>
-			<h3 class="intent__notes__title">${ENV.LABEL_NOTE}s</h3>
+			<h3 class="intent__notes__title"><t t-esc="lABEL_NOTE"/>s</h3>
 			<ul class="intent__notes">
 				<li
 					class="intent__item intent__item--new"
 					t-on-click.stop.prevent="newNoteWithImage"
 				>
-					Nouvelle ${ENV.LABEL_NOTE} avec cette image
+					Nouvelle <t t-esc="lABEL_NOTE"/> avec cette image
 				</li>
 				<li
 					class="intent__item"

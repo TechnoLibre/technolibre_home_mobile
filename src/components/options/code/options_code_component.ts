@@ -3,6 +3,8 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { HeadingComponent } from "../../heading/heading_component";
 import { CodeService, DirEntry, GitBranch, GitCommit } from "../../../services/codeService";
 import { BundleCodeService } from "../../../services/bundleCodeService";
+import { RepoFs, getRepoFs } from "../../../services/repoFsFactory";
+import { ManifestProject as ManifestProjectModel } from "../../../models/manifestProject";
 import {
     detectFileLang, imageMime, supportsHighlight, highlightLine, FileLang,
 } from "./syntax_highlight";
@@ -15,13 +17,7 @@ type Phase = "setup" | "browser";
 type BrowserTab = "files" | "git";
 type FileViewMode = "code" | "markdown" | "image";
 
-interface ManifestProject {
-    url: string;
-    name: string;
-    path: string;
-    slug: string;
-    revision: string;
-}
+type ManifestProject = ManifestProjectModel;
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
 
@@ -222,17 +218,44 @@ export class OptionsCodeComponent extends EnhancedComponent {
         <span class="code-browser__server-label" t-esc="state.serverLabel" />
         <span class="code-browser__branch" t-esc="state.currentBranch" />
       </div>
+      <t t-if="state.mode === 'ssh-url' and !state.isEditable">
+        <button class="code__btn code__btn--edit"
+                t-on-click="() => this.onPromoteEdit()"
+                t-att-disabled="state.promoting">
+          <t t-if="state.promoting">⏳ Promotion…</t>
+          <t t-else="">✏️ Activer édition</t>
+        </button>
+      </t>
+      <t t-if="state.mode === 'ssh-url' and state.isEditable">
+        <button class="code__btn code__btn--unpromote"
+                t-on-click="() => this.onUnpromote()">
+          🔒 Sortir édition
+        </button>
+      </t>
       <button class="code__btn code__btn--disconnect" t-on-click="() => this.onDisconnect()">
         ✕ Déconnecter
       </button>
     </div>
+
+    <t t-if="state.baselineMismatch">
+      <div class="code__warning code__warning--baseline">
+        <strong>⚠ Baseline modifié</strong> —
+        l'application a été recompilée depuis que tu as activé l'édition de ce repo.
+        Ton historique git est basé sur l'ancien baseline (<em t-esc="state.promotedBuildId" />),
+        le nouveau est <em t-esc="state.shippedBuildId" />.
+        <button class="code__btn code__btn--baseline-update"
+                t-on-click="() => this.onRepromoteBaseline()">
+          🔄 Réinitialiser au nouveau baseline (perd les modifications)
+        </button>
+      </div>
+    </t>
 
     <div class="code-browser__tabs">
       <button class="code-browser__tab"
               t-att-class="{ 'code-browser__tab--active': state.tab === 'files' }"
               t-on-click="() => this.onTabFiles()">📂 Fichiers</button>
       <button class="code-browser__tab"
-              t-if="state.mode === 'ssh-path'"
+              t-if="state.mode === 'ssh-path' or state.isEditable"
               t-att-class="{ 'code-browser__tab--active': state.tab === 'git' }"
               t-on-click="() => this.onTabGit()">🔀 Git</button>
     </div>
@@ -385,6 +408,125 @@ export class OptionsCodeComponent extends EnhancedComponent {
     </t>
 
     <!-- ── Git tab (ssh-path only) ─────────────────── -->
+    <!-- ── Editable-mode Git tab (manifest repo promoted) ── -->
+    <t t-if="state.tab === 'git' and state.isEditable">
+      <div class="code-git">
+
+        <div class="code-git__section">
+          <div class="code-git__section-header">
+            <span>Statut — <em t-esc="state.currentBranch" /></span>
+            <div class="code-git__header-btns">
+              <button class="code__btn code__btn--refresh"
+                      t-on-click="() => this.onEditGitRefresh()">↻ Rafraîchir</button>
+              <button class="code__btn code__btn--reset-all"
+                      t-on-click="() => this.onEditGitResetAll()"
+                      t-att-disabled="state.editGitStatus.modified.length === 0 and state.editGitStatus.untracked.length === 0 and state.editGitStatus.deleted.length === 0">
+                ⟲ Tout annuler
+              </button>
+            </div>
+          </div>
+
+          <t t-if="state.editGitStatus.modified.length === 0 and state.editGitStatus.untracked.length === 0 and state.editGitStatus.staged.length === 0 and state.editGitStatus.deleted.length === 0">
+            <div class="code-git__empty">Working tree propre.</div>
+          </t>
+
+          <t t-if="state.editGitStatus.modified.length > 0">
+            <div class="code-git__group">
+              <div class="code-git__group-header">Modifié (<t t-esc="state.editGitStatus.modified.length" />)</div>
+              <t t-foreach="state.editGitStatus.modified" t-as="fp" t-key="fp">
+                <div class="code-git__file">
+                  <button class="code-git__file-name code-git__file-name--modified"
+                          t-on-click="() => this.onEditGitDiffFile(fp)">
+                    <t t-esc="fp" />
+                  </button>
+                  <button class="code__btn code__btn--reset-file"
+                          t-on-click="() => this.onEditGitResetFile(fp)">↶</button>
+                </div>
+              </t>
+            </div>
+          </t>
+
+          <t t-if="state.editGitStatus.staged.length > 0">
+            <div class="code-git__group">
+              <div class="code-git__group-header">Stagé (<t t-esc="state.editGitStatus.staged.length" />)</div>
+              <t t-foreach="state.editGitStatus.staged" t-as="fp" t-key="fp">
+                <div class="code-git__file">
+                  <button class="code-git__file-name code-git__file-name--staged"
+                          t-on-click="() => this.onEditGitDiffFile(fp)">
+                    <t t-esc="fp" />
+                  </button>
+                </div>
+              </t>
+            </div>
+          </t>
+
+          <t t-if="state.editGitStatus.untracked.length > 0">
+            <div class="code-git__group">
+              <div class="code-git__group-header">Non suivis (<t t-esc="state.editGitStatus.untracked.length" />)</div>
+              <t t-foreach="state.editGitStatus.untracked" t-as="fp" t-key="fp">
+                <div class="code-git__file">
+                  <span class="code-git__file-name code-git__file-name--untracked" t-esc="fp" />
+                </div>
+              </t>
+            </div>
+          </t>
+
+          <t t-if="state.editGitStatus.deleted.length > 0">
+            <div class="code-git__group">
+              <div class="code-git__group-header">Supprimés (<t t-esc="state.editGitStatus.deleted.length" />)</div>
+              <t t-foreach="state.editGitStatus.deleted" t-as="fp" t-key="fp">
+                <div class="code-git__file">
+                  <span class="code-git__file-name code-git__file-name--deleted" t-esc="fp" />
+                  <button class="code__btn code__btn--reset-file"
+                          t-on-click="() => this.onEditGitResetFile(fp)">↶</button>
+                </div>
+              </t>
+            </div>
+          </t>
+        </div>
+
+        <t t-if="state.editGitDiff">
+          <div class="code-git__section">
+            <div class="code-git__section-header">
+              <span>Diff — <em t-esc="state.editGitDiffFile" /></span>
+            </div>
+            <pre class="code-git__diff" t-esc="state.editGitDiff" />
+          </div>
+        </t>
+
+        <div class="code-git__section">
+          <div class="code-git__section-header">
+            <span>Commit</span>
+          </div>
+          <input class="code-git__commit-input" type="text"
+                 placeholder="Message de commit"
+                 t-model="state.editGitCommitMessage" />
+          <button class="code__btn code__btn--commit"
+                  t-on-click="() => this.onEditGitCommit()"
+                  t-att-disabled="!state.editGitCommitMessage.trim()">
+            ✓ Commit
+          </button>
+        </div>
+
+        <div class="code-git__section">
+          <div class="code-git__section-header">
+            <span>Historique (<t t-esc="state.editGitLog.length" />)</span>
+          </div>
+          <t t-if="state.editGitLog.length === 0">
+            <div class="code-git__empty">Aucun commit.</div>
+          </t>
+          <t t-foreach="state.editGitLog" t-as="commit" t-key="commit.sha">
+            <div class="code-git__commit">
+              <span class="code-git__commit-sha" t-esc="commit.sha.slice(0, 8)" />
+              <span class="code-git__commit-msg" t-esc="commit.message" />
+              <span class="code-git__commit-date" t-esc="commit.date.slice(0, 10)" />
+            </div>
+          </t>
+        </div>
+      </div>
+    </t>
+
+    <!-- ── SSH-path Git tab (existing) ── -->
     <t t-if="state.tab === 'git' and state.mode === 'ssh-path'">
       <div class="code-git">
 
@@ -479,6 +621,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
     private _codeService: CodeService | null = null;
     private _bundleService: BundleCodeService | null = null;
+    private _repoFs: RepoFs | null = null;
 
     // ── Reader interface ──────────────────────────────────────────────────────
 
@@ -486,8 +629,9 @@ export class OptionsCodeComponent extends EnhancedComponent {
         listDir(p: string): Promise<DirEntry[]>;
         readFile(p: string): Promise<string>;
     } {
-        if (this.state.mode !== "ssh-path") return this._bundleService!;
-        return this._codeService!;
+        if (this.state.mode === "ssh-path") return this._codeService!;
+        if (this._repoFs) return this._repoFs;
+        return this._bundleService!;
     }
 
     get canGoUp(): boolean {
@@ -546,6 +690,22 @@ export class OptionsCodeComponent extends EnhancedComponent {
             gitCommitMessage: "",
             gitLoading: false,
             gitOutput: "",
+
+            // Edit-mode (manifest repo promoted to Documents + git baseline)
+            currentSlug: "",
+            currentArchiveUrl: "",
+            isEditable: false,
+            promoting: false,
+            baselineMismatch: false,
+            shippedBuildId: "",
+            promotedBuildId: "",
+            // Editable git UI state
+            editGitStatus: { modified: [] as string[], untracked: [] as string[],
+                             staged: [] as string[], deleted: [] as string[] },
+            editGitDiff: "",
+            editGitDiffFile: "",
+            editGitCommitMessage: "",
+            editGitLog: [] as GitCommit[],
         });
 
         onWillDestroy(async () => { await this._codeService?.disconnect(); });
@@ -617,12 +777,123 @@ export class OptionsCodeComponent extends EnhancedComponent {
                 "URL non trouvée dans le bundle. Recompilez l'application ou choisissez un dépôt de la liste.",
             );
         }
-        this._bundleService = new BundleCodeService(`/repos/${project.slug}`);
-        await this._bundleService.initialize();
+        this._repoFs = await getRepoFs(
+            project,
+            this.env.repoExtractorService,
+            this.env.repoEditService,
+        );
+        this.state.currentSlug = project.slug;
+        this.state.currentArchiveUrl = `/${project.archive}`;
+        this.state.isEditable = await this.env.repoEditService.isEditable(project.slug);
+        await this._refreshBaselineStatus();
         this.state.serverLabel = project.name;
-        this.state.currentBranch = project.revision;
+        this.state.currentBranch = this.state.isEditable
+            ? `${project.revision} (édition)` : `${project.revision} (lecture seule)`;
         await this._loadDir("");
         this.state.phase = "browser";
+    }
+
+    // ── Edit-mode promotion ────────────────────────────────────────────────────
+
+    async onPromoteEdit(): Promise<void> {
+        if (this.state.promoting || this.state.isEditable) return;
+        if (!this.state.currentSlug || !this.state.currentArchiveUrl) {
+            this.state.error = "Cannot promote: no current repo.";
+            return;
+        }
+        this.state.promoting = true;
+        this.state.error = "";
+        try {
+            await this.env.repoEditService.promoteToEditable(
+                this.state.currentSlug,
+                this.state.currentArchiveUrl,
+            );
+            // Switch _repoFs to EditableCodeService for this slug.
+            const project = this.state.manifestProjects.find(
+                (p) => p.slug === this.state.currentSlug,
+            );
+            if (project) {
+                this._repoFs = await getRepoFs(
+                    project,
+                    this.env.repoExtractorService,
+                    this.env.repoEditService,
+                );
+            }
+            this.state.isEditable = true;
+            await this._refreshBaselineStatus();
+            this.state.currentBranch = this.state.currentBranch.replace(
+                "(lecture seule)", "(édition)",
+            );
+            await this._loadDir(this.state.currentDirPath);
+        } catch (e) {
+            this.state.error = `Promotion échouée: ${e instanceof Error ? e.message : String(e)}`;
+        } finally {
+            this.state.promoting = false;
+        }
+    }
+
+    /**
+     * After loading or promotion, compare the stored editable baseline build_id
+     * to the currently-shipped build_id. Sets state.baselineMismatch when the
+     * developer has rebuilt the app since the user promoted this repo.
+     */
+    private async _refreshBaselineStatus(): Promise<void> {
+        if (!this.state.isEditable || !this.state.currentSlug) {
+            this.state.baselineMismatch = false;
+            this.state.shippedBuildId = "";
+            this.state.promotedBuildId = "";
+            return;
+        }
+        try {
+            const meta = await this.env.repoEditService.getEditableMeta(this.state.currentSlug);
+            const shipped = await this.env.repoEditService.getShippedBuildId();
+            this.state.promotedBuildId = meta?.build_id ?? "";
+            this.state.shippedBuildId = shipped;
+            this.state.baselineMismatch =
+                !!meta && shipped !== "unknown" && meta.build_id !== shipped;
+        } catch (e) {
+            console.warn("[code] baseline status check failed:", e);
+            this.state.baselineMismatch = false;
+        }
+    }
+
+    /** User chose "re-promote" after baseline drift — drops edits + re-promotes. */
+    async onRepromoteBaseline(): Promise<void> {
+        const ok = window.confirm(
+            "Réinitialiser ce repo au nouveau baseline? Toutes les modifications seront perdues. " +
+            "Conseille de commiter d'abord si tu veux garder un historique.",
+        );
+        if (!ok) return;
+        await this.onUnpromote();
+        await this.onPromoteEdit();
+    }
+
+    async onUnpromote(): Promise<void> {
+        if (!this.state.isEditable || !this.state.currentSlug) return;
+        const ok = window.confirm(
+            "Annuler le mode édition? Toutes les modifications non commitées seront perdues.",
+        );
+        if (!ok) return;
+        try {
+            await this.env.repoEditService.unpromote(this.state.currentSlug);
+            this.state.isEditable = false;
+            this.state.currentBranch = this.state.currentBranch.replace(
+                "(édition)", "(lecture seule)",
+            );
+            const project = this.state.manifestProjects.find(
+                (p) => p.slug === this.state.currentSlug,
+            );
+            if (project) {
+                this._repoFs = await getRepoFs(
+                    project,
+                    this.env.repoExtractorService,
+                    this.env.repoEditService,
+                );
+            }
+            await this._loadDir(this.state.currentDirPath);
+        } catch (e) {
+            this.state.error = `Unpromote échoué: ${e instanceof Error ? e.message : String(e)}`;
+        }
     }
 
     private async _connectSshPath(): Promise<void> {
@@ -650,6 +921,11 @@ export class OptionsCodeComponent extends EnhancedComponent {
         await this._codeService?.disconnect();
         this._codeService = null;
         this._bundleService = null;
+        this._repoFs = null;
+        this.state.currentSlug = "";
+        this.state.currentArchiveUrl = "";
+        this.state.isEditable = false;
+        this.state.baselineMismatch = false;
         this.state.phase = "setup";
         this.state.error = "";
         this.state.currentFilePath = "";
@@ -697,7 +973,93 @@ export class OptionsCodeComponent extends EnhancedComponent {
     async onTabGit(): Promise<void> {
         this.state.tab = "git";
         this.state.error = "";
-        await this.onGitRefresh();
+        if (this.state.mode === "ssh-path") {
+            await this.onGitRefresh();
+        } else if (this.state.isEditable) {
+            await this.onEditGitRefresh();
+        }
+    }
+
+    // ── Edit-mode git ops (manifest repo promoted to Documents + git baseline) ─
+
+    private _editableSvc(): import("../../../services/editableCodeService").EditableCodeService {
+        if (!this._repoFs || !("status" in (this._repoFs as object))) {
+            throw new Error("Pas en mode édition");
+        }
+        return this._repoFs as import("../../../services/editableCodeService").EditableCodeService;
+    }
+
+    async onEditGitRefresh(): Promise<void> {
+        if (!this.state.isEditable) return;
+        try {
+            const svc = this._editableSvc();
+            this.state.editGitStatus = await svc.status();
+            this.state.editGitLog = await svc.log({ limit: 20 });
+            // If a file is currently selected for diff, refresh its diff too.
+            if (this.state.editGitDiffFile) {
+                this.state.editGitDiff = await svc.diff(this.state.editGitDiffFile);
+            }
+        } catch (e) {
+            this.state.error = `Git refresh: ${e instanceof Error ? e.message : String(e)}`;
+        }
+    }
+
+    async onEditGitDiffFile(filepath: string): Promise<void> {
+        try {
+            this.state.editGitDiffFile = filepath;
+            this.state.editGitDiff = await this._editableSvc().diff(filepath);
+        } catch (e) {
+            this.state.error = `Git diff: ${e instanceof Error ? e.message : String(e)}`;
+        }
+    }
+
+    async onEditGitCommit(): Promise<void> {
+        const msg = (this.state.editGitCommitMessage ?? "").trim();
+        if (!msg) {
+            this.state.error = "Message de commit requis.";
+            return;
+        }
+        try {
+            const sha = await this._editableSvc().commit(msg);
+            this.state.editGitCommitMessage = "";
+            this.state.editGitDiff = "";
+            this.state.editGitDiffFile = "";
+            this.state.error = "";
+            console.log(`[code] commit ${sha.slice(0, 8)}: ${msg}`);
+            await this.onEditGitRefresh();
+        } catch (e) {
+            this.state.error = `Commit: ${e instanceof Error ? e.message : String(e)}`;
+        }
+    }
+
+    async onEditGitResetFile(filepath: string): Promise<void> {
+        const ok = window.confirm(`Annuler les modifications de "${filepath}"?`);
+        if (!ok) return;
+        try {
+            await this._editableSvc().resetFile(filepath);
+            if (this.state.editGitDiffFile === filepath) {
+                this.state.editGitDiff = "";
+                this.state.editGitDiffFile = "";
+            }
+            await this.onEditGitRefresh();
+        } catch (e) {
+            this.state.error = `Reset: ${e instanceof Error ? e.message : String(e)}`;
+        }
+    }
+
+    async onEditGitResetAll(): Promise<void> {
+        const ok = window.confirm(
+            "Annuler TOUTES les modifications non-commitées? Action irréversible.",
+        );
+        if (!ok) return;
+        try {
+            await this._editableSvc().resetAll();
+            this.state.editGitDiff = "";
+            this.state.editGitDiffFile = "";
+            await this.onEditGitRefresh();
+        } catch (e) {
+            this.state.error = `Reset all: ${e instanceof Error ? e.message : String(e)}`;
+        }
     }
 
     // ── File viewer ───────────────────────────────────────────────────────────

@@ -28,6 +28,10 @@ import { addProcessDebugLogColumn } from "../services/migrations/addProcessDebug
 import { addTagsTable } from "../services/migrations/addTagsTable";
 import { addNtfyTokenColumn } from "../services/migrations/addNtfyTokenColumn";
 import { encryptExistingCredentials } from "../services/migrations/encryptExistingCredentials";
+import { addEditableReposTable } from "../services/migrations/addEditableReposTable";
+import { RepoExtractorService } from "../services/repoExtractorService";
+import { RepoEditService } from "../services/repoEditService";
+import { CodeStyleService } from "../services/codeStyleService";
 import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
@@ -189,6 +193,11 @@ async function startApp() {
 			description: "Chiffrement AES-256-GCM des credentials existants",
 			run: encryptExistingCredentials,
 		},
+		{
+			version: 2026042601,
+			description: "Table editable_repos pour les repos promus en mode édition",
+			run: addEditableReposTable,
+		},
 	]);
 
 	setBootStep(t("boot.loading_graphic_prefs"));
@@ -222,6 +231,14 @@ async function startApp() {
 	const transcriptionService = new TranscriptionService(db, processService);
 	const translationService = new TranslationService(db);
 	const marianService = new MarianService();
+	const repoExtractorService = new RepoExtractorService();
+	const repoEditService = new RepoEditService(repoExtractorService, {
+		run: (sql: string, params?: unknown[]) => db.rawRun(sql, (params ?? []) as any[]),
+		all: <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
+			db.rawQuery(sql, params as any[] | undefined) as Promise<T[]>,
+	});
+	const codeStyleService = new CodeStyleService(db);
+	await codeStyleService.loadAndApply();
 	notificationService.start();
 
 	// Re-schedule any reminders whose notification batch is expiring
@@ -229,7 +246,7 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, marianService, processService };
+	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, marianService, processService, repoExtractorService, repoEditService, codeStyleService };
 
 	setBootStep(t("boot.mounting_interface"));
 	await mount(RootComponent, document.body, { env });

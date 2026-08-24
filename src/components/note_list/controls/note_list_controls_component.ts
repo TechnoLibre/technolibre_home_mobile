@@ -15,6 +15,10 @@ const ENV = {
 };
 
 export class NoteListControlsComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    lABEL_NOTE = ENV.LABEL_NOTE;
+
 	static template = xml`
 		<section id="notes__controls" t-att-aria-label="t('aria.list_controls')">
 			<a

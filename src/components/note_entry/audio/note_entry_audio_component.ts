@@ -14,6 +14,12 @@ import RecordIcon from "../../../assets/icon/mic.svg";
 import StopIcon from "../../../assets/icon/stop.svg";
 
 export class NoteEntryAudioComponent extends EnhancedComponent {
+    // Module-level constants exposed to the static template so the xml`...`
+    // literal stays interpolation-free and AOT-precompilable.
+    stopIcon = StopIcon;
+    recordIcon = RecordIcon;
+    playIcon = PlayIcon;
+
 	static template = xml`
 		<div class="note-entry__wrapper">
 			<div class="note-entry--audio__controls" role="group" aria-label="Contrôles audio">
@@ -24,7 +30,7 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 					aria-label="Arrêter l'enregistrement"
 					t-on-click.stop.prevent="stopRecording"
 				>
-					<img src="${StopIcon}" alt="" aria-hidden="true" />
+					<img t-att-src="stopIcon" alt="" aria-hidden="true" />
 				</button>
 				<button
 					type="button"
@@ -33,7 +39,7 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 					aria-label="Arrêter la lecture"
 					t-on-click.stop.prevent="stopPlayback"
 				>
-					<img src="${StopIcon}" alt="" aria-hidden="true" />
+					<img t-att-src="stopIcon" alt="" aria-hidden="true" />
 				</button>
 				<button
 					type="button"
@@ -42,7 +48,7 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 					aria-label="Démarrer l'enregistrement"
 					t-on-click.stop.prevent="startRecording"
 				>
-					<img src="${RecordIcon}" alt="" aria-hidden="true" />
+					<img t-att-src="recordIcon" alt="" aria-hidden="true" />
 				</button>
 				<button
 					type="button"
@@ -51,7 +57,7 @@ export class NoteEntryAudioComponent extends EnhancedComponent {
 					aria-label="Lire l'enregistrement"
 					t-on-click.stop.prevent="playAudio"
 				>
-					<img src="${PlayIcon}" alt="" aria-hidden="true" />
+					<img t-att-src="playIcon" alt="" aria-hidden="true" />
 				</button>
 				<button
 					type="button"
