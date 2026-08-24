@@ -30,6 +30,7 @@
     "@capacitor/dialog": "^8.0.0",
     "@capacitor/filesystem": "^8.0.0",
     "@capacitor/geolocation": "^8.0.0",
+    "@capacitor/keyboard": "^8.0.3",
     "@capacitor/local-notifications": "^8.0.0",
     "@capacitor/screen-orientation": "^8.0.0",
     "@capacitor/splash-screen": "^8.0.0",

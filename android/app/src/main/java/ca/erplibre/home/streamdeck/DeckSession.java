@@ -6,7 +6,10 @@ import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbEndpoint;
 import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
+import android.hardware.usb.UsbRequest;
 import android.util.Log;
+
+import java.nio.ByteBuffer;
 
 import com.getcapacitor.JSObject;
 
@@ -51,6 +54,11 @@ public final class DeckSession {
     private Thread readerThread;
     private Thread writerThread;
     private volatile boolean running = false;
+    /** When true the reader thread emits a `rawInputReport` event for every
+     * successful bulkTransfer (stripped to first 32 bytes hex). Off by
+     * default — flips on via StreamDeckPlugin.setDebugLogging. */
+    private static volatile boolean debugLogging = false;
+    static void setDebugLogging(boolean v) { debugLogging = v; }
 
     public DeckSession(DeckSpec spec, UsbDevice device, EventEmitter emitter) {
         this.spec = spec;
@@ -214,20 +222,70 @@ public final class DeckSession {
     }
 
     private void readerLoop() {
-        // Buffer sized to spec's HID input report length (inferred from python lib;
-        // safe upper bound covers all models).
-        byte[] buf = new byte[64];
-        while (running) {
-            int got = connection.bulkTransfer(epIn, buf, buf.length, BULK_READ_TIMEOUT_MS);
-            if (!running) break;
-            if (got < 0) {
-                // timeout (continue) or error (disconnect).
-                if (got == -1) continue; // common timeout return on Android USB stack
-                Log.w(TAG, "reader bulkTransfer error " + got + " — closing session");
-                close("usb_lost");
-                return;
+        // Use the async UsbRequest path instead of bulkTransfer for the
+        // interrupt-IN endpoint: on Android, bulkTransfer reads can be
+        // shadow-consumed by the kernel HID driver — the deck appears
+        // healthy (writes succeed, key images render) but the IN
+        // endpoint never yields a single byte. UsbRequest goes through
+        // a different code path that bypasses the kernel driver's
+        // interrupt-poll, so our reads actually receive the reports.
+        UsbRequest req = new UsbRequest();
+        if (!req.initialize(connection, epIn)) {
+            Log.w(TAG, "UsbRequest.initialize failed for reader");
+            close("usb_request_init_failed");
+            return;
+        }
+        ByteBuffer buf = ByteBuffer.allocate(64);
+
+        try {
+            while (running) {
+                buf.clear();
+                if (!req.queue(buf, buf.capacity())) {
+                    if (!running) return;
+                    Log.w(TAG, "UsbRequest.queue failed");
+                    close("usb_request_queue_failed");
+                    return;
+                }
+                UsbRequest finished;
+                try {
+                    finished = connection.requestWait();
+                } catch (Throwable t) {
+                    if (!running) return;
+                    Log.w(TAG, "requestWait threw — closing", t);
+                    close("usb_request_wait_threw:" + t.getClass().getSimpleName());
+                    return;
+                }
+                if (!running) break;
+                if (finished == null) {
+                    Log.w(TAG, "requestWait returned null — connection lost");
+                    close("usb_lost");
+                    return;
+                }
+                int got = buf.position();
+                if (got <= 0) continue;
+
+                byte[] data = new byte[got];
+                buf.position(0);
+                buf.get(data, 0, got);
+
+                if (debugLogging) {
+                    StringBuilder sb = new StringBuilder();
+                    int dump = Math.min(got, 32);
+                    for (int i = 0; i < dump; i++) {
+                        if (i > 0) sb.append(" ");
+                        sb.append(String.format("%02x", data[i] & 0xFF));
+                    }
+                    if (got > dump) sb.append(" …");
+                    JSObject ev = new JSObject();
+                    ev.put("deckId", serial);
+                    ev.put("len", got);
+                    ev.put("bytes", sb.toString());
+                    emitter.emit("rawInputReport", ev);
+                }
+                parseInputReport(data, got);
             }
-            parseInputReport(buf, got);
+        } finally {
+            try { req.close(); } catch (Throwable ignored) {}
         }
     }
 
@@ -247,7 +305,16 @@ public final class DeckSession {
         int reportId = buf[0] & 0xFF;
         int subType = buf[1] & 0xFF;
 
-        if (reportId == 0x01 && subType == 0x00) {
+        // Decks WITH multiple report kinds (Plus, Neo) discriminate via byte 1
+        // (0x00=keys, 0x02=lcd touch, 0x03=dial, 0x04=neo touch). Decks
+        // WITHOUT (XL, MK.2, Original v2, Mini, Original v1) just emit a
+        // key report under reportId 0x01 — byte 1 is part of the header
+        // and can be anything.
+        boolean hasReportSubtypes = spec.dialCount > 0 || spec.touchPoints > 0;
+        boolean isKeyReport = reportId == 0x01
+            && (!hasReportSubtypes || subType == 0x00);
+
+        if (isKeyReport) {
             // Key report. Keys start at offset 4 for V2, 1 for V1.
             int offset = (spec.transport == DeckSpec.TransportKind.V2) ? 4 : 1;
             for (int k = 0; k < spec.keyCount; k++) {

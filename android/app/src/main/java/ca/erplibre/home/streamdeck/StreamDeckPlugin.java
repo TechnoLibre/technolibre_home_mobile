@@ -1,6 +1,7 @@
 package ca.erplibre.home.streamdeck;
 
 import android.content.Context;
+import android.content.Intent;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.util.Base64;
@@ -37,6 +38,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     private final Map<String, DeckSession> sessionsByDevice = new HashMap<>();
     /** Map keyed by serial number. Filled once the device is opened. */
     private final Map<String, DeckSession> sessionsBySerial = new HashMap<>();
+    /** Last attach error per USB device name — surfaced via listAllUsbDevices
+     * so the diagnostic UI can show why a known device is not in listDecks
+     * even when the failure event was emitted before any listener attached. */
+    private final Map<String, String> lastAttachError = new HashMap<>();
 
     private final EventEmitter emitter = (name, data) -> notifyListeners(name, data);
 
@@ -47,6 +52,16 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         permissions = new UsbPermissionRequester(ctx, usb);
         hotplug = new UsbHotplugReceiver(this);
         hotplug.attach(ctx);
+        // The lifecycle service runs only to receive onTaskRemoved on
+        // swipe-from-recents — the Activity lifecycle does not guarantee
+        // onDestroy on that path, so handleOnDestroy alone leaves the deck
+        // painted with the last tile. The service has no other duties.
+        StreamDeckLifecycleService.setTaskRemovedHandler(this::resetAllSessions);
+        try {
+            ctx.startService(new Intent(ctx, StreamDeckLifecycleService.class));
+        } catch (Throwable t) {
+            Log.w(TAG, "startService(StreamDeckLifecycleService) failed: " + t.getMessage());
+        }
         scanExistingDevices();
     }
 
@@ -54,10 +69,32 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     protected void handleOnDestroy() {
         if (hotplug != null) hotplug.detach(getContext());
         if (permissions != null) permissions.close();
+        resetAllSessions();
         synchronized (sessionsByDevice) {
             for (DeckSession s : sessionsByDevice.values()) s.close("app_destroyed");
             sessionsByDevice.clear();
             sessionsBySerial.clear();
+        }
+        StreamDeckLifecycleService.setTaskRemovedHandler(null);
+    }
+
+    /**
+     * Best-effort blank-every-deck. Called on both handleOnDestroy and
+     * the lifecycle service's onTaskRemoved so a swipe-from-recents (which
+     * may skip onDestroy) still clears the LCDs. reset() is a synchronous
+     * feature-report write that bypasses the writer queue, so it lands
+     * even when image jobs are still pending. Failures are logged and
+     * never propagated — at this point we may be racing the OS killing
+     * the process and a crash here would surface as a misleading ANR.
+     */
+    private void resetAllSessions() {
+        synchronized (sessionsByDevice) {
+            for (DeckSession s : sessionsByDevice.values()) {
+                try { s.reset(); }
+                catch (Throwable t) {
+                    Log.w(TAG, "reset failed for " + s.serial() + ": " + t.getMessage());
+                }
+            }
         }
     }
 
@@ -70,16 +107,29 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     @Override
     public void onDeckAttached(UsbDevice device) {
+        final String name = device.getDeviceName();
         DeckSpec spec = DeckRegistry.lookup(device.getProductId());
         if (spec == null) {
             Log.w(TAG, "unknown Elgato product 0x" + Integer.toHexString(device.getProductId()));
+            String reason =
+                "unknown_product:0x" + Integer.toHexString(device.getProductId())
+                + " (manufacturer=" + (device.getManufacturerName() != null ? device.getManufacturerName() : "?")
+                + ", product=" + (device.getProductName() != null ? device.getProductName() : "?")
+                + ")";
+            recordAttachError(name, reason);
+            JSObject ev = new JSObject();
+            ev.put("deckId", "");
+            ev.put("reason", reason);
+            emitter.emit("permissionDenied", ev);
             return;
         }
         permissions.request(device).whenComplete((granted, err) -> {
             if (err != null || granted == null || !granted) {
+                String reason = err != null ? err.getMessage() : "permission_denied";
+                recordAttachError(name, reason);
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
-                ev.put("reason", err != null ? err.getMessage() : "permission_denied");
+                ev.put("reason", reason);
                 emitter.emit("permissionDenied", ev);
                 return;
             }
@@ -87,18 +137,36 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             try {
                 session.open(usb);
                 synchronized (sessionsByDevice) {
-                    sessionsByDevice.put(device.getDeviceName(), session);
+                    sessionsByDevice.put(name, session);
                     if (!session.serial().isEmpty()) {
                         sessionsBySerial.put(session.serial(), session);
                     }
+                    lastAttachError.remove(name);
                 }
             } catch (DeckSession.DeckOpenException e) {
+                String reason = e.getMessage();
+                recordAttachError(name, reason);
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
-                ev.put("reason", e.getMessage());
+                ev.put("reason", reason);
+                emitter.emit("permissionDenied", ev);
+            } catch (Throwable t) {
+                String reason = "open_unexpected:" + t.getClass().getSimpleName()
+                    + ":" + t.getMessage();
+                recordAttachError(name, reason);
+                JSObject ev = new JSObject();
+                ev.put("deckId", "");
+                ev.put("reason", reason);
                 emitter.emit("permissionDenied", ev);
             }
         });
+    }
+
+    private void recordAttachError(String deviceName, String reason) {
+        synchronized (sessionsByDevice) {
+            lastAttachError.put(deviceName, reason);
+        }
+        Log.w(TAG, "attach failed for " + deviceName + ": " + reason);
     }
 
     @Override
@@ -126,6 +194,103 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         call.resolve(r);
     }
 
+    /**
+     * Diagnostic: returns every USB device the phone currently sees,
+     * including non-Elgato ones. Lets the diagnostic UI distinguish:
+     *   - empty list             → USB OTG not working at all (cable / phone)
+     *   - Elgato vendor present  → registered, plugin will pick it up
+     *   - unknown vendor/product → device works, but our registry needs the PID
+     */
+    @PluginMethod
+    public void listAllUsbDevices(PluginCall call) {
+        JSArray arr = new JSArray();
+        Map<String, UsbDevice> all = usb.getDeviceList();
+        for (UsbDevice d : all.values()) {
+            JSObject o = new JSObject();
+            o.put("deviceName", d.getDeviceName());
+            o.put("vendorId", d.getVendorId());
+            o.put("productId", d.getProductId());
+            o.put("vendorIdHex", "0x" + Integer.toHexString(d.getVendorId()));
+            o.put("productIdHex", "0x" + Integer.toHexString(d.getProductId()));
+            o.put("productName", d.getProductName() != null ? d.getProductName() : "");
+            o.put("manufacturerName",
+                d.getManufacturerName() != null ? d.getManufacturerName() : "");
+            o.put("serial",
+                tryGetSerial(d));
+            o.put("isElgato", DeckRegistry.isElgato(d.getVendorId()));
+            o.put("knownStreamDeck", DeckRegistry.lookup(d.getProductId()) != null
+                && DeckRegistry.isElgato(d.getVendorId()));
+            o.put("hasPermission", usb.hasPermission(d));
+            // True if the plugin currently has an open DeckSession for this
+            // USB device path — i.e. the deck would also appear in listDecks.
+            boolean inSession;
+            String lastErr;
+            synchronized (sessionsByDevice) {
+                inSession = sessionsByDevice.containsKey(d.getDeviceName());
+                lastErr = lastAttachError.get(d.getDeviceName());
+            }
+            o.put("inSession", inSession);
+            o.put("lastAttachError", lastErr != null ? lastErr : "");
+            arr.put(o);
+        }
+        JSObject r = new JSObject();
+        r.put("devices", arr);
+        call.resolve(r);
+    }
+
+    /**
+     * Toggle the per-session reader-thread raw input dump. When on, every
+     * successful interrupt-IN transfer emits a `rawInputReport` event with
+     * the first 32 bytes hex — used by the diagnostic UI to verify the
+     * deck is actually sending data when buttons are pressed.
+     */
+    @PluginMethod
+    public void setDebugLogging(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled"));
+        DeckSession.setDebugLogging(enabled);
+        JSObject r = new JSObject();
+        r.put("enabled", enabled);
+        call.resolve(r);
+    }
+
+    /**
+     * Walk every USB device and re-run onDeckAttached for known Elgato
+     * Stream Decks that already have permission but aren't open. Useful
+     * when the diagnostic UI subscribes after the boot-time attach
+     * already failed silently.
+     */
+    @PluginMethod
+    public void retryAttach(PluginCall call) {
+        int retried = 0;
+        for (UsbDevice d : usb.getDeviceList().values()) {
+            if (!DeckRegistry.isElgato(d.getVendorId())) continue;
+            if (DeckRegistry.lookup(d.getProductId()) == null) continue;
+            boolean already;
+            synchronized (sessionsByDevice) {
+                already = sessionsByDevice.containsKey(d.getDeviceName());
+            }
+            if (already) continue;
+            if (!usb.hasPermission(d)) continue;
+            onDeckAttached(d);
+            retried++;
+        }
+        JSObject r = new JSObject();
+        r.put("retried", retried);
+        call.resolve(r);
+    }
+
+    private String tryGetSerial(UsbDevice d) {
+        try {
+            // getSerialNumber requires permission on Android 10+; may return null
+            String s = d.getSerialNumber();
+            return s != null ? s : "";
+        } catch (SecurityException e) {
+            return "(no permission)";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     @PluginMethod
     public void getDeckInfo(PluginCall call) {
         DeckSession s = requireSession(call); if (s == null) return;
@@ -138,6 +303,31 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         JSObject r = new JSObject();
         r.put("granted", true);
         call.resolve(r);
+    }
+
+    /**
+     * Ask the OS for permission on a USB device that hasn't been opened
+     * yet (so it's not in sessions/listDecks). Used by the diagnostic UI
+     * when an Elgato device shows up under listAllUsbDevices but
+     * permission was denied or never asked.
+     */
+    @PluginMethod
+    public void requestPermissionForUsb(PluginCall call) {
+        String deviceName = call.getString("deviceName");
+        if (deviceName == null) { call.reject("missing:deviceName"); return; }
+        UsbDevice dev = usb.getDeviceList().get(deviceName);
+        if (dev == null) { call.reject("no_such_device:" + deviceName); return; }
+        permissions.request(dev).whenComplete((granted, err) -> {
+            JSObject r = new JSObject();
+            r.put("granted", granted != null && granted);
+            if (err != null) r.put("error", err.getMessage());
+            call.resolve(r);
+            // If granted, kick off the same flow the hotplug receiver uses
+            // so the deck enters listDecks.
+            if (granted != null && granted && DeckRegistry.isElgato(dev.getVendorId())) {
+                onDeckAttached(dev);
+            }
+        });
     }
 
     @PluginMethod
@@ -170,6 +360,41 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
         s.queue().offerCoalesce(new ImageWriteJob(s, key, raw, call));
         call.setKeepAlive(true);
+    }
+
+    /**
+     * Streaming-friendly batch: queues N key writes through a single JNI
+     * crossing. Each entry is fire-and-forget on the WriterQueue (no
+     * per-key resolve), so the call returns the moment everything is
+     * decoded and offered. The queue's coalescing keeps backpressure
+     * bounded — only the latest job per key actually hits USB.
+     */
+    @PluginMethod
+    public void setKeyImagesBatch(PluginCall call) {
+        DeckSession s = requireSession(call); if (s == null) return;
+        JSArray entries = call.getArray("entries");
+        if (entries == null) { call.reject("missing:entries"); return; }
+        int queued = 0;
+        int dropped = 0;
+        for (int i = 0; i < entries.length(); i++) {
+            try {
+                org.json.JSONObject o = entries.getJSONObject(i);
+                int key = o.getInt("key");
+                String b64 = o.getString("bytes");
+                if (key < 0 || key >= s.spec().keyCount) { dropped++; continue; }
+                byte[] raw;
+                try { raw = Base64.decode(b64, Base64.NO_WRAP); }
+                catch (IllegalArgumentException ex) { dropped++; continue; }
+                s.queue().offerCoalesce(new ImageWriteJob(s, key, raw, null));
+                queued++;
+            } catch (Throwable t) {
+                dropped++;
+            }
+        }
+        JSObject r = new JSObject();
+        r.put("queued", queued);
+        r.put("dropped", dropped);
+        call.resolve(r);
     }
 
     @PluginMethod
@@ -266,6 +491,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         keyImg.put("format", spec.keyImageFormat == DeckSpec.ImageFormat.JPEG ? "jpeg"
                           : spec.keyImageFormat == DeckSpec.ImageFormat.BMP_BGR_ROT180 ? "bmp_bgr_rot180"
                           : "bmp_bgr_rot270");
+        keyImg.put("rotation", spec.keyImageRotation);
         o.put("keyImage", keyImg);
         o.put("dialCount", spec.dialCount);
         if (spec.lcdW > 0) {

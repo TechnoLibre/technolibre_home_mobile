@@ -1,8 +1,23 @@
 apply plugin: 'com.android.application'
 
+// Dev fast-iteration env vars (defaults preserve a full release-quality build):
+//   BUNDLE_SKIP_WHISPER=1  → do not compile whisper.cpp / ggml. Saves ~5 min
+//                            of NDK build the first time and ~300 MB in the
+//                            APK. Transcription is no-op at runtime.
+//   ALL_ABIS=1             → keep every ABI in the APK (arm64-v8a, armeabi-v7a,
+//                            x86, x86_64). Needed when running an emulator or
+//                            when you might switch devices. Defaults to
+//                            arm64-v8a only — modern phones — which trims
+//                            another ~50% off the native libs.
+def skipWhisper = System.getenv("BUNDLE_SKIP_WHISPER") == "1"
+def allAbis = System.getenv("ALL_ABIS") == "1"
+
 android {
     namespace "ca.erplibre.home"
     compileSdk rootProject.ext.compileSdkVersion
+    buildFeatures {
+        buildConfig true
+    }
     defaultConfig {
         applicationId "ca.erplibre.home"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -10,10 +25,18 @@ android {
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        externalNativeBuild {
-            cmake {
-                cppFlags "-std=c++17"
-                arguments "-DANDROID_STL=c++_shared"
+        buildConfigField "boolean", "SKIP_WHISPER", "${skipWhisper}"
+        if (!skipWhisper) {
+            externalNativeBuild {
+                cmake {
+                    cppFlags "-std=c++17"
+                    arguments "-DANDROID_STL=c++_shared"
+                }
+            }
+        }
+        if (!allAbis) {
+            ndk {
+                abiFilters "arm64-v8a"
             }
         }
         aaptOptions {
@@ -29,10 +52,12 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
-    externalNativeBuild {
-        cmake {
-            path "src/main/cpp/CMakeLists.txt"
-            version "3.22.1"
+    if (!skipWhisper) {
+        externalNativeBuild {
+            cmake {
+                path "src/main/cpp/CMakeLists.txt"
+                version "3.22.1"
+            }
         }
     }
 }

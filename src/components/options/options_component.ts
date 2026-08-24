@@ -18,6 +18,8 @@ import { OptionsSyncComponent } from "./sync/options_sync_component";
 import { OptionsRemindersComponent } from "./reminders/options_reminders_component";
 import { OptionsGraphicComponent } from "./graphic/options_graphic_component";
 import { OptionsCodeStyleComponent } from "./code_style/options_code_style_component";
+import { OptionsStreamDeckComponent } from "./streamdeck/options_streamdeck_component";
+import { OptionsCameraStreamComponent } from "./camera_stream/options_camera_stream_component";
 import { OptionsErplibreComponent } from "./erplibre/options_erplibre_component";
 import { OptionsTranscriptionComponent } from "./transcription/options_transcription_component";
 import { OptionsTranslationComponent } from "./translation/options_translation_component";
@@ -39,6 +41,8 @@ export class OptionsComponent extends EnhancedComponent {
         </li>
         <OptionsPermissionsComponent />
         <OptionsDeviceInfoComponent />
+        <OptionsStreamDeckComponent />
+        <OptionsCameraStreamComponent />
         <OptionsMigrationHistoryComponent />
         <OptionsSyncComponent />
         <OptionsRemindersComponent />
@@ -143,6 +147,8 @@ export class OptionsComponent extends EnhancedComponent {
 		OptionsRemindersComponent,
 		OptionsGraphicComponent,
 		OptionsCodeStyleComponent,
+		OptionsStreamDeckComponent,
+		OptionsCameraStreamComponent,
 		OptionsErplibreComponent,
 		OptionsTranscriptionComponent,
 		OptionsTranslationComponent,

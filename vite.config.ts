@@ -380,6 +380,68 @@ function bundleSourcePlugin(): Plugin {
                 `)`
             );
 
+            // ── 1b. Workspace root bundle (src/public/erplibre/) ──────────
+            // The full ERPLibre workspace as seen from /home/.../erplibre01/,
+            // minus the obvious heavy / redundant subtrees:
+            //   addons/      already in src/public/repos/{slug}.tar.gz
+            //   mobile/      this app, already in src/public/repo/
+            //   .venv*/      Python venvs
+            //   odoo*/       upstream Odoo source trees
+            //   node_modules / dist / build / .repo / .git / private
+            //
+            // Result: scripts, Makefile, conf/, manifest/, requirement/,
+            // doc/, top-level docs, etc. — the things you'd actually want
+            // to read from the Code tool. Skipped on BUNDLE_SKIP_ERPLIBRE=1.
+            if (process.env["BUNDLE_SKIP_ERPLIBRE"] !== "1") {
+                const workspaceRoot = resolve(root, "..", "..");
+                const erplibreOutDir = join(root, "src", "public", "erplibre");
+                removeDirRobust(erplibreOutDir);
+                mkdirSync(erplibreOutDir, { recursive: true });
+
+                const erplibreIndex: BundleEntry[] = [];
+                const erplibreStats: CopyStats = {
+                    copied: 0, skippedName: 0, skippedExclude: 0,
+                    skippedSize: 0, errors: 0,
+                };
+                const erplibreT0 = Date.now();
+
+                const SKIP_WS_DIRS = new Set([
+                    "addons",      // bundled per-repo as tar.gz
+                    "mobile",      // this app — already in /repo/
+                    "node_modules",
+                    "dist", "build", "coverage",
+                    "private",     // not versioned, sensitive
+                    ".repo", ".git",
+                    "cache",
+                ]);
+                const skipWsFn = (_relBase: string, name: string): boolean => {
+                    if (SKIP_WS_DIRS.has(name)) return true;
+                    if (name.startsWith(".venv")) return true;
+                    if (/^odoo\d+\.\d+/.test(name)) return true;
+                    return false;
+                };
+
+                copyDirToBundle(
+                    workspaceRoot, "", erplibreOutDir, erplibreIndex, skipWsFn,
+                    undefined, MAX_BUNDLE_FILE_BYTES, erplibreStats,
+                );
+
+                writeFileSync(
+                    join(erplibreOutDir, "index.json"),
+                    JSON.stringify(erplibreIndex, null, 2),
+                );
+
+                console.log(
+                    `[bundle-source] ${erplibreStats.copied} files → src/public/erplibre/` +
+                    `  (${Date.now() - erplibreT0} ms` +
+                    (erplibreStats.errors ? `  ⚠ ${erplibreStats.errors} errors` : "") +
+                    `)`
+                );
+            } else {
+                // Honor the skip flag: nuke any leftover from a prior build.
+                removeDirRobust(join(root, "src", "public", "erplibre"));
+            }
+
             // ── 2. ERPLibre manifest repos (src/public/repos/) ────────────
             const manifestPath = resolve(
                 process.env["ERPLIBRE_MANIFEST_PATH"] ??
