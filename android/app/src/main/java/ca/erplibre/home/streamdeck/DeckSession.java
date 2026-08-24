@@ -54,11 +54,55 @@ public final class DeckSession {
     private Thread readerThread;
     private Thread writerThread;
     private volatile boolean running = false;
+    /** Last known pressed-state per key. Used to dedupe keyChanged
+     *  emissions in polled mode where the device returns the full
+     *  snapshot every tick — without this we'd flood JS with one
+     *  keyChanged per key per tick (~32 × 33 Hz ≈ 1056 events/s). */
+    private boolean[] lastKeyPressed;
+    /** Last raw IN-report bytes. Used to dedupe rawInputReport debug
+     *  events so the journal only shows transitions, not the polled
+     *  snapshot stream. Crucial diagnostic: if NO line appears when
+     *  the user presses a key in polled mode, GET_REPORT is returning
+     *  cached data and polled is a dead end on that kernel. */
+    private byte[] lastRawBytes;
     /** When true the reader thread emits a `rawInputReport` event for every
      * successful bulkTransfer (stripped to first 32 bytes hex). Off by
      * default — flips on via StreamDeckPlugin.setDebugLogging. */
     private static volatile boolean debugLogging = false;
     static void setDebugLogging(boolean v) { debugLogging = v; }
+
+    /** Reader strategy. Some Android kernels shadow-consume the
+     * interrupt-IN endpoint entirely; for those, GET_REPORT polling on
+     * the control endpoint is the only path that delivers anything.
+     *   - "userequest" — UsbRequest async on interrupt-IN. Default.
+     *   - "bulk"       — bulkTransfer sync on interrupt-IN.
+     *   - "polled"     — HID GET_REPORT control transfer @ ~30 Hz on
+     *                    EP0. Never shadowed by kernel HID drivers
+     *                    (control endpoint is shared infrastructure).
+     * Takes effect on the next session open. */
+    static final String READER_MODE_USEREQUEST = "userequest";
+    static final String READER_MODE_BULK       = "bulk";
+    static final String READER_MODE_POLLED     = "polled";
+    private static volatile String readerMode = READER_MODE_USEREQUEST;
+    static void setReaderMode(String v) {
+        if (READER_MODE_USEREQUEST.equals(v)
+            || READER_MODE_BULK.equals(v)
+            || READER_MODE_POLLED.equals(v)) {
+            readerMode = v;
+        }
+    }
+    static String getReaderMode() { return readerMode; }
+    // Back-compat with the old boolean toggle.
+    static void setReaderUseBulk(boolean v) {
+        readerMode = v ? READER_MODE_BULK : READER_MODE_USEREQUEST;
+    }
+    static boolean getReaderUseBulk() { return READER_MODE_BULK.equals(readerMode); }
+
+    /** Polling period for the GET_REPORT path. ~33 Hz keeps perceived
+     *  latency under 35 ms, well below the human reaction floor for a
+     *  button press. Lower values eat more CPU and battery for no
+     *  perceptible gain. */
+    private static final int POLLED_INTERVAL_MS = 30;
 
     public DeckSession(DeckSpec spec, UsbDevice device, EventEmitter emitter) {
         this.spec = spec;
@@ -85,15 +129,26 @@ public final class DeckSession {
     public synchronized void open(UsbManager usb) throws DeckOpenException {
         if (running) return;
 
+        Log.i(TAG, "open: device=" + device.getDeviceName()
+            + " interfaces=" + device.getInterfaceCount());
+
         // Find the HID interface.
         UsbInterface chosenIface = null;
         UsbEndpoint chosenIn = null, chosenOut = null;
         for (int i = 0; i < device.getInterfaceCount(); i++) {
             UsbInterface itf = device.getInterface(i);
+            Log.i(TAG, "  iface[" + i + "] class=" + itf.getInterfaceClass()
+                + " sub=" + itf.getInterfaceSubclass()
+                + " proto=" + itf.getInterfaceProtocol()
+                + " endpoints=" + itf.getEndpointCount());
             if (itf.getInterfaceClass() != UsbConstants.USB_CLASS_HID) continue;
             UsbEndpoint epi = null, epo = null;
             for (int e = 0; e < itf.getEndpointCount(); e++) {
                 UsbEndpoint ep = itf.getEndpoint(e);
+                Log.i(TAG, "    ep[" + e + "] addr=0x" + Integer.toHexString(ep.getAddress())
+                    + " type=" + ep.getType()
+                    + " dir=" + (ep.getDirection() == UsbConstants.USB_DIR_IN ? "IN" : "OUT")
+                    + " maxPkt=" + ep.getMaxPacketSize());
                 if (ep.getDirection() == UsbConstants.USB_DIR_IN)  epi = ep;
                 if (ep.getDirection() == UsbConstants.USB_DIR_OUT) epo = ep;
             }
@@ -105,13 +160,35 @@ public final class DeckSession {
 
         connection = usb.openDevice(device);
         if (connection == null) throw new DeckOpenException("open_failed");
-        if (!connection.claimInterface(chosenIface, /*forceClaim=*/true)) {
+        boolean claimed = connection.claimInterface(chosenIface, /*forceClaim=*/true);
+        Log.i(TAG, "claimInterface(force=true) → " + claimed);
+        if (!claimed) {
             connection.close();
             throw new DeckOpenException("interface_busy");
         }
         this.iface = chosenIface;
         this.epIn  = chosenIn;
         this.epOut = chosenOut;
+        Log.i(TAG, "selected epIn=0x" + Integer.toHexString(epIn.getAddress())
+            + " epOut=0x" + Integer.toHexString(epOut.getAddress())
+            + " readerMode=" + readerMode);
+
+        // HID class SET_IDLE 0 — tells the device to send reports only on
+        // change, no idle re-transmission. On some Android kernels the
+        // built-in HID driver auto-polls the IN endpoint and shadow-
+        // consumes our reads; SET_IDLE 0 makes the device stop honouring
+        // those polls so our reader gets the actual key-state reports.
+        // Best-effort: a stall here is informational, not fatal.
+        try {
+            int sent = connection.controlTransfer(
+                /*reqType=*/0x21, /*req=*/0x0A,
+                /*value=*/0x0000, /*index=*/chosenIface.getId(),
+                /*data=*/null, /*len=*/0,
+                /*timeout=*/1000);
+            Log.i(TAG, "SET_IDLE 0 → " + sent);
+        } catch (Throwable t) {
+            Log.w(TAG, "SET_IDLE failed (non-fatal): " + t.getMessage());
+        }
 
         try {
             this.serial   = readSerial();
@@ -123,6 +200,7 @@ public final class DeckSession {
         }
 
         running = true;
+        lastKeyPressed = new boolean[spec.keyCount];
         readerThread = new Thread(this::readerLoop, "deck-reader-" + serial);
         writerThread = new Thread(this::writerLoop, "deck-writer-" + serial);
         readerThread.setDaemon(true);
@@ -222,20 +300,34 @@ public final class DeckSession {
     }
 
     private void readerLoop() {
-        // Use the async UsbRequest path instead of bulkTransfer for the
-        // interrupt-IN endpoint: on Android, bulkTransfer reads can be
-        // shadow-consumed by the kernel HID driver — the deck appears
-        // healthy (writes succeed, key images render) but the IN
-        // endpoint never yields a single byte. UsbRequest goes through
-        // a different code path that bypasses the kernel driver's
-        // interrupt-poll, so our reads actually receive the reports.
+        // Reader path is selectable per-session via the static
+        // readerMode flag. UsbRequest async works on most kernels; on
+        // kernels where THAT is shadowed, bulk picks up the slack; on
+        // kernels where BOTH interrupt-IN paths are dead, polled
+        // GET_REPORT on the control endpoint sometimes works.
+        switch (readerMode) {
+            case READER_MODE_BULK:   readerLoopBulk();       break;
+            case READER_MODE_POLLED: readerLoopPolled();     break;
+            default:                 readerLoopUsbRequest();
+        }
+    }
+
+    private void readerLoopUsbRequest() {
         UsbRequest req = new UsbRequest();
         if (!req.initialize(connection, epIn)) {
             Log.w(TAG, "UsbRequest.initialize failed for reader");
             close("usb_request_init_failed");
             return;
         }
-        ByteBuffer buf = ByteBuffer.allocate(64);
+        // The IN endpoint's max packet size is the only safe buffer size.
+        // Stream Deck XL/Plus send 512-byte reports — using 64 bytes
+        // returned EOVERFLOW (errno 75) on Pixel 6 / ThinkPhone kernels
+        // and silent truncation on Motorola. Match the device.
+        int bufSize = epIn != null ? epIn.getMaxPacketSize() : 64;
+        if (bufSize < 64) bufSize = 64;
+        ByteBuffer buf = ByteBuffer.allocate(bufSize);
+        long lastDataAt = System.currentTimeMillis();
+        long lastStarveLog = lastDataAt;
 
         try {
             while (running) {
@@ -246,9 +338,15 @@ public final class DeckSession {
                     close("usb_request_queue_failed");
                     return;
                 }
-                UsbRequest finished;
+                UsbRequest finished = null;
+                boolean timedOut = false;
                 try {
-                    finished = connection.requestWait();
+                    finished = connection.requestWait(5000);
+                } catch (java.util.concurrent.TimeoutException te) {
+                    // requestWait(timeout) throws on timeout in API 26+;
+                    // earlier API returns null. Either way it just means
+                    // "nothing in the last 5 s" — NOT a fatal error.
+                    timedOut = true;
                 } catch (Throwable t) {
                     if (!running) return;
                     Log.w(TAG, "requestWait threw — closing", t);
@@ -256,37 +354,220 @@ public final class DeckSession {
                     return;
                 }
                 if (!running) break;
-                if (finished == null) {
-                    Log.w(TAG, "requestWait returned null — connection lost");
-                    close("usb_lost");
-                    return;
+                long now = System.currentTimeMillis();
+                if (timedOut || finished == null) {
+                    // Cancel the in-flight request before re-queueing.
+                    // Without this, some Android kernels leave the
+                    // request hanging in driver state and the next
+                    // queue() call fails outright (we saw that on
+                    // ThinkPhone after ~100 s of starvation).
+                    try { req.cancel(); } catch (Throwable ignored) {}
+                    if (now - lastStarveLog >= 5000) {
+                        Log.w(TAG, "reader (UsbRequest) starving — "
+                            + (now - lastDataAt) + " ms since last data");
+                        lastStarveLog = now;
+                        if (debugLogging) {
+                            JSObject ev = new JSObject();
+                            ev.put("deckId", serial);
+                            ev.put("len", 0);
+                            ev.put("bytes", "(starving UsbRequest "
+                                + (now - lastDataAt) + "ms)");
+                            emitter.emit("rawInputReport", ev);
+                        }
+                    }
+                    continue;
                 }
                 int got = buf.position();
                 if (got <= 0) continue;
+                lastDataAt = now;
 
                 byte[] data = new byte[got];
                 buf.position(0);
                 buf.get(data, 0, got);
 
-                if (debugLogging) {
-                    StringBuilder sb = new StringBuilder();
-                    int dump = Math.min(got, 32);
-                    for (int i = 0; i < dump; i++) {
-                        if (i > 0) sb.append(" ");
-                        sb.append(String.format("%02x", data[i] & 0xFF));
-                    }
-                    if (got > dump) sb.append(" …");
-                    JSObject ev = new JSObject();
-                    ev.put("deckId", serial);
-                    ev.put("len", got);
-                    ev.put("bytes", sb.toString());
-                    emitter.emit("rawInputReport", ev);
-                }
+                if (debugLogging) emitRaw(data, got);
                 parseInputReport(data, got);
             }
         } finally {
             try { req.close(); } catch (Throwable ignored) {}
         }
+    }
+
+    private void readerLoopBulk() {
+        // Sync read on the interrupt-IN endpoint. Shorter timeout (250 ms)
+        // so the loop iterates often enough to react to running=false
+        // and to surface starvation breadcrumbs. Buffer must match the
+        // endpoint's max packet (512 on XL/Plus) — undersized buffers
+        // return EOVERFLOW on stricter kernels (Pixel 6 / ThinkPhone).
+        int bufSize = epIn != null ? epIn.getMaxPacketSize() : 64;
+        if (bufSize < 64) bufSize = 64;
+        byte[] buf = new byte[bufSize];
+        long lastDataAt = System.currentTimeMillis();
+        long lastStarveLog = lastDataAt;
+        while (running) {
+            int got;
+            try {
+                got = connection.bulkTransfer(epIn, buf, buf.length, 250);
+            } catch (Throwable t) {
+                if (!running) return;
+                Log.w(TAG, "bulkTransfer threw — closing", t);
+                close("bulk_read_threw:" + t.getClass().getSimpleName());
+                return;
+            }
+            if (!running) break;
+            long now = System.currentTimeMillis();
+            if (got <= 0) {
+                if (now - lastStarveLog >= 5000) {
+                    Log.w(TAG, "reader (bulk) starving — "
+                        + (now - lastDataAt) + " ms since last data");
+                    lastStarveLog = now;
+                    if (debugLogging) {
+                        JSObject ev = new JSObject();
+                        ev.put("deckId", serial);
+                        ev.put("len", 0);
+                        ev.put("bytes", "(starving bulk "
+                            + (now - lastDataAt) + "ms)");
+                        emitter.emit("rawInputReport", ev);
+                    }
+                }
+                continue;
+            }
+            lastDataAt = now;
+            byte[] data = new byte[got];
+            System.arraycopy(buf, 0, data, 0, got);
+            if (debugLogging) emitRaw(data, got);
+            parseInputReport(data, got);
+        }
+    }
+
+    /**
+     * Poll the device's input report via HID class GET_REPORT on EP0.
+     * Used as a last-resort path on phones whose kernel claims the
+     * interrupt-IN endpoint and never lets userspace see a key event
+     * (observed on Lenovo ThinkPhone). The control endpoint is shared
+     * infrastructure that no kernel HID driver claims, so this path
+     * always works at the cost of polling instead of waking on event.
+     *
+     * Effective rate is ~33 Hz which is well below human reaction time
+     * floor for a button press, so latency is unnoticeable in practice.
+     */
+    private void readerLoopPolled() {
+        // Stream Deck input reports vary in size by model; the buffer
+        // sized to the IN endpoint's max packet ensures we always
+        // read enough.
+        int reportSize = epIn != null ? epIn.getMaxPacketSize() : 64;
+        if (reportSize <= 0) reportSize = 64;
+        byte[] buf = new byte[reportSize];
+        long lastDataAt = System.currentTimeMillis();
+        long lastStarveLog = lastDataAt;
+        int ifaceId = iface != null ? iface.getId() : 0;
+        // HID GET_REPORT: reqType 0xA1 (Class | Interface | IN), req 0x01,
+        // value (Input=1 << 8 | reportId). Stream Deck input report id
+        // is 0x01 across all the v1/v2 layouts we care about.
+        final int reqType = 0xA1;
+        final int req     = 0x01;
+        final int wValue  = (0x01 << 8) | 0x01;
+        // After a sustained starve (no data for >10 s), close the
+        // session so the plugin can re-attach. Observed on Plus: GET_
+        // REPORT on EP0 stops responding after ~3 s of polling and
+        // never recovers without a fresh open. The hotplug retryAttach
+        // / camera-streamer keepalive will reopen us within the second.
+        final long STARVE_RESET_MS = 10000L;
+
+        while (running) {
+            int got;
+            try {
+                got = connection.controlTransfer(reqType, req, wValue, ifaceId,
+                    buf, buf.length, 200);
+            } catch (Throwable t) {
+                if (!running) return;
+                Log.w(TAG, "controlTransfer threw — closing", t);
+                close("polled_threw:" + t.getClass().getSimpleName());
+                return;
+            }
+            if (!running) break;
+            long now = System.currentTimeMillis();
+            if (got <= 0) {
+                if (now - lastDataAt >= STARVE_RESET_MS) {
+                    // Firmware almost certainly latched up — close so the
+                    // plugin re-attaches us with a fresh GET_REPORT
+                    // pipeline. Avoids the user having to mash Restart
+                    // Sessions every 10 s.
+                    Log.w(TAG, "reader (polled) starved past reset threshold ("
+                        + (now - lastDataAt) + " ms) — closing for re-attach");
+                    close("polled_reset");
+                    return;
+                }
+                if (now - lastStarveLog >= 5000) {
+                    Log.w(TAG, "reader (polled) starving — "
+                        + (now - lastDataAt) + " ms since last data, last got=" + got);
+                    lastStarveLog = now;
+                    if (debugLogging) {
+                        JSObject ev = new JSObject();
+                        ev.put("deckId", serial);
+                        ev.put("len", got);
+                        ev.put("bytes", "(starving polled, last=" + got + ")");
+                        emitter.emit("rawInputReport", ev);
+                    }
+                }
+                sleepQuiet(POLLED_INTERVAL_MS);
+                continue;
+            }
+            lastDataAt = now;
+            byte[] data = new byte[got];
+            System.arraycopy(buf, 0, data, 0, got);
+            if (debugLogging) emitRaw(data, got);
+            parseInputReport(data, got);
+            sleepQuiet(POLLED_INTERVAL_MS);
+        }
+    }
+
+    private static void sleepQuiet(long ms) {
+        try { Thread.sleep(ms); } catch (InterruptedException ignored) { /* loop will exit on running=false */ }
+    }
+
+    /**
+     * Native USBDEVFS reader path. Uses ioctl(USBDEVFS_DISCONNECT) to
+     * detach any in-kernel HID driver from the interface BEFORE we
+     * claim it — this is the part Java's claimInterface(force=true)
+     * does not do, and the reason interrupt-IN reads silently return
+     * nothing on certain phone kernels (Lenovo ThinkPhone, Pixel 6).
+     *
+     * If the native lib isn't loaded (build skipped or arch mismatch),
+     * we fall through to the UsbRequest path so the session still
+     * works with output-only.
+     */
+    private void emitRaw(byte[] data, int got) {
+        // Dedupe — only emit when bytes actually changed since the
+        // last report. Polled mode floods us with the same snapshot
+        // every tick; the journal stays empty until something moves.
+        if (lastRawBytes != null && lastRawBytes.length == got) {
+            boolean same = true;
+            for (int i = 0; i < got; i++) {
+                if (lastRawBytes[i] != data[i]) { same = false; break; }
+            }
+            if (same) return;
+        }
+        if (lastRawBytes == null || lastRawBytes.length != got) {
+            lastRawBytes = new byte[got];
+        }
+        System.arraycopy(data, 0, lastRawBytes, 0, got);
+
+        StringBuilder sb = new StringBuilder();
+        int dump = Math.min(got, 32);
+        for (int i = 0; i < dump; i++) {
+            if (i > 0) sb.append(" ");
+            sb.append(String.format("%02x", data[i] & 0xFF));
+        }
+        if (got > dump) sb.append(" …");
+        // Log to logcat too so adb tcpip captures the diagnostic
+        // even when the user can't see the in-app journal.
+        Log.i(TAG, "raw[" + got + "]: " + sb);
+        JSObject ev = new JSObject();
+        ev.put("deckId", serial);
+        ev.put("len", got);
+        ev.put("bytes", sb.toString());
+        emitter.emit("rawInputReport", ev);
     }
 
     /**
@@ -316,10 +597,22 @@ public final class DeckSession {
 
         if (isKeyReport) {
             // Key report. Keys start at offset 4 for V2, 1 for V1.
+            // Polled mode delivers the full snapshot every tick; dedupe
+            // against lastKeyPressed so JS only sees actual transitions.
+            // Interrupt modes also benefit — the firmware sometimes
+            // resends the same delta if a tick is dropped.
             int offset = (spec.transport == DeckSpec.TransportKind.V2) ? 4 : 1;
             for (int k = 0; k < spec.keyCount; k++) {
                 if (offset + k >= len) break;
                 boolean pressed = buf[offset + k] != 0;
+                if (lastKeyPressed != null
+                    && k < lastKeyPressed.length
+                    && lastKeyPressed[k] == pressed) {
+                    continue;
+                }
+                if (lastKeyPressed != null && k < lastKeyPressed.length) {
+                    lastKeyPressed[k] = pressed;
+                }
                 JSObject ev = new JSObject();
                 ev.put("deckId", serial);
                 ev.put("key", k);

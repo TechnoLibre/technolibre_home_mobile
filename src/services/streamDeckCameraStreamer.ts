@@ -1,6 +1,6 @@
 import type { PluginListenerHandle } from "@capacitor/core";
 import { Camera } from "@capacitor/camera";
-import { StreamDeckPlugin, DeckInfo } from "../plugins/streamDeckPlugin";
+import { StreamDeckPlugin, DeckInfo, DeckModel } from "../plugins/streamDeckPlugin";
 import type { StreamDeckController } from "./streamDeckController";
 
 interface ListenerLike {
@@ -16,6 +16,10 @@ interface DeckCanvasCache {
     canvasH: number;
     kw: number;
     kh: number;
+    /** Width of the inter-key gap in composite pixels. 0 when border
+     *  compensation is off — composite collapses to a contiguous grid. */
+    gapW: number;
+    gapH: number;
 }
 
 /**
@@ -40,10 +44,59 @@ interface DeckCanvasCache {
  *     per key actually gets written.
  */
 export class StreamDeckCameraStreamer {
-    private static readonly TICK_MS = 200; // 5 fps target — actual rate depends on encode + USB drain
-    private static readonly DEFAULT_JPEG_QUALITY = 0.8;
+    private static readonly DEFAULT_FPS = 5;
+    // 0.1 by default keeps USB drain low and the WebView JPEG encoder
+    // fast — visible blocks but a totally usable preview.
+    private static readonly DEFAULT_JPEG_QUALITY = 0.1;
+    // Physical bezel between keys, expressed as a fraction of the
+    // visible LCD image edge. The ratio is unit-free, so we don't need
+    // the camera's resolution: drawImage handles the camera→composite
+    // downscale, then we apply the ratio against deck.keyImage.{w,h}
+    // (the LCD's native pixel size).
+    //
+    // Subtle calibration point — deck.keyImage.w is the pixel count of
+    // the LCD's *visible image area*, not the whole key cap. Adjacent
+    // LCD viewports are separated by:
+    //   plastic bezel of cap A  +  air gap between caps  +  plastic bezel of cap B
+    // So the gap to skip in image-pixel space corresponds to the full
+    // LCD-to-LCD distance, not just the inter-cap air gap. Initial
+    // estimates used cap-edge / cap-edge which sat too low; revised
+    // here to LCD-edge / LCD-edge geometry.
+    //
+    // Values are best-effort measurements from external dims and the
+    // assumption that each cap has ~3 mm of plastic around the LCD.
+    // Hardware variance + that assumption mean the per-deck slider in
+    // the diagnostic panel is the authoritative tuning surface; these
+    // defaults just put the user in the neighbourhood.
+    //
+    //   original_v1/v2/mk2 — 30 mm cap, ~24 mm LCD,  3+3+3 mm gap → 0.40 / 0.40
+    //   xl                — 30 mm cap, ~24 mm LCD,  3+7+3 mm gap → 0.54 / 0.54
+    //                                       (confirmed empirically)
+    //   mini              — 24 mm cap, ~20 mm LCD,  2+3+2 mm gap → 0.30 / 0.30
+    //   plus              — 0.68 W / 0.30 H (confirmed empirically)
+    //                       Vertical is lower than the geometry-only
+    //                       estimate (0.48) suggested — the Plus has a
+    //                       taller LCD viewport per cap than we
+    //                       assumed, so the denominator is larger.
+    //   neo               — 30 mm cap, ~24 mm LCD,  3+5+3 mm gap → 0.40 / 0.40
+    private static readonly BORDER_RATIO_BY_MODEL: Record<DeckModel, { w: number; h: number }> = {
+        original_v1: { w: 0.40, h: 0.40 },
+        original_v2: { w: 0.40, h: 0.40 },
+        mini:        { w: 0.30, h: 0.30 },
+        mk2:         { w: 0.40, h: 0.40 },
+        xl:          { w: 0.54, h: 0.54 },
+        plus:        { w: 0.68, h: 0.30 },
+        neo:         { w: 0.40, h: 0.40 },
+    };
+    private static readonly BORDER_RATIO_FALLBACK = { w: 0.40, h: 0.40 };
 
     private quality = StreamDeckCameraStreamer.DEFAULT_JPEG_QUALITY;
+    private fps = StreamDeckCameraStreamer.DEFAULT_FPS;
+    private facingMode: "environment" | "user" = "environment";
+    private skipIdentical = false;
+    private lastFrameHash = 0;
+    private hashCanvas: HTMLCanvasElement | null = null;
+    private hashCtx: CanvasRenderingContext2D | null = null;
     private active = false;
     private stream: MediaStream | null = null;
     private video: HTMLVideoElement | null = null;
@@ -51,6 +104,15 @@ export class StreamDeckCameraStreamer {
     private listeners: PluginListenerHandle[] = [];
     private decks = new Map<string, DeckInfo>();
     private deckCache = new Map<string, DeckCanvasCache>();
+    /** Per-deck toggle: when true, the composite is rendered at the
+     *  larger virtual size that includes inter-key gaps, and pixels
+     *  falling on the bezels are simply not extracted into any tile. */
+    private borderCompensation = new Map<string, boolean>();
+    /** Per-deck override of the bezel ratio. Empty = use the model
+     *  default from BORDER_RATIO_BY_MODEL. Lets the user fine-tune
+     *  hardware where the published spec doesn't quite match what
+     *  they observe. */
+    private borderRatioOverride = new Map<string, { w: number; h: number }>();
     private inFlight = false;
     private listenersOut = new Set<ListenerLike>();
     private lastTickStart = 0;
@@ -67,6 +129,118 @@ export class StreamDeckCameraStreamer {
     setQuality(q: number): void {
         if (Number.isNaN(q)) return;
         this.quality = Math.max(0.1, Math.min(1.0, q));
+    }
+
+    getFps(): number { return this.fps; }
+
+    /** Live-update tick interval. While streaming, swap the timer in
+     *  place so the new rate kicks in next tick — no need to stop and
+     *  restart the camera. */
+    setFps(fps: number): void {
+        const clamped = Math.max(1, Math.min(30, Math.round(fps)));
+        if (clamped === this.fps) return;
+        this.fps = clamped;
+        if (this.active && this.timer !== null) {
+            clearInterval(this.timer);
+            this.timer = setInterval(() => {
+                try { this.tick(); }
+                catch (e) { console.warn("[camera-streamer] tick:", e); }
+            }, this.tickMs());
+        }
+    }
+
+    getFacingMode(): "environment" | "user" { return this.facingMode; }
+
+    /** Switch front/back camera. While streaming, swaps MediaStream in
+     *  place — gets a new track from getUserMedia and points the
+     *  hidden <video> element at it. The encode pipeline keeps running
+     *  through the swap; first new frame appears within one tick. */
+    async setFacingMode(mode: "environment" | "user"): Promise<void> {
+        if (this.facingMode === mode) return;
+        this.facingMode = mode;
+        if (!this.active || !this.video) return;
+        const old = this.stream;
+        const next = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: this.facingMode,
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+            },
+            audio: false,
+        });
+        this.stream = next;
+        this.video.srcObject = next;
+        await this.video.play().catch(() => { /* autoplay best-effort */ });
+        // Stop old tracks AFTER the new stream is wired so we never
+        // hand the encoder a black frame between swaps.
+        if (old) {
+            for (const t of old.getTracks()) {
+                try { t.stop(); } catch { /* ignore */ }
+            }
+        }
+        // Reset hash so the first post-swap frame doesn't get skipped
+        // as "identical" — different camera, different sensor noise.
+        this.lastFrameHash = 0;
+    }
+
+    getSkipIdentical(): boolean { return this.skipIdentical; }
+
+    setSkipIdentical(on: boolean): void {
+        this.skipIdentical = !!on;
+        // Reset on toggle so the very next frame is always painted —
+        // otherwise enabling the option mid-still-scene leaves the deck
+        // showing whatever was there before.
+        this.lastFrameHash = 0;
+    }
+
+    private tickMs(): number {
+        return Math.max(33, Math.round(1000 / this.fps));
+    }
+
+    getBorderCompensation(deckId: string): boolean {
+        return this.borderCompensation.get(deckId) ?? false;
+    }
+
+    setBorderCompensation(deckId: string, on: boolean): void {
+        this.borderCompensation.set(deckId, !!on);
+        // Invalidate the cache so the next paint re-allocates the
+        // composite at the new virtual size (or back to contiguous).
+        this.deckCache.delete(deckId);
+    }
+
+    /** Per-model bezel ratio. Falls back to a generic value for any
+     *  future model not yet enumerated in BORDER_RATIO_BY_MODEL. */
+    getDefaultBorderRatio(model: DeckModel): { w: number; h: number } {
+        return StreamDeckCameraStreamer.BORDER_RATIO_BY_MODEL[model]
+            ?? StreamDeckCameraStreamer.BORDER_RATIO_FALLBACK;
+    }
+
+    /** Effective ratio for a deck — override when present, else the
+     *  per-model default. */
+    getEffectiveBorderRatio(deckId: string, model: DeckModel): { w: number; h: number } {
+        return this.borderRatioOverride.get(deckId)
+            ?? this.getDefaultBorderRatio(model);
+    }
+
+    hasBorderRatioOverride(deckId: string): boolean {
+        return this.borderRatioOverride.has(deckId);
+    }
+
+    /** Override the bezel ratio for one deck. Triggers a cache rebuild
+     *  on the next paint so the new gap takes effect within one tick.
+     *  Upper bound at 0.9 — beyond that the gap eats almost all of the
+     *  composite and the per-key crop becomes one or two pixels wide. */
+    setBorderRatio(deckId: string, w: number, h: number): void {
+        const cw = Math.max(0, Math.min(0.9, w));
+        const ch = Math.max(0, Math.min(0.9, h));
+        this.borderRatioOverride.set(deckId, { w: cw, h: ch });
+        this.deckCache.delete(deckId);
+    }
+
+    /** Drop the override and fall back to the per-model default. */
+    clearBorderRatio(deckId: string): void {
+        if (!this.borderRatioOverride.delete(deckId)) return;
+        this.deckCache.delete(deckId);
     }
 
     onActiveChange(cb: ListenerLike): () => void {
@@ -99,7 +273,7 @@ export class StreamDeckCameraStreamer {
 
         this.stream = await navigator.mediaDevices.getUserMedia({
             video: {
-                facingMode: "environment",
+                facingMode: this.facingMode,
                 width: { ideal: 1280 },
                 height: { ideal: 720 },
             },
@@ -129,9 +303,10 @@ export class StreamDeckCameraStreamer {
         this.timer = setInterval(() => {
             try { this.tick(); }
             catch (e) { console.warn("[camera-streamer] tick:", e); }
-        }, StreamDeckCameraStreamer.TICK_MS);
+        }, this.tickMs());
         this.tickCount = 0;
         this.lastTickStart = 0;
+        this.lastFrameHash = 0;
 
         // Track decks attaching/detaching while we stream so we keep
         // every connected surface in sync.
@@ -200,6 +375,10 @@ export class StreamDeckCameraStreamer {
         if (this.video.readyState < 2 /* HAVE_CURRENT_DATA */) return;
         if (this.video.videoWidth === 0 || this.video.videoHeight === 0) return;
 
+        // Cheap "static scene" skip — sample the video into a 32×16
+        // canvas, fold the bytes into an int, compare to last. ~0.3 ms.
+        if (this.skipIdentical && this.frameUnchanged()) return;
+
         this.inFlight = true;
         const t0 = performance.now();
         try {
@@ -223,11 +402,52 @@ export class StreamDeckCameraStreamer {
         }
     }
 
+    private frameUnchanged(): boolean {
+        const v = this.video;
+        if (!v) return true;
+        if (!this.hashCanvas) {
+            this.hashCanvas = document.createElement("canvas");
+            this.hashCanvas.width = 32;
+            this.hashCanvas.height = 16;
+            this.hashCtx = this.hashCanvas.getContext("2d", {
+                alpha: false,
+                willReadFrequently: true,
+            });
+        }
+        const ctx = this.hashCtx;
+        if (!ctx) return false;
+        ctx.drawImage(v, 0, 0, 32, 16);
+        let h = 0;
+        try {
+            const img = ctx.getImageData(0, 0, 32, 16).data;
+            for (let i = 0; i < img.length; i += 4) {
+                h = ((h * 31) + img[i] + img[i + 1] * 7 + img[i + 2] * 13) | 0;
+            }
+        } catch {
+            // SecurityError on tainted canvas (shouldn't happen with
+            // same-origin getUserMedia) — disable the hash path.
+            return false;
+        }
+        if (h === this.lastFrameHash) return true;
+        this.lastFrameHash = h;
+        return false;
+    }
+
     private getCache(deck: DeckInfo): DeckCanvasCache | null {
+        const compensate = this.borderCompensation.get(deck.deckId) ?? false;
+        const ratio = this.borderRatioOverride.get(deck.deckId)
+            ?? this.getDefaultBorderRatio(deck.model);
+        const gapW = compensate ? Math.round(deck.keyImage.w * ratio.w) : 0;
+        const gapH = compensate ? Math.round(deck.keyImage.h * ratio.h) : 0;
+        const canvasW = deck.cols * deck.keyImage.w + (deck.cols - 1) * gapW;
+        const canvasH = deck.rows * deck.keyImage.h + (deck.rows - 1) * gapH;
+
         const cached = this.deckCache.get(deck.deckId);
-        const canvasW = deck.cols * deck.keyImage.w;
-        const canvasH = deck.rows * deck.keyImage.h;
-        if (cached && cached.canvasW === canvasW && cached.canvasH === canvasH) {
+        if (cached
+            && cached.canvasW === canvasW
+            && cached.canvasH === canvasH
+            && cached.gapW === gapW
+            && cached.gapH === gapH) {
             return cached;
         }
         const composite = document.createElement("canvas");
@@ -246,6 +466,7 @@ export class StreamDeckCameraStreamer {
             canvasW, canvasH,
             kw: deck.keyImage.w,
             kh: deck.keyImage.h,
+            gapW, gapH,
         };
         this.deckCache.set(deck.deckId, entry);
         return entry;
@@ -257,20 +478,26 @@ export class StreamDeckCameraStreamer {
         const cache = this.getCache(deck);
         if (!cache) return;
 
-        const { composite, cctx, tile, tctx, canvasW, canvasH, kw, kh } = cache;
+        const { composite, cctx, tile, tctx, canvasW, canvasH, kw, kh, gapW, gapH } = cache;
         const cols = deck.cols;
         const rows = deck.rows;
         const rotation = deck.keyImage.rotation ?? 0;
         const format = deck.keyImage.format === "jpeg" ? "jpeg" : "png";
         const mime = format === "jpeg" ? "image/jpeg" : "image/png";
 
-        // Cover-fit the camera into the deck's surface area.
+        // Cover-fit the camera into the deck's surface area (which now
+        // includes the bezel gaps when border compensation is on).
         const vw = v.videoWidth;
         const vh = v.videoHeight;
         const scale = Math.max(canvasW / vw, canvasH / vh);
         const dw = vw * scale;
         const dh = vh * scale;
         cctx.drawImage(v, (canvasW - dw) / 2, (canvasH - dh) / 2, dw, dh);
+
+        // Stride between key origins on the composite. With gaps=0 this
+        // collapses to (kw, kh) — the original contiguous layout.
+        const strideW = kw + gapW;
+        const strideH = kh + gapH;
 
         const entries: { key: number; bytes: string }[] = new Array(rows * cols);
         let count = 0;
@@ -282,7 +509,7 @@ export class StreamDeckCameraStreamer {
                     tctx.rotate((rotation * Math.PI) / 180);
                     tctx.translate(-kw / 2, -kh / 2);
                 }
-                tctx.drawImage(composite, c * kw, r * kh, kw, kh, 0, 0, kw, kh);
+                tctx.drawImage(composite, c * strideW, r * strideH, kw, kh, 0, 0, kw, kh);
 
                 // Synchronous JPEG encode — returns base64 in a data URL
                 // already. Strip the "data:image/jpeg;base64," prefix.

@@ -57,6 +57,15 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                 <t t-if="state.debugLogging">🛑 Debug ON</t>
                 <t t-else="">🐞 Debug OFF</t>
               </button>
+              <button class="options-streamdeck__refresh"
+                      t-att-class="{ 'options-streamdeck__debug--on': state.readerMode !== 'userequest' }"
+                      t-on-click="() => this.cycleReaderMode()">
+                📥 Mode: <t t-esc="state.readerMode" />
+              </button>
+              <button class="options-streamdeck__refresh"
+                      t-on-click="() => this.restartSessions()">
+                🔄 Redémarrer sessions
+              </button>
             </div>
 
             <t t-if="state.error">
@@ -146,6 +155,90 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                         </button>
                       </t>
                     </div>
+
+                    <div class="options-streamdeck__deck-params-row">
+                      <label class="options-streamdeck__checkbox-label">
+                        <input type="checkbox"
+                               t-att-checked="state.borderCompensation[row.info.deckId]"
+                               t-on-change="(ev) => this.toggleBorderCompensation(row.info.deckId, ev.target.checked)" />
+                        Inclure les bordures dans l'image (caméra)
+                      </label>
+                    </div>
+                    <p class="options-streamdeck__hint options-streamdeck__hint--inline">
+                      Compense les espaces physiques entre les touches.
+                      Les pixels qui tombent sur les bordures sont écartés
+                      au lieu d'être affichés sur la mauvaise touche.
+                    </p>
+
+                    <t t-if="row.info.lcd">
+                      <div class="options-streamdeck__deck-params-header">📺 Texte LCD</div>
+                      <div class="options-streamdeck__deck-params-row">
+                        <input type="text"
+                               class="options-streamdeck__lcd-text"
+                               t-att-value="state.lcdText[row.info.deckId] ?? ''"
+                               t-on-input="(ev) => this.onLcdTextInput(ev, row.info.deckId)"
+                               placeholder="Tape ton texte ici…" />
+                      </div>
+
+                      <div class="options-streamdeck__deck-params-header">
+                        Taille de police —
+                        <strong t-esc="(state.lcdFontSize[row.info.deckId] ?? 48) + ' px'" />
+                      </div>
+                      <input type="range" min="12" max="96" step="2"
+                             class="options-streamdeck__brightness-slider"
+                             t-att-value="state.lcdFontSize[row.info.deckId] ?? 48"
+                             t-on-input="(ev) => this.onLcdFontSizeInput(ev, row.info.deckId)" />
+
+                      <div class="options-streamdeck__deck-params-header">
+                        Vitesse de défilement —
+                        <strong t-esc="(state.lcdScrollSpeed[row.info.deckId] ?? 2) + ' px/trame'" />
+                      </div>
+                      <p class="options-streamdeck__hint options-streamdeck__hint--inline">
+                        Le défilement n'apparaît que si le texte dépasse l'écran. 0 = arrêt.
+                      </p>
+                      <input type="range" min="0" max="20" step="1"
+                             class="options-streamdeck__brightness-slider"
+                             t-att-value="state.lcdScrollSpeed[row.info.deckId] ?? 2"
+                             t-on-input="(ev) => this.onLcdScrollSpeedInput(ev, row.info.deckId)" />
+
+                      <div class="options-streamdeck__deck-params-row">
+                        <label class="options-streamdeck__lcd-color-label">
+                          Couleur du texte
+                          <input type="color"
+                                 class="options-streamdeck__lcd-color"
+                                 t-att-value="state.lcdColor[row.info.deckId] ?? '#ffffff'"
+                                 t-on-input="(ev) => this.onLcdColorInput(ev, row.info.deckId)" />
+                        </label>
+                      </div>
+                    </t>
+
+                    <t t-if="state.borderCompensation[row.info.deckId]">
+                      <div class="options-streamdeck__deck-params-header">
+                        Largeur bordure (entre colonnes) —
+                        <strong t-esc="borderSliderLabel(row.info.deckId, 'w')" />
+                      </div>
+                      <input type="range" min="0" max="90" step="1"
+                             class="options-streamdeck__brightness-slider"
+                             t-att-value="borderSliderValue(row.info.deckId, 'w')"
+                             t-on-input="(ev) => this.onBorderRatioInput(ev, row.info.deckId, 'w')" />
+
+                      <div class="options-streamdeck__deck-params-header">
+                        Hauteur bordure (entre rangées) —
+                        <strong t-esc="borderSliderLabel(row.info.deckId, 'h')" />
+                      </div>
+                      <input type="range" min="0" max="90" step="1"
+                             class="options-streamdeck__brightness-slider"
+                             t-att-value="borderSliderValue(row.info.deckId, 'h')"
+                             t-on-input="(ev) => this.onBorderRatioInput(ev, row.info.deckId, 'h')" />
+
+                      <div class="options-streamdeck__deck-params-row">
+                        <button class="options-streamdeck__refresh"
+                                t-att-disabled="!state.borderHasOverride[row.info.deckId]"
+                                t-on-click="() => this.resetBorderRatio(row.info.deckId)">
+                          ↺ Valeurs par défaut du modèle
+                        </button>
+                      </div>
+                    </t>
                   </div>
                 </t>
               </div>
@@ -222,6 +315,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         events: [] as EventLogEntry[],
         error: "",
         debugLogging: false,
+        readerMode: "userequest" as "userequest" | "bulk" | "polled",
         // Which deck row's parameter panel is open (deckId, "" = none).
         // Single-open at a time keeps the diagnostic panel scannable.
         expandedDeckId: "",
@@ -229,6 +323,22 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         // expose a getBrightness, so we keep our own state and default
         // to 50% (matches the firmware factory default).
         brightness: {} as Record<string, number>,
+        // Per-deck "include bezel in camera stream" toggle. The actual
+        // value lives on the camera streamer (singleton); this mirror
+        // is only for the checkbox to render reactively.
+        borderCompensation: {} as Record<string, boolean>,
+        // Per-deck effective bezel ratio (override when set, else
+        // per-model default). Mirrored from the streamer for slider
+        // rendering. Cleared/refilled on every refresh.
+        borderRatio: {} as Record<string, { w: number; h: number }>,
+        borderHasOverride: {} as Record<string, boolean>,
+        // Per-deck LCD text settings (only relevant on LCD-equipped
+        // decks like Plus). Source of truth lives on the LCD text
+        // renderer; these mirrors drive the inputs reactively.
+        lcdText: {} as Record<string, string>,
+        lcdFontSize: {} as Record<string, number>,
+        lcdColor: {} as Record<string, string>,
+        lcdScrollSpeed: {} as Record<string, number>,
     });
 
     // Exposed to the template so the t-foreach over presets stays a
@@ -252,6 +362,10 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         onMounted(async () => {
             await this.refresh();
             await this._wireListeners();
+            try {
+                const r = await StreamDeckPlugin.getReaderMode();
+                this.state.readerMode = r.mode;
+            } catch { /* ignore */ }
         });
         onWillUnmount(async () => {
             for (const h of this._listeners) {
@@ -283,6 +397,9 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             const r = await StreamDeckPlugin.listDecks();
             this.state.decks = r.decks.map((info) => ({ info }));
             this._log(`listDecks → ${r.decks.length} deck(s)`);
+            // Mirror the streamer's per-deck border-compensation flags
+            // so the checkbox reflects state correctly across re-mounts.
+            this.syncBorderCompensationFromStreamer();
             // Always also refresh the all-USB scan so lastAttachError shows up.
             await this.scanAllUsb();
         } catch (e) {
@@ -300,6 +417,33 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             this._log(`debug logging → ${r.enabled ? "ON" : "OFF"}`);
         } catch (e) {
             this._log(`setDebugLogging ERROR: ${e}`);
+        }
+    }
+
+    async cycleReaderMode(): Promise<void> {
+        // userequest → bulk → polled → userequest
+        const cycle: ("userequest" | "bulk" | "polled")[] =
+            ["userequest", "bulk", "polled"];
+        const idx = cycle.indexOf(this.state.readerMode);
+        const next = cycle[(idx + 1) % cycle.length];
+        try {
+            const r = await StreamDeckPlugin.setReaderMode({ mode: next });
+            this.state.readerMode = r.mode;
+            this._log(`reader mode → ${r.mode} (restart sessions to apply)`);
+        } catch (e) {
+            this._log(`setReaderMode ERROR: ${e}`);
+        }
+    }
+
+    async restartSessions(): Promise<void> {
+        try {
+            const r = await StreamDeckPlugin.restartSessions();
+            this._log(`restartSessions → ${r.restarted} deck(s) re-attached`);
+            // listDecks lags briefly — refresh after a beat so the
+            // panel shows the new sessions.
+            setTimeout(() => this.refresh(), 500);
+        } catch (e) {
+            this._log(`restartSessions ERROR: ${e}`);
         }
     }
 
@@ -373,6 +517,126 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         const input = ev.target as HTMLInputElement;
         const v = parseInt(input.value, 10);
         if (!Number.isNaN(v)) this.applyBrightness(deckId, v);
+    }
+
+    toggleBorderCompensation(deckId: string, on: boolean): void {
+        // The camera streamer is the source of truth (it owns the per-
+        // deck composite cache). The component just mirrors the value
+        // for the checkbox to render — read back after set so a clamp
+        // or anything similar in the streamer surfaces here.
+        const streamer = (this.env as any).streamDeckCameraStreamer;
+        if (!streamer) return;
+        streamer.setBorderCompensation(deckId, on);
+        this.state.borderCompensation[deckId] = streamer.getBorderCompensation(deckId);
+        this._log(`borderCompensation(${deckId}) → ${on ? "on" : "off"}`);
+    }
+
+    /** Slider integer value (0–40) for axis 'w' or 'h'. Used directly
+     *  by t-att-value so the template never has to do float math. */
+    borderSliderValue(deckId: string, axis: "w" | "h"): number {
+        const r = this.state.borderRatio[deckId];
+        if (!r) return 0;
+        return Math.round((axis === "w" ? r.w : r.h) * 100);
+    }
+
+    borderSliderLabel(deckId: string, axis: "w" | "h"): string {
+        const r = this.state.borderRatio[deckId];
+        if (!r) return "0%";
+        return Math.round((axis === "w" ? r.w : r.h) * 100) + "%";
+    }
+
+    onBorderRatioInput(ev: Event, deckId: string, axis: "w" | "h"): void {
+        const input = ev.target as HTMLInputElement;
+        const x100 = parseInt(input.value, 10);
+        if (Number.isNaN(x100)) return;
+        const v = Math.max(0, Math.min(0.9, x100 / 100));
+        const streamer = (this.env as any).streamDeckCameraStreamer;
+        if (!streamer) return;
+        const row = this.state.decks.find((r) => r.info.deckId === deckId);
+        if (!row) return;
+        const current = streamer.getEffectiveBorderRatio(deckId, row.info.model);
+        const next = axis === "w"
+            ? { w: v, h: current.h }
+            : { w: current.w, h: v };
+        streamer.setBorderRatio(deckId, next.w, next.h);
+        this.syncBorderRatio(deckId, row.info.model);
+    }
+
+    resetBorderRatio(deckId: string): void {
+        const streamer = (this.env as any).streamDeckCameraStreamer;
+        if (!streamer) return;
+        const row = this.state.decks.find((r) => r.info.deckId === deckId);
+        if (!row) return;
+        streamer.clearBorderRatio(deckId);
+        this.syncBorderRatio(deckId, row.info.model);
+        this._log(`borderRatio(${deckId}) → reset to model default`);
+    }
+
+    private syncBorderRatio(deckId: string, model: any): void {
+        const streamer = (this.env as any).streamDeckCameraStreamer;
+        if (!streamer) return;
+        this.state.borderRatio[deckId] = streamer.getEffectiveBorderRatio(deckId, model);
+        this.state.borderHasOverride[deckId] = streamer.hasBorderRatioOverride(deckId);
+    }
+
+    private syncBorderCompensationFromStreamer(): void {
+        const streamer = (this.env as any).streamDeckCameraStreamer;
+        if (!streamer) return;
+        for (const row of this.state.decks) {
+            this.state.borderCompensation[row.info.deckId] =
+                streamer.getBorderCompensation(row.info.deckId);
+            this.syncBorderRatio(row.info.deckId, row.info.model);
+        }
+        this.syncLcdTextFromRenderer();
+    }
+
+    onLcdTextInput(ev: Event, deckId: string): void {
+        const input = ev.target as HTMLInputElement;
+        const renderer = (this.env as any).streamDeckLcdTextRenderer;
+        if (!renderer) return;
+        renderer.setText(deckId, input.value);
+        this.state.lcdText[deckId] = renderer.getText(deckId);
+    }
+
+    onLcdFontSizeInput(ev: Event, deckId: string): void {
+        const input = ev.target as HTMLInputElement;
+        const px = parseInt(input.value, 10);
+        if (Number.isNaN(px)) return;
+        const renderer = (this.env as any).streamDeckLcdTextRenderer;
+        if (!renderer) return;
+        renderer.setFontSize(deckId, px);
+        this.state.lcdFontSize[deckId] = renderer.getFontSize(deckId);
+    }
+
+    onLcdColorInput(ev: Event, deckId: string): void {
+        const input = ev.target as HTMLInputElement;
+        const renderer = (this.env as any).streamDeckLcdTextRenderer;
+        if (!renderer) return;
+        renderer.setColor(deckId, input.value);
+        this.state.lcdColor[deckId] = renderer.getColor(deckId);
+    }
+
+    onLcdScrollSpeedInput(ev: Event, deckId: string): void {
+        const input = ev.target as HTMLInputElement;
+        const px = parseInt(input.value, 10);
+        if (Number.isNaN(px)) return;
+        const renderer = (this.env as any).streamDeckLcdTextRenderer;
+        if (!renderer) return;
+        renderer.setScrollSpeed(deckId, px);
+        this.state.lcdScrollSpeed[deckId] = renderer.getScrollSpeed(deckId);
+    }
+
+    private syncLcdTextFromRenderer(): void {
+        const renderer = (this.env as any).streamDeckLcdTextRenderer;
+        if (!renderer) return;
+        for (const row of this.state.decks) {
+            if (!row.info.lcd) continue;
+            const id = row.info.deckId;
+            this.state.lcdText[id] = renderer.getText(id);
+            this.state.lcdFontSize[id] = renderer.getFontSize(id);
+            this.state.lcdColor[id] = renderer.getColor(id);
+            this.state.lcdScrollSpeed[id] = renderer.getScrollSpeed(id);
+        }
     }
 
     async retryPermission(): Promise<void> {

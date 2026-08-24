@@ -34,6 +34,7 @@ import { RepoEditService } from "../services/repoEditService";
 import { CodeStyleService } from "../services/codeStyleService";
 import { StreamDeckController } from "../services/streamDeckController";
 import { StreamDeckCameraStreamer } from "../services/streamDeckCameraStreamer";
+import { StreamDeckLcdTextRenderer } from "../services/streamDeckLcdTextRenderer";
 import { streamDeckEventLog } from "../services/streamDeckEventLog";
 import { StreamDeckPlugin } from "../plugins/streamDeckPlugin";
 import { TagService } from "../services/tagService";
@@ -248,6 +249,10 @@ async function startApp() {
 		console.warn("[boot] StreamDeckController.start failed:", e),
 	);
 	const streamDeckCameraStreamer = new StreamDeckCameraStreamer(streamDeckController);
+	const streamDeckLcdTextRenderer = new StreamDeckLcdTextRenderer();
+	streamDeckLcdTextRenderer.start().catch((e) =>
+		console.warn("[boot] StreamDeckLcdTextRenderer.start failed:", e),
+	);
 
 	// Boot-time subscriptions to feed the singleton event log so the
 	// diagnostic Options panel keeps history across navigation.
@@ -288,7 +293,7 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
-	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, marianService, processService, repoExtractorService, repoEditService, codeStyleService, streamDeckController, streamDeckCameraStreamer };
+	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, marianService, processService, repoExtractorService, repoEditService, codeStyleService, streamDeckController, streamDeckCameraStreamer, streamDeckLcdTextRenderer };
 
 	setBootStep(t("boot.mounting_interface"));
 	await mount(RootComponent, document.body, { env });
