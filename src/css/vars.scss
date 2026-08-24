@@ -2,6 +2,13 @@
 :root {
 	--app-font-family: "VarOpenSans", system-ui, sans-serif;
 	--app-font-scale: 1;
+
+	// Text colour for buttons whose background is a saturated brand
+	// shade (blue / red / green). White is legible on every variant
+	// of those colours across all four themes — using var(--text)
+	// would pick up the theme's body-text colour, which is dark on
+	// the light themes and produced unreadable text on dark blue.
+	--btn-on-color-text: #fff;
 }
 
 // ─── Nuit (dark night) — AMOLED deep black, original look ────────────────────
