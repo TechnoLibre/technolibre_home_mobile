@@ -2601,15 +2601,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Reads CHANGELOG.md from the bundle at boot, parses the H2 sections by "
                         + "date, and renders the most recent entries in a popover. No network — "
                         + "what's there is what shipped in the APK. Useful for users on field "
-                        + "devices that can't easily check the website.",
+                        + "devices that can't easily check the website. No copy of the "
+                        + "text in the code: the version shown is the first dated heading.",
                     fr: "Lit CHANGELOG.md depuis le bundle au boot, parse les sections H2 par "
                         + "date, et rend les entrées les plus récentes dans un popover. Pas de "
                         + "réseau — ce qui est là est ce qui a été livré dans l'APK. Utile pour "
                         + "les users sur appareils terrain qui ne peuvent pas checker le site "
-                        + "facilement.",
+                        + "facilement. Aucune copie du texte dans le code : la version "
+                        + "affichée vient du premier titre daté du fichier.",
                 },
                 demo: { kind: "options", sectionId: "changelog" },
-                files: ["src/components/options/changelog/options_changelog_component.ts"],
+                files: [
+                    "src/components/options/changelog/options_changelog_component.ts",
+                    "src/utils/changelogUtils.ts",
+                ],
             },
             {
                 id: "meta.erplibre",

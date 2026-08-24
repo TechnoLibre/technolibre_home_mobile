@@ -27,6 +27,8 @@ export const translations: Record<string, string> = {
   "options.processes": "Processus",
   "options.erplibre": "ERPLibre",
   "options.language": "Langue",
+  "options.changelog": "Changelog",
+  "options.changelog_version": "Version {version}",
 
   // Language picker
   "language.title": "Langue / Language",
@@ -352,6 +354,7 @@ export const translations: Record<string, string> = {
   "dialog.confirm_delete_note": "Voulez-vous vraiment supprimer cette note?",
 
   // Messages
+  "message.changelog_unavailable": "Changelog introuvable dans le bundle. Recompilez l'app (npm run build).",
   "message.no_applications": "Il n'y a pas d'application dans le stockage local.",
   "message.no_servers": "Il n'y a pas de serveur dans le stockage local.",
   "message.no_processes": "Aucun processus pour cette session.",
