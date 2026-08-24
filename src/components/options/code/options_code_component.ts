@@ -304,6 +304,23 @@ export class OptionsCodeComponent extends EnhancedComponent {
               <t t-else="">🖼 Image</t>
             </button>
           </t>
+          <!-- Settings menu (gear) — far right -->
+          <div class="code-viewer__settings">
+            <button class="code__btn code-viewer__settings-btn"
+                    t-att-aria-expanded="state.settingsOpen ? 'true' : 'false'"
+                    aria-label="Paramètres d'affichage"
+                    t-on-click="onToggleSettings">⚙</button>
+            <ul t-if="state.settingsOpen" class="code-viewer__settings-menu" role="menu">
+              <li role="menuitemcheckbox" t-att-aria-checked="state.softWrap ? 'true' : 'false'">
+                <label class="code-viewer__settings-row">
+                  <input type="checkbox"
+                         t-att-checked="state.softWrap"
+                         t-on-change="onToggleSoftWrap" />
+                  <span>Retour à la ligne (soft-wrap)</span>
+                </label>
+              </li>
+            </ul>
+          </div>
         </div>
 
         <t t-if="state.fileLoading">
@@ -329,7 +346,8 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
         <!-- Code view (plain or highlighted) -->
         <t t-else="">
-          <div class="code-viewer__code">
+          <div class="code-viewer__code"
+               t-att-class="{ 'code-viewer__code--soft-wrap': state.softWrap }">
             <t t-if="state.fileLines.length === 0">
               <div class="code__empty">Fichier vide.</div>
             </t>
@@ -720,6 +738,10 @@ export class OptionsCodeComponent extends EnhancedComponent {
             editGitDiffFile: "",
             editGitCommitMessage: "",
             editGitLog: [] as GitCommit[],
+
+            // Display settings (gear menu in the file viewer)
+            settingsOpen: false,
+            softWrap: this._readSoftWrapPref(),
         });
 
         onWillDestroy(async () => { await this._codeService?.disconnect(); });
@@ -730,6 +752,28 @@ export class OptionsCodeComponent extends EnhancedComponent {
             const res = await fetch("/repos/manifest.json");
             if (res.ok) this.state.manifestProjects = await res.json();
         } catch { /* dev server: no manifest */ }
+
+        // Deep-link from /options/features (or any other caller):
+        //   /options/code?target=mobile&path=src/services/foo.ts
+        //   /options/code?target=erplibre&path=mobile/erplibre_home_mobile/android/...
+        // Auto-connect the requested bundle and jump straight to the file.
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const wantPath = params.get("path");
+            const wantTarget = params.get("target");
+            if (wantPath) {
+                this.state.mode = "bundle";
+                this.state.bundleTarget = wantTarget === "erplibre" ? "erplibre" : "mobile";
+                await this._connectBundle();
+                const slash = wantPath.lastIndexOf("/");
+                const dir = slash >= 0 ? wantPath.slice(0, slash) : "";
+                const name = slash >= 0 ? wantPath.slice(slash + 1) : wantPath;
+                if (dir) await this._loadDir(dir);
+                await this._loadFile(wantPath, name);
+            }
+        } catch (e) {
+            this.state.error = e instanceof Error ? e.message : String(e);
+        }
     }
 
     // ── Mode / server ─────────────────────────────────────────────────────────
@@ -1150,6 +1194,30 @@ export class OptionsCodeComponent extends EnhancedComponent {
         } else if (this.state.fileLang === "image") {
             this.state.fileViewMode = this.state.fileViewMode === "image" ? "code" : "image";
         }
+    }
+
+    // ── Display settings (gear menu) ──────────────────────────────────────────
+
+    onToggleSettings(): void {
+        this.state.settingsOpen = !this.state.settingsOpen;
+    }
+
+    onToggleSoftWrap(): void {
+        this.state.softWrap = !this.state.softWrap;
+        this._writeSoftWrapPref(this.state.softWrap);
+    }
+
+    private _readSoftWrapPref(): boolean {
+        try {
+            return localStorage.getItem("options.code.softWrap") === "true";
+        } catch {
+            return false;
+        }
+    }
+
+    private _writeSoftWrapPref(v: boolean): void {
+        try { localStorage.setItem("options.code.softWrap", v ? "true" : "false"); }
+        catch { /* ignore */ }
     }
 
     // ── Line editing (ssh-path only) ──────────────────────────────────────────

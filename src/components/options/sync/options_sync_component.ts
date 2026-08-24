@@ -4,7 +4,7 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 
 export class OptionsSyncComponent extends EnhancedComponent {
   static template = xml`
-    <li class="options-list__item options-sync">
+    <li id="sync" class="options-list__item options-sync">
       <div
         class="options-sync__header"
         role="button"

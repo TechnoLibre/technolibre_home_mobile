@@ -24,7 +24,7 @@ const THEME_OPTIONS: { key: ColorTheme; label: string; icon: string }[] = [
 
 export class OptionsGraphicComponent extends EnhancedComponent {
   static template = xml`
-    <li class="options-list__item options-graphic">
+    <li id="graphic" class="options-list__item options-graphic">
       <div
         class="options-graphic__header"
         role="button"

@@ -10,6 +10,7 @@ import {
     streamDeckEventLog,
     StreamDeckEventLogEntry,
 } from "../../../services/streamDeckEventLog";
+import { useFeatureSection } from "../../../utils/featureSection";
 
 interface DeckRow {
     info: DeckInfo;
@@ -25,7 +26,7 @@ type EventLogEntry = StreamDeckEventLogEntry;
  */
 export class OptionsStreamDeckComponent extends EnhancedComponent {
     static template = xml`
-        <li class="options-list__item options-streamdeck">
+        <li id="streamdeck" class="options-list__item options-streamdeck">
           <div
               class="options-streamdeck__header"
               role="button"
@@ -358,6 +359,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         this._logUnsubscribe = streamDeckEventLog.subscribe(() => {
             this.state.events = streamDeckEventLog.getAll();
         });
+        useFeatureSection("streamdeck", () => { this.state.expanded = true; });
 
         onMounted(async () => {
             await this.refresh();

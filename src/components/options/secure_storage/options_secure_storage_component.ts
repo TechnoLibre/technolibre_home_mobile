@@ -5,7 +5,7 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 
 export class OptionsSecureStorageComponent extends EnhancedComponent {
 	static template = xml`
-    <li class="options-list__item">
+    <li id="secure-storage" class="options-list__item">
       <a href="#" t-on-click.stop.prevent="onShowKeysClick">
         Clés SecureStorage
       </a>

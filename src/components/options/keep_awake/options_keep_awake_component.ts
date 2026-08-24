@@ -1,6 +1,7 @@
 import { onMounted, useState, xml } from "@odoo/owl";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { KeepAwakePlugin } from "../../../plugins/keepAwakePlugin";
+import { useFeatureSection } from "../../../utils/featureSection";
 
 const STORAGE_KEY = "options.keepAwake.enabled";
 
@@ -16,7 +17,7 @@ const STORAGE_KEY = "options.keepAwake.enabled";
  */
 export class OptionsKeepAwakeComponent extends EnhancedComponent {
     static template = xml`
-        <li class="options-list__item">
+        <li id="keep-awake" class="options-list__item">
           <div
               class="options-camera-stream__header"
               role="button"
@@ -56,6 +57,7 @@ export class OptionsKeepAwakeComponent extends EnhancedComponent {
     });
 
     setup(): void {
+        useFeatureSection("keep-awake", () => { this.state.expanded = true; });
         onMounted(async () => {
             try {
                 const stored = localStorage.getItem(STORAGE_KEY);

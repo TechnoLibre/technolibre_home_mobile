@@ -7,7 +7,7 @@ import { WebViewUtils } from "../../../utils/webViewUtils";
 
 export class OptionsClearCacheComponent extends EnhancedComponent {
 	static template = xml`
-    <li class="options-list__item">
+    <li id="clear-cache" class="options-list__item">
       <a
         href="#"
         t-on-click.stop.prevent="onClearCacheClick"
