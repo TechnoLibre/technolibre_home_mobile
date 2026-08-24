@@ -14,6 +14,13 @@ Application mobile ERPLibre construite avec **Odoo Owl + Capacitor**.
 | [ROUTING.md](./ROUTING.md) | Système de routage |
 | [EVENTS.md](./EVENTS.md) | Bus d'événements inter-composants |
 | [BUILD.md](./BUILD.md) | Compilation, déploiement, environnements |
+| [NATIVE_PLUGINS.md](./NATIVE_PLUGINS.md) | Plugins Capacitor maison (Java) |
+| [I18N.md](./I18N.md) | Système de traduction et ajout d'une langue |
+| [BUNDLE_PIPELINE.md](./BUNDLE_PIPELINE.md) | Bundles tar.gz, extraction paresseuse, mode édition |
+| [SECURITY_PLAN.md](./SECURITY_PLAN.md) | Audit de sécurité et plan de correction |
+| [DEBUG_MENU.md](./DEBUG_MENU.md) | Le menu ⋮ et sa surcouche de débogage |
+| [streamdeck_test_matrix.md](./streamdeck_test_matrix.md) | Tests matériels manuels du Stream Deck |
+| [bundle_extract_test_matrix.md](./bundle_extract_test_matrix.md) | Tests manuels d'extraction et d'édition de bundle |
 
 ## Démarrage rapide
 
