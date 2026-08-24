@@ -1,20 +1,20 @@
 
-# Routing
+# Routage
 
-## Engine
+## Moteur
 
-Routing is handled by a custom `SimpleRouter` (`src/js/router.ts`), with no external dependency.
+Le routage est géré par un `SimpleRouter` personnalisé (`src/js/router.ts`), sans dépendance externe.
 
-Features:
-- Parametric routes (`:id` syntax)
-- Wildcard route `*` (fallback)
-- Safe URL decoding (`decodeURIComponent` with fallback)
-- SPA parsing (hash or pathname)
-- Query strings and `#` fragments are stripped before segment comparison
+Fonctionnalités :
+- Routes paramétriques (syntaxe `:id`)
+- Route wildcard `*` (fallback)
+- Décodage sécurisé des URL (`decodeURIComponent` avec fallback)
+- Parsing SPA (hash ou pathname)
+- Les query strings et fragments `#` sont ignorés avant la comparaison de segments
 
-## Route table (`src/js/routes.ts`)
+## Table des routes (`src/js/routes.ts`)
 
-| Route | Component |
+| Route | Composant |
 |-------|-----------|
 
 | `/` | `HomeComponent` |
@@ -40,7 +40,7 @@ Features:
 
 ## Navigation
 
-Navigation is triggered through the `EventBus` with the `ROUTER_NAVIGATION` event.
+La navigation est déclenchée via l'`EventBus` avec l'événement `ROUTER_NAVIGATION`.
 
 ```typescript
 // Navigation vers une route statique
@@ -54,19 +54,19 @@ const qs = new URLSearchParams({ host, username });
 eventBus.trigger(Events.ROUTER_NAVIGATION, { url: `/servers/edit?${qs}` });
 ```
 
-`ContentComponent` listens for that event and mounts the component matching the active route.
+Le `ContentComponent` écoute cet événement et monte le composant correspondant à la route active.
 
-## Query-string pattern for `/servers/edit`
+## Pattern query-string pour `/servers/edit`
 
-The server edit route uses **query parameters** rather than path segments:
+La route d'édition de serveur utilise des **query parameters** plutôt que des segments de chemin :
 
 ```
 /servers/edit?host=192.168.1.5&username=admin
 ```
 
-**Why?** The router's `splitRoute()` method filters out empty segments with `.filter(Boolean)`. If the username is empty, a route such as `/servers/edit/192.168.1.5/` yields only 3 segments instead of the 4 expected — no match is found and the `*` wildcard takes over (back to `HomeComponent`).
+**Pourquoi ?** La méthode `splitRoute()` du routeur filtre les segments vides via `.filter(Boolean)`. Si le nom d'utilisateur est vide, une route comme `/servers/edit/192.168.1.5/` produit seulement 3 segments au lieu de 4 attendus — aucune correspondance n'est trouvée et le wildcard `*` prend le relais (retour à `HomeComponent`).
 
-The answer is to pass the parameters in the query string. `splitRoute()` already strips the query string before counting segments (line 26 of `router.ts`: `route.split(/[?#]/)[0]`), so the route `/servers/edit?host=...&username=` matches `/servers/edit` correctly.
+La solution est de passer les paramètres dans la query string. `splitRoute()` retire déjà la query string avant de compter les segments (ligne 26 de `router.ts` : `route.split(/[?#]/)[0]`), donc la route `/servers/edit?host=...&username=` correspond correctement à `/servers/edit`.
 
 ```typescript
 // Dans ServersEditComponent.setup()
@@ -75,4 +75,4 @@ const host     = params.get("host")     ?? "";
 const username = params.get("username") ?? "";
 ```
 
-This approach works even when `username` is an empty string (the case for servers added by network scan with no user configuration).
+Cette approche fonctionne même si `username` est une chaîne vide (cas des serveurs ajoutés par scan réseau sans configuration utilisateur).
