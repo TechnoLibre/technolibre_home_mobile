@@ -68,6 +68,11 @@ Test suite goes from 854 to 1000 tests across 66 files.
 - **Documentation** — the Stream Deck plugin, the bundle pipeline and edit
   mode, a smoke script and the manual hardware matrix it cannot replace,
   and how to debug an Android build over wifi
+- **Markdown tables in the code browser** — every document under `doc/` is
+  made of tables, and each pipe row rendered as a paragraph. Six heading
+  levels and nested lists came with them. The renderer moved beside
+  `syntax_highlight.ts` so it can be tested, including against the
+  repository's own documentation
 - **Bilingual documentation** — every document under `doc/`, both READMEs
   and this changelog now have a `.base.md` source generating an English and
   a French file through mmg, following the root repository's convention.
@@ -77,6 +82,13 @@ Test suite goes from 854 to 1000 tests across 66 files.
 ### Changed
 - **Owl AOT coverage is now complete** — note templates dropped template
   interpolation, so every template is precompiled; lookup is by raw source
+- **Gettext catalogues leave the bundle** — 41 763 files and 857 MB, 33.5 %
+  of the files and 58.7 % of the payload, against 603 MB for everything
+  else. Weblate and the OCA bots maintain them and nobody reads a catalogue
+  on a phone. Archives fall from 431 to 328 MB, and the build reports what
+  it dropped. `BUNDLE_KEEP_PO=1` brings them back, `BUNDLE_SKIP_IMG=1` drops
+  the raster images too and takes archives to 115 MB. A side effect worth
+  having: 41 763 fewer files takes the build from 43 s to 22 s
 - **Vendor bundle split** with `manualChunks`
 - **Android build** — one ABI by default and whisper skippable, cutting
   local build time

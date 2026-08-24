@@ -76,6 +76,11 @@ fichiers.
 - **Documentation** — le plugin Stream Deck, le pipeline de bundle et le mode
   édition, un script de test de fumée et la matrice matérielle manuelle qu'il ne
   peut pas remplacer, et comment déboguer une compilation Android par wifi
+- **Tableaux markdown dans le navigateur de code** — chaque document de
+  `doc/` est fait de tableaux, et chaque rangée de barres s'affichait en
+  paragraphe. Six niveaux de titre et les listes imbriquées ont suivi. Le
+  rendu est passé à côté de `syntax_highlight.ts` pour être testable, y
+  compris contre la documentation du dépôt
 - **Documentation bilingue** — chaque document de `doc/`, les deux README et
   ce journal ont désormais une source `.base.md` générant un fichier anglais
   et un fichier français via mmg, selon la convention du dépôt racine. La
@@ -86,6 +91,14 @@ fichiers.
 - **La couverture AOT d'Owl est désormais complète** — les gabarits de note ont
   abandonné l'interpolation, tous les gabarits sont donc précompilés ; la
   recherche se fait par source brute
+- **Les catalogues gettext quittent le bundle** — 41 763 fichiers et 857 Mo,
+  33,5 % des fichiers et 58,7 % de la charge, contre 603 Mo pour tout le
+  reste. Weblate et les robots OCA les maintiennent, et personne n'en lit un
+  sur un téléphone. Les archives passent de 431 à 328 Mo, et la compilation
+  dit ce qu'elle a écarté. `BUNDLE_KEEP_PO=1` les ramène,
+  `BUNDLE_SKIP_IMG=1` écarte aussi les images matricielles et amène les
+  archives à 115 Mo. Effet de bord bienvenu : 41 763 fichiers de moins
+  ramènent la compilation de 43 s à 22 s
 - **Bundle fournisseur découpé** avec `manualChunks`
 - **Compilation Android** — une seule ABI par défaut et whisper désactivable, ce
   qui raccourcit la compilation locale
