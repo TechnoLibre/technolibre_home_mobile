@@ -192,6 +192,10 @@ node_modules/
 .sourcemaps
 dist/
 
+# Keystores — never commit signing keys
+*.keystore
+*.jks
+
 # Working directory — cloned manually, not committed
 android/app/src/main/cpp/whisper
 android/app/src/main/cpp/sentencepiece

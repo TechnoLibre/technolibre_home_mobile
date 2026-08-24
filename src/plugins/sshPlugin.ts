@@ -23,10 +23,19 @@ export interface SshExecuteResult {
     exitCode: number;
 }
 
+export interface SshConnectResult {
+    hostKeyFingerprint?: string;
+}
+
+export interface SshClearKnownHostOptions {
+    host: string;
+}
+
 export interface SshPlugin {
-    connect(options: SshConnectOptions): Promise<void>;
+    connect(options: SshConnectOptions): Promise<SshConnectResult>;
     execute(options: SshExecuteOptions): Promise<SshExecuteResult>;
     disconnect(): Promise<void>;
+    clearKnownHost(options: SshClearKnownHostOptions): Promise<void>;
     addListener(
         event: "sshOutput",
         listenerFunc: (data: SshOutputEvent) => void

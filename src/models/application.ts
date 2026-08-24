@@ -9,6 +9,7 @@ export interface Application {
 	pollIntervalMinutes: number;
 	ntfyUrl: string;
 	ntfyTopic: string;
+	ntfyToken: string;
 }
 
 export type ApplicationID = Pick<Application, "url" | "username">;
