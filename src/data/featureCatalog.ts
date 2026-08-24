@@ -227,6 +227,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "src/utils/videoThumbnailUtils.ts",
                             "src/services/migrations/migrateVideoThumbnails.ts",
                         ],
+                        tests: [
+                            "src/__tests__/videoThumbnailUtils.test.ts",
+                            "src/__tests__/migrateVideoThumbnails.test.ts",
+                        ],
                     },
                     {
                         id: "notes.entries.audio",
@@ -391,6 +395,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/note/top_controls/note_top_controls_component.ts",
                     "src/services/migrations/addNotePriority.ts",
                 ],
+                tests: ["src/__tests__/migrations.test.ts"],
             },
             {
                 id: "notes.date-picker",
@@ -553,12 +558,22 @@ export const FEATURE_TREE: FeatureNode[] = [
                 howItWorks: {
                     en: "Subscribes to keyChanged on every connected deck, "
                         + "throttled at 150 ms to dodge the WebView IME-storm "
-                        + "crash. On visibilitychange:hidden each deck dims to "
+                        + "crash. Key 0 always navigates to a fresh /note/<id>; "
+                        + "keys 1-3 are painted only while a NoteComponent is "
+                        + "mounted (notified via the STREAMDECK_NOTE_PAGE_ACTIVE "
+                        + "bus event) and fire STREAMDECK_ADD_VIDEO/AUDIO/"
+                        + "LOCATION events that the note re-uses to add an "
+                        + "entry. On visibilitychange:hidden each deck dims to "
                         + "0 %; brief hides only restore brightness, hides over "
                         + "5 s trigger a full restartSessions to wake the "
                         + "post-sleep-silent reader.",
                     fr: "S'abonne à keyChanged sur chaque deck, throttlé à 150 "
-                        + "ms pour éviter le crash IME du WebView. Sur "
+                        + "ms pour éviter le crash IME du WebView. La touche 0 "
+                        + "navigue toujours vers /note/<id>; les touches 1-3 ne "
+                        + "sont peintes que si une NoteComponent est montée "
+                        + "(notifiée via l'event bus STREAMDECK_NOTE_PAGE_ACTIVE) "
+                        + "et émettent STREAMDECK_ADD_VIDEO/AUDIO/LOCATION que "
+                        + "la note ré-utilise pour ajouter une entrée. Sur "
                         + "visibilitychange:hidden chaque deck dimme à 0 %; "
                         + "hides courtes restaurent juste la luminosité, hides "
                         + ">5 s déclenchent un restartSessions complet pour "
@@ -571,6 +586,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
                 demo: NONE_BG,
                 files: ["src/services/streamDeckController.ts"],
+                tests: ["src/__tests__/streamDeckController.test.ts"],
             },
             {
                 id: "streamdeck.usb",
@@ -816,6 +832,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/FaceDetectionPlugin.java",
                     "src/plugins/faceDetectionPlugin.ts",
                 ],
+                tests: ["src/__tests__/faceDetectionPlugin.test.ts"],
             },
             {
                 id: "streamdeck.lcd-text",
@@ -843,6 +860,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["src/services/streamDeckLcdTextRenderer.ts"],
+                tests: ["src/__tests__/streamDeckLcdTextRenderer.test.ts"],
             },
             {
                 id: "streamdeck.event-log",
@@ -853,19 +871,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 status: "stable",
                 howItWorks: {
-                    en: "In-memory ring-buffer (cap 200) of (timestamp, deck, event, data) "
-                        + "tuples. Append is O(1) with index wrap; the diagnostic panel reads a "
-                        + "snapshot via getRecent(). Cleared on plugin restart but not on deck "
-                        + "reconnect — useful for diagnosing flaky USB after a device comes back.",
-                    fr: "Ring-buffer mémoire (cap 200) de tuples (timestamp, deck, event, "
-                        + "data). Append O(1) avec wrap d'index; le panel diagnostique lit un "
-                        + "snapshot via getRecent(). Vidé au restart du plugin mais pas à la "
-                        + "reconnexion d'un deck — utile pour diagnostiquer un USB flaky après "
-                        + "qu'un appareil revienne.",
+                    en: "In-memory ring-buffer (cap 500) of (timestamp, text) entries pushed "
+                        + "to the front so newest is index 0. Subscribers fire on every add or "
+                        + "clear; getAll() returns a snapshot the diagnostic panel renders "
+                        + "from. Listener exceptions are isolated so logging never breaks.",
+                    fr: "Ring-buffer mémoire (cap 500) d'entrées (timestamp, texte) poussées "
+                        + "en tête — newest à l'index 0. Les souscripteurs fire à chaque add "
+                        + "ou clear; getAll() retourne un snapshot que le panel diagnostique "
+                        + "rend. Les exceptions de listener sont isolées pour ne jamais "
+                        + "casser le logging.",
                 },
                 dependsOn: ["streamdeck.bridge-ts"],
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: ["src/services/streamDeckEventLog.ts"],
+                tests: ["src/__tests__/streamDeckEventLog.test.ts"],
             },
             {
                 id: "streamdeck.options-panel",
@@ -1052,6 +1071,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addSyncPerServerStatus.ts",
                     "src/services/migrations/addSelectedSyncConfigIds.ts",
                 ],
+                tests: ["src/__tests__/migrations.test.ts"],
             },
             {
                 id: "sync.notifications",
@@ -1087,6 +1107,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 tests: [
                     "src/__tests__/ntfyService.test.ts",
                     "src/__tests__/notificationService.test.ts",
+                    "src/__tests__/migrations.test.ts",
                 ],
             },
         ],
@@ -1189,7 +1210,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/editableCodeService.ts",
                     "src/services/migrations/addEditableReposTable.ts",
                 ],
-                tests: ["src/__tests__/editableCodeService.test.ts"],
+                tests: [
+                    "src/__tests__/editableCodeService.test.ts",
+                    "src/__tests__/migrations.test.ts",
+                ],
             },
             {
                 id: "code.git",
@@ -1366,6 +1390,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 demo: NONE_PLUMBING,
                 files: ["src/services/repoFsFactory.ts"],
+                tests: ["src/__tests__/repoFsFactory.test.ts"],
             },
             {
                 id: "repos.manifest",
@@ -1498,7 +1523,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/plugins/whisperPlugin.ts",
                     "src/services/transcriptionService.ts",
                 ],
-                tests: ["src/__tests__/transcriptionService.test.ts"],
+                tests: [
+                    "src/__tests__/transcriptionService.test.ts",
+                    "src/__tests__/whisperPlugin.test.ts",
+                ],
             },
             {
                 id: "transcription.options",
@@ -1599,6 +1627,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/utils/cryptoUtils.ts",
                     "src/services/migrations/encryptExistingCredentials.ts",
                 ],
+                tests: [
+                    "src/__tests__/cryptoUtils.test.ts",
+                    "src/__tests__/storageUtils.test.ts",
+                    "src/__tests__/secureFileUtils.test.ts",
+                ],
             },
             {
                 id: "security.dev-mode",
@@ -1663,6 +1696,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/plugins/keepAwakePlugin.ts",
                     "src/components/options/keep_awake/options_keep_awake_component.ts",
                 ],
+                tests: ["src/__tests__/keepAwakePlugin.test.ts"],
             },
             {
                 id: "system.device-info",
@@ -1690,6 +1724,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/DeviceStatsPlugin.java",
                     "src/plugins/deviceStatsPlugin.ts",
                 ],
+                tests: ["src/__tests__/deviceStatsPlugin.test.ts"],
             },
             {
                 id: "system.network-scan",
@@ -1796,7 +1831,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addProcessDebugLogColumn.ts",
                     "src/services/migrations/addProcessResultColumn.ts",
                 ],
-                tests: ["src/__tests__/processService.test.ts"],
+                tests: [
+                    "src/__tests__/processService.test.ts",
+                    "src/__tests__/migrations.test.ts",
+                ],
             },
         ],
     },
@@ -1862,6 +1900,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/SshPlugin.java",
                     "src/plugins/sshPlugin.ts",
                 ],
+                tests: ["src/__tests__/sshPlugin.test.ts"],
             },
             {
                 id: "deployment.raw-http",
@@ -1889,6 +1928,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/RawHttpPlugin.java",
                     "src/plugins/rawHttpPlugin.ts",
                 ],
+                tests: ["src/__tests__/rawHttpPlugin.test.ts"],
             },
             {
                 id: "deployment.deploy-ui",
@@ -1955,7 +1995,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "deployment.applications",
                 label: { en: "Odoo apps CRUD", fr: "CRUD applications Odoo" },
                 status: "stable",
-                tests: ["src/__tests__/appService.test.ts"],
+                tests: [
+                    "src/__tests__/appService.test.ts",
+                    "src/__tests__/migrations.test.ts",
+                ],
                 description: {
                     en: "Manage Odoo instances (URL, version, sync flags).",
                     fr: "Gérer les instances Odoo (URL, version, flags sync).",
@@ -2215,7 +2258,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/models/reminder.ts",
                     "src/services/migrations/addReminderCreatedAt.ts",
                 ],
-                tests: ["src/__tests__/reminderService.test.ts"],
+                tests: [
+                    "src/__tests__/reminderService.test.ts",
+                    "src/__tests__/migrations.test.ts",
+                ],
             },
             {
                 id: "ui.shared-components",
@@ -2242,7 +2288,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/heading/heading_component.ts",
                     "src/components/content/content_component.ts",
                     "src/components/root/root_component.ts",
+                    "src/utils/webViewUtils.ts",
                 ],
+                tests: ["src/__tests__/webViewUtils.test.ts"],
             },
             {
                 id: "ui.owl-aot",
@@ -2271,6 +2319,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/js/owl-aot.ts",
                     "src/js/enhancedComponent.ts",
                 ],
+                tests: ["src/__tests__/enhancedComponent.test.ts"],
             },
             {
                 id: "ui.errors",
@@ -2295,6 +2344,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/js/errors.ts",
                     "src/constants/errorMessages.ts",
                 ],
+                tests: ["src/__tests__/errors.test.ts"],
             },
         ],
     },
@@ -2391,14 +2441,19 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "it as a recursive tree component with search, "
                         + "deep-link, and per-node detail. A vitest suite "
                         + "enforces uniqueness, file existence, dependsOn "
-                        + "validity, and orphan detection (every src/ file "
-                        + "must be in some feature or allow-listed).",
+                        + "validity, and orphan detection. The vite plugin "
+                        + "feature-touched runs git log -1 per file at "
+                        + "build time and writes feature_touched.json so the "
+                        + "dashboard can surface stale features.",
                     fr: "FEATURE_TREE dans src/data/featureCatalog.ts est la "
                         + "source de vérité. /options/features rend l'arbre "
                         + "via un composant récursif (recherche, deep-link, "
                         + "détail par noeud). Suite vitest vérifie unicité, "
                         + "existence des fichiers, validité dependsOn, et "
-                        + "détection d'orphelins.",
+                        + "détection d'orphelins. Le plugin vite "
+                        + "feature-touched run git log -1 par fichier au "
+                        + "build et écrit feature_touched.json pour que le "
+                        + "dashboard puisse surfacier les features périmées.",
                 },
                 status: "experimental",
                 demo: { kind: "route", url: "/options/features" },
@@ -2413,6 +2468,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/featureCatalog.test.ts",
                     "src/__tests__/featureViewUtils.test.ts",
                     "src/__tests__/permissionsAudit.test.ts",
+                    "src/__tests__/featureSection.test.ts",
                 ],
             },
             {
@@ -2465,6 +2521,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/js/app.ts",
                     "src/js/helpers.ts",
                 ],
+                tests: ["src/__tests__/helpers.test.ts"],
             },
             {
                 id: "meta.build-id",
