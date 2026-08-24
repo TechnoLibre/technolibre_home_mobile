@@ -23,6 +23,15 @@ const LOGICAL_TO_ANDROID: Record<string, string[]> = {
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT",
     ],
+    sms:           [
+        "android.permission.SEND_SMS",
+        "android.permission.RECEIVE_SMS",
+    ],
+    // Sert uniquement a nommer les cartes SIM d'un appareil multi-SIM. Son
+    // refus n'empeche pas l'envoi par la SIM par defaut, mais elle donne acces
+    // a l'identite de la ligne : elle merite d'etre reclamee par une feature
+    // plutot que rangee dans l'infrastructure.
+    phone_state:   ["android.permission.READ_PHONE_STATE"],
 };
 
 // Android perms not expected to map to any catalog logical name —
@@ -33,6 +42,14 @@ const INFRA_ALLOWLIST = new Set([
     "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
     "android.permission.READ_EXTERNAL_STORAGE",
     "android.permission.WRITE_EXTERNAL_STORAGE",
+    // Passerelle SMS : mecanique du service, sans capacite visible de
+    // l'utilisateur. Ce qui touche a ses donnees — envoi, reception, identite
+    // de la ligne — est reclame par la feature, pas alloue ici.
+    "android.permission.RECEIVE_BOOT_COMPLETED",
+    "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+    "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.SCHEDULE_EXACT_ALARM",
+    "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
 ]);
 
 // Android perms merged-in by a Capacitor plugin's own AndroidManifest,

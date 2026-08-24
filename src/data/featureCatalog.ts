@@ -2901,4 +2901,101 @@ export const FEATURE_TREE: FeatureNode[] = [
             },
         ],
     },
+    {
+        id: "sms-gateway",
+        label: { en: "SMS gateway", fr: "Passerelle SMS" },
+        description: {
+            en: "Turns the phone into the SMS sender for an ERPLibre server.",
+            fr: "Fait du téléphone l'émetteur SMS d'un serveur ERPLibre.",
+        },
+        permissions: ["sms"],
+        status: "experimental",
+        howItWorks: {
+            en: "The phone polls Odoo over HTTPS rather than being pushed to, "
+                + "so it needs no inbound port and no public address. Every "
+                + "exchange is HMAC-signed with a shared secret held in the "
+                + "server's environment. Work is persisted to SQLite before "
+                + "anything is sent: a killed process resumes instead of "
+                + "silently dropping an alert. Cycles are driven by "
+                + "AlarmManager, not Thread.sleep, whose clock stops while the "
+                + "device is suspended.",
+            fr: "Le téléphone interroge Odoo en HTTPS au lieu d'être poussé, "
+                + "donc il n'a besoin ni de port entrant ni d'adresse publique. "
+                + "Chaque échange est signé en HMAC avec un secret partagé, gardé "
+                + "dans l'environnement du serveur. Le travail est écrit en SQLite "
+                + "avant tout envoi : un processus tué reprend au lieu de perdre "
+                + "une alerte en silence. Les cycles sont pilotés par AlarmManager "
+                + "et non par Thread.sleep, dont l'horloge s'arrête quand "
+                + "l'appareil se suspend.",
+        },
+        demo: { kind: "route", url: "/options/sms_gateway" },
+        files: [
+            "src/plugins/smsGatewayPlugin.ts",
+            "src/utils/smsGatewayUtils.ts",
+        ],
+        children: [
+            {
+                id: "sms-gateway.service",
+                label: { en: "Background service", fr: "Service d'arrière-plan" },
+                description: {
+                    en: "Foreground service that polls, sends, and reports back.",
+                    fr: "Service de premier plan qui interroge, envoie et rend compte.",
+                },
+                status: "experimental",
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/SmsGatewayService.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsOutbox.java",
+                    "android/app/src/main/java/ca/erplibre/home/OdooReporter.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsResultReceiver.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsInboundReceiver.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsBootReceiver.java",
+                ],
+            },
+            {
+                id: "sms-gateway.journal",
+                label: { en: "Local log", fr: "Journal local" },
+                description: {
+                    en: "Records what only the device knows, with a size-capped purge.",
+                    fr: "Consigne ce que seul l'appareil sait, avec purge plafonnée.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Odoo keeps the view of messages sent; this keeps what only "
+                        + "the phone knows — permission revoked, SIM missing, server "
+                        + "unreachable. Only changes are recorded, never every cycle. "
+                        + "Metadata only by default: bodies sit behind a setting, "
+                        + "because enabling it writes member data onto a device that "
+                        + "can be lost.",
+                    fr: "Odoo garde la vue des envois ; ceci garde ce que seul le "
+                        + "téléphone sait — permission retirée, SIM absente, serveur "
+                        + "injoignable. Seuls les changements sont consignés, jamais "
+                        + "chaque cycle. Métadonnées seules par défaut : le corps des "
+                        + "messages est derrière un réglage, car l'activer écrit des "
+                        + "données de membres sur un appareil qui peut se perdre.",
+                },
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/SmsJournal.java",
+                ],
+            },
+            {
+                id: "sms-gateway.screen",
+                label: { en: "Supervision screen", fr: "Écran de supervision" },
+                description: {
+                    en: "Health banner, configuration, and the log.",
+                    fr: "Bandeau d'état, configuration et journal.",
+                },
+                permissions: ["phone_state"],
+                status: "experimental",
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "src/components/options/sms_gateway/options_sms_gateway_component.ts",
+                    "src/components/options/sms_gateway/options_sms_gateway_component.scss",
+                    "android/app/src/main/java/ca/erplibre/home/SmsGatewayPlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsGatewayConfig.java",
+                ],
+            },
+        ],
+    },
 ];
