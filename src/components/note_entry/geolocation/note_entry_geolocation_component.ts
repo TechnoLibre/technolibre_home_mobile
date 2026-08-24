@@ -10,7 +10,7 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 		<button
 			type="button"
 			class="geolocation__open-popover"
-			aria-label="Voir les données de géolocalisation"
+			t-att-aria-label="t('aria.view_geolocation')"
 			t-on-click.stop.prevent="showPopover"
 		>
 			<t t-esc="props.params.text"></t>
@@ -27,17 +27,17 @@ export class NoteEntryGeolocationComponent extends EnhancedComponent {
 			<div class="geolocation-display__wrapper" t-on-click.stop.prevent="">
 				<div class="geolocation-display">
 					<section class="geolocation-display__heading">
-						<h2 id="geolocation-display__title">Données de géolocalisation</h2>
+						<h2 id="geolocation-display__title"><t t-esc="t('heading.geolocation')"/></h2>
 					</section>
 					<section class="geolocation-display__content">
 						<p>
-							<b>Latitude:</b>&#160;<t t-esc="props.params.latitude"></t>
+							<b><t t-esc="t('label.latitude')"/></b>&#160;<t t-esc="props.params.latitude"></t>
 						</p>
 						<p>
-							<b>Longitude:</b>&#160;<t t-esc="props.params.longitude"></t>
+							<b><t t-esc="t('label.longitude')"/></b>&#160;<t t-esc="props.params.longitude"></t>
 						</p>
 						<p>
-							<b>Date:</b>&#160;<t t-esc="formatGeolocationTimestamp(props.params.timestamp)"></t>
+							<b><t t-esc="t('label.date')"/></b>&#160;<t t-esc="formatGeolocationTimestamp(props.params.timestamp)"></t>
 						</p>
 					</section>
 					<section class="geolocation-display__actions">

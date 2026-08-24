@@ -64,7 +64,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
            class="note__control"
            href="#"
            role="button"
-           aria-label="Ajouter une image depuis la galerie"
+           t-att-aria-label="t('aria.add_image_from_gallery')"
            t-on-click.stop.prevent="props.addImage"
         >
             <img t-att-src="addImageIcon" alt="" aria-hidden="true"/>
@@ -118,7 +118,7 @@ export class NoteBottomControlsComponent extends EnhancedComponent {
                 class="note__control note__control--more"
                 t-att-aria-expanded="state.expanded ? 'true' : 'false'"
                 aria-controls="note__bottom-controls"
-                t-att-aria-label="state.expanded ? 'Réduire les boutons' : 'Afficher tous les boutons'"
+                t-att-aria-label="state.expanded ? t('aria.collapse_buttons') : t('aria.expand_buttons')"
                 t-on-click.stop.prevent="onToggleMore"
         >
             <span class="note__control__more__dots"

@@ -32,7 +32,7 @@ export class OptionsKeepAwakeComponent extends EnhancedComponent {
               t-att-aria-expanded="state.expanded ? 'true' : 'false'"
               t-on-click="toggle"
               t-on-keydown="onHeaderKey">
-            <span>🌙 Mise en veille</span>
+            <span>🌙 <t t-esc="t('section.sleep')"/></span>
             <span t-esc="state.expanded ? '▲' : '▼'"/>
           </div>
           <div t-if="state.expanded" class="options-camera-stream__body">

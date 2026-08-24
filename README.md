@@ -1,8 +1,11 @@
-# TechnoLibre Home Capacitor
 
-This repository contains an Odoo Owl/Capacitor project.
+# ERPLibre Home Mobile
+
+Odoo Owl + Capacitor mobile application for ERPLibre.
 
 The following sections outline instructions on the proper use of the provided scripts, as well as the errors you may encounter when setting up a new project and how to deal with them.
+
+Full technical documentation lives in [doc/README.md](./doc/README.md).
 
 ## Installation
 

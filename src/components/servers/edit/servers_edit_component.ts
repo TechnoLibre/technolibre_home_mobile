@@ -9,43 +9,43 @@ import { HeadingComponent } from "../../heading/heading_component";
 export class ServersEditComponent extends EnhancedComponent {
     static template = xml`
       <div id="servers-edit-component">
-        <HeadingComponent title="'Modifier un serveur'"
+        <HeadingComponent title="t('heading.edit_server')"
           breadcrumbs="[{label: 'Applications', url: '/applications'}]" />
         <form id="server-edit__form" t-on-submit="event => this.onSubmit(event)">
 
           <div class="server-edit__form-group">
-            <label for="server-edit__label">Nom du serveur (optionnel)</label>
+            <label for="server-edit__label"><t t-esc="t('label.server_name_optional')"/></label>
             <input type="text" id="server-edit__label" autocomplete="off"
-                   placeholder="ex: Serveur Production" t-model="state.server.label" />
+                   t-att-placeholder="t('placeholder.server_example')" t-model="state.server.label" />
           </div>
 
           <div class="server-edit__form-group">
-            <label for="server-edit__host">Hôte SSH</label>
+            <label for="server-edit__host"><t t-esc="t('label.ssh_host')"/></label>
             <input type="text" id="server-edit__host" autocomplete="off" autocapitalize="off"
-                   placeholder="ex: 192.168.1.10" required="true"
+                   t-att-placeholder="t('placeholder.host_example_short')" required="true"
                    t-model="state.server.host" />
           </div>
 
           <div class="server-edit__form-group">
-            <label for="server-edit__port">Port SSH</label>
+            <label for="server-edit__port"><t t-esc="t('label.ssh_port')"/></label>
             <input type="number" id="server-edit__port" min="1" max="65535"
                    t-model="state.server.port" />
           </div>
 
           <div class="server-edit__form-group">
-            <label for="server-edit__username">Nom d'utilisateur SSH</label>
+            <label for="server-edit__username"><t t-esc="t('label.ssh_username')"/></label>
             <input type="text" id="server-edit__username" autocomplete="off" autocapitalize="off"
                    required="true" t-model="state.server.username" />
           </div>
 
           <div class="server-edit__form-group">
-            <label for="server-edit__deploy-path">Chemin de déploiement</label>
+            <label for="server-edit__deploy-path"><t t-esc="t('label.deploy_path')"/></label>
             <input type="text" id="server-edit__deploy-path" autocomplete="off" autocapitalize="off"
                    t-model="state.server.deployPath" />
           </div>
 
           <div class="server-edit__form-group">
-            <label>Type d'authentification</label>
+            <label><t t-esc="t('label.auth_type')"/></label>
             <div class="server-edit__auth-type">
               <label class="server-edit__radio-label">
                 <input type="radio" name="authType" value="password"
@@ -72,19 +72,19 @@ export class ServersEditComponent extends EnhancedComponent {
           <t t-if="!state.ignoreCredential">
             <t t-if="state.server.authType === 'password'">
               <div class="server-edit__form-group">
-                <label for="server-edit__password">Mot de passe SSH</label>
+                <label for="server-edit__password"><t t-esc="t('label.ssh_password')"/></label>
                 <input type="password" id="server-edit__password" autocomplete="off"
                        t-model="state.server.password" />
               </div>
             </t>
             <t t-if="state.server.authType === 'key'">
               <div class="server-edit__form-group">
-                <label for="server-edit__private-key">Clé privée (contenu PEM)</label>
+                <label for="server-edit__private-key"><t t-esc="t('label.private_key_pem')"/></label>
                 <textarea id="server-edit__private-key" rows="6"
                           t-model="state.server.privateKey" />
               </div>
               <div class="server-edit__form-group">
-                <label for="server-edit__passphrase">Passphrase (optionnel)</label>
+                <label for="server-edit__passphrase"><t t-esc="t('label.passphrase_optional')"/></label>
                 <input type="password" id="server-edit__passphrase" autocomplete="off"
                        t-model="state.server.passphrase" />
               </div>
@@ -93,7 +93,7 @@ export class ServersEditComponent extends EnhancedComponent {
 
           <div class="server-edit__form-group server-edit__form-actions">
             <input type="submit" id="server-edit__submit" value="Enregistrer" />
-            <button type="button" id="server-edit__cancel" t-on-click="onCancelClick">Annuler</button>
+            <button type="button" id="server-edit__cancel" t-on-click="onCancelClick"><t t-esc="t('button.cancel')"/></button>
           </div>
 
         </form>

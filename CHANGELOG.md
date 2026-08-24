@@ -1,3 +1,4 @@
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -6,9 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Summary of development on the `quality_functionnality_test` branch: 159
-commits rebased onto `main`. Test suite goes from 854 to 979 tests across
-63 files.
+## [2026.08.24.01] - 2026-08-24
+
+Summary of development since release `2026.04.14.01` (April 14, 2026).
+Integrates the `quality_functionnality_test` branch: 160 commits merged
+into `main` as ten stacked pull requests, then 11 further commits carrying
+the bilingual documentation, this release and the accessibility labels.
+Test suite goes from 854 to 1000 tests across 66 files.
 
 ### Added
 - **Elgato Stream Deck support** — a native Android USB stack, written from
@@ -63,6 +68,11 @@ commits rebased onto `main`. Test suite goes from 854 to 979 tests across
 - **Documentation** — the Stream Deck plugin, the bundle pipeline and edit
   mode, a smoke script and the manual hardware matrix it cannot replace,
   and how to debug an Android build over wifi
+- **Bilingual documentation** — every document under `doc/`, both READMEs
+  and this changelog now have a `.base.md` source generating an English and
+  a French file through mmg, following the root repository's convention.
+  Half the documentation was French-only and half English-only; neither
+  half was reachable by the other language.
 
 ### Changed
 - **Owl AOT coverage is now complete** — note templates dropped template
@@ -79,6 +89,18 @@ commits rebased onto `main`. Test suite goes from 854 to 979 tests across
   generator and its backfill
 - **Catalogue permissions** are now audited against the Android manifest
   by a test
+- **Translation coverage** — 62 aria-labels and 354 occurrences of visible
+  text that held hardcoded French now go through the dictionaries, which
+  grew from 383 to 591 keys. 86 of those values already had a key defined
+  and unused, so they are wired rather than duplicated. A test collects
+  every static `t()` call in app code and fails when a key is missing from
+  either side, which nothing rendering templates would have caught. The
+  feature catalogue and the Stream Deck diagnostics keep their own strings:
+  the first has its own FR/EN toggle, the second is log output
+- **In-app changelog** — reads the bundled `CHANGELOG.md` instead of
+  carrying its own copy of the text and a hardcoded version constant. The
+  version shown is the file's first dated heading, in the reader's
+  language, so a release no longer needs it bumped by hand
 
 ### Fixed
 - **Stream Deck reliability** — buttons that worked once then stopped;
@@ -100,11 +122,18 @@ commits rebased onto `main`. Test suite goes from 854 to 979 tests across
 - **`usesCleartextTraffic`** wins the Android manifest merge
 - **Gradle** space-assignment deprecations silenced
 - **Stale symlink** under `repos/` no longer breaks the build
+- **Android `versionCode`** had never moved from 1 since the first commit.
+  Android refuses to install an APK whose code is not greater than the
+  installed one, so no release was upgradable over its predecessor. It now
+  follows the CalVer integer the migrations already use
 
 ### Removed
 - **`debug.keystore`** removed from the repository
 - **Native USBDEVFS reader mode** — dropped after the `UsbRequest` path
   proved sufficient
+- **`build_id.json` and `feature_touched.json`** left version control.
+  Both are build outputs; the second derives from filesystem mtimes, so a
+  rebase stamped every feature with the same false date
 
 ### Security
 - **Four critical audit findings** closed, then the medium and low ones

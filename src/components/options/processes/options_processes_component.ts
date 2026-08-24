@@ -110,7 +110,7 @@ export class OptionsProcessesComponent extends EnhancedComponent {
                         </t>
                         <t t-if="state.detail.debugLog and state.detail.debugLog.length > 0">
                             <div class="process-modal__row process-modal__row--debug">
-                                <span class="process-modal__key">Debug</span>
+                                <span class="process-modal__key"><t t-esc="t('label.debug')"/></span>
                                 <pre class="process-modal__debug" t-esc="formatDebugLog(state.detail)" />
                             </div>
                         </t>

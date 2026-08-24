@@ -33,7 +33,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 				<t t-if="props.params.path">
 					<img
 						class="note-entry__photo__thumbnail"
-						alt="Aperçu de la photo"
+						t-att-alt="t('aria.photo_preview')"
 						t-att-src="image"
 					/>
 				</t>
@@ -47,7 +47,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 				<button
 					t-if="isGallery"
 					class="note-entry__photo__button note-entry__photo__open-gallery"
-					aria-label="Choisir une image dans la galerie"
+					t-att-aria-label="t('aria.pick_image_from_gallery')"
 					t-on-click.stop.prevent="onClickPickImage"
 				>
 					<img t-att-src="imageIcon" alt="" aria-hidden="true" />
@@ -56,7 +56,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 				<button
 					t-else=""
 					class="note-entry__photo__button note-entry__photo__open-camera"
-					aria-label="Prendre une photo"
+					t-att-aria-label="t('aria.take_photo')"
 					t-on-click.stop.prevent="onClickOpenCamera"
 				>
 					<img t-att-src="cameraIcon" alt="" aria-hidden="true" />
@@ -65,7 +65,7 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 				<button
 					class="note-entry__photo__button note-entry__photo__open-photo"
 					t-if="props.params.path"
-					aria-label="Voir la photo en plein écran"
+					t-att-aria-label="t('aria.view_photo_fullscreen')"
 					t-on-click.stop.prevent="onClickOpenPhoto"
 				>
 					<img t-att-src="openIcon" alt="" aria-hidden="true" />
@@ -78,18 +78,18 @@ export class NoteEntryPhotoComponent extends EnhancedComponent {
 			class="note-entry__photo__overlay"
 			role="dialog"
 			aria-modal="true"
-			aria-label="Photo en plein écran"
+			t-att-aria-label="t('aria.fullscreen_photo')"
 		>
 			<button
 				class="note-entry__photo__overlay__close"
-				aria-label="Fermer la photo"
+				t-att-aria-label="t('aria.close_photo')"
 				t-on-click.stop.prevent="onClickClosePhoto"
 			>
 				<img t-att-src="closeIcon" alt="" aria-hidden="true" />
 			</button>
 			<img
 				class="note-entry__photo__overlay__img"
-				alt="Photo en plein écran"
+				t-att-alt="t('dialog.fullscreen_photo')"
 				t-att-src="image"
 			/>
 		</div>

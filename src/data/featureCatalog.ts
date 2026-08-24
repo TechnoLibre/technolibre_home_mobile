@@ -2601,15 +2601,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Reads CHANGELOG.md from the bundle at boot, parses the H2 sections by "
                         + "date, and renders the most recent entries in a popover. No network — "
                         + "what's there is what shipped in the APK. Useful for users on field "
-                        + "devices that can't easily check the website.",
+                        + "devices that can't easily check the website. No copy of the "
+                        + "text in the code: the version shown is the first dated heading.",
                     fr: "Lit CHANGELOG.md depuis le bundle au boot, parse les sections H2 par "
                         + "date, et rend les entrées les plus récentes dans un popover. Pas de "
                         + "réseau — ce qui est là est ce qui a été livré dans l'APK. Utile pour "
                         + "les users sur appareils terrain qui ne peuvent pas checker le site "
-                        + "facilement.",
+                        + "facilement. Aucune copie du texte dans le code : la version "
+                        + "affichée vient du premier titre daté du fichier.",
                 },
                 demo: { kind: "options", sectionId: "changelog" },
-                files: ["src/components/options/changelog/options_changelog_component.ts"],
+                files: [
+                    "src/components/options/changelog/options_changelog_component.ts",
+                    "src/utils/changelogUtils.ts",
+                ],
             },
             {
                 id: "meta.erplibre",
@@ -2740,16 +2745,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 status: "stable",
                 howItWorks: {
                     en: "Vite plugin generates a (gitShortSha + timestamp) on every build and "
-                        + "writes it to src/public/build_id.json. Surfaced in Options → Device "
-                        + "info so a bug report from the field always carries the exact APK "
-                        + "build, not a vague version.",
+                        + "writes it to src/public/build_id.json — a build output, not a source "
+                        + "file, so it is gitignored. RepoEditService reads it to tag the "
+                        + "baseline commit of an editable repo, which is how baseline drift is "
+                        + "detected after a rebuild.",
                     fr: "Plugin Vite génère un (gitShortSha + timestamp) à chaque build et "
-                        + "l'écrit dans src/public/build_id.json. Surfacé dans Options → Info "
-                        + "appareil pour qu'un rapport de bug du terrain transporte toujours le "
-                        + "build APK exact, pas une version vague.",
+                        + "l'écrit dans src/public/build_id.json — une sortie de build, pas un "
+                        + "fichier source, donc gitignoré. RepoEditService le lit pour étiqueter "
+                        + "le commit de référence d'un dépôt éditable, ce qui permet de détecter "
+                        + "une dérive de référence après recompilation.",
                 },
                 demo: NONE_PLUMBING,
-                files: ["src/public/build_id.json"],
+                files: ["vite.config.ts", "src/services/repoEditService.ts"],
             },
         ],
     },

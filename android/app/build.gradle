@@ -22,8 +22,8 @@ android {
         applicationId "ca.erplibre.home"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 2026082401
+        versionName "2026.08.24.01"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "boolean", "SKIP_WHISPER", "${skipWhisper}"
         if (!skipWhisper) {

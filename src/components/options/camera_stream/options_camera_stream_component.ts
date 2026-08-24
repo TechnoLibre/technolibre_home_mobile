@@ -21,7 +21,7 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
               t-att-aria-expanded="state.expanded ? 'true' : 'false'"
               t-on-click="toggle"
               t-on-keydown="onHeaderKey">
-            <span>📷 Caméra → Stream Deck</span>
+            <span>📷 <t t-esc="t('section.camera_to_deck')"/></span>
             <span t-esc="state.expanded ? '▲' : '▼'"/>
           </div>
 
@@ -38,13 +38,13 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
                   t-att-class="{ 'options-camera-stream__button--on': state.active }"
                   t-att-disabled="isToggleDisabled"
                   t-on-click="() => this.onToggle()">
-                <t t-if="state.active">⏹ Désactiver</t>
-                <t t-else="">▶ Activer (<t t-esc="state.deckCount" /> deck<t t-if="state.deckCount !== 1">s</t>)</t>
+                <t t-if="state.active">⏹ <t t-esc="t('button.deactivate')"/></t>
+                <t t-else="">▶ <t t-esc="t('button.activate')"/><t t-esc="state.deckCount" /><t t-esc="t('label.deck')"/><t t-if="state.deckCount !== 1">s</t>)</t>
               </button>
               <button
                   class="options-camera-stream__refresh"
                   t-on-click="() => this.refreshDeckCount()"
-                  title="Re-scanner les decks">
+                  t-att-title="t('button.rescan_decks')">
                 ↻
               </button>
             </div>
@@ -88,7 +88,7 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
               </div>
 
               <div class="options-camera-stream__setting">
-                <label class="options-camera-stream__setting-label">Caméra</label>
+                <label class="options-camera-stream__setting-label"><t t-esc="t('label.camera')"/></label>
                 <div class="options-camera-stream__row">
                   <button class="options-camera-stream__refresh"
                           t-att-class="{ 'options-camera-stream__button--on': state.facingMode === 'environment' }"

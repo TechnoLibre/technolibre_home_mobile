@@ -43,7 +43,7 @@ export class ApplicationsItemComponent extends EnhancedComponent {
           type="button"
           class="app-list__item__action app-list__item__info"
           t-on-click.stop="onInfoClick"
-          title="Informations Odoo"
+          t-att-title="t('button.odoo_info')"
         >ℹ</button>
         <button
           type="button"
@@ -90,7 +90,7 @@ export class ApplicationsItemComponent extends EnhancedComponent {
           <input
             type="text"
             class="app-info-dialog__filter"
-            placeholder="Filtrer les modèles…"
+            t-att-placeholder="t('placeholder.filter_models')"
             t-model="state.dialog.filter"
           />
           <ul class="app-info-dialog__model-list">

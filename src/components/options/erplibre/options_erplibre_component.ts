@@ -16,7 +16,7 @@ export class OptionsErplibreComponent extends EnhancedComponent {
 
 	static template = xml`
       <div id="options-erplibre-component">
-        <HeadingComponent title="'ERPLibre'" breadcrumbs="breadcrumbs" />
+        <HeadingComponent title="t('heading.erplibre')" breadcrumbs="breadcrumbs" />
         <div class="erplibre__content">
           <img class="erplibre__logo" t-att-src="companyLogo" t-att-alt="t('aria.erplibre_logo')" />
           <h2 class="erplibre__title">ERPLibre</h2>

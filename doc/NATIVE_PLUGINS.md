@@ -1,28 +1,29 @@
-# Plugins Capacitor natifs (custom)
 
-Ces plugins sont implémentés en Java dans `android/app/src/main/java/ca/erplibre/home/`
-et enregistrés dans `MainActivity.java` via `registerPlugin(...)`.
+# Native Capacitor plugins (custom)
+
+These plugins are implemented in Java under `android/app/src/main/java/ca/erplibre/home/`
+and registered in `MainActivity.java` through `registerPlugin(...)`.
 
 ---
 
 ## SshPlugin
 
-**Fichiers :**
-- Bridge TS : `src/plugins/sshPlugin.ts`
-- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/SshPlugin.java`
+**Files:**
+- TS bridge: `src/plugins/sshPlugin.ts`
+- Java implementation: `android/app/src/main/java/ca/erplibre/home/SshPlugin.java`
 
-**Bibliothèque :** JSch (`com.jcraft:jsch:0.1.55`)
+**Library:** JSch (`com.jcraft:jsch:0.1.55`)
 
 ### API
 
-| Méthode | Description |
-|---------|-------------|
-| `connect(opts)` | Ouvre une session JSch SSH. `authType: "password"` ou `"key"` ; `credential` est le mot de passe ou la clé PEM ; `passphrase` optionnel. |
-| `execute(opts)` | Exécute une commande dans un `ChannelExec`. Fire des événements `sshOutput` en temps réel (stdout + stderr). Résout avec `{ exitCode }` à la fin. |
-| `disconnect()` | Ferme la session SSH. |
-| `addListener("sshOutput", fn)` | Écoute les lignes de sortie de la commande en cours. `fn` reçoit `{ line: string; stream: "stdout" | "stderr" }`. |
+| Method | Description |
+|--------|-------------|
+| `connect(opts)` | Opens a JSch SSH session. `authType: "password"` or `"key"`; `credential` is the password or the PEM key; `passphrase` optional. |
+| `execute(opts)` | Runs a command in a `ChannelExec`. Fires `sshOutput` events in real time (stdout + stderr). Resolves with `{ exitCode }` at the end. |
+| `disconnect()` | Closes the SSH session. |
+| `addListener("sshOutput", fn)` | Listens to the output lines of the running command. `fn` receives `{ line: string; stream: "stdout" | "stderr" }`. |
 
-### Pattern d'utilisation
+### Usage pattern
 
 ```typescript
 await SshPlugin.connect({ host, port, username, authType: "password", credential: password });
@@ -40,133 +41,133 @@ await SshPlugin.disconnect();
 
 ## WhisperPlugin
 
-**Fichiers :**
-- Bridge TS : `src/plugins/whisperPlugin.ts`
-- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/WhisperPlugin.java`
+**Files:**
+- TS bridge: `src/plugins/whisperPlugin.ts`
+- Java implementation: `android/app/src/main/java/ca/erplibre/home/WhisperPlugin.java`
 
-**Bibliothèque :** whisper.cpp via NDK/JNI (`WhisperLib` AAR inclus dans le projet Android)
+**Library:** whisper.cpp through NDK/JNI (the `WhisperLib` AAR is included in the Android project)
 
-Les modèles GGML sont stockés dans `{filesDir}/whisper/ggml-<model>.bin`.
+GGML models are stored in `{filesDir}/whisper/ggml-<model>.bin`.
 
 ### API
 
-| Méthode | Description |
-|---------|-------------|
-| `isModelLoaded()` | Retourne `{ loaded: boolean }` — si un modèle est déjà en mémoire. |
-| `loadModel({ model })` | Charge le modèle GGML en mémoire via `WhisperLib.initContext()`. |
-| `getModelPath({ model })` | Retourne `{ path: string; exists: boolean }` — chemin absolu du `.bin` sur l'appareil. Renvoie `exists: false` si seul le fichier `.partial` est présent. |
-| `downloadModel({ model, url })` | Télécharge en mode **WakeLock** (CPU/réseau actifs même écran éteint). Pour les téléchargements frais avec `Content-Length` connu, utilise 4 connexions HTTP Range en parallèle (`ExecutorService` + `FileChannel` positionnel) pour saturer la bande passante. Reprise depuis le fichier `.partial` en mono-thread. Fire des événements `downloadProgress`. Résout avec `{ path }`. |
-| `downloadModelForeground({ model, url })` | Télécharge via un **Android Foreground Service** avec une notification persistante (bouton Annuler). Survit à l'extinction de l'écran sans WakeLock. Si le service est déjà actif pour le même modèle (ex : après recréation d'Activity), ré-attache la Promise JS sans démarrer un second thread. Résout avec `{ path }`. |
-| `getServiceStatus()` | Retourne `{ downloading: boolean; model: string }` — état du Foreground Service. Utilisé par la couche JS pour se ré-attacher après une recréation d'Activity. |
-| `cancelDownload({ model? })` | Annule le téléchargement du modèle indiqué, ou tous les téléchargements si `model` est omis. Le fichier `.partial` est **conservé** pour permettre une reprise ultérieure (WakeLock). Les téléchargements multi-thread annulés suppriment le `.partial` (données incomplètes non-séquentielles). |
-| `transcribe({ audioPath, lang? })` | Transcrit un fichier audio. `audioPath` est relatif à `filesDir`. `lang` est un code BCP-47 (défaut `"fr"`). Résout avec `{ text }`. |
-| `unloadModel()` | Libère le modèle de la mémoire. |
-| `deleteModel({ model })` | Supprime le binaire `.bin` du disque (et le `.partial` si présent). Décharge le modèle de la mémoire si nécessaire. |
-| `addListener("progress", fn)` | Progression de la transcription. `fn` reçoit `{ ratio: number; text: string }`. |
-| `addListener("downloadProgress", fn)` | Progression du téléchargement (WakeLock et Foreground). `fn` reçoit `{ model: string; ratio: number; received: number; total: number }`. Le champ `model` permet de router les événements quand plusieurs modèles se téléchargent en parallèle. |
+| Method | Description |
+|--------|-------------|
+| `isModelLoaded()` | Returns `{ loaded: boolean }` — whether a model is already in memory. |
+| `loadModel({ model })` | Loads the GGML model into memory through `WhisperLib.initContext()`. |
+| `getModelPath({ model })` | Returns `{ path: string; exists: boolean }` — the absolute path of the `.bin` on the device. Returns `exists: false` when only the `.partial` file is present. |
+| `downloadModel({ model, url })` | Downloads in **WakeLock** mode (CPU/network stay awake with the screen off). For fresh downloads with a known `Content-Length`, uses 4 parallel HTTP Range connections (`ExecutorService` + positional `FileChannel`) to saturate the bandwidth. Resumes from the `.partial` file single-threaded. Fires `downloadProgress` events. Resolves with `{ path }`. |
+| `downloadModelForeground({ model, url })` | Downloads through an **Android Foreground Service** with a persistent notification (Cancel button). Survives screen-off without a WakeLock. If the service is already running for the same model (e.g. after an Activity was recreated), reattaches the JS Promise instead of starting a second thread. Resolves with `{ path }`. |
+| `getServiceStatus()` | Returns `{ downloading: boolean; model: string }` — the state of the Foreground Service. Used by the JS layer to reattach after an Activity was recreated. |
+| `cancelDownload({ model? })` | Cancels the download of the named model, or every download when `model` is omitted. The `.partial` file is **kept** so a later resume is possible (WakeLock). Cancelled multi-threaded downloads delete the `.partial` (its data is incomplete and non-sequential). |
+| `transcribe({ audioPath, lang? })` | Transcribes an audio file. `audioPath` is relative to `filesDir`. `lang` is a BCP-47 code (default `"fr"`). Resolves with `{ text }`. |
+| `unloadModel()` | Frees the model from memory. |
+| `deleteModel({ model })` | Deletes the `.bin` binary from disk (and the `.partial` when present). Unloads the model from memory when needed. |
+| `addListener("progress", fn)` | Transcription progress. `fn` receives `{ ratio: number; text: string }`. |
+| `addListener("downloadProgress", fn)` | Download progress (WakeLock and Foreground). `fn` receives `{ model: string; ratio: number; received: number; total: number }`. The `model` field lets events be routed when several models download in parallel. |
 
-### Modes de téléchargement
+### Download modes
 
 ```
 downloadModel()                    downloadModelForeground()
 ─────────────────────────────      ──────────────────────────────────────
-Thread background Java             Android Foreground Service séparé
-WakeLock PARTIAL_WAKE_LOCK         Notification persistante + bouton Annuler
-Parallèle (4 threads HTTP Range)   Mono-thread (robuste, fichiers ≥ 1 Go)
-Reprise .partial (mono-thread)     Reprise .partial
-Notifications OS par modèle        Notification unique (NOTIF_ID 9001)
-Annulation par-modèle (flag)       Annulation via Intent ACTION_CANCEL
+Java background thread             Separate Android Foreground Service
+PARTIAL_WAKE_LOCK WakeLock         Persistent notification + Cancel button
+Parallel (4 HTTP Range threads)    Single-threaded (robust, files ≥ 1 GB)
+.partial resume (single-threaded)  .partial resume
+One OS notification per model      Single notification (NOTIF_ID 9001)
+Per-model cancellation (flag)      Cancellation through ACTION_CANCEL Intent
 ```
 
-### Téléchargement multi-thread (WakeLock)
+### Multi-threaded download (WakeLock)
 
-Pour les téléchargements frais (aucun fichier `.partial`) avec `Content-Length` connu :
+For fresh downloads (no `.partial` file) with a known `Content-Length`:
 
-1. **Pré-allocation** : `RandomAccessFile.setLength(total)` réserve l'espace disque.
-2. **4 threads** : chaque thread ouvre sa propre `HttpURLConnection` avec `Range: bytes=X-Y` et écrit via `FileChannel.write(ByteBuffer, position)` — sans superposition.
-3. **Progression atomique** : `AtomicLong totalReceived` + `AtomicInteger notifPct` — une seule notification par point de pourcentage, thread-safe.
-4. **Échec** : si le serveur ne retourne pas HTTP 206, le `.partial` est supprimé et la Promise est rejetée. Le prochain appel recommence en mono-thread (pas de `.partial` → nouveau téléchargement).
+1. **Pre-allocation**: `RandomAccessFile.setLength(total)` reserves the disk space.
+2. **4 threads**: each thread opens its own `HttpURLConnection` with `Range: bytes=X-Y` and writes through `FileChannel.write(ByteBuffer, position)` — with no overlap.
+3. **Atomic progress**: `AtomicLong totalReceived` + `AtomicInteger notifPct` — one notification per percentage point, thread-safe.
+4. **Failure**: if the server does not answer HTTP 206, the `.partial` is deleted and the Promise is rejected. The next call starts over single-threaded (no `.partial` → a fresh download).
 
-### Pourquoi le téléchargement est natif
+### Why the download is native
 
-Le téléchargement via JavaScript (`fetch` + `btoa()`) allouait ~600 Mo en WebView pour un modèle de 244 Mo (base64 overhead ×2.7), causant un OOM silencieux. Le fichier résultant était tronqué et `WhisperLib.initContext()` retournait 0 (null pointer) sans message d'erreur explicite.
+Downloading through JavaScript (`fetch` + `btoa()`) allocated ~600 MB in the WebView for a 244 MB model (base64 overhead ×2.7), causing a silent OOM. The resulting file was truncated and `WhisperLib.initContext()` returned 0 (null pointer) with no explicit error message.
 
-La solution est un `HttpURLConnection` Java en thread background, streaming direct vers `FileOutputStream` en chunks de 64 KB. Aucune donnée ne transite par la WebView.
+The answer is a Java `HttpURLConnection` on a background thread, streaming straight into a `FileOutputStream` in 64 KB chunks. No data goes through the WebView.
 
-### Normalisation de chemin pour la vidéo
+### Path normalisation for video
 
-Capacitor expose les fichiers vidéo sous un schéma WebView (`https://localhost/_capacitor_file_/...`). Ce chemin n'est pas reconnu par `File()` côté Java. Deux couches de normalisation sont appliquées :
+Capacitor exposes video files under a WebView scheme (`https://localhost/_capacitor_file_/...`). That path is not recognised by `File()` on the Java side. Two layers of normalisation are applied:
 
-1. **TypeScript** (`NoteEntryVideoComponent.toNativePath()`) — retire le préfixe `https://localhost/_capacitor_file_` (avec ou sans underscore terminal) avant de passer le chemin au service.
-2. **Java** (`WhisperPlugin.java`) — normalisation côté natif en secours, pour les chemins non normalisés qui atteindraient le plugin.
+1. **TypeScript** (`NoteEntryVideoComponent.toNativePath()`) — strips the `https://localhost/_capacitor_file_` prefix (with or without the trailing underscore) before handing the path to the service.
+2. **Java** (`WhisperPlugin.java`) — a native-side normalisation as a fallback, for any un-normalised path that reaches the plugin.
 
-Le chemin original (avant normalisation) est conservé uniquement pour l'affichage dans le log de débogage du processus.
+The original path (before normalisation) is kept only to be shown in the process debug log.
 
 ---
 
 ## OcrPlugin
 
-**Fichiers :**
-- Bridge TS : `src/plugins/ocrPlugin.ts`
-- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/OcrPlugin.java`
+**Files:**
+- TS bridge: `src/plugins/ocrPlugin.ts`
+- Java implementation: `android/app/src/main/java/ca/erplibre/home/OcrPlugin.java`
 
-**Bibliothèque :** ML Kit Text Recognition (`com.google.mlkit:text-recognition`)
+**Library:** ML Kit Text Recognition (`com.google.mlkit:text-recognition`)
 
 ### API
 
-| Méthode | Description |
-|---------|-------------|
-| `startScan(opts?)` | Démarre l'analyse périodique. `opts.intervalMs` contrôle la fréquence d'analyse (défaut défini côté Java). Fire des événements `textDetected` à chaque frame contenant du texte. |
-| `stopScan()` | Arrête l'analyse OCR. |
-| `addListener("textDetected", fn)` | Reçoit `{ blocks: TextBlock[] }` à chaque détection. |
+| Method | Description |
+|--------|-------------|
+| `startScan(opts?)` | Starts the periodic analysis. `opts.intervalMs` controls the analysis rate (the default is set on the Java side). Fires `textDetected` events for every frame that contains text. |
+| `stopScan()` | Stops the OCR analysis. |
+| `addListener("textDetected", fn)` | Receives `{ blocks: TextBlock[] }` on every detection. |
 
-### Interface `TextBlock`
+### The `TextBlock` interface
 
 ```typescript
 interface TextBlock {
-    text: string;    // texte détecté dans ce bloc
-    x: number;       // bord gauche normalisé (0–1)
-    y: number;       // bord haut normalisé (0–1)
-    width: number;   // largeur normalisée (0–1)
-    height: number;  // hauteur normalisée (0–1)
+    text: string;    // text detected in this block
+    x: number;       // normalised left edge (0–1)
+    y: number;       // normalised top edge (0–1)
+    width: number;   // normalised width (0–1)
+    height: number;  // normalised height (0–1)
 }
 ```
 
-### Usage typique
+### Typical use
 
-Le plugin est utilisé depuis le composant caméra vidéo. L'analyse se fait à intervalle régulier sur le flux de la caméra arrière, sans capture explicite de frame.
+The plugin is driven from the video camera component. The analysis runs at a regular interval on the rear camera stream, with no explicit frame capture.
 
 ---
 
 ## NetworkScanPlugin
 
-**Fichiers :**
-- Bridge TS : `src/plugins/networkScanPlugin.ts`
-- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/NetworkScanPlugin.java`
+**Files:**
+- TS bridge: `src/plugins/networkScanPlugin.ts`
+- Java implementation: `android/app/src/main/java/ca/erplibre/home/NetworkScanPlugin.java`
 
 ### API
 
-| Méthode | Description |
-|---------|-------------|
-| `scan({ timeoutMs? })` | Scanne le sous-réseau /24 local pour les services SSH (port 22). Fire des événements `hostFound` en temps réel. Résout avec `{ hosts: ScannedHost[] }` à la fin. |
-| `cancelScan()` | Annule un scan en cours. |
-| `addListener("hostFound", fn)` | Reçoit `{ host: string; port: number; banner: string }` pour chaque machine découverte. |
+| Method | Description |
+|--------|-------------|
+| `scan({ timeoutMs? })` | Scans the local /24 subnet for SSH services (port 22). Fires `hostFound` events in real time. Resolves with `{ hosts: ScannedHost[] }` at the end. |
+| `cancelScan()` | Cancels a running scan. |
+| `addListener("hostFound", fn)` | Receives `{ host: string; port: number; banner: string }` for every machine found. |
 
-### Implémentation
+### Implementation
 
-- **Détection de l'IP locale** : `NetworkInterface.getNetworkInterfaces()` — aucune permission Android requise (fonctionne sur WiFi, Ethernet, USB-tethering).
-- **Scan parallèle** : `Executors.newFixedThreadPool(50)` + `CountDownLatch(254)` pour scanner les 254 adresses d'un /24 en parallèle.
-- **Détection SSH** : `Socket.connect(InetSocketAddress, timeoutMs)` + lecture de la bannière (`"SSH-"` prefix confirme un service SSH).
-- **Annulation** : `AtomicBoolean isScanning` + `executor.shutdownNow()`.
+- **Local IP detection**: `NetworkInterface.getNetworkInterfaces()` — no Android permission required (works over WiFi, Ethernet and USB tethering).
+- **Parallel scan**: `Executors.newFixedThreadPool(50)` + `CountDownLatch(254)` to scan all 254 addresses of a /24 in parallel.
+- **SSH detection**: `Socket.connect(InetSocketAddress, timeoutMs)` + reading the banner (an `"SSH-"` prefix confirms an SSH service).
+- **Cancellation**: `AtomicBoolean isScanning` + `executor.shutdownNow()`.
 
-### Interface `ScannedHost`
+### The `ScannedHost` interface
 
 ```typescript
 interface ScannedHost {
-    host: string;       // IPv4, ex: "192.168.1.42"
-    port: number;       // toujours 22
-    banner: string;     // ex: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6"
-    hostname?: string;  // nom DNS inversé si le réseau local a des enregistrements PTR
+    host: string;       // IPv4, e.g. "192.168.1.42"
+    port: number;       // always 22
+    banner: string;     // e.g. "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6"
+    hostname?: string;  // reverse DNS name when the local network has PTR records
 }
 ```
 
@@ -174,39 +175,39 @@ interface ScannedHost {
 
 ## DeviceStatsPlugin
 
-**Fichiers :**
-- Bridge TS : `src/plugins/deviceStatsPlugin.ts`
-- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/DeviceStatsPlugin.java`
+**Files:**
+- TS bridge: `src/plugins/deviceStatsPlugin.ts`
+- Java implementation: `android/app/src/main/java/ca/erplibre/home/DeviceStatsPlugin.java`
 
-Plugin de surveillance des ressources système en temps réel (CPU, RAM, batterie).
-Utilisé par `options_resources_component` pour afficher des graphiques mis à jour à intervalle configurable.
+A plugin that monitors system resources in real time (CPU, RAM, battery).
+Used by `options_resources_component` to draw graphs refreshed at a configurable interval.
 
 ### API
 
-| Méthode | Description |
-|---------|-------------|
-| `startPolling({ intervalMs })` | Démarre la collecte des métriques à l'intervalle donné (ms). Fire des événements `stats` en continu. |
-| `stopPolling()` | Arrête la collecte. |
-| `addListener("stats", fn)` | Reçoit les métriques à chaque tick. `fn` reçoit `DeviceStats`. |
+| Method | Description |
+|--------|-------------|
+| `startPolling({ intervalMs })` | Starts collecting metrics at the given interval (ms). Fires `stats` events continuously. |
+| `stopPolling()` | Stops the collection. |
+| `addListener("stats", fn)` | Receives the metrics on every tick. `fn` receives `DeviceStats`. |
 
-### Interface `DeviceStats`
+### The `DeviceStats` interface
 
 ```typescript
 interface DeviceStats {
-    cpuPercent:      number;   // utilisation CPU globale (0–100)
-    ramUsedMb:       number;   // RAM utilisée en Mo
-    ramTotalMb:      number;   // RAM totale en Mo
-    batteryPercent:  number;   // niveau batterie (0–100)
-    batteryCharging: boolean;  // vrai si branché
+    cpuPercent:      number;   // overall CPU usage (0–100)
+    ramUsedMb:       number;   // RAM used, in MB
+    ramTotalMb:      number;   // total RAM, in MB
+    batteryPercent:  number;   // battery level (0–100)
+    batteryCharging: boolean;  // true when plugged in
 }
 ```
 
-### Implémentation
+### Implementation
 
-- **CPU** : lecture de `/proc/stat` entre deux intervalles — différence `(total - idle) / total` en pourcentage.
-- **RAM** : `ActivityManager.MemoryInfo` — `totalMem` et `availMem` (soustraction pour `usedMem`).
-- **Batterie** : `Intent` `ACTION_BATTERY_CHANGED` via `registerReceiver(null, ...)` — sans permission requise.
-- **Polling** : `Handler` + `Runnable` sur le thread principal ; stoppé proprement par `stopPolling()` ou destruction du plugin.
+- **CPU**: reads `/proc/stat` across two intervals — the `(total - idle) / total` difference as a percentage.
+- **RAM**: `ActivityManager.MemoryInfo` — `totalMem` and `availMem` (subtracted to get `usedMem`).
+- **Battery**: the `ACTION_BATTERY_CHANGED` `Intent` through `registerReceiver(null, ...)` — no permission required.
+- **Polling**: a `Handler` + `Runnable` on the main thread; stopped cleanly by `stopPolling()` or when the plugin is destroyed.
 
 ---
 
@@ -325,34 +326,37 @@ still work without the native library.
 - **Single-threaded executor.** Downloads and translations share one `ExecutorService`. A
   translation request queued while a download is in progress will wait until all four files
   finish.
+
+---
+
 ## StreamDeckPlugin
 
-**Fichiers :**
-- Bridge TS : `src/plugins/streamDeckPlugin.ts`
-- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/streamdeck/`
-- Filtre USB : `android/app/src/main/res/xml/streamdeck_devices.xml`
+**Files:**
+- TS bridge: `src/plugins/streamDeckPlugin.ts`
+- Java implementation: `android/app/src/main/java/ca/erplibre/home/streamdeck/`
+- USB filter: `android/app/src/main/res/xml/streamdeck_devices.xml`
 
-**Bibliothèque :** Android USB Host API natif (`UsbManager`, `UsbDeviceConnection`, `bulkTransfer`, `controlTransfer`).
+**Library:** the native Android USB Host API (`UsbManager`, `UsbDeviceConnection`, `bulkTransfer`, `controlTransfer`).
 
-**Modèles supportés :** Elgato Stream Deck Original v1 (`0x0060`), Mini
+**Supported models:** Elgato Stream Deck Original v1 (`0x0060`), Mini
 (`0x0063`), XL (`0x006c`), Original v2 (`0x006d`), MK.2 (`0x0080`),
 Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 
 ### API
 
-| Méthode | Description |
-|---------|-------------|
-| `listDecks()` | Retourne tous les decks connus, chacun avec capacités (keys/dials/lcd/infobars/touchpoints). |
-| `getDeckInfo({deckId})` | Détail d'un deck (model, rows/cols, keyImage, dials, lcd…). |
-| `requestPermission({deckId})` | Force la demande de permission USB si manquante. |
-| `reset({deckId})` | Efface toutes les images des touches. |
-| `setBrightness({deckId, percent})` | Luminosité 0..100. |
-| `setKeyImage({deckId, key, bytes, format})` | Pousse une image. `bytes` = base64. `format = "jpeg"` pour v2+/MK.2/XL/Plus/Neo, `"png"` pour v1/Mini (Java fait BMP rotaté). Résout `{dropped: true}` si une image plus récente a été poussée pour la même touche entre-temps. |
-| `clearKey({deckId, key})` | Image noire 1×1 → touche éteinte. |
-| `clearAllKeys({deckId})` | Identique à `reset`. |
-| `setLcdImage({deckId, bytes})` | Plus uniquement — JPEG plein 800×100. |
-| `setLcdRegion({deckId, x, y, w, h, bytes})` | Plus uniquement — JPEG région partielle. |
-| `setInfoBar({deckId, index, bytes})` | Neo uniquement — JPEG 248×58 sur l'écran d'info. Le Neo n'a qu'un seul écran ; `index` doit être 0 (forward-compat pour de futurs modèles). |
+| Method | Description |
+|--------|-------------|
+| `listDecks()` | Returns every known deck, each with its capabilities (keys/dials/lcd/infobars/touchpoints). |
+| `getDeckInfo({deckId})` | Detail of one deck (model, rows/cols, keyImage, dials, lcd…). |
+| `requestPermission({deckId})` | Forces the USB permission request when it is missing. |
+| `reset({deckId})` | Clears every key image. |
+| `setBrightness({deckId, percent})` | Brightness 0..100. |
+| `setKeyImage({deckId, key, bytes, format})` | Pushes an image. `bytes` is base64. `format = "jpeg"` for v2+/MK.2/XL/Plus/Neo, `"png"` for v1/Mini (Java produces the rotated BMP). Resolves `{dropped: true}` when a newer image was pushed for the same key in the meantime. |
+| `clearKey({deckId, key})` | A black 1×1 image → the key goes dark. |
+| `clearAllKeys({deckId})` | Same as `reset`. |
+| `setLcdImage({deckId, bytes})` | Plus only — a full 800×100 JPEG. |
+| `setLcdRegion({deckId, x, y, w, h, bytes})` | Plus only — a JPEG for a partial region. |
+| `setInfoBar({deckId, index, bytes})` | Neo only — a 248×58 JPEG on the info screen. The Neo has a single screen; `index` must be 0 (forward compatibility with future models). |
 
 ### Events
 
@@ -367,22 +371,22 @@ Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `lcdTouched` | `{deckId, type, x, y, xEnd?, yEnd?}` (Plus) |
 | `neoTouched` | `{deckId, index, pressed}` (Neo) |
 
-### Identité persistante
+### Persistent identity
 
-Les decks sont identifiés par leur **numéro de série USB** (lu via
-feature report à la connexion). Un deck rebranché conserve donc son
-`deckId` — les préférences/layouts/snapshots peuvent être indexés par
-ce serial sans risque.
+Decks are identified by their **USB serial number** (read through a
+feature report on connection). A deck that is plugged back in therefore
+keeps its `deckId` — preferences, layouts and snapshots can safely be
+indexed by that serial.
 
 ### Architecture
 
-Pattern strategy. `DeckRegistry` mappe `productId → DeckSpec`. Une
-`DeckSession` par deck connecté possède son propre thread reader (HID
-IN), thread writer (HID OUT consommant `WriterQueue`), et un
-`DeckTransport` + `ImageEncoder` choisis selon la spec. Les images
-poussées rapidement pour la même touche sont coalescées : la dernière
-gagne, les plus anciennes résolvent leur Promise avec `{dropped: true}`.
+A strategy pattern. `DeckRegistry` maps `productId → DeckSpec`. One
+`DeckSession` per connected deck owns its own reader thread (HID IN),
+writer thread (HID OUT consuming a `WriterQueue`), and a
+`DeckTransport` + `ImageEncoder` chosen from the spec. Images pushed in
+quick succession for the same key are coalesced: the last one wins, the
+older ones resolve their Promise with `{dropped: true}`.
 
-### Tests manuels
+### Manual tests
 
-Voir `doc/streamdeck_test_matrix.md` — checklist par modèle physique.
+See `doc/streamdeck_test_matrix.md` — a checklist per physical model.

@@ -1,27 +1,72 @@
-import { xml } from "@odoo/owl";
+import { onWillStart, useState, xml } from "@odoo/owl";
 import { Dialog } from "@capacitor/dialog";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
-import { versionToDisplay } from "../../../services/migrationService";
+import { getCurrentLocale } from "../../../i18n";
+import {
+  formatReleases,
+  latestVersion,
+  parseChangelog,
+} from "../../../utils/changelogUtils";
 
-const CURRENT_VERSION = 2026031801;
-
+/**
+ * Shows the app version and the recent changelog entries.
+ *
+ * Both come from CHANGELOG.md as copied into the bundle by
+ * `bundleSourcePlugin` — the same file the repository publishes. This
+ * component previously carried its own copy of both, which is why it went on
+ * announcing 2026.03.18.01 for five months. There is nothing here to bump at
+ * release time.
+ */
 export class OptionsChangelogComponent extends EnhancedComponent {
   static template = xml`
     <li id="changelog" class="options-list__item">
-      <a href="#" t-on-click.stop.prevent="onChangelogClick">
-        📋 Version <t t-esc="currentVersion"/>
+      <a href="#" role="button" t-att-aria-label="t('options.changelog')"
+         t-on-click.stop.prevent="onChangelogClick">
+        📋 <t t-esc="label"/>
       </a>
     </li>
   `;
 
-  get currentVersion() {
-    return versionToDisplay(CURRENT_VERSION);
+  setup() {
+    this.state = useState({ version: "", body: "" });
+    onWillStart(() => this.load());
   }
 
-  async onChangelogClick() {
+  /** The bundle carries one changelog per language; pick the reader's. */
+  private get bundleUrl(): string {
+    return getCurrentLocale() === "fr"
+      ? "/repo/CHANGELOG.fr.md"
+      : "/repo/CHANGELOG.md";
+  }
+
+  /**
+   * A missing bundle is not an error worth surfacing at boot — the menu entry
+   * simply falls back to its plain label, and the dialog explains why.
+   */
+  async load(): Promise<void> {
+    try {
+      const res = await fetch(this.bundleUrl);
+      if (!res.ok) return;
+      const releases = parseChangelog(await res.text());
+      this.state.version = latestVersion(releases) ?? "";
+      this.state.body = formatReleases(releases);
+    } catch {
+      // Left as loaded-nothing; `label` and `onChangelogClick` cover it.
+    }
+  }
+
+  get label(): string {
+    return this.state.version
+      ? this.t("options.changelog_version", { version: this.state.version })
+      : this.t("options.changelog");
+  }
+
+  async onChangelogClick(): Promise<void> {
     await Dialog.alert({
-      title: `Changelog — ${versionToDisplay(CURRENT_VERSION)}`,
-      message: "=== 2026.03.18.01 ===\nAdded:\n- SQLite backend with AES-256 encryption\n- Biometric protection for DB key (opt-in)\n- Versioned migration system + notification\n- Boot screen with init progress\n- Options sub-pages with breadcrumbs\n- SQLite DB size diagnostic\n- Video: HTML5 overlay playback\n- Video: thumbnail (first frame, cached)\n- Video: thumbnail backfill migration\n- Video: auto-open camera on new entry\n- Photo: capture + fullscreen viewer\n- Photo: auto-open camera on new entry\n- Geolocation: open native map button\nFixed:\n- Stale listeners causing ghost entries\n- Video camera opening on all note views\n- Race condition on photo camera open\n\n=== 2025.12.28.01 ===\nAdded:\n- Application management (add/edit/delete)\n- Notes with text, audio, video, photo,\n  and geolocation entries\n- Tags and labels for notes\n- Data stored in SecureStorage",
+      title: this.state.version
+        ? this.t("dialog.title.changelog", { version: this.state.version })
+        : this.t("options.changelog"),
+      message: this.state.body || this.t("message.changelog_unavailable"),
     });
   }
 }

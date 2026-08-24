@@ -67,7 +67,7 @@ export class OptionsComponent extends EnhancedComponent {
           </a>
         </li>
         <li class="options-list__item">
-          <a href="#" role="button" aria-label="Code" t-on-click.stop.prevent="onCodeClick">
+          <a href="#" role="button" t-att-aria-label="t('aria.code')" t-on-click.stop.prevent="onCodeClick">
             💻 Code ›
           </a>
         </li>
@@ -77,7 +77,7 @@ export class OptionsComponent extends EnhancedComponent {
           </a>
         </li>
         <li class="options-list__item">
-          <a href="#" role="button" aria-label="Fonctionnalités" t-on-click.stop.prevent="onFeaturesClick">
+          <a href="#" role="button" t-att-aria-label="t('aria.features')" t-on-click.stop.prevent="onFeaturesClick">
             🗺️ Fonctionnalités ›
           </a>
         </li>

@@ -32,22 +32,22 @@ export class NoteComponent extends EnhancedComponent {
 				aria-atomic="true"
 				t-esc="state.syncAnnouncement"
 			/>
-			<nav class="breadcrumb" aria-label="Fil d'ariane de la note">
-				<a href="#" role="button" aria-label="Retour à la liste des notes" t-on-click.stop.prevent="onBackToNotesClick">Notes</a>
+			<nav class="breadcrumb" t-att-aria-label="t('aria.note_breadcrumb')">
+				<a href="#" role="button" t-att-aria-label="t('aria.back_to_notes')" t-on-click.stop.prevent="onBackToNotesClick"><t t-esc="t('nav.notes')"/></a>
 				<span class="breadcrumb__sep">›</span>
 				<span class="breadcrumb__current" t-esc="state.note.title or 'Nouvelle note'"/>
 				<div class="breadcrumb__note-nav">
 					<button
 						type="button"
 						class="breadcrumb__note-nav-btn"
-						aria-label="Note précédente"
+						t-att-aria-label="t('aria.previous_note')"
 						t-att-disabled="!hasPrevious"
 						t-on-click.stop.prevent="navigatePrevious"
 					>‹</button>
 					<button
 						type="button"
 						class="breadcrumb__note-nav-btn"
-						aria-label="Note suivante"
+						t-att-aria-label="t('aria.next_note')"
 						t-att-disabled="!hasNext"
 						t-on-click.stop.prevent="navigateNext"
 					>›</button>
@@ -72,7 +72,7 @@ export class NoteComponent extends EnhancedComponent {
 							aria-modal="true"
 							aria-labelledby="config-picker-title"
 						>
-							<p id="config-picker-title" class="breadcrumb__config-picker-label">Synchroniser avec :</p>
+							<p id="config-picker-title" class="breadcrumb__config-picker-label"><t t-esc="t('label.sync_with')"/></p>
 							<t t-foreach="state.syncConfigs" t-as="cfg" t-key="cfg.id">
 								<label class="breadcrumb__config-option">
 									<input
@@ -88,12 +88,12 @@ export class NoteComponent extends EnhancedComponent {
 								class="breadcrumb__config-confirm"
 								t-att-disabled="state.selectedConfigIds.length === 0"
 								t-on-click="() => this.confirmConfigSelection()"
-							>Synchroniser</button>
+							><t t-esc="t('button.synchronise')"/></button>
 							<button
 								type="button"
 								class="breadcrumb__config-cancel"
 								t-on-click="cancelConfigPick"
-							>Annuler</button>
+							><t t-esc="t('button.cancel')"/></button>
 						</div>
 					</div>
 					<div class="breadcrumb__options-wrap">
@@ -101,8 +101,8 @@ export class NoteComponent extends EnhancedComponent {
 							type="button"
 							class="breadcrumb__options-btn"
 							t-att-disabled="state.newNote"
-							title="Options"
-							aria-label="Options"
+							t-att-title="t('nav.options')"
+							t-att-aria-label="t('aria.options')"
 							aria-haspopup="menu"
 							t-att-aria-expanded="state.showOptionsMenu ? 'true' : 'false'"
 							t-on-click.stop.prevent="toggleOptionsMenu"
@@ -117,13 +117,13 @@ export class NoteComponent extends EnhancedComponent {
 								class="breadcrumb__options-item"
 								role="menuitem"
 								t-on-click.stop.prevent="onMetadataClick"
-							>ℹ Métadonnées SQL</button>
+							><t t-esc="t('button.sql_metadata')"/></button>
 							<button
 								type="button"
 								class="breadcrumb__options-item"
 								role="menuitem"
 								t-on-click.stop.prevent="onDebugClick"
-							>🐛 Debug</button>
+							>🐛 <t t-esc="t('button.debug')"/></button>
 						</div>
 					</div>
 				</div>
@@ -181,14 +181,14 @@ export class NoteComponent extends EnhancedComponent {
 				aria-labelledby="open-in-app-title"
 				t-on-click.stop=""
 			>
-				<p id="open-in-app-title" class="open-in-app__title">Ouvrir dans application</p>
+				<p id="open-in-app-title" class="open-in-app__title"><t t-esc="t('button.open_in_app')"/></p>
 				<div class="error-dialog__actions">
 					<t t-foreach="state.openInApp.apps" t-as="appItem" t-key="appItem.appUrl + '|' + appItem.username">
 						<button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="() => this.openInAppForConfig(appItem)">
 							<t t-esc="appItem.label" />
 						</button>
 					</t>
-					<button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeOpenInApp">Annuler</button>
+					<button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeOpenInApp"><t t-esc="t('button.cancel')"/></button>
 				</div>
 			</div>
 		</div>
@@ -205,27 +205,27 @@ export class NoteComponent extends EnhancedComponent {
 				aria-labelledby="priority-picker-title"
 				t-on-click.stop=""
 			>
-				<p id="priority-picker-title" class="priority-picker__title">Priorité (Matrice d'Eisenhower)</p>
+				<p id="priority-picker-title" class="priority-picker__title"><t t-esc="t('section.eisenhower')"/></p>
 				<div class="priority-picker__grid">
 					<button type="button" class="priority-picker__btn priority-picker__btn--1" t-on-click.stop="() => this.setPriority(1)">
-						<span class="priority-picker__label">Urgent &amp; Important</span>
-						<span class="priority-picker__desc">Faire maintenant</span>
+						<span class="priority-picker__label"><t t-esc="t('label.urgent_important')"/></span>
+						<span class="priority-picker__desc"><t t-esc="t('label.do_now')"/></span>
 					</button>
 					<button type="button" class="priority-picker__btn priority-picker__btn--2" t-on-click.stop="() => this.setPriority(2)">
-						<span class="priority-picker__label">Important, pas urgent</span>
-						<span class="priority-picker__desc">Planifier</span>
+						<span class="priority-picker__label"><t t-esc="t('label.important_not_urgent')"/></span>
+						<span class="priority-picker__desc"><t t-esc="t('label.schedule')"/></span>
 					</button>
 					<button type="button" class="priority-picker__btn priority-picker__btn--3" t-on-click.stop="() => this.setPriority(3)">
-						<span class="priority-picker__label">Urgent, pas important</span>
-						<span class="priority-picker__desc">Déléguer</span>
+						<span class="priority-picker__label"><t t-esc="t('label.urgent_not_important')"/></span>
+						<span class="priority-picker__desc"><t t-esc="t('label.delegate')"/></span>
 					</button>
 					<button type="button" class="priority-picker__btn priority-picker__btn--4" t-on-click.stop="() => this.setPriority(4)">
-						<span class="priority-picker__label">Ni urgent ni important</span>
-						<span class="priority-picker__desc">Éliminer</span>
+						<span class="priority-picker__label"><t t-esc="t('label.neither')"/></span>
+						<span class="priority-picker__desc"><t t-esc="t('label.eliminate')"/></span>
 					</button>
 				</div>
-				<button type="button" class="priority-picker__clear" t-on-click.stop="() => this.setPriority(undefined)">Retirer la priorité</button>
-				<button type="button" class="priority-picker__cancel" t-on-click.stop="closePriorityPicker">Annuler</button>
+				<button type="button" class="priority-picker__clear" t-on-click.stop="() => this.setPriority(undefined)"><t t-esc="t('button.clear_priority')"/></button>
+				<button type="button" class="priority-picker__cancel" t-on-click.stop="closePriorityPicker"><t t-esc="t('button.cancel')"/></button>
 			</div>
 		</div>
 		<div
@@ -241,12 +241,12 @@ export class NoteComponent extends EnhancedComponent {
 				aria-labelledby="error-dialog-title"
 				t-on-click.stop=""
 			>
-				<p id="error-dialog-title" class="sr-only">Détail de l'erreur</p>
+				<p id="error-dialog-title" class="sr-only"><t t-esc="t('section.error_detail')"/></p>
 				<pre class="error-dialog__message" t-esc="state.errorDialog.message" />
 				<div class="error-dialog__actions">
-					<button type="button" class="error-dialog__btn error-dialog__btn--copy" t-on-click.stop.prevent="copyErrorMessage">📋 Copier</button>
-					<button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="createErrorNote">📝 Créer note</button>
-					<button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeErrorDialog">Fermer</button>
+					<button type="button" class="error-dialog__btn error-dialog__btn--copy" t-on-click.stop.prevent="copyErrorMessage">📋 <t t-esc="t('button.copy')"/></button>
+					<button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="createErrorNote">📝 <t t-esc="t('button.create_note')"/></button>
+					<button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeErrorDialog"><t t-esc="t('button.close')"/></button>
 				</div>
 			</div>
 		</div>
@@ -259,8 +259,8 @@ export class NoteComponent extends EnhancedComponent {
 			<div class="error-dialog" role="dialog" aria-modal="true" t-on-click.stop="">
 				<pre class="debug-dialog__message" t-esc="state.debugDialog.message"/>
 				<div class="error-dialog__actions">
-					<button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="createDebugNote">📝 Ajouter une note</button>
-					<button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeDebugDialog">Fermer</button>
+					<button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="createDebugNote">📝 <t t-esc="t('button.add_note')"/></button>
+					<button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeDebugDialog"><t t-esc="t('button.close')"/></button>
 				</div>
 			</div>
 		</div>

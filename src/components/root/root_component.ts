@@ -18,8 +18,8 @@ export class RootComponent extends EnhancedComponent {
 		<t t-if="state.isLoadingApps or state.isSaving">
 			<div class="app-status-overlay" role="status" aria-live="polite" aria-atomic="true">
 				<div class="app-status-spinner" aria-hidden="true"></div>
-				<t t-if="state.isLoadingApps">Chargement…</t>
-				<t t-elif="state.isSaving">Enregistrement…</t>
+				<t t-if="state.isLoadingApps"><t t-esc="t('label.loading')"/></t>
+				<t t-elif="state.isSaving"><t t-esc="t('message.saving')"/></t>
 			</div>
 		</t>
 		<main
@@ -34,14 +34,14 @@ export class RootComponent extends EnhancedComponent {
 		<t t-if="state.isLoadingApps or state.isSaving">
 			<div class="app-status-overlay" role="status" aria-live="polite" aria-atomic="true">
 				<div class="app-status-spinner" aria-hidden="true"></div>
-				<t t-if="state.isLoadingApps">Chargement…</t>
-				<t t-elif="state.isSaving">Enregistrement…</t>
+				<t t-if="state.isLoadingApps"><t t-esc="t('label.loading')"/></t>
+				<t t-elif="state.isSaving"><t t-esc="t('message.saving')"/></t>
 			</div>
 		</t>
 		<div t-if="state.syncBanner" class="sync-banner" role="alert" aria-live="assertive">
-			<span>☁ <t t-esc="state.syncBannerCount"/> modification(s) disponible(s) depuis Odoo</span>
-			<button class="sync-banner__btn" t-on-click="onSyncBannerSync">Synchroniser</button>
-			<button class="sync-banner__close" t-on-click="onSyncBannerDismiss" aria-label="Fermer la notification">✕</button>
+			<span>☁ <t t-esc="state.syncBannerCount"/><t t-esc="t('message.odoo_changes_available')"/></span>
+			<button class="sync-banner__btn" t-on-click="onSyncBannerSync"><t t-esc="t('button.synchronise')"/></button>
+			<button class="sync-banner__close" t-on-click="onSyncBannerDismiss" t-att-aria-label="t('aria.close_notification')">✕</button>
 		</div>
 		<VideoCameraComponent
 			t-if="state.isCameraOpen"

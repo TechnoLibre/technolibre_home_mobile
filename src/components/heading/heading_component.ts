@@ -28,8 +28,8 @@ export class HeadingComponent extends EnhancedComponent {
         <button
           type="button"
           class="breadcrumb__options-btn"
-          title="Options"
-          aria-label="Options"
+          t-att-title="t('nav.options')"
+          t-att-aria-label="t('aria.options')"
           aria-haspopup="menu"
           t-att-aria-expanded="state.showOptionsMenu ? 'true' : 'false'"
           t-on-click.stop.prevent="toggleOptionsMenu"
@@ -44,7 +44,7 @@ export class HeadingComponent extends EnhancedComponent {
             class="breadcrumb__options-item"
             role="menuitem"
             t-on-click.stop.prevent="onDebugClick"
-          >🐛 Debug</button>
+          >🐛 <t t-esc="t('button.debug')"/></button>
         </div>
       </div>
       <div
@@ -56,8 +56,8 @@ export class HeadingComponent extends EnhancedComponent {
         <div class="error-dialog" role="dialog" aria-modal="true" t-on-click.stop="">
           <pre class="debug-dialog__message" t-esc="state.debugDialog.message"/>
           <div class="error-dialog__actions">
-            <button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="createDebugNote">📝 Ajouter une note</button>
-            <button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeDebugDialog">Fermer</button>
+            <button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="createDebugNote">📝 <t t-esc="t('button.add_note')"/></button>
+            <button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeDebugDialog"><t t-esc="t('button.close')"/></button>
           </div>
         </div>
       </div>

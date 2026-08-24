@@ -1,3 +1,4 @@
+
 # Debug Menu (⋮)
 
 Every page header in ERPLibre Home Mobile exposes a **⋮** (vertical ellipsis) button

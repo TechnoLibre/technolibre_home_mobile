@@ -32,7 +32,7 @@ export class VideoCameraComponent extends EnhancedComponent {
 					id="video-camera__ai-toggle"
 					t-att-class="{ 'ai-active': state.isAiActive }"
 					t-on-click.stop.prevent="toggleAi"
-					title="Détection de texte IA"
+					t-att-title="t('button.ai_text_detection')"
 				>
 					<span class="ai-icon">◉</span>
 					<span class="ai-label">IA</span>

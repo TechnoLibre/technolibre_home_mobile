@@ -42,9 +42,9 @@ export class TagManagerComponent extends EnhancedComponent {
                     </section>
 
                     <!-- Applied tags -->
-                    <section id="tag-manager__applied" t-if="getAppliedTags().length > 0" aria-label="Tags appliqués">
+                    <section id="tag-manager__applied" t-if="getAppliedTags().length > 0" t-att-aria-label="t('aria.applied_tags')">
 
-                        <p class="tag-manager__section-label" aria-hidden="true">Tags appliqués</p>
+                        <p class="tag-manager__section-label" aria-hidden="true"><t t-esc="t('aria.applied_tags')"/></p>
                         <div class="tag-manager__chips" role="list">
                             <button
                                 t-foreach="getAppliedTags()"
@@ -52,7 +52,7 @@ export class TagManagerComponent extends EnhancedComponent {
                                 t-key="tag.id"
                                 class="tag-manager__chip tag-manager__chip--applied"
                                 t-att-style="'background-color:' + tag.color + ';border-color:' + tag.color"
-                                t-att-aria-label="'Retirer le tag : ' + tag.name"
+                                t-att-aria-label="t('aria.remove_tag_named', { name: tag.name })"
                                 t-on-click.stop.prevent="() => this.removeTag(tag.id)"
                             >
                                 <span t-esc="tag.name" aria-hidden="true"/>
@@ -88,7 +88,7 @@ export class TagManagerComponent extends EnhancedComponent {
                                 <button
                                     class="tag-manager__chip tag-manager__chip--available"
                                     t-att-style="'color:' + tag.color + ';border-color:' + tag.color"
-                                    t-att-aria-label="'Appliquer le tag : ' + getTagLabel(tag)"
+                                    t-att-aria-label="t('aria.apply_tag_named', { name: getTagLabel(tag) })"
                                     t-on-click.stop.prevent="() => this.applyTag(tag.id)"
                                 >
                                     <span t-esc="getTagLabel(tag)" aria-hidden="true"/>
@@ -96,7 +96,7 @@ export class TagManagerComponent extends EnhancedComponent {
                                 <button
                                     class="tag-manager__chip-edit-btn"
                                     t-att-style="'color:' + tag.color"
-                                    t-att-aria-label="'Modifier la couleur de : ' + tag.name"
+                                    t-att-aria-label="t('aria.edit_color_of', { name: tag.name })"
                                     t-on-click.stop.prevent="() => this.startEditTag(tag)"
                                 >✎</button>
                             </span>
@@ -109,13 +109,13 @@ export class TagManagerComponent extends EnhancedComponent {
                     </section>
 
                     <!-- Edit tag color form -->
-                    <section id="tag-manager__edit-form" t-if="state.editingTagId" aria-label="Modifier la couleur du tag">
+                    <section id="tag-manager__edit-form" t-if="state.editingTagId" t-att-aria-label="t('aria.edit_tag_color')">
                         <t t-set="editTag" t-value="getEditingTag()" />
                         <p class="tag-manager__section-label" id="tag-manager__edit-label">
                             Modifier « <t t-esc="editTag and editTag.name or ''" /> »
                         </p>
                         <div class="tag-manager__color-picker" role="group" aria-labelledby="tag-manager__edit-label">
-                            <div class="tag-manager__color-swatches" role="radiogroup" aria-label="Couleurs préréglées">
+                            <div class="tag-manager__color-swatches" role="radiogroup" t-att-aria-label="t('aria.preset_colors')">
                                 <button
                                     t-foreach="getPresetColors()"
                                     t-as="c"
@@ -124,20 +124,20 @@ export class TagManagerComponent extends EnhancedComponent {
                                     class="tag-manager__color-swatch"
                                     t-att-style="'background-color:' + c"
                                     t-att-class="{ 'tag-manager__color-swatch--selected': state.editingColor === c }"
-                                    t-att-aria-label="'Couleur ' + c"
+                                    t-att-aria-label="t('aria.color_named', { color: c })"
                                     t-att-aria-pressed="state.editingColor === c ? 'true' : 'false'"
                                     t-on-click.stop.prevent="() => this.selectEditColor(c)"
                                 />
                             </div>
                             <div class="tag-manager__color-hex-row">
                                 <div class="tag-manager__color-preview" aria-hidden="true" t-att-style="'background-color:' + state.editingColor" />
-                                <label for="tag-manager__edit-hex" class="sr-only">Code couleur hexadécimal</label>
+                                <label for="tag-manager__edit-hex" class="sr-only"><t t-esc="t('aria.hex_color_code')"/></label>
                                 <input
                                     id="tag-manager__edit-hex"
                                     type="text"
                                     class="tag-manager__color-hex-input"
                                     placeholder="#6b7280"
-                                    aria-label="Code couleur hexadécimal"
+                                    t-att-aria-label="t('aria.hex_color_code')"
                                     t-model="state.editingColor"
                                 />
                             </div>
@@ -161,12 +161,12 @@ export class TagManagerComponent extends EnhancedComponent {
                     </section>
 
                     <!-- Create form (name from search field, no exact match) -->
-                    <section id="tag-manager__create-form" t-if="canCreate()" aria-label="Créer un tag">
+                    <section id="tag-manager__create-form" t-if="canCreate()" t-att-aria-label="t('aria.create_tag')">
                         <p class="tag-manager__section-label" id="tag-manager__create-label">
                             Créer « <t t-esc="state.search.trim()" /> »
                         </p>
                         <div class="tag-manager__create-row">
-                            <label for="tag-manager__parent-select" class="sr-only">Tag parent</label>
+                            <label for="tag-manager__parent-select" class="sr-only"><t t-esc="t('label.parent_tag')"/></label>
                             <select id="tag-manager__parent-select" t-model="state.newParentId" class="tag-manager__parent-select">
                                 <option value="" t-esc="t('label.no_parent')"/>
                                 <t t-foreach="state.allTags" t-as="pt" t-key="pt.id">
@@ -175,7 +175,7 @@ export class TagManagerComponent extends EnhancedComponent {
                             </select>
                         </div>
                         <div class="tag-manager__color-picker" role="group" aria-labelledby="tag-manager__create-label">
-                            <div class="tag-manager__color-swatches" role="radiogroup" aria-label="Couleurs préréglées">
+                            <div class="tag-manager__color-swatches" role="radiogroup" t-att-aria-label="t('aria.preset_colors')">
                                 <button
                                     t-foreach="getPresetColors()"
                                     t-as="c"
@@ -184,20 +184,20 @@ export class TagManagerComponent extends EnhancedComponent {
                                     class="tag-manager__color-swatch"
                                     t-att-style="'background-color:' + c"
                                     t-att-class="{ 'tag-manager__color-swatch--selected': state.newColor === c }"
-                                    t-att-aria-label="'Couleur ' + c"
+                                    t-att-aria-label="t('aria.color_named', { color: c })"
                                     t-att-aria-pressed="state.newColor === c ? 'true' : 'false'"
                                     t-on-click.stop.prevent="() => this.selectColor(c)"
                                 />
                             </div>
                             <div class="tag-manager__color-hex-row">
                                 <div class="tag-manager__color-preview" aria-hidden="true" t-att-style="'background-color:' + state.newColor" />
-                                <label for="tag-manager__new-hex" class="sr-only">Code couleur hexadécimal</label>
+                                <label for="tag-manager__new-hex" class="sr-only"><t t-esc="t('aria.hex_color_code')"/></label>
                                 <input
                                     id="tag-manager__new-hex"
                                     type="text"
                                     class="tag-manager__color-hex-input"
                                     placeholder="#6b7280"
-                                    aria-label="Code couleur hexadécimal"
+                                    t-att-aria-label="t('aria.hex_color_code')"
                                     t-model="state.newColor"
                                 />
                             </div>

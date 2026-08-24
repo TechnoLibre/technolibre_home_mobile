@@ -11,47 +11,47 @@ import { HeadingComponent } from "../../heading/heading_component";
 export class ApplicationsEditComponent extends EnhancedComponent {
     static template = xml`
 <div id="applications-edit-component">
-    <HeadingComponent title="'Modifier une application'"/>
+    <HeadingComponent title="t('heading.edit_application')"/>
     <form
             id="app-edit__form"
             t-on-submit.prevent="onAppEditFormSubmit"
     >
         <div class="app-edit__form-group">
-            <label for="app-edit__url">Adresse du site web</label>
+            <label for="app-edit__url"><t t-esc="t('label.website_address')"/></label>
             <input type="text" name="url" id="app-edit__url" autocomplete="off" autocapitalize="off"
-                   placeholder="example.com" required="true" t-model="state.app.url"/>
+                   t-att-placeholder="t('placeholder.example_url')" required="true" t-model="state.app.url"/>
         </div>
         <div class="app-edit__form-group">
-            <label for="app-edit__username">Nom d'utilisateur</label>
+            <label for="app-edit__username"><t t-esc="t('label.username')"/></label>
             <input type="text" name="username" id="app-edit__username" autocomplete="off" autocapitalize="off"
-                   placeholder="username" required="true" t-model="state.app.username"/>
+                   t-att-placeholder="t('placeholder.username')" required="true" t-model="state.app.username"/>
         </div>
         <div class="app-edit__form-group">
-            <label for="app-edit__ignore_password">Ignore password</label>
+            <label for="app-edit__ignore_password"><t t-esc="t('button.ignore_password')"/></label>
             <input type="checkbox" name="ignore_password" id="app-edit__ignore_password" autocomplete="off"
                    t-model="state.app.ignore_password"/>
         </div>
         <t t-if="!state.app.ignore_password">
             <div class="app-edit__form-group">
-                <label for="app-edit__password">Mot de passe</label>
-                <input type="password" name="password" id="app-edit__password" autocomplete="off" placeholder="password"
+                <label for="app-edit__password"><t t-esc="t('label.password')"/></label>
+                <input type="password" name="password" id="app-edit__password" autocomplete="off" t-att-placeholder="t('placeholder.password')"
                        required="true" t-model="state.app.password"/>
             </div>
         </t>
 
         <details class="app-edit__sync-section">
-            <summary class="app-edit__sync-summary">☁ Synchronisation Odoo</summary>
+            <summary class="app-edit__sync-summary">☁ <t t-esc="t('section.odoo_sync')"/></summary>
 
             <div class="app-edit__form-group">
-                <label for="app-edit__database">Base de données Odoo</label>
+                <label for="app-edit__database"><t t-esc="t('label.odoo_database')"/></label>
                 <div class="app-edit__db-row">
                     <input type="text" name="database" id="app-edit__database" autocomplete="off" autocapitalize="off"
-                           placeholder="ex: ma_base" t-model="state.app.database"/>
+                           t-att-placeholder="t('placeholder.database')" t-model="state.app.database"/>
                     <button type="button" class="app-edit__autocomplete-btn"
                             t-on-click="autocompleteDatabase"
                             t-att-disabled="state.isLoadingDb || !state.app.url">
                         <t t-if="state.isLoadingDb">…</t>
-                        <t t-else="">Autocomplete</t>
+                        <t t-else=""><t t-esc="t('button.autocomplete')"/></t>
                     </button>
                 </div>
                 <t t-if="state.detectedVersion">
@@ -60,7 +60,7 @@ export class ApplicationsEditComponent extends EnhancedComponent {
             </div>
 
             <div class="app-edit__form-group">
-                <label for="app-edit__auto_sync">Synchronisation automatique</label>
+                <label for="app-edit__auto_sync"><t t-esc="t('label.auto_sync')"/></label>
                 <label class="app-edit__toggle">
                     <input type="checkbox" id="app-edit__auto_sync" t-model="state.app.autoSync"/>
                     <span t-esc="state.app.autoSync ? 'Activée' : 'Désactivée'"/>
@@ -69,27 +69,27 @@ export class ApplicationsEditComponent extends EnhancedComponent {
 
             <t t-if="state.app.autoSync">
                 <div class="app-edit__form-group">
-                    <label for="app-edit__poll_interval">Intervalle de synchronisation</label>
+                    <label for="app-edit__poll_interval"><t t-esc="t('label.sync_interval')"/></label>
                     <select id="app-edit__poll_interval" t-model="state.app.pollIntervalMinutes">
-                        <option value="1">1 minute</option>
-                        <option value="5">5 minutes</option>
-                        <option value="15">15 minutes</option>
-                        <option value="30">30 minutes</option>
+                        <option value="1"><t t-esc="t('sync_interval.1_min')"/></option>
+                        <option value="5"><t t-esc="t('sync_interval.5_min')"/></option>
+                        <option value="15"><t t-esc="t('sync_interval.15_min')"/></option>
+                        <option value="30"><t t-esc="t('sync_interval.30_min')"/></option>
                     </select>
                 </div>
             </t>
 
             <details class="app-edit__ntfy-section">
-                <summary class="app-edit__ntfy-summary">🔔 Notifications NTFY (optionnel)</summary>
+                <summary class="app-edit__ntfy-summary">🔔 <t t-esc="t('section.ntfy_optional')"/></summary>
                 <div class="app-edit__form-group">
-                    <label for="app-edit__ntfy_url">URL du serveur NTFY</label>
+                    <label for="app-edit__ntfy_url"><t t-esc="t('label.ntfy_server_url')"/></label>
                     <input type="url" id="app-edit__ntfy_url" autocomplete="off"
-                           placeholder="ex: https://ntfy.sh" t-model="state.app.ntfyUrl"/>
+                           t-att-placeholder="t('placeholder.ntfy_url')" t-model="state.app.ntfyUrl"/>
                 </div>
                 <div class="app-edit__form-group">
-                    <label for="app-edit__ntfy_topic">Topic NTFY</label>
+                    <label for="app-edit__ntfy_topic"><t t-esc="t('label.ntfy_topic')"/></label>
                     <input type="text" id="app-edit__ntfy_topic" autocomplete="off"
-                           placeholder="ex: erplibre-monentreprise" t-model="state.app.ntfyTopic"/>
+                           t-att-placeholder="t('placeholder.ntfy_topic')" t-model="state.app.ntfyTopic"/>
                 </div>
                 <p class="app-edit__ntfy-hint">
                     Configurez le même topic dans Odoo (Paramètres → ERPLibre Mobile).
@@ -99,7 +99,7 @@ export class ApplicationsEditComponent extends EnhancedComponent {
 
         <div class="app-edit__form-group app-edit__form-actions">
             <input type="submit" id="app-edit__submit" value="Modifier"/>
-            <button type="button" id="app-edit__cancel" t-on-click="onCancelClick">Annuler</button>
+            <button type="button" id="app-edit__cancel" t-on-click="onCancelClick"><t t-esc="t('button.cancel')"/></button>
         </div>
     </form>
 </div>
