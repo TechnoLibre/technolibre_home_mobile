@@ -2745,16 +2745,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                 status: "stable",
                 howItWorks: {
                     en: "Vite plugin generates a (gitShortSha + timestamp) on every build and "
-                        + "writes it to src/public/build_id.json. Surfaced in Options → Device "
-                        + "info so a bug report from the field always carries the exact APK "
-                        + "build, not a vague version.",
+                        + "writes it to src/public/build_id.json — a build output, not a source "
+                        + "file, so it is gitignored. RepoEditService reads it to tag the "
+                        + "baseline commit of an editable repo, which is how baseline drift is "
+                        + "detected after a rebuild.",
                     fr: "Plugin Vite génère un (gitShortSha + timestamp) à chaque build et "
-                        + "l'écrit dans src/public/build_id.json. Surfacé dans Options → Info "
-                        + "appareil pour qu'un rapport de bug du terrain transporte toujours le "
-                        + "build APK exact, pas une version vague.",
+                        + "l'écrit dans src/public/build_id.json — une sortie de build, pas un "
+                        + "fichier source, donc gitignoré. RepoEditService le lit pour étiqueter "
+                        + "le commit de référence d'un dépôt éditable, ce qui permet de détecter "
+                        + "une dérive de référence après recompilation.",
                 },
                 demo: NONE_PLUMBING,
-                files: ["src/public/build_id.json"],
+                files: ["vite.config.ts", "src/services/repoEditService.ts"],
             },
         ],
     },

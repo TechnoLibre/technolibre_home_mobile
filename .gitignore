@@ -205,3 +205,7 @@ src/public/repo/
 src/public/repos/
 src/public/erplibre/
 src/__owl-precompiled__.ts
+# Derives du build : build_id du sha git, feature_touched des mtime du
+# systeme de fichiers — un rebase ou un clone frais les reecrit tous.
+src/public/build_id.json
+src/public/feature_touched.json
