@@ -94,10 +94,14 @@ Test suite goes from 854 to 1000 tests across 66 files.
   generator and its backfill
 - **Catalogue permissions** are now audited against the Android manifest
   by a test
-- **Accessibility labels** — 62 aria-labels that held hardcoded French now
-  go through the translation dictionaries. A test collects every static
-  `t()` call in app code and fails when a key is missing from either side,
-  which nothing rendering templates would have caught
+- **Translation coverage** — 62 aria-labels and 354 occurrences of visible
+  text that held hardcoded French now go through the dictionaries, which
+  grew from 383 to 591 keys. 86 of those values already had a key defined
+  and unused, so they are wired rather than duplicated. A test collects
+  every static `t()` call in app code and fails when a key is missing from
+  either side, which nothing rendering templates would have caught. The
+  feature catalogue and the Stream Deck diagnostics keep their own strings:
+  the first has its own FR/EN toggle, the second is log output
 - **In-app changelog** — reads the bundled `CHANGELOG.md` instead of
   carrying its own copy of the text and a hardcoded version constant. The
   version shown is the file's first dated heading, in the reader's
@@ -383,10 +387,15 @@ fichiers.
   générateur de vignettes vidéo comme son rattrapage
 - **Les permissions du catalogue** sont maintenant auditées contre le manifeste
   Android par un test
-- **Libellés d'accessibilité** — 62 aria-label qui portaient du français en
-  dur passent désormais par les dictionnaires de traduction. Un test collecte
-  chaque appel statique à `t()` dans le code et échoue si une clé manque d'un
-  côté, ce qu'aucun rendu de gabarit n'aurait attrapé
+- **Couverture de traduction** — 62 aria-label et 354 occurrences de texte
+  visible qui portaient du français en dur passent désormais par les
+  dictionnaires, passés de 383 à 591 clés. 86 de ces valeurs avaient déjà
+  une clé définie et non employée : elles sont branchées plutôt que
+  dupliquées. Un test collecte chaque appel statique à `t()` dans le code et
+  échoue si une clé manque d'un côté, ce qu'aucun rendu de gabarit n'aurait
+  attrapé. Le catalogue de fonctionnalités et le diagnostic Stream Deck
+  gardent leurs propres chaînes : le premier a son sélecteur FR/EN, le second
+  est une sortie de journal
 - **Changelog intégré** — lit le `CHANGELOG.md` embarqué au lieu de porter sa
   propre copie du texte et une constante de version en dur. La version
   affichée est le premier titre daté du fichier, dans la langue du lecteur ;

@@ -89,10 +89,14 @@ Test suite goes from 854 to 1000 tests across 66 files.
   generator and its backfill
 - **Catalogue permissions** are now audited against the Android manifest
   by a test
-- **Accessibility labels** — 62 aria-labels that held hardcoded French now
-  go through the translation dictionaries. A test collects every static
-  `t()` call in app code and fails when a key is missing from either side,
-  which nothing rendering templates would have caught
+- **Translation coverage** — 62 aria-labels and 354 occurrences of visible
+  text that held hardcoded French now go through the dictionaries, which
+  grew from 383 to 591 keys. 86 of those values already had a key defined
+  and unused, so they are wired rather than duplicated. A test collects
+  every static `t()` call in app code and fails when a key is missing from
+  either side, which nothing rendering templates would have caught. The
+  feature catalogue and the Stream Deck diagnostics keep their own strings:
+  the first has its own FR/EN toggle, the second is log output
 - **In-app changelog** — reads the bundled `CHANGELOG.md` instead of
   carrying its own copy of the text and a hardcoded version constant. The
   version shown is the file's first dated heading, in the reader's

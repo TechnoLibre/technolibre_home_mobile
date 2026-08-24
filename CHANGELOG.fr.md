@@ -98,10 +98,15 @@ fichiers.
   générateur de vignettes vidéo comme son rattrapage
 - **Les permissions du catalogue** sont maintenant auditées contre le manifeste
   Android par un test
-- **Libellés d'accessibilité** — 62 aria-label qui portaient du français en
-  dur passent désormais par les dictionnaires de traduction. Un test collecte
-  chaque appel statique à `t()` dans le code et échoue si une clé manque d'un
-  côté, ce qu'aucun rendu de gabarit n'aurait attrapé
+- **Couverture de traduction** — 62 aria-label et 354 occurrences de texte
+  visible qui portaient du français en dur passent désormais par les
+  dictionnaires, passés de 383 à 591 clés. 86 de ces valeurs avaient déjà
+  une clé définie et non employée : elles sont branchées plutôt que
+  dupliquées. Un test collecte chaque appel statique à `t()` dans le code et
+  échoue si une clé manque d'un côté, ce qu'aucun rendu de gabarit n'aurait
+  attrapé. Le catalogue de fonctionnalités et le diagnostic Stream Deck
+  gardent leurs propres chaînes : le premier a son sélecteur FR/EN, le second
+  est une sortie de journal
 - **Changelog intégré** — lit le `CHANGELOG.md` embarqué au lieu de porter sa
   propre copie du texte et une constante de version en dur. La version
   affichée est le premier titre daté du fichier, dans la langue du lecteur ;
