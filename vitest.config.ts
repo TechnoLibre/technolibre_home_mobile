@@ -15,6 +15,9 @@ export default defineConfig({
       "node_modules/**",
       "dist/**",
       "src/public/**",
+      // Fixtures d'affichage : leurs tests appartiennent a leur propre projet
+      // (node:test, cargo, junit) et ne sont pas ecrits pour vitest.
+      "test-bundle/**",
     ],
     alias: [
       {

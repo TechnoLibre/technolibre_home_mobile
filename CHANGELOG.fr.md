@@ -7,6 +7,34 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Non publié]
 
+### Ajouté
+- **Bundle de test** — une troisième cible dans Options › Code, après Mobile
+  et ERPLibre. 52 fixtures d'affichage sous 400 Ko : PNG en couleur, avec
+  alpha et en niveaux de gris, plus le cas dégénéré 1×1, BMP, GIF fixe et
+  animé, trois SVG, WAV, et les JPEG, WebP, MP3, OGG et ICO empruntés ;
+  markdown, JSON, CSV, XML, YAML, TOML, texte brut, un fichier vide et une
+  feuille Unicode ; et six projets de code — Tornado, un module Odoo avec
+  composant Owl, JavaScript, Rust, C++ et Java. Un format qui ne s'affiche
+  pas ici ne s'affichera pas dans un vrai dépôt, et on le voit sans dérouler
+  82 000 fichiers. Aucune vidéo n'est livrée : H.264 et VP9 exigent un
+  encodeur que cette machine n'a pas, et `media/PROVENANCE.md` porte les
+  deux commandes ffmpeg qui comblent le manque
+- **Tableaux markdown dans le navigateur de code** — chaque document de
+  `doc/` est fait de tableaux, et chaque rangée de barres s'affichait en
+  paragraphe. Six niveaux de titre et les listes imbriquées ont suivi. Le
+  rendu est passé à côté de `syntax_highlight.ts` pour être testable, y
+  compris contre la documentation du dépôt
+
+### Modifié
+- **Les catalogues gettext quittent le bundle** — 41 763 fichiers et 857 Mo,
+  33,5 % des fichiers et 58,7 % de la charge, contre 603 Mo pour tout le
+  reste. Weblate et les robots OCA les maintiennent, et personne n'en lit un
+  sur un téléphone. Les archives passent de 431 à 328 Mo, et la compilation
+  dit ce qu'elle a écarté. `BUNDLE_KEEP_PO=1` les ramène,
+  `BUNDLE_SKIP_IMG=1` écarte aussi les images matricielles et amène les
+  archives à 115 Mo. Effet de bord bienvenu : 41 763 fichiers de moins
+  ramènent la compilation de 43 s à 22 s
+
 ## [2026.08.24.01] - 2026-08-24
 
 Résumé du développement depuis la publication `2026.04.14.01` (14 avril 2026).

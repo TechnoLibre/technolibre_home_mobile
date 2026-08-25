@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" width="120" height="60">
+  <title>Formes de base</title>
+  <rect x="2" y="2" width="56" height="56" fill="#2c78d6" rx="6"/>
+  <circle cx="88" cy="30" r="26" fill="#d62c38"/>
+  <polygon points="30,12 48,46 12,46" fill="#f0c83c"/>
+  <line x1="2" y1="59" x2="118" y2="59" stroke="#3cbe78" stroke-width="2"/>
+</svg>

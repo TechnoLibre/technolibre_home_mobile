@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 48" width="220" height="48">
+  <title>Texte et accents</title>
+  <rect width="220" height="48" fill="#111"/>
+  <text x="8" y="20" font-family="sans-serif" font-size="14" fill="#eee">Été, où ça ? Ça !</text>
+  <text x="8" y="38" font-family="monospace" font-size="12" fill="#3cbe78">svg &lt;text&gt; &amp; entités</text>
+</svg>

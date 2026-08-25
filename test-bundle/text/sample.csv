@@ -1,0 +1,5 @@
+id,nom,quantité,prix,commentaire
+1,Vis M3,250,0.04,"court"
+2,Écrou M3,250,0.02,"accent dans le nom"
+3,Plaque,4,12.50,"virgule, dans le champ"
+4,Câble,10,3.75,"guillemet "" échappé"

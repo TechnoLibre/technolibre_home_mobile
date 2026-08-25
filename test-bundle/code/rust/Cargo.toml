@@ -1,0 +1,12 @@
+[package]
+name = "demo-rust"
+version = "1.0.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Compteur de mots, en une passe"
+
+[dependencies]
+
+[profile.release]
+lto = true
+opt-level = "z"

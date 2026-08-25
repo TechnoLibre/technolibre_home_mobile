@@ -8,6 +8,7 @@ import { ManifestProject as ManifestProjectModel } from "../../../models/manifes
 import {
     detectFileLang, imageMime, supportsHighlight, highlightLine, FileLang,
 } from "./syntax_highlight";
+import { renderMarkdown } from "./markdown";
 import { Server } from "../../../models/server";
 import { Workspace } from "../../../models/workspace";
 import { Note } from "../../../models/note";
@@ -18,71 +19,6 @@ type BrowserTab = "files" | "git";
 type FileViewMode = "code" | "markdown" | "image";
 
 type ManifestProject = ManifestProjectModel;
-
-// ── Markdown renderer ─────────────────────────────────────────────────────────
-
-function escHtml(s: string): string {
-    return s
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-}
-
-function applyInline(s: string): string {
-    return s
-        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/\*(.+?)\*/g, "<em>$1</em>")
-        .replace(/`(.+?)`/g, '<code class="md-inline-code">$1</code>')
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '<span class="md-link">$1</span>');
-}
-
-function renderMarkdown(text: string): string {
-    const lines = text.split("\n");
-    const out: string[] = [];
-    let inCode = false;
-    let codeLines: string[] = [];
-    let codeLang = "";
-
-    for (const raw of lines) {
-        if (raw.startsWith("```")) {
-            if (inCode) {
-                out.push(
-                    `<pre class="md-code-block" data-lang="${escHtml(codeLang)}"><code>${escHtml(codeLines.join("\n"))}</code></pre>`,
-                );
-                codeLines = [];
-                codeLang = "";
-                inCode = false;
-            } else {
-                codeLang = raw.slice(3).trim();
-                inCode = true;
-            }
-            continue;
-        }
-        if (inCode) { codeLines.push(raw); continue; }
-
-        const l = escHtml(raw);
-        if (l.startsWith("### "))       out.push(`<h3 class="md-h3">${applyInline(l.slice(4))}</h3>`);
-        else if (l.startsWith("## "))   out.push(`<h2 class="md-h2">${applyInline(l.slice(3))}</h2>`);
-        else if (l.startsWith("# "))    out.push(`<h1 class="md-h1">${applyInline(l.slice(2))}</h1>`);
-        else if (l === "---" || l === "***" || l === "___") out.push('<hr class="md-hr" />');
-        else if (l.startsWith("- ") || l.startsWith("* ")) out.push(`<div class="md-li">•&nbsp;${applyInline(l.slice(2))}</div>`);
-        else if (/^\d+\. /.test(l)) {
-            const m = l.match(/^(\d+)\. (.*)/);
-            if (m) out.push(`<div class="md-li">${m[1]}.&nbsp;${applyInline(m[2])}</div>`);
-        } else if (l.startsWith("&gt; ")) {
-            out.push(`<blockquote class="md-blockquote">${applyInline(l.slice(5))}</blockquote>`);
-        } else if (l === "") {
-            out.push('<div class="md-spacer"></div>');
-        } else {
-            out.push(`<p class="md-p">${applyInline(l)}</p>`);
-        }
-    }
-    if (inCode && codeLines.length > 0) {
-        out.push(`<pre class="md-code-block"><code>${escHtml(codeLines.join("\n"))}</code></pre>`);
-    }
-    return out.join("");
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -124,14 +60,21 @@ export class OptionsCodeComponent extends EnhancedComponent {
           <button class="code-setup__mode-btn"
                   t-att-class="{ 'code-setup__mode-btn--active': state.bundleTarget === 'mobile' }"
                   t-on-click="() => state.bundleTarget = 'mobile'">
-            📱 Mobile
+            📱 <t t-esc="t('label.bundle_mobile')"/>
           </button>
           <button class="code-setup__mode-btn"
                   t-att-class="{ 'code-setup__mode-btn--active': state.bundleTarget === 'erplibre' }"
                   t-on-click="() => state.bundleTarget = 'erplibre'">
-            🏠 ERPLibre (racine)
+            🏠 <t t-esc="t('label.bundle_erplibre')"/>
+          </button>
+          <button class="code-setup__mode-btn"
+                  t-att-class="{ 'code-setup__mode-btn--active': state.bundleTarget === 'test' }"
+                  t-on-click="() => state.bundleTarget = 'test'">
+            🧪 <t t-esc="t('label.bundle_test')"/>
           </button>
         </div>
+        <div class="code-setup__hint" t-if="state.bundleTarget === 'test'"
+             t-esc="t('hint.bundle_test')"/>
       </t>
       <t t-if="state.mode === 'ssh-path'">
         <div class="code-setup__hint"><t t-esc="t('hint.ssh_path_mode')"/></div>
@@ -692,7 +635,7 @@ export class OptionsCodeComponent extends EnhancedComponent {
             serverWorkspaces: [] as Workspace[],
             workspacesLoading: false,
             manifestProjects: [] as ManifestProject[],
-            bundleTarget: "mobile" as "mobile" | "erplibre",
+            bundleTarget: "mobile" as "mobile" | "erplibre" | "test",
 
             tab: "files" as BrowserTab,
             serverLabel: "",
@@ -763,7 +706,10 @@ export class OptionsCodeComponent extends EnhancedComponent {
             const wantTarget = params.get("target");
             if (wantPath) {
                 this.state.mode = "bundle";
-                this.state.bundleTarget = wantTarget === "erplibre" ? "erplibre" : "mobile";
+                this.state.bundleTarget =
+                    wantTarget === "erplibre" || wantTarget === "test"
+                        ? wantTarget
+                        : "mobile";
                 await this._connectBundle();
                 const slash = wantPath.lastIndexOf("/");
                 const dir = slash >= 0 ? wantPath.slice(0, slash) : "";
@@ -820,13 +766,17 @@ export class OptionsCodeComponent extends EnhancedComponent {
 
     private async _connectBundle(): Promise<void> {
         const target = this.state.bundleTarget;
-        const baseUrl = target === "erplibre" ? "/erplibre" : "/repo";
-        this._bundleService = new BundleCodeService(baseUrl);
+        // Une table plutôt qu'un ternaire imbriqué : la prochaine cible s'y
+        // ajoute sans relire la condition.
+        const BUNDLES = {
+            mobile: { url: "/repo", label: "label.bundle_mobile_desc" },
+            erplibre: { url: "/erplibre", label: "label.bundle_erplibre_desc" },
+            test: { url: "/test", label: "label.bundle_test_desc" },
+        } as const;
+        const bundle = BUNDLES[target] ?? BUNDLES.mobile;
+        this._bundleService = new BundleCodeService(bundle.url);
         await this._bundleService.initialize();
-        this.state.serverLabel =
-            target === "erplibre"
-                ? "Bundle ERPLibre (racine du workspace)"
-                : "Bundle Mobile (sources de l'app)";
+        this.state.serverLabel = this.t(bundle.label);
         this.state.currentBranch = "(lecture seule)";
         await this._loadDir("");
         this.state.phase = "browser";

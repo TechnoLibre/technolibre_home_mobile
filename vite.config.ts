@@ -157,6 +157,33 @@ const BINARY_EXT = new Set([
     ".lock",
 ]);
 
+/**
+ * Gettext catalogues, skipped for manifest repos unless BUNDLE_KEEP_PO=1.
+ *
+ * Measured on the 139 manifest repositories: 41 719 .po/.pot files weighing
+ * 857 MB — 33.5 % of the files and 58.7 % of the payload — against 603 MB for
+ * everything else. Weblate and the OCA bots maintain them and nobody reads a
+ * catalogue on a phone, so they are the one exclusion that halves the APK.
+ */
+const KEEP_PO = process.env["BUNDLE_KEEP_PO"] === "1";
+const PO_EXT = new Set([".po", ".pot"]);
+
+/**
+ * Raster images, kept by default and dropped with BUNDLE_SKIP_IMG=1.
+ *
+ * They weigh 223 MB, 15.3 % of the payload, and unlike text they do not
+ * compress: the APK follows their size almost one for one. Kept by default
+ * because the code browser displays them; the switch is for whoever wants the
+ * smallest build.
+ *
+ * .svg is absent on purpose — it is text, it compresses, and it is read as
+ * source as often as it is viewed.
+ */
+const SKIP_IMG = process.env["BUNDLE_SKIP_IMG"] === "1";
+const IMG_EXT = new Set([
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif",
+]);
+
 /** Maximum file size (bytes) allowed in a manifest repo bundle. */
 const MAX_BUNDLE_FILE_BYTES = 1_048_576; // 1 MB
 
@@ -442,6 +469,39 @@ function bundleSourcePlugin(): Plugin {
                 removeDirRobust(join(root, "src", "public", "erplibre"));
             }
 
+            // ── 1c. Display-test bundle (src/public/test/) ────────────────
+            // Unlike the two above, this one is not derived from sources: the
+            // fixtures ARE the content, so they live in test-bundle/ and are
+            // copied verbatim. No size limit and no skip list — the whole tree
+            // is under 400 KB, and a fixture that got filtered out would
+            // silently stop testing the format it was there for.
+            const testSrcDir = join(root, "test-bundle");
+            const testOutDir = join(root, "src", "public", "test");
+            removeDirRobust(testOutDir);
+            if (existsSync(testSrcDir)) {
+                mkdirSync(testOutDir, { recursive: true });
+                const testIndex: BundleEntry[] = [];
+                const testStats: CopyStats = {
+                    copied: 0, skippedName: 0, skippedExclude: 0,
+                    skippedSize: 0, errors: 0,
+                };
+                const testT0 = Date.now();
+                copyDirToBundle(
+                    testSrcDir, "", testOutDir, testIndex, undefined,
+                    undefined, undefined, testStats,
+                );
+                writeFileSync(
+                    join(testOutDir, "index.json"),
+                    JSON.stringify(testIndex, null, 2),
+                );
+                console.log(
+                    `[bundle-source] ${testStats.copied} files → src/public/test/` +
+                    `  (${Date.now() - testT0} ms` +
+                    (testStats.errors ? `  ⚠ ${testStats.errors} errors` : "") +
+                    `)`
+                );
+            }
+
             // ── 2. ERPLibre manifest repos (src/public/repos/) ────────────
             const manifestPath = resolve(
                 process.env["ERPLIBRE_MANIFEST_PATH"] ??
@@ -484,10 +544,19 @@ function bundleSourcePlugin(): Plugin {
                 const workspaceRoot = resolve(dirname(manifestPath), "../..");
 
                 /** Skip dirs/files that produce binary build artifacts. */
+                const skipped = { po: 0, img: 0 };
                 const manifestExtraSkip = (_relBase: string, name: string): boolean => {
                     if (MANIFEST_SKIP_DIRS.has(name)) return true;
                     const ext = name.match(/(\.[^.]+)$/)?.[1]?.toLowerCase();
                     if (ext && BINARY_EXT.has(ext)) return true;
+                    if (!KEEP_PO && ext && PO_EXT.has(ext)) {
+                        skipped.po += 1;
+                        return true;
+                    }
+                    if (SKIP_IMG && ext && IMG_EXT.has(ext)) {
+                        skipped.img += 1;
+                        return true;
+                    }
                     return false;
                 };
 
@@ -581,6 +650,20 @@ function bundleSourcePlugin(): Plugin {
                     `[bundle-manifest] parallel pool=${MANIFEST_PARALLEL} ` +
                     `total=${Date.now() - tManifestT0} ms`,
                 );
+                // Say what was dropped. A silent exclusion reads as "the
+                // bundle covers everything" when it does not.
+                if (skipped.po) {
+                    console.log(
+                        `[bundle-manifest] ${skipped.po} gettext catalogues` +
+                        ` skipped (BUNDLE_KEEP_PO=1 keeps them)`,
+                    );
+                }
+                if (skipped.img) {
+                    console.log(
+                        `[bundle-manifest] ${skipped.img} raster images` +
+                        ` skipped (BUNDLE_SKIP_IMG)`,
+                    );
+                }
             }
 
             writeFileSync(

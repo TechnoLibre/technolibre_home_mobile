@@ -1,0 +1,11 @@
+Accents      : é è ê ë à â ä ù û ü î ï ô ö ç
+Ligatures    : œ æ Œ Æ
+Guillemets   : « citation française » “anglaise” ‘simple’
+Tirets       : - – — ‑
+Symboles     : € £ ¥ © ® ™ ° … ± × ÷ ≤ ≥ ≠ →
+Grec         : α β γ δ ε π Σ Ω
+Cyrillique   : привет мир
+Japonais     : こんにちは世界
+Emoji        : 📋 🐛 🖼 🔀 ✏️ ⚠
+Combinant    : e + ́ = é (deux formes normalisées différentes)
+RTL          : العربية עברית
