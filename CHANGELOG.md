@@ -7,6 +7,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Test bundle** — a third target in Options › Code, after Mobile and
+  ERPLibre. 52 display fixtures under 400 KB: PNG in colour, alpha and
+  greyscale plus the 1×1 degenerate case, BMP, static and animated GIF,
+  three SVG, WAV, and borrowed JPEG, WebP, MP3, OGG and ICO; markdown,
+  JSON, CSV, XML, YAML, TOML, plain text, an empty file and a Unicode
+  sheet; and six code projects — Tornado, an Odoo module with an Owl
+  component, JavaScript, Rust, C++ and Java. A format that does not display
+  here will not display in a real repository, and it shows without
+  scrolling 82 000 files. No video ships: H.264 and VP9 need an encoder
+  this machine has not, and `media/PROVENANCE.md` carries the two ffmpeg
+  commands that fill the gap
+- **Markdown tables in the code browser** — every document under `doc/` is
+  made of tables, and each pipe row rendered as a paragraph. Six heading
+  levels and nested lists came with them. The renderer moved beside
+  `syntax_highlight.ts` so it can be tested, including against the
+  repository's own documentation
+
+### Changed
+- **Gettext catalogues leave the bundle** — 41 763 files and 857 MB, 33.5 %
+  of the files and 58.7 % of the payload, against 603 MB for everything
+  else. Weblate and the OCA bots maintain them and nobody reads a catalogue
+  on a phone. Archives fall from 431 to 328 MB, and the build reports what
+  it dropped. `BUNDLE_KEEP_PO=1` brings them back, `BUNDLE_SKIP_IMG=1` drops
+  the raster images too and takes archives to 115 MB. A side effect worth
+  having: 41 763 fewer files takes the build from 43 s to 22 s
+
 ## [2026.08.24.01] - 2026-08-24
 
 Summary of development since release `2026.04.14.01` (April 14, 2026).
@@ -68,11 +95,6 @@ Test suite goes from 854 to 1000 tests across 66 files.
 - **Documentation** — the Stream Deck plugin, the bundle pipeline and edit
   mode, a smoke script and the manual hardware matrix it cannot replace,
   and how to debug an Android build over wifi
-- **Markdown tables in the code browser** — every document under `doc/` is
-  made of tables, and each pipe row rendered as a paragraph. Six heading
-  levels and nested lists came with them. The renderer moved beside
-  `syntax_highlight.ts` so it can be tested, including against the
-  repository's own documentation
 - **Bilingual documentation** — every document under `doc/`, both READMEs
   and this changelog now have a `.base.md` source generating an English and
   a French file through mmg, following the root repository's convention.
@@ -82,13 +104,6 @@ Test suite goes from 854 to 1000 tests across 66 files.
 ### Changed
 - **Owl AOT coverage is now complete** — note templates dropped template
   interpolation, so every template is precompiled; lookup is by raw source
-- **Gettext catalogues leave the bundle** — 41 763 files and 857 MB, 33.5 %
-  of the files and 58.7 % of the payload, against 603 MB for everything
-  else. Weblate and the OCA bots maintain them and nobody reads a catalogue
-  on a phone. Archives fall from 431 to 328 MB, and the build reports what
-  it dropped. `BUNDLE_KEEP_PO=1` brings them back, `BUNDLE_SKIP_IMG=1` drops
-  the raster images too and takes archives to 115 MB. A side effect worth
-  having: 41 763 fewer files takes the build from 43 s to 22 s
 - **Vendor bundle split** with `manualChunks`
 - **Android build** — one ABI by default and whisper skippable, cutting
   local build time
