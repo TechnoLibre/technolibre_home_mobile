@@ -471,7 +471,7 @@ Le secret HMAC et les numéros en attente sont exclus des sauvegardes Android pa
 
 ### Prérequis serveur
 
-Le module Odoo `erplibre_sms` doit être installé, une passerelle déclarée, et le
+Le module Odoo `erplibre_mobile_passerelle_sms` doit être installé, une passerelle déclarée, et le
 secret HMAC présent dans l'environnement du processus Odoo. **Le serveur ntfy
 doit avoir TLS et l'authentification activés** : le script d'installation fourni
 avec ERPLibre les laisse désactivés, et les numéros comme le contenu des messages
