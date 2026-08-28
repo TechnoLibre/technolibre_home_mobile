@@ -27,8 +27,11 @@ public class SmsOutbox extends SQLiteOpenHelper {
 
     private static final String TAG = "SmsOutbox";
     private static final String DB_NAME = "erplibre_sms.db";
-    /** 2 : ajout de la table {@code event}, journal local de la passerelle. */
-    private static final int DB_VERSION = 2;
+    /**
+     * 2 : table {@code event}, journal local de la passerelle.
+     * 3 : table {@code call}, appels en cours — voir {@link PhoneCalls}.
+     */
+    private static final int DB_VERSION = 3;
 
     public static final String STATE_PENDING = "pending";
     public static final String STATE_SENDING = "sending";
@@ -108,6 +111,7 @@ public class SmsOutbox extends SQLiteOpenHelper {
                 + "reported INTEGER NOT NULL DEFAULT 0)");
 
         createEventTable(db);
+        createCallTable(db);
     }
 
     /**
@@ -147,6 +151,152 @@ public class SmsOutbox extends SQLiteOpenHelper {
         if (oldVersion < 2) {
             createEventTable(db);
         }
+        if (oldVersion < 3) {
+            createCallTable(db);
+        }
+    }
+
+
+    /**
+     * Appels en cours — voir {@link PhoneCalls}.
+     *
+     * <p>Persistee pour la MEME raison que la file d'envoi : un appel suivi en
+     * memoire disparait au premier redemarrage du service, et sa fiche reste
+     * alors « en composition » indefiniment cote serveur. Le defaut a ete
+     * observe en essai reel avant d'etre corrige ici.
+     *
+     * <p>La table ne contient qu'un appel actif a la fois — un telephone ne
+     * tient qu'une conversation — mais on ne s'appuie pas sur cette unicite :
+     * la requete demande l'appel actif, elle ne suppose pas qu'il est seul.
+     */
+    static void createCallTable(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE call ("
+                + "call_uuid TEXT PRIMARY KEY,"
+                + "number TEXT NOT NULL,"
+                + "source TEXT NOT NULL,"
+                + "direction TEXT NOT NULL DEFAULT 'out',"
+                + "state TEXT NOT NULL,"
+                + "seq INTEGER NOT NULL DEFAULT 0,"
+                + "dialing_since INTEGER NOT NULL DEFAULT 0,"
+                + "offhook_at INTEGER NOT NULL DEFAULT 0,"
+                + "created_at INTEGER NOT NULL)");
+        db.execSQL("CREATE INDEX idx_call_state ON call(state)");
+    }
+
+    // ------------------------------------------------------------------
+    // Appels
+    // ------------------------------------------------------------------
+
+    /** Un appel suivi par la passerelle. */
+    public static class Call {
+        public String uuid;
+        public String number;
+        public String source;
+        public String state;
+        public long dialingSince;
+        public long offhookAt;
+    }
+
+    /** Ouvre le suivi d'un appel. Remplace tout suivi anterieur du meme uuid. */
+    public void callStart(String uuid, String number, String source) {
+        ContentValues values = new ContentValues();
+        values.put("call_uuid", uuid);
+        values.put("number", number == null ? "" : number);
+        values.put("source", source == null ? "manual" : source);
+        values.put("state", "dialing");
+        values.put("dialing_since", System.currentTimeMillis());
+        values.put("offhook_at", 0L);
+        values.put("created_at", System.currentTimeMillis());
+        getWritableDatabase().insertWithOnConflict(
+                "call", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    /**
+     * L'appel actif, ou null.
+     *
+     * <p>Le plus recent d'abord : si un appel precedent n'a jamais ete clos —
+     * un processus tue au mauvais moment — c'est celui d'aujourd'hui qui
+     * interesse, pas le fantome. Le balai se chargera de l'autre.
+     */
+    public Call activeCall() {
+        try (Cursor cursor = getReadableDatabase().rawQuery(
+                "SELECT call_uuid, number, source, state, dialing_since,"
+                        + " offhook_at FROM call"
+                        + " WHERE state IN ('dialing', 'connected')"
+                        + " ORDER BY created_at DESC LIMIT 1", null)) {
+            if (cursor.moveToFirst()) {
+                return readCall(cursor);
+            }
+        }
+        return null;
+    }
+
+    /** Marque l'appel comme decroche, et retient l'instant. */
+    public void callOffhook(String uuid, long at) {
+        ContentValues values = new ContentValues();
+        values.put("state", "connected");
+        values.put("offhook_at", at);
+        getWritableDatabase().update(
+                "call", values, "call_uuid = ?", new String[]{uuid});
+    }
+
+    /**
+     * Numero de sequence SUIVANT pour un appel.
+     *
+     * <p>Les appels ont leur propre compteur. Reutiliser {@code nextSeq}, qui
+     * s'appuie sur la table des SMS, renvoyait 1 a chaque evenement d'appel —
+     * aucune ligne a incrementer — et le serveur rejetait donc tout ce qui
+     * suivait le premier comme un rejeu. L'appel restait « en composition »
+     * pour toujours. Defaut observe en essai reel.
+     */
+    public int nextCallSeq(String uuid) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.execSQL("UPDATE call SET seq = seq + 1 WHERE call_uuid = ?",
+                new Object[]{uuid});
+        try (Cursor cursor = db.rawQuery(
+                "SELECT seq FROM call WHERE call_uuid = ?",
+                new String[]{uuid})) {
+            if (cursor.moveToFirst()) {
+                return cursor.getInt(0);
+            }
+        }
+        // Ligne deja fermee : on ne peut plus numeroter de facon fiable.
+        // Renvoyer un rang tres eleve laisse passer l'evenement FINAL, qui est
+        // le plus important : mieux vaut un etat final applique hors ordre
+        // qu'un appel eternellement en cours.
+        return Integer.MAX_VALUE;
+    }
+
+    /** Ferme le suivi. L'appel a vecu, le serveur en a la trace. */
+    public void callFinish(String uuid) {
+        getWritableDatabase().delete("call", "call_uuid = ?", new String[]{uuid});
+    }
+
+    /** Les appels en composition depuis trop longtemps. */
+    public List<Call> callsStale(long olderThanMs) {
+        List<Call> stale = new ArrayList<>();
+        long limite = System.currentTimeMillis() - olderThanMs;
+        try (Cursor cursor = getReadableDatabase().rawQuery(
+                "SELECT call_uuid, number, source, state, dialing_since,"
+                        + " offhook_at FROM call"
+                        + " WHERE state = 'dialing' AND dialing_since < ?",
+                new String[]{String.valueOf(limite)})) {
+            while (cursor.moveToNext()) {
+                stale.add(readCall(cursor));
+            }
+        }
+        return stale;
+    }
+
+    private static Call readCall(Cursor cursor) {
+        Call call = new Call();
+        call.uuid = cursor.getString(0);
+        call.number = cursor.getString(1);
+        call.source = cursor.getString(2);
+        call.state = cursor.getString(3);
+        call.dialingSince = cursor.getLong(4);
+        call.offhookAt = cursor.getLong(5);
+        return call;
     }
 
     // ------------------------------------------------------------------

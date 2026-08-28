@@ -78,13 +78,13 @@ public class PhoneCalls {
     private final SmsOutbox outbox;
     private final SmsJournal journal;
 
-    /** Appel en cours, ou null. Un telephone n'en tient qu'un. */
-    private String currentUuid;
-    private String currentNumber;
-    private String currentSource;
-    private long offhookAt;
-    /** Depuis quand un appel est en composition, pour ne pas l'y laisser. */
-    private long dialingSince;
+    /**
+     * Dernier etat vu de la ligne, pour ne traiter que les CHANGEMENTS.
+     *
+     * <p>Seul rescape en memoire, et sans consequence s'il se perd : au pire
+     * on retraite une transition, ce que la table absorbe. Tout ce qui compte
+     * — quel appel, depuis quand, decroche ou non — vit dans SQLite.
+     */
     private int lastState = TelephonyManager.CALL_STATE_IDLE;
 
     public PhoneCalls(Context context) {
@@ -128,16 +128,14 @@ public class PhoneCalls {
                     e.getMessage());
             return null;
         }
-        // On retient l'appel AVANT que le systeme ne change d'etat : la
+        // On ouvre le suivi AVANT que le systeme ne change d'etat : la
         // transition OFFHOOK peut arriver en quelques millisecondes, et un
-        // appel non retenu serait compte comme « compose a la main ».
-        currentUuid = identifiant;
-        currentNumber = number.trim();
-        currentSource = source != null ? source : SOURCE_CLICK;
-        dialingSince = System.currentTimeMillis();
+        // appel non enregistre serait compte comme « compose a la main ».
+        String origine = source != null ? source : SOURCE_CLICK;
+        outbox.callStart(identifiant, number.trim(), origine);
         journal.withDetail(SmsJournal.LEVEL_INFO, SmsJournal.CAT_SEND,
-                "Appel lance (" + currentSource + ")", identifiant, currentNumber);
-        report(identifiant, currentNumber, currentSource, STATE_DIALING, 0,
+                "Appel lance (" + origine + ")", identifiant, number.trim());
+        report(identifiant, number.trim(), origine, STATE_DIALING, 0,
                 null, null);
         return identifiant;
     }
@@ -154,26 +152,16 @@ public class PhoneCalls {
      * une ligne que l'on croit occupee.
      */
     public void sweepStale() {
-        if (currentUuid == null || dialingSince == 0L) {
-            return;
+        for (SmsOutbox.Call perdu : outbox.callsStale(DIALING_TIMEOUT_MS)) {
+            // Rapporter AVANT de fermer : la numerotation s'appuie sur la
+            // ligne, et la supprimer d'abord ferait perdre le rang.
+            report(perdu.uuid, perdu.number, perdu.source, STATE_FAILED, 0,
+                    null, "aucune reponse du reseau apres "
+                            + (DIALING_TIMEOUT_MS / 1000) + " s");
+            outbox.callFinish(perdu.uuid);
+            journal.warn(SmsJournal.CAT_SEND,
+                    "Appel abandonne : la ligne n'a jamais bouge", perdu.uuid);
         }
-        long ecoule = System.currentTimeMillis() - dialingSince;
-        if (ecoule < DIALING_TIMEOUT_MS) {
-            return;
-        }
-        String uuid = currentUuid;
-        String numero = currentNumber;
-        String source = currentSource;
-        currentUuid = null;
-        currentNumber = null;
-        currentSource = null;
-        dialingSince = 0L;
-        offhookAt = 0L;
-        report(uuid, numero, source, STATE_FAILED, 0, null,
-                "aucune reponse du reseau apres "
-                        + (DIALING_TIMEOUT_MS / 1000) + " s");
-        journal.warn(SmsJournal.CAT_SEND,
-                "Appel abandonne : la ligne n'a jamais bouge", uuid);
     }
 
     // ------------------------------------------------------------------
@@ -205,57 +193,59 @@ public class PhoneCalls {
         int precedent = lastState;
         lastState = state;
 
+        SmsOutbox.Call actif = outbox.activeCall();
+
         if (state == TelephonyManager.CALL_STATE_RINGING) {
-            // Appel entrant : on le retient pour le tracer s'il aboutit.
-            if (currentUuid == null) {
-                currentUuid = UUID.randomUUID().toString().replace("-", "");
-                currentNumber = incomingNumber == null ? "" : incomingNumber;
-                currentSource = SOURCE_MANUAL;
+            if (actif == null) {
+                // Appel entrant : on ouvre le suivi pour le tracer s'il aboutit.
+                String uuid = UUID.randomUUID().toString().replace("-", "");
+                outbox.callStart(uuid,
+                        incomingNumber == null ? "" : incomingNumber,
+                        SOURCE_MANUAL);
             }
             return;
         }
 
         if (state == TelephonyManager.CALL_STATE_OFFHOOK) {
-            offhookAt = System.currentTimeMillis();
-            dialingSince = 0L;
-            if (currentUuid == null) {
+            if (actif == null) {
                 // Compose a la main sur le telephone : le serveur ne le
                 // connait pas encore, c'est notre rapport qui le fera naitre.
-                currentUuid = UUID.randomUUID().toString().replace("-", "");
-                currentNumber = incomingNumber == null ? "" : incomingNumber;
-                currentSource = SOURCE_MANUAL;
+                String uuid = UUID.randomUUID().toString().replace("-", "");
+                outbox.callStart(uuid,
+                        incomingNumber == null ? "" : incomingNumber,
+                        SOURCE_MANUAL);
+                actif = outbox.activeCall();
             }
-            report(currentUuid, currentNumber, currentSource, STATE_CONNECTED,
+            if (actif == null) {
+                return;
+            }
+            outbox.callOffhook(actif.uuid, System.currentTimeMillis());
+            report(actif.uuid, actif.number, actif.source, STATE_CONNECTED,
                     0, null, null);
             journal.info(SmsJournal.CAT_SEND, "Appel en communication",
-                    currentUuid);
+                    actif.uuid);
             return;
         }
 
-        if (state == TelephonyManager.CALL_STATE_IDLE && currentUuid != null) {
-            long mesuree = offhookAt > 0
-                    ? Math.max(0, (System.currentTimeMillis() - offhookAt) / 1000L)
-                    : 0L;
-            boolean jamaisDecroche = precedent != TelephonyManager.CALL_STATE_OFFHOOK;
-            String uuid = currentUuid;
-            String numero = currentNumber;
-            String source = currentSource;
-            currentUuid = null;
-            currentNumber = null;
-            currentSource = null;
-            offhookAt = 0L;
-            dialingSince = 0L;
-
+        if (state == TelephonyManager.CALL_STATE_IDLE && actif != null) {
+            boolean jamaisDecroche =
+                    precedent != TelephonyManager.CALL_STATE_OFFHOOK
+                            || actif.offhookAt <= 0L;
             if (jamaisDecroche) {
                 // La ligne est retombee sans jamais passer par OFFHOOK :
                 // occupe, refuse, ou sans reponse. Ce n'est pas un appel de
                 // duree nulle, c'est un appel qui n'a pas eu lieu.
-                report(uuid, numero, source, STATE_FAILED, 0, null,
-                        "sans reponse");
-                journal.warn(SmsJournal.CAT_SEND, "Appel sans reponse", uuid);
+                report(actif.uuid, actif.number, actif.source, STATE_FAILED,
+                        0, null, "sans reponse");
+                outbox.callFinish(actif.uuid);
+                journal.warn(SmsJournal.CAT_SEND, "Appel sans reponse",
+                        actif.uuid);
                 return;
             }
-            finish(uuid, numero, source, mesuree);
+            long mesuree = Math.max(
+                    0, (System.currentTimeMillis() - actif.offhookAt) / 1000L);
+            finish(actif.uuid, actif.number, actif.source, mesuree);
+            outbox.callFinish(actif.uuid);
         }
     }
 
@@ -337,7 +327,7 @@ public class PhoneCalls {
             event.put("source", source == null ? SOURCE_MANUAL : source);
             event.put("direction", "out");
             event.put("state", state);
-            event.put("seq", outbox.nextSeq(uuid));
+            event.put("seq", outbox.nextCallSeq(uuid));
             event.put("at", System.currentTimeMillis() / 1000L);
             if (duration > 0) {
                 event.put("duration", duration);

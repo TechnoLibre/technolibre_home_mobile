@@ -667,6 +667,15 @@ public class SmsGatewayService extends Service {
         if (queued == null || queued.length() == 0) {
             return;
         }
+        // Un appel deja suivi interdit d'en lancer un second. La verification
+        // porte sur la BASE et non sur la ligne : apres un redemarrage du
+        // service, la ligne peut etre libre alors qu'un appel reste ouvert
+        // cote serveur — le relancer le composerait deux fois.
+        if (outbox.activeCall() != null) {
+            journal.info(SmsJournal.CAT_SEND,
+                    "Un appel est deja suivi : file reportee");
+            return;
+        }
         try {
             android.telephony.TelephonyManager telephony =
                     getSystemService(android.telephony.TelephonyManager.class);
