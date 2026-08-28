@@ -8,6 +8,7 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.CallLog;
+import android.telecom.TelecomManager;
 import android.telephony.PhoneStateListener;
 import android.telephony.TelephonyManager;
 import android.util.Log;
@@ -116,16 +117,11 @@ public class PhoneCalls {
         }
         String identifiant = uuid != null ? uuid
                 : UUID.randomUUID().toString().replace("-", "");
-        try {
-            Intent intent = new Intent(Intent.ACTION_CALL);
-            intent.setData(Uri.fromParts("tel", number.trim(), null));
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            context.startActivity(intent);
-        } catch (Exception e) {
+        String echec = compose(number.trim());
+        if (echec != null) {
             journal.error(SmsJournal.CAT_SEND,
-                    "Appel impossible : " + e.getMessage(), identifiant);
-            report(identifiant, number, source, STATE_FAILED, 0, null,
-                    e.getMessage());
+                    "Appel impossible : " + echec, identifiant);
+            report(identifiant, number, source, STATE_FAILED, 0, null, echec);
             return null;
         }
         // On ouvre le suivi AVANT que le systeme ne change d'etat : la
@@ -140,6 +136,61 @@ public class PhoneCalls {
         return identifiant;
     }
 
+
+    /**
+     * Compose reellement le numero. Renvoie null si c'est parti, sinon le motif.
+     *
+     * <h3>Pourquoi pas {@code startActivity(ACTION_CALL)}</h3>
+     *
+     * <p>C'etait l'implementation precedente, et Android la refusait EN
+     * SILENCE. Depuis Android 10, une application ne peut plus demarrer une
+     * activite depuis l'arriere-plan, et un service de premier plan ne donne
+     * PAS ce droit. Trace systeme relevee sur appareil :
+     *
+     * <pre>
+     * W/ActivityTaskManager: Background activity start
+     *   [callingPackage: ca.erplibre.home;
+     *    callingUidHasAnyVisibleWindow: false;
+     *    callingUidProcState: FOREGROUND_SERVICE;
+     *    isBgStartWhitelisted: false;
+     *    intent: act=android.intent.action.CALL ...]
+     * </pre>
+     *
+     * <p>Aucune exception n'etait levee : l'intention partait, personne ne la
+     * traitait, et la ligne ne bougeait jamais. Le seul symptome etait un
+     * appel qui restait en composition jusqu'a expiration — un echec muet, le
+     * pire genre.
+     *
+     * <p>{@link TelecomManager#placeCall} est l'API prevue pour cela. Elle ne
+     * demarre pas d'activite : elle s'adresse au sous-systeme telephonique,
+     * qui affiche lui-meme l'ecran d'appel. Elle fonctionne donc depuis un
+     * service.
+     */
+    private String compose(String numero) {
+        Uri cible = Uri.fromParts("tel", numero, null);
+        try {
+            TelecomManager telecom =
+                    context.getSystemService(TelecomManager.class);
+            if (telecom != null) {
+                telecom.placeCall(cible, null);
+                return null;
+            }
+        } catch (SecurityException e) {
+            return "permission refusee : " + e.getMessage();
+        } catch (Exception e) {
+            Log.w(TAG, "placeCall a echoue : " + e.getMessage());
+        }
+        // Repli pour les cas ou Telecom est indisponible. Il echouera depuis
+        // l'arriere-plan sur Android 10+, mais il vaut mieux tenter que rien.
+        try {
+            Intent intent = new Intent(Intent.ACTION_CALL, cible);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+            return null;
+        } catch (Exception e) {
+            return String.valueOf(e.getMessage());
+        }
+    }
 
     /**
      * Cloture un appel qui n'aboutit jamais.
