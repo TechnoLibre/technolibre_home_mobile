@@ -14,6 +14,16 @@ export interface SmsCapabilities {
     /** Plafond imposé par Android : 30 segments par minute et par application. */
     segmentLimitPerMinute: number;
     isDefaultSmsApp: boolean;
+    /**
+     * L'application est-elle dispensée des optimisations de batterie ?
+     *
+     * C'est le facteur décisif du cadencement. Mesure sur Pixel 2 XL : sans
+     * dispense, un cycle réglé à 30 s tient 30 s en régime normal mais
+     * s'ouvre à plus de deux minutes dès que l'appareil s'assoupit.
+     */
+    dozeExempt: boolean;
+    /** Android 12+ : les alarmes exactes exigent une permission. */
+    canScheduleExactAlarms: boolean;
     simReady: boolean;
     sims: SmsSimInfo[];
 }
@@ -112,6 +122,8 @@ export interface SmsGatewayPlugin {
     kick(): Promise<void>;
     clearLastError(): Promise<void>;
     journalEntries(query?: SmsJournalQuery): Promise<SmsJournalPage>;
+    requestBatteryExemption(): Promise<{ alreadyExempt: boolean; opened?: boolean }>;
+    requestExactAlarms(): Promise<{ alreadyGranted: boolean; opened?: boolean }>;
     clearJournal(): Promise<{ deleted: number }>;
 }
 

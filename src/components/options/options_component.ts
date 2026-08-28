@@ -79,6 +79,9 @@ export class OptionsComponent extends EnhancedComponent {
         <li class="options-list__item">
           <a href="#" role="button" t-att-aria-label="t('aria.features')" t-on-click.stop.prevent="onFeaturesClick">
             🗺️ Fonctionnalités ›
+          </a>
+        </li>
+        <li class="options-list__item">
           <a href="#" role="button" t-att-aria-label="t('options.sms_gateway')" t-on-click.stop.prevent="onSmsGatewayClick">
             📨 <t t-esc="t('options.sms_gateway')"/> ›
           </a>

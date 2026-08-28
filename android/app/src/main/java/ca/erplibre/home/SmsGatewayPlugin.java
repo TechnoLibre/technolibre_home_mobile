@@ -58,6 +58,8 @@ public class SmsGatewayPlugin extends Plugin {
         result.put("deviceModel", Build.MANUFACTURER + " " + Build.MODEL);
         result.put("segmentLimitPerMinute", ANDROID_SEGMENT_LIMIT_PER_MINUTE);
         result.put("isDefaultSmsApp", isDefaultSmsApp());
+        result.put("dozeExempt", ignoringBatteryOptimizations());
+        result.put("canScheduleExactAlarms", canScheduleExact());
 
         TelephonyManager telephony = getContext().getSystemService(TelephonyManager.class);
         result.put("simReady", telephony != null
@@ -164,6 +166,97 @@ public class SmsGatewayPlugin extends Plugin {
         result.put("usedBytes", journal.usedBytes());
         result.put("keepsBodies", config.journalKeepsBodies());
         call.resolve(result);
+    }
+
+
+    // ------------------------------------------------------------------
+    // Cadencement : ce qui decide si un cycle part a l'heure
+    // ------------------------------------------------------------------
+
+    private boolean ignoringBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return true;
+        }
+        try {
+            android.os.PowerManager pm =
+                    getContext().getSystemService(android.os.PowerManager.class);
+            return pm != null
+                    && pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean canScheduleExact() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return true;
+        }
+        try {
+            android.app.AlarmManager am =
+                    getContext().getSystemService(android.app.AlarmManager.class);
+            return am != null && am.canScheduleExactAlarms();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Ouvre le reglage systeme de dispense des optimisations de batterie.
+     *
+     * <p>On NE demande PAS la dispense par une boite de dialogue directe
+     * (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`) : Google la reserve a des
+     * cas precis et la refuse a la publication. On ouvre la liste, ou
+     * l'utilisateur choisit lui-meme — c'est plus long, mais c'est le chemin
+     * que le systeme accepte durablement.
+     */
+    @PluginMethod
+    public void requestBatteryExemption(PluginCall call) {
+        JSObject result = new JSObject();
+        if (ignoringBatteryOptimizations()) {
+            result.put("alreadyExempt", true);
+            call.resolve(result);
+            return;
+        }
+        try {
+            android.content.Intent intent = new android.content.Intent(
+                    android.provider.Settings
+                            .ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            result.put("alreadyExempt", false);
+            result.put("opened", true);
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Reglage introuvable : " + e.getMessage());
+        }
+    }
+
+    /**
+     * Ouvre le reglage des alarmes exactes (Android 12+).
+     *
+     * <p>Sans elles, `setExactAndAllowWhileIdle` devient `setAndAllowWhileIdle`
+     * et les cycles se regroupent. Sur Android 11 et anterieurs la permission
+     * n'existe pas : la methode se contente de le dire.
+     */
+    @PluginMethod
+    public void requestExactAlarms(PluginCall call) {
+        JSObject result = new JSObject();
+        if (canScheduleExact()) {
+            result.put("alreadyGranted", true);
+            call.resolve(result);
+            return;
+        }
+        try {
+            android.content.Intent intent = new android.content.Intent(
+                    android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            result.put("alreadyGranted", false);
+            result.put("opened", true);
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Reglage introuvable : " + e.getMessage());
+        }
     }
 
     /** Efface le journal. Ne touche ni à la file d'envoi ni aux rapports. */

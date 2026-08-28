@@ -530,6 +530,44 @@ public class SmsGatewayService extends Service {
         }
     }
 
+
+    /**
+     * L'application est-elle dispensee des optimisations de batterie ?
+     *
+     * <p>C'est LE facteur du cadencement. Sans dispense, Doze regroupe les
+     * alarmes : mesure sur un Pixel 2 XL, un cycle regle a 30 s tient ~31 s en
+     * regime normal, mais s'ouvre a plus de deux minutes des que l'appareil
+     * s'assoupit. Sur un canal d'alerte, ces deux minutes sont exactement
+     * celles qu'on ne peut pas se permettre.
+     *
+     * <p>Un appareil branche n'entre jamais en Doze — c'est la parade la plus
+     * sure pour une passerelle dediee — mais on ne peut pas en faire
+     * l'hypothese : un cable se debranche.
+     */
+    boolean ignoringBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return true;
+        }
+        try {
+            return powerManager != null
+                    && powerManager.isIgnoringBatteryOptimizations(getPackageName());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Les alarmes exactes sont-elles utilisables ? */
+    boolean canScheduleExact() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return true;
+        }
+        try {
+            return alarmManager != null && alarmManager.canScheduleExactAlarms();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** État de la passerelle, envoyé à chaque interrogation. */
     private JSONObject buildStatus() throws Exception {
         JSONObject status = new JSONObject();
@@ -541,6 +579,8 @@ public class SmsGatewayService extends Service {
         status.put("charging", batteryCharging());
         status.put("app_version", appVersion());
         status.put("android_sdk", Build.VERSION.SDK_INT);
+        status.put("doze_exempt", ignoringBatteryOptimizations());
+        status.put("exact_alarms", canScheduleExact());
         status.put("device_model", Build.MANUFACTURER + " " + Build.MODEL);
         String error = config.getLastError();
         if (!error.isEmpty()) {

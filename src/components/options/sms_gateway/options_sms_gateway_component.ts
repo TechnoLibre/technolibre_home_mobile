@@ -61,6 +61,9 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
             <dt t-esc="t('sms_gateway.fact_sim')" />
             <dd t-esc="state.caps.simReady ? t('sms_gateway.yes') : t('sms_gateway.no')" />
 
+            <dt t-esc="t('sms_gateway.fact_pacing')" />
+            <dd t-esc="state.caps.dozeExempt ? t('sms_gateway.pacing_ok') : t('sms_gateway.pacing_degraded')" />
+
             <dt t-esc="t('sms_gateway.fact_pending')" />
             <dd t-esc="state.status.pending" />
 
@@ -94,6 +97,14 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
             <button type="button" class="sms-gateway__btn"
                     t-if="state.status.lastError"
                     t-on-click="onClearError" t-esc="t('sms_gateway.clear_error')" />
+            <button type="button" class="sms-gateway__btn"
+                    t-if="!state.caps.dozeExempt"
+                    t-on-click="onBatteryExemption"
+                    t-esc="t('sms_gateway.fix_pacing')" />
+            <button type="button" class="sms-gateway__btn"
+                    t-if="!state.caps.canScheduleExactAlarms"
+                    t-on-click="onExactAlarms"
+                    t-esc="t('sms_gateway.fix_exact_alarms')" />
           </div>
         </section>
 
@@ -335,6 +346,35 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 		await this.loadJournal();
 	}
 
+	/**
+	 * Ouvre le réglage de dispense de batterie.
+	 *
+	 * Sans elle, Android regroupe les réveils et un message urgent peut
+	 * attendre des minutes. On ouvre le réglage plutôt que de demander la
+	 * dispense directement : c'est le chemin que le système accepte.
+	 */
+	async onBatteryExemption(): Promise<void> {
+		try {
+			await SmsGatewayPlugin.requestBatteryExemption();
+		} catch (error) {
+			await Dialog.alert({
+				title: this.t("sms_gateway.fix_pacing"),
+				message: String(error),
+			});
+		}
+	}
+
+	async onExactAlarms(): Promise<void> {
+		try {
+			await SmsGatewayPlugin.requestExactAlarms();
+		} catch (error) {
+			await Dialog.alert({
+				title: this.t("sms_gateway.fix_exact_alarms"),
+				message: String(error),
+			});
+		}
+	}
+
 	get isDevelopmentUrl(): boolean {
 		return SmsGatewayUtils.isDevelopmentUrl((this.state.form as FormState).odooBaseUrl);
 	}
@@ -347,6 +387,8 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 			deviceModel: "",
 			segmentLimitPerMinute: 30,
 			isDefaultSmsApp: false,
+			dozeExempt: true,
+			canScheduleExactAlarms: true,
 			simReady: false,
 			sims: [],
 		};
