@@ -26,6 +26,7 @@ public class SmsGatewayConfig {
     private static final String KEY_POLL_SECONDS = "poll_seconds";
     private static final String KEY_LAST_ERROR = "last_error";
     private static final String KEY_JOURNAL_BODIES = "journal_bodies";
+    private static final String KEY_ALLOW_PLAIN_LAN = "allow_plain_lan";
 
     private final SharedPreferences prefs;
 
@@ -47,6 +48,27 @@ public class SmsGatewayConfig {
      * prendre ce risque tout seul. Les métadonnées et les états, eux, sont
      * toujours journalisés : ils suffisent à la quasi-totalité des pannes.
      */
+    /**
+     * Le HTTP en clair est-il tolere vers le reseau local ?
+     *
+     * <p>Faux par defaut, et le defaut compte : sur un reseau en clair, les
+     * numeros et le corps des messages passent en clair. Quiconque partage le
+     * Wi-Fi les lit. Ce n'est acceptable que sur un reseau qu'on maitrise, pour
+     * une demonstration ou un developpement — jamais pour un studio dont le
+     * Wi-Fi est ouvert aux eleves.
+     *
+     * <p>Meme active, l'interrupteur ne tolere QUE les plages privees. Une
+     * adresse publique en HTTP reste refusee : il n'existe aucune raison
+     * legitime d'envoyer des donnees de membres en clair sur Internet.
+     */
+    public boolean allowPlainLan() {
+        return prefs.getBoolean(KEY_ALLOW_PLAIN_LAN, false);
+    }
+
+    public void setAllowPlainLan(boolean allow) {
+        prefs.edit().putBoolean(KEY_ALLOW_PLAIN_LAN, allow).apply();
+    }
+
     public boolean journalKeepsBodies() {
         return prefs.getBoolean(KEY_JOURNAL_BODIES, false);
     }

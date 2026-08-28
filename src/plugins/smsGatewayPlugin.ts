@@ -24,6 +24,8 @@ export interface SmsCapabilities {
     dozeExempt: boolean;
     /** Android 12+ : les alarmes exactes exigent une permission. */
     canScheduleExactAlarms: boolean;
+    /** Le HTTP en clair vers le réseau local est-il toléré ? */
+    allowPlainLan: boolean;
     simReady: boolean;
     sims: SmsSimInfo[];
 }
@@ -55,6 +57,14 @@ export interface SmsConfigureOptions {
      * toujours journalisés et suffisent à presque toutes les pannes.
      */
     journalKeepsBodies?: boolean;
+    /**
+     * Tolérer le HTTP en clair vers une adresse privée du réseau local.
+     *
+     * Faux par défaut. L'activer expose numéros et messages à quiconque
+     * partage le réseau ; même activé, une adresse publique en clair reste
+     * refusée.
+     */
+    allowPlainLan?: boolean;
 }
 
 /** Catégories d'entrées du journal, telles que les écrit le service Android. */

@@ -60,22 +60,46 @@ export class SmsGatewayUtils {
 	 * Le HTTPS est exigé — le contenu des messages et les numéros de téléphone
 	 * transitent par cette URL.
 	 *
-	 * Seules les adresses NON ROUTABLES y échappent : bouclage, et `10.0.2.2`
-	 * qui désigne la machine hôte vue depuis un émulateur. Elles ne quittent
-	 * jamais la machine, donc la dérogation ne peut pas servir à exposer des
-	 * données sur un réseau.
+	 * Deux dérogations, de nature très différente.
+	 *
+	 * Les adresses NON ROUTABLES — bouclage, et `10.0.2.2` qui désigne l'hôte
+	 * vu d'un émulateur — sont tolérées sans condition : elles ne quittent
+	 * jamais l'appareil, donc rien ne peut fuir.
+	 *
+	 * Le réseau local en clair, lui, expose réellement : sur un Wi-Fi partagé,
+	 * numéros et messages sont lisibles par les autres. Il exige donc un
+	 * accord explicite (`allowPlainLan`), et se limite aux plages privées.
 	 */
-	public static isSecureUrl(url: string): boolean {
+	public static isSecureUrl(url: string, allowPlainLan = false): boolean {
 		const value = String(url ?? "").trim().toLowerCase();
 		if (/^https:\/\/[^\s]+$/.test(value)) {
 			return true;
 		}
-		return /^http:\/\/(10\.0\.2\.2|127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(value);
+		if (/^http:\/\/(10\.0\.2\.2|127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(value)) {
+			return true;
+		}
+		return allowPlainLan && SmsGatewayUtils.isPrivateLanUrl(value);
+	}
+
+	/**
+	 * L'URL vise-t-elle une adresse privée RFC 1918 en clair ?
+	 *
+	 * Les trois plages, et rien d'autre. Une adresse publique en HTTP reste
+	 * refusée même quand l'exception réseau local est active : il n'existe
+	 * aucune raison légitime d'envoyer des numéros de membres en clair sur
+	 * Internet, alors qu'il en existe une — provisoire — de le faire sur un
+	 * réseau qu'on maîtrise.
+	 */
+	public static isPrivateLanUrl(url: string): boolean {
+		const value = String(url ?? "").trim().toLowerCase();
+		return /^http:\/\/(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})(:\d+)?(\/|$)/.test(
+			value,
+		);
 	}
 
 	/** Vrai si l'URL passe par une dérogation de développement. */
-	public static isDevelopmentUrl(url: string): boolean {
-		return SmsGatewayUtils.isSecureUrl(url)
+	public static isDevelopmentUrl(url: string, allowPlainLan = false): boolean {
+		return SmsGatewayUtils.isSecureUrl(url, allowPlainLan)
 			&& !String(url ?? "").trim().toLowerCase().startsWith("https://");
 	}
 

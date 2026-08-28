@@ -691,6 +691,8 @@ export const translations: Record<string, string> = {
   "sms_gateway.saved": "Configuration enregistrée",
   "sms_gateway.saved_message": "Vérifiez que la fiche passerelle d'Odoo reçoit un signal de vie dans les prochaines minutes.",
   "sms_gateway.save_error": "Enregistrement impossible",
+  "sms_gateway.allow_plain_lan": "Tolerer le reseau local en clair (Wi-Fi sans HTTPS)",
+  "sms_gateway.allow_plain_lan_warning": "Sur ce reseau, les numeros et le corps des messages sont lisibles par quiconque le partage. A n'utiliser que sur un reseau maitrise.",
   "sms_gateway.fact_pacing": "Cadencement",
   "sms_gateway.pacing_ok": "regulier",
   "sms_gateway.pacing_degraded": "degrade - les cycles peuvent glisser de plusieurs minutes",

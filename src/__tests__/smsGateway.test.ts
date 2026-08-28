@@ -206,3 +206,54 @@ describe("SmsGatewayUtils.journalFill", () => {
 		expect(SmsGatewayUtils.journalFill(1000, 0)).toBe(0);
 	});
 });
+
+describe("SmsGatewayUtils reseau local en clair", () => {
+	const LAN = "http://192.168.2.38:8169";
+
+	it("refuse le reseau local tant que l'exception n'est pas accordee", () => {
+		// C'est le defaut, et il compte : sur un Wi-Fi partage, numeros et
+		// messages sont lisibles par quiconque est sur le meme reseau.
+		expect(SmsGatewayUtils.isSecureUrl(LAN)).toBe(false);
+	});
+
+	it("accepte le reseau local une fois l'exception accordee", () => {
+		expect(SmsGatewayUtils.isSecureUrl(LAN, true)).toBe(true);
+	});
+
+	it("accepte les trois plages privees", () => {
+		for (const url of [
+			"http://10.1.2.3:8169",
+			"http://172.16.0.5:8069",
+			"http://172.31.255.254",
+			"http://192.168.0.1/",
+		]) {
+			expect(SmsGatewayUtils.isSecureUrl(url, true), url).toBe(true);
+		}
+	});
+
+	it("refuse une adresse PUBLIQUE en clair meme avec l'exception", () => {
+		// L'exception sert a tolerer un reseau qu'on maitrise, pas a envoyer
+		// des donnees de membres en clair sur Internet.
+		for (const url of [
+			"http://8.8.8.8:8169",
+			"http://172.15.0.1",   // juste sous la plage privee
+			"http://172.32.0.1",   // juste au-dessus
+			"http://193.168.2.38", // ressemble a 192.168 sans en etre
+			"http://odoo.exemple.org",
+		]) {
+			expect(SmsGatewayUtils.isSecureUrl(url, true), url).toBe(false);
+		}
+	});
+
+	it("le HTTPS n'a jamais besoin de l'exception", () => {
+		expect(SmsGatewayUtils.isSecureUrl("https://odoo.exemple.org")).toBe(true);
+	});
+
+	it("le bouclage reste tolere sans exception", () => {
+		expect(SmsGatewayUtils.isSecureUrl("http://127.0.0.1:8169")).toBe(true);
+	});
+
+	it("une URL de reseau local reste signalee comme derogation", () => {
+		expect(SmsGatewayUtils.isDevelopmentUrl(LAN, true)).toBe(true);
+	});
+});

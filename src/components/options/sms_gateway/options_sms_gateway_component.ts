@@ -22,6 +22,7 @@ interface FormState {
 	hmacSecret: string;
 	deviceId: string;
 	subscriptionId: number;
+	allowPlainLan: boolean;
 }
 
 /**
@@ -152,6 +153,14 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
               </t>
             </select>
           </label>
+
+          <label class="sms-gateway__check">
+            <input type="checkbox" t-att-checked="state.form.allowPlainLan"
+                   t-on-change="onTogglePlainLan" />
+            <span t-esc="t('sms_gateway.allow_plain_lan')" />
+          </label>
+          <p class="sms-gateway__warning" t-if="state.form.allowPlainLan"
+             t-esc="t('sms_gateway.allow_plain_lan_warning')" />
 
           <p class="sms-gateway__warning" t-if="isDevelopmentUrl"
              t-esc="t('sms_gateway.warn_dev_url')" />
@@ -376,7 +385,26 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 	}
 
 	get isDevelopmentUrl(): boolean {
-		return SmsGatewayUtils.isDevelopmentUrl((this.state.form as FormState).odooBaseUrl);
+		const form = this.state.form as FormState;
+		return SmsGatewayUtils.isDevelopmentUrl(
+			form.odooBaseUrl,
+			form.allowPlainLan,
+		);
+	}
+
+	/**
+	 * Bascule la tolérance du réseau local en clair.
+	 *
+	 * Le réglage vit côté natif, parce que c'est le plugin qui valide l'URL
+	 * au moment d'enregistrer : le garder ici seulement laisserait l'écran
+	 * afficher une case cochée que la validation ignorerait.
+	 */
+	onTogglePlainLan(ev: Event): void {
+		// On note que l'utilisateur y a touché : sinon le rafraîchissement
+		// périodique écraserait son choix avant qu'il ait pu enregistrer.
+		this.state.touchedPlainLan = true;
+		(this.state.form as FormState).allowPlainLan =
+			(ev.target as HTMLInputElement).checked;
 	}
 
 	emptyCaps(): SmsCapabilities {
@@ -389,6 +417,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 			isDefaultSmsApp: false,
 			dozeExempt: true,
 			canScheduleExactAlarms: true,
+			allowPlainLan: false,
 			simReady: false,
 			sims: [],
 		};
@@ -432,6 +461,14 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 			]);
 			Object.assign(this.state.status, status);
 			Object.assign(this.state.caps, caps);
+			// La case suit ce que le natif retient. Sans cette reprise, rouvrir
+			// l'ecran afficherait une case decochee alors que l'exception est
+			// active — et on chercherait longtemps pourquoi le Wi-Fi marche.
+			if (!this.state.touchedPlainLan) {
+				(this.state.form as FormState).allowPlainLan = Boolean(
+					caps.allowPlainLan,
+				);
+			}
 		} catch (error: unknown) {
 			console.warn("[sms-gateway] état indisponible", error);
 		}
@@ -456,7 +493,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 			});
 			return;
 		}
-		if (!SmsGatewayUtils.isSecureUrl(form.odooBaseUrl)) {
+		if (!SmsGatewayUtils.isSecureUrl(form.odooBaseUrl, form.allowPlainLan)) {
 			await Dialog.alert({
 				title: this.t("sms_gateway.save_error"),
 				message: this.t("sms_gateway.https_required"),

@@ -691,6 +691,8 @@ export const translations: Record<string, string> = {
   "sms_gateway.saved": "Configuration saved",
   "sms_gateway.saved_message": "Check that the Odoo gateway record receives a heartbeat within the next few minutes.",
   "sms_gateway.save_error": "Cannot save",
+  "sms_gateway.allow_plain_lan": "Allow the local network in the clear (Wi-Fi without HTTPS)",
+  "sms_gateway.allow_plain_lan_warning": "On this network, phone numbers and message bodies are readable by anyone sharing it. Use only on a network you control.",
   "sms_gateway.fact_pacing": "Pacing",
   "sms_gateway.pacing_ok": "steady",
   "sms_gateway.pacing_degraded": "degraded - cycles may slip by minutes",

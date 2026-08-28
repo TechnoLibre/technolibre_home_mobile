@@ -60,6 +60,7 @@ public class SmsGatewayPlugin extends Plugin {
         result.put("isDefaultSmsApp", isDefaultSmsApp());
         result.put("dozeExempt", ignoringBatteryOptimizations());
         result.put("canScheduleExactAlarms", canScheduleExact());
+        result.put("allowPlainLan", config.allowPlainLan());
 
         TelephonyManager telephony = getContext().getSystemService(TelephonyManager.class);
         result.put("simReady", telephony != null
@@ -113,7 +114,9 @@ public class SmsGatewayPlugin extends Plugin {
             call.reject("Parametres requis : odooBaseUrl, hmacSecret, deviceId");
             return;
         }
-        if (!isAcceptableUrl(odooBaseUrl)) {
+        Boolean lanDemande = call.getBoolean("allowPlainLan");
+        boolean lan = lanDemande != null ? lanDemande : config.allowPlainLan();
+        if (!isAcceptableUrl(odooBaseUrl, lan)) {
             call.reject("L'URL du serveur doit etre en HTTPS : le contenu des messages et "
                     + "les numeros de telephone y transitent. Seules les adresses de "
                     + "bouclage et l'hote d'un emulateur sont tolerees en HTTP, pour le "
@@ -127,6 +130,9 @@ public class SmsGatewayPlugin extends Plugin {
                 deviceId,
                 call.getInt("subscriptionId", -1)
         );
+        if (lanDemande != null) {
+            config.setAllowPlainLan(lanDemande);
+        }
         Boolean keepBodies = call.getBoolean("journalKeepsBodies");
         if (keepBodies != null) {
             config.setJournalKeepsBodies(keepBodies);
@@ -332,7 +338,33 @@ public class SmsGatewayPlugin extends Plugin {
      * adresses ne quittent jamais la machine, donc la derogation ne peut pas
      * servir a exposer des numeros de telephone sur un reseau.
      */
+    /** Adresses IPv4 des plages privees RFC 1918, plus le bouclage. */
+    private static final java.util.regex.Pattern LAN_PRIVEE =
+            java.util.regex.Pattern.compile(
+                    "^http://("
+                            + "10\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})"
+                            + "|172\\.(1[6-9]|2\\d|3[01])\\.(\\d{1,3})\\.(\\d{1,3})"
+                            + "|192\\.168\\.(\\d{1,3})\\.(\\d{1,3})"
+                            + ")(:\\d+)?(/.*)?$");
+
     static boolean isAcceptableUrl(String url) {
+        return isAcceptableUrl(url, false);
+    }
+
+    /**
+     * L'URL est-elle acceptable pour y faire transiter des SMS ?
+     *
+     * <p>HTTPS toujours. En clair, seules les adresses NON ROUTABLES —
+     * bouclage et l'hote vu d'un emulateur — sont tolerees sans condition :
+     * elles ne quittent jamais l'appareil.
+     *
+     * <p>Le reseau local en clair demande un accord EXPLICITE
+     * ({@code allowPlainLan}), parce que les numeros et le corps des messages
+     * y circulent lisibles par quiconque partage le Wi-Fi. Meme alors, on
+     * s'en tient aux plages privees : une adresse publique en HTTP reste
+     * refusee, quel que soit le reglage.
+     */
+    static boolean isAcceptableUrl(String url, boolean allowPlainLan) {
         if (url == null) {
             return false;
         }
@@ -340,9 +372,12 @@ public class SmsGatewayPlugin extends Plugin {
         if (value.startsWith("https://")) {
             return true;
         }
-        return value.startsWith("http://10.0.2.2")
+        if (value.startsWith("http://10.0.2.2")
                 || value.startsWith("http://127.0.0.1")
-                || value.startsWith("http://localhost");
+                || value.startsWith("http://localhost")) {
+            return true;
+        }
+        return allowPlainLan && LAN_PRIVEE.matcher(value).matches();
     }
 
     // ------------------------------------------------------------------
