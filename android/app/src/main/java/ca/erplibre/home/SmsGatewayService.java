@@ -115,6 +115,8 @@ public class SmsGatewayService extends Service {
     private SmsGatewayConfig config;
     private SmsOutbox outbox;
     private SmsJournal journal;
+    private PhoneCalls calls;
+    private android.telephony.PhoneStateListener callListener;
     /** Voir l'usage : évite de rejournaliser un état qui ne change pas. */
     private static boolean exactAlarmsReported = false;
     private OdooReporter reporter;
@@ -159,6 +161,8 @@ public class SmsGatewayService extends Service {
         alarmManager = getSystemService(AlarmManager.class);
         powerManager = getSystemService(PowerManager.class);
         worker = Executors.newSingleThreadExecutor();
+        calls = new PhoneCalls(this);
+        registerCallListener();
         createNotificationChannel();
     }
 
@@ -202,6 +206,7 @@ public class SmsGatewayService extends Service {
 
     @Override
     public void onDestroy() {
+        unregisterCallListener();
         Log.i(TAG, "Service détruit");
         stopRequested.set(true);
         running = false;
@@ -514,6 +519,8 @@ public class SmsGatewayService extends Service {
                     body.optInt("segments_per_minute", 0),
                     body.optInt("poll_interval", 0));
 
+            calls.sweepStale();
+            placeQueuedCalls(body);
             int inserted = enqueueResponse(body);
             if (inserted > 0) {
                 Log.i(TAG, inserted + " SMS ajoutés à la file");
@@ -595,6 +602,92 @@ public class SmsGatewayService extends Service {
      * <p>Le corps du message n'est écrit qu'une fois par groupe : c'est ce qui
      * garde une réponse compacte pour un envoi à quarante destinataires.
      */
+
+    /**
+     * Ecoute l'etat de la ligne pour chronometrer les appels.
+     *
+     * <p>Sans READ_PHONE_STATE, on n'observe rien — et ce n'est pas une panne
+     * de la passerelle : les SMS continuent. On le journalise une fois plutot
+     * que d'echouer, parce qu'un exploitant qui n'utilise pas les appels n'a
+     * aucune raison d'accorder cette permission.
+     */
+    private void registerCallListener() {
+        if (checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            journal.warn(SmsJournal.CAT_CONFIG,
+                    "Etat de la ligne non lisible : la duree des appels ne sera pas mesuree",
+                    null);
+            return;
+        }
+        try {
+            android.telephony.TelephonyManager telephony =
+                    getSystemService(android.telephony.TelephonyManager.class);
+            if (telephony == null) {
+                return;
+            }
+            callListener = calls.listener();
+            telephony.listen(callListener,
+                    android.telephony.PhoneStateListener.LISTEN_CALL_STATE);
+            Log.i(TAG, "Ecoute de la ligne enregistree");
+        } catch (Exception e) {
+            Log.w(TAG, "Ecoute des appels indisponible : " + e.getMessage());
+            journal.error(SmsJournal.CAT_CONFIG,
+                    "Ecoute de la ligne impossible : " + e.getMessage(), null);
+        }
+    }
+
+    private void unregisterCallListener() {
+        if (callListener == null) {
+            return;
+        }
+        try {
+            android.telephony.TelephonyManager telephony =
+                    getSystemService(android.telephony.TelephonyManager.class);
+            if (telephony != null) {
+                telephony.listen(callListener,
+                        android.telephony.PhoneStateListener.LISTEN_NONE);
+            }
+        } catch (Exception ignored) {
+            // Le desabonnement echoue si le service meurt brutalement : sans
+            // consequence, l'ecouteur disparait avec le processus.
+        }
+        callListener = null;
+    }
+
+    /**
+     * Compose les appels que le serveur a mis en file.
+     *
+     * <p>UN SEUL par cycle, et jamais si la ligne est occupee : un telephone ne
+     * tient qu'une conversation, et en lancer un second raccrocherait le
+     * premier. La file s'ecoule donc au rythme des cycles, ce qui est aussi le
+     * garde-fou le plus simple contre une file emballee.
+     */
+    private void placeQueuedCalls(JSONObject body) {
+        JSONArray queued = body.optJSONArray("calls");
+        if (queued == null || queued.length() == 0) {
+            return;
+        }
+        try {
+            android.telephony.TelephonyManager telephony =
+                    getSystemService(android.telephony.TelephonyManager.class);
+            if (telephony != null
+                    && telephony.getCallState() != android.telephony.TelephonyManager.CALL_STATE_IDLE) {
+                journal.info(SmsJournal.CAT_SEND,
+                        "Ligne occupee : appel reporte au prochain cycle");
+                return;
+            }
+        } catch (Exception ignored) {
+            // Etat inconnu : on tente, le systeme refusera si besoin.
+        }
+        JSONObject premier = queued.optJSONObject(0);
+        if (premier == null) {
+            return;
+        }
+        calls.place(premier.optString("number", ""),
+                premier.optString("uuid", null),
+                PhoneCalls.SOURCE_QUEUED);
+    }
+
     private int enqueueResponse(JSONObject body) throws Exception {
         long expiresAt = body.optLong("expires", 0L) * 1000L;
         JSONArray groups = body.optJSONArray("groups");

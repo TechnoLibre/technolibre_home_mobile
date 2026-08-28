@@ -27,6 +27,7 @@ public class SmsGatewayConfig {
     private static final String KEY_LAST_ERROR = "last_error";
     private static final String KEY_JOURNAL_BODIES = "journal_bodies";
     private static final String KEY_ALLOW_PLAIN_LAN = "allow_plain_lan";
+    private static final String KEY_CALL_LOG_DURATION = "call_log_duration";
 
     private final SharedPreferences prefs;
 
@@ -67,6 +68,26 @@ public class SmsGatewayConfig {
 
     public void setAllowPlainLan(boolean allow) {
         prefs.edit().putBoolean(KEY_ALLOW_PLAIN_LAN, allow).apply();
+    }
+
+    /**
+     * Lire la duree exacte dans le journal d'appels d'Android ?
+     *
+     * <p>Faux par defaut. La mesure interne suffit a savoir si quelqu'un a
+     * parle deux minutes ou dix secondes ; elle inclut simplement la sonnerie.
+     * Le journal d'Android donne le chiffre de l'operateur, mais le lire exige
+     * READ_CALL_LOG, qui ouvre TOUT l'historique d'appels de l'appareil.
+     *
+     * <p>Anodin sur un telephone dedie a la passerelle. Sur le telephone
+     * personnel de quelqu'un, c'est une intrusion — et ce n'est pas a l'outil
+     * de la decider.
+     */
+    public boolean callLogDuration() {
+        return prefs.getBoolean(KEY_CALL_LOG_DURATION, false);
+    }
+
+    public void setCallLogDuration(boolean actif) {
+        prefs.edit().putBoolean(KEY_CALL_LOG_DURATION, actif).apply();
     }
 
     public boolean journalKeepsBodies() {

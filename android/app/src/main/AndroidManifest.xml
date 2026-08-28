@@ -152,6 +152,12 @@
 
     <!-- Passerelle SMS -->
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- Appels. CALL_PHONE compose ; la duree se mesure par READ_PHONE_STATE,
+         deja demandee plus bas. READ_CALL_LOG n'est PAS declaree : elle
+         donnerait la duree exacte mais ouvrirait tout l'historique de
+         l'appareil, et la mesure interne suffit dans la quasi-totalite des
+         cas. Qui veut le chiffre de l'operateur l'ajoute sciemment. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <!-- Facultative : sert uniquement a nommer les cartes SIM d'un appareil
          multi-SIM dans l'ecran de configuration. Son refus n'empeche pas

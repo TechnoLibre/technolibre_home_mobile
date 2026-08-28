@@ -32,6 +32,12 @@ import java.util.List;
         permissions = {
                 @Permission(alias = "send", strings = {Manifest.permission.SEND_SMS}),
                 @Permission(alias = "receive", strings = {Manifest.permission.RECEIVE_SMS}),
+                // Les deux vont ensemble : composer sans pouvoir observer la
+                // ligne donnerait des appels sans duree, donc des fiches vides.
+                @Permission(alias = "calls", strings = {
+                        Manifest.permission.CALL_PHONE,
+                        Manifest.permission.READ_PHONE_STATE,
+                }),
         }
 )
 public class SmsGatewayPlugin extends Plugin {
@@ -61,6 +67,8 @@ public class SmsGatewayPlugin extends Plugin {
         result.put("dozeExempt", ignoringBatteryOptimizations());
         result.put("canScheduleExactAlarms", canScheduleExact());
         result.put("allowPlainLan", config.allowPlainLan());
+        result.put("hasCallPermission", granted(Manifest.permission.CALL_PHONE));
+        result.put("callLogDuration", config.callLogDuration());
 
         TelephonyManager telephony = getContext().getSystemService(TelephonyManager.class);
         result.put("simReady", telephony != null
@@ -263,6 +271,52 @@ public class SmsGatewayPlugin extends Plugin {
         } catch (Exception e) {
             call.reject("Reglage introuvable : " + e.getMessage());
         }
+    }
+
+
+    /**
+     * Compose un numero depuis l'application : le clic-pour-appeler.
+     *
+     * <p>Un humain touche le bouton, le telephone compose, cet humain parle.
+     * C'est de la telephonie CRM ordinaire, et rien ici ne s'apparente a un
+     * appel automatise — la distinction tient a la presence de quelqu'un, et
+     * elle est enregistree : l'appel part avec la source « click ».
+     */
+    @PluginMethod
+    public void placeCall(PluginCall call) {
+        String number = call.getString("number");
+        if (number == null || number.trim().isEmpty()) {
+            call.reject("Numero requis");
+            return;
+        }
+        if (!granted(Manifest.permission.CALL_PHONE)) {
+            call.reject("La permission d'appel n'est pas accordee.");
+            return;
+        }
+        String uuid = new PhoneCalls(getContext())
+                .place(number, call.getString("uuid"), PhoneCalls.SOURCE_CLICK);
+        if (uuid == null) {
+            call.reject("Le systeme a refuse l'appel.");
+            return;
+        }
+        JSObject result = new JSObject();
+        result.put("uuid", uuid);
+        call.resolve(result);
+    }
+
+    /** Demande la permission d'appeler, et celle de lire l'etat de la ligne. */
+    @PluginMethod
+    public void requestCallPermissions(PluginCall call) {
+        requestPermissionForAlias("calls", call, "callPermissionResult");
+    }
+
+    @PermissionCallback
+    private void callPermissionResult(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("hasCallPermission", granted(Manifest.permission.CALL_PHONE));
+        result.put("hasPhoneStatePermission",
+                granted(Manifest.permission.READ_PHONE_STATE));
+        call.resolve(result);
     }
 
     /** Efface le journal. Ne touche ni à la file d'envoi ni aux rapports. */
