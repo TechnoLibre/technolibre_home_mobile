@@ -14,14 +14,14 @@ import java.util.List;
  * File d'attente PERSISTANTE de la passerelle SMS.
  *
  * <p>Ceci n'est pas un cache : c'est le chemin critique. Une file en mémoire
- * (LinkedBlockingQueue) perdrait silencieusement des messages, parce que
- * l'identifiant du dernier événement ntfy consommé est persisté : après une mort
- * du processus, la reprise {@code ?since=<lastId>} sauterait un message qui
- * n'était plus que dans la file volatile. Le SMS ne partirait jamais et personne
- * ne le saurait.
+ * perdrait silencieusement des messages — le serveur considère un envoi comme
+ * remis dès qu'il l'a transmis, et ne le proposera plus. Après une mort du
+ * processus, un SMS resté dans une file volatile ne partirait jamais, et
+ * personne ne le saurait.
  *
- * <p>Règle d'ordre invariante, respectée par {@link SmsGatewayService} :
- * on insère ici D'ABORD, on avance l'identifiant ntfy ENSUITE.
+ * <p>Règle d'ordre invariante, respectée par {@link SmsGatewayService} : on
+ * insère ici D'ABORD, on accuse réception au serveur ENSUITE. L'inverse
+ * perdrait tout message reçu juste avant une coupure.
  */
 public class SmsOutbox extends SQLiteOpenHelper {
 
