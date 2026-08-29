@@ -152,12 +152,21 @@
 
     <!-- Passerelle SMS -->
     <uses-permission android:name="android.permission.SEND_SMS" />
-    <!-- Appels. CALL_PHONE compose ; la duree se mesure par READ_PHONE_STATE,
-         deja demandee plus bas. READ_CALL_LOG n'est PAS declaree : elle
-         donnerait la duree exacte mais ouvrirait tout l'historique de
-         l'appareil, et la mesure interne suffit dans la quasi-totalite des
-         cas. Qui veut le chiffre de l'operateur l'ajoute sciemment. -->
+    <!-- Appels. CALL_PHONE compose ; READ_PHONE_STATE observe la ligne.
+
+         READ_CALL_LOG est declaree mais JAMAIS demandee au demarrage : elle
+         est reclamee seulement si l'exploitant active l'affichage de la fiche
+         de l'appelant. Depuis Android 10, `onCallStateChanged` ne transmet
+         plus le numero entrant sans elle — sans numero, il n'y a rien a
+         chercher dans Odoo, et la fonction est donc impossible autrement.
+
+         Ce qu'elle coute : l'acces a TOUT l'historique d'appels de
+         l'appareil. Proportionne sur un telephone dedie a la passerelle, dont
+         le journal ne contient que ses propres appels. Disproportionne sur le
+         telephone personnel de quelqu'un — d'ou le fait que ce soit un choix
+         et non un defaut. -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <!-- Facultative : sert uniquement a nommer les cartes SIM d'un appareil
          multi-SIM dans l'ecran de configuration. Son refus n'empeche pas

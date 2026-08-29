@@ -248,11 +248,23 @@ public class PhoneCalls {
 
         if (state == TelephonyManager.CALL_STATE_RINGING) {
             if (actif == null) {
-                // Appel entrant : on ouvre le suivi pour le tracer s'il aboutit.
+                // Appel entrant : on ouvre le suivi ET on previent Odoo tout
+                // de suite. L'interet d'afficher la fiche de l'appelant est de
+                // l'avoir sous les yeux PENDANT qu'il parle : rapporter a la
+                // fin ne servirait a rien.
                 String uuid = UUID.randomUUID().toString().replace("-", "");
-                outbox.callStart(uuid,
-                        incomingNumber == null ? "" : incomingNumber,
-                        SOURCE_MANUAL);
+                String numero = incomingNumber == null ? "" : incomingNumber;
+                outbox.callStart(uuid, numero, SOURCE_MANUAL);
+                if (numero.isEmpty()) {
+                    // Android 10+ masque le numero sans READ_CALL_LOG. On le
+                    // dit une fois plutot que de laisser croire a une panne
+                    // d'Odoo ou de rapprochement.
+                    journal.warn(SmsJournal.CAT_SEND,
+                            "Numero entrant masque par Android : accordez la"
+                                    + " lecture du journal d'appels pour"
+                                    + " identifier l'appelant", uuid);
+                }
+                reportIncoming(uuid, numero);
             }
             return;
         }
@@ -366,6 +378,28 @@ public class PhoneCalls {
         return chiffres.length() > 7
                 ? chiffres.substring(chiffres.length() - 7)
                 : chiffres;
+    }
+
+    /** Annonce un appel entrant, des la sonnerie. */
+    private void reportIncoming(String uuid, String numero) {
+        try {
+            org.json.JSONObject event = new org.json.JSONObject();
+            event.put("uuid", uuid);
+            event.put("number", numero);
+            event.put("source", SOURCE_MANUAL);
+            event.put("direction", "in");
+            event.put("state", STATE_DIALING);
+            event.put("seq", outbox.nextCallSeq(uuid));
+            event.put("at", System.currentTimeMillis() / 1000L);
+            org.json.JSONArray calls = new org.json.JSONArray();
+            calls.put(event);
+            OdooReporter reporter = new OdooReporter(context);
+            org.json.JSONObject payload = reporter.envelope();
+            payload.put("calls", calls);
+            reporter.submit(OdooReporter.ENDPOINT_REPORT, payload);
+        } catch (Exception e) {
+            Log.e(TAG, "Annonce d'appel entrant impossible : " + e.getMessage());
+        }
     }
 
     // ------------------------------------------------------------------

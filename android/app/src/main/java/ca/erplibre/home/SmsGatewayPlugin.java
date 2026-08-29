@@ -38,6 +38,12 @@ import java.util.List;
                         Manifest.permission.CALL_PHONE,
                         Manifest.permission.READ_PHONE_STATE,
                 }),
+                // Separee des precedentes : elle ouvre tout l'historique
+                // d'appels, et ne doit etre demandee que si l'exploitant veut
+                // identifier ses appelants.
+                @Permission(alias = "caller_id", strings = {
+                        Manifest.permission.READ_CALL_LOG,
+                }),
         }
 )
 public class SmsGatewayPlugin extends Plugin {
@@ -69,6 +75,7 @@ public class SmsGatewayPlugin extends Plugin {
         result.put("allowPlainLan", config.allowPlainLan());
         result.put("hasCallPermission", granted(Manifest.permission.CALL_PHONE));
         result.put("callLogDuration", config.callLogDuration());
+        result.put("hasCallerId", granted(Manifest.permission.READ_CALL_LOG));
 
         TelephonyManager telephony = getContext().getSystemService(TelephonyManager.class);
         result.put("simReady", telephony != null
@@ -301,6 +308,25 @@ public class SmsGatewayPlugin extends Plugin {
         }
         JSObject result = new JSObject();
         result.put("uuid", uuid);
+        call.resolve(result);
+    }
+
+    /**
+     * Demande la lecture du journal d'appels — identification de l'appelant.
+     *
+     * <p>Sans elle, Android 10+ ne transmet pas le numero entrant, et Odoo n'a
+     * rien a rapprocher. Elle donne en echange l'acces a tout l'historique
+     * d'appels : a n'accorder que sur un appareil dedie a la passerelle.
+     */
+    @PluginMethod
+    public void requestCallerId(PluginCall call) {
+        requestPermissionForAlias("caller_id", call, "callerIdResult");
+    }
+
+    @PermissionCallback
+    private void callerIdResult(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("hasCallerId", granted(Manifest.permission.READ_CALL_LOG));
         call.resolve(result);
     }
 
