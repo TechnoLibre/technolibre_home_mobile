@@ -3046,6 +3046,42 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/SmsGatewayService.java",
                 ],
             },
+            {
+                id: "sms-gateway.calls",
+                label: { en: "Traced phone calls", fr: "Appels tracés" },
+                description: {
+                    en: "Places and logs calls, and measures their duration.",
+                    fr: "Place et journalise les appels, et mesure leur durée.",
+                },
+                permissions: ["calls", "call_log"],
+                status: "experimental",
+                howItWorks: {
+                    en: "Calls are placed with TelecomManager.placeCall, not an "
+                        + "ACTION_CALL activity: since API 29 Android silently "
+                        + "drops background activity starts, and a foreground "
+                        + "service does not lift that ban. State lives in SQLite, "
+                        + "never in memory, so a restart does not strand a call in "
+                        + "'dialing'. Duration is measured OFFHOOK→IDLE, and read "
+                        + "back from the system call log when that permission is "
+                        + "granted — the log is authoritative, the measure is the "
+                        + "fallback.",
+                    fr: "Les appels partent par TelecomManager.placeCall et non "
+                        + "par une activité ACTION_CALL : depuis l'API 29 Android "
+                        + "supprime silencieusement les lancements d'activité en "
+                        + "arrière-plan, et un service au premier plan ne lève pas "
+                        + "cette interdiction. L'état vit dans SQLite et jamais en "
+                        + "mémoire, pour qu'un redémarrage ne laisse pas un appel "
+                        + "bloqué en « composition ». La durée est mesurée "
+                        + "OFFHOOK→IDLE, puis relue dans le journal d'appels du "
+                        + "système quand la permission est accordée — le journal "
+                        + "fait foi, la mesure est le repli.",
+                },
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/PhoneCalls.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsOutbox.java",
+                ],
+            },
         ],
     },
 ];

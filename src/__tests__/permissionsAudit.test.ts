@@ -32,6 +32,12 @@ const LOGICAL_TO_ANDROID: Record<string, string[]> = {
     // a l'identite de la ligne : elle merite d'etre reclamee par une feature
     // plutot que rangee dans l'infrastructure.
     phone_state:   ["android.permission.READ_PHONE_STATE"],
+    // Placer un appel engage de l'argent et sort de l'appareil : cette
+    // capacite doit etre reclamee par une feature, jamais rangee en infra.
+    calls:         ["android.permission.CALL_PHONE"],
+    // Le journal d'appels est l'historique COMPLET des correspondants, bien
+    // au-dela de l'appel en cours. Android le classe restreinte a ce titre.
+    call_log:      ["android.permission.READ_CALL_LOG"],
 };
 
 // Android perms not expected to map to any catalog logical name —

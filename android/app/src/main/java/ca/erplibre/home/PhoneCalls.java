@@ -80,6 +80,15 @@ public class PhoneCalls {
     private final SmsJournal journal;
 
     /**
+     * Fil unique pour la cloture des appels.
+     *
+     * <p>Un seul : deux clotures simultanees liraient le journal d'Android en
+     * meme temps, et rien ne garantit laquelle verrait la bonne ligne.
+     */
+    private final java.util.concurrent.ExecutorService finisseur =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    /**
      * Dernier etat vu de la ligne, pour ne traiter que les CHANGEMENTS.
      *
      * <p>Seul rescape en memoire, et sans consequence s'il se perd : au pire
@@ -307,7 +316,8 @@ public class PhoneCalls {
             }
             long mesuree = Math.max(
                     0, (System.currentTimeMillis() - actif.offhookAt) / 1000L);
-            finish(actif.uuid, actif.number, actif.source, mesuree);
+            finish(actif.uuid, actif.number, actif.source, mesuree,
+                    actif.offhookAt);
             outbox.callFinish(actif.uuid);
         }
     }
@@ -318,25 +328,90 @@ public class PhoneCalls {
      * <p>Le rapport part dans tous les cas : le journal d'Android peut etre
      * indisponible, et une duree approchee vaut mieux qu'un appel sans trace.
      */
-    private void finish(String uuid, String numero, String source, long mesuree) {
+    private void finish(String uuid, String numero, String source, long mesuree,
+                        long depuis) {
+        if (!config.callLogDuration() || !granted(Manifest.permission.READ_CALL_LOG)) {
+            // Sans le journal d'Android, on ne peut RIEN dire du decroche : on
+            // rapporte la mesure telle quelle, en la nommant honnetement.
+            report(uuid, numero, source, STATE_ENDED, mesuree, "measured", null);
+            journal.info(SmsJournal.CAT_SEND,
+                    "Appel termine — " + mesuree + " s (measured)", uuid);
+            return;
+        }
+        // Hors du fil principal : l'attente que le systeme ecrive son journal
+        // durait 2,5 s, et elle se produisait dans le rappel du
+        // PhoneStateListener — donc sur le fil de l'interface, qu'elle gelait.
+        finisseur.execute(
+                () -> finishAvecJournal(uuid, numero, source, mesuree, depuis));
+    }
+
+    /**
+     * Cloture en consultant le journal d'Android, hors du fil principal.
+     *
+     * <p>Le journal ne sert pas qu'a preciser la duree : il dit aussi si
+     * l'appel a ete DECROCHE. Telecom compte `duration` depuis l'instant de
+     * connexion et laisse 0 quand la connexion n'a jamais eu lieu — donc
+     * `duration == 0` signifie « personne n'a repondu », et c'est une
+     * classification, pas seulement un chiffre.
+     *
+     * <p>Cela repare un defaut reel : pour un appel SORTANT, l'etat OFFHOOK
+     * arrive des la composition, si bien que le garde-fou `jamaisDecroche` ne
+     * se declenchait jamais. Un appel qui avait sonne dans le vide etait
+     * rapporte a Odoo comme REUSSI, d'une duree egale au temps de sonnerie.
+     */
+    private void finishAvecJournal(String uuid, String numero, String source,
+                                   long mesuree, long depuis) {
+        long exacte = attendreLigneDuJournal(numero, depuis);
+
+        if (exacte == 0L) {
+            report(uuid, numero, source, STATE_FAILED, 0, "call_log",
+                    "sans reponse");
+            journal.warn(SmsJournal.CAT_SEND,
+                    "Appel sans reponse — " + mesuree + " s de sonnerie."
+                            + " Le journal d'Android donne une duree nulle :"
+                            + " personne n'a decroche.", uuid);
+            return;
+        }
+
         long duree = mesuree;
         String origine = "measured";
-
-        if (config.callLogDuration() && granted(Manifest.permission.READ_CALL_LOG)) {
-            try {
-                Thread.sleep(CALL_LOG_SETTLE_MS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            long exacte = callLogDuration(numero);
-            if (exacte >= 0) {
-                duree = exacte;
-                origine = "call_log";
-            }
+        if (exacte > 0L) {
+            duree = exacte;
+            origine = "call_log";
         }
         report(uuid, numero, source, STATE_ENDED, duree, origine, null);
         journal.info(SmsJournal.CAT_SEND,
                 "Appel termine — " + duree + " s (" + origine + ")", uuid);
+    }
+
+    /**
+     * Attend que le systeme ait ecrit LA ligne de CET appel, puis la lit.
+     *
+     * <p>Un delai fixe de 2,5 s ne suffisait pas : deux appels de suite vers le
+     * meme numero ont rendu la MEME duree de 60 s, alors que le second avait ete
+     * refuse et valait zero. La requete, filtree sur le seul numero et triee par
+     * date, rendait la ligne du PRECEDENT appel — un chiffre faux et credible,
+     * exactement ce que le commentaire de {@link #callLogDuration} annoncait.
+     *
+     * <p>On attend donc une ligne plus recente que le debut de l'appel, au lieu
+     * de parier sur un delai. Sept secondes au total : au-dela, mieux vaut
+     * rapporter la mesure interne que de retenir un rapport indefiniment.
+     */
+    private long attendreLigneDuJournal(String numero, long depuis) {
+        long echeance = System.currentTimeMillis() + 7_000L;
+        while (System.currentTimeMillis() < echeance) {
+            try {
+                Thread.sleep(CALL_LOG_SETTLE_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return -1;
+            }
+            long duree = callLogDuration(numero, depuis);
+            if (duree >= 0) {
+                return duree;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -346,16 +421,20 @@ public class PhoneCalls {
      * un telephone partage, un autre appel peut s'etre intercale, et lire la
      * mauvaise ligne donnerait un chiffre faux ET credible.
      */
-    long callLogDuration(String numero) {
+    long callLogDuration(String numero, long depuis) {
         if (numero == null || numero.isEmpty()) {
             return -1;
         }
         String[] colonnes = {CallLog.Calls.DURATION, CallLog.Calls.NUMBER};
+        // La marge de 2 s absorbe l'ecart entre notre horloge et celle que le
+        // systeme inscrit dans sa ligne ; sans elle on rejetterait la bonne.
+        String depuisTexte = String.valueOf(Math.max(0, depuis - 2_000L));
         try (Cursor curseur = context.getContentResolver().query(
                 CallLog.Calls.CONTENT_URI,
                 colonnes,
-                CallLog.Calls.NUMBER + " LIKE ?",
-                new String[]{"%" + tail(numero)},
+                CallLog.Calls.NUMBER + " LIKE ? AND "
+                        + CallLog.Calls.DATE + " >= ?",
+                new String[]{"%" + tail(numero), depuisTexte},
                 CallLog.Calls.DATE + " DESC")) {
             if (curseur != null && curseur.moveToFirst()) {
                 return curseur.getLong(0);
