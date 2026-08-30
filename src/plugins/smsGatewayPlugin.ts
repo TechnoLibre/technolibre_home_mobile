@@ -26,6 +26,8 @@ export interface SmsCapabilities {
     canScheduleExactAlarms: boolean;
     /** Le HTTP en clair vers le réseau local est-il toléré ? */
     allowPlainLan: boolean;
+    /** La mélodie de démonstration joue-t-elle pendant les appels ? */
+    demoCallAudio: boolean;
     simReady: boolean;
     sims: SmsSimInfo[];
 }
@@ -65,6 +67,16 @@ export interface SmsConfigureOptions {
      * refusée.
      */
     allowPlainLan?: boolean;
+    /**
+     * Diffuser une mélodie pendant un appel, par couplage acoustique.
+     *
+     * Faux par défaut, et **démonstration uniquement**. Android n'offre aucune
+     * interface pour injecter du son dans un appel cellulaire : le téléphone
+     * passe sur haut-parleur et son propre microphone reprend la mélodie.
+     * L'annulation d'écho combat ce montage, le rendu est étouffé. Ne pas s'en
+     * servir pour une annonce à des membres.
+     */
+    demoCallAudio?: boolean;
 }
 
 /** Catégories d'entrées du journal, telles que les écrit le service Android. */
@@ -74,7 +86,8 @@ export type SmsJournalCategory =
     | "receipt"
     | "inbound"
     | "network"
-    | "config";
+    | "config"
+    | "service";
 
 export interface SmsJournalEntry {
     id: number;

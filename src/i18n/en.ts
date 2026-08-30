@@ -694,6 +694,8 @@ export const translations: Record<string, string> = {
   "sms_gateway.save_error": "Cannot save",
   "sms_gateway.allow_plain_lan": "Allow the local network in the clear (Wi-Fi without HTTPS)",
   "sms_gateway.allow_plain_lan_warning": "On this network, phone numbers and message bodies are readable by anyone sharing it. Use only on a network you control.",
+  "sms_gateway.demo_call_audio": "Play a tune during calls (demo)",
+  "sms_gateway.demo_call_audio_warning": "DOES NOT WORK — measured 30 Aug 2026: the other party hears nothing. The microphone is live and speakerphone is granted, but Android's echo cancellation removes from the uplink whatever the device just played. Only the phone's own speaker is audible, in the room. Kept as a record of the experiment.",
   "sms_gateway.fact_pacing": "Pacing",
   "sms_gateway.pacing_ok": "steady",
   "sms_gateway.pacing_degraded": "degraded - cycles may slip by minutes",

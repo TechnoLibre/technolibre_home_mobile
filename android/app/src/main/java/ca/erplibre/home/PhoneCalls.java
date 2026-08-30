@@ -78,6 +78,7 @@ public class PhoneCalls {
     private final SmsGatewayConfig config;
     private final SmsOutbox outbox;
     private final SmsJournal journal;
+    private final CallAudio callAudio;
 
     /**
      * Fil unique pour la cloture des appels.
@@ -102,6 +103,7 @@ public class PhoneCalls {
         this.config = new SmsGatewayConfig(this.context);
         this.outbox = SmsOutbox.get(this.context);
         this.journal = new SmsJournal(this.context);
+        this.callAudio = new CallAudio(this.context);
     }
 
     // ------------------------------------------------------------------
@@ -296,7 +298,27 @@ public class PhoneCalls {
                     0, null, null);
             journal.info(SmsJournal.CAT_SEND, "Appel en communication",
                     actif.uuid);
+            // A OFFHOOK et pas avant : diffuser pendant la sonnerie ne ferait
+            // que jouer pour nous-memes. Sans effet si la demonstration est
+            // desactivee, ce qui est le defaut.
+            //
+            // SORTANTS SEULEMENT. Un appel entrant passe par RINGING avant
+            // OFFHOOK : venir de cet etat, c'est avoir DECROCHE. Envoyer la
+            // melodie de demonstration a quelqu'un qui appelle l'ecole serait
+            // au mieux incomprehensible, au pire pris pour une plaisanterie —
+            // et l'oubli d'un interrupteur ne doit pas pouvoir faire ca.
+            if (precedent != TelephonyManager.CALL_STATE_RINGING) {
+                callAudio.start(actif.uuid);
+            }
             return;
+        }
+
+        if (state == TelephonyManager.CALL_STATE_IDLE) {
+            // Inconditionnel, et place en tete : la ligne est retombee, donc
+            // la melodie doit se taire et le haut-parleur revenir a son etat
+            // d'origine, quoi qu'il arrive ensuite. Le faire plus bas
+            // laisserait le telephone sur haut-parleur si un rapport echoue.
+            callAudio.stop(actif == null ? null : actif.uuid);
         }
 
         if (state == TelephonyManager.CALL_STATE_IDLE && actif != null) {

@@ -168,6 +168,14 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
           <p class="sms-gateway__warning" t-if="isDevelopmentUrl"
              t-esc="t('sms_gateway.warn_dev_url')" />
 
+          <label class="sms-gateway__check">
+            <input type="checkbox" t-att-checked="state.demoCallAudio"
+                   t-on-change="onToggleDemoAudio" />
+            <span t-esc="t('sms_gateway.demo_call_audio')" />
+          </label>
+          <p class="sms-gateway__warning" t-if="state.demoCallAudio"
+             t-esc="t('sms_gateway.demo_call_audio_warning')" />
+
           <div class="sms-gateway__actions">
             <button type="button" class="sms-gateway__btn" t-on-click="onSave"
                     t-esc="t('sms_gateway.save')" />
@@ -251,6 +259,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 			journalCount: 0,
 			journalBytes: 0,
 			keepsBodies: false,
+			demoCallAudio: false,
 			relances: 0,
 			category: "",
 		});
@@ -332,6 +341,20 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 	async onCategory(category: string): Promise<void> {
 		this.state.category = category;
 		await this.loadJournal();
+	}
+
+	/**
+	 * Active la mélodie de démonstration pendant les appels.
+	 *
+	 * Réglage de démonstration, pas de production : Android ne permet pas
+	 * d'injecter du son dans un appel cellulaire, on passe par le
+	 * haut-parleur et le microphone. L'annulation d'écho dégrade le rendu.
+	 */
+	async onToggleDemoAudio(ev: Event): Promise<void> {
+		const actif = (ev.target as HTMLInputElement).checked;
+		const form = this.state.form as FormState;
+		await SmsGatewayPlugin.configure({ ...form, demoCallAudio: actif });
+		this.state.demoCallAudio = actif;
 	}
 
 	async onToggleBodies(ev: Event): Promise<void> {
@@ -422,6 +445,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 			dozeExempt: true,
 			canScheduleExactAlarms: true,
 			allowPlainLan: false,
+			demoCallAudio: false,
 			simReady: false,
 			sims: [],
 		};
@@ -478,6 +502,11 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 					caps.allowPlainLan,
 				);
 			}
+			// Même raison : la case doit refléter ce que le natif retient,
+			// sinon rouvrir l'écran la montrerait décochée pendant que la
+			// mélodie joue.
+			this.state.demoCallAudio = Boolean(caps.demoCallAudio);
+
 			await this.releverSiTombee();
 		} catch (error: unknown) {
 			console.warn("[sms-gateway] état indisponible", error);

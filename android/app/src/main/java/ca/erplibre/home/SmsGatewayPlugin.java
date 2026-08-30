@@ -75,6 +75,7 @@ public class SmsGatewayPlugin extends Plugin {
         result.put("allowPlainLan", config.allowPlainLan());
         result.put("hasCallPermission", granted(Manifest.permission.CALL_PHONE));
         result.put("callLogDuration", config.callLogDuration());
+        result.put("demoCallAudio", config.demoCallAudio());
         result.put("hasCallerId", granted(Manifest.permission.READ_CALL_LOG));
 
         TelephonyManager telephony = getContext().getSystemService(TelephonyManager.class);
@@ -151,6 +152,10 @@ public class SmsGatewayPlugin extends Plugin {
         Boolean keepBodies = call.getBoolean("journalKeepsBodies");
         if (keepBodies != null) {
             config.setJournalKeepsBodies(keepBodies);
+        }
+        Boolean demoAudio = call.getBoolean("demoCallAudio");
+        if (demoAudio != null) {
+            config.setDemoCallAudio(demoAudio);
         }
         call.resolve();
     }
@@ -365,6 +370,10 @@ public class SmsGatewayPlugin extends Plugin {
         }
         config.setEnabled(true);
         SmsGatewayService.start(getContext());
+        // Le filet se pose en meme temps que la passerelle : sans lui, une
+        // mort du service passerait inapercue jusqu'a ce que quelqu'un
+        // rouvre cet ecran.
+        SmsWatchdogJob.schedule(getContext());
         call.resolve();
     }
 
@@ -372,6 +381,9 @@ public class SmsGatewayPlugin extends Plugin {
     public void stopGateway(PluginCall call) {
         config.setEnabled(false);
         SmsGatewayService.stop(getContext());
+        // Un arret VOULU retire le filet : sinon il releverait dans le quart
+        // d'heure une passerelle que l'utilisatrice vient d'eteindre.
+        SmsWatchdogJob.cancel(getContext());
         call.resolve();
     }
 

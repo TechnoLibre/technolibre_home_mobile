@@ -694,6 +694,8 @@ export const translations: Record<string, string> = {
   "sms_gateway.save_error": "Enregistrement impossible",
   "sms_gateway.allow_plain_lan": "Tolerer le reseau local en clair (Wi-Fi sans HTTPS)",
   "sms_gateway.allow_plain_lan_warning": "Sur ce reseau, les numeros et le corps des messages sont lisibles par quiconque le partage. A n'utiliser que sur un reseau maitrise.",
+  "sms_gateway.demo_call_audio": "Jouer une melodie pendant les appels (demonstration)",
+  "sms_gateway.demo_call_audio_warning": "NE FONCTIONNE PAS — mesure du 30 aout 2026 : le correspondant n'entend rien. Le micro est actif et le haut-parleur est bien force, mais l'annulation d'echo d'Android retire du flux emis le son que l'appareil vient de jouer. Seul le haut-parleur du telephone se fait entendre, dans la piece. Reglage conserve comme trace de l'essai.",
   "sms_gateway.fact_pacing": "Cadencement",
   "sms_gateway.pacing_ok": "regulier",
   "sms_gateway.pacing_degraded": "degrade - les cycles peuvent glisser de plusieurs minutes",

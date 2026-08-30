@@ -38,6 +38,9 @@ const LOGICAL_TO_ANDROID: Record<string, string[]> = {
     // Le journal d'appels est l'historique COMPLET des correspondants, bien
     // au-dela de l'appel en cours. Android le classe restreinte a ce titre.
     call_log:      ["android.permission.READ_CALL_LOG"],
+    // Forcer le haut-parleur pendant un appel. Permission normale, mais elle
+    // change ce que les gens autour entendent : elle se reclame.
+    audio_routing: ["android.permission.MODIFY_AUDIO_SETTINGS"],
 };
 
 // Android perms not expected to map to any catalog logical name —

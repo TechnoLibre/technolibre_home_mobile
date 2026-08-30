@@ -3082,6 +3082,57 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/SmsOutbox.java",
                 ],
             },
+            {
+                id: "sms-gateway.demo-call-audio",
+                permissions: ["audio_routing"],
+                label: {
+                    en: "Tune during a call (demo)",
+                    fr: "Mélodie pendant un appel (démo)",
+                },
+                description: {
+                    en: "Measured dead end: echo cancellation removes it from the uplink.",
+                    fr: "Impasse mesurée : l'annulation d'écho la retire du flux émis.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "MEASURED 30 Aug 2026: this does not work — the other "
+                        + "party hears nothing. Kept as a record of what was "
+                        + "tried, off by default. Android exposes no API to "
+                        + "inject audio into a cellular "
+                        + "call: that stream belongs to the modem. The only way an "
+                        + "ordinary app has is to force speakerphone and let the "
+                        + "device's own microphone pick the tune back up. The voice "
+                        + "pipeline runs echo cancellation, whose whole job is to "
+                        + "remove what the device just emitted, so it actively "
+                        + "fights this. Audible but muffled — a demo, never an "
+                        + "announcement to members. Off by default; the routing "
+                        + "attempt is verified and journalled rather than assumed, "
+                        + "because on Android 12+ call routing belongs to the "
+                        + "dialer app.",
+                    fr: "MESURÉ le 30 août 2026 : cela ne fonctionne pas — le "
+                        + "correspondant n'entend rien. Conservé comme trace de "
+                        + "l'essai, désactivé par défaut. Android n'expose "
+                        + "aucune interface pour injecter du son "
+                        + "dans un appel cellulaire : ce flux appartient au modem. "
+                        + "Le seul moyen d'une application ordinaire est de forcer "
+                        + "le haut-parleur et de laisser le micro de l'appareil "
+                        + "reprendre la mélodie. Le pipeline voix applique une "
+                        + "annulation d'écho, dont le travail est justement de "
+                        + "supprimer ce que l'appareil vient d'émettre : elle "
+                        + "combat le montage. Audible mais étouffé — une "
+                        + "démonstration, jamais une annonce à des membres. "
+                        + "Désactivé par défaut ; la tentative de routage est "
+                        + "vérifiée et journalisée plutôt que supposée, car sur "
+                        + "Android 12+ le routage d'un appel appartient à "
+                        + "l'application téléphone.",
+                },
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/CallAudio.java",
+                    "android/app/src/main/java/ca/erplibre/home/PhoneCalls.java",
+                    "android/app/src/main/res/raw/demo_musique.wav",
+                ],
+            },
         ],
     },
 ];

@@ -28,6 +28,7 @@ public class SmsGatewayConfig {
     private static final String KEY_JOURNAL_BODIES = "journal_bodies";
     private static final String KEY_ALLOW_PLAIN_LAN = "allow_plain_lan";
     private static final String KEY_CALL_LOG_DURATION = "call_log_duration";
+    private static final String KEY_DEMO_CALL_AUDIO = "demo_call_audio";
     private static final String KEY_SERVICE_LIVE = "service_live";
 
     private final SharedPreferences prefs;
@@ -89,6 +90,23 @@ public class SmsGatewayConfig {
 
     public void setCallLogDuration(boolean actif) {
         prefs.edit().putBoolean(KEY_CALL_LOG_DURATION, actif).apply();
+    }
+
+    /**
+     * Diffuser une melodie pendant un appel, par couplage acoustique.
+     *
+     * <p>DEMONSTRATION UNIQUEMENT, et desactivee par defaut. Android ne
+     * permet pas d'injecter du son dans un appel cellulaire : on joue dans le
+     * haut-parleur et le microphone reprend. L'annulation d'echo combat ce
+     * montage, le rendu est etouffe. Une annonce a des membres passe par un
+     * autre chemin — voir le chiffrage SIP.
+     */
+    public boolean demoCallAudio() {
+        return prefs.getBoolean(KEY_DEMO_CALL_AUDIO, false);
+    }
+
+    public void setDemoCallAudio(boolean actif) {
+        prefs.edit().putBoolean(KEY_DEMO_CALL_AUDIO, actif).apply();
     }
 
     /**

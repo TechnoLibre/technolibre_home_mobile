@@ -86,6 +86,13 @@
         </service>
 
         <!-- Capte les SMS entrants pour honorer automatiquement les STOP. -->
+        <!-- Filet de securite : releve la passerelle quand Android l'a tuee.
+             Appartient au systeme, donc survit a la mort du processus. -->
+        <service
+            android:name=".SmsWatchdogJob"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
+
         <receiver
             android:name=".SmsInboundReceiver"
             android:exported="true"
@@ -145,6 +152,10 @@
 
     <!-- CapacitorVoiceRecorder Plugin -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Demonstration seulement : mettre l'appel sur haut-parleur
+         pour que le microphone reprenne la melodie. Permission
+         normale, accordee a l'installation. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- CapacitorVideoPlayer Plugin (legacy, no-op on API 33+) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
