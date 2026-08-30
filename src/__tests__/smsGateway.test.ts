@@ -28,6 +28,58 @@ function status(overrides: Partial<SmsGatewayStatus> = {}): SmsGatewayStatus {
 	};
 }
 
+describe("SmsGatewayUtils.primaryAction", () => {
+	it("propose d'arrêter quand le service tourne vraiment", () => {
+		expect(SmsGatewayUtils.primaryAction(status())).toBe("stop");
+	});
+
+	it("propose de démarrer quand la passerelle est éteinte", () => {
+		expect(SmsGatewayUtils.primaryAction(status({ enabled: false }))).toBe("start");
+	});
+
+	it("propose de RELANCER quand la préférence ment sur l'état réel", () => {
+		// Le cas observé après une réinstallation : `enabled` reste vrai, le
+		// processus est mort. L'écran proposait « arrêter » ce qui n'existait
+		// plus, et il fallait deviner le cycle arrêt/démarrage.
+		expect(
+			SmsGatewayUtils.primaryAction(status({ enabled: true, running: false })),
+		).toBe("restart");
+	});
+
+	it("ne propose jamais d'arrêter un service absent", () => {
+		for (const connected of [true, false]) {
+			expect(
+				SmsGatewayUtils.primaryAction(status({ running: false, connected })),
+			).not.toBe("stop");
+		}
+	});
+});
+
+describe("SmsGatewayUtils.shouldRevive", () => {
+	it("relève une passerelle activée dont le service est mort", () => {
+		expect(SmsGatewayUtils.shouldRevive(status({ running: false }), 0)).toBe(true);
+	});
+
+	it("ne touche pas à une passerelle qui tourne", () => {
+		expect(SmsGatewayUtils.shouldRevive(status(), 0)).toBe(false);
+	});
+
+	it("ne rallume JAMAIS ce que l'utilisatrice vient d'éteindre", () => {
+		// Garde-fou central : sans lui, appuyer sur « Arrêter » relancerait la
+		// passerelle au rafraîchissement suivant, et le bouton paraîtrait cassé.
+		expect(
+			SmsGatewayUtils.shouldRevive(status({ enabled: false, running: false }), 0),
+		).toBe(false);
+	});
+
+	it("abandonne après deux tentatives ratées", () => {
+		const down = status({ running: false });
+		expect(SmsGatewayUtils.shouldRevive(down, 1)).toBe(true);
+		expect(SmsGatewayUtils.shouldRevive(down, 2)).toBe(false);
+		expect(SmsGatewayUtils.shouldRevive(down, 99)).toBe(false);
+	});
+});
+
 describe("SmsGatewayUtils.health", () => {
 	it("reports ok only when everything is in place", () => {
 		expect(SmsGatewayUtils.health(status())).toBe("ok");

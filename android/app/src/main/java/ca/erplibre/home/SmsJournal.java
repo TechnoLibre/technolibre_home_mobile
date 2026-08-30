@@ -48,6 +48,15 @@ public class SmsJournal {
     public static final String CAT_INBOUND = "inbound";
     public static final String CAT_NETWORK = "network";
     public static final String CAT_CONFIG = "config";
+    /**
+     * Vie du service : demarrages, arrets, morts, relances automatiques.
+     *
+     * <p>Une categorie a part, et non un sous-cas de `cycle` : quand la
+     * passerelle se tait, la premiere question est « depuis quand est-elle
+     * morte, et qui l'a tuee ». Noyee parmi des milliers de lignes de cycle,
+     * la reponse est introuvable ; ici elle tient en un filtre.
+     */
+    public static final String CAT_SERVICE = "service";
 
     /** Au-delà, la purge se déclenche. */
     static final long HIGH_WATER_BYTES = 10L * 1024 * 1024;

@@ -30,6 +30,45 @@ export class SmsGatewayUtils {
 	}
 
 	/**
+	 * Action que l'écran doit proposer, selon l'état RÉEL du service.
+	 *
+	 * Le bouton suivait la préférence `enabled` et non `running` : après une
+	 * réinstallation, la préférence disait « en service » alors qu'aucun
+	 * processus ne tournait, et l'écran proposait d'« arrêter » ce qui était
+	 * déjà mort. Il fallait deviner qu'un cycle arrêt/démarrage débloquait la
+	 * situation — personne ne devine ça.
+	 */
+	public static primaryAction(
+		status: SmsGatewayStatus,
+	): "start" | "restart" | "stop" {
+		if (!status.enabled) {
+			return "start";
+		}
+		return status.running ? "stop" : "restart";
+	}
+
+	/**
+	 * Faut-il relancer la passerelle qu'on vient de constater morte ?
+	 *
+	 * Bornée à deux tentatives : un service qui refuse de démarrer serait
+	 * sinon rappelé à chaque rafraîchissement, en vidant la batterie pour
+	 * rien. Le filet natif reprend au quart d'heure suivant.
+	 *
+	 * Une passerelle ARRÊTÉE volontairement n'est jamais relevée — sans quoi
+	 * l'écran rallumerait ce que l'utilisatrice vient d'éteindre.
+	 */
+	public static shouldRevive(
+		status: SmsGatewayStatus,
+		attempts: number,
+		maxAttempts = 2,
+	): boolean {
+		if (!status.enabled || status.running) {
+			return false;
+		}
+		return attempts < maxAttempts;
+	}
+
+	/**
 	 * Durée d'envoi estimée, en secondes, pour un nombre de segments donné.
 	 *
 	 * Sert à annoncer avant l'envoi qu'un groupe de quarante personnes prend

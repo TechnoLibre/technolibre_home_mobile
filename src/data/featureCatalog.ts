@@ -2996,6 +2996,56 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/SmsGatewayConfig.java",
                 ],
             },
+            {
+                id: "sms-gateway.watchdog",
+                label: {
+                    en: "Watchdog and restart",
+                    fr: "Surveillance et relance",
+                },
+                description: {
+                    en: "Detects a dead service, restarts it, and logs it.",
+                    fr: "Detecte un service mort, le relance, et le consigne.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The service's own alarm lives INSIDE the service, so "
+                        + "when Android kills it the alarm dies too and nothing "
+                        + "notices the silence. A JobScheduler job belongs to "
+                        + "the system instead, survives the process, and is "
+                        + "persisted across reboots — 15 min is Android's floor "
+                        + "for a periodic job, coarse but it only has to catch "
+                        + "death, not pace the work. The screen also restarts on "
+                        + "sight, capped at two tries so a service that refuses "
+                        + "to start is not hammered. Deliberate stops cancel the "
+                        + "watchdog; otherwise it would revive what someone just "
+                        + "turned off. Every start, stop and revival is written "
+                        + "to its own log category, separating 'stopped by the "
+                        + "user' from 'killed by Android' — the first reads as a "
+                        + "decision, the second as a fault.",
+                    fr: "L'alarme du service vit DANS le service : quand Android "
+                        + "le tue, elle meurt avec lui et plus rien ne remarque "
+                        + "le silence. Un travail JobScheduler appartient au "
+                        + "systeme, survit au processus et traverse les "
+                        + "redemarrages — 15 min est le plancher d'Android pour "
+                        + "un travail periodique, grossier mais il ne doit "
+                        + "rattraper qu'une mort, pas cadencer le travail. "
+                        + "L'ecran releve aussi des qu'il constate la panne, "
+                        + "borne a deux tentatives pour ne pas marteler un "
+                        + "service qui refuse de demarrer. Un arret VOULU retire "
+                        + "la surveillance, sinon elle rallumerait ce qu'on vient "
+                        + "d'eteindre. Chaque demarrage, arret et relance va dans "
+                        + "sa propre categorie de journal, en distinguant "
+                        + "« arretee par l'utilisatrice » de « tuee par "
+                        + "Android » : la premiere se lit comme une decision, la "
+                        + "seconde comme une panne.",
+                },
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/SmsWatchdogJob.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsBootReceiver.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsGatewayService.java",
+                ],
+            },
         ],
     },
 ];

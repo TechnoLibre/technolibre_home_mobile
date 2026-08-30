@@ -89,8 +89,11 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
             <button type="button" class="sms-gateway__btn"
                     t-if="!state.status.enabled"
                     t-on-click="onStart" t-esc="t('sms_gateway.start')" />
+            <button type="button" class="sms-gateway__btn"
+                    t-if="state.status.enabled and !state.status.running"
+                    t-on-click="onStart" t-esc="t('sms_gateway.restart')" />
             <button type="button" class="sms-gateway__btn sms-gateway__btn--danger"
-                    t-if="state.status.enabled"
+                    t-if="state.status.enabled and state.status.running"
                     t-on-click="onStop" t-esc="t('sms_gateway.stop')" />
             <button type="button" class="sms-gateway__btn"
                     t-if="!state.status.hasSendPermission"
@@ -248,6 +251,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 			journalCount: 0,
 			journalBytes: 0,
 			keepsBodies: false,
+			relances: 0,
 			category: "",
 		});
 
@@ -287,7 +291,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 	}
 
 	static readonly CATEGORIES: SmsJournalCategory[] = [
-		"cycle", "send", "receipt", "inbound", "network", "config",
+		"service", "cycle", "send", "receipt", "inbound", "network", "config",
 	];
 
 	/** Seuil haut de la purge côté Android, pour la jauge d'occupation. */
@@ -432,6 +436,11 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 		return SmsGatewayUtils.health(this.state.status as SmsGatewayStatus);
 	}
 
+	/** Action à proposer : la règle vit dans {@link SmsGatewayUtils}. */
+	get primaryAction(): "start" | "restart" | "stop" {
+		return SmsGatewayUtils.primaryAction(this.state.status as SmsGatewayStatus);
+	}
+
 	get healthLabel(): string {
 		const map: Record<string, string> = {
 			off: this.t("sms_gateway.state_off"),
@@ -469,6 +478,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 					caps.allowPlainLan,
 				);
 			}
+			await this.releverSiTombee();
 		} catch (error: unknown) {
 			console.warn("[sms-gateway] état indisponible", error);
 		}
@@ -518,6 +528,38 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 				title: this.t("sms_gateway.save_error"),
 				message: String(error instanceof Error ? error.message : error),
 			});
+		}
+	}
+
+	/**
+	 * Relance la passerelle si elle est activée mais que le service est mort.
+	 *
+	 * C'est le cas observé après une réinstallation : la préférence dit « en
+	 * service », aucun processus ne tourne, et l'écran attendait qu'on
+	 * devine qu'il faut un cycle arrêt/démarrage. Constater la panne sans y
+	 * remédier n'a aucun intérêt — on relève.
+	 *
+	 * On ne relance PAS en boucle : deux tentatives ratées d'affilée et on
+	 * s'arrête, sinon un service qui refuse de démarrer serait rappelé toutes
+	 * les quelques secondes en vidant la batterie. Le filet natif
+	 * (`SmsWatchdogJob`) reprend le relais au quart d'heure suivant.
+	 */
+	async releverSiTombee(): Promise<void> {
+		const status = this.state.status as SmsGatewayStatus;
+		if (status.running || !status.enabled) {
+			this.state.relances = 0;
+		}
+		if (!SmsGatewayUtils.shouldRevive(status, this.state.relances)) {
+			return;
+		}
+		this.state.relances += 1;
+		try {
+			await SmsGatewayPlugin.startGateway();
+			// Le natif journalise la relance : rien à écrire ici, et deux
+			// traces de la même chose se contrediraient un jour.
+			await this.loadJournal();
+		} catch (error: unknown) {
+			console.warn("[sms-gateway] relance impossible", error);
 		}
 	}
 

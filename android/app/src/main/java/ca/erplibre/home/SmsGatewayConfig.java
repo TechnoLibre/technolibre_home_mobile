@@ -28,6 +28,7 @@ public class SmsGatewayConfig {
     private static final String KEY_JOURNAL_BODIES = "journal_bodies";
     private static final String KEY_ALLOW_PLAIN_LAN = "allow_plain_lan";
     private static final String KEY_CALL_LOG_DURATION = "call_log_duration";
+    private static final String KEY_SERVICE_LIVE = "service_live";
 
     private final SharedPreferences prefs;
 
@@ -88,6 +89,25 @@ public class SmsGatewayConfig {
 
     public void setCallLogDuration(boolean actif) {
         prefs.edit().putBoolean(KEY_CALL_LOG_DURATION, actif).apply();
+    }
+
+    /**
+     * Le service etait-il vivant la derniere fois qu'on a regarde ?
+     *
+     * <p>Persiste a dessein : un drapeau en memoire meurt avec le processus,
+     * donc il vaut toujours « non » au redemarrage — precisement dans le cas
+     * qu'on cherche a reconnaitre. Ecrit ici, il permet a un processus neuf de
+     * constater que le precedent est mort sans prevenir.
+     */
+    public boolean serviceLive() {
+        return prefs.getBoolean(KEY_SERVICE_LIVE, false);
+    }
+
+    public void setServiceLive(boolean vivant) {
+        // `commit` et non `apply` : quand Android tue le processus, une
+        // ecriture differee n'a pas le temps de partir, et le drapeau mentirait
+        // au demarrage suivant.
+        prefs.edit().putBoolean(KEY_SERVICE_LIVE, vivant).commit();
     }
 
     public boolean journalKeepsBodies() {

@@ -195,7 +195,21 @@ public class SmsGatewayService extends Service {
             return START_STICKY;
         }
         running = true;
+        // Le drapeau vient des PREFERENCES, pas de la memoire : un statique
+        // meurt avec le processus, donc il vaudrait toujours faux ici — et le
+        // cas a reconnaitre est justement celui ou le processus a ete tue.
+        // S'il dit encore « vivant » alors qu'on demarre, c'est que le service
+        // precedent est mort sans passer par onDestroy.
+        boolean morteSubite = config.serviceLive();
+        config.setServiceLive(true);
         stopRequested.set(false);
+        if (morteSubite) {
+            journal.warn(SmsJournal.CAT_SERVICE,
+                    "Service relance apres un arret NON demande : le"
+                            + " precedent a ete tue sans prevenir.", null);
+        } else {
+            journal.info(SmsJournal.CAT_SERVICE, "Service demarre", null);
+        }
         registerResultReceiver();
         registerCycleReceiver();
         registerNetworkCallback();
@@ -208,6 +222,27 @@ public class SmsGatewayService extends Service {
     public void onDestroy() {
         unregisterCallListener();
         Log.i(TAG, "Service détruit");
+        boolean voulu = stopRequested.get();
+        if (config != null) {
+            // On n'efface le drapeau que pour un arret PROPRE. Une mort subite
+            // ne passe pas ici, le drapeau reste a « vivant », et le prochain
+            // demarrage saura le dire.
+            config.setServiceLive(false);
+        }
+        if (journal != null) {
+            // La distinction est TOUTE la valeur de cette ligne : « arretee
+            // par l'utilisatrice » se lit comme une decision, « arretee par
+            // Android » se lit comme une panne a corriger.
+            if (voulu) {
+                journal.info(SmsJournal.CAT_SERVICE,
+                        "Service arrete a la demande", null);
+            } else {
+                journal.warn(SmsJournal.CAT_SERVICE,
+                        "Service arrete par le systeme, sans demande."
+                                + " La passerelle ne repondra plus tant"
+                                + " qu'elle n'est pas relancee.", null);
+            }
+        }
         stopRequested.set(true);
         running = false;
         connected = false;

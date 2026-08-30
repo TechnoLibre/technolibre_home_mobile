@@ -40,6 +40,12 @@ public class SmsBootReceiver extends BroadcastReceiver {
             return;
         }
         Log.i(TAG, "Relance de la passerelle après " + action);
+        new SmsJournal(context).info(SmsJournal.CAT_SERVICE,
+                "Relance apres " + action, null);
         SmsGatewayService.start(context);
+        // Le filet n'est pas persiste sur tous les appareils apres une mise a
+        // jour de l'application : on le repose sans condition, la planification
+        // est sans effet s'il est deja la.
+        SmsWatchdogJob.schedule(context);
     }
 }
