@@ -15,7 +15,9 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.PermissionCallback;
+import androidx.activity.result.ActivityResult;
 
 import java.util.List;
 
@@ -76,6 +78,8 @@ public class SmsGatewayPlugin extends Plugin {
         result.put("hasCallPermission", granted(Manifest.permission.CALL_PHONE));
         result.put("callLogDuration", config.callLogDuration());
         result.put("demoCallAudio", config.demoCallAudio());
+        result.put("dialerRoleHeld",
+                ca.erplibre.home.phone.CallRole.detenu(getContext()));
         result.put("hasCallerId", granted(Manifest.permission.READ_CALL_LOG));
 
         TelephonyManager telephony = getContext().getSystemService(TelephonyManager.class);
@@ -374,6 +378,54 @@ public class SmsGatewayPlugin extends Plugin {
         // mort du service passerait inapercue jusqu'a ce que quelqu'un
         // rouvre cet ecran.
         SmsWatchdogJob.schedule(getContext());
+        call.resolve();
+    }
+
+    /**
+     * Ouvre le dialogue systeme qui propose de nous confier le role de composeur.
+     *
+     * <p>Sonde : c'est le seul moyen d'obtenir l'instant du DECROCHE, que
+     * l'etat de ligne ordinaire ne donne pas. Rien n'est impose — le systeme
+     * affiche un dialogue, et le role se rend a tout moment depuis
+     * Reglages > Applications par defaut.
+     */
+    @PluginMethod
+    public void requestDialerRole(PluginCall call) {
+        android.content.Intent i =
+                ca.erplibre.home.phone.CallRole.intentDemande(getContext());
+        if (i == null) {
+            call.reject("Le role de composeur n'est pas disponible sur cet appareil.");
+            return;
+        }
+        // startActivityForResult, et surtout PAS startActivity avec
+        // FLAG_ACTIVITY_NEW_TASK : le systeme verifie que la demande vient de
+        // l'application elle-meme, par une activite qui attend une reponse.
+        // Lance autrement, l'intent est rejete EN SILENCE — mesure a l'appui,
+        // meme `adb am start` n'affiche aucun dialogue.
+        startActivityForResult(call, i, "resultatRoleComposeur");
+    }
+
+    @ActivityCallback
+    private void resultatRoleComposeur(PluginCall call, ActivityResult resultat) {
+        if (call == null) {
+            return;
+        }
+        boolean detenu = ca.erplibre.home.phone.CallRole.detenu(getContext());
+        JSObject reponse = new JSObject();
+        reponse.put("granted", detenu);
+        new SmsJournal(getContext()).info(SmsJournal.CAT_SERVICE,
+                detenu
+                        ? "Composeur : role accorde a l'application"
+                        : "Composeur : role refuse ou annule",
+                null);
+        call.resolve(reponse);
+    }
+
+    /** Conduit a l'ecran systeme ou le role se rend. */
+    @PluginMethod
+    public void releaseDialerRole(PluginCall call) {
+        getContext().startActivity(
+                ca.erplibre.home.phone.CallRole.intentRestitution());
         call.resolve();
     }
 

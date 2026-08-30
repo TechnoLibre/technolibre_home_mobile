@@ -1,0 +1,87 @@
+.phone-dialer {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	padding: 0 16px 24px;
+
+	&__display {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 12px;
+		min-height: 64px;
+		margin: 8px 0 4px;
+	}
+
+	&__number {
+		font-size: 2rem;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		word-break: break-all;
+	}
+
+	&__erase {
+		background: none;
+		border: none;
+		color: inherit;
+		font-size: 1.5rem;
+		cursor: pointer;
+		opacity: 0.7;
+	}
+
+	&__error {
+		margin: 0 0 8px;
+		color: #d9534f;
+		font-size: 0.9rem;
+		text-align: center;
+	}
+
+	&__keys {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 10px;
+		margin-bottom: 16px;
+	}
+
+	&__key {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		// Assez grand pour être touché sans viser : ce clavier peut servir en
+		// urgence, et une cible trop petite se rate.
+		min-height: 64px;
+		border: 1px solid rgba(128, 128, 128, 0.35);
+		border-radius: 12px;
+		background: transparent;
+		color: inherit;
+		cursor: pointer;
+	}
+
+	&__digit {
+		font-size: 1.6rem;
+		line-height: 1.1;
+	}
+
+	&__letters {
+		font-size: 0.7rem;
+		letter-spacing: 0.12em;
+		opacity: 0.6;
+	}
+
+	&__call {
+		margin-top: auto;
+		min-height: 60px;
+		border: none;
+		border-radius: 12px;
+		background: #1e7a46;
+		color: #fff;
+		font-size: 1.15rem;
+		cursor: pointer;
+
+		&:disabled {
+			opacity: 0.4;
+			cursor: default;
+		}
+	}
+}

@@ -38,6 +38,7 @@ interface HomeState {
     rootTags: Tag[];
     loaded: boolean;
     uptime: string;
+    telephoneParDefaut: boolean;
 }
 
 export class HomeComponent extends EnhancedComponent {
@@ -116,6 +117,15 @@ export class HomeComponent extends EnhancedComponent {
           <span t-if="state.appCount > 0" class="home-action-card__badge"
                 t-esc="state.appCount" aria-hidden="true"/>
         </button>
+        <!-- Uniquement quand l'application tient le rôle de composeur :
+             proposer un clavier sans avoir la main sur les appels donnerait un
+             bouton incapable de tenir sa promesse. -->
+        <button t-if="state.telephoneParDefaut" class="home-action-card"
+                role="listitem" t-on-click="onPhoneClick"
+                t-att-aria-label="t('label.phone')">
+          <span class="home-action-card__icon" aria-hidden="true">📞</span>
+          <span class="home-action-card__label" t-esc="t('label.phone')"/>
+        </button>
       </div>
 
       <div id="home-quick-notes" t-if="state.loaded and state.quickNotes.length > 0">
@@ -177,9 +187,11 @@ export class HomeComponent extends EnhancedComponent {
             rootTags: [],
             loaded: false,
             uptime: this._formatUptime(0),
+            telephoneParDefaut: false,
         });
         onMounted(() => {
             this.loadStats();
+            this._verifierRoleComposeur();
             this._tickUptime();
             this._uptimeTimer = setInterval(() => this._tickUptime(), this._uptimePeriodMs);
         });
@@ -273,6 +285,30 @@ export class HomeComponent extends EnhancedComponent {
 
     onServersClick() {
         this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/applications"});
+    }
+
+    /**
+     * La tuile Téléphone n'apparaît que si le rôle de composeur est détenu.
+     *
+     * On interroge le natif à chaque affichage : le rôle se rend depuis les
+     * Réglages d'Android, sans passer par nous, donc une valeur mise en cache
+     * finirait par mentir.
+     */
+    async _verifierRoleComposeur() {
+        try {
+            const {SmsGatewayPlugin} = await import(
+                "../../plugins/smsGatewayPlugin"
+            );
+            const caps = await SmsGatewayPlugin.getCapabilities();
+            this.state.telephoneParDefaut = Boolean(caps.dialerRoleHeld);
+        } catch {
+            // Hors Android, ou greffon absent : pas de tuile, pas d'erreur.
+            this.state.telephoneParDefaut = false;
+        }
+    }
+
+    onPhoneClick() {
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/phone"});
     }
 
     onApplicationsClick() {

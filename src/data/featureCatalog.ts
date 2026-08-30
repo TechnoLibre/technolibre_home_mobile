@@ -2997,6 +2997,97 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "sms-gateway.dialer-keypad",
+                label: { en: "Keypad", fr: "Clavier de composition" },
+                description: {
+                    en: "Compose a number from the app when it holds the dialer role.",
+                    fr: "Composer un numéro depuis l'app quand elle tient le rôle.",
+                },
+                permissions: ["calls"],
+                status: "experimental",
+                howItWorks: {
+                    en: "The Home tile appears only while the app actually holds "
+                        + "the dialer role, checked against the native side on "
+                        + "every mount — the role can be handed back from Android "
+                        + "Settings without going through us, so a cached value "
+                        + "would eventually lie. Offering a keypad without "
+                        + "control over calls would be a button that cannot keep "
+                        + "its promise. The call goes out through the SAME path "
+                        + "as Odoo's click-to-dial, so it is traced and reported "
+                        + "like any other; a second dialling path bypassing the "
+                        + "log would produce calls invisible to Odoo, which is "
+                        + "exactly what the gateway exists to prevent.",
+                    fr: "La tuile d'Accueil n'apparaît que si l'application tient "
+                        + "réellement le rôle de composeur, vérifié auprès du "
+                        + "natif à chaque affichage — le rôle se rend depuis les "
+                        + "Réglages d'Android sans passer par nous, donc une "
+                        + "valeur en cache finirait par mentir. Proposer un "
+                        + "clavier sans avoir la main sur les appels donnerait un "
+                        + "bouton incapable de tenir sa promesse. L'appel part "
+                        + "par le MÊME chemin que le clic-pour-appeler d'Odoo : "
+                        + "il est donc tracé et remonté comme les autres. Un "
+                        + "second chemin de composition échappant au journal "
+                        + "produirait des appels invisibles côté Odoo — "
+                        + "précisément ce que la passerelle existe pour éviter.",
+                },
+                demo: { kind: "route", url: "/phone" },
+                files: [
+                    "src/components/phone/phone_dialer_component.ts",
+                    "src/components/phone/phone_dialer_component.scss",
+                    "src/components/home/home_component.ts",
+                ],
+            },
+            {
+                id: "sms-gateway.dialer-probe",
+                label: {
+                    en: "Dialer role (probe)",
+                    fr: "Rôle de composeur (sonde)",
+                },
+                description: {
+                    en: "Becomes the default phone app to learn when a call is answered.",
+                    fr: "Devient le téléphone par défaut pour connaître l'instant du décroché.",
+                },
+                permissions: ["calls"],
+                status: "experimental",
+                howItWorks: {
+                    en: "No public API tells an ordinary app when the other party "
+                        + "answers an outgoing call: Telecom files DIALING and "
+                        + "ACTIVE under the same CALL_STATE_OFFHOOK, and the "
+                        + "transition emits no event at all. PreciseCallState "
+                        + "does distinguish them but is signature|privileged — "
+                        + "measured on the device: declarable, never granted, and "
+                        + "pm grant refuses it. An InCallService gives "
+                        + "Call.STATE_ACTIVE, and it is the only way. The catch: "
+                        + "once bound, Telecom stops showing the system call "
+                        + "screen and shows ours, so an incomplete screen would "
+                        + "leave someone in a call with no hang-up button. Hence "
+                        + "a native layout with no webview and no loading. "
+                        + "Reversible from Settings > Default apps at any time.",
+                    fr: "Aucune interface publique ne dit à une application "
+                        + "ordinaire quand le correspondant décroche un appel "
+                        + "sortant : Telecom range DIALING et ACTIVE sous le même "
+                        + "CALL_STATE_OFFHOOK, et la transition n'émet aucun "
+                        + "événement. PreciseCallState les distingue mais est en "
+                        + "signature|privileged — mesuré sur l'appareil : "
+                        + "déclarable, jamais accordée, et pm grant la refuse. Un "
+                        + "InCallService donne Call.STATE_ACTIVE, et c'est la "
+                        + "seule voie. La contrepartie : une fois lié, Telecom "
+                        + "cesse d'afficher l'écran d'appel du système et affiche "
+                        + "le nôtre — un écran incomplet laisserait quelqu'un en "
+                        + "communication sans bouton pour raccrocher. D'où une "
+                        + "mise en page native, sans webview ni chargement. "
+                        + "Réversible depuis Réglages > Applications par défaut.",
+                },
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/phone/PhoneCallService.java",
+                    "android/app/src/main/java/ca/erplibre/home/phone/InCallActivity.java",
+                    "android/app/src/main/java/ca/erplibre/home/phone/DialerActivity.java",
+                    "android/app/src/main/java/ca/erplibre/home/phone/CallRole.java",
+                    "android/app/src/main/res/layout/activity_in_call.xml",
+                ],
+            },
+            {
                 id: "sms-gateway.watchdog",
                 label: {
                     en: "Watchdog and restart",

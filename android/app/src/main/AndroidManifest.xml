@@ -86,6 +86,50 @@
         </service>
 
         <!-- Capte les SMS entrants pour honorer automatiquement les STOP. -->
+        <!-- ===== Sonde composeur (role DIALER) =====
+             Ces composants ne s'activent QUE si l'utilisatrice confie le role
+             a l'application, par un dialogue systeme. Sans le role, Telecom ne
+             lie pas l'InCallService et l'ecran d'appel de Google continue de
+             fonctionner normalement. Le role se rend depuis
+             Reglages > Applications par defaut > Application Telephone. -->
+
+        <service
+            android:name=".phone.PhoneCallService"
+            android:permission="android.permission.BIND_INCALL_SERVICE"
+            android:exported="true">
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_UI"
+                android:value="true" />
+            <intent-filter>
+                <action android:name="android.telecom.InCallService" />
+            </intent-filter>
+        </service>
+
+        <activity
+            android:name=".phone.InCallActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:showOnLockScreen="true"
+            android:theme="@style/AppTheme.NoActionBar" />
+
+        <!-- Les deux activites ACTION_DIAL sont la CONDITION du role : verifie
+             sur l'appareil, ce sont les seuls `required-components` exiges. -->
+        <activity
+            android:name=".phone.DialerActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="tel" />
+            </intent-filter>
+        </activity>
+
         <!-- Filet de securite : releve la passerelle quand Android l'a tuee.
              Appartient au systeme, donc survit a la mort du processus. -->
         <service

@@ -28,6 +28,14 @@ export interface SmsCapabilities {
     allowPlainLan: boolean;
     /** La mélodie de démonstration joue-t-elle pendant les appels ? */
     demoCallAudio: boolean;
+    /**
+     * L'application tient-elle le rôle de composeur par défaut ?
+     *
+     * Sonde en cours d'évaluation. Le rôle donne l'instant exact du décroché,
+     * que l'état de ligne ordinaire ne signale pas — mais il fait aussi de
+     * notre écran le SEUL écran d'appel du téléphone.
+     */
+    dialerRoleHeld: boolean;
     simReady: boolean;
     sims: SmsSimInfo[];
 }
@@ -142,6 +150,16 @@ export interface SmsGatewayPlugin {
     startGateway(): Promise<void>;
     stopGateway(): Promise<void>;
     getStatus(): Promise<SmsGatewayStatus>;
+    /**
+     * Ouvre le dialogue système proposant de nous confier le rôle de composeur.
+     *
+     * Résout quand l'utilisatrice a répondu, avec `granted` disant ce qu'elle a
+     * choisi. Le dialogue est celui d'Android : nous ne pouvons ni le
+     * contourner, ni présumer de la réponse.
+     */
+    requestDialerRole(): Promise<{ granted: boolean }>;
+    /** Conduit à l'écran système où le rôle se rend. */
+    releaseDialerRole(): Promise<void>;
     kick(): Promise<void>;
     clearLastError(): Promise<void>;
     journalEntries(query?: SmsJournalQuery): Promise<SmsJournalPage>;

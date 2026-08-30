@@ -176,6 +176,21 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
           <p class="sms-gateway__warning" t-if="state.demoCallAudio"
              t-esc="t('sms_gateway.demo_call_audio_warning')" />
 
+          <h2 class="sms-gateway__subtitle" t-esc="t('sms_gateway.dialer_title')" />
+          <p class="sms-gateway__hint" t-esc="t('sms_gateway.dialer_hint')" />
+          <p class="sms-gateway__warning"
+             t-esc="t('sms_gateway.dialer_warning')" />
+          <div class="sms-gateway__actions">
+            <button type="button" class="sms-gateway__btn"
+                    t-if="!state.caps.dialerRoleHeld"
+                    t-on-click="onRequestDialer"
+                    t-esc="t('sms_gateway.dialer_request')" />
+            <button type="button" class="sms-gateway__btn sms-gateway__btn--danger"
+                    t-if="state.caps.dialerRoleHeld"
+                    t-on-click="onReleaseDialer"
+                    t-esc="t('sms_gateway.dialer_release')" />
+          </div>
+
           <div class="sms-gateway__actions">
             <button type="button" class="sms-gateway__btn" t-on-click="onSave"
                     t-esc="t('sms_gateway.save')" />
@@ -357,6 +372,34 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 		this.state.demoCallAudio = actif;
 	}
 
+	/** Demande le rôle de composeur. Le système affiche son propre dialogue. */
+	async onRequestDialer(): Promise<void> {
+		try {
+			await SmsGatewayPlugin.requestDialerRole();
+			// Relire le natif plutôt que croire le dialogue : refuser, annuler
+			// ou revenir en arrière donnent trois chemins différents, et un
+			// seul d'entre eux accorde vraiment le rôle.
+			await this.refresh();
+		} catch (error: unknown) {
+			console.warn("[sms-gateway] rôle composeur indisponible", error);
+		}
+	}
+
+	/**
+	 * Rend le rôle.
+	 *
+	 * Aucune API ne permet à une application de se retirer elle-même un rôle —
+	 * c'est voulu, un tel choix ne doit pas se faire dans le dos de qui utilise
+	 * l'appareil. On conduit donc à l'écran système.
+	 */
+	async onReleaseDialer(): Promise<void> {
+		try {
+			await SmsGatewayPlugin.releaseDialerRole();
+		} catch (error: unknown) {
+			console.warn("[sms-gateway] écran des applications par défaut", error);
+		}
+	}
+
 	async onToggleBodies(ev: Event): Promise<void> {
 		const keep = (ev.target as HTMLInputElement).checked;
 		const form = this.state.form as FormState;
@@ -446,6 +489,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 			canScheduleExactAlarms: true,
 			allowPlainLan: false,
 			demoCallAudio: false,
+			dialerRoleHeld: false,
 			simReady: false,
 			sims: [],
 		};

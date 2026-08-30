@@ -24,6 +24,7 @@ import { OptionsFeaturesComponent } from "../components/options/features/options
 import { ApplicationsGalleryComponent } from "../components/applications/gallery/applications_gallery_component";
 import { OptionsSmsGatewayComponent } from "../components/options/sms_gateway/options_sms_gateway_component";
 import { TagNotesComponent } from "../components/tags/tag_notes_component";
+import { PhoneDialerComponent } from "../components/phone/phone_dialer_component";
 
 export interface Route {
 	pathname: string;
@@ -49,6 +50,7 @@ export const routes: Route[] = [
 	{ pathname: "/intent/:type", component: IntentComponent },
 	{ pathname: "/options/language", component: OptionsLanguageComponent },
 	{ pathname: "/options/sms_gateway", component: OptionsSmsGatewayComponent },
+	{ pathname: "/phone", component: PhoneDialerComponent },
 	{ pathname: "/options/database", component: OptionsDatabaseComponent },
 	{ pathname: "/options/erplibre", component: OptionsErplibreComponent },
 	{ pathname: "/options/transcription", component: OptionsTranscriptionComponent },
