@@ -6,11 +6,11 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:networkSecurityConfig="@xml/network_security_config"
+        android:networkSecurityConfig="@xml/${netSecConfig}"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="false"
+        android:usesCleartextTraffic="${cleartextAllowed}"
         tools:replace="android:usesCleartextTraffic"><!-- ours wins over the
         capacitor-cordova-android-plugins default of true. The fine-grained
         cleartext policy is in res/xml/network_security_config.xml: deny by
@@ -66,6 +66,101 @@
             android:exported="false"
             android:stopWithTask="false" />
 
+        <!-- Passerelle SMS.
+
+             Le type est "specialUse" et non "dataSync" : Android 15 plafonne
+             dataSync a six heures par periode de vingt-quatre heures, ce qui est
+             incompatible avec un canal d'alerte qui doit tourner en permanence.
+             L'application n'etant pas distribuee par Google Play, la
+             justification que Play exigerait pour ce type ne s'applique pas. -->
+        <service
+            android:name=".SmsGatewayService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Passerelle SMS : relaie vers la carte SIM les avis
+                    d'annulation et de retard emis par le serveur ERPLibre. Doit
+                    rester active en continu pour qu'une alerte de derniere minute
+                    puisse partir." />
+        </service>
+
+        <!-- Capte les SMS entrants pour honorer automatiquement les STOP. -->
+        <!-- ===== Sonde composeur (role DIALER) =====
+             Ces composants ne s'activent QUE si l'utilisatrice confie le role
+             a l'application, par un dialogue systeme. Sans le role, Telecom ne
+             lie pas l'InCallService et l'ecran d'appel de Google continue de
+             fonctionner normalement. Le role se rend depuis
+             Reglages > Applications par defaut > Application Telephone. -->
+
+        <service
+            android:name=".phone.PhoneCallService"
+            android:permission="android.permission.BIND_INCALL_SERVICE"
+            android:exported="true">
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_UI"
+                android:value="true" />
+            <intent-filter>
+                <action android:name="android.telecom.InCallService" />
+            </intent-filter>
+        </service>
+
+        <activity
+            android:name=".phone.InCallActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:showOnLockScreen="true"
+            android:theme="@style/AppTheme.NoActionBar" />
+
+        <!-- Les deux activites ACTION_DIAL sont la CONDITION du role : verifie
+             sur l'appareil, ce sont les seuls `required-components` exiges. -->
+        <activity
+            android:name=".phone.DialerActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="tel" />
+            </intent-filter>
+        </activity>
+
+        <!-- Filet de securite : releve la passerelle quand Android l'a tuee.
+             Appartient au systeme, donc survit a la mort du processus. -->
+        <service
+            android:name=".SmsWatchdogJob"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
+
+        <receiver
+            android:name=".SmsInboundReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter android:priority="500">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Relance la passerelle apres un redemarrage ou une mise a jour :
+             sans lui, une coupure de courant eteindrait le canal d'alerte
+             definitivement et en silence. -->
+        <receiver
+            android:name=".SmsBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -101,8 +196,50 @@
 
     <!-- CapacitorVoiceRecorder Plugin -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Demonstration seulement : mettre l'appel sur haut-parleur
+         pour que le microphone reprenne la melodie. Permission
+         normale, accordee a l'installation. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- CapacitorVideoPlayer Plugin (legacy, no-op on API 33+) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+
+    <!-- Passerelle SMS -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- Appels. CALL_PHONE compose ; READ_PHONE_STATE observe la ligne.
+
+         READ_CALL_LOG est declaree mais JAMAIS demandee au demarrage : elle
+         est reclamee seulement si l'exploitant active l'affichage de la fiche
+         de l'appelant. Depuis Android 10, `onCallStateChanged` ne transmet
+         plus le numero entrant sans elle — sans numero, il n'y a rien a
+         chercher dans Odoo, et la fonction est donc impossible autrement.
+
+         Ce qu'elle coute : l'acces a TOUT l'historique d'appels de
+         l'appareil. Proportionne sur un telephone dedie a la passerelle, dont
+         le journal ne contient que ses propres appels. Disproportionne sur le
+         telephone personnel de quelqu'un — d'ou le fait que ce soit un choix
+         et non un defaut. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <!-- Facultative : sert uniquement a nommer les cartes SIM d'un appareil
+         multi-SIM dans l'ecran de configuration. Son refus n'empeche pas
+         l'envoi par la SIM par defaut. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- API 34+ : le type de service de premier plan doit etre declare. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Relancer un cycle des que le reseau revient, plutot que d'attendre
+         l'intervalle entier. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Cadencement des interrogations. `Thread.sleep` ne convient pas : il se
+         base sur une horloge qui s'arrete quand l'appareil se suspend, et un
+         service de premier plan ne tient aucun wakelock. Sans cette permission
+         le cadencement reste fonctionnel, simplement approche. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Demandee a l'utilisateur, jamais accordee par programme : sans elle,
+         les constructeurs les plus agressifs arretent la passerelle. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 </manifest>

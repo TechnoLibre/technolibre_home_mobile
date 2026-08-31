@@ -82,6 +82,11 @@ export class OptionsComponent extends EnhancedComponent {
           </a>
         </li>
         <li class="options-list__item">
+          <a href="#" role="button" t-att-aria-label="t('options.sms_gateway')" t-on-click.stop.prevent="onSmsGatewayClick">
+            📨 <t t-esc="t('options.sms_gateway')"/> ›
+          </a>
+        </li>
+        <li class="options-list__item">
           <a href="#" role="button" t-att-aria-label="t('options.erplibre')" t-on-click.stop.prevent="onErplibreClick">
             🏠 <t t-esc="t('options.erplibre')"/> ›
           </a>
@@ -128,6 +133,10 @@ export class OptionsComponent extends EnhancedComponent {
 
 	onProcessesClick() {
 		this.navigate("/options/processes");
+	}
+
+	onSmsGatewayClick() {
+		this.navigate("/options/sms_gateway");
 	}
 
 	onCodeClick() {
