@@ -196,6 +196,10 @@
 
     <!-- CapacitorVoiceRecorder Plugin -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Demonstration seulement : mettre l'appel sur haut-parleur
+         pour que le microphone reprenne la melodie. Permission
+         normale, accordee a l'installation. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- CapacitorVideoPlayer Plugin (legacy, no-op on API 33+) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
