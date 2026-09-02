@@ -63,7 +63,24 @@ android {
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
-            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+            //
+            // `-PslimApk` retire les dépôts de code embarqués pour le navigateur
+            // hors ligne. Ils pèsent à eux seuls 123 306 fichiers, alors qu'un
+            // APK ne peut contenir que 65 535 entrées : sans cette option, la
+            // tâche packageDebug échoue sur « Too many zip entries ».
+            //
+            // Ce n'est PAS un correctif : l'APK produit perd le navigateur de
+            // code. Il sert à obtenir une application installable pour tester
+            // le reste. La solution durable — réduire ce qui est embarqué, ou
+            // le servir autrement — est une décision de produit.
+            def slim = !project.hasProperty('slimApk') || project.property('slimApk').toString() != 'false'
+            if (slim) {
+                logger.lifecycle("slimApk : dépôts de code embarqués exclus de l'APK")
+            } else {
+                logger.warn("slimApk=false : l'empaquetage va échouer, 124 000 entrées pour 65 535 permises.")
+            }
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~' +
+                    (slim ? ':repos:repo' : '')
         }
     }
     buildTypes {
