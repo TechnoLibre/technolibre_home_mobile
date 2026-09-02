@@ -86,6 +86,49 @@
         </service>
 
         <!-- Capte les SMS entrants pour honorer automatiquement les STOP. -->
+        <!-- ===== Sonde composeur (role DIALER) =====
+             Ces composants ne s'activent QUE si l'utilisatrice confie le role
+             a l'application, par un dialogue systeme. Sans le role, Telecom ne
+             lie pas l'InCallService et l'ecran d'appel de Google continue de
+             fonctionner normalement. Le role se rend depuis
+             Reglages > Applications par defaut > Application Telephone. -->
+
+        <service
+            android:name=".phone.PhoneCallService"
+            android:permission="android.permission.BIND_INCALL_SERVICE"
+            android:exported="true">
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_UI"
+                android:value="true" />
+            <intent-filter>
+                <action android:name="android.telecom.InCallService" />
+            </intent-filter>
+        </service>
+
+        <activity
+            android:name=".phone.InCallActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:showOnLockScreen="true"
+            android:theme="@style/AppTheme.NoActionBar" />
+
+        <!-- Les deux activites ACTION_DIAL sont la CONDITION du role : verifie
+             sur l'appareil, ce sont les seuls `required-components` exiges. -->
+        <activity
+            android:name=".phone.DialerActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="tel" />
+            </intent-filter>
+        </activity>
 
         <!-- Filet de securite : releve la passerelle quand Android l'a tuee.
              Appartient au systeme, donc survit a la mort du processus. -->
@@ -160,6 +203,21 @@
 
     <!-- Passerelle SMS -->
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- Appels. CALL_PHONE compose ; READ_PHONE_STATE observe la ligne.
+
+         READ_CALL_LOG est declaree mais JAMAIS demandee au demarrage : elle
+         est reclamee seulement si l'exploitant active l'affichage de la fiche
+         de l'appelant. Depuis Android 10, `onCallStateChanged` ne transmet
+         plus le numero entrant sans elle — sans numero, il n'y a rien a
+         chercher dans Odoo, et la fonction est donc impossible autrement.
+
+         Ce qu'elle coute : l'acces a TOUT l'historique d'appels de
+         l'appareil. Proportionne sur un telephone dedie a la passerelle, dont
+         le journal ne contient que ses propres appels. Disproportionne sur le
+         telephone personnel de quelqu'un — d'ou le fait que ce soit un choix
+         et non un defaut. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <!-- Facultative : sert uniquement a nommer les cartes SIM d'un appareil
          multi-SIM dans l'ecran de configuration. Son refus n'empeche pas

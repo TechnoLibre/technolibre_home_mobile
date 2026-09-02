@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ecran d'appel. Volontairement pauvre et natif : quand ce service est lie,
+     c'est le SEUL ecran d'appel du telephone. Il doit s'afficher meme si tout
+     le reste de l'application va mal, donc ni webview, ni chargement, ni
+     dependance externe. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:background="#101418"
+    android:padding="24dp">
+
+    <TextView
+        android:id="@+id/etiquette_etat"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="72dp"
+        android:textColor="#8AA0B4"
+        android:textSize="16sp"
+        android:text="" />
+
+    <TextView
+        android:id="@+id/etiquette_numero"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:textColor="#FFFFFF"
+        android:textSize="30sp"
+        android:textStyle="bold"
+        android:text="" />
+
+    <TextView
+        android:id="@+id/etiquette_duree"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textColor="#8AA0B4"
+        android:textSize="18sp"
+        android:text="" />
+
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <Button
+            android:id="@+id/bouton_haut_parleur"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="16dp"
+            android:minWidth="140dp"
+            android:text="@string/in_call_speaker" />
+
+        <Button
+            android:id="@+id/bouton_micro"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="140dp"
+            android:text="@string/in_call_mute" />
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/bouton_repondre"
+        android:layout_width="match_parent"
+        android:layout_height="72dp"
+        android:layout_marginTop="24dp"
+        android:backgroundTint="#1E7A46"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:visibility="gone"
+        android:text="@string/in_call_answer" />
+
+    <!-- Raccrocher est le bouton qui ne doit JAMAIS manquer : il est le dernier
+         de la pile, pleine largeur, toujours visible. -->
+    <Button
+        android:id="@+id/bouton_raccrocher"
+        android:layout_width="match_parent"
+        android:layout_height="72dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="32dp"
+        android:backgroundTint="#B3261E"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:text="@string/in_call_hangup" />
+</LinearLayout>
