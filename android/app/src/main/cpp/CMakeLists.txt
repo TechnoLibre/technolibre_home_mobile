@@ -89,7 +89,14 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/sentencepiece/CMakeLists.txt)
 
     add_library(marian_jni SHARED marian_jni.cpp)
 
+    # La RACINE de sentencepiece, en plus de src/ : sentencepiece_processor.h
+    # inclut "third_party/absl/strings/string_view.h", chemin relatif à cette
+    # racine. Sentencepiece l'ajoute pour ses propres cibles (src/CMakeLists.txt,
+    # `include_directories(${CMAKE_CURRENT_SOURCE_DIR}/..)`) mais pas pour les
+    # nôtres. Le lien third_party/absl est créé au moment de la configuration et
+    # pointe vers l'abseil récupéré.
     target_include_directories(marian_jni PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/sentencepiece
         ${CMAKE_CURRENT_SOURCE_DIR}/sentencepiece/src
     )
 

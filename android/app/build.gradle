@@ -31,6 +31,27 @@ android {
                 cmake {
                     cppFlags "-std=c++17"
                     arguments "-DANDROID_STL=c++_shared"
+
+                    // sentencepiece récupère protobuf, dont le CMake construit
+                    // `protoc` pour la CIBLE puis tente de l'exécuter sur l'hôte
+                    // afin de générer les .pb.cc. Comme la cible est arm64 et
+                    // l'hôte x86_64, cela échoue sur « Exec format error ».
+                    //
+                    // sentencepiece prévoit le cas : SPM_PROTOC_EXECUTABLE
+                    // désigne un protoc hôte et désactive celui de la cible. Le
+                    // binaire est produit par tools/build-host-protoc.sh, dans
+                    // la version que sentencepiece exige — code généré et
+                    // bibliothèque d'exécution vont par paire.
+                    //
+                    // Rien à faire quand BUNDLE_SKIP_WHISPER=1 : la compilation
+                    // native est alors sautée, sentencepiece avec.
+                    def hostProtoc = rootProject.file("tools/protoc/bin/protoc")
+                    if (hostProtoc.exists()) {
+                        arguments "-DSPM_PROTOC_EXECUTABLE=${hostProtoc.absolutePath}"
+                    } else {
+                        logger.warn("protoc hôte absent : lancez android/tools/build-host-protoc.sh, " +
+                                    "sinon la compilation native échouera sur « Exec format error ».")
+                    }
                 }
             }
         }
