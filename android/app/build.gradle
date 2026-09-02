@@ -26,6 +26,25 @@ android {
         versionName "2026.08.24.01"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "boolean", "SKIP_WHISPER", "${skipWhisper}"
+
+        // `-PlanCleartext` produit un APK de DEMONSTRATION qui tolere le HTTP
+        // en clair, pour joindre un Odoo du reseau local en Wi-Fi.
+        //
+        // Android n'accepte pas de plages CIDR dans sa configuration reseau :
+        // on ne peut pas y ecrire « seulement les adresses privees ». Lever la
+        // protection la leve donc entierement, et le seul rempart restant est
+        // la verification cote application (plages RFC 1918 + accord explicite
+        // de l'utilisateur). C'est plus faible, et c'est pourquoi ce n'est PAS
+        // le defaut.
+        def lanCleartext = project.hasProperty('lanCleartext')
+        if (lanCleartext) {
+            logger.warn("lanCleartext : APK de demonstration, HTTP en clair tolere par le systeme")
+        }
+        manifestPlaceholders = [
+            netSecConfig    : lanCleartext ? "network_security_config_lan"
+                                           : "network_security_config",
+            cleartextAllowed: lanCleartext ? "true" : "false",
+        ]
         if (!skipWhisper) {
             externalNativeBuild {
                 cmake {

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Variante de DEMONSTRATION, produite par `-PlanCleartext`.
+
+  Android n'accepte que des hotes nommes dans ce fichier, jamais des plages
+  CIDR : il est donc impossible d'y exprimer « toutes les adresses privees ».
+  Autoriser le Wi-Fi local en clair oblige a lever la protection en entier.
+
+  Ce que cela deplace, il faut le dire : le controle ne vient plus du systeme
+  mais du code de l'application, qui n'accepte que les plages RFC 1918 et
+  seulement apres un accord explicite de l'utilisateur. C'est une garantie
+  plus faible — un defaut dans ce code ne serait plus rattrape par Android.
+
+  L'APK par defaut garde `network_security_config.xml`, qui bloque tout le
+  clair hors bouclage. Cette variante n'existe que pour demontrer la
+  passerelle sur un reseau maitrise.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
