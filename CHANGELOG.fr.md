@@ -24,6 +24,41 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   paragraphe. Six niveaux de titre et les listes imbriquées ont suivi. Le
   rendu est passé à côté de `syntax_highlight.ts` pour être testable, y
   compris contre la documentation du dépôt
+- **Passerelle SMS** (Options › Passerelle SMS) — le téléphone devient le
+  canal SMS sortant d'un serveur ERPLibre : il interroge Odoo en HTTPS
+  sortant, envoie par sa propre carte SIM et rend compte de chaque accusé,
+  si bien que rien n'est facturé au message et que l'appareil n'a besoin ni
+  d'une adresse fixe ni d'un port ouvert. Le service au premier plan est
+  déclaré `specialUse` et non `dataSync`, plafonné depuis Android 15 à six
+  heures par période de vingt-quatre — un canal d'alerte permanent n'entre
+  pas sous ce plafond. Une tâche planifiée le relève quand le système le
+  tue, et un récepteur de démarrage le rallume après une coupure de courant.
+  Chaque corps est signé en HMAC-SHA256, l'envoi se tient à 24 segments par
+  minute contre la limite de 30 qu'Android applique de lui-même, et un STOP
+  entrant est honoré par un récepteur dédié
+- **Téléphone** — un clavier de composition à `/phone`, et l'application peut
+  tenir le rôle de composeur. Sans `InCallService`, `onCallStateChanged`
+  classe la composition et la conversation sous le même état décroché :
+  rien ne dit QUAND le correspondant répond, alors que le rôle donne
+  l'instant exact. Il se confie par un dialogue système et se rend depuis
+  les réglages, et les composants restent inertes tant qu'il n'est pas
+  accordé — l'écran d'appel du système fonctionne normalement
+- **APK de démonstration pour un serveur du réseau local** — `-PlanCleartext`
+  produit une variante qui tolère le HTTP en clair. La configuration réseau
+  d'Android n'accepte aucune plage CIDR : on ne peut pas y écrire
+  « seulement les adresses privées ». Lever la protection la lève donc
+  entièrement, et le seul rempart restant est la vérification côté
+  application — plages RFC 1918 et accord explicite de l'utilisateur. C'est
+  plus faible, et ce n'est donc pas le défaut
+- **Démonstration d'audio d'appel**, désactivée par défaut et limitée aux
+  appels sortants — Android n'expose aucune interface pour injecter du son
+  dans le flux montant d'un appel : ce flux appartient au modem, et
+  `VOICE_UPLINK`, `VOICE_DOWNLINK` et `VOICE_CALL` exigent
+  `CAPTURE_AUDIO_OUTPUT`, réservée aux applications signées par la
+  plateforme, sans contrepartie en écriture à aucun niveau de permission.
+  Reste le couplage acoustique — jouer sur le haut-parleur pendant que le
+  micro capte — dont l'annulation d'écho du processeur de signal retire ce
+  que l'appareil vient de jouer, d'où une qualité mauvaise par construction
 
 ### Modifié
 - **Les catalogues gettext quittent le bundle** — 41 763 fichiers et 857 Mo,
@@ -34,6 +69,22 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `BUNDLE_SKIP_IMG=1` écarte aussi les images matricielles et amène les
   archives à 115 Mo. Effet de bord bienvenu : 41 763 fichiers de moins
   ramènent la compilation de 43 s à 22 s
+
+### Corrigé
+- **L'empaquetage tient sous les 65 535 entrées d'un APK** — le navigateur de
+  code hors ligne embarque 123 306 fichiers, et l'empaquetage échouait sur
+  « Too many zip entries ». Ces dépôts sont désormais exclus par défaut, et
+  `-PslimApk=false` les rétablit pour retrouver l'échec. Ce n'est pas un
+  correctif : l'APK produit perd le navigateur de code, et la solution
+  durable — servir ces dépôts depuis le réseau plutôt que de les embarquer —
+  reste une décision de produit
+- **La compilation native trouve un `protoc` d'hôte** — sentencepiece
+  récupère protobuf, dont le CMake construit `protoc` pour la cible puis
+  tente de l'exécuter sur l'hôte : arm64 contre x86_64, « Exec format
+  error ». `android/tools/build-host-protoc.sh` produit le binaire hôte hors
+  du dépôt, huit mégaoctets propres à l'architecture de qui compile, et
+  `SPM_PROTOC_EXECUTABLE` le désigne. Rien à faire quand
+  `BUNDLE_SKIP_WHISPER=1` saute la compilation native
 
 ## [2026.08.24.01] - 2026-08-24
 

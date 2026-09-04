@@ -30,6 +30,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   levels and nested lists came with them. The renderer moved beside
   `syntax_highlight.ts` so it can be tested, including against the
   repository's own documentation
+- **SMS gateway** (Options › SMS gateway) — the phone becomes the outgoing
+  SMS channel of an ERPLibre server: it polls Odoo over outgoing HTTPS,
+  sends through its own SIM and reports every acknowledgement, so nothing is
+  billed per message and the device needs neither a fixed address nor an
+  open port. The foreground service is declared `specialUse` and not
+  `dataSync`, which Android 15 caps at six hours per twenty-four — a
+  permanent alert channel does not fit under that cap. A scheduled job
+  revives the service when the system kills it, and a boot receiver restarts
+  it after a power cut. Every body is signed HMAC-SHA256, sending holds a
+  budget of 24 segments per minute against the limit of 30 Android enforces
+  on its own, and an incoming STOP is honoured by a dedicated receiver
+- **Phone** — a keypad at `/phone`, and the application can hold the dialer
+  role. Without an `InCallService`, `onCallStateChanged` files dialling and
+  conversation under the same off-hook state, so nothing says WHEN the other
+  party answers; the role gives that exact moment. It is granted by a system
+  dialog and handed back from settings, and the components stay inert until
+  it is granted — the system call screen keeps working as usual
+- **Demonstration APK for a server on the local network** — `-PlanCleartext`
+  builds a variant that tolerates cleartext HTTP. Android's network
+  configuration accepts no CIDR range, so “only private addresses” cannot be
+  written there: lifting the protection lifts it entirely, and the only
+  remaining guard is the application-side check — RFC 1918 ranges plus an
+  explicit agreement from the user. Weaker, hence not the default
+- **Call audio demonstration**, off by default and limited to outgoing calls
+  — Android exposes no interface to inject sound into a call's uplink: that
+  stream belongs to the modem, and `VOICE_UPLINK`, `VOICE_DOWNLINK` and
+  `VOICE_CALL` require `CAPTURE_AUDIO_OUTPUT`, reserved to platform-signed
+  applications, with no write-side counterpart at any permission level. What
+  remains is acoustic coupling — playing on the speaker while the microphone
+  captures — from which the signal processor's echo cancellation strips back
+  out whatever the device has just played, so quality is poor by
+  construction
 
 ### Changed
 - **Gettext catalogues leave the bundle** — 41 763 files and 857 MB, 33.5 %
@@ -39,6 +71,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it dropped. `BUNDLE_KEEP_PO=1` brings them back, `BUNDLE_SKIP_IMG=1` drops
   the raster images too and takes archives to 115 MB. A side effect worth
   having: 41 763 fewer files takes the build from 43 s to 22 s
+
+### Fixed
+- **Packaging stays under the 65 535 entries an APK allows** — the offline
+  code browser embeds 123 306 files, and packaging failed on “Too many zip
+  entries”. Those repositories are now excluded by default, and
+  `-PslimApk=false` puts them back to reproduce the failure. This is not a
+  fix: the resulting APK has no code browser, and the durable answer —
+  serving those repositories from the network rather than embedding them —
+  remains a product decision
+- **The native build finds a host `protoc`** — sentencepiece fetches
+  protobuf, whose CMake builds `protoc` for the target then tries to run it
+  on the host: arm64 against x86_64, “Exec format error”.
+  `android/tools/build-host-protoc.sh` produces the host binary outside the
+  repository, eight megabytes specific to the builder's architecture, and
+  `SPM_PROTOC_EXECUTABLE` names it. Nothing to do when
+  `BUNDLE_SKIP_WHISPER=1` skips the native build altogether
 
 ## [2026.08.24.01] - 2026-08-24
 
@@ -342,6 +390,41 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   paragraphe. Six niveaux de titre et les listes imbriquées ont suivi. Le
   rendu est passé à côté de `syntax_highlight.ts` pour être testable, y
   compris contre la documentation du dépôt
+- **Passerelle SMS** (Options › Passerelle SMS) — le téléphone devient le
+  canal SMS sortant d'un serveur ERPLibre : il interroge Odoo en HTTPS
+  sortant, envoie par sa propre carte SIM et rend compte de chaque accusé,
+  si bien que rien n'est facturé au message et que l'appareil n'a besoin ni
+  d'une adresse fixe ni d'un port ouvert. Le service au premier plan est
+  déclaré `specialUse` et non `dataSync`, plafonné depuis Android 15 à six
+  heures par période de vingt-quatre — un canal d'alerte permanent n'entre
+  pas sous ce plafond. Une tâche planifiée le relève quand le système le
+  tue, et un récepteur de démarrage le rallume après une coupure de courant.
+  Chaque corps est signé en HMAC-SHA256, l'envoi se tient à 24 segments par
+  minute contre la limite de 30 qu'Android applique de lui-même, et un STOP
+  entrant est honoré par un récepteur dédié
+- **Téléphone** — un clavier de composition à `/phone`, et l'application peut
+  tenir le rôle de composeur. Sans `InCallService`, `onCallStateChanged`
+  classe la composition et la conversation sous le même état décroché :
+  rien ne dit QUAND le correspondant répond, alors que le rôle donne
+  l'instant exact. Il se confie par un dialogue système et se rend depuis
+  les réglages, et les composants restent inertes tant qu'il n'est pas
+  accordé — l'écran d'appel du système fonctionne normalement
+- **APK de démonstration pour un serveur du réseau local** — `-PlanCleartext`
+  produit une variante qui tolère le HTTP en clair. La configuration réseau
+  d'Android n'accepte aucune plage CIDR : on ne peut pas y écrire
+  « seulement les adresses privées ». Lever la protection la lève donc
+  entièrement, et le seul rempart restant est la vérification côté
+  application — plages RFC 1918 et accord explicite de l'utilisateur. C'est
+  plus faible, et ce n'est donc pas le défaut
+- **Démonstration d'audio d'appel**, désactivée par défaut et limitée aux
+  appels sortants — Android n'expose aucune interface pour injecter du son
+  dans le flux montant d'un appel : ce flux appartient au modem, et
+  `VOICE_UPLINK`, `VOICE_DOWNLINK` et `VOICE_CALL` exigent
+  `CAPTURE_AUDIO_OUTPUT`, réservée aux applications signées par la
+  plateforme, sans contrepartie en écriture à aucun niveau de permission.
+  Reste le couplage acoustique — jouer sur le haut-parleur pendant que le
+  micro capte — dont l'annulation d'écho du processeur de signal retire ce
+  que l'appareil vient de jouer, d'où une qualité mauvaise par construction
 
 ### Modifié
 - **Les catalogues gettext quittent le bundle** — 41 763 fichiers et 857 Mo,
@@ -352,6 +435,22 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `BUNDLE_SKIP_IMG=1` écarte aussi les images matricielles et amène les
   archives à 115 Mo. Effet de bord bienvenu : 41 763 fichiers de moins
   ramènent la compilation de 43 s à 22 s
+
+### Corrigé
+- **L'empaquetage tient sous les 65 535 entrées d'un APK** — le navigateur de
+  code hors ligne embarque 123 306 fichiers, et l'empaquetage échouait sur
+  « Too many zip entries ». Ces dépôts sont désormais exclus par défaut, et
+  `-PslimApk=false` les rétablit pour retrouver l'échec. Ce n'est pas un
+  correctif : l'APK produit perd le navigateur de code, et la solution
+  durable — servir ces dépôts depuis le réseau plutôt que de les embarquer —
+  reste une décision de produit
+- **La compilation native trouve un `protoc` d'hôte** — sentencepiece
+  récupère protobuf, dont le CMake construit `protoc` pour la cible puis
+  tente de l'exécuter sur l'hôte : arm64 contre x86_64, « Exec format
+  error ». `android/tools/build-host-protoc.sh` produit le binaire hôte hors
+  du dépôt, huit mégaoctets propres à l'architecture de qui compile, et
+  `SPM_PROTOC_EXECUTABLE` le désigne. Rien à faire quand
+  `BUNDLE_SKIP_WHISPER=1` saute la compilation native
 
 ## [2026.08.24.01] - 2026-08-24
 

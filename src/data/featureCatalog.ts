@@ -2901,4 +2901,329 @@ export const FEATURE_TREE: FeatureNode[] = [
             },
         ],
     },
+    {
+        id: "sms-gateway",
+        label: { en: "SMS gateway", fr: "Passerelle SMS" },
+        description: {
+            en: "Turns the phone into the SMS sender for an ERPLibre server.",
+            fr: "Fait du téléphone l'émetteur SMS d'un serveur ERPLibre.",
+        },
+        permissions: ["sms"],
+        status: "experimental",
+        howItWorks: {
+            en: "The phone polls Odoo over HTTPS rather than being pushed to, "
+                + "so it needs no inbound port and no public address. Every "
+                + "exchange is HMAC-signed with a shared secret held in the "
+                + "server's environment. Work is persisted to SQLite before "
+                + "anything is sent: a killed process resumes instead of "
+                + "silently dropping an alert. Cycles are driven by "
+                + "AlarmManager, not Thread.sleep, whose clock stops while the "
+                + "device is suspended.",
+            fr: "Le téléphone interroge Odoo en HTTPS au lieu d'être poussé, "
+                + "donc il n'a besoin ni de port entrant ni d'adresse publique. "
+                + "Chaque échange est signé en HMAC avec un secret partagé, gardé "
+                + "dans l'environnement du serveur. Le travail est écrit en SQLite "
+                + "avant tout envoi : un processus tué reprend au lieu de perdre "
+                + "une alerte en silence. Les cycles sont pilotés par AlarmManager "
+                + "et non par Thread.sleep, dont l'horloge s'arrête quand "
+                + "l'appareil se suspend.",
+        },
+        demo: { kind: "route", url: "/options/sms_gateway" },
+        files: [
+            "src/plugins/smsGatewayPlugin.ts",
+            "src/utils/smsGatewayUtils.ts",
+        ],
+        children: [
+            {
+                id: "sms-gateway.service",
+                label: { en: "Background service", fr: "Service d'arrière-plan" },
+                description: {
+                    en: "Foreground service that polls, sends, and reports back.",
+                    fr: "Service de premier plan qui interroge, envoie et rend compte.",
+                },
+                status: "experimental",
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/SmsGatewayService.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsOutbox.java",
+                    "android/app/src/main/java/ca/erplibre/home/OdooReporter.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsResultReceiver.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsInboundReceiver.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsBootReceiver.java",
+                ],
+            },
+            {
+                id: "sms-gateway.journal",
+                label: { en: "Local log", fr: "Journal local" },
+                description: {
+                    en: "Records what only the device knows, with a size-capped purge.",
+                    fr: "Consigne ce que seul l'appareil sait, avec purge plafonnée.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Odoo keeps the view of messages sent; this keeps what only "
+                        + "the phone knows — permission revoked, SIM missing, server "
+                        + "unreachable. Only changes are recorded, never every cycle. "
+                        + "Metadata only by default: bodies sit behind a setting, "
+                        + "because enabling it writes member data onto a device that "
+                        + "can be lost.",
+                    fr: "Odoo garde la vue des envois ; ceci garde ce que seul le "
+                        + "téléphone sait — permission retirée, SIM absente, serveur "
+                        + "injoignable. Seuls les changements sont consignés, jamais "
+                        + "chaque cycle. Métadonnées seules par défaut : le corps des "
+                        + "messages est derrière un réglage, car l'activer écrit des "
+                        + "données de membres sur un appareil qui peut se perdre.",
+                },
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/SmsJournal.java",
+                ],
+            },
+            {
+                id: "sms-gateway.screen",
+                label: { en: "Supervision screen", fr: "Écran de supervision" },
+                description: {
+                    en: "Health banner, configuration, and the log.",
+                    fr: "Bandeau d'état, configuration et journal.",
+                },
+                permissions: ["phone_state"],
+                status: "experimental",
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "src/components/options/sms_gateway/options_sms_gateway_component.ts",
+                    "src/components/options/sms_gateway/options_sms_gateway_component.scss",
+                    "android/app/src/main/java/ca/erplibre/home/SmsGatewayPlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsGatewayConfig.java",
+                ],
+            },
+            {
+                id: "sms-gateway.dialer-keypad",
+                label: { en: "Keypad", fr: "Clavier de composition" },
+                description: {
+                    en: "Compose a number from the app when it holds the dialer role.",
+                    fr: "Composer un numéro depuis l'app quand elle tient le rôle.",
+                },
+                permissions: ["calls"],
+                status: "experimental",
+                howItWorks: {
+                    en: "The Home tile appears only while the app actually holds "
+                        + "the dialer role, checked against the native side on "
+                        + "every mount — the role can be handed back from Android "
+                        + "Settings without going through us, so a cached value "
+                        + "would eventually lie. Offering a keypad without "
+                        + "control over calls would be a button that cannot keep "
+                        + "its promise. The call goes out through the SAME path "
+                        + "as Odoo's click-to-dial, so it is traced and reported "
+                        + "like any other; a second dialling path bypassing the "
+                        + "log would produce calls invisible to Odoo, which is "
+                        + "exactly what the gateway exists to prevent.",
+                    fr: "La tuile d'Accueil n'apparaît que si l'application tient "
+                        + "réellement le rôle de composeur, vérifié auprès du "
+                        + "natif à chaque affichage — le rôle se rend depuis les "
+                        + "Réglages d'Android sans passer par nous, donc une "
+                        + "valeur en cache finirait par mentir. Proposer un "
+                        + "clavier sans avoir la main sur les appels donnerait un "
+                        + "bouton incapable de tenir sa promesse. L'appel part "
+                        + "par le MÊME chemin que le clic-pour-appeler d'Odoo : "
+                        + "il est donc tracé et remonté comme les autres. Un "
+                        + "second chemin de composition échappant au journal "
+                        + "produirait des appels invisibles côté Odoo — "
+                        + "précisément ce que la passerelle existe pour éviter.",
+                },
+                demo: { kind: "route", url: "/phone" },
+                files: [
+                    "src/components/phone/phone_dialer_component.ts",
+                    "src/components/phone/phone_dialer_component.scss",
+                    "src/components/home/home_component.ts",
+                ],
+            },
+            {
+                id: "sms-gateway.dialer-probe",
+                label: {
+                    en: "Dialer role (probe)",
+                    fr: "Rôle de composeur (sonde)",
+                },
+                description: {
+                    en: "Becomes the default phone app to learn when a call is answered.",
+                    fr: "Devient le téléphone par défaut pour connaître l'instant du décroché.",
+                },
+                permissions: ["calls"],
+                status: "experimental",
+                howItWorks: {
+                    en: "No public API tells an ordinary app when the other party "
+                        + "answers an outgoing call: Telecom files DIALING and "
+                        + "ACTIVE under the same CALL_STATE_OFFHOOK, and the "
+                        + "transition emits no event at all. PreciseCallState "
+                        + "does distinguish them but is signature|privileged — "
+                        + "measured on the device: declarable, never granted, and "
+                        + "pm grant refuses it. An InCallService gives "
+                        + "Call.STATE_ACTIVE, and it is the only way. The catch: "
+                        + "once bound, Telecom stops showing the system call "
+                        + "screen and shows ours, so an incomplete screen would "
+                        + "leave someone in a call with no hang-up button. Hence "
+                        + "a native layout with no webview and no loading. "
+                        + "Reversible from Settings > Default apps at any time.",
+                    fr: "Aucune interface publique ne dit à une application "
+                        + "ordinaire quand le correspondant décroche un appel "
+                        + "sortant : Telecom range DIALING et ACTIVE sous le même "
+                        + "CALL_STATE_OFFHOOK, et la transition n'émet aucun "
+                        + "événement. PreciseCallState les distingue mais est en "
+                        + "signature|privileged — mesuré sur l'appareil : "
+                        + "déclarable, jamais accordée, et pm grant la refuse. Un "
+                        + "InCallService donne Call.STATE_ACTIVE, et c'est la "
+                        + "seule voie. La contrepartie : une fois lié, Telecom "
+                        + "cesse d'afficher l'écran d'appel du système et affiche "
+                        + "le nôtre — un écran incomplet laisserait quelqu'un en "
+                        + "communication sans bouton pour raccrocher. D'où une "
+                        + "mise en page native, sans webview ni chargement. "
+                        + "Réversible depuis Réglages > Applications par défaut.",
+                },
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/phone/PhoneCallService.java",
+                    "android/app/src/main/java/ca/erplibre/home/phone/InCallActivity.java",
+                    "android/app/src/main/java/ca/erplibre/home/phone/DialerActivity.java",
+                    "android/app/src/main/java/ca/erplibre/home/phone/CallRole.java",
+                    "android/app/src/main/res/layout/activity_in_call.xml",
+                ],
+            },
+            {
+                id: "sms-gateway.watchdog",
+                label: {
+                    en: "Watchdog and restart",
+                    fr: "Surveillance et relance",
+                },
+                description: {
+                    en: "Detects a dead service, restarts it, and logs it.",
+                    fr: "Detecte un service mort, le relance, et le consigne.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The service's own alarm lives INSIDE the service, so "
+                        + "when Android kills it the alarm dies too and nothing "
+                        + "notices the silence. A JobScheduler job belongs to "
+                        + "the system instead, survives the process, and is "
+                        + "persisted across reboots — 15 min is Android's floor "
+                        + "for a periodic job, coarse but it only has to catch "
+                        + "death, not pace the work. The screen also restarts on "
+                        + "sight, capped at two tries so a service that refuses "
+                        + "to start is not hammered. Deliberate stops cancel the "
+                        + "watchdog; otherwise it would revive what someone just "
+                        + "turned off. Every start, stop and revival is written "
+                        + "to its own log category, separating 'stopped by the "
+                        + "user' from 'killed by Android' — the first reads as a "
+                        + "decision, the second as a fault.",
+                    fr: "L'alarme du service vit DANS le service : quand Android "
+                        + "le tue, elle meurt avec lui et plus rien ne remarque "
+                        + "le silence. Un travail JobScheduler appartient au "
+                        + "systeme, survit au processus et traverse les "
+                        + "redemarrages — 15 min est le plancher d'Android pour "
+                        + "un travail periodique, grossier mais il ne doit "
+                        + "rattraper qu'une mort, pas cadencer le travail. "
+                        + "L'ecran releve aussi des qu'il constate la panne, "
+                        + "borne a deux tentatives pour ne pas marteler un "
+                        + "service qui refuse de demarrer. Un arret VOULU retire "
+                        + "la surveillance, sinon elle rallumerait ce qu'on vient "
+                        + "d'eteindre. Chaque demarrage, arret et relance va dans "
+                        + "sa propre categorie de journal, en distinguant "
+                        + "« arretee par l'utilisatrice » de « tuee par "
+                        + "Android » : la premiere se lit comme une decision, la "
+                        + "seconde comme une panne.",
+                },
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/SmsWatchdogJob.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsBootReceiver.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsGatewayService.java",
+                ],
+            },
+            {
+                id: "sms-gateway.calls",
+                label: { en: "Traced phone calls", fr: "Appels tracés" },
+                description: {
+                    en: "Places and logs calls, and measures their duration.",
+                    fr: "Place et journalise les appels, et mesure leur durée.",
+                },
+                permissions: ["calls", "call_log"],
+                status: "experimental",
+                howItWorks: {
+                    en: "Calls are placed with TelecomManager.placeCall, not an "
+                        + "ACTION_CALL activity: since API 29 Android silently "
+                        + "drops background activity starts, and a foreground "
+                        + "service does not lift that ban. State lives in SQLite, "
+                        + "never in memory, so a restart does not strand a call in "
+                        + "'dialing'. Duration is measured OFFHOOK→IDLE, and read "
+                        + "back from the system call log when that permission is "
+                        + "granted — the log is authoritative, the measure is the "
+                        + "fallback.",
+                    fr: "Les appels partent par TelecomManager.placeCall et non "
+                        + "par une activité ACTION_CALL : depuis l'API 29 Android "
+                        + "supprime silencieusement les lancements d'activité en "
+                        + "arrière-plan, et un service au premier plan ne lève pas "
+                        + "cette interdiction. L'état vit dans SQLite et jamais en "
+                        + "mémoire, pour qu'un redémarrage ne laisse pas un appel "
+                        + "bloqué en « composition ». La durée est mesurée "
+                        + "OFFHOOK→IDLE, puis relue dans le journal d'appels du "
+                        + "système quand la permission est accordée — le journal "
+                        + "fait foi, la mesure est le repli.",
+                },
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/PhoneCalls.java",
+                    "android/app/src/main/java/ca/erplibre/home/SmsOutbox.java",
+                ],
+            },
+            {
+                id: "sms-gateway.demo-call-audio",
+                permissions: ["audio_routing"],
+                label: {
+                    en: "Tune during a call (demo)",
+                    fr: "Mélodie pendant un appel (démo)",
+                },
+                description: {
+                    en: "Measured dead end: echo cancellation removes it from the uplink.",
+                    fr: "Impasse mesurée : l'annulation d'écho la retire du flux émis.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "MEASURED 30 Aug 2026: this does not work — the other "
+                        + "party hears nothing. Kept as a record of what was "
+                        + "tried, off by default. Android exposes no API to "
+                        + "inject audio into a cellular "
+                        + "call: that stream belongs to the modem. The only way an "
+                        + "ordinary app has is to force speakerphone and let the "
+                        + "device's own microphone pick the tune back up. The voice "
+                        + "pipeline runs echo cancellation, whose whole job is to "
+                        + "remove what the device just emitted, so it actively "
+                        + "fights this. Audible but muffled — a demo, never an "
+                        + "announcement to members. Off by default; the routing "
+                        + "attempt is verified and journalled rather than assumed, "
+                        + "because on Android 12+ call routing belongs to the "
+                        + "dialer app.",
+                    fr: "MESURÉ le 30 août 2026 : cela ne fonctionne pas — le "
+                        + "correspondant n'entend rien. Conservé comme trace de "
+                        + "l'essai, désactivé par défaut. Android n'expose "
+                        + "aucune interface pour injecter du son "
+                        + "dans un appel cellulaire : ce flux appartient au modem. "
+                        + "Le seul moyen d'une application ordinaire est de forcer "
+                        + "le haut-parleur et de laisser le micro de l'appareil "
+                        + "reprendre la mélodie. Le pipeline voix applique une "
+                        + "annulation d'écho, dont le travail est justement de "
+                        + "supprimer ce que l'appareil vient d'émettre : elle "
+                        + "combat le montage. Audible mais étouffé — une "
+                        + "démonstration, jamais une annonce à des membres. "
+                        + "Désactivé par défaut ; la tentative de routage est "
+                        + "vérifiée et journalisée plutôt que supposée, car sur "
+                        + "Android 12+ le routage d'un appel appartient à "
+                        + "l'application téléphone.",
+                },
+                demo: { kind: "route", url: "/options/sms_gateway" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/CallAudio.java",
+                    "android/app/src/main/java/ca/erplibre/home/PhoneCalls.java",
+                    "android/app/src/main/res/raw/demo_musique.wav",
+                ],
+            },
+        ],
+    },
 ];

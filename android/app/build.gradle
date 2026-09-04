@@ -26,11 +26,51 @@ android {
         versionName "2026.08.24.01"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "boolean", "SKIP_WHISPER", "${skipWhisper}"
+
+        // `-PlanCleartext` produit un APK de DEMONSTRATION qui tolere le HTTP
+        // en clair, pour joindre un Odoo du reseau local en Wi-Fi.
+        //
+        // Android n'accepte pas de plages CIDR dans sa configuration reseau :
+        // on ne peut pas y ecrire « seulement les adresses privees ». Lever la
+        // protection la leve donc entierement, et le seul rempart restant est
+        // la verification cote application (plages RFC 1918 + accord explicite
+        // de l'utilisateur). C'est plus faible, et c'est pourquoi ce n'est PAS
+        // le defaut.
+        def lanCleartext = project.hasProperty('lanCleartext')
+        if (lanCleartext) {
+            logger.warn("lanCleartext : APK de demonstration, HTTP en clair tolere par le systeme")
+        }
+        manifestPlaceholders = [
+            netSecConfig    : lanCleartext ? "network_security_config_lan"
+                                           : "network_security_config",
+            cleartextAllowed: lanCleartext ? "true" : "false",
+        ]
         if (!skipWhisper) {
             externalNativeBuild {
                 cmake {
                     cppFlags "-std=c++17"
                     arguments "-DANDROID_STL=c++_shared"
+
+                    // sentencepiece récupère protobuf, dont le CMake construit
+                    // `protoc` pour la CIBLE puis tente de l'exécuter sur l'hôte
+                    // afin de générer les .pb.cc. Comme la cible est arm64 et
+                    // l'hôte x86_64, cela échoue sur « Exec format error ».
+                    //
+                    // sentencepiece prévoit le cas : SPM_PROTOC_EXECUTABLE
+                    // désigne un protoc hôte et désactive celui de la cible. Le
+                    // binaire est produit par tools/build-host-protoc.sh, dans
+                    // la version que sentencepiece exige — code généré et
+                    // bibliothèque d'exécution vont par paire.
+                    //
+                    // Rien à faire quand BUNDLE_SKIP_WHISPER=1 : la compilation
+                    // native est alors sautée, sentencepiece avec.
+                    def hostProtoc = rootProject.file("tools/protoc/bin/protoc")
+                    if (hostProtoc.exists()) {
+                        arguments "-DSPM_PROTOC_EXECUTABLE=${hostProtoc.absolutePath}"
+                    } else {
+                        logger.warn("protoc hôte absent : lancez android/tools/build-host-protoc.sh, " +
+                                    "sinon la compilation native échouera sur « Exec format error ».")
+                    }
                 }
             }
         }
@@ -42,7 +82,24 @@ android {
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
-            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+            //
+            // `-PslimApk` retire les dépôts de code embarqués pour le navigateur
+            // hors ligne. Ils pèsent à eux seuls 123 306 fichiers, alors qu'un
+            // APK ne peut contenir que 65 535 entrées : sans cette option, la
+            // tâche packageDebug échoue sur « Too many zip entries ».
+            //
+            // Ce n'est PAS un correctif : l'APK produit perd le navigateur de
+            // code. Il sert à obtenir une application installable pour tester
+            // le reste. La solution durable — réduire ce qui est embarqué, ou
+            // le servir autrement — est une décision de produit.
+            def slim = !project.hasProperty('slimApk') || project.property('slimApk').toString() != 'false'
+            if (slim) {
+                logger.lifecycle("slimApk : dépôts de code embarqués exclus de l'APK")
+            } else {
+                logger.warn("slimApk=false : l'empaquetage va échouer, 124 000 entrées pour 65 535 permises.")
+            }
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~' +
+                    (slim ? ':repos:repo' : '')
         }
     }
     buildTypes {

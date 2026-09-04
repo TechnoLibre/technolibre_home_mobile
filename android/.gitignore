@@ -99,3 +99,11 @@ app/src/main/assets/public
 app/src/main/assets/capacitor.config.json
 app/src/main/assets/capacitor.plugins.json
 app/src/main/res/xml/config.xml
+
+# Outillage de compilation croisée
+# Le protoc pour la machine hôte est construit localement par
+# tools/build-host-protoc.sh : c'est un binaire de 8 Mo propre à
+# l'architecture de qui compile, il n'a rien à faire dans le dépôt.
+tools/protoc/
+tools/.protobuf-src/
+tools/.protoc-build/
