@@ -393,3 +393,106 @@ gagne, les plus anciennes résolvent leur Promise avec `{dropped: true}`.
 ### Tests manuels
 
 Voir `doc/streamdeck_test_matrix.md` — checklist par modèle physique.
+
+
+## SmsGatewayPlugin
+
+**Fichiers :**
+- Pont TS : `src/plugins/smsGatewayPlugin.ts`
+- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/SmsGatewayPlugin.java`
+- Service : `SmsGatewayService.java` — service de premier plan de type `specialUse`
+- Récepteurs : `SmsResultReceiver.java`, `SmsInboundReceiver.java`, `SmsBootReceiver.java`
+- File persistante : `SmsOutbox.java` (SQLite `erplibre_sms.db`)
+- Réglages et compteurs : `SmsGatewayConfig.java` (SharedPreferences)
+- Transport vers Odoo : `OdooReporter.java`
+- Logique pure testable : `src/utils/smsGatewayUtils.ts`
+- Écran : `src/components/options/sms_gateway/` — route `/options/sms_gateway`
+
+**Nom d'enregistrement :** `SmsGateway`, et non `SmsGatewayPlugin`.
+
+Transforme le téléphone en voie d'envoi des SMS d'un serveur Odoo distant. Le
+téléphone INTERROGE Odoo en HTTPS sortant, envoie par sa propre carte SIM et
+rend compte de chaque accusé. Le serveur ne joint jamais le téléphone : une
+adresse dynamique et un NAT d'opérateur n'y changent rien, et aucune URL
+publique n'est exposée. Trois routes portent tout, et elles ne nomment pas le
+module parce que le module a été renommé et le protocole non :
+`/erplibre_sms/poll` demande du travail et vaut signal de vie,
+`/erplibre_sms/report` rend les accusés, `/erplibre_sms/inbound` remet un
+message reçu.
+
+Chaque corps est signé en HMAC-SHA256 sous l'en-tête `X-Erplibre-Signature`.
+
+### API
+
+| Méthode | Description |
+|---------|-------------|
+| `getCapabilities()` | Permissions, état de la SIM, cartes SIM, version d'Android, limite système de segments, et si l'application est le gestionnaire de SMS par défaut. |
+| `requestSmsPermissions()` | Demande `SEND_SMS` et `RECEIVE_SMS` à l'exécution. |
+| `configure(options)` | Enregistre l'URL d'Odoo, le secret HMAC, l'identifiant d'appareil, et au choix la SIM, la journalisation des corps, la tolérance du HTTP en clair vers une adresse privée, et l'audio d'appel de démonstration. **Refuse une URL non HTTPS**, sauf une adresse de bouclage, l'hôte d'un émulateur, ou une adresse privée quand `allowPlainLan` est posé. |
+| `startGateway()` / `stopGateway()` | Démarre ou arrête le service. Refuse de démarrer sans permission ou sans configuration. |
+| `getStatus()` | Service en marche, connecté, file, rapports en attente, segments de la dernière minute, dernière erreur. |
+| `kick()` | Force un tour de boucle après une reconfiguration. |
+| `clearLastError()` | Efface l'erreur affichée. |
+| `requestDialerRole()` / `releaseDialerRole()` | Ouvre le dialogue système proposant le rôle de composeur, ou le rend. |
+| `journalEntries(query)` / `clearJournal()` | Lit ou vide le journal local. |
+| `requestBatteryExemption()` / `requestExactAlarms()` | Ouvre les écrans système dont dépend le cadencement. |
+
+L'écran ne relit jamais ce qui est stocké : les trois champs partent vides à
+chaque ouverture, et le greffon n'expose aucun accesseur pour eux.
+
+### Trois points de conception à connaître avant d'y toucher
+
+**L'action de l'intention d'accusé est FIXE.** Un `IntentFilter` apparie par
+égalité exacte de chaîne : une action construite par travail
+(`…SMS_SENT/<travail>/<indice>`) ne serait appariée par aucun filtre, et
+**tous les accusés seraient perdus**. Odoo conclurait à un échec pour des
+messages réellement partis, puis republierait — fausses alertes et doublons
+systématiques. Ce qui rend chaque `PendingIntent` distinct est un code de
+requête PERSISTÉ (`SmsGatewayConfig.nextRequestCode()`), que `filterEquals`
+ignore. Un compteur en mémoire repartirait à 1 après un redémarrage et
+mélangerait les statuts entre destinataires.
+
+**La file est persistante, et un rapport est re-signé à chaque tentative.** Un
+travail est écrit dans SQLite avant toute tentative : la mort du processus ne
+perd rien. L'horodatage et le nonce de l'enveloppe sont posés juste avant
+chaque envoi, et non à la mise en file : le serveur n'accepte une signature
+que dans une fenêtre de quelques minutes, si bien qu'un rapport mis en file
+pendant une coupure deviendrait sinon définitivement irrecevable et bloquerait
+derrière lui tous les rapports valides. Le doublon reste impossible : chaque
+évènement porte un numéro de séquence que le serveur ordonne.
+
+**Le type de service est `specialUse`, pas `dataSync`.** Android 15 plafonne
+`dataSync` à six heures par vingt-quatre, ce qu'aucun canal d'alerte permanent
+ne tient. L'application n'étant pas distribuée par Google Play, la
+justification que Play exigerait ne s'applique pas.
+
+### Limite de débit d'Android
+
+Vérifiée dans les sources AOSP (`SmsUsageMonitor.java`, étiquettes
+`android-15.0.0_r36` et `android-16.0.0_r3`) : `DEFAULT_SMS_MAX_COUNT = 30`
+sur `DEFAULT_SMS_CHECK_PERIOD = 60000` ms, compté **par nom de paquet** et
+**en segments**. Au-delà, le système empile un dialogue de confirmation — sur
+un téléphone que personne ne regarde, cela signifie que rien ne part.
+
+Le service s'étale donc sous la limite, avec un intervalle minimal de 2,5 s et
+un budget par défaut de 24 segments par minute. Conséquence à annoncer :
+**40 destinataires prennent environ 100 secondes en GSM-7, et plus de trois
+minutes en UCS-2.** Un seul `ç` minuscule suffit à faire basculer un message
+en UCS-2 : il n'est pas dans l'alphabet GSM 03.38, contrairement au `Ç`
+majuscule.
+
+### Permissions ajoutées au manifeste
+
+`SEND_SMS`, `RECEIVE_SMS`, `BROADCAST_SMS`, `READ_PHONE_STATE` (facultative,
+pour nommer les cartes SIM), `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE`,
+`FOREGROUND_SERVICE_SPECIAL_USE` et `FOREGROUND_SERVICE_DATA_SYNC`.
+
+Le manifeste pose `android:allowBackup="false"` : le secret HMAC et les
+numéros en attente ne quittent jamais l'appareil par une sauvegarde Android.
+
+### Prérequis serveur
+
+Le module Odoo `erplibre_mobile_gateway` doit être installé, une fiche
+passerelle déclarée avec le même identifiant d'appareil, et le secret HMAC
+présent dans l'ENVIRONNEMENT du processus Odoo — jamais en base, qui voyage
+dans chaque sauvegarde.
