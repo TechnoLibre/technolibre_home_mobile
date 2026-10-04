@@ -67,6 +67,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   having: 41 763 fewer files takes the build from 43 s to 22 s
 
 ### Fixed
+- **The interface comes back after every restart** — one launch in two left the
+  application on its starting screen: JavaScript ran to the end, the main thread
+  sat idle in its loop, and nothing was ever painted. `launchAutoHide: false`
+  makes the splash plugin install a pre-draw listener that refuses every draw of
+  the activity's content, and turns off the timer that would remove it; only
+  `hide()` removes it, and only if it finds it already installed. The listener is
+  installed on the UI thread while `hide()` is called from the first line of the
+  boot, so whichever won the race decided whether the application would ever
+  appear. The splash now hides on its own after 500 ms, which frees the draw even
+  when `hide()` arrives too early; the application's own boot screen, with its
+  spinner and its steps, covers the loading as it was meant to
+- **The first launch after an install no longer stops on its starting screen** —
+  a fresh install runs every migration, and the summary was shown in a modal
+  dialog the boot waited on. That dialog is raised before the interface is
+  painted, so it sits behind the system's starting window: nobody can reach
+  it, and the boot waits forever for a tap that cannot happen, with no error
+  anywhere. The summary is now written under the boot spinner, where it stays
+  until the application opens, and to the console. Nothing waits for a gesture
+- **A queued report is re-signed at each attempt** — the envelope carried the
+  timestamp and the nonce of the first try. The server accepts a signature
+  only within a few minutes, so a report queued while the network, the
+  battery or the server was down became permanently unacceptable, was retried
+  fifty times and blocked every valid report behind it. Timestamp and nonce
+  are now set just before each send. Duplicates stay impossible: what guards
+  against them is the sequence number each event carries, which the server
+  orders and ignores on a second delivery. A body that cannot be parsed is
+  dropped with a journal line instead of being replayed
 - **Packaging stays under the 65 535 entries an APK allows** — the offline
   code browser embeds 123 306 files, and packaging failed on “Too many zip
   entries”. Those repositories are now excluded by default, and
