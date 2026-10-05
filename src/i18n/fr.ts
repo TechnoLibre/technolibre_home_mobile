@@ -698,6 +698,7 @@ export const translations: Record<string, string> = {
   "sms_gateway.warn_default_sms_app": "Cette application est l'application de messagerie par défaut du téléphone. Elle reçoit donc tous les SMS, y compris les codes d'authentification bancaires. Ce n'est pas recommandé.",
   "sms_gateway.odoo_url": "URL du serveur Odoo (HTTPS)",
   "sms_gateway.hmac_secret": "Secret partagé",
+  "sms_gateway.secret_kept": "deja posee — laisser vide pour la garder",
   "sms_gateway.device_id": "Identifiant de l'appareil",
   "sms_gateway.sim": "Carte SIM",
   "sms_gateway.sim_default": "Carte SIM par défaut",

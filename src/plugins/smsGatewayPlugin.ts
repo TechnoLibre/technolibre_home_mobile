@@ -53,7 +53,13 @@ export interface SmsConfigureOptions {
      * `10.0.2.2`, l'hôte vu depuis un émulateur — tolérée pour le développement.
      */
     odooBaseUrl: string;
-    /** Secret partagé avec Odoo, servant à signer les échanges. */
+    /**
+     * Secret partagé avec Odoo, servant à signer les échanges.
+     *
+     * Vide veut dire « garder celui qui est en place ». Un écran ne peut pas
+     * le réafficher pour le renvoyer tel quel : l'exiger ferait qu'un simple
+     * changement d'URL efface la clé.
+     */
     hmacSecret: string;
     /** Identifiant que la fiche passerelle d'Odoo attend. */
     deviceId: string;
@@ -143,8 +149,25 @@ export interface SmsGatewayStatus {
     connectionError: string;
 }
 
+/** Ce qui est enregistre, la cle exceptee. */
+export interface SmsStoredConfig {
+    odooBaseUrl: string;
+    deviceId: string;
+    subscriptionId: number;
+    /**
+     * Une cle est-elle posee.
+     *
+     * La cle elle-meme ne traverse jamais le pont : la renvoyer l'installerait
+     * dans le document d'une page web, alors que tout son interet est de ne
+     * pas circuler. Un ecran n'a besoin que de savoir s'il y en a une.
+     */
+    hasSecret: boolean;
+}
+
 export interface SmsGatewayPlugin {
     getCapabilities(): Promise<SmsCapabilities>;
+    /** La configuration enregistree, sans la cle. */
+    getConfig(): Promise<SmsStoredConfig>;
     requestSmsPermissions(): Promise<SmsPermissionResult>;
     configure(options: SmsConfigureOptions): Promise<void>;
     startGateway(): Promise<void>;
