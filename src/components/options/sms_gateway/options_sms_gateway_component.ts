@@ -117,6 +117,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
         <p class="sms-gateway__warning" t-esc="t('sms_gateway.warn_battery')" />
         <p class="sms-gateway__warning" t-if="state.caps.isDefaultSmsApp"
            t-esc="t('sms_gateway.warn_default_sms_app')" />
+        <p class="sms-gateway__warning" t-esc="t('sms_gateway.warn_rcs')" />
 
         <!-- Configuration -->
         <section class="sms-gateway__section" t-att-aria-label="t('sms_gateway.config_title')">

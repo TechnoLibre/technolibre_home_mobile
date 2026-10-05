@@ -91,6 +91,22 @@ describe("Options › Passerelle SMS — pre-remplissage", () => {
 		expect(c.state.hasSecret).toBe(false);
 	});
 
+	it("warns about RCS on the gateway screen, in both languages", async () => {
+		// Un message RCS n'entre jamais dans la pile SMS : la passerelle ne
+		// le voit pas, et rien ne signale la perte. L'avertissement est la
+		// seule chose qui previent une panne muette.
+		const fr = (await import("../i18n/fr")).translations;
+		const en = (await import("../i18n/en")).translations;
+		for (const table of [fr, en]) {
+			const texte = table["sms_gateway.warn_rcs"];
+			expect(texte).toBeTruthy();
+			expect(texte).toMatch(/RCS/);
+		}
+		expect(fr["sms_gateway.warn_rcs"]).not.toBe(
+			en["sms_gateway.warn_rcs"],
+		);
+	});
+
 	it("keeps the screen usable when the plugin refuses", async () => {
 		__setPluginMock("SmsGateway", {
 			getConfig: vi.fn().mockRejectedValue(new Error("pas de greffon")),

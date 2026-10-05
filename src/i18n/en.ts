@@ -695,6 +695,7 @@ export const translations: Record<string, string> = {
   "sms_gateway.clear_error": "Clear the error",
   "sms_gateway.warn_rate_limit": "Android caps sending at 30 segments per minute per app. A group of 40 people takes about 100 seconds, and over three minutes if the message is accented — a single lowercase « ç » doubles the segment count.",
   "sms_gateway.warn_battery": "Exclude this app from battery optimisation, otherwise Android will stop the gateway. On Samsung, Xiaomi, Oppo and Huawei, also disable the vendor app manager.",
+  "sms_gateway.warn_rcs": "Turn RCS chats off on THIS phone. Left on, messages from contacts whose phone speaks RCS land in Google Messages without ever touching the SMS stack: the gateway never sees them, and nothing reports the loss. No setting here can read them. Messages > profile picture > Settings > RCS chats.",
   "sms_gateway.warn_default_sms_app": "This app is the phone's default messaging app, so it receives every SMS, including banking authentication codes. This is not recommended.",
   "sms_gateway.odoo_url": "Odoo server URL (HTTPS)",
   "sms_gateway.hmac_secret": "Shared secret",

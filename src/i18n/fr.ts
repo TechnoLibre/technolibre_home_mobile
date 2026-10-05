@@ -695,6 +695,7 @@ export const translations: Record<string, string> = {
   "sms_gateway.clear_error": "Effacer l'erreur",
   "sms_gateway.warn_rate_limit": "Android bloque à 30 segments par minute et par application. Un groupe de 40 personnes prend environ 100 secondes, et plus de trois minutes si le message est accentué — un « ç » minuscule suffit à doubler le nombre de segments.",
   "sms_gateway.warn_battery": "Retirez cette application de l'optimisation de batterie, sinon Android arrêtera la passerelle. Sur Samsung, Xiaomi, Oppo et Huawei, désactivez aussi le gestionnaire d'applications du constructeur.",
+  "sms_gateway.warn_rcs": "Couper les chats RCS sur CE telephone. Laisses actifs, les messages des contacts dont le telephone fait du RCS arrivent dans Google Messages sans jamais toucher la pile SMS : la passerelle ne les voit pas, et rien ne signale la perte. Aucun reglage ici ne peut les lire. Messages > photo de profil > Parametres > Chats RCS.",
   "sms_gateway.warn_default_sms_app": "Cette application est l'application de messagerie par défaut du téléphone. Elle reçoit donc tous les SMS, y compris les codes d'authentification bancaires. Ce n'est pas recommandé.",
   "sms_gateway.odoo_url": "URL du serveur Odoo (HTTPS)",
   "sms_gateway.hmac_secret": "Secret partagé",
