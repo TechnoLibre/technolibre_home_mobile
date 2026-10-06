@@ -391,88 +391,102 @@ older ones resolve their Promise with `{dropped: true}`.
 
 See `doc/streamdeck_test_matrix.md` — a checklist per physical model.
 
+
 ## SmsGatewayPlugin
 
-**Fichiers :**
-- Bridge TS : `src/plugins/smsGatewayPlugin.ts`
-- Implémentation Java : `android/app/src/main/java/ca/erplibre/home/SmsGatewayPlugin.java`
-- Service : `SmsGatewayService.java` — Foreground Service de type `specialUse`
-- Récepteurs : `SmsResultReceiver.java`, `SmsInboundReceiver.java`, `SmsBootReceiver.java`
-- File persistante : `SmsOutbox.java` (SQLite `erplibre_sms.db`)
-- Configuration et compteurs : `SmsGatewayConfig.java` (SharedPreferences)
-- Transport vers Odoo : `OdooReporter.java`
-- Logique pure testable : `src/utils/smsGatewayUtils.ts`
-- Écran : `src/components/options/sms_gateway/` — route `/options/sms_gateway`
+**Files:**
+- TS bridge: `src/plugins/smsGatewayPlugin.ts`
+- Java implementation: `android/app/src/main/java/ca/erplibre/home/SmsGatewayPlugin.java`
+- Service: `SmsGatewayService.java` — a foreground service of type `specialUse`
+- Receivers: `SmsResultReceiver.java`, `SmsInboundReceiver.java`, `SmsBootReceiver.java`
+- Persistent queue: `SmsOutbox.java` (SQLite `erplibre_sms.db`)
+- Settings and counters: `SmsGatewayConfig.java` (SharedPreferences)
+- Transport to Odoo: `OdooReporter.java`
+- Pure, testable logic: `src/utils/smsGatewayUtils.ts`
+- Screen: `src/components/options/sms_gateway/` — route `/options/sms_gateway`
 
-**Nom d'enregistrement :** `SmsGateway` (et non `SmsGatewayPlugin`).
+**Registration name:** `SmsGateway`, not `SmsGatewayPlugin`.
 
-Transforme le téléphone en passerelle SMS pour un serveur Odoo distant. Odoo
-publie une demande d'envoi sur un sujet **ntfy** ; le service, abonné en sortant,
-la consomme et envoie par la carte SIM, puis rend compte en HTTPS. Aucune URL
-publique n'est exposée : le serveur n'a jamais besoin de joindre le téléphone,
-ce qui fonctionne derrière une IP dynamique et un NAT d'opérateur.
+Turns the phone into the outgoing SMS channel of a remote Odoo server. The
+phone POLLS Odoo over outgoing HTTPS, sends through its own SIM and reports
+each acknowledgement. The server never reaches the phone, so a dynamic
+address and a carrier NAT change nothing and no public URL is exposed. Three
+routes carry everything, and they do not bear the module's name because the
+module was renamed and the protocol was not: `/erplibre_sms/poll` asks for
+work and doubles as the sign of life, `/erplibre_sms/report` returns the
+acknowledgements, `/erplibre_sms/inbound` hands over a received message.
+
+Every body is signed in HMAC-SHA256 under the `X-Erplibre-Signature` header.
 
 ### API
 
-| Méthode | Description |
-|---------|-------------|
-| `getCapabilities()` | Permissions, état de la SIM, liste des cartes SIM, version d'Android, limite système de segments, et si l'app est le gestionnaire de SMS par défaut. |
-| `requestSmsPermissions()` | Demande `SEND_SMS` et `RECEIVE_SMS` à l'exécution. Résout avec l'état obtenu. |
-| `configure(options)` | Enregistre URL ntfy, sujet, jeton, URL Odoo, secret HMAC, identifiant d'appareil, SIM. **Refuse toute URL non HTTPS.** |
-| `startGateway()` / `stopGateway()` | Démarre ou arrête le service. Refuse de démarrer sans permission ou sans configuration. |
-| `getStatus()` | État complet : service actif, abonnement ntfy, file d'attente, rapports en attente, segments de la minute écoulée, dernière erreur. |
-| `kick()` | Force un tour de boucle après reconfiguration. |
-| `clearLastError()` | Efface la dernière erreur affichée. |
+| Method | Description |
+|--------|-------------|
+| `getCapabilities()` | Permissions, SIM state, the SIM cards, Android version, the system's segment limit, whether the app is the default SMS handler. |
+| `requestSmsPermissions()` | Asks for `SEND_SMS` and `RECEIVE_SMS` at runtime. |
+| `configure(options)` | Stores the Odoo URL, the HMAC secret, the device identifier, and optionally the SIM, whether the journal keeps bodies, whether plain HTTP to a private address is tolerated, and the demonstration call audio. **Refuses a non-HTTPS URL**, except a loopback address, an emulator host, or a private address when `allowPlainLan` is set. |
+| `startGateway()` / `stopGateway()` | Starts or stops the service. Refuses to start without permission or without a configuration. |
+| `getStatus()` | Service running, connected, queue, spooled reports, segments in the last minute, last error. |
+| `kick()` | Forces one loop turn after a reconfiguration. |
+| `clearLastError()` | Clears the displayed error. |
+| `requestDialerRole()` / `releaseDialerRole()` | Opens the system dialog offering the dialer role, or gives it back. |
+| `journalEntries(query)` / `clearJournal()` | Reads or empties the local journal. |
+| `requestBatteryExemption()` / `requestExactAlarms()` | Opens the system screens the pacing depends on. |
 
-### Trois points de conception à connaître avant d'y toucher
+The screen never reads back what is stored: the three fields start empty at
+every mount, and the plugin exposes no getter for them.
 
-**L'action des intentions d'accusé est FIXE.** Un `IntentFilter` apparie par
-égalité exacte de chaîne : une action construite par travail
-(`…SMS_SENT/<job>/<index>`) ne serait appariée par aucun filtre, et **100 % des
-accusés seraient perdus**. Odoo conclurait à un échec pour des SMS réellement
-partis, puis republierait — fausses alertes et doublons systématiques. L'unicité
-entre segments vient d'un **code de requête persisté**
-(`SmsGatewayConfig.nextRequestCode()`), que `filterEquals` ignore mais qui rend
-chaque `PendingIntent` distinct. Un compteur en mémoire repartirait à 1 après un
-redémarrage et mélangerait les statuts entre destinataires.
+### Three design points to know before touching it
 
-**La file est persistante, et l'ordre est invariant.** Un travail est inséré dans
-SQLite *avant* que l'identifiant du dernier événement ntfy ne soit avancé.
-L'inverse perdrait des messages sans trace : après une mort du processus, la
-reprise `?since=` sauterait un message qui n'existait plus qu'en mémoire.
+**The acknowledgement intent's action is FIXED.** An `IntentFilter` matches by
+exact string equality: an action built per job (`…SMS_SENT/<job>/<index>`)
+would match no filter, and **every acknowledgement would be lost**. Odoo would
+conclude failure for messages that did leave, then republish — false alarms
+and systematic duplicates. What makes each `PendingIntent` distinct is a
+PERSISTED request code (`SmsGatewayConfig.nextRequestCode()`), which
+`filterEquals` ignores. An in-memory counter would restart at 1 after a
+reboot and mix up the statuses of different recipients.
 
-**Le type de service est `specialUse`, pas `dataSync`.** Android 15 plafonne
-`dataSync` à six heures par période de vingt-quatre heures, ce qui est
-incompatible avec un canal d'alerte permanent. L'application n'étant pas
-distribuée par Google Play, la justification que Play exigerait ne s'applique
-pas.
+**The queue is persistent, and a report is re-signed at each attempt.** A job
+is written to SQLite before anything is attempted, so the death of the process
+loses nothing. The envelope's timestamp and nonce are set just before each
+send and not when the report is queued: the server accepts a signature only
+within a few minutes, so a report queued during an outage would otherwise
+become permanently unacceptable and block every valid report behind it. A
+duplicate stays impossible because each event carries a sequence number that
+the server orders.
 
-### Limite de débit d'Android
+**The service type is `specialUse`, not `dataSync`.** Android 15 caps
+`dataSync` at six hours per twenty-four, which no permanent alert channel
+fits. The application is not distributed through Google Play, so the
+justification Play would demand does not apply.
 
-Vérifiée dans les sources AOSP (`SmsUsageMonitor.java`, étiquettes
-`android-15.0.0_r36` et `android-16.0.0_r3`) : `DEFAULT_SMS_MAX_COUNT = 30` sur
-`DEFAULT_SMS_CHECK_PERIOD = 60000` ms, compté **par nom de paquet** et **en
-segments**. Au-delà, le système empile un dialogue de confirmation — sur un
-téléphone que personne ne regarde, cela signifie que rien ne part.
+### Android's rate limit
 
-Le service s'étale donc sous la limite, avec un intervalle minimal de 2,5 s et un
-budget par défaut de 24 segments par minute. Conséquence à annoncer :
-**40 destinataires prennent environ 100 secondes en GSM-7, et plus de trois
-minutes en UCS-2.** Un seul `ç` minuscule suffit à faire basculer un message en
-UCS-2 : il n'est pas dans l'alphabet GSM 03.38, contrairement au `Ç` majuscule.
+Checked in the AOSP sources (`SmsUsageMonitor.java`, tags
+`android-15.0.0_r36` and `android-16.0.0_r3`): `DEFAULT_SMS_MAX_COUNT = 30`
+over `DEFAULT_SMS_CHECK_PERIOD = 60000` ms, counted **per package** and **in
+segments**. Past that, the system raises a confirmation dialog — on a phone
+nobody is watching, that means nothing leaves.
 
-### Permissions ajoutées au manifeste
+The service therefore spreads itself under the limit, with a minimum interval
+of 2.5 s and a default budget of 24 segments per minute. The consequence to
+announce: **40 recipients take about 100 seconds in GSM-7, and more than three
+minutes in UCS-2.** A single lowercase `ç` is enough to push a message into
+UCS-2: it is not in the GSM 03.38 alphabet, while the uppercase `Ç` is.
 
-`SEND_SMS`, `RECEIVE_SMS`, `READ_PHONE_STATE` (facultative, pour nommer les
-SIM), `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE_SPECIAL_USE`.
+### Permissions added to the manifest
 
-Le secret HMAC et les numéros en attente sont exclus des sauvegardes Android par
-`res/xml/backup_rules.xml` et `res/xml/data_extraction_rules.xml`.
+`SEND_SMS`, `RECEIVE_SMS`, `BROADCAST_SMS`, `READ_PHONE_STATE` (optional, to
+name the SIM cards), `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE`,
+`FOREGROUND_SERVICE_SPECIAL_USE` and `FOREGROUND_SERVICE_DATA_SYNC`.
 
-### Prérequis serveur
+The manifest sets `android:allowBackup="false"`: the HMAC secret and the
+pending numbers never leave the device through an Android backup.
 
-Le module Odoo `erplibre_mobile_passerelle` doit être installé, une passerelle déclarée, et le
-secret HMAC présent dans l'environnement du processus Odoo. **Le serveur ntfy
-doit avoir TLS et l'authentification activés** : le script d'installation fourni
-avec ERPLibre les laisse désactivés, et les numéros comme le contenu des messages
-transiteraient en clair sur un sujet lisible par quiconque en connaît le nom.
+### Server prerequisites
+
+The Odoo module `erplibre_mobile_gateway` must be installed, a gateway record
+declared with the same device identifier, and the HMAC secret present in the
+ENVIRONMENT of the Odoo process — never in the database, which travels in
+every backup.

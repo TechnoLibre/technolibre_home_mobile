@@ -1,5 +1,4 @@
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
-import { Dialog } from "@capacitor/dialog";
 import { DatabaseService } from "./databaseService";
 
 const SCHEMA_VERSION_KEY = "schema_version";
@@ -105,9 +104,23 @@ async function appendMigrationHistory(entry: MigrationHistoryEntry): Promise<voi
   });
 }
 
+/**
+ * Runs the pending migrations, then hands back a summary of what ran.
+ *
+ * `annoncer` receives that summary, or nothing is shown. It MUST NOT wait for
+ * the user: boot calls this before the interface is painted, and a modal
+ * dialog raised there sits behind the splash window, which no one can reach.
+ * Boot then waits forever on a tap that cannot happen — the application stays
+ * on its starting screen with no error anywhere.
+ *
+ * The summary is also written to the console, so a build with no reporter
+ * still leaves a trace. The durable record is elsewhere and unconditional:
+ * every migration is appended to the history before this returns.
+ */
 export async function runMigrations(
   db: DatabaseService,
-  migrations: Migration[]
+  migrations: Migration[],
+  annoncer?: (resume: string) => void
 ): Promise<void> {
   const currentVersion = await getSchemaVersion();
 
@@ -166,9 +179,8 @@ export async function runMigrations(
       }
     }
 
-    await Dialog.alert({
-      title: "Mise à jour",
-      message: lines.join("\n"),
-    });
+    const resume = lines.join("\n");
+    console.info(`[migration]\n${resume}`);
+    annoncer?.(resume);
   }
 }

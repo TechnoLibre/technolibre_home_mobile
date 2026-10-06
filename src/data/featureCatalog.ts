@@ -2012,19 +2012,27 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "system.permissions",
                 label: { en: "Permissions panel", fr: "Panel permissions" },
                 description: {
-                    en: "Inspect/grant runtime permissions.",
-                    fr: "Inspecter/accorder les permissions runtime.",
+                    en: "Read location, camera and SMS states; request the SMS ones.",
+                    fr: "Lire localisation, caméra et SMS ; demander celles des SMS.",
                 },
                 status: "stable",
                 howItWorks: {
-                    en: "Lists the runtime permissions the app declares (camera, microphone, "
-                        + "location, biometric, notifications) with their current grant state "
-                        + "read via Capacitor's per-plugin checkPermissions(). Tapping a denied "
-                        + "perm calls requestPermissions() — the OS dialog handles the rest.",
-                    fr: "Liste les permissions runtime déclarées par l'app (caméra, micro, "
-                        + "localisation, biométrie, notifications) avec leur état actuel lu via "
-                        + "checkPermissions() par plugin Capacitor. Tap sur une perm refusée "
-                        + "appelle requestPermissions() — la dialogue OS fait le reste.",
+                    en: "Reads location (fine and coarse) and camera/photos through each "
+                        + "plugin's checkPermissions(), and the two SMS permissions through the "
+                        + "gateway plugin's getCapabilities(). When an SMS permission is "
+                        + "missing it offers to ask for it and calls requestSmsPermissions(): "
+                        + "the only one this panel can request, the others belonging to their "
+                        + "own plugin. The right to send an SMS was otherwise reachable only "
+                        + "from the gateway screen, where no one looking for permissions goes, "
+                        + "and a reinstall resets it to denied.",
+                    fr: "Lit la localisation (précise et approximative) et caméra/photos par le "
+                        + "checkPermissions() de chaque plugin, et les deux permissions SMS par "
+                        + "le getCapabilities() du plugin passerelle. Quand une permission SMS "
+                        + "manque, propose de la demander et appelle requestSmsPermissions() : "
+                        + "la seule que ce panneau puisse demander, les autres appartenant à "
+                        + "leur propre plugin. Le droit d'envoyer un SMS n'était sinon "
+                        + "accessible que depuis l'écran de la passerelle, où ne va pas qui "
+                        + "cherche ses permissions, et une réinstallation le remet à refusée.",
                 },
                 demo: { kind: "options", sectionId: "permissions" },
                 files: ["src/components/options/permissions/options_permissions_component.ts"],

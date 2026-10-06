@@ -61,6 +61,7 @@ Fonctionnalités :
 | `/options/erplibre` | `OptionsErplibreComponent` |
 | `/options/transcription` | `OptionsTranscriptionComponent` |
 | `/options/processes` | `OptionsProcessesComponent` |
+| `/options/sms_gateway` | `OptionsSmsGatewayComponent` |
 | `*` | `HomeComponent` (fallback) |
 
 <!-- [en] -->

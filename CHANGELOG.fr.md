@@ -71,6 +71,36 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ramènent la compilation de 43 s à 22 s
 
 ### Corrigé
+- **L'interface revient après chaque redémarrage** — un lancement sur deux
+  laissait l'application sur son écran de démarrage : le JavaScript allait au
+  bout, le fil principal restait inactif dans sa boucle, et rien n'était jamais
+  peint. `launchAutoHide: false` fait poser au greffon un écouteur de pré-dessin
+  qui refuse tout dessin du contenu de l'activité, et désactive la minuterie qui
+  le retirerait ; seul `hide()` le retire, et seulement s'il le trouve déjà posé.
+  L'écouteur est posé sur le fil d'interface pendant que `hide()` part de la
+  première ligne du démarrage : celui qui gagnait la course décidait si
+  l'application paraîtrait un jour. L'écran du greffon s'efface désormais seul au
+  bout de 500 ms, ce qui libère le dessin même quand `hide()` arrive trop tôt ;
+  l'écran de démarrage de l'application, avec son indicateur et ses étapes,
+  couvre le chargement comme il le devait
+- **Le premier lancement après une installation ne reste plus sur son écran de
+  démarrage** — une installation neuve exécute toutes les migrations, et leur
+  résumé s'affichait dans une boîte modale que le démarrage attendait. Cette
+  boîte est levée avant que l'interface soit peinte : elle se place derrière la
+  fenêtre de lancement du système, personne ne peut la toucher, et le démarrage
+  attend sans fin un geste impossible, sans la moindre erreur nulle part. Le
+  résumé s'écrit désormais sous l'indicateur de démarrage, où il reste jusqu'à
+  l'ouverture de l'application, et dans la console. Plus rien n'attend un geste
+- **Un rapport en file est re-signé à chaque tentative** — l'enveloppe portait
+  l'horodatage et le nonce de la première. Le serveur n'accepte une signature
+  que dans une fenêtre de quelques minutes : un rapport mis en file pendant une
+  coupure de réseau, une batterie à plat ou un serveur arrêté devenait donc
+  définitivement irrecevable, était rejoué cinquante fois et bloquait derrière
+  lui tous les rapports valides. L'horodatage et le nonce sont désormais posés
+  juste avant chaque envoi. Le doublon reste impossible : ce qui en protège est
+  le numéro de séquence que porte chaque évènement, que le serveur ordonne et
+  ignore à la seconde remise. Un corps illisible est abandonné avec une ligne
+  au journal au lieu d'être rejoué
 - **L'empaquetage tient sous les 65 535 entrées d'un APK** — le navigateur de
   code hors ligne embarque 123 306 fichiers, et l'empaquetage échouait sur
   « Too many zip entries ». Ces dépôts sont désormais exclus par défaut, et

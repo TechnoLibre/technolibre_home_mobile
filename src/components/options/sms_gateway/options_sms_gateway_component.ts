@@ -117,6 +117,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
         <p class="sms-gateway__warning" t-esc="t('sms_gateway.warn_battery')" />
         <p class="sms-gateway__warning" t-if="state.caps.isDefaultSmsApp"
            t-esc="t('sms_gateway.warn_default_sms_app')" />
+        <p class="sms-gateway__warning" t-esc="t('sms_gateway.warn_rcs')" />
 
         <!-- Configuration -->
         <section class="sms-gateway__section" t-att-aria-label="t('sms_gateway.config_title')">
@@ -133,6 +134,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
           <label class="sms-gateway__field">
             <span t-esc="t('sms_gateway.hmac_secret')" />
             <input type="password" autocapitalize="off" autocomplete="off"
+                   t-att-placeholder="state.hasSecret ? t('sms_gateway.secret_kept') : ''"
                    t-att-value="state.form.hmacSecret"
                    t-on-input="(ev) => this.onField('hmacSecret', ev)" />
           </label>
@@ -270,6 +272,10 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 				deviceId: "",
 				subscriptionId: -1,
 			} as FormState,
+			//: Une cle est-elle deja posee. La cle ne traverse pas le pont,
+			//: donc le champ reste vide : sans ce drapeau, rien a l'ecran ne
+			//: distingue « pas de cle » de « cle posee, non affichee ».
+			hasSecret: false,
 			journal: [] as SmsJournalEntry[],
 			journalCount: 0,
 			journalBytes: 0,
@@ -283,6 +289,7 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 			if (!this.state.native) {
 				return;
 			}
+			await this.chargerConfiguration();
 			await this.refresh();
 			await this.loadJournal();
 			this.timer = setInterval(() => void this.refresh(), POLL_MS);
@@ -528,6 +535,27 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 			sdk: caps.androidSdk,
 			limit: caps.segmentLimitPerMinute,
 		});
+	}
+
+	/**
+	 * Remplit le formulaire avec ce qui est enregistre, la cle exceptee.
+	 *
+	 * Sans cette lecture les trois champs partent vides a chaque ouverture, et
+	 * rien ne distingue « pas configure » de « configure ailleurs » — par le
+	 * cable, par exemple. Le champ de la cle reste vide par construction : son
+	 * invite dit qu'elle est en place, et la laisser vide la conserve.
+	 */
+	async chargerConfiguration(): Promise<void> {
+		try {
+			const pose = await SmsGatewayPlugin.getConfig();
+			const form = this.state.form as FormState;
+			form.odooBaseUrl = pose.odooBaseUrl ?? "";
+			form.deviceId = pose.deviceId ?? "";
+			form.subscriptionId = pose.subscriptionId ?? -1;
+			this.state.hasSecret = Boolean(pose.hasSecret);
+		} catch (error: unknown) {
+			console.warn("[sms-gateway] configuration illisible", error);
+		}
 	}
 
 	async refresh(): Promise<void> {

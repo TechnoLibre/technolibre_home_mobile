@@ -73,6 +73,19 @@ function setBootStep(msg: string) {
 	if (el) el.textContent = msg;
 }
 
+/**
+ * Pose un texte qui RESTE sous l'etape de demarrage.
+ *
+ * `setBootStep` se fait remplacer a chaque etape ; le resume des migrations
+ * y disparaitrait en quelques centiemes de seconde. Ici il tient jusqu'a ce
+ * que l'ecran de demarrage s'efface, ce qui laisse le temps de le lire sans
+ * jamais attendre un geste.
+ */
+function setBootNote(msg: string) {
+	const el = document.getElementById("boot-note");
+	if (el) el.textContent = msg;
+}
+
 function hideBootScreen() {
 	const el = document.getElementById("boot-screen");
 	if (el) el.remove();
@@ -203,7 +216,7 @@ async function startApp() {
 			description: "Table editable_repos pour les repos promus en mode édition",
 			run: addEditableReposTable,
 		},
-	]);
+	], setBootNote);
 
 	setBootStep(t("boot.loading_graphic_prefs"));
 	{

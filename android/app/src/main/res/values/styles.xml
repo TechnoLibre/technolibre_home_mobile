@@ -18,7 +18,15 @@
     </style>
 
 
+    <!--
+      « postSplashScreenTheme » n'est pas decoratif : androidx l'exige pour
+      savoir quel theme poser une fois l'ecran de lancement fini. Absent,
+      l'activite GARDE ce theme-ci, dont le fond est l'image de lancement,
+      et elle reste affichee par-dessus l'application — interface montee,
+      JavaScript termine, et rien de lisible a l'ecran.
+    -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
 </resources>

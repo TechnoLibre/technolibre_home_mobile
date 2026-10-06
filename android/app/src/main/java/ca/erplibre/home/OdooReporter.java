@@ -49,11 +49,32 @@ public class OdooReporter {
 
     /** Complète l'enveloppe commune : version, appareil, horodatage, nonce. */
     public JSONObject envelope() throws JSONException {
-        byte[] bytes = new byte[16];
-        random.nextBytes(bytes);
         JSONObject payload = new JSONObject();
         payload.put("v", 1);
         payload.put("device", config.getDeviceId());
+        return estampiller(payload);
+    }
+
+    /**
+     * Pose l'horodatage et le nonce de CET envoi, en écrasant les précédents.
+     *
+     * <p>Appelé juste avant chaque expédition, y compris pour un rapport déjà
+     * en file. Le serveur refuse hors d'une fenêtre de quelques minutes :
+     * rejouer un corps avec l'horodatage de sa première tentative le rend
+     * définitivement irrecevable dès que la file a pris du retard — hors
+     * réseau, batterie à plat, serveur arrêté. Le rapport est alors réessayé
+     * sans fin, et il bloque derrière lui tous ceux qui attendent.
+     *
+     * <p>Le nonce est refait aussi : il n'est valable qu'une fois côté
+     * serveur, et le reprendre ferait refuser pour rejeu une tentative qui
+     * n'a jamais abouti. Ce qui protège réellement du doublon est ailleurs,
+     * et plus bas : chaque évènement porte un numéro de séquence que le
+     * serveur ordonne, si bien qu'un rapport remis deux fois est ignoré la
+     * seconde.
+     */
+    public JSONObject estampiller(JSONObject payload) throws JSONException {
+        byte[] bytes = new byte[16];
+        random.nextBytes(bytes);
         payload.put("ts", System.currentTimeMillis() / 1000L);
         payload.put("nonce", toHex(bytes));
         return payload;
@@ -122,7 +143,20 @@ public class OdooReporter {
         }
         List<SmsOutbox.SpoolEntry> entries = outbox.spooled(20);
         for (SmsOutbox.SpoolEntry entry : entries) {
-            boolean ok = post(entry.endpoint, entry.payload);
+            String corps;
+            try {
+                corps = estampiller(new JSONObject(entry.payload)).toString();
+            } catch (JSONException erreur) {
+                // Un corps illisible ne le deviendra jamais : le garder le
+                // ferait rejouer cinquante fois, et bloquer derrière lui tous
+                // les rapports valides qui suivent.
+                Log.w(TAG, "Rapport illisible abandonné", erreur);
+                new SmsJournal(context).warn(SmsJournal.CAT_NETWORK,
+                        "Rapport illisible abandonné", null);
+                outbox.spoolDone(entry.id);
+                continue;
+            }
+            boolean ok = post(entry.endpoint, corps);
             if (ok) {
                 outbox.spoolDone(entry.id);
             } else {

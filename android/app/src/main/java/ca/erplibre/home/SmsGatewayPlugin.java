@@ -123,6 +123,28 @@ public class SmsGatewayPlugin extends Plugin {
         call.resolve(result);
     }
 
+    /**
+     * Rend la configuration enregistree, SANS la cle.
+     *
+     * <p>Elle est renvoyee pour qu'un ecran de reglages montre ce qu'il va
+     * modifier : sans lecteur, ses champs partent vides a chaque ouverture et
+     * rien ne distingue « pas configure » de « configure ailleurs ».
+     *
+     * <p>La cle, elle, ne sort pas : la renvoyer la ferait traverser le pont
+     * et s'installer dans le document d'une page web, alors que tout son
+     * interet est de ne pas circuler. {@code hasSecret} dit seulement si elle
+     * est posee, ce qui suffit a un ecran.
+     */
+    @PluginMethod
+    public void getConfig(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("odooBaseUrl", config.getOdooBaseUrl());
+        result.put("deviceId", config.getDeviceId());
+        result.put("subscriptionId", config.getSubscriptionId());
+        result.put("hasSecret", !config.getHmacSecret().isEmpty());
+        call.resolve(result);
+    }
+
     // ------------------------------------------------------------------
     @PluginMethod
     public void configure(PluginCall call) {
@@ -130,7 +152,15 @@ public class SmsGatewayPlugin extends Plugin {
         String hmacSecret = call.getString("hmacSecret");
         String deviceId = call.getString("deviceId");
 
-        if (odooBaseUrl == null || hmacSecret == null || deviceId == null) {
+        // Une cle vide veut dire « garder celle qui est en place ». Un ecran
+        // ne peut pas la reafficher pour la renvoyer telle quelle : exiger
+        // qu'elle soit fournie ferait que changer l'URL effacerait la cle, ou
+        // obligerait a retaper soixante-quatre caracteres a chaque reglage.
+        if (hmacSecret == null || hmacSecret.trim().isEmpty()) {
+            hmacSecret = config.getHmacSecret();
+        }
+
+        if (odooBaseUrl == null || hmacSecret.isEmpty() || deviceId == null) {
             call.reject("Parametres requis : odooBaseUrl, hmacSecret, deviceId");
             return;
         }
