@@ -948,19 +948,28 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 status: "stable",
                 howItWorks: {
-                    en: "V1 transport (Original Stream Deck) writes 16 KiB pages with a "
+                    en: "V1 transport (Original Stream Deck) writes 8191-byte pages with a "
                         + "prepended report id and page index; V2 transport (Mk.2, XL, Plus, "
                         + "Neo, Pedal) writes 1024-byte pages with the new framing. Choice is "
-                        + "driven by DeckSpec.transportVersion — encoders never see the wire "
-                        + "format directly.",
-                    fr: "Transport V1 (Stream Deck Original) écrit des pages de 16 KiB avec "
+                        + "driven by DeckSpec.transport — encoders never see the wire "
+                        + "format directly. keyStreamReset is one page holding only the "
+                        + "report id 0x02: DeckSession.open writes it first, so the deck "
+                        + "drops an image the previous session left unfinished.",
+                    fr: "Transport V1 (Stream Deck Original) écrit des pages de 8191 octets avec "
                         + "report id + index de page en préfixe; transport V2 (Mk.2, XL, Plus, "
                         + "Neo, Pedal) écrit des pages 1024 bytes avec le nouveau framing. Le "
-                        + "choix est piloté par DeckSpec.transportVersion — les encoders ne "
-                        + "voient pas le format wire directement.",
+                        + "choix est piloté par DeckSpec.transport — les encoders ne "
+                        + "voient pas le format wire directement. keyStreamReset est une "
+                        + "page qui ne porte que le report id 0x02 : DeckSession.open l'écrit "
+                        + "d'abord, et le deck abandonne une image que la session précédente "
+                        + "a laissée inachevée.",
                 },
                 demo: NONE_PLUMBING,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/transport"],
+                tests: [
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/transport/TransportV1Test.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/transport/TransportV2Test.java",
+                ],
             },
             {
                 id: "streamdeck.lifecycle-service",

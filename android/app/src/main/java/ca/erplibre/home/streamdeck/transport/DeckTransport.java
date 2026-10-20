@@ -16,4 +16,15 @@ public interface DeckTransport {
      * and validate writes.
      */
     int pageSize();
+
+    /**
+     * One image page carrying only the report ID 0x02, the rest zero: the
+     * deck drops an image whose pages stopped before the last one, so the
+     * next image starts clean. A new buffer on every call.
+     */
+    default byte[] keyStreamReset() {
+        byte[] page = new byte[pageSize()];
+        page[0] = 0x02;
+        return page;
+    }
 }

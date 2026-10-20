@@ -429,7 +429,10 @@ Pattern strategy. `DeckRegistry` mappe `productId → DeckSpec`. Une
 IN), thread writer (HID OUT consommant `WriterQueue`), et un
 `DeckTransport` + `ImageEncoder` choisis selon la spec. Les images
 poussées rapidement pour la même touche sont coalescées : la dernière
-gagne, les plus anciennes résolvent leur Promise avec `{dropped: true}`.
+gagne, les plus anciennes résolvent leur Promise avec `{dropped: true}`. Une session qui
+s'ouvre écrit d'abord une page d'image vierge (report ID `0x02`, le reste à
+zéro), comme la bibliothèque de référence d'Elgato : le deck abandonne une
+image que la session précédente a laissée inachevée.
 
 ### Tests manuels
 

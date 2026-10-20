@@ -30,7 +30,8 @@ import ca.erplibre.home.streamdeck.transport.TransportV2;
  *
  * Lifecycle:
  *   constructor (no I/O)
- *   open(usbConnection, iface) — claim, read serial, start threads
+ *   open(usbConnection, iface) — claim, reset the key stream, read
+ *             serial and firmware, start threads
  *   close() — drain queue with rejected promises, end the threads (see
  *             WorkerShutdown) and the calls from other threads (see
  *             UsbCallGate), close the connection, then tell the owner
@@ -261,6 +262,12 @@ public final class DeckSession {
         // its whole control timeout. The claim above has disconnected the
         // kernel's HID driver, so nothing else polls the IN endpoint.
 
+        // A session that ended mid-image leaves the deck waiting for the
+        // rest of it; the reset makes it drop that image, as the Elgato
+        // reference library does on every open. A failure here costs one
+        // garbled key at most, which the writer's own failures report.
+        resetKeyStream();
+
         try {
             this.serial   = readSerial();
             this.firmware = readFirmware();
@@ -381,6 +388,22 @@ public final class DeckSession {
             if (sent != page.length) {
                 throw new DeckIoException("bulk_write_short:" + sent + "/" + page.length);
             }
+        }
+    }
+
+    /** Writes the transport's key-stream reset page to the OUT endpoint.
+     *  Called by open() before the writer starts, so nothing else writes. */
+    private void resetKeyStream() {
+        byte[] page = transport.keyStreamReset();
+        int sent;
+        try {
+            sent = connection.bulkTransfer(epOut, page, page.length, BULK_WRITE_TIMEOUT_MS);
+        } catch (RuntimeException e) {
+            sent = -1;
+        }
+        if (sent != page.length) {
+            Log.w(TAG, "key stream reset failed for " + device.getDeviceName()
+                + ": " + sent + "/" + page.length);
         }
     }
 
