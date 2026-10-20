@@ -674,7 +674,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "restartSessions and retryAttach give every deck its three "
                         + "attempts back (restartSessions with deviceNames: those decks "
                         + "only), as does any other reopen of a deck given up, "
-                        + "the permission button included.",
+                        + "the permission button included. A deck whose restart close "
+                        + "outlasts the 3 s wait is reopened once that close ends "
+                        + "(RestartReopen).",
                     fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
                         + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
                         + "appareil : premier attach prompt l'utilisateur; l'autorisation est "
@@ -694,7 +696,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "retryAttach rendent à chaque deck ses trois essais "
                         + "(restartSessions avec deviceNames : à ces decks seulement), "
                         + "comme toute autre réouverture d'un deck abandonné, bouton de "
-                        + "permission compris.",
+                        + "permission compris. Un deck dont la fermeture au redémarrage "
+                        + "dépasse l'attente de 3 s est rouvert dès qu'elle se termine "
+                        + "(RestartReopen).",
                 },
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: [
@@ -704,6 +708,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/PermissionRequestPlan.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachPolicy.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachTimers.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/RestartReopen.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
                     "src/plugins/streamDeckPlugin.ts",
                     "src/services/streamDeckEventLog.ts",
@@ -712,6 +717,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/PermissionRequestPlanTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachPolicyTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachTimersTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/RestartReopenTest.java",
                     "src/__tests__/streamDeckPlugin.test.ts",
                     "src/__tests__/streamDeckEventLog.test.ts",
                 ],

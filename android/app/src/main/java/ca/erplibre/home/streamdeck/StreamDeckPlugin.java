@@ -95,6 +95,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     /** Reopens a deck whose session closed itself; see ReattachPolicy. */
     private final ReattachPolicy reattach = new ReattachPolicy(SystemClock::elapsedRealtime);
+    /** Decks a restartSessions reopens once their close outlasts its wait. */
+    private final RestartReopen restartReopen = new RestartReopen();
     /** Runs the retries; created in load(), shut down by stopReattach(). */
     private volatile ScheduledExecutorService reattachTimer;
     /** The retry waiting on reattachTimer, by USB device name. */
@@ -382,6 +384,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // The device is gone: a retry has nothing to open, and the
         // hotplug attach handles its return.
         forgetReattach(name);
+        restartReopen.forget(name);
         // Debounce: ThinkPhone (and a few other Android stacks) emit
         // detach + attach in tight succession after the first interrupt
         // event. Closing the session synchronously here would tear the
@@ -391,6 +394,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         Runnable closeJob = () -> {
             synchronized (pendingCloseJobs) { pendingCloseJobs.remove(name); }
             forgetReattach(name);
+            restartReopen.forget(name);
             // An attach still waiting on permission or open() for this
             // device will fail to register and close what it opened.
             registry.release(name);
@@ -426,6 +430,22 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // applyReattach updates the wake lock once the retry is pending,
         // so it is not dropped in the gap before the reopen.
         applyReattach(name, session.serial(), reattach.closed(name, reason));
+        if (restartReopen.closed(name)) reopenAfterRestart(name);
+    }
+
+    /**
+     * Opens again a deck whose restart stopped waiting for its close (see
+     * RestartReopen), on a thread of its own: this runs inside the close,
+     * which a second close() waits for, and an open makes EP0 transfers.
+     * A deck unplugged or without permission meanwhile is left alone.
+     */
+    private void reopenAfterRestart(String name) {
+        UsbDevice device = usb.getDeviceList().get(name);
+        if (device == null || !usb.hasPermission(device)) return;
+        Log.i(TAG, "restartSessions: " + name + " closed after the wait, reopening");
+        Thread t = new Thread(() -> onDeckAttached(device), "deck-reopen");
+        t.setDaemon(true);
+        t.start();
     }
 
     /**
@@ -499,6 +519,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     /** No retry for any deck any more: the plugin is being destroyed. */
     private void stopReattach() {
         reattach.stop();
+        restartReopen.clear();
         reattachTimers.cancelAll();
         ScheduledExecutorService timer = reattachTimer;
         if (timer != null) timer.shutdownNow();
@@ -637,7 +658,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * those USB devices are closed, reopened and get their retries back;
      * the other decks are not touched. Resolves {restarted}, the number of
      * decks re-attached. Runs on its own thread, off the plugin thread
-     * every plugin shares: the closes wait for the sessions' workers.
+     * every plugin shares: the closes wait for the sessions' workers. A
+     * close that outlasts CLOSE_WAIT_MS keeps its session registered, which
+     * the reopen here would skip: that deck is reopened when its close
+     * ends instead (see RestartReopen), and counts in {restarted}.
      */
     @PluginMethod
     public void restartSessions(PluginCall call) {
@@ -649,12 +673,19 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             }
             Log.i(TAG, "restartSessions: " + (only == null ? "every deck" : only)
                 + ", closing " + targets.size() + " session(s)");
+            List<String> closing = new ArrayList<>();
+            for (DeckSession s : targets) closing.add(s.device().getDeviceName());
+            restartReopen.begin(closing);
             // Each close unregisters its session through onSessionClosed.
             closeSessions(targets, "restart_requested", DeckSession.CLOSE_WAIT_MS);
             if (only == null) forgetAllReattach();
             else for (String name : only) forgetReattach(name);
+            Set<String> late = restartReopen.endWait(closing);
+            if (!late.isEmpty()) {
+                Log.w(TAG, "restartSessions: " + late + " still closing, reopened once closed");
+            }
             JSObject r = new JSObject();
-            r.put("restarted", attachIdleDecks(only));
+            r.put("restarted", attachIdleDecks(only) + late.size());
             call.resolve(r);
         }), "deck-restart", 0);
     }

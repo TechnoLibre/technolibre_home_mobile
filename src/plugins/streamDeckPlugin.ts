@@ -229,7 +229,9 @@ interface StreamDeckPluginApi {
      *  has no session — including one whose session closed itself while
      *  it stayed plugged in. Used to pick up a reader-mode change without
      *  an unplug. With deviceNames, only those USB devices are closed and
-     *  reopened. `restarted` counts the decks re-attached. */
+     *  reopened. `restarted` counts the decks re-attached, a deck whose
+     *  close outlasts the 3 s wait included: it reopens once that close
+     *  ends. */
     restartSessions(opts?: { deviceNames?: string[] }): Promise<{ restarted: number }>;
     /** Per attached Stream Deck, the session signals and the plugin's
      *  sick verdict; makes no USB transfer. */
