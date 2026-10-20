@@ -527,7 +527,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "keeps one DeckSession per attached device; DeckSpec carries product "
                         + "id → key count, image size, transport version. The bridge surface is "
                         + "JSON over the Capacitor JS↔Java pipe; binary frames travel as base64 "
-                        + "batched on a single JNI call per deck. "
+                        + "batched on a single JNI call per deck. KeyEventGate holds "
+                        + "keyChanged until the page's key handler calls "
+                        + "keyListenerReady (at launch and after each page load): "
+                        + "the last 16 events at most, those older than 10 s "
+                        + "dropped, the rest delivered in arrival order. "
                         + "FeatureReads probes the control pipe at open with "
                         + "the firmware report (250 ms, one retry): a deck "
                         + "that answers neither opens with controlPipeOk "
@@ -541,7 +545,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "garde une DeckSession par appareil branché; DeckSpec porte product id "
                         + "→ nb touches, taille image, version transport. La surface bridge est "
                         + "JSON sur le pipe Capacitor JS↔Java; les frames binaires passent en "
-                        + "base64 batchées en un seul appel JNI par deck. FeatureReads sonde le "
+                        + "base64 batchées en un seul appel JNI par deck. KeyEventGate "
+                        + "retient keyChanged jusqu'à ce que le gestionnaire de "
+                        + "touches de la page appelle keyListenerReady (au lancement "
+                        + "et après chaque chargement de page) : 16 événements au "
+                        + "plus, ceux de plus de 10 s écartés, les autres livrés "
+                        + "dans leur ordre d'arrivée. FeatureReads sonde le "
                         + "canal de contrôle à l'ouverture avec le rapport "
                         + "firmware (250 ms, un nouvel essai) : un deck qui "
                         + "ne répond à aucun s'ouvre avec controlPipeOk faux, "
@@ -561,6 +570,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ParallelClose.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSpec.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckRegistry.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/KeyEventGate.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/FeatureReads.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ControlPipe.java",
                 ],
@@ -624,7 +634,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "sleep looks like an idle deck, so a deck that sent "
                         + "no report over the whole hide is sick (quiet), "
                         + "while one that did, as the press that woke the "
-                        + "phone, keeps its session.",
+                        + "phone, keeps its session. Once its "
+                        + "keyChanged handler is subscribed it calls "
+                        + "keyListenerReady, so a press the plugin held since "
+                        + "launch reaches that handler; the decks found at "
+                        + "boot are painted only after that call, so their "
+                        + "USB writes do not age the held presses.",
                     fr: "S'abonne à keyChanged sur chaque deck, throttlé à 150 "
                         + "ms pour éviter le crash IME du WebView. La touche 0 "
                         + "navigue toujours vers /note/<id>; les touches 1-3 ne "
@@ -649,7 +664,14 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "inactif, donc un deck qui n'a envoyé aucun rapport "
                         + "de tout le masquage est malade (quiet), tandis qu'un "
                         + "deck qui en a envoyé, comme la touche qui a réveillé "
-                        + "le téléphone, garde sa session.",
+                        + "le téléphone, garde sa session. Une fois son "
+                        + "gestionnaire keyChanged "
+                        + "abonné, il appelle keyListenerReady : une touche que "
+                        + "le plugin a retenue depuis le lancement atteint ce "
+                        + "gestionnaire ; les decks trouvés au démarrage ne "
+                        + "sont peints qu'après cet appel, pour que leurs "
+                        + "écritures USB ne vieillissent pas les touches "
+                        + "retenues.",
                 },
                 status: "stable",
                 dependsOn: [

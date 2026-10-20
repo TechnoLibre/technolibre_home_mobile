@@ -252,6 +252,12 @@ interface StreamDeckPluginApi {
      *  open session that heard no input report for that long is sick
      *  (quiet). */
     getSessionHealth(opts?: { quietForMs?: number }): Promise<{ decks: DeckHealth[] }>;
+    /** Call once the app's keyChanged handler is subscribed. Until then,
+     *  and again after each page load, the plugin holds key events: the
+     *  last 16 at most, delivered through keyChanged in arrival order by
+     *  this call, except those older than 10 s. Later events pass
+     *  straight through. Resolves with what the held events became. */
+    keyListenerReady(): Promise<{ delivered: number; dropped: number }>;
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
     /**
      * Ask the OS for USB permission on one deck or, without deckId, on

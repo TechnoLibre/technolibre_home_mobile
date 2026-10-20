@@ -352,12 +352,15 @@ export class StreamDeckController {
             );
         };
 
-        // Pick up decks already connected at boot time.
+        // Pick up decks already connected at boot time. They are painted
+        // once the key handler listens (below): the plugin drops a held
+        // press after 10 s, and painting takes USB writes per key.
+        const bootDecks: DeckInfo[] = [];
         try {
             const r = await StreamDeckPlugin.listDecks();
             for (const d of r.decks) {
                 this.decks.set(d.deckId, d);
-                await repaintIfVisible(d);
+                bootDecks.push(d);
             }
         } catch (e) {
             console.warn("[streamdeck] listDecks at boot failed:", e);
@@ -420,6 +423,20 @@ export class StreamDeckController {
                 }
             }),
         );
+
+        // The handler above is subscribed: the plugin delivers the
+        // presses it held since launch (a launch by USB attach can see
+        // one before this point), through that handler, then every
+        // later one directly.
+        StreamDeckPlugin.keyListenerReady().then((r) => {
+            if (r.delivered > 0 || r.dropped > 0) {
+                console.info(
+                    `[streamdeck] held key events: delivered ${r.delivered}, dropped ${r.dropped}`,
+                );
+            }
+        }).catch((e) => console.warn("[streamdeck] keyListenerReady:", e));
+
+        for (const d of bootDecks) await repaintIfVisible(d);
 
         // The PAGE_ACTIVE bus listener is registered eagerly in the
         // constructor — see the comment there.
