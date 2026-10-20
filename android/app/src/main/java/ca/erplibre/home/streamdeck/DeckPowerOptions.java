@@ -79,7 +79,8 @@ public final class DeckPowerOptions {
         return wakeOnKeyPress && activityPaused && showOverLockScreen();
     }
 
-    /** The partial wake lock is held only with keepAwake and an open deck. */
+    /** The partial wake lock is held only with keepAwake and a deck open,
+     *  or one waiting to be reopened (ReattachPolicy.reopening). */
     public boolean holdWakeLock(boolean anyDeckOpen) { return keepAwake() && anyDeckOpen; }
 
     /** Each open session sends its heartbeat only with keepAwake. */

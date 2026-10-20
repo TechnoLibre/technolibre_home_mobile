@@ -204,4 +204,49 @@ public class ReattachPolicyTest {
         failAgain(d, READER);
         assertRetry(policy.closed(other, READER), 2_000L, 1);
     }
+
+    @Test
+    public void reopening_holds_from_the_self_close_until_the_deck_registers() {
+        assertFalse(policy.reopening());
+        Decision d = policy.closed(DEV, READER);
+        assertTrue(policy.reopening());
+        clock.advance(d.delayMs);
+        assertTrue(policy.due(DEV, d.token));
+        // The retry is opening the deck: no timer, no session yet.
+        assertTrue(policy.reopening());
+        policy.registered(DEV);
+        assertFalse(policy.reopening());
+    }
+
+    @Test
+    public void reopening_ends_when_the_attempts_are_given_up() {
+        Decision d = policy.closed(DEV, READER);
+        d = failAgain(d, READER);
+        d = failAgain(d, READER);
+        clock.advance(d.delayMs);
+        assertTrue(policy.due(DEV, d.token));
+        assertTrue(policy.reopening());
+        assertEquals(Decision.Kind.GIVE_UP, policy.attachFailed(DEV, "interface_busy").kind);
+        assertFalse(policy.reopening());
+    }
+
+    @Test
+    public void reopening_ends_on_detach_owner_close_and_stop() {
+        policy.closed(DEV, READER);
+        policy.forget(DEV);
+        assertFalse(policy.reopening());
+        policy.closed(DEV, READER);
+        policy.closed(DEV, "usb_lost");
+        assertFalse(policy.reopening());
+        policy.closed(DEV, READER);
+        policy.stop();
+        assertFalse(policy.reopening());
+    }
+
+    @Test
+    public void an_attach_failure_outside_a_retry_is_not_reopening() {
+        policy.attachFailed(DEV, "permission_denied");
+        policy.closed(DEV, "open_failed");
+        assertFalse(policy.reopening());
+    }
 }

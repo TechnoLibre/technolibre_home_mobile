@@ -176,6 +176,17 @@ final class ReattachPolicy {
         return true;
     }
 
+    /** True while a retry sequence is underway for some deck: a retry
+     *  waits for its timer, or is opening the deck and has not yet
+     *  registered nor failed. The deck counts as open meanwhile, for the
+     *  wake lock: without it the CPU may suspend and the timer stall. */
+    synchronized boolean reopening() {
+        for (State s : states.values()) {
+            if (s.attempts > 0 && !s.gaveUp && s.registeredAt < 0) return true;
+        }
+        return false;
+    }
+
     /** Drop the state and pending retry of {@code deviceName}: detached. */
     synchronized void forget(String deviceName) { states.remove(deviceName); }
 

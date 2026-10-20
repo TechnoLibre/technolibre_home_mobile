@@ -349,16 +349,23 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         if (registry.unregister(name, session, reason)) {
             Log.i(TAG, "session for " + name + " closed (" + reason + ") — unregistered");
         }
-        updateWakeLock();
+        // applyReattach updates the wake lock once the retry is pending,
+        // so it is not dropped in the gap before the reopen.
         applyReattach(name, session.serial(), reattach.closed(name, reason));
     }
 
     /**
      * Act on a ReattachPolicy decision for {@code name}: schedule the
-     * retry, or send reattachGaveUp once the attempts are spent.
+     * retry, or send reattachGaveUp once the attempts are spent; then
+     * update the wake lock, held while a deck waits to be reopened.
      * {@code deckId} is the serial last seen, "" when none was read.
      */
     private void applyReattach(String name, String deckId, ReattachPolicy.Decision d) {
+        scheduleOrReport(name, deckId, d);
+        updateWakeLock();
+    }
+
+    private void scheduleOrReport(String name, String deckId, ReattachPolicy.Decision d) {
         if (d.kind == ReattachPolicy.Decision.Kind.RETRY) {
             Log.i(TAG, "re-attach " + d.attempt + "/" + ReattachPolicy.DELAYS_MS.length
                 + " of " + name + " in " + d.delayMs + " ms (" + d.reason + ")");
@@ -395,7 +402,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         if (!reattach.due(name, token)) return;
         synchronized (reattachJobs) { reattachJobs.remove(name); }
         UsbDevice device = usb.getDeviceList().get(name);
-        if (device == null) { reattach.forget(name); return; }
+        if (device == null) { reattach.forget(name); updateWakeLock(); return; }
         if (registry.isBusy(name)) return;
         if (!usb.hasPermission(device)) {
             applyReattach(name, "", reattach.attachFailed(name, "permission_missing"));
@@ -416,6 +423,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     private void forgetReattach(String name) {
         reattach.forget(name);
         cancelReattachJob(name);
+        updateWakeLock();
     }
 
     /** No retry for any deck any more: the plugin is being destroyed. */
@@ -428,12 +436,14 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         }
     }
 
-    /** Take or drop the partial wake lock to match the keepAwake option
-     *  and the open sessions. Synchronized: sessions close on their own
-     *  threads while the option changes on the plugin thread. */
+    /** Take or drop the partial wake lock to match the keepAwake option,
+     *  the open sessions and the decks waiting to be reopened: the retry
+     *  timer does not advance while the CPU sleeps. Synchronized: sessions
+     *  close on their own threads while the option changes on the plugin
+     *  thread. */
     private synchronized void updateWakeLock() {
         if (wakeLock == null || power == null) return;
-        boolean want = power.holdWakeLock(!registry.isEmpty());
+        boolean want = power.holdWakeLock(!registry.isEmpty() || reattach.reopening());
         try {
             if (want && !wakeLock.isHeld()) wakeLock.acquire();
             else if (!want && wakeLock.isHeld()) wakeLock.release();
@@ -591,6 +601,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             for (ScheduledFuture<?> job : reattachJobs.values()) job.cancel(false);
             reattachJobs.clear();
         }
+        updateWakeLock();
     }
 
     /** onDeckAttached on each of ReattachPlan.idleDecks; returns how many. */
