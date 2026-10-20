@@ -540,6 +540,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/WorkerShutdown.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/UsbCallGate.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/CloseOnce.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSpec.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckRegistry.java",
                 ],

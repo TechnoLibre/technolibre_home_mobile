@@ -38,7 +38,8 @@ import ca.erplibre.home.streamdeck.transport.TransportV2;
  * close() runs from the owner (detach, restart, destroy), from the reader
  * thread itself when the USB pipe fails, or from the writer thread when
  * transfers keep failing (see WriterStep); the listener fires once either
- * way.
+ * way. A close() that finds another one running waits for it (see
+ * CloseOnce), unless it runs on the reader or the writer.
  */
 public final class DeckSession {
 
@@ -51,6 +52,9 @@ public final class DeckSession {
      *  within one page's BULK_WRITE_TIMEOUT_MS; a heartbeat within its
      *  500 ms transfer; setBrightness and reset within their 1000 ms. */
     private static final long   STOP_WORKERS_MS = 2000;
+    /** Bound of a second close()'s wait for the first: its workers, then
+     *  its connection release and CloseListener. */
+    private static final long   CLOSE_WAIT_MS = STOP_WORKERS_MS + 1000;
 
     /** Told once, after the session stopped, whoever called close(). */
     public interface CloseListener {
@@ -64,6 +68,7 @@ public final class DeckSession {
     private final WriterQueue queue = new WriterQueue();
     /** USB calls from threads close() does not join; see UsbCallGate. */
     private final UsbCallGate calls = new UsbCallGate();
+    private final CloseOnce closeOnce = new CloseOnce();
     private final WriteFailureReporter writeFailures = new WriteFailureReporter();
     private final DeckTransport transport;
     private final ImageEncoder encoder;
@@ -262,13 +267,25 @@ public final class DeckSession {
 
     public void close(String reason) {
         List<Thread> workers;
+        boolean first;
         synchronized (this) {
-            if (!running) return;
-            running = false;
-            calls.shut();
-            queue.closeAndDrainAsDropped();
             workers = Arrays.asList(readerThread, writerThread, heartbeatThread);
-            heartbeatThread = null;
+            first = running && closeOnce.claim();
+            if (first) {
+                running = false;
+                calls.shut();
+                queue.closeAndDrainAsDropped();
+                heartbeatThread = null;
+            }
+        }
+        if (!first) {
+            // Never opened, or closed or closing already: a close in
+            // progress is waited for, so the session is gone on return.
+            if (!closeOnce.awaitFinished(workers, CLOSE_WAIT_MS)) {
+                Log.w(TAG, "close(" + reason + "): the close in progress still running after "
+                    + CLOSE_WAIT_MS + " ms");
+            }
+            return;
         }
         // The workers and the gated calls end before the connection is
         // released: close() frees the native device their USB calls use.
@@ -300,9 +317,12 @@ public final class DeckSession {
         // Outside the monitor: the listener takes the plugin's registry
         // lock, and the plugin never calls into a session under that lock.
         // The plugin also sends deckDisconnected from there.
-        if (closeListener != null) {
-            try { closeListener.onClosed(this, reason); }
-            catch (Throwable t) { Log.w(TAG, "closeListener: " + t.getMessage()); }
+        try {
+            if (closeListener != null) closeListener.onClosed(this, reason);
+        } catch (Throwable t) {
+            Log.w(TAG, "closeListener: " + t.getMessage());
+        } finally {
+            closeOnce.finish();
         }
     }
 
