@@ -68,9 +68,9 @@ final class ImageWriteJob extends WriteJob {
         } catch (ImageEncoder.ImageEncodeException e) {
             fail(e.getMessage());
         } catch (DeckSession.DeckIoException e) {
-            // The session closes on this; deckDisconnected carries the
-            // detail for a fire-and-forget job.
-            if (call != null) call.reject(e.getMessage());
+            // Counted by the writer, which closes the session once
+            // transfers keep failing (see WriterStep).
+            fail(e.getMessage());
             throw e;
         } catch (Throwable t) {
             fail("image_write_failed:" + t.getMessage());

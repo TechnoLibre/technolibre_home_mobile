@@ -773,19 +773,21 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "drains via bulk-OUT. clearPendingWrites() empties "
                         + "the queue without closing it — used by the camera "
                         + "streamer on stop to avoid the firmware-busy lag. "
-                        + "A failed USB transfer closes the session "
-                        + "(deckDisconnected, reason usb_lost:…); a "
-                        + "fire-and-forget batch write that fails on its "
-                        + "input is reported as writeFailed in the journal.",
+                        + "Three failed USB transfers in a row close the "
+                        + "session (deckDisconnected, reason usb_lost:…); a "
+                        + "single one is a firmware stall and leaves it "
+                        + "open. A fire-and-forget batch write that fails "
+                        + "is reported as writeFailed in the journal.",
                     fr: "Chaque (deck, key) est un slot ; offrir un nouveau job "
                         + "pour un slot existant remplace l'ancien (résolu "
                         + "comme `dropped`). Thread consommateur unique drain "
                         + "via bulk-OUT. clearPendingWrites() vide la queue "
                         + "sans la fermer — utilisé par le streamer sur stop. "
-                        + "Un transfert USB en échec ferme la session "
-                        + "(deckDisconnected, raison usb_lost:…) ; une "
-                        + "écriture de lot sans retour qui échoue sur son "
-                        + "entrée est signalée par writeFailed au journal.",
+                        + "Trois transferts USB en échec de suite ferment "
+                        + "la session (deckDisconnected, raison usb_lost:…) ; "
+                        + "un seul est un blocage du firmware et la laisse "
+                        + "ouverte. Une écriture de lot sans retour qui "
+                        + "échoue est signalée par writeFailed au journal.",
                 },
                 status: "stable",
                 dependsOn: [

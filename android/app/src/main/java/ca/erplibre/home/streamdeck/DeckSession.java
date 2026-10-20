@@ -31,8 +31,9 @@ import ca.erplibre.home.streamdeck.transport.TransportV2;
  *             then tell the owner through the CloseListener
  *
  * close() runs from the owner (detach, restart, destroy), from the reader
- * thread itself when the USB pipe fails, or from the writer thread when a
- * transfer fails (see WriterStep); the listener fires once either way.
+ * thread itself when the USB pipe fails, or from the writer thread when
+ * transfers keep failing (see WriterStep); the listener fires once either
+ * way.
  */
 public final class DeckSession {
 
@@ -267,7 +268,7 @@ public final class DeckSession {
 
     /** Synchronously write all pages of a pre-paginated payload to the OUT
      *  endpoint. Any failed transfer, thrown or short, is a DeckIoException:
-     *  the writer closes the session on it. */
+     *  the writer closes the session after a few in a row (see WriterStep). */
     public void writePages(List<byte[]> pages) throws DeckIoException {
         for (byte[] page : pages) {
             int sent;
@@ -772,12 +773,12 @@ public final class DeckSession {
     }
 
     private void writerLoop() {
-        WriterStep.Owner owner = this::closeAfterWriteFailure;
+        WriterStep step = new WriterStep(this::closeAfterWriteFailure);
         while (running) {
             try {
                 WriteJob job = queue.take();
                 if (!running) return;
-                if (!WriterStep.run(job, owner)) return;
+                if (!step.run(job)) return;
             } catch (InterruptedException e) {
                 return; // closed
             } catch (Throwable t) {

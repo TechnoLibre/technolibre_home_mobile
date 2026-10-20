@@ -15,7 +15,8 @@ public abstract class WriteJob {
     /**
      * Called by the writer thread to execute the USB write. Settles the
      * Promise in every case; on a failed transfer it rejects first, then
-     * throws so the writer closes the session (see WriterStep).
+     * throws so the writer counts it, and closes the session once
+     * transfers keep failing (see WriterStep).
      */
     public abstract void runTransport() throws DeckSession.DeckIoException;
 }
