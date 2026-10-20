@@ -1068,6 +1068,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/options/streamdeck/options_streamdeck_component.ts",
                     "src/components/options/streamdeck/options_streamdeck_component.scss",
                 ],
+                tests: ["src/__tests__/streamDeckPanelI18n.test.ts"],
             },
         ],
     },
