@@ -21,7 +21,8 @@ package ca.erplibre.home.streamdeck;
  *   WRITER_ENDED    — same for the writer thread.
  *   WRITES_FAILING  — FAILURES_SICK bulk writes failed in a row.
  *   CONTROL_FAILING — FAILURES_SICK EP0 transfers failed in a row
- *                     (brightness, reset, heartbeat), on a session whose
+ *                     (brightness, reset; a failed heartbeat is not
+ *                     counted, see ControlPipe), on a session whose
  *                     control pipe answered at open (FeatureReads). One
  *                     down since open stays down across a restart, until
  *                     a replug, so its failures are no sickness.

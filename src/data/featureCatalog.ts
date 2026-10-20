@@ -617,7 +617,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "getSessionHealth and restarts only the decks the "
                         + "plugin reports sick (no session and no automatic "
                         + "reopen pending, reader or writer thread ended, two "
-                        + "failed writes or EP0 transfers in a row, the latter "
+                        + "failed writes or EP0 transfers in a row, heartbeat "
+                        + "failures not counted, the latter "
                         + "only on a deck whose control pipe answered at "
                         + "open) through "
                         + "restartSessions({deviceNames}); a healthy deck is "
@@ -642,7 +643,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "le plugin déclare malades (pas de session et aucune "
                         + "réouverture automatique en attente, fil lecteur ou "
                         + "écrivain terminé, deux écritures ou transferts EP0 "
-                        + "ratés de suite, ces derniers seulement sur un deck "
+                        + "ratés de suite, sans compter les battements ratés, "
+                        + "ces derniers seulement sur un deck "
                         + "dont le canal de contrôle a répondu à l'ouverture) "
                         + "via restartSessions({deviceNames}) ; "
                         + "un deck sain est restauré, jamais fermé. Un deck "
@@ -665,11 +667,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/streamDeckController.ts",
                     "src/services/streamDeckHealth.ts",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/SessionHealth.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ControlPipe.java",
                 ],
                 tests: [
                     "src/__tests__/streamDeckController.test.ts",
                     "src/__tests__/streamDeckHealth.test.ts",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/SessionHealthTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ControlPipeTest.java",
                 ],
             },
             {

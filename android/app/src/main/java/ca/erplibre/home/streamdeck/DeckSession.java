@@ -17,7 +17,6 @@ import com.getcapacitor.JSObject;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import ca.erplibre.home.streamdeck.encoder.ImageEncoder;
 import ca.erplibre.home.streamdeck.events.EventEmitter;
@@ -96,9 +95,9 @@ public final class DeckSession {
     private volatile RequestReader requestReader;
     /** The writer thread's WriterStep, null before it starts. */
     private volatile WriterStep writerStep;
-    /** EP0 transfers of gatedControlTransfer that failed since the last
-     *  one that went through: brightness, reset and heartbeat. */
-    private final AtomicInteger controlFailures = new AtomicInteger();
+    /** Failed EP0 transfers of gatedControlTransfer in a row, the
+     *  heartbeat's not counted (see ControlPipe). */
+    private final ControlPipe control = new ControlPipe();
     /** The reader's request the kernel never gave back, closed after the
      *  connection; see closeAfterConnection. Guarded by this. */
     private UsbRequest leftRequest;
@@ -212,8 +211,9 @@ public final class DeckSession {
         WriterStep step = writerStep;
         return step != null ? step.failuresInARow() : 0;
     }
-    /** EP0 transfers failed in a row: brightness, reset, heartbeat. */
-    public int controlFailuresInARow() { return controlFailures.get(); }
+    /** EP0 transfers failed in a row: brightness and reset; a heartbeat
+     *  that answers resets the count, one that fails is not counted. */
+    public int controlFailuresInARow() { return control.failuresInARow(); }
 
     private static boolean isAlive(Thread t) { return t != null && t.isAlive(); }
 
@@ -478,9 +478,16 @@ public final class DeckSession {
     }
 
     /** controlTransfer on EP0 with index 0 for a thread close() does not
-     *  join; see UsbCallGate. A closing session refuses it. */
+     *  join; see UsbCallGate. A closing session refuses it. A failure
+     *  counts toward controlFailuresInARow unless {@code heartbeat}. */
     private int gatedControlTransfer(int reqType, int req, int value, byte[] buf,
                                      int timeoutMs) throws DeckIoException {
+        return gatedControlTransfer(reqType, req, value, buf, timeoutMs, false);
+    }
+
+    private int gatedControlTransfer(int reqType, int req, int value, byte[] buf,
+                                     int timeoutMs, boolean heartbeat)
+            throws DeckIoException {
         if (!calls.enter()) throw new DeckIoException("session_closed");
         boolean ok = false;
         try {
@@ -489,7 +496,7 @@ public final class DeckSession {
             return got;
         } finally {
             calls.leave();
-            if (ok) controlFailures.set(0); else controlFailures.incrementAndGet();
+            if (ok) control.answered(); else control.failed(!heartbeat);
         }
     }
 
@@ -526,10 +533,11 @@ public final class DeckSession {
      *  interrupt-IN) or the writer (which sends bulk-OUT), so the
      *  three threads don't contend.
      *
-     *  Heartbeat failures are logged and swallowed — the deck might
-     *  briefly hang during high writer queue pressure (e.g., camera
-     *  streaming saturating bulk-OUT) and we don't want to tear the
-     *  session down for what's almost always a transient stall. */
+     *  Heartbeat failures are swallowed and not counted toward
+     *  controlFailuresInARow (see ControlPipe) — the deck might briefly
+     *  hang during high writer queue pressure (e.g., camera streaming
+     *  saturating bulk-OUT), and such a transient stall neither closes
+     *  the session nor makes SessionHealth restart it. */
     private void heartbeatLoop() {
         int reportId = (spec.transport == DeckSpec.TransportKind.V2) ? 0x05 : 0x04;
         byte[] buf = new byte[32];
@@ -541,7 +549,7 @@ public final class DeckSession {
             }
             if (!running) return;
             try {
-                gatedControlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, buf, 500);
+                gatedControlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, buf, 500, true);
             } catch (DeckIoException closing) {
                 return;
             } catch (Throwable t) {
