@@ -91,9 +91,18 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     /** Reopens a deck whose session closed itself; see ReattachPolicy. */
     private final ReattachPolicy reattach = new ReattachPolicy(SystemClock::elapsedRealtime);
     /** Runs the retries; created in load(), shut down by stopReattach(). */
-    private ScheduledExecutorService reattachTimer;
+    private volatile ScheduledExecutorService reattachTimer;
     /** The retry waiting on reattachTimer, by USB device name. */
-    private final Map<String, ScheduledFuture<?>> reattachJobs = new HashMap<>();
+    private final ReattachTimers reattachTimers = new ReattachTimers((task, delayMs) -> {
+        ScheduledExecutorService timer = this.reattachTimer;
+        if (timer == null) return null;
+        try {
+            ScheduledFuture<?> f = timer.schedule(task, delayMs, TimeUnit.MILLISECONDS);
+            return () -> f.cancel(false);
+        } catch (RejectedExecutionException e) {
+            return null;  // shut down: the plugin is going away
+        }
+    });
 
     /** Single shared partial wake lock — held while the keepAwake option
      *  is on and at least one session is open, so the USB bus doesn't
@@ -268,7 +277,6 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                     return;
                 }
                 synchronized (lastAttachError) { lastAttachError.remove(name); }
-                cancelReattachJob(name);
                 // Read after registering: setPowerOptions reaches every
                 // registered session, so a change in between is not lost.
                 session.setHeartbeat(power.heartbeat());
@@ -369,16 +377,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         if (d.kind == ReattachPolicy.Decision.Kind.RETRY) {
             Log.i(TAG, "re-attach " + d.attempt + "/" + ReattachPolicy.DELAYS_MS.length
                 + " of " + name + " in " + d.delayMs + " ms (" + d.reason + ")");
-            synchronized (reattachJobs) {
-                cancelReattachJob(name);
-                if (reattachTimer == null) return;
-                try {
-                    reattachJobs.put(name, reattachTimer.schedule(
-                        () -> runReattach(name, d.token), d.delayMs, TimeUnit.MILLISECONDS));
-                } catch (RejectedExecutionException e) {
-                    // Timer shut down: the plugin is going away.
-                }
-            }
+            reattachTimers.schedule(name, d.token, d.delayMs, () -> runReattach(name, d.token));
         } else if (d.kind == ReattachPolicy.Decision.Kind.GIVE_UP) {
             Log.w(TAG, "re-attach of " + name + " given up after " + d.attempt
                 + " attempts (" + d.reason + ")");
@@ -399,8 +398,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * would raise the system dialog: it counts as a failed attempt.
      */
     private void runReattach(String name, long token) {
+        reattachTimers.fired(name, token);
         if (!reattach.due(name, token)) return;
-        synchronized (reattachJobs) { reattachJobs.remove(name); }
         UsbDevice device = usb.getDeviceList().get(name);
         if (device == null) { reattach.forget(name); updateWakeLock(); return; }
         if (registry.isBusy(name)) return;
@@ -411,29 +410,19 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         onDeckAttached(device);
     }
 
-    /** Cancel the timer of the retry of {@code name}, if one waits. */
-    private void cancelReattachJob(String name) {
-        synchronized (reattachJobs) {
-            ScheduledFuture<?> job = reattachJobs.remove(name);
-            if (job != null) job.cancel(false);
-        }
-    }
-
     /** No retry for {@code name} any more: detached. */
     private void forgetReattach(String name) {
         reattach.forget(name);
-        cancelReattachJob(name);
+        reattachTimers.cancel(name);
         updateWakeLock();
     }
 
     /** No retry for any deck any more: the plugin is being destroyed. */
     private void stopReattach() {
         reattach.stop();
-        synchronized (reattachJobs) {
-            for (ScheduledFuture<?> job : reattachJobs.values()) job.cancel(false);
-            reattachJobs.clear();
-            if (reattachTimer != null) reattachTimer.shutdownNow();
-        }
+        reattachTimers.cancelAll();
+        ScheduledExecutorService timer = reattachTimer;
+        if (timer != null) timer.shutdownNow();
     }
 
     /** Take or drop the partial wake lock to match the keepAwake option,
@@ -597,10 +586,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      *  and every deck gets its three retries back. */
     private void forgetAllReattach() {
         reattach.forgetAll();
-        synchronized (reattachJobs) {
-            for (ScheduledFuture<?> job : reattachJobs.values()) job.cancel(false);
-            reattachJobs.clear();
-        }
+        reattachTimers.cancelAll();
         updateWakeLock();
     }
 
