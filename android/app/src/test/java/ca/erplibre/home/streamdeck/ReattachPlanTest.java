@@ -54,4 +54,30 @@ public class ReattachPlanTest {
         Device unknownElgato = new Device("/dev/bus/usb/001/005", ELGATO, 0x7fff, "", true);
         assertTrue(pick(Arrays.asList(keyboard, unknownElgato)).isEmpty());
     }
+
+    @Test
+    public void a_restart_limited_to_some_devices_opens_only_those() {
+        Device sick = deck("/dev/bus/usb/001/002", true);
+        Device healthyIdle = deck("/dev/bus/usb/001/003", true);
+        Set<String> only = new HashSet<>(Collections.singletonList(sick.deviceName));
+        assertEquals(Collections.singletonList(sick),
+            ReattachPlan.idleDecks(Arrays.asList(sick, healthyIdle), n -> false, only));
+    }
+
+    @Test
+    public void no_limit_opens_every_idle_deck() {
+        Device a = deck("/dev/bus/usb/001/002", true);
+        Device b = deck("/dev/bus/usb/001/003", true);
+        assertEquals(Arrays.asList(a, b),
+            ReattachPlan.idleDecks(Arrays.asList(a, b), n -> false, null));
+    }
+
+    @Test
+    public void a_limited_restart_still_skips_busy_and_unpermitted_decks() {
+        Device busy = deck("/dev/bus/usb/001/002", true);
+        Device denied = deck("/dev/bus/usb/001/003", false);
+        Set<String> only = new HashSet<>(Arrays.asList(busy.deviceName, denied.deviceName));
+        assertTrue(ReattachPlan.idleDecks(Arrays.asList(busy, denied),
+            busy.deviceName::equals, only).isEmpty());
+    }
 }

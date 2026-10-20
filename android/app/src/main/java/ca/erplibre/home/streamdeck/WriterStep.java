@@ -34,9 +34,14 @@ final class WriterStep {
     }
 
     private final Owner owner;
-    private int failuresInARow = 0;
+    /** Written by the writer thread only; volatile for SessionHealth,
+     *  which reads it from the plugin thread. */
+    private volatile int failuresInARow = 0;
 
     WriterStep(Owner owner) { this.owner = owner; }
+
+    /** Failed transfers since the last job that ended without one. */
+    int failuresInARow() { return failuresInARow; }
 
     /** Runs {@code job}; false when the session is closed, by this call or before it. */
     boolean run(WriteJob job) {
@@ -49,7 +54,9 @@ final class WriterStep {
             failuresInARow = 0;
             return true;
         } catch (DeckSession.DeckIoException e) {
-            if (++failuresInARow < FAILURES_TO_CLOSE) return true;
+            int failures = failuresInARow + 1;
+            failuresInARow = failures;
+            if (failures < FAILURES_TO_CLOSE) return true;
             owner.closeAfterWriteFailure(CLOSE_REASON + ":" + e.getMessage());
             return false;
         }

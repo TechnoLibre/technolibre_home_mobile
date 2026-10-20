@@ -701,7 +701,8 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `getPowerOptions()` | Resolves `{showOverLockScreen, keepAwake}`, both `false` until the user turns them on. |
 | `setPowerOptions({showOverLockScreen?, keepAwake?})` | Stores the fields given and leaves the others; resolves with both. `keepAwake` — a partial wake lock and a 700 ms USB heartbeat while a deck is open, the lock also while a self-closed deck waits to be reopened — applies at once to the open decks. `showOverLockScreen` lets a launch caused by the deck show the app over the lock screen, and is the only way a deck key press turns the screen on. The app couples `keepAwake` with the Sleep section's "keep the deck lit" option, which arms `setWakeOnKeyPress` and needs it: turning that option on turns `keepAwake` on first, and leaves the option off when `keepAwake` stays off; turning `keepAwake` off turns that option off first. App boot arms `setWakeOnKeyPress` as stored, except that option stored on with `keepAwake` off: boot turns that option off, never `keepAwake` on, and writes one Stream Deck journal line saying so (`src/services/deckSleepCoupling.ts`). |
 | `setWakeOnKeyPress({enabled})` | Arms or disarms the key-press wake; resolves `{enabled}`, not stored by the plugin. When it is armed, a key press while the app is paused brings the app forward if the screen is already lit, or if `showOverLockScreen` is on, which alone lets the press turn the screen on (`DeckPowerOptions.bringAppForwardOnKeyPress`, `wakeScreenOnKeyPress`). Otherwise the screen stays off and the press arrives as `keyChanged` only. |
-| `restartSessions()` | Closes every open session, then opens every permitted deck that has none, including one whose session closed itself while it stayed plugged in. Cancels the pending automatic reopens and gives every deck its three attempts back. Resolves `{restarted}`, the number of decks re-attached. |
+| `restartSessions({deviceNames?})` | Closes every open session, then opens every permitted deck that has none, including one whose session closed itself while it stayed plugged in. Cancels the pending automatic reopens and gives every deck its three attempts back. With `deviceNames` (USB paths, as `getSessionHealth` gives them), only those devices are closed, reopened and get their attempts back; the other decks are not touched. Resolves `{restarted}`, the number of decks re-attached. |
+| `getSessionHealth()` | Per attached Stream Deck, without any USB transfer: `{deviceName, deckId, hasPermission, open, reopening, readerAlive, writerAlive, writeFailuresInARow, controlFailuresInARow, lastCloseReason, sick, sickReason}`. `sick` is the plugin's verdict (`SessionHealth`): `no_session` (permitted, no session, no automatic reopen pending), `reader_ended` / `writer_ended` (that thread ended while the session stays open), `writes_failing` / `control_failing` (two bulk writes or EP0 transfers failed in a row). A deck without permission, being opened or closed, or waiting for its automatic reopen is never sick. An idle deck sends no input report, so the time since the last one is not a signal. |
 | `retryAttach()` | Opens every permitted deck that has no session, without closing any. Cancels the pending automatic reopens and gives every deck its three attempts back. Resolves `{retried}`. |
 
 ### Events
@@ -739,10 +740,13 @@ sleeps.
 
 Nothing is reopened after an unplug (`usb_lost`: hotplug handles the
 return), `restartSessions`, `retryAttach` or the destruction of the app;
-those cancel the pending reopens. `restartSessions` and `retryAttach` —
-the app's own `restartSessions` after more than 5 s hidden included — give
+those cancel the pending reopens. `restartSessions` and `retryAttach` give
 every deck its three attempts back, a deck given up for its permission
-too. A deck given up that opens again by another path — the request
+too; `restartSessions` with `deviceNames` does so for those decks only.
+After more than 5 s hidden the app calls `getSessionHealth` and restarts
+only the decks reported `sick`, through `restartSessions({deviceNames})`:
+a healthy session is never closed, and a deck waiting for its automatic
+reopen is left to it. A deck given up that opens again by another path — the request
 permission button, a hotplug attach — gets its three attempts back too.
 
 ### Persistent identity
@@ -800,7 +804,8 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `getPowerOptions()` | Résout `{showOverLockScreen, keepAwake}`, tous deux `false` tant que l'utilisateur ne les active pas. |
 | `setPowerOptions({showOverLockScreen?, keepAwake?})` | Enregistre les champs donnés, laisse les autres ; résout avec les deux. `keepAwake` — un wake lock partiel et un battement USB de 700 ms tant qu'un deck est ouvert, le wake lock aussi tant qu'un deck fermé de lui-même attend sa réouverture — s'applique tout de suite aux decks ouverts. `showOverLockScreen` permet à un lancement causé par le deck d'afficher l'app par-dessus l'écran de verrouillage, et c'est la seule façon pour une touche du deck d'allumer l'écran. L'app lie `keepAwake` à l'option « garder le deck allumé » de la section Mise en veille, qui arme `setWakeOnKeyPress` et en a besoin : cocher cette option coche d'abord `keepAwake`, et la laisse décochée si `keepAwake` reste désactivé ; décocher `keepAwake` la décoche d'abord. Le démarrage de l'app arme `setWakeOnKeyPress` comme enregistré, sauf cette option enregistrée cochée avec `keepAwake` désactivé : le démarrage la décoche, sans jamais cocher `keepAwake`, et l'écrit sur une ligne du journal du Stream Deck (`src/services/deckSleepCoupling.ts`). |
 | `setWakeOnKeyPress({enabled})` | Arme ou désarme le réveil par touche ; résout `{enabled}`, que le plugin n'enregistre pas. Réveil armé, une touche pressée pendant que l'app est en pause ramène l'app au premier plan si l'écran est déjà allumé, ou si `showOverLockScreen` est activé, seule option qui permet à la touche d'allumer l'écran (`DeckPowerOptions.bringAppForwardOnKeyPress`, `wakeScreenOnKeyPress`). Sinon l'écran reste éteint et la touche n'arrive qu'en `keyChanged`. |
-| `restartSessions()` | Ferme toutes les sessions ouvertes, puis ouvre chaque deck permis qui n'en a pas, y compris celui dont la session s'est fermée d'elle-même alors qu'il restait branché. Annule les réouvertures automatiques en attente et rend à chaque deck ses trois essais. Résout `{restarted}`, le nombre de decks rattachés. |
+| `restartSessions({deviceNames?})` | Ferme toutes les sessions ouvertes, puis ouvre chaque deck permis qui n'en a pas, y compris celui dont la session s'est fermée d'elle-même alors qu'il restait branché. Annule les réouvertures automatiques en attente et rend à chaque deck ses trois essais. Avec `deviceNames` (chemins USB, tels que `getSessionHealth` les donne), seuls ces appareils sont fermés, rouverts et retrouvent leurs essais ; les autres decks ne sont pas touchés. Résout `{restarted}`, le nombre de decks rattachés. |
+| `getSessionHealth()` | Pour chaque Stream Deck branché, sans aucun transfert USB : `{deviceName, deckId, hasPermission, open, reopening, readerAlive, writerAlive, writeFailuresInARow, controlFailuresInARow, lastCloseReason, sick, sickReason}`. `sick` est le verdict du plugin (`SessionHealth`) : `no_session` (permis, sans session, aucune réouverture automatique en attente), `reader_ended` / `writer_ended` (ce fil a pris fin alors que la session reste ouverte), `writes_failing` / `control_failing` (deux écritures bulk ou transferts EP0 ratés de suite). Un deck sans permission, en cours d'ouverture ou de fermeture, ou qui attend sa réouverture automatique n'est jamais malade. Un deck inactif n'envoie aucun rapport d'entrée : le temps écoulé depuis le dernier n'est pas un signal. |
 | `retryAttach()` | Ouvre chaque deck permis qui n'a pas de session, sans en fermer aucune. Annule les réouvertures automatiques en attente et rend à chaque deck ses trois essais. Résout `{retried}`. |
 
 ### Events
@@ -840,9 +845,12 @@ minuterie de reprise n'avance pas quand le CPU dort.
 Rien n'est rouvert après un débranchement (`usb_lost` : le hotplug gère
 le retour), `restartSessions`, `retryAttach` ou la destruction de l'app ;
 ceux-ci annulent les réouvertures en attente. `restartSessions` et
-`retryAttach` — y compris le `restartSessions` de l'app après plus de 5 s
-masquée — rendent à chaque deck ses trois essais, même à un deck
-abandonné faute de permission. Un deck abandonné qui s'ouvre de nouveau
+`retryAttach` rendent à chaque deck ses trois essais, même à un deck
+abandonné faute de permission ; `restartSessions` avec `deviceNames` ne
+le fait que pour ces decks. Après plus de 5 s masquée, l'app appelle
+`getSessionHealth` et ne redémarre que les decks déclarés `sick`, via
+`restartSessions({deviceNames})` : une session saine n'est jamais
+fermée, et un deck qui attend sa réouverture automatique lui est laissé. Un deck abandonné qui s'ouvre de nouveau
 par un autre chemin — le bouton de demande de permission, un branchement —
 retrouve lui aussi ses trois essais.
 

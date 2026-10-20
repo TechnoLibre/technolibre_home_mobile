@@ -336,4 +336,29 @@ public class ReattachPolicyTest {
         policy.closed(DEV, "open_failed");
         assertFalse(policy.reopening());
     }
+
+    @Test
+    public void reopening_of_one_device_follows_its_retry_sequence() {
+        String other = "/dev/bus/usb/001/003";
+        assertFalse(policy.reopening(DEV));
+        Decision d = policy.closed(DEV, READER);
+        assertTrue(policy.reopening(DEV));
+        assertFalse(policy.reopening(other));
+        d = failAgain(d, READER);
+        d = failAgain(d, READER);
+        d = failAgain(d, READER);
+        assertEquals(Decision.Kind.GIVE_UP, d.kind);
+        // Given up: nothing will reopen it any more.
+        assertFalse(policy.reopening(DEV));
+    }
+
+    @Test
+    public void reopening_ends_when_the_retry_registers() {
+        Decision d = policy.closed(DEV, READER);
+        clock.advance(d.delayMs);
+        assertTrue(policy.due(DEV, d.token));
+        assertTrue(policy.reopening(DEV));
+        policy.registered(DEV);
+        assertFalse(policy.reopening(DEV));
+    }
 }

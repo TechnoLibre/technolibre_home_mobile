@@ -216,7 +216,15 @@ final class ReattachPolicy {
         return false;
     }
 
-    /** Drop the state and pending retry of {@code deviceName}: detached. */
+    /** reopening() for {@code deviceName} alone: a retry of that device
+     *  waits for its timer or is opening it. False once it is given up. */
+    synchronized boolean reopening(String deviceName) {
+        State s = states.get(deviceName);
+        return s != null && s.attempts > 0 && !s.gaveUp && s.registeredAt < 0;
+    }
+
+    /** Drop the state and pending retry of {@code deviceName}: detached,
+     *  or reopened by hand (restartSessions limited to some decks). */
     synchronized void forget(String deviceName) { states.remove(deviceName); }
 
     /** Drop every device's state: the owner reopened the decks by hand

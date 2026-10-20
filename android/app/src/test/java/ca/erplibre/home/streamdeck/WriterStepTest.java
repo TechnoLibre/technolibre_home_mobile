@@ -91,4 +91,15 @@ public class WriterStepTest {
         assertFalse(job.ran);
         assertTrue(owner.closes.isEmpty());
     }
+
+    @Test
+    public void failures_in_a_row_are_readable_and_reset_by_a_success() {
+        // SessionHealth reads the count from another thread.
+        WriterStep step = new WriterStep(new FakeOwner());
+        assertEquals(0, step.failuresInARow());
+        step.run(new FailingTransferJob());
+        assertEquals(1, step.failuresInARow());
+        step.run(new SettledJob());
+        assertEquals(0, step.failuresInARow());
+    }
 }

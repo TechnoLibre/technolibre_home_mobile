@@ -4,6 +4,7 @@ import {
     DeckInfo,
 } from "../plugins/streamDeckPlugin";
 import { Events } from "../constants/events";
+import { planSickRestart, shouldCheckHealth } from "./streamDeckHealth";
 
 interface EventBusLike {
     trigger(name: string, payload: Record<string, unknown>): void;
@@ -101,14 +102,11 @@ export class StreamDeckController {
      *  brightness on visibility:visible after we dim to 0 on hidden. */
     private lastBrightness = new Map<string, number>();
     private static readonly DEFAULT_BRIGHTNESS = 50;
-    /** When the page became hidden — used to decide whether to do a
-     *  full session restart on visible. Brief hides (<5 s, e.g. a
-     *  notification briefly waking the screen) don't need it; a real
-     *  sleep cycle does, because the reader's interrupt-IN endpoint
-     *  goes silent for ~10 s post-wake — whether the USB bus stayed up
-     *  through the keepAwake power option's heartbeat or suspended. */
+    /** When the page became hidden. A hide longer than
+     *  HEALTH_CHECK_AFTER_HIDDEN_MS makes the return to visible ask the
+     *  plugin for each deck's health and restart only the sick ones
+     *  (see _resumeAfterLongHide); a brief hide only restores. */
     private hiddenAt = 0;
-    private static readonly RESTART_AFTER_HIDDEN_MS = 5000;
     /** Per-key timestamp of the last accepted press. The debounce
      *  budget is per-key, not shared, because the original 150 ms
      *  rule was put in place to protect against the IME-storm
@@ -325,10 +323,10 @@ export class StreamDeckController {
         // the LCD before USB suspends again.
         const repaintIfVisible = async (info: DeckInfo) => {
             if (this._isHidden()) return;
-            // Re-applied unconditionally on every (re)connect so
-            // restartSessions on visibility:visible picks up the
-            // user's pre-sleep brightness — the firmware resets to
-            // its default on session reopen.
+            // Re-applied unconditionally on every (re)connect so a deck
+            // reopened by restartSessions picks up the user's pre-sleep
+            // brightness — the firmware resets to its default on session
+            // reopen.
             StreamDeckPlugin.setBrightness({
                 deckId: info.deckId,
                 percent: this.getBrightness(info.deckId),
@@ -426,14 +424,12 @@ export class StreamDeckController {
         // constructor — see the comment there.
 
         // Dim every deck to 0 while the page is hidden (phone locked /
-        // app backgrounded). setBrightness(0) hides the LCDs without
-        // touching the HID interface — earlier we used reset() here
-        // and the reader thread's interrupt-IN pipe was left in a
-        // state where post-wake key presses didn't surface, requiring
-        // a manual session restart. Brightness is a feature-report
-        // write that's safe to issue concurrently with the reader.
-        // On the way back, restore the user's brightness and repaint
-        // the home tile.
+        // app backgrounded). setBrightness(0) is a feature-report write
+        // on EP0, safe beside the reader, and leaves the key images and
+        // the interrupt-IN pipe alone; reset() would not: after it,
+        // post-wake presses can stop reaching the reader. On the way
+        // back a brief hide restores brightness and repaints, a long one
+        // checks the decks' health first (_resumeAfterLongHide).
         document.addEventListener("visibilitychange", () => {
             if (this._isHidden()) {
                 this.hiddenAt = Date.now();
@@ -459,47 +455,74 @@ export class StreamDeckController {
             }
             const hiddenFor = this.hiddenAt > 0 ? Date.now() - this.hiddenAt : 0;
             this.hiddenAt = 0;
-            // After a real sleep cycle (>5 s), the deck's reader pipe
-            // can sit silent for ~10 s post-wake, even when the
-            // keepAwake heartbeat kept the bus active. A full session
-            // restart re-creates the reader/writer threads from
-            // scratch and the next press lands instantly. The
-            // deckConnected listener above will repaint Note for each
-            // re-attached deck, so we don't repaint here. Brightness
-            // is reset to the firmware default on restart, so the
-            // restore call on the post-restart attach path picks up
-            // the user's value via the cache.
-            if (hiddenFor > StreamDeckController.RESTART_AFTER_HIDDEN_MS) {
-                StreamDeckPlugin.restartSessions().catch((e) =>
-                    console.warn("[streamdeck] restartSessions on visible:", e),
+            if (shouldCheckHealth(hiddenFor)) {
+                this._resumeAfterLongHide().catch((e) =>
+                    console.warn("[streamdeck] resume after long hide:", e),
                 );
                 return;
             }
-            for (const info of this.decks.values()) {
-                StreamDeckPlugin.setBrightness({
-                    deckId: info.deckId,
-                    percent: this.getBrightness(info.deckId),
-                }).catch((e) =>
-                    console.warn("[streamdeck] restore brightness:", e),
-                );
-                if (this.cameraStreaming) continue;
-                if (this.galleryActive) {
-                    this._paintGallery(info).catch((e) =>
-                        console.warn("[streamdeck] gallery repaint on visible:", e),
-                    );
-                    continue;
-                }
-                this._renderHome(info).catch((e) =>
-                    console.warn("[streamdeck] repaint on visible:", e),
-                );
-                this._paintGalleryKey(info).catch((e) =>
-                    console.warn("[streamdeck] gallery key repaint on visible:", e),
-                );
-                this._paintNotePageKeys(info).catch((e) =>
-                    console.warn("[streamdeck] note-page repaint on visible:", e),
-                );
-            }
+            for (const info of this.decks.values()) this._restoreOnVisible(info);
         });
+    }
+
+    /**
+     * Return to visible after a long hide. The plugin reports each deck's
+     * health (getSessionHealth, no USB transfer) and only the decks it
+     * finds sick are restarted, through restartSessions({deviceNames}).
+     * Reopening a healthy session is not free: its first EP0 transfers
+     * (SET_IDLE, the serial read, brightness) can each run into their 1 s
+     * timeout, and the serial falls back to the USB descriptor's.
+     * deckConnected restores and repaints a restarted
+     * deck; every other deck is restored here. A failed health query
+     * restarts nothing.
+     */
+    private async _resumeAfterLongHide(): Promise<void> {
+        let plan = planSickRestart(undefined);
+        try {
+            const r = await StreamDeckPlugin.getSessionHealth();
+            plan = planSickRestart(r?.decks);
+        } catch (e) {
+            console.warn("[streamdeck] getSessionHealth on visible:", e);
+        }
+        if (plan.deviceNames.length > 0) {
+            console.info(`[streamdeck] restarting sick deck(s): ${plan.reasons.join(", ")}`);
+            StreamDeckPlugin.restartSessions({ deviceNames: plan.deviceNames }).catch((e) =>
+                console.warn("[streamdeck] restartSessions on visible:", e),
+            );
+        }
+        // Hidden again while the query ran: the next visible restores.
+        if (this._isHidden()) return;
+        for (const info of this.decks.values()) {
+            if (plan.deckIds.includes(info.deckId)) continue;
+            this._restoreOnVisible(info);
+        }
+    }
+
+    /** Back to visible: the deck's cached brightness, then the surface
+     *  the current page owns, unless the camera streamer holds it. */
+    private _restoreOnVisible(info: DeckInfo): void {
+        StreamDeckPlugin.setBrightness({
+            deckId: info.deckId,
+            percent: this.getBrightness(info.deckId),
+        }).catch((e) =>
+            console.warn("[streamdeck] restore brightness:", e),
+        );
+        if (this.cameraStreaming) return;
+        if (this.galleryActive) {
+            this._paintGallery(info).catch((e) =>
+                console.warn("[streamdeck] gallery repaint on visible:", e),
+            );
+            return;
+        }
+        this._renderHome(info).catch((e) =>
+            console.warn("[streamdeck] repaint on visible:", e),
+        );
+        this._paintGalleryKey(info).catch((e) =>
+            console.warn("[streamdeck] gallery key repaint on visible:", e),
+        );
+        this._paintNotePageKeys(info).catch((e) =>
+            console.warn("[streamdeck] note-page repaint on visible:", e),
+        );
     }
 
     private _isHidden(): boolean {

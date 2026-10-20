@@ -586,9 +586,15 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "bus event) and fire STREAMDECK_ADD_VIDEO/AUDIO/"
                         + "LOCATION events that the note re-uses to add an "
                         + "entry. On visibilitychange:hidden each deck dims to "
-                        + "0 %; brief hides only restore brightness, hides over "
-                        + "5 s trigger a full restartSessions to wake the "
-                        + "post-sleep-silent reader.",
+                        + "0 %; a brief hide only restores brightness and "
+                        + "repaints. After a hide over 5 s the controller asks "
+                        + "getSessionHealth and restarts only the decks the "
+                        + "plugin reports sick (no session and no automatic "
+                        + "reopen pending, reader or writer thread ended, two "
+                        + "failed writes or EP0 transfers in a row) through "
+                        + "restartSessions({deviceNames}); a healthy deck is "
+                        + "restored, never closed. An idle deck sends no "
+                        + "report, so silence is not a sickness.",
                     fr: "S'abonne à keyChanged sur chaque deck, throttlé à 150 "
                         + "ms pour éviter le crash IME du WebView. La touche 0 "
                         + "navigue toujours vers /note/<id>; les touches 1-3 ne "
@@ -597,9 +603,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "et émettent STREAMDECK_ADD_VIDEO/AUDIO/LOCATION que "
                         + "la note ré-utilise pour ajouter une entrée. Sur "
                         + "visibilitychange:hidden chaque deck dimme à 0 %; "
-                        + "hides courtes restaurent juste la luminosité, hides "
-                        + ">5 s déclenchent un restartSessions complet pour "
-                        + "réveiller le reader silencieux après wake.",
+                        + "un masquage bref restaure la luminosité et repeint. "
+                        + "Après plus de 5 s masqué, le contrôleur interroge "
+                        + "getSessionHealth et ne redémarre que les decks que "
+                        + "le plugin déclare malades (pas de session et aucune "
+                        + "réouverture automatique en attente, fil lecteur ou "
+                        + "écrivain terminé, deux écritures ou transferts EP0 "
+                        + "ratés de suite) via restartSessions({deviceNames}) ; "
+                        + "un deck sain est restauré, jamais fermé. Un deck "
+                        + "inactif n'envoie aucun rapport : le silence n'est "
+                        + "pas une maladie.",
                 },
                 status: "stable",
                 dependsOn: [
@@ -607,8 +620,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "streamdeck.lifecycle-service",
                 ],
                 demo: NONE_BG,
-                files: ["src/services/streamDeckController.ts"],
-                tests: ["src/__tests__/streamDeckController.test.ts"],
+                files: [
+                    "src/services/streamDeckController.ts",
+                    "src/services/streamDeckHealth.ts",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/SessionHealth.java",
+                ],
+                tests: [
+                    "src/__tests__/streamDeckController.test.ts",
+                    "src/__tests__/streamDeckHealth.test.ts",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/SessionHealthTest.java",
+                ],
             },
             {
                 id: "streamdeck.usb",
@@ -635,7 +656,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "a retry that finds the USB permission missing gives up at once. "
                         + "Unplug, restartSessions, retryAttach and app destroy cancel it; "
                         + "restartSessions and retryAttach give every deck its three "
-                        + "attempts back, as does any other reopen of a deck given up, "
+                        + "attempts back (restartSessions with deviceNames: those decks "
+                        + "only), as does any other reopen of a deck given up, "
                         + "the permission button included.",
                     fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
                         + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
@@ -653,9 +675,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "n'est tenté ; un essai qui trouve la permission USB absente "
                         + "abandonne aussitôt. Débranchement, restartSessions, retryAttach "
                         + "et destruction de l'app l'annulent ; restartSessions et "
-                        + "retryAttach rendent à chaque deck ses trois essais, comme toute "
-                        + "autre réouverture d'un deck abandonné, bouton de permission "
-                        + "compris.",
+                        + "retryAttach rendent à chaque deck ses trois essais "
+                        + "(restartSessions avec deviceNames : à ces decks seulement), "
+                        + "comme toute autre réouverture d'un deck abandonné, bouton de "
+                        + "permission compris.",
                 },
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: [

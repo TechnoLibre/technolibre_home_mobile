@@ -17,6 +17,7 @@ import com.getcapacitor.JSObject;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import ca.erplibre.home.streamdeck.encoder.ImageEncoder;
 import ca.erplibre.home.streamdeck.events.EventEmitter;
@@ -81,8 +82,14 @@ public final class DeckSession {
     private String serial = "";
     private String firmware = "";
 
-    private Thread readerThread;
-    private Thread writerThread;
+    /** Set by open() under this; volatile for the health getters. */
+    private volatile Thread readerThread;
+    private volatile Thread writerThread;
+    /** The writer thread's WriterStep, null before it starts. */
+    private volatile WriterStep writerStep;
+    /** EP0 transfers of gatedControlTransfer that failed since the last
+     *  one that went through: brightness, reset and heartbeat. */
+    private final AtomicInteger controlFailures = new AtomicInteger();
     /** The reader's request the kernel never gave back, closed after the
      *  connection; see closeAfterConnection. Guarded by this. */
     private UsbRequest leftRequest;
@@ -183,6 +190,20 @@ public final class DeckSession {
     public String firmware() { return firmware; }
     /** False from the moment close() starts. */
     public boolean isOpen()  { return running; }
+
+    /** True while the reader thread runs; false before open(). */
+    public boolean readerAlive() { return isAlive(readerThread); }
+    /** True while the writer thread runs; false before open(). */
+    public boolean writerAlive() { return isAlive(writerThread); }
+    /** Bulk writes failed in a row (WriterStep), 0 before the writer starts. */
+    public int writeFailuresInARow() {
+        WriterStep step = writerStep;
+        return step != null ? step.failuresInARow() : 0;
+    }
+    /** EP0 transfers failed in a row: brightness, reset, heartbeat. */
+    public int controlFailuresInARow() { return controlFailures.get(); }
+
+    private static boolean isAlive(Thread t) { return t != null && t.isAlive(); }
 
     public synchronized void open(UsbManager usb) throws DeckOpenException {
         if (running) return;
@@ -394,10 +415,14 @@ public final class DeckSession {
     private int gatedControlTransfer(int reqType, int req, int value, byte[] buf,
                                      int timeoutMs) throws DeckIoException {
         if (!calls.enter()) throw new DeckIoException("session_closed");
+        boolean ok = false;
         try {
-            return connection.controlTransfer(reqType, req, value, 0, buf, buf.length, timeoutMs);
+            int got = connection.controlTransfer(reqType, req, value, 0, buf, buf.length, timeoutMs);
+            ok = got >= 0;
+            return got;
         } finally {
             calls.leave();
+            if (ok) controlFailures.set(0); else controlFailures.incrementAndGet();
         }
     }
 
@@ -908,6 +933,7 @@ public final class DeckSession {
                 DeckSession.this.closeAfterWriteFailure(reason);
             }
         });
+        writerStep = step;
         while (running) {
             try {
                 if (!step.run(queue.take())) return;
