@@ -7,6 +7,7 @@ import android.hardware.usb.UsbManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Base64;
 import android.util.Log;
 
@@ -24,6 +25,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 import ca.erplibre.home.streamdeck.encoder.ImageEncoder;
 import ca.erplibre.home.streamdeck.events.EventEmitter;
@@ -50,6 +56,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         new SessionRegistry<>(new SessionRegistry.Hooks<DeckSession>() {
             @Override public boolean isOpen(DeckSession s) { return s.isOpen(); }
             @Override public void connected(DeckSession s) {
+                // Under the registry monitor, so it precedes the policy's
+                // closed() for this session, which runs after unregister.
+                reattach.registered(s.device().getDeviceName());
                 // The spec's payload: JS caches the deck from `info`
                 // without a getDeckInfo round-trip.
                 JSObject ev = new JSObject();
@@ -79,6 +88,13 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     private static final long DETACH_DEBOUNCE_MS = 250L;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
+    /** Reopens a deck whose session closed itself; see ReattachPolicy. */
+    private final ReattachPolicy reattach = new ReattachPolicy(SystemClock::elapsedRealtime);
+    /** Runs the retries; created in load(), shut down by stopReattach(). */
+    private ScheduledExecutorService reattachTimer;
+    /** The retry waiting on reattachTimer, by USB device name. */
+    private final Map<String, ScheduledFuture<?>> reattachJobs = new HashMap<>();
+
     /** Single shared partial wake lock — held while the keepAwake option
      *  is on and at least one session is open, so the USB bus doesn't
      *  suspend after the first interrupt-IN event. updateWakeLock()
@@ -106,6 +122,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         usb = (UsbManager) ctx.getSystemService(Context.USB_SERVICE);
         permissions = new UsbPermissionRequester(ctx, usb);
         power = DeckPowerOptions.of(ctx);
+        reattachTimer = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "deck-reattach");
+            t.setDaemon(true);
+            return t;
+        });
         hotplug = new UsbHotplugReceiver(this);
         hotplug.attach(ctx);
         try {
@@ -124,7 +145,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // opted in (wakeOnKeyPress) and the activity is currently
         // paused (locked screen / backgrounded).
         DeckSession.setKeyPressHook(this::onDeckKeyPressed);
-        StreamDeckLifecycleService.setTaskRemovedHandler(this::resetAllSessions);
+        StreamDeckLifecycleService.setTaskRemovedHandler(() -> {
+            stopReattach();
+            resetAllSessions();
+        });
         try {
             ctx.startService(new Intent(ctx, StreamDeckLifecycleService.class));
         } catch (Throwable t) {
@@ -141,6 +165,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     @Override
     protected void handleOnDestroy() {
+        stopReattach();
         DeckSession.setKeyPressHook(null);
         if (hotplug != null) hotplug.detach(getContext());
         if (permissions != null) permissions.close();
@@ -223,6 +248,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 registry.release(name);
                 String reason = err != null ? err.getMessage() : "permission_denied";
                 recordAttachError(name, reason);
+                applyReattach(name, "", reattach.attachFailed(name, reason));
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
                 ev.put("reason", reason);
@@ -241,6 +267,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                     return;
                 }
                 synchronized (lastAttachError) { lastAttachError.remove(name); }
+                cancelReattachJob(name);
                 // Read after registering: setPowerOptions reaches every
                 // registered session, so a change in between is not lost.
                 session.setHeartbeat(power.heartbeat());
@@ -249,6 +276,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 registry.release(name);
                 String reason = e.getMessage();
                 recordAttachError(name, reason);
+                applyReattach(name, readableSerial(device), reattach.attachFailed(name, reason));
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
                 ev.put("reason", reason);
@@ -259,6 +287,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 String reason = "open_unexpected:" + t.getClass().getSimpleName()
                     + ":" + t.getMessage();
                 recordAttachError(name, reason);
+                applyReattach(name, readableSerial(device), reattach.attachFailed(name, reason));
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
                 ev.put("reason", reason);
@@ -277,6 +306,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     @Override
     public void onDeckDetached(UsbDevice device) {
         final String name = device.getDeviceName();
+        // The device is gone: a retry has nothing to open, and the
+        // hotplug attach handles its return.
+        forgetReattach(name);
         // Debounce: ThinkPhone (and a few other Android stacks) emit
         // detach + attach in tight succession after the first interrupt
         // event. Closing the session synchronously here would tear the
@@ -285,6 +317,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // device comes back within DETACH_DEBOUNCE_MS.
         Runnable closeJob = () -> {
             synchronized (pendingCloseJobs) { pendingCloseJobs.remove(name); }
+            forgetReattach(name);
             // An attach still waiting on permission or open() for this
             // device will fail to register and close what it opened.
             registry.release(name);
@@ -307,7 +340,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * CloseListener of every session, on the thread that closed it — the
      * reader thread when the USB pipe failed. Unregistering here, not only
      * on detach, is what lets onDeckAttached, restartSessions and
-     * retryAttach open the same device again.
+     * retryAttach open the same device again. A session that closed itself
+     * gets a retry scheduled by ReattachPolicy.
      */
     private void onSessionClosed(DeckSession session, String reason) {
         String name = session.device().getDeviceName();
@@ -315,6 +349,82 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             Log.i(TAG, "session for " + name + " closed (" + reason + ") — unregistered");
         }
         updateWakeLock();
+        applyReattach(name, session.serial(), reattach.closed(name, reason));
+    }
+
+    /**
+     * Act on a ReattachPolicy decision for {@code name}: schedule the
+     * retry, or send reattachGaveUp once the attempts are spent.
+     * {@code deckId} is the serial last seen, "" when none was read.
+     */
+    private void applyReattach(String name, String deckId, ReattachPolicy.Decision d) {
+        if (d.kind == ReattachPolicy.Decision.Kind.RETRY) {
+            Log.i(TAG, "re-attach " + d.attempt + "/" + ReattachPolicy.DELAYS_MS.length
+                + " of " + name + " in " + d.delayMs + " ms (" + d.reason + ")");
+            synchronized (reattachJobs) {
+                cancelReattachJob(name);
+                if (reattachTimer == null) return;
+                try {
+                    reattachJobs.put(name, reattachTimer.schedule(
+                        () -> runReattach(name, d.token), d.delayMs, TimeUnit.MILLISECONDS));
+                } catch (RejectedExecutionException e) {
+                    // Timer shut down: the plugin is going away.
+                }
+            }
+        } else if (d.kind == ReattachPolicy.Decision.Kind.GIVE_UP) {
+            Log.w(TAG, "re-attach of " + name + " given up after " + d.attempt
+                + " attempts (" + d.reason + ")");
+            JSObject ev = new JSObject();
+            ev.put("deckId", deckId != null ? deckId : "");
+            ev.put("deviceName", name);
+            ev.put("attempts", d.attempt);
+            ev.put("reason", d.reason);
+            emitter.emit("reattachGaveUp", ev);
+        }
+    }
+
+    /**
+     * A retry's timer fired. Runs only if the policy still holds this
+     * retry, then goes through onDeckAttached — reserve, permission
+     * already granted, open, register — so it can never open a second
+     * session. A device without permission is not reopened, since that
+     * would raise the system dialog: it counts as a failed attempt.
+     */
+    private void runReattach(String name, long token) {
+        if (!reattach.due(name, token)) return;
+        synchronized (reattachJobs) { reattachJobs.remove(name); }
+        UsbDevice device = usb.getDeviceList().get(name);
+        if (device == null) { reattach.forget(name); return; }
+        if (registry.isBusy(name)) return;
+        if (!usb.hasPermission(device)) {
+            applyReattach(name, "", reattach.attachFailed(name, "permission_missing"));
+            return;
+        }
+        onDeckAttached(device);
+    }
+
+    /** Cancel the timer of the retry of {@code name}, if one waits. */
+    private void cancelReattachJob(String name) {
+        synchronized (reattachJobs) {
+            ScheduledFuture<?> job = reattachJobs.remove(name);
+            if (job != null) job.cancel(false);
+        }
+    }
+
+    /** No retry for {@code name} any more: detached. */
+    private void forgetReattach(String name) {
+        reattach.forget(name);
+        cancelReattachJob(name);
+    }
+
+    /** No retry for any deck any more: the plugin is being destroyed. */
+    private void stopReattach() {
+        reattach.stop();
+        synchronized (reattachJobs) {
+            for (ScheduledFuture<?> job : reattachJobs.values()) job.cancel(false);
+            reattachJobs.clear();
+            if (reattachTimer != null) reattachTimer.shutdownNow();
+        }
     }
 
     /** Take or drop the partial wake lock to match the keepAwake option
@@ -452,6 +562,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         for (DeckSession s : registry.sessions()) {
             s.close("restart_requested");   // unregisters through onSessionClosed
         }
+        forgetAllReattach();
         JSObject r = new JSObject();
         r.put("restarted", attachIdleDecks());
         call.resolve(r);
@@ -465,9 +576,20 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      */
     @PluginMethod
     public void retryAttach(PluginCall call) {
+        forgetAllReattach();
         JSObject r = new JSObject();
         r.put("retried", attachIdleDecks());
         call.resolve(r);
+    }
+
+    /** The owner reopens the decks by hand: pending retries are dropped
+     *  and every deck gets its three retries back. */
+    private void forgetAllReattach() {
+        reattach.forgetAll();
+        synchronized (reattachJobs) {
+            for (ScheduledFuture<?> job : reattachJobs.values()) job.cancel(false);
+            reattachJobs.clear();
+        }
     }
 
     /** onDeckAttached on each of ReattachPlan.idleDecks; returns how many. */

@@ -571,9 +571,10 @@ public final class DeckSession {
         // After a sustained starve (no data for >10 s), close the
         // session. On Plus, GET_REPORT on EP0 can stop responding after
         // a few seconds of polling and never recovers without a fresh
-        // open. Closing unregisters the session, and the deck stays
-        // plugged in, so the next restartSessions or retryAttach opens a
-        // new one (see ReattachPlan).
+        // open. Closing unregisters the session while the deck stays
+        // plugged in: the plugin reopens it after 2, 4 then 8 s and gives
+        // up after the third attempt (see ReattachPolicy); restartSessions
+        // or retryAttach reopens it as well (see ReattachPlan).
         final long STARVE_RESET_MS = 10000L;
 
         while (running) {
