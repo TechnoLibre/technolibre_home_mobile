@@ -5,7 +5,9 @@ package ca.erplibre.home.streamdeck;
  * covers it. One instance per writer thread: it counts the failed transfers
  * in a row.
  *
- * A job settles its own Promise in every case. A rejected input — bad
+ * A job settles its own Promise in every case. One taken from the queue
+ * after the session started closing is resolved as dropped without
+ * running: close() drains only what is still queued. A rejected input — bad
  * format, undecodable image — leaves the session as it is. A failed USB
  * transfer surfaces as DeckIoException. bulkTransfer answers -1 to a
  * timeout as to a gone pipe, so one failure cannot tell a firmware stall
@@ -26,6 +28,8 @@ final class WriterStep {
 
     /** The session the writer serves, as far as a failed write concerns it. */
     interface Owner {
+        /** False once the session has started closing. */
+        boolean isOpen();
         void closeAfterWriteFailure(String reason);
     }
 
@@ -34,8 +38,12 @@ final class WriterStep {
 
     WriterStep(Owner owner) { this.owner = owner; }
 
-    /** Runs {@code job}; false when its transfer failed and the session was closed. */
+    /** Runs {@code job}; false when the session is closed, by this call or before it. */
     boolean run(WriteJob job) {
+        if (!owner.isOpen()) {
+            job.resolveDropped();
+            return false;
+        }
         try {
             job.runTransport();
             failuresInARow = 0;

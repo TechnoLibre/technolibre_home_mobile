@@ -11,6 +11,8 @@ public class WriterStepTest {
     /** Records the close requests the writer would make on its session. */
     static final class FakeOwner implements WriterStep.Owner {
         final List<String> closes = new ArrayList<>();
+        boolean open = true;
+        @Override public boolean isOpen() { return open; }
         @Override public void closeAfterWriteFailure(String reason) { closes.add(reason); }
     }
 
@@ -26,8 +28,9 @@ public class WriterStepTest {
     /** A job that settled its Promise itself: rejected input or success. */
     static final class SettledJob extends WriteJob {
         boolean ran = false;
+        boolean dropped = false;
         @Override public String slotKey() { return "key:1"; }
-        @Override public void resolveDropped() {}
+        @Override public void resolveDropped() { dropped = true; }
         @Override public void runTransport() { ran = true; }
     }
 
@@ -73,6 +76,19 @@ public class WriterStepTest {
         SettledJob job = new SettledJob();
         assertTrue(new WriterStep(owner).run(job));
         assertTrue(job.ran);
+        assertTrue(owner.closes.isEmpty());
+    }
+
+    @Test
+    public void job_taken_after_close_is_resolved_as_dropped() {
+        // close() drains only what is still queued: a job the writer took
+        // just before it would otherwise never settle its Promise.
+        FakeOwner owner = new FakeOwner();
+        owner.open = false;
+        SettledJob job = new SettledJob();
+        assertFalse(new WriterStep(owner).run(job));
+        assertTrue(job.dropped);
+        assertFalse(job.ran);
         assertTrue(owner.closes.isEmpty());
     }
 }

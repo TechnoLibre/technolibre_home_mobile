@@ -773,12 +773,15 @@ public final class DeckSession {
     }
 
     private void writerLoop() {
-        WriterStep step = new WriterStep(this::closeAfterWriteFailure);
+        WriterStep step = new WriterStep(new WriterStep.Owner() {
+            @Override public boolean isOpen() { return running; }
+            @Override public void closeAfterWriteFailure(String reason) {
+                DeckSession.this.closeAfterWriteFailure(reason);
+            }
+        });
         while (running) {
             try {
-                WriteJob job = queue.take();
-                if (!running) return;
-                if (!step.run(job)) return;
+                if (!step.run(queue.take())) return;
             } catch (InterruptedException e) {
                 return; // closed
             } catch (Throwable t) {
