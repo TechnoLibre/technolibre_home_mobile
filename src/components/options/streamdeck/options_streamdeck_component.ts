@@ -5,6 +5,7 @@ import {
     StreamDeckPlugin,
     DeckInfo,
     UsbDeviceDiag,
+    describePermissionResponse,
 } from "../../../plugins/streamDeckPlugin";
 import {
     streamDeckEventLog,
@@ -44,7 +45,6 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                 ↻ Rafraîchir
               </button>
               <button class="options-streamdeck__retry"
-                      t-att-disabled="state.decks.length === 0"
                       t-on-click="() => this.retryPermission()">
                 🔓 Demander permission
               </button>
@@ -693,16 +693,19 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         }
     }
 
+    /** One request for every attached deck: a deck still waiting for
+     *  permission has no deckId yet, so it is not in state.decks. */
     async retryPermission(): Promise<void> {
-        for (const row of this.state.decks) {
-            try {
-                const r = await StreamDeckPlugin.requestPermission({
-                    deckId: row.info.deckId,
-                });
-                this._log(`requestPermission(${row.info.deckId}) → granted=${r.granted}`);
-            } catch (e) {
-                this._log(`requestPermission(${row.info.deckId}) ERROR: ${e}`);
+        this._log("requestPermission() → asking…");
+        try {
+            const r = await StreamDeckPlugin.requestPermission();
+            for (const line of describePermissionResponse(r)) {
+                this._log(`requestPermission: ${line}`);
             }
+            await this.refresh();
+            await this.scanAllUsb();
+        } catch (e) {
+            this._log(`requestPermission ERROR: ${e}`);
         }
     }
 
