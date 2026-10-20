@@ -2066,8 +2066,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "coupled to keepAwake by deckSleepCoupling: turning "
                         + "(2) on turns keepAwake on, turning keepAwake off "
                         + "turns (2) off. App boot (restoreDeckSleepAtBoot) "
-                        + "arms the plugin from storage and repairs (2) "
-                        + "stored on with keepAwake off.",
+                        + "arms the plugin from storage, except (2) stored "
+                        + "on with keepAwake off: boot turns (2) off, never "
+                        + "keepAwake on, and writes one Stream Deck journal "
+                        + "line saying so.",
                     fr: "Deux toggles, persistés en "
                         + "localStorage et réappliqués au boot. "
                         + "(1) Empêcher la mise en veille — KeepAwakePlugin "
@@ -2096,8 +2098,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "à keepAwake par deckSleepCoupling : cocher (2) coche "
                         + "keepAwake, décocher keepAwake décoche (2). Le "
                         + "démarrage (restoreDeckSleepAtBoot) arme le plugin "
-                        + "depuis le stockage et répare (2) enregistré coché "
-                        + "avec keepAwake désactivé.",
+                        + "depuis le stockage, sauf (2) enregistré coché avec "
+                        + "keepAwake désactivé : le démarrage décoche (2), "
+                        + "sans jamais cocher keepAwake, et l'écrit sur une "
+                        + "ligne du journal du Stream Deck.",
                 },
                 demo: { kind: "options", sectionId: "keep-awake" },
                 files: [

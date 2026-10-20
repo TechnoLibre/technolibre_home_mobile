@@ -2,6 +2,7 @@ import type { EventBus } from "@odoo/owl";
 import { Events } from "../constants/events";
 import { StreamDeckPlugin, DeckPowerOptions } from "../plugins/streamDeckPlugin";
 import { loadDeckPowerOptions, setDeckPowerOption } from "./streamDeckPowerOptions";
+import { streamDeckEventLog } from "./streamDeckEventLog";
 import { t } from "../i18n";
 
 /**
@@ -28,6 +29,9 @@ export const NOTICE_WAKE_TURNED_OFF = "streamdeck.wake_turned_off";
 /** i18n key of the line telling that keepAwake stayed off, and so did
  *  wakeOnKeyPress. */
 export const ERROR_KEEP_AWAKE_NOT_STORED = "sleep.keep_awake_not_stored";
+/** i18n key of the Stream Deck journal line telling that app start turned
+ *  wakeOnKeyPress off because keepAwake is off. */
+export const NOTICE_WAKE_OFF_AT_BOOT = "streamdeck.event_wake_off_at_boot";
 
 export interface DeckSleepSettings {
     wakeOnKeyPress: boolean;
@@ -154,38 +158,39 @@ export function storedWakeOnKeyPress(): boolean {
  * Brings the stored settings back into force: the plugin's
  * wake-on-key-press is a static that starts off with every process, so
  * it is armed again as stored. wakeOnKeyPress stored on with keepAwake
- * off breaks the coupling, and is repaired the way turning it on works:
- * keepAwake goes on first, and when it stays off wakeOnKeyPress is
- * stored off. Resolves with both settings as left.
+ * off breaks the coupling, and is repaired by storing wakeOnKeyPress
+ * off: keepAwake costs battery and goes on only from a change the user
+ * asks, never from this repair. Resolves with both settings as left, and with
+ * NOTICE_WAKE_OFF_AT_BOOT as notice when the repair ran.
  */
 export async function restoreDeckSleepSettings(
     stored: DeckSleepSettings,
     effects: DeckSleepEffects,
 ): Promise<DeckSleepOutcome> {
-    if (!stored.wakeOnKeyPress || stored.keepAwake) {
-        await effects.setWakeOnKeyPress(stored.wakeOnKeyPress);
-        return { settings: { ...stored }, notice: null, coupledError: null };
-    }
-    const r = await applyDeckSleepChange(
-        { ...stored, wakeOnKeyPress: false },
-        { setting: "wakeOnKeyPress", enabled: true },
-        effects,
-    );
-    if (r.coupledError) await effects.setWakeOnKeyPress(false);
-    return r;
+    const wakeOnKeyPress = stored.wakeOnKeyPress && stored.keepAwake;
+    const broken = stored.wakeOnKeyPress && !wakeOnKeyPress;
+    await effects.setWakeOnKeyPress(wakeOnKeyPress);
+    return {
+        settings: { ...stored, wakeOnKeyPress },
+        notice: broken ? NOTICE_WAKE_OFF_AT_BOOT : null,
+        coupledError: null,
+    };
 }
 
 /**
  * restoreDeckSleepSettings on the stored values and the device writes,
  * run once at app start: no Options section has to be opened for the
- * settings to apply. Announces the result on `bus` like any change.
+ * settings to apply. Announces the result on `bus` like any change, and
+ * writes the repair's notice, if any, as one Stream Deck journal line.
  */
 export async function restoreDeckSleepAtBoot(bus?: EventBus): Promise<DeckSleepOutcome> {
     const power = await loadDeckPowerOptions();
-    return restoreDeckSleepSettings(
+    const r = await restoreDeckSleepSettings(
         { wakeOnKeyPress: storedWakeOnKeyPress(), keepAwake: power.keepAwake },
         deckSleepEffects(bus),
     );
+    if (r.notice) streamDeckEventLog.add(t(r.notice));
+    return r;
 }
 
 /**

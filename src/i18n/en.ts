@@ -743,6 +743,7 @@ export const translations: Record<string, string> = {
   "sms_gateway.device_summary": "{model}, Android SDK {sdk}. System limit: {limit} segments per minute.",
   "streamdeck.event_reattach_gave_up": "Deck {deck} not reopened after {attempts} attempts ({reason}): unplug it and plug it back in.",
   "streamdeck.event_reattach_gave_up_permission": "Deck {deck} not reopened after {attempts} attempts: its USB permission is missing. Press “{button}” in Options › Stream Deck.",
+  "streamdeck.event_wake_off_at_boot": "“Keep the Stream Deck lit during sleep” was turned off at app start: it needs “Keep the phone awake while a deck is connected” (Options › Stream Deck), which is off.",
   "streamdeck.request_permission": "🔓 Request permission",
   "streamdeck.power_title": "🔋 Phone sleep",
   "streamdeck.power_show_over_lock_screen": "Let the deck turn the screen on and show the app over the lock screen",

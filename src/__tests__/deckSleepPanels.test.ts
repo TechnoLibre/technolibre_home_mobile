@@ -11,6 +11,7 @@ import { translations as fr } from "../i18n/fr";
 import {
     ERROR_KEEP_AWAKE_NOT_STORED,
     NOTICE_KEEP_AWAKE_TURNED_ON,
+    NOTICE_WAKE_OFF_AT_BOOT,
     NOTICE_WAKE_TURNED_OFF,
     WAKE_ON_KEY_PRESS_KEY,
 } from "../services/deckSleepCoupling";
@@ -223,6 +224,11 @@ describe("i18n — coupled deck sleep settings", () => {
     it.each([["en", en], ["fr", fr]])("%s refusal names the option that stayed off", (_, dict) => {
         expect(dict[ERROR_KEEP_AWAKE_NOT_STORED]).toContain(dict["streamdeck.power_keep_awake"]);
         expect(dict[ERROR_KEEP_AWAKE_NOT_STORED]).toContain(dict["sleep.deck_awake"]);
+    });
+
+    it.each([["en", en], ["fr", fr]])("%s boot journal line names both options", (_, dict) => {
+        expect(dict[NOTICE_WAKE_OFF_AT_BOOT]).toContain(dict["sleep.deck_awake"]);
+        expect(dict[NOTICE_WAKE_OFF_AT_BOOT]).toContain(dict["streamdeck.power_keep_awake"]);
     });
 
     it.each([["en", en], ["fr", fr]])("%s hints name the setting they move", (_, dict) => {
