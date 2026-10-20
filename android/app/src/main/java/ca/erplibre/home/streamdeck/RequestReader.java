@@ -134,7 +134,10 @@ final class RequestReader {
                     got = await(WAIT_MS);
                     failuresInARow = 0;
                 } catch (WaitFailed e) {
-                    // The request's state is unknown: it counts as queued.
+                    // The request is still queued. requestWait(long) fails
+                    // before any reap (poll or reap refused, null), or after
+                    // one only in dequeue's buffer update, which cannot
+                    // overflow: submit queues the whole remaining buffer.
                     if (++failuresInARow >= WAIT_FAILURES_TO_CLOSE) {
                         failure = WAIT_FAILED + ":" + e.getMessage();
                         break;
