@@ -54,9 +54,9 @@ public class ReattachPolicyTest {
         assertEquals(Decision.Kind.GIVE_UP, d.kind);
         assertEquals(3, d.attempt);
         assertEquals("usb_request_wait_threw:IOException", d.reason);
-        // A later close of a deck opened by hand adds no second line.
-        policy.registered(DEV);
-        assertEquals(Decision.Kind.NONE, policy.closed(DEV, READER).kind);
+        // A later failure, with no session registered since, adds no line.
+        assertEquals(Decision.Kind.NONE, policy.attachFailed(DEV, "interface_busy").kind);
+        assertFalse(policy.reopening());
     }
 
     @Test
@@ -189,9 +189,39 @@ public class ReattachPolicyTest {
         Decision d = policy.closed(DEV, READER);
         assertTrue(policy.due(DEV, d.token));
         policy.attachFailed(DEV, ReattachPolicy.PERMISSION_MISSING);
-        // Reopened by hand, then closed before 60 s: no retry, no line.
-        policy.registered(DEV);
+        // Still unopened: a later failure neither retries nor reports.
         assertEquals(Decision.Kind.NONE, policy.closed(DEV, READER).kind);
+        assertFalse(policy.reopening());
+    }
+
+    @Test
+    public void a_deck_given_up_for_its_permission_then_opened_by_hand_gets_three_retries() {
+        Decision d = policy.closed(DEV, READER);
+        assertTrue(policy.due(DEV, d.token));
+        policy.attachFailed(DEV, ReattachPolicy.PERMISSION_MISSING);
+        // The permission button grants it and opens the deck, which then
+        // closes itself before 60 s: retried as after any first close.
+        policy.registered(DEV);
+        d = policy.closed(DEV, READER);
+        assertRetry(d, 2_000L, 1);
+        d = failAgain(d, READER);
+        assertRetry(d, 4_000L, 2);
+        d = failAgain(d, READER);
+        assertRetry(d, 8_000L, 3);
+        d = failAgain(d, READER);
+        assertEquals(Decision.Kind.GIVE_UP, d.kind);
+        assertEquals(3, d.attempt);
+    }
+
+    @Test
+    public void a_deck_given_up_after_three_failures_then_opened_by_hand_gets_three_retries() {
+        Decision d = policy.closed(DEV, READER);
+        d = failAgain(d, READER);
+        d = failAgain(d, READER);
+        d = failAgain(d, READER);
+        assertEquals(Decision.Kind.GIVE_UP, d.kind);
+        policy.registered(DEV);
+        assertRetry(policy.closed(DEV, READER), 2_000L, 1);
     }
 
     @Test

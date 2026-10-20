@@ -742,7 +742,8 @@ return), `restartSessions`, `retryAttach` or the destruction of the app;
 those cancel the pending reopens. `restartSessions` and `retryAttach` —
 the app's own `restartSessions` after more than 5 s hidden included — give
 every deck its three attempts back, a deck given up for its permission
-too.
+too. A deck given up that opens again by another path — the request
+permission button, a hotplug attach — gets its three attempts back too.
 
 ### Persistent identity
 
@@ -841,7 +842,9 @@ le retour), `restartSessions`, `retryAttach` ou la destruction de l'app ;
 ceux-ci annulent les réouvertures en attente. `restartSessions` et
 `retryAttach` — y compris le `restartSessions` de l'app après plus de 5 s
 masquée — rendent à chaque deck ses trois essais, même à un deck
-abandonné faute de permission.
+abandonné faute de permission. Un deck abandonné qui s'ouvre de nouveau
+par un autre chemin — le bouton de demande de permission, un branchement —
+retrouve lui aussi ses trois essais.
 
 ### Identité persistante
 

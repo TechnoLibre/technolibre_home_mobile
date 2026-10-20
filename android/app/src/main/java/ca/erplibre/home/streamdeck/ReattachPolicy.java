@@ -16,7 +16,9 @@ import java.util.Map;
  * one line in the journal, and every later one answers NONE: no loop.
  * A retry that finds the USB permission missing ({@link #PERMISSION_MISSING})
  * answers GIVE_UP at once and spends the rest of the budget: a retry never
- * raises the system dialog, so a later one cannot succeed either.
+ * raises the system dialog, so a later one cannot succeed either. A deck
+ * given up that registers again — opened by the permission button or a
+ * manual attach, since no retry runs any more — gets its three retries back.
  *
  * A session that stayed registered for {@link #HEALTHY_MS} before closing
  * resets the count, so a deck that fails once a day keeps its three
@@ -119,13 +121,20 @@ final class ReattachPolicy {
     }
 
     /** A session on {@code deviceName} registered: the healthy period
-     *  starts, and a retry still waiting has nothing left to open. */
+     *  starts, and a retry still waiting has nothing left to open. After a
+     *  give-up no retry opens the deck, so this registration comes from
+     *  another path — the permission button, a manual attach — and the
+     *  deck gets its three retries back. */
     synchronized void registered(String deviceName) {
         if (stopped) return;
         State s = states.get(deviceName);
         if (s == null) {
             s = new State();
             states.put(deviceName, s);
+        }
+        if (s.gaveUp) {
+            s.attempts = 0;
+            s.gaveUp = false;
         }
         s.registeredAt = clock.nowMs();
         s.pending = 0L;
@@ -175,7 +184,8 @@ final class ReattachPolicy {
     }
 
     /** GIVE_UP with the attempts made, once; the budget is then spent, so
-     *  a later close answers NONE until a healthy session or forgetAll. */
+     *  a later failure answers NONE until the deck registers again, by a
+     *  path other than a retry, or forgetAll. */
     private Decision giveUp(State s, String reason) {
         s.pending = 0L;
         if (s.gaveUp) return Decision.NONE;

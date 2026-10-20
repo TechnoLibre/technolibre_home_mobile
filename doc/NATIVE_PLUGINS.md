@@ -402,7 +402,8 @@ return), `restartSessions`, `retryAttach` or the destruction of the app;
 those cancel the pending reopens. `restartSessions` and `retryAttach` —
 the app's own `restartSessions` after more than 5 s hidden included — give
 every deck its three attempts back, a deck given up for its permission
-too.
+too. A deck given up that opens again by another path — the request
+permission button, a hotplug attach — gets its three attempts back too.
 
 ### Persistent identity
 

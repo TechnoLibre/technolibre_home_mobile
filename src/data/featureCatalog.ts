@@ -631,7 +631,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "a retry that finds the USB permission missing gives up at once. "
                         + "Unplug, restartSessions, retryAttach and app destroy cancel it; "
                         + "restartSessions and retryAttach give every deck its three "
-                        + "attempts back.",
+                        + "attempts back, as does any other reopen of a deck given up, "
+                        + "the permission button included.",
                     fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
                         + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
                         + "appareil : premier attach prompt l'utilisateur; l'autorisation est "
@@ -648,7 +649,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "n'est tenté ; un essai qui trouve la permission USB absente "
                         + "abandonne aussitôt. Débranchement, restartSessions, retryAttach "
                         + "et destruction de l'app l'annulent ; restartSessions et "
-                        + "retryAttach rendent à chaque deck ses trois essais.",
+                        + "retryAttach rendent à chaque deck ses trois essais, comme toute "
+                        + "autre réouverture d'un deck abandonné, bouton de permission "
+                        + "compris.",
                 },
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: [

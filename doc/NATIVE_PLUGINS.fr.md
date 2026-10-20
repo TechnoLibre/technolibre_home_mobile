@@ -406,7 +406,9 @@ le retour), `restartSessions`, `retryAttach` ou la destruction de l'app ;
 ceux-ci annulent les réouvertures en attente. `restartSessions` et
 `retryAttach` — y compris le `restartSessions` de l'app après plus de 5 s
 masquée — rendent à chaque deck ses trois essais, même à un deck
-abandonné faute de permission.
+abandonné faute de permission. Un deck abandonné qui s'ouvre de nouveau
+par un autre chemin — le bouton de demande de permission, un branchement —
+retrouve lui aussi ses trois essais.
 
 ### Identité persistante
 
