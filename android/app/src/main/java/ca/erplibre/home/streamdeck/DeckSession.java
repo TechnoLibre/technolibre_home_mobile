@@ -31,7 +31,8 @@ import ca.erplibre.home.streamdeck.transport.TransportV2;
  *   constructor (no I/O)
  *   open(usbConnection, iface) — claim, read serial, start threads
  *   close() — drain queue with rejected promises, end the threads (see
- *             WorkerShutdown), release iface, then tell the owner through
+ *             WorkerShutdown) and the calls from other threads (see
+ *             UsbCallGate), release iface, then tell the owner through
  *             the CloseListener
  *
  * close() runs from the owner (detach, restart, destroy), from the reader
@@ -44,10 +45,11 @@ public final class DeckSession {
     private static final String TAG = "StreamDeckSession";
     private static final int    BULK_WRITE_TIMEOUT_MS = 500;
     private static final int    BULK_READ_TIMEOUT_MS  = 1000;
-    /** Bound of close()'s wait for the workers. The reader sees a close
-     *  within RequestReader.WAIT_MS and then drains its request, at most
-     *  DRAIN_WAITS more waits; the writer within one page's
-     *  BULK_WRITE_TIMEOUT_MS; the heartbeat within its 500 ms transfer. */
+    /** Bound of close()'s wait for the workers and the gated calls
+     *  together. The reader sees a close within RequestReader.WAIT_MS and
+     *  then drains its request, at most DRAIN_WAITS more waits; the writer
+     *  within one page's BULK_WRITE_TIMEOUT_MS; a heartbeat within its
+     *  500 ms transfer; setBrightness and reset within their 1000 ms. */
     private static final long   STOP_WORKERS_MS = 2000;
 
     /** Told once, after the session stopped, whoever called close(). */
@@ -60,6 +62,8 @@ public final class DeckSession {
     private final EventEmitter emitter;
     private final CloseListener closeListener;
     private final WriterQueue queue = new WriterQueue();
+    /** USB calls from threads close() does not join; see UsbCallGate. */
+    private final UsbCallGate calls = new UsbCallGate();
     private final WriteFailureReporter writeFailures = new WriteFailureReporter();
     private final DeckTransport transport;
     private final ImageEncoder encoder;
@@ -89,11 +93,9 @@ public final class DeckSession {
      *  cheapest activity we can produce; reader interrupt-IN tokens
      *  alone aren't enough on some kernels. Off by default: it follows
      *  the user's keepAwake option (DeckPowerOptions). Null while not
-     *  running; guarded by this. */
+     *  running; guarded by this. A heartbeat stopped by setHeartbeat can
+     *  still be inside its transfer, which goes through the call gate. */
     private Thread heartbeatThread;
-    /** The last heartbeat stopped by setHeartbeat(false), which can still
-     *  be inside its transfer; close() waits for it too. Guarded by this. */
-    private Thread stoppedHeartbeat;
     private boolean heartbeatOn = false;
     private static final long HEARTBEAT_MS = 700;
     private volatile boolean running = false;
@@ -263,16 +265,23 @@ public final class DeckSession {
         synchronized (this) {
             if (!running) return;
             running = false;
+            calls.shut();
             queue.closeAndDrainAsDropped();
-            workers = Arrays.asList(readerThread, writerThread, heartbeatThread,
-                stoppedHeartbeat);
+            workers = Arrays.asList(readerThread, writerThread, heartbeatThread);
             heartbeatThread = null;
         }
-        // The workers end before the connection is released: close() frees
-        // the native device their USB calls use. Outside the monitor, which
-        // setHeartbeat takes; the calling worker, if any, is skipped.
+        // The workers and the gated calls end before the connection is
+        // released: close() frees the native device their USB calls use.
+        // Outside the monitor, which setHeartbeat takes; the calling
+        // worker, if any, is skipped. One deadline bounds both waits.
+        long deadline = System.nanoTime() + STOP_WORKERS_MS * 1_000_000L;
         for (Thread t : WorkerShutdown.stop(workers, STOP_WORKERS_MS)) {
             Log.w(TAG, "close: " + t.getName() + " still running after "
+                + STOP_WORKERS_MS + " ms; releasing the connection anyway");
+        }
+        long leftMs = Math.max(0, (deadline - System.nanoTime()) / 1_000_000L);
+        if (!calls.awaitEmpty(leftMs)) {
+            Log.w(TAG, "close: a USB call from another thread still running after "
                 + STOP_WORKERS_MS + " ms; releasing the connection anyway");
         }
         UsbRequest left;
@@ -336,7 +345,7 @@ public final class DeckSession {
             payload[3] = (byte) 0xD1; payload[4] = 0x01; payload[5] = (byte) p;
         }
         int wValue = (0x03 << 8) | (payload[0] & 0xFF);
-        int sent = connection.controlTransfer(0x21, 0x09, wValue, 0, payload, payload.length, 1000);
+        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, 1000);
         if (sent < 0) throw new DeckIoException("set_brightness_failed:" + sent);
     }
 
@@ -351,8 +360,20 @@ public final class DeckSession {
             payload[0] = 0x0B; payload[1] = 0x63;
         }
         int wValue = (0x03 << 8) | (payload[0] & 0xFF);
-        int sent = connection.controlTransfer(0x21, 0x09, wValue, 0, payload, payload.length, 1000);
+        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, 1000);
         if (sent < 0) throw new DeckIoException("reset_failed:" + sent);
+    }
+
+    /** controlTransfer on EP0 with index 0 for a thread close() does not
+     *  join; see UsbCallGate. A closing session refuses it. */
+    private int gatedControlTransfer(int reqType, int req, int value, byte[] buf,
+                                     int timeoutMs) throws DeckIoException {
+        if (!calls.enter()) throw new DeckIoException("session_closed");
+        try {
+            return connection.controlTransfer(reqType, req, value, 0, buf, buf.length, timeoutMs);
+        } finally {
+            calls.leave();
+        }
     }
 
     /** Start or stop the heartbeat. Before open() it only records the
@@ -376,7 +397,6 @@ public final class DeckSession {
     private void stopHeartbeat() {
         if (heartbeatThread == null) return;
         heartbeatThread.interrupt();
-        stoppedHeartbeat = heartbeatThread;
         heartbeatThread = null;
     }
 
@@ -404,8 +424,9 @@ public final class DeckSession {
             }
             if (!running) return;
             try {
-                connection.controlTransfer(0xa1, 0x01,
-                    (0x03 << 8) | reportId, 0, buf, buf.length, 500);
+                gatedControlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, buf, 500);
+            } catch (DeckIoException closing) {
+                return;
             } catch (Throwable t) {
                 Log.w(TAG, "heartbeat failed (continuing)", t);
             }
