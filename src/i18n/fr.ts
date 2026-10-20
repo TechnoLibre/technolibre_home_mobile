@@ -437,7 +437,8 @@ export const translations: Record<string, string> = {
   "section.code_style": "🎨 Style — outil Code",
   "section.sleep": "🌙 Mise en veille",
   "sleep.deck_awake": "Garder le Stream Deck allumé en veille",
-  "sleep.deck_awake_hint": "Quand le téléphone se met en veille, le Stream Deck garde sa dernière image plutôt que de s'éteindre. Il ne reste allumé, et une pression sur une touche ne réveille le téléphone, que si « Garder le téléphone éveillé tant qu'un deck est branché » est coché dans Options › Stream Deck. Indépendant du réglage ci-dessus.",
+  "sleep.deck_awake_hint": "Quand le téléphone se met en veille, le Stream Deck garde sa dernière image plutôt que de s'éteindre, et une pression sur une touche réveille le téléphone. Il faut pour cela « Garder le téléphone éveillé tant qu'un deck est branché » dans Options › Stream Deck : cocher cette option-ci coche aussi celle-là, et décocher celle-là décoche aussi celle-ci. Indépendant du réglage ci-dessus.",
+  "sleep.keep_awake_turned_on": "L'option « Garder le téléphone éveillé tant qu'un deck est branché » a été cochée dans Options › Stream Deck : garder le deck allumé en veille en a besoin.",
   "label.refresh_rate": "Rafraîchissement",
   "label.one_second": "1 seconde",
   "label.five_seconds": "5 secondes",
@@ -744,5 +745,6 @@ export const translations: Record<string, string> = {
   "streamdeck.power_show_over_lock_screen": "Afficher par-dessus l'écran verrouillé quand le deck réveille le téléphone",
   "streamdeck.power_show_over_lock_screen_hint": "Désactivé par défaut : l'application n'apparaît jamais par-dessus l'écran verrouillé. Activé : seul un lancement par le deck — le brancher, ou une touche qui réveille le téléphone (section Mise en veille) — montre l'application sans déverrouiller, à quiconque tient le deck.",
   "streamdeck.power_keep_awake": "Garder le téléphone éveillé tant qu'un deck est branché",
-  "streamdeck.power_keep_awake_hint": "Désactivé par défaut. Activé : un verrou de veille retient le processeur et le deck est sollicité toutes les 0,7 s tant qu'il est branché, au prix de la batterie. Désactivé : écran éteint, le deck peut clignoter ou s'éteindre, et ses touches peuvent rester sans effet — réveil du téléphone compris — jusqu'au retour de l'écran.",
+  "streamdeck.power_keep_awake_hint": "Désactivé par défaut. Activé : un verrou de veille retient le processeur et le deck est sollicité toutes les 0,7 s tant qu'il est branché, au prix de la batterie. Désactivé : écran éteint, le deck peut clignoter ou s'éteindre, et ses touches peuvent rester sans effet — réveil du téléphone compris — jusqu'au retour de l'écran. Le décocher décoche aussi « Garder le Stream Deck allumé en veille » (section Mise en veille), qui en a besoin.",
+  "streamdeck.wake_turned_off": "L'option « Garder le Stream Deck allumé en veille » a été décochée dans la section Mise en veille : elle a besoin de cette option-ci.",
 };

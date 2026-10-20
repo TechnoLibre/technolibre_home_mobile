@@ -741,7 +741,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "held and each session sends its 700 ms heartbeat while "
                         + "a deck is open. Off, the phone may suspend the USB bus "
                         + "with the screen off: the deck may flicker or go dark "
-                        + "and its keys may not reach the app, nor wake the phone.",
+                        + "and its keys may not reach the app, nor wake the phone. "
+                        + "deckSleepCoupling ties keepAwake to the Sleep "
+                        + "section's deck-lit option, which needs it: turning "
+                        + "that option on turns keepAwake on, turning keepAwake "
+                        + "off turns that option off, and the section that "
+                        + "moved the other one shows a line saying so.",
                     fr: "DeckPowerOptions range deux booléens dans les "
                         + "SharedPreferences, faux tant que l'utilisateur ne les "
                         + "coche pas dans Options › Stream Deck ; getPowerOptions / "
@@ -756,7 +761,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "de 700 ms tant qu'un deck est ouvert. Désactivé, le "
                         + "téléphone peut suspendre le bus USB écran éteint : le "
                         + "deck peut clignoter ou s'éteindre et ses touches ne plus "
-                        + "atteindre l'application, ni réveiller le téléphone.",
+                        + "atteindre l'application, ni réveiller le téléphone. "
+                        + "deckSleepCoupling lie keepAwake à l'option « deck "
+                        + "allumé en veille » de la section Mise en veille, qui "
+                        + "en a besoin : cocher celle-ci coche keepAwake, "
+                        + "décocher keepAwake la décoche, et la section qui a "
+                        + "changé l'autre affiche une ligne qui le dit.",
                 },
                 dependsOn: ["streamdeck.plugin-native"],
                 demo: { kind: "options", sectionId: "streamdeck" },
@@ -765,10 +775,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
                     "android/app/src/main/java/ca/erplibre/home/MainActivity.java",
                     "src/services/streamDeckPowerOptions.ts",
+                    "src/services/deckSleepCoupling.ts",
                     "src/components/options/streamdeck/options_streamdeck_component.ts",
                 ],
                 tests: [
                     "src/__tests__/streamDeckPowerOptions.test.ts",
+                    "src/__tests__/deckSleepCoupling.test.ts",
+                    "src/__tests__/deckSleepPanels.test.ts",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/DeckPowerOptionsTest.java",
                 ],
             },
@@ -2015,7 +2028,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                       fr: "Batterie : draine proportionnel au temps écran allumé." },
                 ],
                 howItWorks: {
-                    en: "Two independent toggles, each persisted in "
+                    en: "Two toggles, each persisted in "
                         + "localStorage and re-applied on boot. "
                         + "(1) Empêcher la mise en veille — KeepAwakePlugin "
                         + "sets FLAG_KEEP_SCREEN_ON on the activity window, "
@@ -2033,8 +2046,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "Stream Deck showOverLockScreen power option, and a "
                         + "press reaches the reader with the screen off "
                         + "reliably only with keepAwake (see "
-                        + "streamdeck.power-options).",
-                    fr: "Deux toggles indépendants, persistés en "
+                        + "streamdeck.power-options). Hence toggle (2) is "
+                        + "coupled to keepAwake by deckSleepCoupling: turning "
+                        + "(2) on turns keepAwake on, turning keepAwake off "
+                        + "turns (2) off.",
+                    fr: "Deux toggles, persistés en "
                         + "localStorage et réappliqués au boot. "
                         + "(1) Empêcher la mise en veille — KeepAwakePlugin "
                         + "pose FLAG_KEEP_SCREEN_ON sur la window de "
@@ -2053,7 +2069,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "le couvre qu'avec l'option showOverLockScreen du "
                         + "Stream Deck, et une pression n'atteint le lecteur "
                         + "écran éteint de façon fiable qu'avec keepAwake (voir "
-                        + "streamdeck.power-options).",
+                        + "streamdeck.power-options). Le toggle (2) est donc lié "
+                        + "à keepAwake par deckSleepCoupling : cocher (2) coche "
+                        + "keepAwake, décocher keepAwake décoche (2).",
                 },
                 demo: { kind: "options", sectionId: "keep-awake" },
                 files: [
@@ -2063,9 +2081,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/MainActivity.java",
                     "src/plugins/keepAwakePlugin.ts",
                     "src/services/streamDeckController.ts",
+                    "src/services/deckSleepCoupling.ts",
                     "src/components/options/keep_awake/options_keep_awake_component.ts",
                 ],
-                tests: ["src/__tests__/keepAwakePlugin.test.ts"],
+                tests: [
+                    "src/__tests__/keepAwakePlugin.test.ts",
+                    "src/__tests__/deckSleepPanels.test.ts",
+                ],
             },
             {
                 id: "system.device-info",

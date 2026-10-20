@@ -135,7 +135,8 @@ export class StreamDeckController {
      *  their last image, and the wake-on-keypress native path (armed
      *  via StreamDeckPlugin.setWakeOnKeyPress) brings the phone back
      *  on — reliably only with the keepAwake power option, which keeps
-     *  the USB bus up. The flag is rehydrated from localStorage at boot
+     *  the USB bus up and which deckSleepCoupling turns on with this
+     *  flag, and turns this flag off with. The flag is rehydrated from localStorage at boot
      *  so it survives an app restart without relying on the toggle's
      *  mount. */
     private keepDeckAwake = false;
@@ -437,10 +438,10 @@ export class StreamDeckController {
                     // sleep" — skip the dim so the LCDs keep their
                     // last frame. USB stays enumerated only with the
                     // plugin's keepAwake power option (wake lock and
-                    // heartbeat), which is off by default and set apart
-                    // from this flag; without it the deck may flicker
-                    // or go dark, and a press reaches neither the
-                    // reader nor the wake-on-keypress path.
+                    // heartbeat), which turning this flag on also turns
+                    // on (deckSleepCoupling); without it the deck may
+                    // flicker or go dark, and a press reaches neither
+                    // the reader nor the wake-on-keypress path.
                     return;
                 }
                 for (const info of this.decks.values()) {

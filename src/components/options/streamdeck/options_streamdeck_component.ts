@@ -1,4 +1,5 @@
 import { onMounted, onWillUnmount, useState, xml } from "@odoo/owl";
+import type { EventBus } from "@odoo/owl";
 import type { PluginListenerHandle } from "@capacitor/core";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import {
@@ -18,6 +19,12 @@ import {
 } from "../../../services/streamDeckPowerOptions";
 import type { DeckPowerOptions } from "../../../plugins/streamDeckPlugin";
 import { useFeatureSection } from "../../../utils/featureSection";
+import { Events } from "../../../constants/events";
+import {
+    applyDeckSleepChange,
+    deckSleepEffects,
+    storedWakeOnKeyPress,
+} from "../../../services/deckSleepCoupling";
 
 interface DeckRow {
     info: DeckInfo;
@@ -104,6 +111,9 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
               </label>
               <p class="options-streamdeck__hint options-streamdeck__hint--inline"
                  t-esc="t('streamdeck.power_keep_awake_hint')" />
+              <p t-if="state.powerNotice"
+                 class="options-streamdeck__hint options-streamdeck__hint--inline"
+                 t-esc="state.powerNotice" />
             </div>
 
             <t t-if="state.decks.length === 0">
@@ -354,6 +364,8 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         // Mirror of the two native power options; both off until
         // loadPowerOptions reads what the plugin stores.
         power: { ...DECK_POWER_DEFAULTS } as DeckPowerOptions,
+        // Line saying why the Sleep section's deck-lit option was turned off.
+        powerNotice: "",
         // Which deck row's parameter panel is open (deckId, "" = none).
         // Single-open at a time keeps the diagnostic panel scannable.
         expandedDeckId: "",
@@ -388,6 +400,13 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
 
     private _logUnsubscribe?: () => void;
 
+    private _powerListener?: (e: any) => void;
+
+    /** Undefined where the component runs without an Owl env (tests). */
+    private get _bus(): EventBus | undefined {
+        return this.env?.eventBus;
+    }
+
     /** Auto-refresh tick. Re-runs `refresh()` on a 5 s cadence so the
      *  panel reflects deck (re)connects, USB device list, and last-
      *  attach errors without the user pressing Rafraîchir. Off by
@@ -405,6 +424,12 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             this.state.events = streamDeckEventLog.getAll();
         });
         useFeatureSection("streamdeck", () => { this.state.expanded = true; });
+        // Mirrors the power options however they change, including the
+        // Sleep section turning keepAwake on along with its deck-lit option.
+        this._powerListener = (e: any) => {
+            if (e?.detail) this.state.power = { ...e.detail };
+        };
+        this._bus?.addEventListener(Events.STREAMDECK_POWER_OPTIONS, this._powerListener);
 
         onMounted(async () => {
             await this.loadPowerOptions();
@@ -421,6 +446,11 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             }
             this._logUnsubscribe?.();
             this._stopAutoRefresh();
+            if (this._powerListener) {
+                this._bus?.removeEventListener(
+                    Events.STREAMDECK_POWER_OPTIONS, this._powerListener,
+                );
+            }
         });
     }
 
@@ -461,15 +491,22 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
 
     /** The checkbox shows what the plugin stored, so a refused change
      *  puts it back and says why. `input` is the checkbox itself: the
-     *  state did not change, so no render would uncheck it. */
+     *  state did not change, so no render would uncheck it. Turning
+     *  keepAwake off also turns off the Sleep section's deck-lit option,
+     *  which depends on it (deckSleepCoupling), and says so. */
     async togglePowerOption(
         name: keyof DeckPowerOptions,
         enabled: boolean,
         input?: { checked: boolean },
     ): Promise<void> {
         this.state.error = "";
+        this.state.powerNotice = "";
         try {
-            this.state.power = await setDeckPowerOption(name, enabled);
+            if (name === "keepAwake") {
+                await this._toggleKeepAwake(enabled);
+            } else {
+                this.state.power = await setDeckPowerOption(name, enabled);
+            }
             this._log(`power ${name} → ${this.state.power[name] ? "ON" : "OFF"}`);
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
@@ -477,6 +514,20 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             this._log(`setPowerOptions ERROR: ${msg}`);
         }
         if (input) input.checked = this.state.power[name];
+    }
+
+    private async _toggleKeepAwake(enabled: boolean): Promise<void> {
+        const r = await applyDeckSleepChange(
+            { wakeOnKeyPress: storedWakeOnKeyPress(), keepAwake: this.state.power.keepAwake },
+            { setting: "keepAwake", enabled },
+            deckSleepEffects(this._bus),
+        );
+        if (r.power) this.state.power = r.power;
+        if (r.notice) {
+            this.state.powerNotice = this.t(r.notice);
+            this._log("wakeOnKeyPress → OFF (needs keepAwake)");
+        }
+        if (r.coupledError) this.state.error = r.coupledError;
     }
 
     toggle(): void { this.state.expanded = !this.state.expanded; }

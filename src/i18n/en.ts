@@ -437,7 +437,8 @@ export const translations: Record<string, string> = {
   "section.code_style": "🎨 Style — Code tool",
   "section.sleep": "🌙 Sleep",
   "sleep.deck_awake": "Keep the Stream Deck lit during sleep",
-  "sleep.deck_awake_hint": "When the phone goes to sleep, the Stream Deck keeps its last image instead of going dark. It only stays lit, and a key press only wakes the phone, with “Keep the phone awake while a deck is connected” on in Options › Stream Deck. Independent of the setting above.",
+  "sleep.deck_awake_hint": "When the phone goes to sleep, the Stream Deck keeps its last image instead of going dark, and a key press wakes the phone. This needs “Keep the phone awake while a deck is connected” in Options › Stream Deck: turning this on turns that on, and turning that off turns this off. Independent of the setting above.",
+  "sleep.keep_awake_turned_on": "“Keep the phone awake while a deck is connected” was turned on in Options › Stream Deck: keeping the deck lit during sleep needs it.",
   "label.refresh_rate": "Refresh rate",
   "label.one_second": "1 second",
   "label.five_seconds": "5 seconds",
@@ -744,5 +745,6 @@ export const translations: Record<string, string> = {
   "streamdeck.power_show_over_lock_screen": "Show over the lock screen when the deck wakes the phone",
   "streamdeck.power_show_over_lock_screen_hint": "Off by default: the app never appears over the lock screen. On: only a launch by the deck — plugging it in, or a key press that wakes the phone (Sleep section) — shows the app without unlocking, to whoever holds the deck.",
   "streamdeck.power_keep_awake": "Keep the phone awake while a deck is connected",
-  "streamdeck.power_keep_awake_hint": "Off by default. On: a wake lock holds the processor and the deck is pinged every 0.7 s while it is connected, at a cost in battery. Off: with the screen off, the deck may flicker or go dark, and its keys may do nothing — waking the phone included — until the screen is back on.",
+  "streamdeck.power_keep_awake_hint": "Off by default. On: a wake lock holds the processor and the deck is pinged every 0.7 s while it is connected, at a cost in battery. Off: with the screen off, the deck may flicker or go dark, and its keys may do nothing — waking the phone included — until the screen is back on. Turning it off also turns off “Keep the Stream Deck lit during sleep” (Sleep section), which needs it.",
+  "streamdeck.wake_turned_off": "“Keep the Stream Deck lit during sleep” was turned off in the Sleep section: it needs this option.",
 };

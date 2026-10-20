@@ -31,8 +31,8 @@ export const Events: Record<string, string> = {
 	STREAMDECK_GALLERY_OPEN: "streamdeck_gallery_open",
 	/** Controller → component: close fullscreen / navigate back. */
 	STREAMDECK_GALLERY_BACK: "streamdeck_gallery_back",
-	/** Options keep-awake checkbox → controller: keep deck lit during
-	 *  phone sleep instead of dimming brightness to 0 on hidden. */
+	/** deckSleepCoupling → controller and Options › Sleep: keep deck lit
+	 *  during phone sleep instead of dimming brightness to 0 on hidden. */
 	STREAMDECK_KEEP_AWAKE: "streamdeck_keep_awake",
 	/** deckSleepCoupling → Options › Stream Deck: both power options as
 	 *  the plugin now stores them, after a write from another section. */
