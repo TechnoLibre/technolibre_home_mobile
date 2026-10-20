@@ -306,8 +306,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     /**
      * CloseListener of every session, on the thread that closed it — the
      * reader thread when the USB pipe failed. Unregistering here, not only
-     * on detach, is what lets onDeckAttached and retryAttach open the same
-     * device again.
+     * on detach, is what lets onDeckAttached, restartSessions and
+     * retryAttach open the same device again.
      */
     private void onSessionClosed(DeckSession session, String reason) {
         String name = session.device().getDeviceName();
@@ -441,46 +441,46 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /**
-     * Close every open session and re-attach. Lets the user apply
-     * setReaderUseBulk without unplugging the deck.
+     * Close every open session, then open every idle deck again (see
+     * ReattachPlan): the ones just closed, and any whose session closed
+     * itself earlier while the deck stayed plugged in. Lets the user apply
+     * setReaderMode without unplugging the deck. Resolves {restarted}, the
+     * number of decks re-attached.
      */
     @PluginMethod
     public void restartSessions(PluginCall call) {
-        int closed = 0;
-        java.util.List<UsbDevice> toReattach = new java.util.ArrayList<>();
         for (DeckSession s : registry.sessions()) {
-            toReattach.add(s.device());
             s.close("restart_requested");   // unregisters through onSessionClosed
-            closed++;
-        }
-        for (UsbDevice d : toReattach) {
-            if (DeckRegistry.isElgato(d.getVendorId())) onDeckAttached(d);
         }
         JSObject r = new JSObject();
-        r.put("restarted", closed);
+        r.put("restarted", attachIdleDecks());
         call.resolve(r);
     }
 
     /**
-     * Walk every USB device and re-run onDeckAttached for known Elgato
-     * Stream Decks that already have permission but aren't open. Useful
-     * when the diagnostic UI subscribes after the boot-time attach
-     * already failed silently.
+     * Run onDeckAttached for every known Stream Deck that already has
+     * permission but is neither open nor opening. Useful when the
+     * diagnostic UI subscribes after the boot-time attach already failed
+     * silently, or after a session closed itself.
      */
     @PluginMethod
     public void retryAttach(PluginCall call) {
-        int retried = 0;
-        for (UsbDevice d : usb.getDeviceList().values()) {
-            if (!DeckRegistry.isElgato(d.getVendorId())) continue;
-            if (DeckRegistry.lookup(d.getProductId()) == null) continue;
-            if (registry.isBusy(d.getDeviceName())) continue;
-            if (!usb.hasPermission(d)) continue;
-            onDeckAttached(d);
-            retried++;
-        }
         JSObject r = new JSObject();
-        r.put("retried", retried);
+        r.put("retried", attachIdleDecks());
         call.resolve(r);
+    }
+
+    /** onDeckAttached on each of ReattachPlan.idleDecks; returns how many. */
+    private int attachIdleDecks() {
+        Map<String, UsbDevice> attached = usb.getDeviceList();
+        List<PermissionRequestPlan.Device> seen = new ArrayList<>();
+        for (UsbDevice d : attached.values()) {
+            seen.add(new PermissionRequestPlan.Device(d.getDeviceName(), d.getVendorId(),
+                d.getProductId(), "", usb.hasPermission(d)));
+        }
+        List<PermissionRequestPlan.Device> idle = ReattachPlan.idleDecks(seen, registry::isBusy);
+        for (PermissionRequestPlan.Device t : idle) onDeckAttached(attached.get(t.deviceName));
+        return idle.size();
     }
 
     private String tryGetSerial(UsbDevice d) {

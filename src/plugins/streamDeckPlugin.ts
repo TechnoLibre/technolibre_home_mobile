@@ -187,8 +187,10 @@ interface StreamDeckPluginApi {
     setReaderUseBulk(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
     /** @deprecated — use getReaderMode. */
     getReaderUseBulk(): Promise<{ enabled: boolean }>;
-    /** Close every open session and re-attach. Used to pick up a
-     *  reader-mode change without an unplug. */
+    /** Close every open session, then attach every permitted deck that
+     *  has no session — including one whose session closed itself while
+     *  it stayed plugged in. Used to pick up a reader-mode change without
+     *  an unplug. `restarted` counts the decks re-attached. */
     restartSessions(): Promise<{ restarted: number }>;
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
     /**

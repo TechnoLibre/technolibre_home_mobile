@@ -568,10 +568,11 @@ public final class DeckSession {
         final int req     = 0x01;
         final int wValue  = (0x01 << 8) | 0x01;
         // After a sustained starve (no data for >10 s), close the
-        // session so the plugin can re-attach. On Plus, GET_REPORT on
-        // EP0 can stop responding after a few seconds of polling and
-        // never recovers without a fresh open. Closing unregisters the
-        // session, so the next attach or retryAttach opens a new one.
+        // session. On Plus, GET_REPORT on EP0 can stop responding after
+        // a few seconds of polling and never recovers without a fresh
+        // open. Closing unregisters the session, and the deck stays
+        // plugged in, so the next restartSessions or retryAttach opens a
+        // new one (see ReattachPlan).
         final long STARVE_RESET_MS = 10000L;
 
         while (running) {
@@ -589,10 +590,8 @@ public final class DeckSession {
             long now = System.currentTimeMillis();
             if (got <= 0) {
                 if (now - lastDataAt >= STARVE_RESET_MS) {
-                    // Firmware almost certainly latched up — close so the
-                    // plugin re-attaches us with a fresh GET_REPORT
-                    // pipeline. Avoids the user having to mash Restart
-                    // Sessions every 10 s.
+                    // Firmware almost certainly latched up — close so a
+                    // re-attach starts a fresh GET_REPORT pipeline.
                     Log.w(TAG, "reader (polled) starved past reset threshold ("
                         + (now - lastDataAt) + " ms) — closing for re-attach");
                     close("polled_reset");
