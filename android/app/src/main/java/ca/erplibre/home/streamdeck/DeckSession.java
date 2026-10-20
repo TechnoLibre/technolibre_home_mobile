@@ -503,15 +503,7 @@ public final class DeckSession {
                 parseInputReport(data, data.length);
             }
             @Override public void onIdle(long msSinceData) {
-                Log.w(TAG, "reader (UsbRequest) starving — "
-                    + msSinceData + " ms since last data");
-                if (debugLogging) {
-                    JSObject ev = new JSObject();
-                    ev.put("deckId", serial);
-                    ev.put("len", 0);
-                    ev.put("bytes", "(starving UsbRequest " + msSinceData + "ms)");
-                    emitter.emit("rawInputReport", ev);
-                }
+                noteIdle("UsbRequest", msSinceData);
             }
         };
         RequestReader reader = new RequestReader(pipe, owner, System::currentTimeMillis);
@@ -526,17 +518,35 @@ public final class DeckSession {
         }
     }
 
+    /** A debug breadcrumb for an interrupt-IN reader (userequest, bulk)
+     *  that has received nothing for msSinceData. A deck sends an input
+     *  report only when a key changes, so silence is the normal state of
+     *  an idle deck and not a fault: the note exists only with
+     *  debugLogging on, in logcat at debug level and as a rawInputReport
+     *  of length 0. The polled reader differs: GET_REPORT answers even on
+     *  an idle deck, so its silence stays a warning. */
+    private void noteIdle(String reader, long msSinceData) {
+        if (!debugLogging) return;
+        Log.d(TAG, "reader (" + reader + ") idle — "
+            + msSinceData + " ms since last data");
+        JSObject ev = new JSObject();
+        ev.put("deckId", serial);
+        ev.put("len", 0);
+        ev.put("bytes", "(idle " + reader + " " + msSinceData + "ms)");
+        emitter.emit("rawInputReport", ev);
+    }
+
     private void readerLoopBulk() {
         // Sync read on the interrupt-IN endpoint. Shorter timeout (250 ms)
         // so the loop iterates often enough to react to running=false
-        // and to surface starvation breadcrumbs. Buffer must match the
+        // and to leave idle breadcrumbs. Buffer must match the
         // endpoint's max packet (512 on XL/Plus) — undersized buffers
         // return EOVERFLOW on stricter kernels (Pixel 6 / ThinkPhone).
         int bufSize = epIn != null ? epIn.getMaxPacketSize() : 64;
         if (bufSize < 64) bufSize = 64;
         byte[] buf = new byte[bufSize];
         long lastDataAt = System.currentTimeMillis();
-        long lastStarveLog = lastDataAt;
+        long lastIdleNote = lastDataAt;
         while (running) {
             int got;
             try {
@@ -550,18 +560,9 @@ public final class DeckSession {
             if (!running) break;
             long now = System.currentTimeMillis();
             if (got <= 0) {
-                if (now - lastStarveLog >= 5000) {
-                    Log.w(TAG, "reader (bulk) starving — "
-                        + (now - lastDataAt) + " ms since last data");
-                    lastStarveLog = now;
-                    if (debugLogging) {
-                        JSObject ev = new JSObject();
-                        ev.put("deckId", serial);
-                        ev.put("len", 0);
-                        ev.put("bytes", "(starving bulk "
-                            + (now - lastDataAt) + "ms)");
-                        emitter.emit("rawInputReport", ev);
-                    }
+                if (now - lastIdleNote >= RequestReader.IDLE_NOTE_MS) {
+                    noteIdle("bulk", now - lastDataAt);
+                    lastIdleNote = now;
                 }
                 continue;
             }
