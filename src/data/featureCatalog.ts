@@ -536,8 +536,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "the firmware report (250 ms, one retry): a deck "
                         + "that answers neither opens with controlPipeOk "
                         + "false, its USB serial string as deckId, and "
-                        + "brightness and reset refused at once until it is "
-                        + "replugged.",
+                        + "brightness and reset refused at once but for one "
+                        + "250 ms try every 5 s (ControlPipe); the first "
+                        + "control request that goes through sets it back "
+                        + "to true.",
                     fr: "Plugin Capacitor (Java) qui enveloppe le stack USB host. DeckRegistry "
                         + "garde une DeckSession par appareil branché; DeckSpec porte product id "
                         + "→ nb touches, taille image, version transport. La surface bridge est "
@@ -552,8 +554,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "firmware (250 ms, un nouvel essai) : un deck qui "
                         + "ne répond à aucun s'ouvre avec controlPipeOk faux, "
                         + "sa chaîne de série USB pour deckId, et luminosité "
-                        + "et reset refusés aussitôt jusqu'à son "
-                        + "rebranchement.",
+                        + "et reset refusés aussitôt sauf un essai de 250 ms "
+                        + "toutes les 5 s (ControlPipe) ; la première requête "
+                        + "de contrôle qui passe le remet à vrai.",
                 },
                 demo: NONE_PLUMBING,
                 files: [
@@ -567,9 +570,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckRegistry.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/KeyEventGate.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/FeatureReads.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ControlPipe.java",
                 ],
                 tests: [
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/FeatureReadsTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ControlPipeTest.java",
                 ],
             },
             {
@@ -1154,14 +1159,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "restart button that triggers restartSessions to recover from the "
                         + "post-sleep silent-reader state. A deck whose info carries "
                         + "controlPipeOk false shows a line saying brightness and key "
-                        + "clearing are off until it is replugged.",
+                        + "clearing are off until it answers again, and that a "
+                        + "replug restores them.",
                     fr: "Panel Owl listant chaque deck connecté avec : slider brightness "
                         + "(persisté localStorage), dropdown reader-mode (request/bulk/polled), "
                         + "sliders gap de bezels pour le cover-fit camera-stream, et un bouton "
                         + "restart manuel qui déclenche restartSessions pour récupérer du state "
                         + "reader-silencieux post-sleep. Un deck dont les infos portent "
                         + "controlPipeOk faux affiche une ligne disant que luminosité et "
-                        + "effacement des touches sont coupés jusqu'à son rebranchement.",
+                        + "effacement des touches sont coupés jusqu'à ce qu'il réponde "
+                        + "de nouveau, et qu'un rebranchement les rétablit.",
                 },
                 dependsOn: [
                     "streamdeck.controller",

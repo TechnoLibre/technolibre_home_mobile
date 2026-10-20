@@ -688,8 +688,8 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             : this.t("streamdeck.header_other", { count });
     }
 
-    /** "" unless the deck answered no feature report at open; then what
-     *  is off and that a replug restores it. */
+    /** "" unless the deck's info says its control pipe is down; then
+     *  what is off, that it is retried, and that a replug restores it. */
     controlPipeNotice(info: Partial<DeckInfo>): string {
         return info.controlPipeOk === false
             ? this.t("streamdeck.deck_control_pipe_down")

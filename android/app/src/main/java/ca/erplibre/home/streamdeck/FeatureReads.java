@@ -9,7 +9,9 @@ package ca.erplibre.home.streamdeck;
  * retry after RETRY_PAUSE_MS. A deck whose control pipe fails every
  * class request keeps failing them across reopens, until a USB reset (a
  * replug); a deck that answers neither probe is reported down, and open()
- * skips the serial read rather than spend READ_TIMEOUT_MS on it. A deck
+ * skips the serial read rather than spend READ_TIMEOUT_MS on it.
+ * ControlPipe then tries the pipe again now and then, so a deck merely
+ * slow to answer at open is not down for the whole session. A deck
  * that answers the probe gets its serial read with READ_TIMEOUT_MS; a
  * failed serial no longer costs the firmware, nor the reverse.
  *

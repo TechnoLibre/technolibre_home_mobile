@@ -23,9 +23,10 @@ package ca.erplibre.home.streamdeck;
  *   CONTROL_FAILING — FAILURES_SICK EP0 transfers failed in a row
  *                     (brightness, reset; a failed heartbeat is not
  *                     counted, see ControlPipe), on a session whose
- *                     control pipe answered at open (FeatureReads). One
- *                     down since open stays down across a restart, until
- *                     a replug, so its failures are no sickness.
+ *                     control pipe is up (ControlPipe). One down since
+ *                     open stays down across a restart, until a replug,
+ *                     so its failures are no sickness until a request
+ *                     goes through again.
  * A deck without permission is never sick: a restart does not ask for
  * it. A device busy but not open — an attach holding the reservation, a
  * close in progress — is left to that path, as is a deck whose automatic

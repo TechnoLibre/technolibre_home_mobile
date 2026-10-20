@@ -47,6 +47,8 @@ public final class DeckSession {
     private static final String TAG = "StreamDeckSession";
     private static final int    BULK_WRITE_TIMEOUT_MS = 500;
     private static final int    BULK_READ_TIMEOUT_MS  = 1000;
+    /** Timeout of a brightness or reset request on a pipe up. */
+    private static final int    CONTROL_TIMEOUT_MS    = 1000;
     /** Bound of close()'s wait for the workers and the gated calls
      *  together. The reader sees a close at once through
      *  RequestReader.wake(), else within RequestReader.WAIT_MS, and then
@@ -82,11 +84,6 @@ public final class DeckSession {
     private UsbEndpoint epOut;
     private String serial = "";
     private String firmware = "";
-    /** Set by open(): the control pipe answered a feature report (see
-     *  FeatureReads). False, setBrightness and reset fail at once rather
-     *  than each costing its control timeout. */
-    private volatile boolean controlPipeOk = true;
-
     /** Set by open() under this; volatile for the health getters. */
     private volatile Thread readerThread;
     private volatile Thread writerThread;
@@ -95,8 +92,9 @@ public final class DeckSession {
     private volatile RequestReader requestReader;
     /** The writer thread's WriterStep, null before it starts. */
     private volatile WriterStep writerStep;
-    /** Failed EP0 transfers of gatedControlTransfer in a row, the
-     *  heartbeat's not counted (see ControlPipe). */
+    /** Whether EP0 answers, set by open() from the firmware probe (see
+     *  FeatureReads), and the failed transfers of gatedControlTransfer in
+     *  a row, the heartbeat's not counted (see ControlPipe). */
     private final ControlPipe control = new ControlPipe();
     /** The reader's request the kernel never gave back, closed after the
      *  connection; see closeAfterConnection. Guarded by this. */
@@ -196,9 +194,10 @@ public final class DeckSession {
     public UsbDevice device(){ return device; }
     public String serial()   { return serial; }
     public String firmware() { return firmware; }
-    /** False when no feature report went through at open: brightness and
-     *  reset are refused until the deck is replugged. */
-    public boolean controlPipeOk() { return controlPipeOk; }
+    /** False from a firmware probe that failed at open until a control
+     *  request goes through: brightness and reset are refused meanwhile,
+     *  but for one short try every ControlPipe.RETRY_MS. */
+    public boolean controlPipeOk() { return control.up(); }
     /** False from the moment close() starts. */
     public boolean isOpen()  { return running; }
 
@@ -294,7 +293,7 @@ public final class DeckSession {
                 }
             },
             Thread::sleep);
-        this.controlPipeOk = reads.controlPipeOk;
+        control.opened(reads.controlPipeOk, SystemClock.elapsedRealtime());
         // The USB serial string the system read at enumeration matches the
         // feature report's on the decks the registry knows.
         String usbSerial = device.getSerialNumber();
@@ -305,7 +304,8 @@ public final class DeckSession {
             Log.w(TAG, "control pipe of " + device.getDeviceName()
                 + " answers no feature report; standard requests "
                 + (reads.standardRequestsAnswer ? "answer" : "fail too")
-                + ". Brightness and reset are off until the deck is replugged");
+                + ". Brightness and reset are refused, tried again every "
+                + ControlPipe.RETRY_MS + " ms");
         } else if (reads.serial == null) {
             Log.w(TAG, "serial read failed for " + device.getDeviceName()
                 + "; using the USB serial string");
@@ -443,7 +443,7 @@ public final class DeckSession {
 
     /** Set brightness 0..100 via feature report. */
     public void setBrightness(int percent) throws DeckIoException {
-        if (!controlPipeOk) throw new DeckIoException("control_pipe_down");
+        int timeoutMs = controlTimeout();
         int p = Math.max(0, Math.min(100, percent));
         // Feature report: 0x03 0x08 <pct>. SET_REPORT request type 0x21,
         // request 0x09 (SET_REPORT), value (Feature << 8) | reportId.
@@ -457,13 +457,13 @@ public final class DeckSession {
             payload[3] = (byte) 0xD1; payload[4] = 0x01; payload[5] = (byte) p;
         }
         int wValue = (0x03 << 8) | (payload[0] & 0xFF);
-        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, 1000);
+        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, timeoutMs);
         if (sent < 0) throw new DeckIoException("set_brightness_failed:" + sent);
     }
 
     /** Reset (clear all key images) via feature report. */
     public void reset() throws DeckIoException {
-        if (!controlPipeOk) throw new DeckIoException("control_pipe_down");
+        int timeoutMs = controlTimeout();
         byte[] payload;
         if (spec.transport == DeckSpec.TransportKind.V2) {
             payload = new byte[32];
@@ -473,8 +473,16 @@ public final class DeckSession {
             payload[0] = 0x0B; payload[1] = 0x63;
         }
         int wValue = (0x03 << 8) | (payload[0] & 0xFF);
-        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, 1000);
+        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, timeoutMs);
         if (sent < 0) throw new DeckIoException("reset_failed:" + sent);
+    }
+
+    /** The timeout of a brightness or reset request: CONTROL_TIMEOUT_MS,
+     *  the probe's on a pipe down due for a try (see ControlPipe). */
+    private int controlTimeout() throws DeckIoException {
+        int ms = control.timeoutFor(CONTROL_TIMEOUT_MS, SystemClock.elapsedRealtime());
+        if (ms < 0) throw new DeckIoException("control_pipe_down");
+        return ms;
     }
 
     /** controlTransfer on EP0 with index 0 for a thread close() does not
@@ -496,7 +504,11 @@ public final class DeckSession {
             return got;
         } finally {
             calls.leave();
-            if (ok) control.answered(); else control.failed(!heartbeat);
+            if (!ok) {
+                control.failed(!heartbeat);
+            } else if (control.answered()) {
+                Log.i(TAG, "control pipe of " + device.getDeviceName() + " answers again");
+            }
         }
     }
 

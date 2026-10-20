@@ -689,8 +689,8 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `listDecks()` | Returns every known deck, each with its capabilities (keys/dials/lcd/infobars/touchpoints). |
 | `getDeckInfo({deckId})` | Detail of one deck (model, rows/cols, keyImage, dials, lcd…). |
 | `requestPermission({deckId?})` | Asks the OS for USB permission on one deck or, without `deckId`, on every attached Stream Deck (the only way to reach a deck whose serial Android still hides). Resolves `{granted, results}` once every device has an outcome: `granted` is true only when all are; each result gives `deviceName`, `deckId`, `granted` and `outcome` (`already_granted` without a dialog, `granted`, `denied`, `timeout` after 30 s, `error`). A granted deck that is not open is opened and announced by `deckConnected`. Rejects `no_stream_deck` / `no_such_deck:<id>`. |
-| `reset({deckId})` | Clears every key image. Rejected at once with `control_pipe_down` when `controlPipeOk` is false. |
-| `setBrightness({deckId, percent})` | Brightness 0..100. Rejected at once with `control_pipe_down` when `controlPipeOk` is false. |
+| `reset({deckId})` | Clears every key image. Rejected at once with `control_pipe_down` when `controlPipeOk` is false, but for one short try every 5 s. |
+| `setBrightness({deckId, percent})` | Brightness 0..100. Rejected at once with `control_pipe_down` when `controlPipeOk` is false, but for one short try every 5 s. |
 | `setKeyImage({deckId, key, bytes, format})` | Pushes an image. `bytes` is base64. `format = "jpeg"` for v2+/MK.2/XL/Plus/Neo, `"png"` for v1/Mini (Java produces the rotated BMP). Resolves `{dropped: true}` when a newer image was pushed for the same key in the meantime. |
 | `setKeyImagesBatch({deckId, format, entries})` | Queues every `{key, bytes}` of `entries` with no Promise per key, for camera streaming. Resolves `{queued, dropped}` once they are decoded and queued, not when USB completes. An entry that fails later is sent as `writeFailed`. |
 | `clearKey({deckId, key})` | Paints the key black at its native size → the key goes dark. |
@@ -764,7 +764,11 @@ not. The session opens anyway — keys and images use the other endpoints —
 with `controlPipeOk: false` in its info and the USB serial string the
 system read at enumeration as `deckId`, the same value on the decks the
 registry knows. `setBrightness` and `reset` are then refused at once
-rather than each costing its 1 s control timeout.
+rather than each costing its 1 s control timeout, except one try every
+5 s with the probe's 250 ms timeout (`ControlPipe`): a deck slow to
+answer right after open is not down for the whole session. The first
+control request that goes through, a heartbeat included, sets
+`controlPipeOk` back to true.
 
 ### Architecture
 
@@ -805,8 +809,8 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `listDecks()` | Retourne tous les decks connus, chacun avec capacités (keys/dials/lcd/infobars/touchpoints). |
 | `getDeckInfo({deckId})` | Détail d'un deck (model, rows/cols, keyImage, dials, lcd…). |
 | `requestPermission({deckId?})` | Demande à l'OS la permission USB pour un deck ou, sans `deckId`, pour chaque Stream Deck branché (seul moyen d'atteindre un deck dont Android cache encore le numéro de série). Résout `{granted, results}` une fois que chaque appareil a son issue : `granted` n'est vrai que si tous le sont ; chaque résultat donne `deviceName`, `deckId`, `granted` et `outcome` (`already_granted` sans dialogue, `granted`, `denied`, `timeout` après 30 s, `error`). Un deck accordé qui n'est pas ouvert est ouvert et annoncé par `deckConnected`. Rejette `no_stream_deck` / `no_such_deck:<id>`. |
-| `reset({deckId})` | Efface toutes les images des touches. Refusé aussitôt avec `control_pipe_down` quand `controlPipeOk` est faux. |
-| `setBrightness({deckId, percent})` | Luminosité 0..100. Refusé aussitôt avec `control_pipe_down` quand `controlPipeOk` est faux. |
+| `reset({deckId})` | Efface toutes les images des touches. Refusé aussitôt avec `control_pipe_down` quand `controlPipeOk` est faux, sauf un court essai toutes les 5 s. |
+| `setBrightness({deckId, percent})` | Luminosité 0..100. Refusé aussitôt avec `control_pipe_down` quand `controlPipeOk` est faux, sauf un court essai toutes les 5 s. |
 | `setKeyImage({deckId, key, bytes, format})` | Pousse une image. `bytes` = base64. `format = "jpeg"` pour v2+/MK.2/XL/Plus/Neo, `"png"` pour v1/Mini (Java fait BMP rotaté). Résout `{dropped: true}` si une image plus récente a été poussée pour la même touche entre-temps. |
 | `setKeyImagesBatch({deckId, format, entries})` | Met en file chaque `{key, bytes}` de `entries` sans promesse par touche, pour le flux caméra. Résout `{queued, dropped}` une fois décodés et mis en file, pas à la fin de l'USB. Une entrée qui échoue ensuite part en `writeFailed`. |
 | `clearKey({deckId, key})` | Peint la touche en noir à sa taille native → touche éteinte. |
@@ -883,7 +887,11 @@ images passent par les autres points d'accès — avec `controlPipeOk: false`
 dans ses infos et, pour `deckId`, la chaîne de série USB que le système a
 lue à l'énumération, la même valeur sur les decks que connaît le
 registre. `setBrightness` et `reset` sont alors refusés aussitôt plutôt
-que de coûter chacun son délai de contrôle de 1 s.
+que de coûter chacun son délai de contrôle de 1 s, sauf un essai toutes
+les 5 s avec le délai de 250 ms de la sonde (`ControlPipe`) : un deck lent
+à répondre juste après l'ouverture n'est pas coupé pour toute la session.
+La première requête de contrôle qui passe, battement compris, remet
+`controlPipeOk` à vrai.
 
 ### Architecture
 

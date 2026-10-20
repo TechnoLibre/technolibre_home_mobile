@@ -767,7 +767,7 @@ export const translations: Record<string, string> = {
   "streamdeck.deck_key_image": "image {w}×{h} ({format})",
   "streamdeck.deck_product_id": "productId 0x{id}",
   "streamdeck.deck_firmware": "fw {version}",
-  "streamdeck.deck_control_pipe_down": "Ce deck ne répond à aucune requête de contrôle : luminosité et effacement des touches sont coupés. Débranchez-le puis rebranchez-le pour les rétablir.",
+  "streamdeck.deck_control_pipe_down": "Ce deck ne répond à aucune requête de contrôle : luminosité et effacement des touches sont coupés jusqu'à ce qu'il réponde de nouveau, essayé toutes les 5 secondes. Le débrancher puis le rebrancher les rétablit.",
   "streamdeck.deck_dials": "{count} dials",
   "streamdeck.deck_lcd": "LCD {w}×{h}",
   "streamdeck.deck_capabilities": "capacités: {list}",
