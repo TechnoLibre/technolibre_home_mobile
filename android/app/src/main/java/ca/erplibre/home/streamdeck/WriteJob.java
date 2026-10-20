@@ -12,6 +12,11 @@ public abstract class WriteJob {
     /** Called when the queue drops this job in favor of a newer one. */
     public abstract void resolveDropped();
 
-    /** Called by the writer thread to execute the USB write and resolve the Promise. */
-    public abstract void runTransport();
+    /**
+     * Called by the writer thread to execute the USB write. Settles the
+     * Promise in every case; on a failed transfer it rejects first, then
+     * throws so the writer counts it, and closes the session once
+     * transfers keep failing (see WriterStep).
+     */
+    public abstract void runTransport() throws DeckSession.DeckIoException;
 }

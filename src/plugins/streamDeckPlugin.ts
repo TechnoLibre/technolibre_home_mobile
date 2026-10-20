@@ -76,6 +76,16 @@ export interface DeckLifecycleEvent {
     reason?: string;
 }
 
+/** Failure of a fire-and-forget key write (setKeyImagesBatch), which has
+ *  no Promise to reject. A key failing again for the same reason is sent
+ *  once, until a write to it succeeds; a failed USB transfer closes the
+ *  deck instead and arrives as deckDisconnected. */
+export interface WriteFailedEvent {
+    deckId: string;
+    key: number;
+    reason: string;
+}
+
 export interface ImageWriteResult {
     dropped?: boolean;
 }
@@ -168,6 +178,7 @@ interface StreamDeckPluginApi {
      * JNI crossing. Each entry is fire-and-forget on the writer queue;
      * the promise resolves once Java finishes Base64-decoding and
      * offering, not when USB completes. Use for camera streaming.
+     * A write that fails later is reported through writeFailed.
      */
     setKeyImagesBatch(opts: {
         deckId: string;
@@ -222,6 +233,10 @@ interface StreamDeckPluginApi {
     addListener(
         eventName: "neoTouched",
         listener: (ev: NeoTouchEvent) => void
+    ): Promise<PluginListenerHandle>;
+    addListener(
+        eventName: "writeFailed",
+        listener: (ev: WriteFailedEvent) => void
     ): Promise<PluginListenerHandle>;
     addListener(
         eventName: "rawInputReport",

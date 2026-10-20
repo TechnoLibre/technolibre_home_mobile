@@ -10,7 +10,8 @@ import ca.erplibre.home.streamdeck.transport.DeckTransport;
 
 /** Writes one key image: encode → paginate → write pages. Resolves the PluginCall.
  *  When call is null, the job is fire-and-forget (used by setKeyImagesBatch
- *  during camera streaming where 32 per-key resolves would just be JNI noise). */
+ *  during camera streaming where 32 per-key resolves would just be JNI noise):
+ *  its failures go out as writeFailed events instead of rejections. */
 final class ImageWriteJob extends WriteJob {
 
     private final DeckSession session;
@@ -49,7 +50,7 @@ final class ImageWriteJob extends WriteJob {
     }
 
     @Override
-    public void runTransport() {
+    public void runTransport() throws DeckSession.DeckIoException {
         try {
             ImageEncoder enc = session.encoder();
             byte[] wire = encoded ? inputBytes
@@ -61,13 +62,24 @@ final class ImageWriteJob extends WriteJob {
                 JSObject r = new JSObject();
                 r.put("dropped", false);
                 call.resolve(r);
+            } else {
+                session.writeSucceeded(keyIndex);
             }
         } catch (ImageEncoder.ImageEncodeException e) {
-            if (call != null) call.reject(e.getMessage());
+            fail(e.getMessage());
         } catch (DeckSession.DeckIoException e) {
-            if (call != null) call.reject(e.getMessage());
+            // Counted by the writer, which closes the session once
+            // transfers keep failing (see WriterStep).
+            fail(e.getMessage());
+            throw e;
         } catch (Throwable t) {
-            if (call != null) call.reject("image_write_failed:" + t.getMessage());
+            fail("image_write_failed:" + t.getMessage());
         }
+    }
+
+    /** Rejects the caller, or reports to JS when there is none. */
+    private void fail(String reason) {
+        if (call != null) call.reject(reason);
+        else session.reportWriteFailure(keyIndex, reason);
     }
 }
