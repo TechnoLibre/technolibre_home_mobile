@@ -14,6 +14,7 @@ import java.nio.ByteBuffer;
 
 import com.getcapacitor.JSObject;
 
+import java.util.Arrays;
 import java.util.List;
 
 import ca.erplibre.home.streamdeck.encoder.ImageEncoder;
@@ -28,8 +29,9 @@ import ca.erplibre.home.streamdeck.transport.TransportV2;
  * Lifecycle:
  *   constructor (no I/O)
  *   open(usbConnection, iface) — claim, read serial, start threads
- *   close() — kill threads, drain queue with rejected promises, release iface,
- *             then tell the owner through the CloseListener
+ *   close() — drain queue with rejected promises, end the threads (see
+ *             WorkerShutdown), release iface, then tell the owner through
+ *             the CloseListener
  *
  * close() runs from the owner (detach, restart, destroy), from the reader
  * thread itself when the USB pipe fails, or from the writer thread when
@@ -41,6 +43,11 @@ public final class DeckSession {
     private static final String TAG = "StreamDeckSession";
     private static final int    BULK_WRITE_TIMEOUT_MS = 500;
     private static final int    BULK_READ_TIMEOUT_MS  = 1000;
+    /** Bound of close()'s wait for the workers. The reader sees a close
+     *  within RequestReader.WAIT_MS and then drains its request, at most
+     *  DRAIN_WAITS more waits; the writer within one page's
+     *  BULK_WRITE_TIMEOUT_MS; the heartbeat within its 500 ms transfer. */
+    private static final long   STOP_WORKERS_MS = 2000;
 
     /** Told once, after the session stopped, whoever called close(). */
     public interface CloseListener {
@@ -78,6 +85,9 @@ public final class DeckSession {
      *  the user's keepAwake option (DeckPowerOptions). Null while not
      *  running; guarded by this. */
     private Thread heartbeatThread;
+    /** The last heartbeat stopped by setHeartbeat(false), which can still
+     *  be inside its transfer; close() waits for it too. Guarded by this. */
+    private Thread stoppedHeartbeat;
     private boolean heartbeatOn = false;
     private static final long HEARTBEAT_MS = 700;
     private volatile boolean running = false;
@@ -243,13 +253,23 @@ public final class DeckSession {
     }
 
     public void close(String reason) {
+        List<Thread> workers;
         synchronized (this) {
             if (!running) return;
             running = false;
             queue.closeAndDrainAsDropped();
-            if (readerThread != null) readerThread.interrupt();
-            if (writerThread != null) writerThread.interrupt();
-            stopHeartbeat();
+            workers = Arrays.asList(readerThread, writerThread, heartbeatThread,
+                stoppedHeartbeat);
+            heartbeatThread = null;
+        }
+        // The workers end before the connection is released: close() frees
+        // the native device their USB calls use. Outside the monitor, which
+        // setHeartbeat takes; the calling worker, if any, is skipped.
+        for (Thread t : WorkerShutdown.stop(workers, STOP_WORKERS_MS)) {
+            Log.w(TAG, "close: " + t.getName() + " still running after "
+                + STOP_WORKERS_MS + " ms; releasing the connection anyway");
+        }
+        synchronized (this) {
             if (connection != null) {
                 try { connection.releaseInterface(iface); } catch (Exception ignored) {}
                 try { connection.close(); } catch (Exception ignored) {}
@@ -273,6 +293,9 @@ public final class DeckSession {
      *  the writer closes the session after a few in a row (see WriterStep). */
     public void writePages(List<byte[]> pages) throws DeckIoException {
         for (byte[] page : pages) {
+            // close() waits for the writer: a closing session stops
+            // between pages rather than after the whole image.
+            if (!running) throw new DeckIoException("session_closed");
             int sent;
             try {
                 sent = connection.bulkTransfer(epOut, page, page.length, BULK_WRITE_TIMEOUT_MS);
@@ -340,6 +363,7 @@ public final class DeckSession {
     private void stopHeartbeat() {
         if (heartbeatThread == null) return;
         heartbeatThread.interrupt();
+        stoppedHeartbeat = heartbeatThread;
         heartbeatThread = null;
     }
 
