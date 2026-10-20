@@ -1,5 +1,16 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { streamDeckEventLog } from "../services/streamDeckEventLog";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { streamDeckEventLog, reattachGaveUpText } from "../services/streamDeckEventLog";
+
+/** localStorage does not exist in the node environment; i18n reads it. */
+function stubLocale(locale: "fr" | "en") {
+    const store: Record<string, string> = { app_lang: locale };
+    vi.stubGlobal("localStorage", {
+        getItem: (k: string) => store[k] ?? null,
+        setItem: (k: string, v: string) => { store[k] = v; },
+        removeItem: (k: string) => { delete store[k]; },
+        clear: () => { for (const k of Object.keys(store)) delete store[k]; },
+    });
+}
 
 describe("streamDeckEventLog", () => {
     beforeEach(() => {
@@ -77,6 +88,41 @@ describe("streamDeckEventLog", () => {
             streamDeckEventLog.subscribe(good);
             expect(() => streamDeckEventLog.add("x")).not.toThrow();
             expect(good).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("reattachGaveUpText", () => {
+        afterEach(() => vi.unstubAllGlobals());
+
+        const ev = {
+            deckId: "CL00A0000000",
+            deviceName: "/dev/bus/usb/001/002",
+            attempts: 3,
+            reason: "polled_reset",
+        };
+
+        it("names the deck, the attempts and the last reason, in English", () => {
+            stubLocale("en");
+            const text = reattachGaveUpText(ev);
+            expect(text).toContain("CL00A0000000");
+            expect(text).toContain("3");
+            expect(text).toContain("polled_reset");
+            expect(text).not.toContain("streamdeck.");
+            expect(text).not.toContain("{");
+        });
+
+        it("is translated in French", () => {
+            stubLocale("en");
+            const en = reattachGaveUpText(ev);
+            stubLocale("fr");
+            const fr = reattachGaveUpText(ev);
+            expect(fr).toContain("CL00A0000000");
+            expect(fr).not.toBe(en);
+        });
+
+        it("falls back to the USB device name when the serial is unknown", () => {
+            stubLocale("en");
+            expect(reattachGaveUpText({ ...ev, deckId: "" })).toContain("/dev/bus/usb/001/002");
         });
     });
 });

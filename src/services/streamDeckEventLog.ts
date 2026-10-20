@@ -5,6 +5,9 @@
  * to changes — navigation no longer wipes the journal.
  */
 
+import { t } from "../i18n";
+import type { ReattachGaveUpEvent } from "../plugins/streamDeckPlugin";
+
 export interface StreamDeckEventLogEntry {
     ts: string;
     text: string;
@@ -46,3 +49,13 @@ class StreamDeckEventLog {
 }
 
 export const streamDeckEventLog = new StreamDeckEventLog();
+
+/** Journal line of reattachGaveUp, in the user's language; names the deck
+ *  by serial, or by USB device name when no serial was read. */
+export function reattachGaveUpText(ev: ReattachGaveUpEvent): string {
+    return t("streamdeck.event_reattach_gave_up", {
+        deck: ev.deckId || ev.deviceName,
+        attempts: ev.attempts,
+        reason: ev.reason,
+    });
+}

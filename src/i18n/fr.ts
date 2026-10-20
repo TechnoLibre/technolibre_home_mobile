@@ -739,6 +739,7 @@ export const translations: Record<string, string> = {
   "sms_gateway.https_required": "L'URL du serveur doit être en HTTPS : le contenu des messages et les numéros de téléphone y transitent.",
   "sms_gateway.warn_dev_url": "Cette adresse n'est pas routable : elle ne sert qu'au développement contre un serveur local. Une passerelle réelle doit pointer une URL HTTPS.",
   "sms_gateway.device_summary": "{model}, Android SDK {sdk}. Limite système : {limit} segments par minute.",
+  "streamdeck.event_reattach_gave_up": "Deck {deck} non rouvert après {attempts} essais ({reason}) : débranchez-le puis rebranchez-le.",
   "streamdeck.power_title": "🔋 Veille du téléphone",
   "streamdeck.power_show_over_lock_screen": "Afficher par-dessus l'écran verrouillé quand le deck réveille le téléphone",
   "streamdeck.power_show_over_lock_screen_hint": "Désactivé par défaut : l'application n'apparaît jamais par-dessus l'écran verrouillé. Activé : seul un lancement par le deck — le brancher, ou une touche qui réveille le téléphone (section Mise en veille) — montre l'application sans déverrouiller, à quiconque tient le deck.",

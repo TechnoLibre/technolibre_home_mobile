@@ -35,7 +35,7 @@ import { CodeStyleService } from "../services/codeStyleService";
 import { StreamDeckController } from "../services/streamDeckController";
 import { StreamDeckCameraStreamer } from "../services/streamDeckCameraStreamer";
 import { StreamDeckLcdTextRenderer } from "../services/streamDeckLcdTextRenderer";
-import { streamDeckEventLog } from "../services/streamDeckEventLog";
+import { streamDeckEventLog, reattachGaveUpText } from "../services/streamDeckEventLog";
 import { StreamDeckPlugin } from "../plugins/streamDeckPlugin";
 import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
@@ -325,6 +325,9 @@ async function startApp() {
 	}).catch(() => {});
 	StreamDeckPlugin.addListener("writeFailed", (ev) =>
 		streamDeckEventLog.add(`writeFailed: deck=${ev.deckId} key=${ev.key} (${ev.reason})`),
+	).catch(() => {});
+	StreamDeckPlugin.addListener("reattachGaveUp", (ev) =>
+		streamDeckEventLog.add(reattachGaveUpText(ev)),
 	).catch(() => {});
 	StreamDeckPlugin.addListener("rawInputReport", (ev) =>
 		streamDeckEventLog.add(`raw[${ev.len}]: ${ev.bytes}`),

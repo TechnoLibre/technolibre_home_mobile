@@ -98,6 +98,18 @@ export interface WriteFailedEvent {
     reason: string;
 }
 
+/** A deck whose session closed itself is reopened after 2, 4 then 8 s;
+ *  this is sent once when the third attempt fails too. Nothing retries it
+ *  afterwards: unplugging it, restartSessions or retryAttach reopens it.
+ *  deckId is "" when no serial was read; reason is the last close or
+ *  attach failure. */
+export interface ReattachGaveUpEvent {
+    deckId: string;
+    deviceName: string;
+    attempts: number;
+    reason: string;
+}
+
 export interface ImageWriteResult {
     dropped?: boolean;
 }
@@ -303,6 +315,10 @@ interface StreamDeckPluginApi {
     addListener(
         eventName: "writeFailed",
         listener: (ev: WriteFailedEvent) => void
+    ): Promise<PluginListenerHandle>;
+    addListener(
+        eventName: "reattachGaveUp",
+        listener: (ev: ReattachGaveUpEvent) => void
     ): Promise<PluginListenerHandle>;
     addListener(
         eventName: "rawInputReport",

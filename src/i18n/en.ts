@@ -739,6 +739,7 @@ export const translations: Record<string, string> = {
   "sms_gateway.https_required": "The server URL must use HTTPS: message content and phone numbers travel through it.",
   "sms_gateway.warn_dev_url": "This address is not routable: it is only for development against a local server. A real gateway must point at an HTTPS URL.",
   "sms_gateway.device_summary": "{model}, Android SDK {sdk}. System limit: {limit} segments per minute.",
+  "streamdeck.event_reattach_gave_up": "Deck {deck} not reopened after {attempts} attempts ({reason}): unplug it and plug it back in.",
   "streamdeck.power_title": "🔋 Phone sleep",
   "streamdeck.power_show_over_lock_screen": "Show over the lock screen when the deck wakes the phone",
   "streamdeck.power_show_over_lock_screen_hint": "Off by default: the app never appears over the lock screen. On: only a launch by the deck — plugging it in, or a key press that wakes the phone (Sleep section) — shows the app without unlocking, to whoever holds the deck.",
