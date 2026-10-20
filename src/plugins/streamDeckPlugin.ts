@@ -88,9 +88,10 @@ export interface DeckLifecycleEvent {
 }
 
 /** Failure of a fire-and-forget key write (setKeyImagesBatch), which has
- *  no Promise to reject. A key failing again for the same reason is sent
- *  once, until a write to it succeeds; a failed USB transfer closes the
- *  deck instead and arrives as deckDisconnected. */
+ *  no Promise to reject: a rejected image or a failed USB transfer. A key
+ *  failing again for the same reason is sent once, until a write to it
+ *  succeeds. Transfers that keep failing also close the deck, which then
+ *  arrives as deckDisconnected with reason "usb_lost:<detail>". */
 export interface WriteFailedEvent {
     deckId: string;
     key: number;

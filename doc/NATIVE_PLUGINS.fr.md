@@ -342,8 +342,8 @@ la gestion des modèles fonctionnent malgré tout sans la bibliothèque native.
 **Bibliothèque :** Android USB Host API natif (`UsbManager`, `UsbDeviceConnection`, `bulkTransfer`, `controlTransfer`).
 
 **Modèles supportés :** Elgato Stream Deck Original v1 (`0x0060`), Mini
-(`0x0063`), XL (`0x006c`), Original v2 (`0x006d`), MK.2 (`0x0080`),
-Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
+(`0x0063`), XL (`0x006c`), XL v2 (`0x008f`), Original v2 (`0x006d`),
+MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 
 ### API
 
@@ -355,24 +355,30 @@ Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `reset({deckId})` | Efface toutes les images des touches. |
 | `setBrightness({deckId, percent})` | Luminosité 0..100. |
 | `setKeyImage({deckId, key, bytes, format})` | Pousse une image. `bytes` = base64. `format = "jpeg"` pour v2+/MK.2/XL/Plus/Neo, `"png"` pour v1/Mini (Java fait BMP rotaté). Résout `{dropped: true}` si une image plus récente a été poussée pour la même touche entre-temps. |
-| `clearKey({deckId, key})` | Image noire 1×1 → touche éteinte. |
+| `setKeyImagesBatch({deckId, format, entries})` | Met en file chaque `{key, bytes}` de `entries` sans promesse par touche, pour le flux caméra. Résout `{queued, dropped}` une fois décodés et mis en file, pas à la fin de l'USB. Une entrée qui échoue ensuite part en `writeFailed`. |
+| `clearKey({deckId, key})` | Peint la touche en noir à sa taille native → touche éteinte. |
 | `clearAllKeys({deckId})` | Identique à `reset`. |
 | `setLcdImage({deckId, bytes})` | Plus uniquement — JPEG plein 800×100. |
 | `setLcdRegion({deckId, x, y, w, h, bytes})` | Plus uniquement — JPEG région partielle. |
 | `setInfoBar({deckId, index, bytes})` | Neo uniquement — JPEG 248×58 sur l'écran d'info. Le Neo n'a qu'un seul écran ; `index` doit être 0 (forward-compat pour de futurs modèles). L'écran est monté comme les touches : envoyer l'image tournée de 180°. |
+| `getPowerOptions()` | Résout `{showOverLockScreen, keepAwake}`, tous deux `false` tant que l'utilisateur ne les active pas. |
+| `setPowerOptions({showOverLockScreen?, keepAwake?})` | Enregistre les champs donnés, laisse les autres ; résout avec les deux. `keepAwake` — un wake lock partiel et un battement USB de 700 ms tant qu'un deck est ouvert — s'applique tout de suite aux decks ouverts. `showOverLockScreen` permet à un lancement causé par le deck d'afficher l'app par-dessus l'écran de verrouillage. |
+| `restartSessions()` | Ferme toutes les sessions ouvertes, puis ouvre chaque deck permis qui n'en a pas, y compris celui dont la session s'est fermée d'elle-même alors qu'il restait branché. Résout `{restarted}`, le nombre de decks rattachés. |
+| `retryAttach()` | Ouvre chaque deck permis qui n'a pas de session, sans en fermer aucune. Résout `{retried}`. |
 
 ### Events
 
 | Event | Payload |
 |-------|---------|
 | `deckConnected` | `{deckId, info, reason?}` |
-| `deckDisconnected` | `{deckId, reason}` (`usb_lost`, `app_destroyed`) |
+| `deckDisconnected` | `{deckId, reason}`. `reason` vaut `usb_lost` (débranché), `usb_lost:<détail du transfert>` (les écritures échouaient de suite), `restart_requested`, `app_destroyed`, ou un échec du lecteur (`polled_reset`, `usb_request_…`, `bulk_read_threw:…`, `polled_threw:…`) : comparer le préfixe. Envoyé une fois par deck, quand sa dernière session se ferme. |
 | `permissionDenied` | `{deckId, reason}` |
 | `keyChanged` | `{deckId, key, pressed}` |
 | `dialRotated` | `{deckId, dial, delta}` (Plus) |
 | `dialPressed` | `{deckId, dial, pressed}` (Plus) |
 | `lcdTouched` | `{deckId, type, x, y, xEnd?, yEnd?}` (Plus) |
 | `neoTouched` | `{deckId, index, pressed}` (Neo) |
+| `writeFailed` | `{deckId, key, reason}` — une entrée de `setKeyImagesBatch` en échec (image refusée, transfert en échec). Envoyé une fois par touche et raison, jusqu'à ce qu'une écriture sur cette touche réussisse. |
 
 ### Identité persistante
 

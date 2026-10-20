@@ -339,8 +339,8 @@ still work without the native library.
 **Library:** the native Android USB Host API (`UsbManager`, `UsbDeviceConnection`, `bulkTransfer`, `controlTransfer`).
 
 **Supported models:** Elgato Stream Deck Original v1 (`0x0060`), Mini
-(`0x0063`), XL (`0x006c`), Original v2 (`0x006d`), MK.2 (`0x0080`),
-Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
+(`0x0063`), XL (`0x006c`), XL v2 (`0x008f`), Original v2 (`0x006d`),
+MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 
 ### API
 
@@ -352,24 +352,30 @@ Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `reset({deckId})` | Clears every key image. |
 | `setBrightness({deckId, percent})` | Brightness 0..100. |
 | `setKeyImage({deckId, key, bytes, format})` | Pushes an image. `bytes` is base64. `format = "jpeg"` for v2+/MK.2/XL/Plus/Neo, `"png"` for v1/Mini (Java produces the rotated BMP). Resolves `{dropped: true}` when a newer image was pushed for the same key in the meantime. |
-| `clearKey({deckId, key})` | A black 1×1 image → the key goes dark. |
+| `setKeyImagesBatch({deckId, format, entries})` | Queues every `{key, bytes}` of `entries` with no Promise per key, for camera streaming. Resolves `{queued, dropped}` once they are decoded and queued, not when USB completes. An entry that fails later is sent as `writeFailed`. |
+| `clearKey({deckId, key})` | Paints the key black at its native size → the key goes dark. |
 | `clearAllKeys({deckId})` | Same as `reset`. |
 | `setLcdImage({deckId, bytes})` | Plus only — a full 800×100 JPEG. |
 | `setLcdRegion({deckId, x, y, w, h, bytes})` | Plus only — a JPEG for a partial region. |
 | `setInfoBar({deckId, index, bytes})` | Neo only — a 248×58 JPEG on the info screen. The Neo has a single screen; `index` must be 0 (forward compatibility with future models). The screen is mounted like the keys: send the image rotated 180°. |
+| `getPowerOptions()` | Resolves `{showOverLockScreen, keepAwake}`, both `false` until the user turns them on. |
+| `setPowerOptions({showOverLockScreen?, keepAwake?})` | Stores the fields given and leaves the others; resolves with both. `keepAwake` — a partial wake lock and a 700 ms USB heartbeat while a deck is open — applies at once to the open decks. `showOverLockScreen` lets a launch caused by the deck show the app over the lock screen. |
+| `restartSessions()` | Closes every open session, then opens every permitted deck that has none, including one whose session closed itself while it stayed plugged in. Resolves `{restarted}`, the number of decks re-attached. |
+| `retryAttach()` | Opens every permitted deck that has no session, without closing any. Resolves `{retried}`. |
 
 ### Events
 
 | Event | Payload |
 |-------|---------|
 | `deckConnected` | `{deckId, info, reason?}` |
-| `deckDisconnected` | `{deckId, reason}` (`usb_lost`, `app_destroyed`) |
+| `deckDisconnected` | `{deckId, reason}`. `reason` is `usb_lost` (unplugged), `usb_lost:<transfer detail>` (writes kept failing), `restart_requested`, `app_destroyed`, or a reader failure (`polled_reset`, `usb_request_…`, `bulk_read_threw:…`, `polled_threw:…`): match on the prefix. Sent once per deck, when its last session closes. |
 | `permissionDenied` | `{deckId, reason}` |
 | `keyChanged` | `{deckId, key, pressed}` |
 | `dialRotated` | `{deckId, dial, delta}` (Plus) |
 | `dialPressed` | `{deckId, dial, pressed}` (Plus) |
 | `lcdTouched` | `{deckId, type, x, y, xEnd?, yEnd?}` (Plus) |
 | `neoTouched` | `{deckId, index, pressed}` (Neo) |
+| `writeFailed` | `{deckId, key, reason}` — a `setKeyImagesBatch` entry that failed (rejected image, failed transfer). Sent once per key and reason, until a write to that key succeeds. |
 
 ### Persistent identity
 
