@@ -665,7 +665,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * every plugin shares: the closes wait for the sessions' workers. A
      * close that outlasts CLOSE_WAIT_MS keeps its session registered, which
      * the reopen here would skip: that deck is reopened when its close
-     * ends instead (see RestartReopen), and counts in {restarted}.
+     * ends instead (see RestartReopen), and counts in {restarted}, once
+     * even when its close ends in time for the reopen here as well.
      */
     @PluginMethod
     public void restartSessions(PluginCall call) {
@@ -689,7 +690,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 Log.w(TAG, "restartSessions: " + late + " still closing, reopened once closed");
             }
             JSObject r = new JSObject();
-            r.put("restarted", attachIdleDecks(only) + late.size());
+            r.put("restarted", RestartReopen.restarted(attachIdleDeckNames(only), late));
             call.resolve(r);
         }), "deck-restart", 0);
     }
@@ -785,6 +786,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     /** attachIdleDecks limited to the device names in {@code only}, null
      *  for every device. */
     private int attachIdleDecks(Set<String> only) {
+        return attachIdleDeckNames(only).size();
+    }
+
+    /** attachIdleDecks(only), returning the device names it attached. */
+    private List<String> attachIdleDeckNames(Set<String> only) {
         Map<String, UsbDevice> attached = usb.getDeviceList();
         List<PermissionRequestPlan.Device> seen = new ArrayList<>();
         for (UsbDevice d : attached.values()) {
@@ -792,8 +798,12 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 d.getProductId(), "", usb.hasPermission(d)));
         }
         List<PermissionRequestPlan.Device> idle = ReattachPlan.idleDecks(seen, registry::isBusy, only);
-        for (PermissionRequestPlan.Device t : idle) onDeckAttached(attached.get(t.deviceName));
-        return idle.size();
+        List<String> names = new ArrayList<>();
+        for (PermissionRequestPlan.Device t : idle) {
+            onDeckAttached(attached.get(t.deviceName));
+            names.add(t.deviceName);
+        }
+        return names;
     }
 
     private String tryGetSerial(UsbDevice d) {

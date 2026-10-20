@@ -76,4 +76,15 @@ final class RestartReopen {
     synchronized void clear() {
         states.clear();
     }
+
+    /**
+     * The decks one restart reopens: those it reattached itself and the
+     * late ones, each once. A late close that ends between endWait() and
+     * the reattach pass puts its deck in both.
+     */
+    static int restarted(Collection<String> reattached, Collection<String> late) {
+        Set<String> all = new HashSet<>(reattached);
+        all.addAll(late);
+        return all.size();
+    }
 }
