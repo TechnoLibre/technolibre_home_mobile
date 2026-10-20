@@ -347,7 +347,7 @@ describe("StreamDeckController", () => {
             // Mount-time visible (will paint key 0 once via _renderHome
             // — let it run, we filter by key below).
             visibilityState = "visible";
-            // Stub canvas just enough for _renderTile to resolve a Blob.
+            // Stub canvas just enough for _renderTile to encode a tile.
             vi.stubGlobal("document", {
                 get visibilityState() { return visibilityState; },
                 addEventListener: vi.fn(),
@@ -361,7 +361,7 @@ describe("StreamDeckController", () => {
                         set textAlign(_: string) {},
                         set textBaseline(_: string) {},
                     }),
-                    toBlob: (cb: any) => cb(new Blob([new Uint8Array([1, 2])])),
+                    toDataURL: () => "data:image/jpeg;base64,AQI=",
                 }),
             });
             await ctrl.start();
@@ -390,7 +390,7 @@ describe("StreamDeckController", () => {
                         set textAlign(_: string) {},
                         set textBaseline(_: string) {},
                     }),
-                    toBlob: (cb: any) => cb(new Blob([new Uint8Array([1])])),
+                    toDataURL: () => "data:image/jpeg;base64,AQ==",
                 }),
             });
             await ctrl.start();
@@ -593,11 +593,12 @@ describe("StreamDeckController", () => {
                         set textAlign(_: string) {},
                         set textBaseline(_: string) {},
                     }),
-                    toBlob: (cb: any, mime: string) => {
+                    toDataURL: (mime: string) => {
                         mimes.push(mime);
                         const sig = mime === "image/png"
                             ? [0x89, 0x50, 0x4e, 0x47] : [0xff, 0xd8, 0xff];
-                        cb(new Blob([new Uint8Array(sig)]));
+                        return `data:${mime};base64,`
+                            + btoa(String.fromCharCode(...sig));
                     },
                 }),
             });
@@ -786,6 +787,55 @@ describe("StreamDeckController", () => {
             const events = trigger.mock.calls.map((c: any) => c[0]);
             expect(events).not.toContain("routernav");
             expect(events).toContain("streamdeck_gallery_open");
+        });
+
+        it("paints all 15 keys without waiting on an async canvas encoder", async () => {
+            // A mobile WebView can defer toBlob() to an idle period and
+            // force it only after 4 s on a static page; this stub never
+            // calls back at all, so a paint that relies on it hangs.
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            const mimes: string[] = [];
+            vi.stubGlobal("document", {
+                get visibilityState() { return visibilityState; },
+                addEventListener: vi.fn(),
+                createElement: () => ({
+                    width: 0, height: 0,
+                    getContext: () => ({
+                        translate: vi.fn(), rotate: vi.fn(),
+                        fillRect: vi.fn(), fillText: vi.fn(),
+                        set fillStyle(_: string) {},
+                        set font(_: string) {},
+                        set textAlign(_: string) {},
+                        set textBaseline(_: string) {},
+                    }),
+                    toBlob: () => { /* never completes */ },
+                    toDataURL: (mime: string) => {
+                        mimes.push(mime);
+                        return `data:${mime};base64,/9j/AA==`;
+                    },
+                }),
+            });
+            visibilityState = "visible";
+            mockPlugin.setKeyImage.mockClear();
+
+            const outcome = await Promise.race([
+                ctrl.setGalleryActive(true, []).then(() => "done"),
+                new Promise((r) => setTimeout(() => r("hung"), 200)),
+            ]);
+
+            expect(outcome).toBe("done");
+            const calls = mockPlugin.setKeyImage.mock.calls.map((c: any) => c[0]);
+            expect(calls.map((c: any) => c.key)).toEqual(
+                Array.from({ length: 15 }, (_, i) => i),
+            );
+            for (const c of calls) {
+                expect(c.format).toBe("jpeg");
+                expect(c.bytes).toBe("/9j/AA==");
+            }
+            expect(new Set(mimes)).toEqual(new Set(["image/jpeg"]));
         });
 
         it("deactivation clears images and resets page", async () => {
