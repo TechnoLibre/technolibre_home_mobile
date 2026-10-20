@@ -17,6 +17,14 @@ import java.util.Set;
  * device see one consistent table. No method calls back into a session
  * other than through {@link Hooks}, which keeps the lock order one-way.
  *
+ * The registry also decides the lifecycle events JS sees. deckConnected
+ * leaves only once the session is indexed, so a getDeckInfo or setKeyImage
+ * sent in reply finds it; deckDisconnected leaves only for the call that
+ * removed a registered session, so each announced deck is reported gone
+ * exactly once and a session JS never heard of is never reported. Both are
+ * sent under the monitor: a session closing while it is being registered
+ * cannot have its deckDisconnected overtake its deckConnected.
+ *
  * Opening a device is reserve → (permission, open) → register, or
  * release on failure. The reservation is the atomic check-and-insert:
  * while it is held, or while the device has a session, every other attach
@@ -24,10 +32,14 @@ import java.util.Set;
  */
 final class SessionRegistry<S> {
 
-    /** What the registry needs to know about a session. */
+    /** What the registry needs to know about, and to say about, a session. */
     interface Hooks<S> {
         /** False once the session has started closing. */
         boolean isOpen(S session);
+        /** Session indexed; called with the registry monitor held. */
+        void connected(S session);
+        /** Registered session removed; called with the monitor held. */
+        void disconnected(S session, String reason);
     }
 
     private static final class Entry<S> {
@@ -76,19 +88,22 @@ final class SessionRegistry<S> {
         if (!hooks.isOpen(session)) return false;
         byDevice.put(deviceName, new Entry<>(session, serial));
         if (serial != null && !serial.isEmpty()) bySerial.put(serial, session);
+        hooks.connected(session);
         return true;
     }
 
     /**
-     * Drop the entry of {@code session}. Only that exact instance is
-     * removed: a stale session closing late leaves its successor on the
-     * same device in place. True only for the call that removed it.
+     * Drop the entry of {@code session} and announce it gone with
+     * {@code reason}. Only that exact instance is removed: a stale session
+     * closing late leaves its successor on the same device in place. True
+     * only for the call that removed it.
      */
-    synchronized boolean unregister(String deviceName, S session) {
+    synchronized boolean unregister(String deviceName, S session, String reason) {
         Entry<S> e = byDevice.get(deviceName);
         if (e == null || e.session != session) return false;
         byDevice.remove(deviceName);
         if (e.serial != null && bySerial.get(e.serial) == session) bySerial.remove(e.serial);
+        hooks.disconnected(session, reason);
         return true;
     }
 

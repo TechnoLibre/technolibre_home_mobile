@@ -242,8 +242,8 @@ public final class DeckSession {
         readerThread.start();
         writerThread.start();
         heartbeatThread.start();
-
-        emitLifecycle("deckConnected", null);
+        // deckConnected is the plugin's to send, once it has registered
+        // this session: JS calls back by deckId as soon as it hears it.
     }
 
     public void close(String reason) {
@@ -261,7 +261,7 @@ public final class DeckSession {
         }
         // Outside the monitor: the listener takes the plugin's registry
         // lock, and the plugin never calls into a session under that lock.
-        emitLifecycle("deckDisconnected", reason);
+        // The plugin also sends deckDisconnected from there.
         if (closeListener != null) {
             try { closeListener.onClosed(this, reason); }
             catch (Throwable t) { Log.w(TAG, "closeListener: " + t.getMessage()); }
@@ -763,13 +763,6 @@ public final class DeckSession {
                 Log.w(TAG, "writer job error", t);
             }
         }
-    }
-
-    private void emitLifecycle(String name, String reason) {
-        JSObject ev = new JSObject();
-        ev.put("deckId", serial);
-        if (reason != null) ev.put("reason", reason);
-        emitter.emit(name, ev);
     }
 
     public static final class DeckOpenException extends Exception {

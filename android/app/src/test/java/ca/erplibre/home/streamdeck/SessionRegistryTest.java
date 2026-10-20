@@ -3,6 +3,9 @@ package ca.erplibre.home.streamdeck;
 import static org.junit.Assert.*;
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class SessionRegistryTest {
 
     /** Stand-in for DeckSession: only its open flag matters to the registry. */
@@ -10,8 +13,29 @@ public class SessionRegistryTest {
         boolean open = true;
     }
 
+    /** Records the lifecycle events the plugin would send to JS. */
+    static final class FakeHooks implements SessionRegistry.Hooks<FakeSession> {
+        final List<String> events = new ArrayList<>();
+        SessionRegistry<FakeSession> registry;
+        @Override public boolean isOpen(FakeSession s) { return s.open; }
+        @Override public void connected(FakeSession s) {
+            // JS answers deckConnected with calls by deckId: the session
+            // must already be reachable when the event leaves.
+            events.add("connected:" + (registry.sessions().contains(s) ? "registered" : "missing"));
+        }
+        @Override public void disconnected(FakeSession s, String reason) {
+            events.add("disconnected:" + reason);
+        }
+    }
+
     private static SessionRegistry<FakeSession> newRegistry() {
-        return new SessionRegistry<>(s -> s.open);
+        return newRegistry(new FakeHooks());
+    }
+
+    private static SessionRegistry<FakeSession> newRegistry(FakeHooks hooks) {
+        SessionRegistry<FakeSession> r = new SessionRegistry<>(hooks);
+        hooks.registry = r;
+        return r;
     }
 
     /** The attach flow: reserve the device, open, then register. */
@@ -37,7 +61,7 @@ public class SessionRegistryTest {
         attach(r, "/dev/bus/usb/001/002", "SN1", s);
 
         s.open = false;
-        assertTrue(r.unregister("/dev/bus/usb/001/002", s));
+        assertTrue(r.unregister("/dev/bus/usb/001/002", s, "usb_lost"));
 
         assertNull(r.byDevice("/dev/bus/usb/001/002"));
         assertNull(r.bySerial("SN1"));
@@ -52,8 +76,8 @@ public class SessionRegistryTest {
         SessionRegistry<FakeSession> r = newRegistry();
         FakeSession s = new FakeSession();
         attach(r, "/dev/bus/usb/001/002", "SN1", s);
-        assertTrue(r.unregister("/dev/bus/usb/001/002", s));
-        assertFalse(r.unregister("/dev/bus/usb/001/002", s));
+        assertTrue(r.unregister("/dev/bus/usb/001/002", s, "usb_lost"));
+        assertFalse(r.unregister("/dev/bus/usb/001/002", s, "usb_lost"));
     }
 
     @Test
@@ -63,7 +87,7 @@ public class SessionRegistryTest {
         FakeSession current = new FakeSession();
         attach(r, "/dev/bus/usb/001/002", "SN1", current);
 
-        assertFalse(r.unregister("/dev/bus/usb/001/002", old));
+        assertFalse(r.unregister("/dev/bus/usb/001/002", old, "usb_lost"));
         assertSame(current, r.byDevice("/dev/bus/usb/001/002"));
         assertSame(current, r.bySerial("SN1"));
     }
@@ -76,7 +100,7 @@ public class SessionRegistryTest {
         SessionRegistry<FakeSession> r = newRegistry();
         FakeSession s = new FakeSession();
         s.open = false;
-        assertFalse(r.unregister("/dev/bus/usb/001/002", s));
+        assertFalse(r.unregister("/dev/bus/usb/001/002", s, "usb_lost"));
 
         assertFalse(attach(r, "/dev/bus/usb/001/002", "SN1", s));
         assertFalse(r.hasSession("/dev/bus/usb/001/002"));
@@ -145,7 +169,7 @@ public class SessionRegistryTest {
         SessionRegistry<FakeSession> r = newRegistry();
         FakeSession s = new FakeSession();
         assertTrue(attach(r, "/dev/bus/usb/001/002", "SN1", s));
-        r.unregister("/dev/bus/usb/001/002", s);
+        r.unregister("/dev/bus/usb/001/002", s, "usb_lost");
         assertFalse(r.isBusy("/dev/bus/usb/001/002"));
         assertTrue(r.reserve("/dev/bus/usb/001/002"));
     }
@@ -158,5 +182,60 @@ public class SessionRegistryTest {
         assertTrue(r.reserve("/dev/bus/usb/001/002"));
         assertFalse(r.register("/dev/bus/usb/001/002", "SN1", s));
         assertFalse(r.isBusy("/dev/bus/usb/001/002"));
+    }
+
+    @Test
+    public void connected_is_announced_once_registered() {
+        FakeHooks h = new FakeHooks();
+        SessionRegistry<FakeSession> r = newRegistry(h);
+        FakeSession s = new FakeSession();
+        assertTrue(attach(r, "/dev/bus/usb/001/002", "SN1", s));
+        assertEquals(List.of("connected:registered"), h.events);
+    }
+
+    @Test
+    public void refused_registration_announces_nothing() {
+        FakeHooks h = new FakeHooks();
+        SessionRegistry<FakeSession> r = newRegistry(h);
+        assertFalse(r.register("/dev/bus/usb/001/002", "SN1", new FakeSession()));
+        FakeSession closed = new FakeSession();
+        closed.open = false;
+        assertFalse(attach(r, "/dev/bus/usb/001/003", "SN2", closed));
+        assertTrue(h.events.isEmpty());
+    }
+
+    @Test
+    public void disconnected_is_announced_once_with_the_close_reason() {
+        FakeHooks h = new FakeHooks();
+        SessionRegistry<FakeSession> r = newRegistry(h);
+        FakeSession s = new FakeSession();
+        attach(r, "/dev/bus/usb/001/002", "SN1", s);
+        s.open = false;
+        r.unregister("/dev/bus/usb/001/002", s, "polled_reset");
+        r.unregister("/dev/bus/usb/001/002", s, "usb_lost");
+        assertEquals(List.of("connected:registered", "disconnected:polled_reset"), h.events);
+    }
+
+    @Test
+    public void session_never_registered_is_never_announced() {
+        // Closed by its reader before registration: JS never heard of it,
+        // so it gets no deckDisconnected either.
+        FakeHooks h = new FakeHooks();
+        SessionRegistry<FakeSession> r = newRegistry(h);
+        FakeSession s = new FakeSession();
+        assertTrue(r.reserve("/dev/bus/usb/001/002"));
+        s.open = false;
+        r.unregister("/dev/bus/usb/001/002", s, "usb_request_queue_failed");
+        assertFalse(r.register("/dev/bus/usb/001/002", "SN1", s));
+        assertTrue(h.events.isEmpty());
+    }
+
+    @Test
+    public void stale_session_close_announces_nothing() {
+        FakeHooks h = new FakeHooks();
+        SessionRegistry<FakeSession> r = newRegistry(h);
+        attach(r, "/dev/bus/usb/001/002", "SN1", new FakeSession());
+        r.unregister("/dev/bus/usb/001/002", new FakeSession(), "usb_lost");
+        assertEquals(List.of("connected:registered"), h.events);
     }
 }

@@ -41,7 +41,23 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      *  from its own close(), whoever closed it, so a deck whose reader
      *  failed can be attached again. */
     private final SessionRegistry<DeckSession> registry =
-        new SessionRegistry<>(DeckSession::isOpen);
+        new SessionRegistry<>(new SessionRegistry.Hooks<DeckSession>() {
+            @Override public boolean isOpen(DeckSession s) { return s.isOpen(); }
+            @Override public void connected(DeckSession s) {
+                // The spec's payload: JS caches the deck from `info`
+                // without a getDeckInfo round-trip.
+                JSObject ev = new JSObject();
+                ev.put("deckId", s.serial());
+                ev.put("info", infoOf(s));
+                emitter.emit("deckConnected", ev);
+            }
+            @Override public void disconnected(DeckSession s, String reason) {
+                JSObject ev = new JSObject();
+                ev.put("deckId", s.serial());
+                if (reason != null) ev.put("reason", reason);
+                emitter.emit("deckDisconnected", ev);
+            }
+        });
     /** Last attach error per USB device name — surfaced via listAllUsbDevices
      * so the diagnostic UI can show why a known device is not in listDecks
      * even when the failure event was emitted before any listener attached. */
@@ -282,7 +298,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      */
     private void onSessionClosed(DeckSession session, String reason) {
         String name = session.device().getDeviceName();
-        if (registry.unregister(name, session)) {
+        if (registry.unregister(name, session, reason)) {
             Log.i(TAG, "session for " + name + " closed (" + reason + ") — unregistered");
         }
         releaseWakeLockIfIdle();

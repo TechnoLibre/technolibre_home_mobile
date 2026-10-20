@@ -148,6 +148,36 @@ describe("StreamDeckController", () => {
             expect(mockPlugin.listDecks).toHaveBeenCalledTimes(1);
         });
 
+        // deckConnected carries the deck's info: the controller caches the
+        // deck from it, probed through the gallery shortcut (key `cols`),
+        // which only answers for a cached deck.
+        it("caches a deck from the deckConnected info without getDeckInfo", async () => {
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            await listeners["deckConnected"]({ deckId: "AL01", info: DECK });
+            expect(mockPlugin.getDeckInfo).not.toHaveBeenCalled();
+            listeners["keyChanged"]({ deckId: "AL01", key: 5, pressed: true });
+            expect(trigger).toHaveBeenCalledWith(
+                Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
+            );
+        });
+
+        it("falls back to getDeckInfo when deckConnected has no info", async () => {
+            mockPlugin.getDeckInfo.mockResolvedValue(DECK);
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            await listeners["deckConnected"]({ deckId: "AL01" });
+            expect(mockPlugin.getDeckInfo).toHaveBeenCalledWith({ deckId: "AL01" });
+            listeners["keyChanged"]({ deckId: "AL01", key: 5, pressed: true });
+            expect(trigger).toHaveBeenCalledWith(
+                Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
+            );
+        });
+
         it("survives listDecks rejection without throwing", async () => {
             mockPlugin.listDecks.mockRejectedValue(new Error("USB busted"));
             const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
