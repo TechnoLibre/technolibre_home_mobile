@@ -10,6 +10,7 @@ const { mockPlugin, listeners } = vi.hoisted(() => {
             setKeyImage: vi.fn().mockResolvedValue(undefined),
             restartSessions: vi.fn().mockResolvedValue(undefined),
             getSessionHealth: vi.fn().mockResolvedValue({ decks: [] }),
+            keyListenerReady: vi.fn().mockResolvedValue({ delivered: 0, dropped: 0 }),
             addListener: vi.fn(async (name: string, fn: any) => {
                 ls[name] = fn;
                 return { remove: vi.fn() };
@@ -86,6 +87,7 @@ describe("StreamDeckController", () => {
         mockPlugin.setKeyImage.mockResolvedValue(undefined);
         mockPlugin.restartSessions.mockResolvedValue(undefined);
         mockPlugin.getSessionHealth.mockResolvedValue({ decks: [] });
+        mockPlugin.keyListenerReady.mockResolvedValue({ delivered: 0, dropped: 0 });
         mockPlugin.addListener.mockImplementation(async (name: string, fn: any) => {
             listeners[name] = fn;
             return { remove: vi.fn() };
@@ -178,6 +180,49 @@ describe("StreamDeckController", () => {
             expect(trigger).toHaveBeenCalledWith(
                 Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
             );
+        });
+
+        // The plugin holds presses until keyListenerReady and delivers
+        // them through keyChanged: the handler must exist by then.
+        it("calls keyListenerReady once keyChanged is subscribed", async () => {
+            let subscribedAtReady = false;
+            mockPlugin.keyListenerReady.mockImplementation(async () => {
+                subscribedAtReady = typeof listeners["keyChanged"] === "function";
+                return { delivered: 0, dropped: 0 };
+            });
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            expect(mockPlugin.keyListenerReady).toHaveBeenCalledTimes(1);
+            expect(subscribedAtReady).toBe(true);
+        });
+
+        it("acts on a press the plugin delivers at keyListenerReady", async () => {
+            mockPlugin.keyListenerReady.mockImplementation(async () => {
+                listeners["keyChanged"]({ deckId: "AL01", key: 0, pressed: true });
+                listeners["keyChanged"]({ deckId: "AL01", key: 0, pressed: false });
+                return { delivered: 2, dropped: 0 };
+            });
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService("held-1"));
+            visibilityState = "hidden";
+            await ctrl.start();
+            expect(trigger).toHaveBeenCalledWith(
+                Events.ROUTER_NAVIGATION, { url: "/note/held-1" },
+            );
+        });
+
+        it("survives a keyListenerReady rejection", async () => {
+            mockPlugin.keyListenerReady.mockRejectedValue(new Error("not implemented"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            visibilityState = "hidden";
+            await expect(ctrl.start()).resolves.toBeUndefined();
+            await Promise.resolve();
+            expect(warn).toHaveBeenCalledWith(
+                "[streamdeck] keyListenerReady:", expect.any(Error),
+            );
+            warn.mockRestore();
         });
 
         it("survives listDecks rejection without throwing", async () => {

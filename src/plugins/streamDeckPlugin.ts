@@ -234,6 +234,12 @@ interface StreamDeckPluginApi {
     /** Per attached Stream Deck, the session signals and the plugin's
      *  sick verdict; makes no USB transfer. */
     getSessionHealth(): Promise<{ decks: DeckHealth[] }>;
+    /** Call once the app's keyChanged handler is subscribed. Until then,
+     *  and again after each page load, the plugin holds key events: the
+     *  last 16 at most, delivered through keyChanged in arrival order by
+     *  this call, except those older than 10 s. Later events pass
+     *  straight through. Resolves with what the held events became. */
+    keyListenerReady(): Promise<{ delivered: number; dropped: number }>;
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
     /**
      * Ask the OS for USB permission on one deck or, without deckId, on

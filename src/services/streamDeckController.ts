@@ -420,6 +420,18 @@ export class StreamDeckController {
             }),
         );
 
+        // The handler above is subscribed: the plugin delivers the
+        // presses it held since launch (a launch by USB attach can see
+        // one before this point), through that handler, then every
+        // later one directly.
+        StreamDeckPlugin.keyListenerReady().then((r) => {
+            if (r.delivered > 0 || r.dropped > 0) {
+                console.info(
+                    `[streamdeck] held key events: delivered ${r.delivered}, dropped ${r.dropped}`,
+                );
+            }
+        }).catch((e) => console.warn("[streamdeck] keyListenerReady:", e));
+
         // The PAGE_ACTIVE bus listener is registered eagerly in the
         // constructor — see the comment there.
 

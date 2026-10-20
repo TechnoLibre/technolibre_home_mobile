@@ -703,6 +703,7 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `setWakeOnKeyPress({enabled})` | Arms or disarms the key-press wake; resolves `{enabled}`, not stored by the plugin. When it is armed, a key press while the app is paused brings the app forward if the screen is already lit, or if `showOverLockScreen` is on, which alone lets the press turn the screen on (`DeckPowerOptions.bringAppForwardOnKeyPress`, `wakeScreenOnKeyPress`). Otherwise the screen stays off and the press arrives as `keyChanged` only. |
 | `restartSessions({deviceNames?})` | Closes every open session, then opens every permitted deck that has none, including one whose session closed itself while it stayed plugged in. Cancels the pending automatic reopens and gives every deck its three attempts back. With `deviceNames` (USB paths, as `getSessionHealth` gives them), only those devices are closed, reopened and get their attempts back; the other decks are not touched. Resolves `{restarted}`, the number of decks re-attached. |
 | `getSessionHealth()` | Per attached Stream Deck, without any USB transfer: `{deviceName, deckId, hasPermission, open, reopening, readerAlive, writerAlive, writeFailuresInARow, controlFailuresInARow, lastCloseReason, sick, sickReason}`. `sick` is the plugin's verdict (`SessionHealth`): `no_session` (permitted, no session, no automatic reopen pending), `reader_ended` / `writer_ended` (that thread ended while the session stays open), `writes_failing` / `control_failing` (two bulk writes or EP0 transfers failed in a row). A deck without permission, being opened or closed, or waiting for its automatic reopen is never sick. An idle deck sends no input report, so the time since the last one is not a signal. |
+| `keyListenerReady()` | Call once the app's `keyChanged` handler is subscribed. Until then, and again from each page load, the plugin holds `keyChanged` (`KeyEventGate`): a launch by USB attach can read a press before the page listens. This call delivers the held events through `keyChanged` in arrival order, the last 16 at most and none older than 10 s, so a press is never delivered without its release; later events pass straight through. Resolves `{delivered, dropped}`. |
 | `retryAttach()` | Opens every permitted deck that has no session, without closing any. Cancels the pending automatic reopens and gives every deck its three attempts back. Resolves `{retried}`. |
 
 ### Events
@@ -712,7 +713,7 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `deckConnected` | `{deckId, info, reason?}` |
 | `deckDisconnected` | `{deckId, reason}`. `reason` is `usb_lost` (unplugged), `usb_lost:<transfer detail>` (writes kept failing), `restart_requested`, `app_destroyed`, or a reader failure (`polled_reset`, `usb_request_…`, `bulk_read_threw:…`, `polled_threw:…`): match on the prefix. Sent once per deck, when its last session closes. |
 | `permissionDenied` | `{deckId, reason}` |
-| `keyChanged` | `{deckId, key, pressed}` |
+| `keyChanged` | `{deckId, key, pressed}`. Held until `keyListenerReady`. |
 | `dialRotated` | `{deckId, dial, delta}` (Plus) |
 | `dialPressed` | `{deckId, dial, pressed}` (Plus) |
 | `lcdTouched` | `{deckId, type, x, y, xEnd?, yEnd?}` (Plus) |
@@ -806,6 +807,7 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `setWakeOnKeyPress({enabled})` | Arme ou désarme le réveil par touche ; résout `{enabled}`, que le plugin n'enregistre pas. Réveil armé, une touche pressée pendant que l'app est en pause ramène l'app au premier plan si l'écran est déjà allumé, ou si `showOverLockScreen` est activé, seule option qui permet à la touche d'allumer l'écran (`DeckPowerOptions.bringAppForwardOnKeyPress`, `wakeScreenOnKeyPress`). Sinon l'écran reste éteint et la touche n'arrive qu'en `keyChanged`. |
 | `restartSessions({deviceNames?})` | Ferme toutes les sessions ouvertes, puis ouvre chaque deck permis qui n'en a pas, y compris celui dont la session s'est fermée d'elle-même alors qu'il restait branché. Annule les réouvertures automatiques en attente et rend à chaque deck ses trois essais. Avec `deviceNames` (chemins USB, tels que `getSessionHealth` les donne), seuls ces appareils sont fermés, rouverts et retrouvent leurs essais ; les autres decks ne sont pas touchés. Résout `{restarted}`, le nombre de decks rattachés. |
 | `getSessionHealth()` | Pour chaque Stream Deck branché, sans aucun transfert USB : `{deviceName, deckId, hasPermission, open, reopening, readerAlive, writerAlive, writeFailuresInARow, controlFailuresInARow, lastCloseReason, sick, sickReason}`. `sick` est le verdict du plugin (`SessionHealth`) : `no_session` (permis, sans session, aucune réouverture automatique en attente), `reader_ended` / `writer_ended` (ce fil a pris fin alors que la session reste ouverte), `writes_failing` / `control_failing` (deux écritures bulk ou transferts EP0 ratés de suite). Un deck sans permission, en cours d'ouverture ou de fermeture, ou qui attend sa réouverture automatique n'est jamais malade. Un deck inactif n'envoie aucun rapport d'entrée : le temps écoulé depuis le dernier n'est pas un signal. |
+| `keyListenerReady()` | À appeler une fois le gestionnaire `keyChanged` de l'app abonné. Jusque-là, et de nouveau à chaque chargement de page, le plugin retient `keyChanged` (`KeyEventGate`) : un lancement par branchement USB peut lire une touche avant que la page n'écoute. Cet appel livre les événements retenus par `keyChanged` dans leur ordre d'arrivée, 16 au plus et aucun de plus de 10 s, si bien qu'une pression n'est jamais livrée sans son relâchement ; les suivants passent directement. Résout `{delivered, dropped}`. |
 | `retryAttach()` | Ouvre chaque deck permis qui n'a pas de session, sans en fermer aucune. Annule les réouvertures automatiques en attente et rend à chaque deck ses trois essais. Résout `{retried}`. |
 
 ### Events
@@ -815,7 +817,7 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `deckConnected` | `{deckId, info, reason?}` |
 | `deckDisconnected` | `{deckId, reason}`. `reason` vaut `usb_lost` (débranché), `usb_lost:<détail du transfert>` (les écritures échouaient de suite), `restart_requested`, `app_destroyed`, ou un échec du lecteur (`polled_reset`, `usb_request_…`, `bulk_read_threw:…`, `polled_threw:…`) : comparer le préfixe. Envoyé une fois par deck, quand sa dernière session se ferme. |
 | `permissionDenied` | `{deckId, reason}` |
-| `keyChanged` | `{deckId, key, pressed}` |
+| `keyChanged` | `{deckId, key, pressed}`. Retenu jusqu'à `keyListenerReady`. |
 | `dialRotated` | `{deckId, dial, delta}` (Plus) |
 | `dialPressed` | `{deckId, dial, pressed}` (Plus) |
 | `lcdTouched` | `{deckId, type, x, y, xEnd?, yEnd?}` (Plus) |

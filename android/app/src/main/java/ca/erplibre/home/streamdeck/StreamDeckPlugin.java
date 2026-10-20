@@ -130,7 +130,46 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      *  while the user is already looking at the app. */
     private static volatile boolean activityPaused = false;
 
-    private final EventEmitter emitter = (name, data) -> notifyListeners(name, data);
+    /** keyChanged goes through here: held while no JS key handler has
+     *  said it listens (keyListenerReady), delivered once one has. A
+     *  launch by USB attach lets the reader see a press before the page
+     *  subscribes. Closed again by a page load (removeAllListeners). */
+    private final KeyEventGate<JSObject> keyGate = new KeyEventGate<>(
+        ev -> notifyListeners("keyChanged", ev),
+        KeyEventGate.MAX_HELD, KeyEventGate.MAX_AGE_MS);
+
+    private final EventEmitter emitter = (name, data) -> {
+        if ("keyChanged".equals(name)) {
+            keyGate.submit(data, SystemClock.elapsedRealtime());
+        } else {
+            notifyListeners(name, data);
+        }
+    };
+
+    /** The bridge calls this on every page load, before the page's
+     *  scripts run: key events wait for the new page's keyListenerReady. */
+    @Override
+    public void removeAllListeners() {
+        keyGate.close();
+        super.removeAllListeners();
+    }
+
+    /** The JS key handler is subscribed to keyChanged: deliver the key
+     *  events held since launch or the last page load, at most
+     *  KeyEventGate.MAX_HELD and none older than MAX_AGE_MS, then every
+     *  later one directly. Resolves {delivered, dropped}. */
+    @PluginMethod
+    public void keyListenerReady(PluginCall call) {
+        KeyEventGate.Release r = keyGate.open(SystemClock.elapsedRealtime());
+        if (r.delivered > 0 || r.dropped > 0) {
+            Log.i(TAG, "keyChanged held before the page listened: delivered "
+                + r.delivered + ", dropped " + r.dropped);
+        }
+        JSObject ret = new JSObject();
+        ret.put("delivered", r.delivered);
+        ret.put("dropped", r.dropped);
+        call.resolve(ret);
+    }
 
     @Override
     public void load() {
