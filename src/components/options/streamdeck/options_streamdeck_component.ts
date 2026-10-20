@@ -58,9 +58,8 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                 ↻ Rafraîchir
               </button>
               <button class="options-streamdeck__retry"
-                      t-on-click="() => this.retryPermission()">
-                🔓 Demander permission
-              </button>
+                      t-on-click="() => this.retryPermission()"
+                      t-esc="t('streamdeck.request_permission')"/>
               <button class="options-streamdeck__refresh"
                       t-on-click="() => this.scanAllUsb()">
                 🔍 Scanner USB

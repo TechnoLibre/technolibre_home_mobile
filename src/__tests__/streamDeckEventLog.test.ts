@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { streamDeckEventLog, reattachGaveUpText } from "../services/streamDeckEventLog";
+import { translations as en } from "../i18n/en";
+import { translations as fr } from "../i18n/fr";
 
 /** localStorage does not exist in the node environment; i18n reads it. */
 function stubLocale(locale: "fr" | "en") {
@@ -124,5 +126,17 @@ describe("streamDeckEventLog", () => {
             stubLocale("en");
             expect(reattachGaveUpText({ ...ev, deckId: "" })).toContain("/dev/bus/usb/001/002");
         });
+
+        it.each([["en", en], ["fr", fr]] as const)(
+            "%s: a missing permission names the permission button, not a replug",
+            (locale, dict) => {
+                stubLocale(locale);
+                const text = reattachGaveUpText({ ...ev, reason: "permission_missing" });
+                expect(text).toContain("CL00A0000000");
+                expect(text).toContain(dict["streamdeck.request_permission"]);
+                expect(text).not.toBe(reattachGaveUpText(ev));
+                expect(text).not.toContain("{");
+            },
+        );
     });
 });

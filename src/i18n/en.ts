@@ -742,6 +742,8 @@ export const translations: Record<string, string> = {
   "sms_gateway.warn_dev_url": "This address is not routable: it is only for development against a local server. A real gateway must point at an HTTPS URL.",
   "sms_gateway.device_summary": "{model}, Android SDK {sdk}. System limit: {limit} segments per minute.",
   "streamdeck.event_reattach_gave_up": "Deck {deck} not reopened after {attempts} attempts ({reason}): unplug it and plug it back in.",
+  "streamdeck.event_reattach_gave_up_permission": "Deck {deck} not reopened after {attempts} attempts: its USB permission is missing. Press “{button}” in Options › Stream Deck.",
+  "streamdeck.request_permission": "🔓 Request permission",
   "streamdeck.power_title": "🔋 Phone sleep",
   "streamdeck.power_show_over_lock_screen": "Let the deck turn the screen on and show the app over the lock screen",
   "streamdeck.power_show_over_lock_screen_hint": "Off by default: a deck never turns the screen on, and the app never appears over the lock screen. On: only a launch by the deck — plugging it in, or a key press with “Keep the Stream Deck lit during sleep” (Sleep section) — turns the screen on and shows the app without unlocking, to whoever holds the deck.",

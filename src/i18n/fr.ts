@@ -742,6 +742,8 @@ export const translations: Record<string, string> = {
   "sms_gateway.warn_dev_url": "Cette adresse n'est pas routable : elle ne sert qu'au développement contre un serveur local. Une passerelle réelle doit pointer une URL HTTPS.",
   "sms_gateway.device_summary": "{model}, Android SDK {sdk}. Limite système : {limit} segments par minute.",
   "streamdeck.event_reattach_gave_up": "Deck {deck} non rouvert après {attempts} essais ({reason}) : débranchez-le puis rebranchez-le.",
+  "streamdeck.event_reattach_gave_up_permission": "Deck {deck} non rouvert après {attempts} essais : sa permission USB manque. Appuyez sur « {button} » dans Options › Stream Deck.",
+  "streamdeck.request_permission": "🔓 Demander permission",
   "streamdeck.power_title": "🔋 Veille du téléphone",
   "streamdeck.power_show_over_lock_screen": "Laisser le deck allumer l'écran et afficher l'application par-dessus l'écran verrouillé",
   "streamdeck.power_show_over_lock_screen_hint": "Désactivé par défaut : le deck n'allume jamais l'écran, et l'application n'apparaît jamais par-dessus l'écran verrouillé. Activé : seul un lancement par le deck — le brancher, ou une touche avec « Garder le Stream Deck allumé en veille » (section Mise en veille) — allume l'écran et montre l'application sans déverrouiller, à quiconque tient le deck.",
