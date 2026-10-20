@@ -384,7 +384,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // The device is gone: a retry has nothing to open, and the
         // hotplug attach handles its return.
         forgetReattach(name);
-        restartReopen.forget(name);
+        // The restart's late-reopen mark is dropped by the close job only:
+        // through a detach and attach bounce, the attach finds the late
+        // close still registered and skips, and the mark is what reopens
+        // the deck once that close ends. On a real unplug, a close ending
+        // inside the debounce finds no device and reopens nothing.
         // Debounce: ThinkPhone (and a few other Android stacks) emit
         // detach + attach in tight succession after the first interrupt
         // event. Closing the session synchronously here would tear the

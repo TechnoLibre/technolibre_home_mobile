@@ -17,8 +17,9 @@ import java.util.Set;
  * cannot reopen that deck, and a close by the owner schedules no retry
  * (see ReattachPolicy): such a device is late, and closed() answers true
  * for it once, when its close ends, for the CloseListener to reopen it.
- * forget() and clear() drop the marks of a device unplugged and of a
- * plugin being destroyed. Every method holds the instance monitor:
+ * forget() and clear() drop the marks of a device unplugged, once its
+ * detach debounce expires without an attach, and of a plugin being
+ * destroyed. Every method holds the instance monitor:
  * sessions close on their own threads.
  */
 final class RestartReopen {
