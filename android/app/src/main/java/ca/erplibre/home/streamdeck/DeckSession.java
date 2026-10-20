@@ -627,15 +627,13 @@ public final class DeckSession {
     }
 
     /**
-     * Native USBDEVFS reader path. Uses ioctl(USBDEVFS_DISCONNECT) to
-     * detach any in-kernel HID driver from the interface BEFORE we
-     * claim it — this is the part Java's claimInterface(force=true)
-     * does not do, and the reason interrupt-IN reads silently return
-     * nothing on certain phone kernels (Lenovo ThinkPhone, Pixel 6).
-     *
-     * If the native lib isn't loaded (build skipped or arch mismatch),
-     * we fall through to the UsbRequest path so the session still
-     * works with output-only.
+     * Debug echo of one IN report: a rawInputReport event and a logcat
+     * line carrying its first 32 bytes in hex. Each of the three readers
+     * calls it while debug logging is on, before parseInputReport —
+     * "userequest" (UsbRequest on interrupt-IN), "bulk" (bulkTransfer on
+     * interrupt-IN) and "polled" (GET_REPORT on EP0), chosen by
+     * readerMode when the session opens. A report identical to the
+     * previous one is skipped.
      */
     private void emitRaw(byte[] data, int got) {
         // Dedupe — only emit when bytes actually changed since the
