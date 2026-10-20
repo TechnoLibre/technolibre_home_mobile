@@ -37,7 +37,15 @@ final class RequestReader {
 
     /** A wait that failed rather than timed out; the message is its detail. */
     static final class WaitFailed extends Exception {
-        WaitFailed(String detail) { super(detail); }
+        /** The wait returned no request and raised nothing. */
+        final boolean nullReturn;
+        WaitFailed(String detail) { this(detail, false); }
+        private WaitFailed(String detail, boolean nullReturn) {
+            super(detail);
+            this.nullReturn = nullReturn;
+        }
+        /** requestWait returned null. */
+        static WaitFailed nullReturn() { return new WaitFailed("null", true); }
     }
 
     /** The one IN request and the connection it is queued on. */
@@ -47,7 +55,9 @@ final class RequestReader {
         /**
          * Waits at most {@code ms} for the queued request. Returns the bytes
          * it received once the kernel gave it back, empty for a cancelled or
-         * zero-length completion; null when nothing completed in time.
+         * zero-length completion; null when nothing completed in time. A
+         * null from requestWait is WaitFailed.nullReturn(), which the reader
+         * classifies by how long the wait took.
          */
         byte[] await(long ms) throws WaitFailed;
         /** Asks the kernel to give the queued request back without data. */
@@ -66,6 +76,7 @@ final class RequestReader {
         void onIdle(long msSinceData);
     }
 
+    /** Milliseconds on a monotonic clock. */
     interface Clock { long now(); }
 
     private final Pipe pipe;
@@ -101,7 +112,7 @@ final class RequestReader {
                 }
                 byte[] got;
                 try {
-                    got = pipe.await(WAIT_MS);
+                    got = await(WAIT_MS);
                     failuresInARow = 0;
                 } catch (WaitFailed e) {
                     // The request's state is unknown: it counts as queued.
@@ -134,12 +145,28 @@ final class RequestReader {
         return failure;
     }
 
+    /**
+     * pipe.await, where a null return counts as a timeout once at least 90 %
+     * of the wait has passed. requestWait(long) reports a timeout by
+     * TimeoutException only when the native wait sets ETIMEDOUT; a pipe
+     * error ends the wait early, so the elapsed time tells the two apart.
+     */
+    private byte[] await(long ms) throws WaitFailed {
+        long start = clock.now();
+        try {
+            return pipe.await(ms);
+        } catch (WaitFailed e) {
+            if (e.nullReturn && (clock.now() - start) * 10 >= ms * 9) return null;
+            throw e;
+        }
+    }
+
     /** Cancels the queued request and reaps it; false if it never came back. */
     private boolean drain() {
         try { pipe.cancel(); } catch (RuntimeException ignored) { }
         for (int i = 0; i < DRAIN_WAITS; i++) {
             try {
-                if (pipe.await(WAIT_MS) != null) return true;
+                if (await(WAIT_MS) != null) return true;
             } catch (WaitFailed e) {
                 return false;
             }

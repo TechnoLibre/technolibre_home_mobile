@@ -216,6 +216,30 @@ public class RequestReaderTest {
     }
 
     @Test
+    public void a_null_after_the_whole_wait_reads_as_a_timeout() {
+        // A framework that answers a timeout by null rather than by
+        // TimeoutException: the request stays queued, nothing fails.
+        FakeOwner owner = new FakeOwner();
+        Object[] steps = new Object[2 * RequestReader.WAIT_FAILURES_TO_CLOSE + 1];
+        for (int i = 0; i < steps.length - 1; i++) steps[i] = RequestReader.WaitFailed.nullReturn();
+        steps[steps.length - 1] = STOP;
+        FakePipe pipe = new FakePipe(owner, steps);
+        assertNull(reader(pipe).run());
+        assertEquals(1, pipe.count("submit"));
+    }
+
+    @Test
+    public void a_null_before_the_wait_ends_is_a_failure() {
+        // A pipe error makes requestWait return null at once.
+        FakeOwner owner = new FakeOwner();
+        Object[] steps = new Object[RequestReader.WAIT_FAILURES_TO_CLOSE];
+        for (int i = 0; i < steps.length; i++) steps[i] = RequestReader.WaitFailed.nullReturn();
+        FakePipe pipe = new FakePipe(owner, steps);
+        pipe.msPerWait = 2;
+        assertEquals(RequestReader.WAIT_FAILED + ":null", reader(pipe).run());
+    }
+
+    @Test
     public void the_idle_note_comes_once_per_period() {
         FakeOwner owner = new FakeOwner();
         int waits = (int) (2 * RequestReader.IDLE_NOTE_MS / 250) + 1;

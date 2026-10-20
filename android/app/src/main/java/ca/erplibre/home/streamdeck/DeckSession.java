@@ -8,6 +8,7 @@ import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.hardware.usb.UsbRequest;
 import android.os.Build;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.nio.ByteBuffer;
@@ -485,8 +486,9 @@ public final class DeckSession {
                     throw new RequestReader.WaitFailed(e.getClass().getSimpleName());
                 }
                 // requestWait(long) answers a timeout by TimeoutException
-                // and an error by null.
-                if (done == null) throw new RequestReader.WaitFailed("null");
+                // and an error by null; RequestReader reads a null that
+                // took the whole wait as a timeout.
+                if (done == null) throw RequestReader.WaitFailed.nullReturn();
                 if (done != req) return null;
                 byte[] data = new byte[buf.position()];
                 buf.flip();
@@ -506,7 +508,7 @@ public final class DeckSession {
                 noteIdle("UsbRequest", msSinceData);
             }
         };
-        RequestReader reader = new RequestReader(pipe, owner, System::currentTimeMillis);
+        RequestReader reader = new RequestReader(pipe, owner, SystemClock::elapsedRealtime);
         String failure = reader.run();
         if (reader.leftQueued()) {
             Log.w(TAG, "reader: cancelled UsbRequest never reaped, left to the connection close");
