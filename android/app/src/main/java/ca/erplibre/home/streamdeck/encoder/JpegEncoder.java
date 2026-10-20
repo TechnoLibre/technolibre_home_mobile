@@ -7,7 +7,9 @@ import ca.erplibre.home.streamdeck.encoder.ImageEncoder.ImageEncodeException;
  * exports JPEG via canvas.toBlob('image/jpeg'). Java only forwards the bytes
  * to the transport pagination stage.
  *
- * The encoder validates the JPEG magic bytes to fail fast on malformed input.
+ * The encoder validates the JPEG magic bytes to fail fast on malformed input:
+ * anything else, a PNG meant for a BMP model included, is rejected with
+ * "format_mismatch:jpeg_model_requires_jpeg".
  */
 public final class JpegEncoder implements ImageEncoder {
 
@@ -19,7 +21,7 @@ public final class JpegEncoder implements ImageEncoder {
             throw new ImageEncodeException("image_decode_failed:empty_or_truncated");
         }
         if ((inputBytes[0] & 0xFF) != 0xFF || (inputBytes[1] & 0xFF) != 0xD8 || (inputBytes[2] & 0xFF) != 0xFF) {
-            throw new ImageEncodeException("format_mismatch:bmp_model_requires_png");
+            throw new ImageEncodeException("format_mismatch:jpeg_model_requires_jpeg");
         }
         return inputBytes;
     }

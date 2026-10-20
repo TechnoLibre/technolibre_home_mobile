@@ -224,7 +224,10 @@ interface StreamDeckPluginApi {
     setPowerOptions(opts: Partial<DeckPowerOptions>): Promise<DeckPowerOptions>;
 
     /** Rejects "missing:key" / "invalid_key:N" for a key the deck lacks,
-     *  and "image_oversized:WxH>KWxKH" for an image larger than the key. */
+     *  "image_oversized:WxH>KWxKH" for an image larger than the key, and
+     *  "format_mismatch:bmp_model_requires_png" or
+     *  "format_mismatch:jpeg_model_requires_jpeg" for bytes the deck's
+     *  keyImage.format does not take. */
     setKeyImage(opts: {
         deckId: string;
         key: number;
