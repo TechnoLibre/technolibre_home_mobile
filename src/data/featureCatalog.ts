@@ -1143,12 +1143,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(persisted localStorage), reader-mode dropdown (request/bulk/polled), "
                         + "bezel-gap sliders for the camera-stream cover-fit, and a manual "
                         + "restart button that triggers restartSessions to recover from the "
-                        + "post-sleep silent-reader state.",
+                        + "post-sleep silent-reader state. A deck whose info carries "
+                        + "controlPipeOk false shows a line saying brightness and key "
+                        + "clearing are off until it is replugged.",
                     fr: "Panel Owl listant chaque deck connecté avec : slider brightness "
                         + "(persisté localStorage), dropdown reader-mode (request/bulk/polled), "
                         + "sliders gap de bezels pour le cover-fit camera-stream, et un bouton "
                         + "restart manuel qui déclenche restartSessions pour récupérer du state "
-                        + "reader-silencieux post-sleep.",
+                        + "reader-silencieux post-sleep. Un deck dont les infos portent "
+                        + "controlPipeOk faux affiche une ligne disant que luminosité et "
+                        + "effacement des touches sont coupés jusqu'à son rebranchement.",
                 },
                 dependsOn: [
                     "streamdeck.controller",

@@ -138,6 +138,8 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
                   <span t-esc="t('streamdeck.deck_product_id', { id: row.info.productId.toString(16) })"/>
                   <span t-esc="t('streamdeck.deck_firmware', { version: row.info.firmwareVersion })"/>
                 </div>
+                <div t-if="controlPipeNotice(row.info)" class="options-streamdeck__error"
+                     t-esc="controlPipeNotice(row.info)"/>
                 <t t-if="row.info.dialCount &gt; 0">
                   <div class="options-streamdeck__deck-line">
                     <span t-esc="t('streamdeck.deck_dials', { count: row.info.dialCount })"/>
@@ -684,6 +686,14 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         return count === 1
             ? this.t("streamdeck.header_one", { count })
             : this.t("streamdeck.header_other", { count });
+    }
+
+    /** "" unless the deck answered no feature report at open; then what
+     *  is off and that a replug restores it. */
+    controlPipeNotice(info: Partial<DeckInfo>): string {
+        return info.controlPipeOk === false
+            ? this.t("streamdeck.deck_control_pipe_down")
+            : "";
     }
 
     /** The brightness last set from this panel, or the firmware

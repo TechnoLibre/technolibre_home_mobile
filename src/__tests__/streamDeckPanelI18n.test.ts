@@ -130,6 +130,28 @@ describe("Options › Stream Deck — labels in each language", () => {
         expect(c.lcdScrollSpeedLabel("A")).toBe("5 px/frame");
     });
 
+    it("tells to replug a deck whose control pipe is down, in each language", () => {
+        stubLocale("fr");
+        const c = panel();
+        expect(c.controlPipeNotice({ controlPipeOk: false })).toBe(
+            "Ce deck ne répond à aucune requête de contrôle : luminosité et "
+            + "effacement des touches sont coupés. Débranchez-le puis "
+            + "rebranchez-le pour les rétablir.");
+        stubLocale("en");
+        expect(c.controlPipeNotice({ controlPipeOk: false })).toBe(
+            "This deck answers no control request: brightness and key "
+            + "clearing are off. Unplug it and plug it back in to restore "
+            + "them.");
+        expect(c.controlPipeNotice({ controlPipeOk: true })).toBe("");
+        // Info without the field says nothing about the pipe.
+        expect(c.controlPipeNotice({})).toBe("");
+    });
+
+    it("shows the control pipe notice under the deck's firmware line", () => {
+        expect(template()).toMatch(
+            /t-if="controlPipeNotice\(row\.info\)"[\s\S]*?t-esc="controlPipeNotice\(row\.info\)"/);
+    });
+
     it("journals an empty USB scan in the reader's language", async () => {
         stubLocale("en");
         __setPluginMock("StreamDeckPlugin", {
