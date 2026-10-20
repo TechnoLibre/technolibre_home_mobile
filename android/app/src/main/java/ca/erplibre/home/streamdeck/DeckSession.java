@@ -159,7 +159,9 @@ public final class DeckSession {
      *  keyChanged emit. Used by the plugin to request a screen-wake when
      *  the host activity is paused — kept as a static plain Runnable so
      *  DeckSession does not have to import Android lifecycle types. The
-     *  hook only posts: the reader thread makes no binder call. */
+     *  hook only posts: a key press costs the reader no binder call. A
+     *  reader that closes its session does make some, through the
+     *  CloseListener (the plugin's wake lock update). */
     private static volatile Runnable keyPressHook;
     public static void setKeyPressHook(Runnable hook) { keyPressHook = hook; }
 

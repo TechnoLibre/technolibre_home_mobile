@@ -157,7 +157,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // (locked screen / backgrounded), and the screen is lit already
         // or showOverLockScreen lets the press light it. The hook runs on
         // the main thread: PowerManager and startActivity are binder calls,
-        // and the USB reader thread makes none.
+        // kept off the USB reader's path for each key report.
         DeckSession.setKeyPressHook(() -> mainHandler.post(this::onDeckKeyPressed));
         StreamDeckLifecycleService.setTaskRemovedHandler(() -> {
             stopReattach();
@@ -367,10 +367,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     /**
      * CloseListener of every session, on the thread that closed it — the
-     * reader thread when the USB pipe failed. Unregistering here, not only
-     * on detach, is what lets onDeckAttached, restartSessions and
-     * retryAttach open the same device again. A session that closed itself
-     * gets a retry scheduled by ReattachPolicy.
+     * reader or the writer when the USB pipe failed, whose wake lock update
+     * through applyReattach is then a binder call on that thread.
+     * Unregistering here, not only on detach, is what lets onDeckAttached,
+     * restartSessions and retryAttach open the same device again. A session
+     * that closed itself gets a retry scheduled by ReattachPolicy.
      */
     private void onSessionClosed(DeckSession session, String reason) {
         String name = session.device().getDeviceName();
