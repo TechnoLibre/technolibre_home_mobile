@@ -116,6 +116,8 @@ public final class DeckSession {
      *  the user presses a key in polled mode, GET_REPORT is returning
      *  cached data and polled is a dead end on that kernel. */
     private byte[] lastRawBytes;
+    /** Set by the reader once it logged its first report. */
+    private boolean firstReportLogged = false;
     /** When true the reader thread emits a `rawInputReport` event for every
      * successful bulkTransfer (stripped to first 32 bytes hex). Off by
      * default — flips on via StreamDeckPlugin.setDebugLogging. */
@@ -496,10 +498,18 @@ public final class DeckSession {
             && Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             mode = READER_MODE_BULK;
         }
-        switch (mode) {
-            case READER_MODE_BULK:   readerLoopBulk();       break;
-            case READER_MODE_POLLED: readerLoopPolled();     break;
-            default:                 readerLoopUsbRequest();
+        // Always logged, with the first report in parseInputReport: an
+        // idle deck is silent, and these lines tell a reader that runs and
+        // hears nothing from one that has ended.
+        Log.i(TAG, "reader (" + mode + ") started for " + serial);
+        try {
+            switch (mode) {
+                case READER_MODE_BULK:   readerLoopBulk();       break;
+                case READER_MODE_POLLED: readerLoopPolled();     break;
+                default:                 readerLoopUsbRequest();
+            }
+        } finally {
+            Log.i(TAG, "reader (" + mode + ") ended for " + serial);
         }
     }
 
@@ -603,7 +613,8 @@ public final class DeckSession {
      *  report only when a key changes, so silence is the normal state of
      *  an idle deck and not a fault: the note exists only with
      *  debugLogging on, in logcat at debug level and as a rawInputReport
-     *  of length 0. The polled reader differs: GET_REPORT answers even on
+     *  of length 0. The reader's start, end and first report are logged
+     *  in any case. The polled reader differs: GET_REPORT answers even on
      *  an idle deck, so its silence stays a warning. */
     private void noteIdle(String reader, long msSinceData) {
         if (!debugLogging) return;
@@ -794,6 +805,10 @@ public final class DeckSession {
      * Neo touch: 0x01 0x04 ...
      */
     private void parseInputReport(byte[] buf, int len) {
+        if (!firstReportLogged) {
+            firstReportLogged = true;
+            Log.i(TAG, "reader: first input report for " + serial + ", " + len + " bytes");
+        }
         if (len < 2) return;
         int reportId = buf[0] & 0xFF;
         int subType = buf[1] & 0xFF;
