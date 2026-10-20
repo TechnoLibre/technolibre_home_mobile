@@ -20,8 +20,9 @@ import java.util.Set;
  * The registry also decides the lifecycle events JS sees. deckConnected
  * leaves only once the session is indexed, so a getDeckInfo or setKeyImage
  * sent in reply finds it; deckDisconnected leaves only for the call that
- * removed a registered session, so each announced deck is reported gone
- * exactly once and a session JS never heard of is never reported. Both are
+ * removed the last registered session of a serial, so each announced deck
+ * is reported gone exactly once and a session JS never heard of is never
+ * reported. Both are
  * sent under the monitor: a session closing while it is being registered
  * cannot have its deckDisconnected overtake its deckConnected.
  *
@@ -97,13 +98,28 @@ final class SessionRegistry<S> {
      * {@code reason}. Only that exact instance is removed: a stale session
      * closing late leaves its successor on the same device in place. True
      * only for the call that removed it.
+     *
+     * A deck that re-enumerates under a new device name can hold two
+     * entries with one serial for a moment. JS knows the deck by serial
+     * only, so while another entry carries that serial nothing is
+     * announced and the serial maps to that entry; deckDisconnected
+     * leaves with the last of them.
      */
     synchronized boolean unregister(String deviceName, S session, String reason) {
         Entry<S> e = byDevice.get(deviceName);
         if (e == null || e.session != session) return false;
         byDevice.remove(deviceName);
-        if (e.serial != null && bySerial.get(e.serial) == session) bySerial.remove(e.serial);
-        hooks.disconnected(session, reason);
+        Entry<S> sibling = null;
+        if (e.serial != null && !e.serial.isEmpty()) {
+            for (Entry<S> other : byDevice.values()) {
+                if (e.serial.equals(other.serial)) { sibling = other; break; }
+            }
+            if (bySerial.get(e.serial) == session) {
+                if (sibling != null) bySerial.put(e.serial, sibling.session);
+                else bySerial.remove(e.serial);
+            }
+        }
+        if (sibling == null) hooks.disconnected(session, reason);
         return true;
     }
 

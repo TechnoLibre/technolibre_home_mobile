@@ -238,4 +238,50 @@ public class SessionRegistryTest {
         r.unregister("/dev/bus/usb/001/002", new FakeSession(), "usb_lost");
         assertEquals(List.of("connected:registered"), h.events);
     }
+
+    @Test
+    public void stale_session_of_a_reenumerated_deck_leaves_it_announced() {
+        // The deck came back under a new device name and its new session
+        // registered before the old one closed: JS keys decks by serial, so
+        // the old close must not report the live deck gone.
+        FakeHooks h = new FakeHooks();
+        SessionRegistry<FakeSession> r = newRegistry(h);
+        FakeSession old = new FakeSession();
+        FakeSession current = new FakeSession();
+        attach(r, "/dev/bus/usb/001/002", "SN1", old);
+        attach(r, "/dev/bus/usb/001/003", "SN1", current);
+
+        old.open = false;
+        assertTrue(r.unregister("/dev/bus/usb/001/002", old, "usb_lost"));
+        assertSame(current, r.bySerial("SN1"));
+        assertEquals(List.of("connected:registered", "connected:registered"), h.events);
+
+        current.open = false;
+        assertTrue(r.unregister("/dev/bus/usb/001/003", current, "usb_lost"));
+        assertNull(r.bySerial("SN1"));
+        assertEquals("disconnected:usb_lost", h.events.get(h.events.size() - 1));
+        assertEquals(3, h.events.size());
+    }
+
+    @Test
+    public void newest_session_closing_first_hands_the_serial_back() {
+        FakeHooks h = new FakeHooks();
+        SessionRegistry<FakeSession> r = newRegistry(h);
+        FakeSession old = new FakeSession();
+        FakeSession current = new FakeSession();
+        attach(r, "/dev/bus/usb/001/002", "SN1", old);
+        attach(r, "/dev/bus/usb/001/003", "SN1", current);
+
+        current.open = false;
+        assertTrue(r.unregister("/dev/bus/usb/001/003", current, "polled_reset"));
+        // Calls by deckId still reach a session that is open.
+        assertSame(old, r.bySerial("SN1"));
+        assertEquals(2, h.events.size());
+
+        old.open = false;
+        r.unregister("/dev/bus/usb/001/002", old, "usb_lost");
+        assertNull(r.bySerial("SN1"));
+        assertEquals("disconnected:usb_lost", h.events.get(h.events.size() - 1));
+        assertEquals(3, h.events.size());
+    }
 }
