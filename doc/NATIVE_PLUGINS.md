@@ -356,7 +356,7 @@ Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `clearAllKeys({deckId})` | Same as `reset`. |
 | `setLcdImage({deckId, bytes})` | Plus only — a full 800×100 JPEG. |
 | `setLcdRegion({deckId, x, y, w, h, bytes})` | Plus only — a JPEG for a partial region. |
-| `setInfoBar({deckId, index, bytes})` | Neo only — a 248×58 JPEG on the info screen. The Neo has a single screen; `index` must be 0 (forward compatibility with future models). |
+| `setInfoBar({deckId, index, bytes})` | Neo only — a 248×58 JPEG on the info screen. The Neo has a single screen; `index` must be 0 (forward compatibility with future models). The screen is mounted like the keys: send the image rotated 180°. |
 
 ### Events
 

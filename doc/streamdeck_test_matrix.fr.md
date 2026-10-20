@@ -13,7 +13,8 @@ matériel : c'est ici le filet de sécurité.
 
 ## Liste de contrôle (par deck physique)
 
-Pour chacun de : Original v1, Mini, Original v2, MK.2, XL, Plus, Neo.
+Pour chacun de : Original v1, Mini, Original v2, MK.2, XL, XL v2 (PID 0x008f),
+Plus, Neo.
 
 - [ ] Brancher le deck avec l'application **fermée**. L'application doit se
       lancer via le filtre d'intention USB ATTACHED et afficher le deck dans

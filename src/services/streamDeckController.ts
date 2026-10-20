@@ -25,10 +25,22 @@ const NOTE_PAGE_TILES: Record<number, { icon: string; label: string; bg: string;
 };
 const NOTE_PAGE_KEYS = Object.keys(NOTE_PAGE_TILES).map(Number);
 
-/** Persistent Gallery shortcut — sits below the Note key (key 0) on a
- *  3-row × 5-col Stream Deck layout. Pressing it routes the mobile to
- *  /applications/gallery so the deck doubles as a remote thumbnail picker. */
-const GALLERY_KEY = 5;
+/** Key index of the persistent Gallery shortcut on `deck`, or null when
+ *  the deck has none. Keys are numbered row by row, so the key directly
+ *  below the Note key (key 0) is index `cols`: 5 on a 5×3 deck, 8 on the
+ *  8×4 XL. When that key is one of the note-page keys (the 3×2 Mini puts
+ *  key 3 there), the shortcut moves to the last key instead. A deck with
+ *  a single row has no key below key 0, hence no shortcut. Pressing it
+ *  routes the mobile to /applications/gallery so the deck doubles as a
+ *  remote thumbnail picker. */
+export function galleryKeyFor(
+    deck: Pick<DeckInfo, "rows" | "cols" | "keyCount">,
+): number | null {
+    if (!(deck.rows >= 2) || !(deck.cols >= 1)) return null;
+    if (!NOTE_PAGE_KEYS.includes(deck.cols)) return deck.cols;
+    const last = deck.keyCount - 1;
+    return last > 0 && !NOTE_PAGE_KEYS.includes(last) ? last : null;
+}
 const GALLERY_TILE = { icon: "🖼️", label: "Galerie", bg: "#0e7490" };
 
 /** While the gallery page is mounted on the mobile, the deck switches
@@ -364,7 +376,8 @@ export class StreamDeckController {
                     });
                     return;
                 }
-                if (ev.key === GALLERY_KEY) {
+                const deck = this.decks.get(ev.deckId);
+                if (deck && ev.key === galleryKeyFor(deck)) {
                     this.lastPressAt.set(ev.key, now);
                     this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
                         url: "/applications/gallery",
@@ -594,11 +607,14 @@ export class StreamDeckController {
         return btoa(bin);
     }
 
-    /** Paint the persistent Gallery shortcut on key 5. Called whenever
-     *  the home surface is repainted (deck attach, visibility:visible,
+    /** Paint the persistent Gallery shortcut on the key `galleryKeyFor`
+     *  picks; no-op on a deck without one. Called whenever the home
+     *  surface is repainted (deck attach, visibility:visible,
      *  exit-from-gallery). Skipped while a gallery remote is active —
-     *  in that mode key 5 is owned by `_paintGallery`. */
+     *  in that mode the key is owned by `_paintGallery`. */
     private async _paintGalleryKey(deck: DeckInfo): Promise<void> {
+        const key = galleryKeyFor(deck);
+        if (key === null) return;
         const { w, h, format, rotation } = deck.keyImage;
         const blob = await this._renderTile(
             w, h, rotation ?? 0,
@@ -607,7 +623,7 @@ export class StreamDeckController {
         const bytes = await this._blobToBase64(blob);
         await StreamDeckPlugin.setKeyImage({
             deckId: deck.deckId,
-            key: GALLERY_KEY,
+            key,
             bytes,
             format: format === "jpeg" ? "jpeg" : "png",
         });

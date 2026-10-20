@@ -81,6 +81,7 @@ public final class DeckRegistry {
             .model("neo").productId(0x009a)
             .grid(2, 4)
             .keyImage(96, 96, DeckSpec.ImageFormat.JPEG)
+            .keyImageRotation(180)
             .infoBars(248, 58, 1)
             .touch(2)
             .transport(DeckSpec.TransportKind.V2)

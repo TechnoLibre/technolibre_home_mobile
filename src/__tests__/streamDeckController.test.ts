@@ -23,12 +23,14 @@ vi.mock("../plugins/streamDeckPlugin", () => ({
     DeckInfo: {} as any,
 }));
 
-import { StreamDeckController } from "../services/streamDeckController";
+import { StreamDeckController, galleryKeyFor } from "../services/streamDeckController";
 import { Events } from "../constants/events";
 
 const DECK = {
     deckId: "AL01",
     model: "mk2",
+    rows: 3,
+    cols: 5,
     keyCount: 15,
     keyImage: { w: 72, h: 72, format: "jpeg", rotation: 0 },
 };
@@ -489,13 +491,30 @@ describe("StreamDeckController", () => {
             expect(fired).toContain("streamdeck_add_audio");
         });
 
-        it("press on key 5 navigates to /applications/gallery (gallery shortcut)", async () => {
+        it("press on key 5 navigates to /applications/gallery on a 5x3 deck", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
             const { bus, trigger } = makeBus();
             const ctrl = new StreamDeckController(bus, makeNoteService());
             visibilityState = "hidden";
             await ctrl.start();
             trigger.mockClear();
             listeners["keyChanged"]({ deckId: "AL01", key: 5, pressed: true });
+            expect(trigger).toHaveBeenCalledWith(
+                Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
+            );
+        });
+
+        it("on an 8x4 deck the shortcut is key 8, and key 5 stays inert", async () => {
+            const xl = { ...DECK, deckId: "XL01", model: "xl", rows: 4, cols: 8, keyCount: 32 };
+            mockPlugin.listDecks.mockResolvedValue({ decks: [xl] });
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            trigger.mockClear();
+            listeners["keyChanged"]({ deckId: "XL01", key: 5, pressed: true });
+            expect(trigger).not.toHaveBeenCalled();
+            listeners["keyChanged"]({ deckId: "XL01", key: 8, pressed: true });
             expect(trigger).toHaveBeenCalledWith(
                 Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
             );
@@ -524,6 +543,24 @@ describe("StreamDeckController", () => {
             vi.setSystemTime(Date.now() + 1000);
             listeners["keyChanged"]({ deckId: "AL01", key: 1, pressed: true });
             expect(trigger).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("galleryKeyFor", () => {
+        it("puts the shortcut directly below key 0", () => {
+            expect(galleryKeyFor({ rows: 3, cols: 5, keyCount: 15 })).toBe(5);
+            expect(galleryKeyFor({ rows: 4, cols: 8, keyCount: 32 })).toBe(8);
+            expect(galleryKeyFor({ rows: 2, cols: 4, keyCount: 8 })).toBe(4);
+        });
+
+        it("falls back to the last key when below key 0 is a note-page key", () => {
+            // Mini 3x2: key 3 is the Location tile on a note page.
+            expect(galleryKeyFor({ rows: 2, cols: 3, keyCount: 6 })).toBe(5);
+        });
+
+        it("has no shortcut on a single row or a keyless deck", () => {
+            expect(galleryKeyFor({ rows: 1, cols: 3, keyCount: 3 })).toBeNull();
+            expect(galleryKeyFor({ rows: 0, cols: 0, keyCount: 0 })).toBeNull();
         });
     });
 

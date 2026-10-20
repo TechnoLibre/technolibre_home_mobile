@@ -11,7 +11,7 @@ public final class DeckSpec {
     public enum ImageFormat { JPEG, BMP_BGR_ROT180, BMP_BGR_ROT270 }
     public enum TransportKind { V1, V2 }
 
-    public final String model;            // "mk2", "xl", "plus", "neo", "original_v1", "original_v2", "mini"
+    public final String model;            // "mk2", "xl", "xl_v2", "plus", "neo", "original_v1", "original_v2", "mini"
     public final int productId;           // 0x0080 etc.
     public final int rows;
     public final int cols;
@@ -21,15 +21,17 @@ public final class DeckSpec {
     public final ImageFormat keyImageFormat;
     /** Degrees the rendered image must be rotated (CW) before sending to
      * the device. The deck's LCD is sometimes mounted upside-down or 90°
-     * relative to the buttons. XL / XL v2 / MK.2 / Original v2 → 180°,
-     * Mini → 270° (handled by BMP_BGR_ROT270 already), Plus and Neo → 0°. */
+     * relative to the buttons. XL / XL v2 / MK.2 / Original v2 / Neo →
+     * 180°, the flip on both axes python-elgato-streamdeck applies (KEY_FLIP
+     * (True, True)); Plus → 0°. The BMP models carry 0 here: BmpEncoder
+     * rotates them (BMP_BGR_ROT180, BMP_BGR_ROT270). */
     public final int keyImageRotation;
     public final int dialCount;           // 0 except Plus (4)
     public final int lcdW;                // 0 if no LCD
     public final int lcdH;
     public final int infoBarW;            // 0 if no info bars
     public final int infoBarH;
-    public final int infoBarCount;        // 0 except Neo (2)
+    public final int infoBarCount;        // 0 except Neo (1: one 248x58 screen)
     public final int touchPoints;         // 0 except Neo (2); Plus uses lcd touch
     public final TransportKind transport;
     public final List<String> capabilities; // subset of: keys, dials, lcd, infobars, touchpoints

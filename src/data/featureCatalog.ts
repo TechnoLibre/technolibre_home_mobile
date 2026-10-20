@@ -1123,8 +1123,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "navigates to /applications on a second press. When "
                         + "the page unmounts, the deck repaints its "
                         + "default Note + Galerie surface. Outside the "
-                        + "gallery page, key 5 sits below the Note key "
-                        + "as a permanent shortcut to /options/gallery.",
+                        + "gallery page, the key directly below the Note "
+                        + "key (5 on a 5x3 deck, 8 on the XL; the last key "
+                        + "on the Mini) is a permanent shortcut to "
+                        + "/applications/gallery.",
                     fr: "Quand la page galerie est montée, le composant "
                         + "Owl émet STREAMDECK_GALLERY_PAGE_ACTIVE avec "
                         + "la liste d'images (URLs + index). Le "
@@ -1139,8 +1141,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "navigue à /applications à la 2e pression. Au "
                         + "démontage, le deck repeint sa surface "
                         + "Note + Galerie par défaut. Hors page "
-                        + "galerie, la touche 5 reste un raccourci "
-                        + "permanent vers /options/gallery.",
+                        + "galerie, la touche juste sous Note (5 sur un "
+                        + "deck 5x3, 8 sur le XL ; la dernière sur le "
+                        + "Mini) reste un raccourci permanent vers "
+                        + "/applications/gallery.",
                 },
                 dependsOn: ["gallery.page", "streamdeck.controller"],
                 demo: { kind: "route", url: "/applications/gallery" },

@@ -43,6 +43,34 @@ public class DeckRegistryTest {
     }
 
     @Test
+    public void only_the_neo_has_an_info_screen() {
+        int[] pids = {0x0060, 0x0063, 0x006c, 0x006d, 0x0080, 0x0084, 0x008f};
+        for (int pid : pids) {
+            assertEquals("pid 0x" + Integer.toHexString(pid), 0, DeckRegistry.lookup(pid).infoBarCount);
+        }
+    }
+
+    /** python-elgato-streamdeck flips JPEG keys on both axes (KEY_FLIP
+     *  (True, True)) for the XL, the Original v2 / MK.2 and the Neo, which
+     *  is a 180° rotation, and leaves the Plus as is (False, False). */
+    @Test
+    public void jpeg_key_rotation_matches_the_python_library_flip() {
+        assertEquals(180, DeckRegistry.lookup(0x006c).keyImageRotation); // xl
+        assertEquals(180, DeckRegistry.lookup(0x008f).keyImageRotation); // xl_v2
+        assertEquals(180, DeckRegistry.lookup(0x006d).keyImageRotation); // original_v2
+        assertEquals(180, DeckRegistry.lookup(0x0080).keyImageRotation); // mk2
+        assertEquals(180, DeckRegistry.lookup(0x009a).keyImageRotation); // neo
+        assertEquals(0,   DeckRegistry.lookup(0x0084).keyImageRotation); // plus
+    }
+
+    /** The BMP models rotate in BmpEncoder; TypeScript draws them upright. */
+    @Test
+    public void bmp_models_leave_rotation_to_the_encoder() {
+        assertEquals(0, DeckRegistry.lookup(0x0060).keyImageRotation);
+        assertEquals(0, DeckRegistry.lookup(0x0063).keyImageRotation);
+    }
+
+    @Test
     public void mini_uses_bmp_rot270() {
         DeckSpec s = DeckRegistry.lookup(0x0063);
         assertNotNull(s);
