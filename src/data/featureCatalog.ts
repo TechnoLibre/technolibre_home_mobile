@@ -733,14 +733,23 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Per-model image encoder picked by DeckSpec: V1 decks accept BMP raw, "
                         + "V2 decks accept JPEG (better compression, faster USB transfer). "
                         + "Encoders run on a worker thread so the main thread isn't blocked "
-                        + "during a full-deck refresh.",
+                        + "during a full-deck refresh. KeyImages rejects a key index outside "
+                        + "the deck and an image whose header is larger than the key "
+                        + "(image_oversized); clearKey sends each encoder's black image at "
+                        + "the key's native size.",
                     fr: "Encoder image par modèle choisi par DeckSpec : decks V1 acceptent du "
                         + "BMP brut, decks V2 du JPEG (meilleure compression, transfert USB plus "
                         + "rapide). Les encoders tournent sur un thread worker pour ne pas "
-                        + "bloquer le main thread lors d'un refresh complet.",
+                        + "bloquer le main thread lors d'un refresh complet. KeyImages refuse "
+                        + "un index de touche hors du deck et une image dont l'en-tête dépasse "
+                        + "la touche (image_oversized) ; clearKey envoie l'image noire de "
+                        + "chaque encoder à la taille native de la touche.",
                 },
                 demo: NONE_PLUMBING,
-                files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/encoder"],
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/encoder",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/KeyImages.java",
+                ],
             },
             {
                 id: "streamdeck.transports",
@@ -1114,7 +1123,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "component fires STREAMDECK_GALLERY_PAGE_ACTIVE "
                         + "with the current image list (URLs + indices). "
                         + "The controller flips into remote mode: keys "
-                        + "0..N-4 paint a JPEG thumbnail per slot (loaded "
+                        + "0..N-4 paint a thumbnail per slot (JPEG, PNG on "
+                        + "the BMP decks; loaded "
                         + "via <img> + canvas cover-crop), and the last "
                         + "three keys become prev / next / back. Pressing "
                         + "a thumb fires STREAMDECK_GALLERY_OPEN with the "
@@ -1131,8 +1141,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "Owl émet STREAMDECK_GALLERY_PAGE_ACTIVE avec "
                         + "la liste d'images (URLs + index). Le "
                         + "contrôleur bascule en mode télécommande : "
-                        + "touches 0..N-4 affichent une miniature JPEG "
-                        + "par tuile (chargée via <img> + canvas crop "
+                        + "touches 0..N-4 affichent une miniature (JPEG, "
+                        + "PNG sur les decks BMP) par tuile (chargée via "
+                        + "<img> + canvas crop "
                         + "cover), les 3 dernières touches deviennent "
                         + "préc / suiv / retour. Une miniature pressée "
                         + "émet STREAMDECK_GALLERY_OPEN avec l'index "

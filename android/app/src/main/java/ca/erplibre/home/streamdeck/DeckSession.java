@@ -15,9 +15,7 @@ import com.getcapacitor.JSObject;
 
 import java.util.List;
 
-import ca.erplibre.home.streamdeck.encoder.BmpEncoder;
 import ca.erplibre.home.streamdeck.encoder.ImageEncoder;
-import ca.erplibre.home.streamdeck.encoder.JpegEncoder;
 import ca.erplibre.home.streamdeck.events.EventEmitter;
 import ca.erplibre.home.streamdeck.transport.DeckTransport;
 import ca.erplibre.home.streamdeck.transport.TransportV1;
@@ -127,16 +125,7 @@ public final class DeckSession {
         this.device = device;
         this.emitter = emitter;
         this.transport = (spec.transport == DeckSpec.TransportKind.V1) ? new TransportV1() : new TransportV2();
-        this.encoder = chooseEncoder(spec);
-    }
-
-    private static ImageEncoder chooseEncoder(DeckSpec spec) {
-        switch (spec.keyImageFormat) {
-            case JPEG:            return new JpegEncoder();
-            case BMP_BGR_ROT180:  return new BmpEncoder(180);
-            case BMP_BGR_ROT270:  return new BmpEncoder(270);
-            default: throw new IllegalStateException("unknown format " + spec.keyImageFormat);
-        }
+        this.encoder = KeyImages.encoderFor(spec);
     }
 
     public DeckSpec spec()   { return spec; }

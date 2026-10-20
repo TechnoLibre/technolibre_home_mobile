@@ -16,13 +16,27 @@ final class ImageWriteJob extends WriteJob {
     private final DeckSession session;
     private final int keyIndex;
     private final byte[] inputBytes;
+    /** True when inputBytes are already in the wire format (a blank key). */
+    private final boolean encoded;
     private final PluginCall call;
 
     ImageWriteJob(DeckSession session, int keyIndex, byte[] inputBytes, PluginCall call) {
+        this(session, keyIndex, inputBytes, false, call);
+    }
+
+    private ImageWriteJob(DeckSession session, int keyIndex, byte[] inputBytes,
+                          boolean encoded, PluginCall call) {
         this.session = session;
         this.keyIndex = keyIndex;
         this.inputBytes = inputBytes;
+        this.encoded = encoded;
         this.call = call;
+    }
+
+    /** Writes {@code wireBytes} as they are, skipping the encoder. */
+    static ImageWriteJob preEncoded(DeckSession session, int keyIndex, byte[] wireBytes,
+                                    PluginCall call) {
+        return new ImageWriteJob(session, keyIndex, wireBytes, true, call);
     }
 
     @Override public String slotKey() { return "key:" + keyIndex; }
@@ -38,9 +52,10 @@ final class ImageWriteJob extends WriteJob {
     public void runTransport() {
         try {
             ImageEncoder enc = session.encoder();
-            byte[] encoded = enc.encode(inputBytes, session.spec().keyImageW, session.spec().keyImageH);
+            byte[] wire = encoded ? inputBytes
+                : enc.encode(inputBytes, session.spec().keyImageW, session.spec().keyImageH);
             DeckTransport tx = session.transport();
-            List<byte[]> pages = tx.paginateKeyImage(keyIndex, encoded);
+            List<byte[]> pages = tx.paginateKeyImage(keyIndex, wire);
             session.writePages(pages);
             if (call != null) {
                 JSObject r = new JSObject();
