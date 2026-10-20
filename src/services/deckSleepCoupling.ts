@@ -1,0 +1,178 @@
+import type { EventBus } from "@odoo/owl";
+import { Events } from "../constants/events";
+import { StreamDeckPlugin, DeckPowerOptions } from "../plugins/streamDeckPlugin";
+import { setDeckPowerOption } from "./streamDeckPowerOptions";
+
+/**
+ * Couples two settings shown in two Options sections:
+ *  - wakeOnKeyPress — "keep the Stream Deck lit during sleep" (Sleep
+ *    section): the controller skips the dim on hidden and the plugin
+ *    arms the wake-on-key-press path;
+ *  - keepAwake — the Stream Deck power option (wake lock and USB
+ *    heartbeat) without which the bus may suspend with the screen off,
+ *    so the deck goes dark and a press reaches nothing.
+ * wakeOnKeyPress depends on keepAwake: turning it on turns keepAwake on,
+ * turning keepAwake off turns it off. The other two directions change
+ * one setting only.
+ */
+
+/** localStorage key of wakeOnKeyPress; StreamDeckController reads it at boot. */
+export const WAKE_ON_KEY_PRESS_KEY = "options.keepAwake.deckEnabled";
+
+/** i18n key of the line telling why keepAwake was turned on. */
+export const NOTICE_KEEP_AWAKE_TURNED_ON = "sleep.keep_awake_turned_on";
+/** i18n key of the line telling why wakeOnKeyPress was turned off. */
+export const NOTICE_WAKE_TURNED_OFF = "streamdeck.wake_turned_off";
+
+export interface DeckSleepSettings {
+    wakeOnKeyPress: boolean;
+    keepAwake: boolean;
+}
+
+export interface DeckSleepChange {
+    setting: keyof DeckSleepSettings;
+    enabled: boolean;
+}
+
+export interface DeckSleepPlan {
+    /** Both settings once the change and its coupled change are applied. */
+    next: DeckSleepSettings;
+    /** The change the asked one drags along, or null when it drags none. */
+    coupled: DeckSleepChange | null;
+    /** i18n key of the line that says why the other setting moved, or null. */
+    notice: string | null;
+}
+
+/** Pure rule: what changing one setting does to both. */
+export function planDeckSleepChange(
+    current: DeckSleepSettings,
+    change: DeckSleepChange,
+): DeckSleepPlan {
+    const next = { ...current, [change.setting]: change.enabled };
+    if (change.setting === "wakeOnKeyPress" && change.enabled && !current.keepAwake) {
+        return {
+            next: { ...next, keepAwake: true },
+            coupled: { setting: "keepAwake", enabled: true },
+            notice: NOTICE_KEEP_AWAKE_TURNED_ON,
+        };
+    }
+    if (change.setting === "keepAwake" && !change.enabled && current.wakeOnKeyPress) {
+        return {
+            next: { ...next, wakeOnKeyPress: false },
+            coupled: { setting: "wakeOnKeyPress", enabled: false },
+            notice: NOTICE_WAKE_TURNED_OFF,
+        };
+    }
+    return { next, coupled: null, notice: null };
+}
+
+/** The writes behind each setting, injected so the rule runs without a device. */
+export interface DeckSleepEffects {
+    /** Stores keepAwake; resolves with both power options as now stored. */
+    setKeepAwake(enabled: boolean): Promise<DeckPowerOptions>;
+    /** Stores wakeOnKeyPress and applies it. */
+    setWakeOnKeyPress(enabled: boolean): Promise<void>;
+}
+
+export interface DeckSleepOutcome {
+    /** Both settings as written. */
+    settings: DeckSleepSettings;
+    /** Both power options as stored, when keepAwake was written. */
+    power?: DeckPowerOptions;
+    /** i18n key of the line to show, set only when the coupled write succeeded. */
+    notice: string | null;
+    /** Why the coupled write failed, or null. */
+    coupledError: string | null;
+}
+
+/**
+ * Writes the asked change, then the change it drags along. A refused
+ * asked change rejects before anything else is written. A refused
+ * coupled change leaves the asked one in place and comes back as
+ * coupledError, with no notice.
+ */
+export async function applyDeckSleepChange(
+    current: DeckSleepSettings,
+    change: DeckSleepChange,
+    effects: DeckSleepEffects,
+): Promise<DeckSleepOutcome> {
+    const plan = planDeckSleepChange(current, change);
+    const out: DeckSleepOutcome = {
+        settings: { ...current },
+        notice: null,
+        coupledError: null,
+    };
+    await write(change, effects, out);
+    if (!plan.coupled) return out;
+    try {
+        await write(plan.coupled, effects, out);
+    } catch (e) {
+        out.coupledError = e instanceof Error ? e.message : String(e);
+        return out;
+    }
+    out.notice = plan.notice;
+    return out;
+}
+
+async function write(
+    change: DeckSleepChange,
+    effects: DeckSleepEffects,
+    out: DeckSleepOutcome,
+): Promise<void> {
+    if (change.setting === "keepAwake") {
+        out.power = await effects.setKeepAwake(change.enabled);
+        out.settings.keepAwake = out.power.keepAwake;
+    } else {
+        await effects.setWakeOnKeyPress(change.enabled);
+        out.settings.wakeOnKeyPress = change.enabled;
+    }
+}
+
+/** wakeOnKeyPress as stored; off where storage is unavailable. */
+export function storedWakeOnKeyPress(): boolean {
+    try {
+        return localStorage.getItem(WAKE_ON_KEY_PRESS_KEY) === "true";
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Applies wakeOnKeyPress without storing it: the controller hears it on
+ * STREAMDECK_KEEP_AWAKE, the plugin arms or disarms the wake path. A
+ * missing plugin (web preview) is only logged, so the controller still
+ * honours the setting. Never rejects.
+ */
+export async function applyWakeOnKeyPress(
+    bus: EventBus | undefined,
+    enabled: boolean,
+): Promise<void> {
+    bus?.trigger(Events.STREAMDECK_KEEP_AWAKE, { enabled });
+    try {
+        await StreamDeckPlugin.setWakeOnKeyPress({ enabled });
+    } catch (e) {
+        console.warn("[deck-sleep] setWakeOnKeyPress:", e);
+    }
+}
+
+/**
+ * The device writes. Each one announces its result on `bus`, so the
+ * section that did not ask still shows the coupled state:
+ * STREAMDECK_POWER_OPTIONS carries both power options,
+ * STREAMDECK_KEEP_AWAKE carries wakeOnKeyPress.
+ */
+export function deckSleepEffects(bus?: EventBus): DeckSleepEffects {
+    return {
+        async setKeepAwake(enabled) {
+            const power = await setDeckPowerOption("keepAwake", enabled);
+            bus?.trigger(Events.STREAMDECK_POWER_OPTIONS, power);
+            return power;
+        },
+        async setWakeOnKeyPress(enabled) {
+            try {
+                localStorage.setItem(WAKE_ON_KEY_PRESS_KEY, enabled ? "true" : "false");
+            } catch { /* storage unavailable: applied for this run only */ }
+            await applyWakeOnKeyPress(bus, enabled);
+        },
+    };
+}
