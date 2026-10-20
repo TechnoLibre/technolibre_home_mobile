@@ -224,11 +224,11 @@ interface StreamDeckPluginApi {
     setBrightness(opts: { deckId: string; percent: number }): Promise<void>;
 
     /**
-     * When enabled, and only with the showOverLockScreen power option on,
-     * a key press while the host activity is paused (phone locked / app
-     * backgrounded) turns the screen on and brings MainActivity to the
-     * foreground over the lock screen. With showOverLockScreen off the
-     * screen stays as it is and the press arrives as keyChanged only.
+     * When enabled, a key press while the host activity is paused brings
+     * MainActivity to the foreground. With the screen off it does so only
+     * with the showOverLockScreen power option on, which turns the screen
+     * on and shows the app over the lock screen; without that option the
+     * screen stays off and the press arrives as keyChanged only.
      * A press reaches the reader with
      * the screen off reliably only with the keepAwake power option, whose
      * wake lock and heartbeat keep the USB bus up; this method only arms

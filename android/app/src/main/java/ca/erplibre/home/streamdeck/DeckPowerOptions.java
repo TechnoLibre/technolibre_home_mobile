@@ -11,7 +11,8 @@ import android.hardware.usb.UsbManager;
  *   showOverLockScreen — a launch caused by the deck (USB attach, or the
  *       wake-on-key-press relaunch) may show the app over the keyguard and
  *       turn the screen on. Any other launch never does, and a key press
- *       never lights the screen without it.
+ *       never lights the screen without it; over a screen already lit, a
+ *       key press still brings the app forward.
  *   keepAwake — while a deck is open, a partial wake lock holds the CPU and
  *       each session sends its heartbeat. Off, the phone may suspend the USB
  *       bus with the screen off: the deck LCD may pulse or go dark and key
@@ -69,14 +70,26 @@ public final class DeckPowerOptions {
     }
 
     /**
-     * Whether a deck key press turns the screen on and brings the app to
-     * the front: wake-on-key-press armed, the host activity paused, and
-     * showOverLockScreen on. Otherwise the screen stays as it is; the press
-     * still reaches a running app as a keyChanged event. keepAwake plays no
-     * part here: it decides whether the press arrives at all.
+     * Whether a deck key press turns the screen on: wake-on-key-press
+     * armed, the host activity paused, and showOverLockScreen on. Otherwise
+     * the screen stays as it is; the press still reaches a running app as
+     * a keyChanged event. keepAwake plays no part here: it decides whether
+     * the press arrives at all.
      */
     public boolean wakeScreenOnKeyPress(boolean wakeOnKeyPress, boolean activityPaused) {
         return wakeOnKeyPress && activityPaused && showOverLockScreen();
+    }
+
+    /**
+     * Whether a deck key press brings the paused app to the front: with
+     * wake-on-key-press armed, when the screen is already interactive, or
+     * when {@link #wakeScreenOnKeyPress} turns it on. A screen left off
+     * gets no relaunch, which nobody would see.
+     */
+    public boolean bringAppForwardOnKeyPress(
+            boolean wakeOnKeyPress, boolean activityPaused, boolean screenInteractive) {
+        if (!wakeOnKeyPress || !activityPaused) return false;
+        return screenInteractive || showOverLockScreen();
     }
 
     /** The partial wake lock is held only with keepAwake and a deck open,

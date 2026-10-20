@@ -123,4 +123,32 @@ public class DeckPowerOptionsTest {
         p.setKeepAwake(false);
         assertTrue(p.wakeScreenOnKeyPress(true, true));
     }
+
+    @Test
+    public void key_press_brings_the_app_forward_over_a_lit_screen_or_with_the_lock_option() {
+        // wakeOnKeyPress x showOverLockScreen x screen interactive, app paused.
+        boolean[][] table = {
+            // wakeOnKeyPress, showOverLockScreen, interactive, brings forward
+            { false, false, true,  false },
+            { false, true,  false, false },
+            { true,  false, false, false },
+            { true,  false, true,  true  },
+            { true,  true,  false, true  },
+            { true,  true,  true,  true  },
+        };
+        for (boolean[] row : table) {
+            DeckPowerOptions p = new DeckPowerOptions(new MapStore());
+            p.setShowOverLockScreen(row[1]);
+            assertEquals("wakeOnKeyPress=" + row[0] + " showOverLockScreen=" + row[1]
+                    + " interactive=" + row[2],
+                row[3], p.bringAppForwardOnKeyPress(row[0], true, row[2]));
+        }
+    }
+
+    @Test
+    public void key_press_never_relaunches_the_app_in_front() {
+        DeckPowerOptions p = new DeckPowerOptions(new MapStore());
+        p.setShowOverLockScreen(true);
+        assertFalse(p.bringAppForwardOnKeyPress(true, false, true));
+    }
 }
