@@ -104,8 +104,9 @@ export class StreamDeckController {
     private static readonly DEFAULT_BRIGHTNESS = 50;
     /** When the page became hidden. A hide longer than
      *  HEALTH_CHECK_AFTER_HIDDEN_MS makes the return to visible ask the
-     *  plugin for each deck's health and restart only the sick ones
-     *  (see _resumeAfterLongHide); a brief hide only restores. */
+     *  plugin for each deck's health and restart only the sick ones, a
+     *  deck silent over the whole hide included (see
+     *  _resumeAfterLongHide); a brief hide only restores. */
     private hiddenAt = 0;
     /** Per-key timestamp of the last accepted press. The debounce
      *  budget is per-key, not shared, because the original 150 ms
@@ -473,7 +474,7 @@ export class StreamDeckController {
             const hiddenFor = this.hiddenAt > 0 ? Date.now() - this.hiddenAt : 0;
             this.hiddenAt = 0;
             if (shouldCheckHealth(hiddenFor)) {
-                this._resumeAfterLongHide().catch((e) =>
+                this._resumeAfterLongHide(hiddenFor).catch((e) =>
                     console.warn("[streamdeck] resume after long hide:", e),
                 );
                 return;
@@ -483,20 +484,21 @@ export class StreamDeckController {
     }
 
     /**
-     * Return to visible after a long hide. The plugin reports each deck's
-     * health (getSessionHealth, no USB transfer) and only the decks it
-     * finds sick are restarted, through restartSessions({deviceNames}).
-     * Reopening a healthy session is not free: its first EP0 transfers
-     * (the serial read, brightness) can each run into their 1 s
-     * timeout, and the serial falls back to the USB descriptor's.
-     * deckConnected restores and repaints a restarted
-     * deck; every other deck is restored here. A failed health query
-     * restarts nothing.
+     * Return to visible after a hide of {@code hiddenForMs}. The plugin
+     * reports each deck's health (getSessionHealth, no USB transfer) and
+     * only the decks it finds sick are restarted, through
+     * restartSessions({deviceNames}). The hide's length goes as
+     * quietForMs: an interrupt-IN pipe can go quiet over a sleep and look
+     * like an idle deck, so a deck that sent no input report over the
+     * whole hide is sick (quiet), while one that did, as the press that
+     * woke the phone, has proved its pipe and keeps its session.
+     * deckConnected restores and repaints a restarted deck; every other
+     * deck is restored here. A failed health query restarts nothing.
      */
-    private async _resumeAfterLongHide(): Promise<void> {
+    private async _resumeAfterLongHide(hiddenForMs: number): Promise<void> {
         let plan = planSickRestart(undefined);
         try {
-            const r = await StreamDeckPlugin.getSessionHealth();
+            const r = await StreamDeckPlugin.getSessionHealth({ quietForMs: hiddenForMs });
             plan = planSickRestart(r?.decks);
         } catch (e) {
             console.warn("[streamdeck] getSessionHealth on visible:", e);

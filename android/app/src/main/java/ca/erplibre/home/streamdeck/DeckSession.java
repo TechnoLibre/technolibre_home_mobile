@@ -131,6 +131,9 @@ public final class DeckSession {
     private byte[] lastRawBytes;
     /** Set by the reader once it logged its first report. */
     private boolean firstReportLogged = false;
+    /** SystemClock.elapsedRealtime of the last input report, of open()
+     *  before the first; deep sleep counts. */
+    private volatile long lastReportAt = 0;
     /** When true the reader thread emits a `rawInputReport` event for every
      * successful bulkTransfer (stripped to first 32 bytes hex). Off by
      * default — flips on via StreamDeckPlugin.setDebugLogging. */
@@ -209,6 +212,12 @@ public final class DeckSession {
     public int writeFailuresInARow() {
         WriterStep step = writerStep;
         return step != null ? step.failuresInARow() : 0;
+    }
+    /** Since the last input report, or open() when none came; 0 before
+     *  open(). In polled mode every poll that answers counts. */
+    public long msSinceReport() {
+        long at = lastReportAt;
+        return at == 0 ? 0 : SystemClock.elapsedRealtime() - at;
     }
     /** EP0 transfers failed in a row: brightness and reset; a heartbeat
      *  that answers resets the count, one that fails is not counted. */
@@ -315,6 +324,7 @@ public final class DeckSession {
                 + " differs from its USB serial string; deckId is the latter");
         }
 
+        lastReportAt = SystemClock.elapsedRealtime();
         running = true;
         lastKeyPressed = new boolean[spec.keyCount];
         readerThread = new Thread(this::readerLoop, "deck-reader-" + serial);
@@ -895,6 +905,7 @@ public final class DeckSession {
      * Neo touch: 0x01 0x04 ...
      */
     private void parseInputReport(byte[] buf, int len) {
+        lastReportAt = SystemClock.elapsedRealtime();
         if (!firstReportLogged) {
             firstReportLogged = true;
             Log.i(TAG, "reader: first input report for " + serial + ", " + len + " bytes");

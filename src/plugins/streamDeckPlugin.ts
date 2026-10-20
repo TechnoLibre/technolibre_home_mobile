@@ -120,8 +120,10 @@ export interface ReattachGaveUpEvent {
 /** One attached Stream Deck as getSessionHealth reports it. sick is the
  *  plugin's verdict (SessionHealth.java): restarting this deck would help.
  *  sickReason is "" when healthy, else no_session, reader_ended,
- *  writer_ended, writes_failing or control_failing. Time since the last
- *  input report is not a signal: an idle deck sends none. */
+ *  writer_ended, writes_failing, control_failing or quiet. An idle deck
+ *  sends no input report, so its silence is a sickness only when the
+ *  caller asks with quietForMs: quiet is an open session that heard
+ *  nothing for that long. */
 export interface DeckHealth {
     /** System USB path, the key of restartSessions({deviceNames}). */
     deviceName: string;
@@ -139,6 +141,9 @@ export interface DeckHealth {
      *  open and nothing since; its control failures are then no sickness,
      *  since a restart does not clear them. True when no session is open. */
     controlPipeOk: boolean;
+    /** Since the session's last input report, or its open when none
+     *  came; 0 without a session. */
+    msSinceReport: number;
     lastCloseReason: string;
     sick: boolean;
     sickReason: string;
@@ -243,8 +248,10 @@ interface StreamDeckPluginApi {
      *  ends. */
     restartSessions(opts?: { deviceNames?: string[] }): Promise<{ restarted: number }>;
     /** Per attached Stream Deck, the session signals and the plugin's
-     *  sick verdict; makes no USB transfer. */
-    getSessionHealth(): Promise<{ decks: DeckHealth[] }>;
+     *  sick verdict; makes no USB transfer. With quietForMs above 0, an
+     *  open session that heard no input report for that long is sick
+     *  (quiet). */
+    getSessionHealth(opts?: { quietForMs?: number }): Promise<{ decks: DeckHealth[] }>;
     /** Call once the app's keyChanged handler is subscribed. Until then,
      *  and again after each page load, the plugin holds key events: the
      *  last 16 at most, delivered through keyChanged in arrival order by

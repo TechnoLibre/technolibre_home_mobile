@@ -396,7 +396,7 @@ describe("StreamDeckController", () => {
                 reopening: false, readerAlive: sickReason !== "reader_ended",
                 writerAlive: true, writeFailuresInARow: 0,
                 controlFailuresInARow: 0, controlPipeOk: true,
-                lastCloseReason: "",
+                msSinceReport: 0, lastCloseReason: "",
                 sick: sickReason !== "", sickReason,
             };
         }
@@ -433,6 +433,19 @@ describe("StreamDeckController", () => {
             );
             expect(mockPlugin.setBrightness).not.toHaveBeenCalledWith(
                 { deckId: "AL02", percent: 50 },
+            );
+        });
+
+        // An interrupt-IN pipe can go quiet over a sleep and look idle:
+        // the plugin calls a deck that heard nothing over the hide quiet.
+        it("asks for the decks quiet over the whole hide", async () => {
+            mockPlugin.getSessionHealth.mockResolvedValue({
+                decks: [health("/dev/bus/usb/001/002", "AL01", "quiet")],
+            });
+            await longHide();
+            expect(mockPlugin.getSessionHealth).toHaveBeenCalledWith({ quietForMs: 8000 });
+            expect(mockPlugin.restartSessions).toHaveBeenCalledWith(
+                { deviceNames: ["/dev/bus/usb/001/002"] },
             );
         });
 

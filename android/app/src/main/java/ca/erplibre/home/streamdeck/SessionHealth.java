@@ -7,10 +7,15 @@ package ca.erplibre.home.streamdeck;
  *
  * The verdict reads only signals the plugin holds: permission, the
  * registry, the pending automatic reopen, whether the session's reader and
- * writer threads still run, and the failed transfers in a row. A deck
- * sends an input report only when a key changes, so the time since the
- * last report says nothing: an idle deck and a deck whose interrupt-IN
- * pipe went quiet look the same, and silence is never a sickness here.
+ * writer threads still run, the failed transfers in a row, and the time
+ * since the last input report. A deck sends an input report only when a
+ * key changes, so an idle deck and a deck whose interrupt-IN pipe went
+ * quiet look the same: silence alone is no sickness. The caller that knows
+ * the pipe may have gone quiet over a span, as the app back from a long
+ * hide, passes that span as quietForMs, and a session that heard nothing
+ * over it is QUIET: a restart is then the only way to tell the two apart.
+ * A report within the span, as the press that woke the phone, proves the
+ * pipe and spares the session.
  *
  * Sick, in this order:
  *   NO_SESSION      — permitted, nothing holds the device and no automatic
@@ -27,6 +32,8 @@ package ca.erplibre.home.streamdeck;
  *                     open stays down across a restart, until a replug,
  *                     so its failures are no sickness until a request
  *                     goes through again.
+ *   QUIET           — asked with quietForMs, no input report for at least
+ *                     that long.
  * A deck without permission is never sick: a restart does not ask for
  * it. A device busy but not open — an attach holding the reservation, a
  * close in progress — is left to that path, as is a deck whose automatic
@@ -44,6 +51,7 @@ final class SessionHealth {
     static final String WRITER_ENDED = "writer_ended";
     static final String WRITES_FAILING = "writes_failing";
     static final String CONTROL_FAILING = "control_failing";
+    static final String QUIET = "quiet";
 
     private SessionHealth() {}
 
@@ -62,6 +70,9 @@ final class SessionHealth {
         final int controlFailuresInARow;
         /** The session's control pipe answered at open; true without one. */
         final boolean controlPipeOk;
+        /** Since the session's last input report, or its open when none
+         *  came; 0 without a session. */
+        final long msSinceReport;
 
         /** A session whose control pipe answered at open. */
         Signals(boolean permitted, boolean busy, boolean open, boolean reopening,
@@ -75,6 +86,15 @@ final class SessionHealth {
                 boolean readerAlive, boolean writerAlive,
                 int writeFailuresInARow, int controlFailuresInARow,
                 boolean controlPipeOk) {
+            this(permitted, busy, open, reopening, readerAlive, writerAlive,
+                writeFailuresInARow, controlFailuresInARow, controlPipeOk, 0);
+        }
+
+        private Signals(boolean permitted, boolean busy, boolean open, boolean reopening,
+                        boolean readerAlive, boolean writerAlive,
+                        int writeFailuresInARow, int controlFailuresInARow,
+                        boolean controlPipeOk, long msSinceReport) {
+            this.msSinceReport = msSinceReport;
             this.permitted = permitted;
             this.busy = busy;
             this.open = open;
@@ -85,10 +105,23 @@ final class SessionHealth {
             this.controlFailuresInARow = controlFailuresInARow;
             this.controlPipeOk = controlPipeOk;
         }
+
+        /** These signals, the last input report {@code ms} ago. */
+        Signals heardMsAgo(long ms) {
+            return new Signals(permitted, busy, open, reopening, readerAlive, writerAlive,
+                writeFailuresInARow, controlFailuresInARow, controlPipeOk, ms);
+        }
     }
 
-    /** "" when a restart would not help, else the reason it would. */
+    /** "" when a restart would not help, else the reason it would;
+     *  silence is never a reason. */
     static String sickness(Signals s) {
+        return sickness(s, 0);
+    }
+
+    /** sickness(s), and QUIET for an open session that heard nothing for
+     *  {@code quietForMs} or longer; 0 or less turns QUIET off. */
+    static String sickness(Signals s, long quietForMs) {
         if (!s.permitted) return "";
         if (!s.busy) return s.reopening ? "" : NO_SESSION;
         if (!s.open) return "";
@@ -98,6 +131,7 @@ final class SessionHealth {
         if (s.controlPipeOk && s.controlFailuresInARow >= FAILURES_SICK) {
             return CONTROL_FAILING;
         }
+        if (quietForMs > 0 && s.msSinceReport >= quietForMs) return QUIET;
         return "";
     }
 

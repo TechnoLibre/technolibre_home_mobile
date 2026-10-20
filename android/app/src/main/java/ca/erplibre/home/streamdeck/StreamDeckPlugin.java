@@ -712,13 +712,16 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * For each attached known Stream Deck, the signals SessionHealth reads
      * and its verdict: {decks: [{deviceName, deckId, hasPermission, open,
      * reopening, readerAlive, writerAlive, writeFailuresInARow,
-     * controlFailuresInARow, controlPipeOk, lastCloseReason, sick,
-     * sickReason}]}. deckId
-     * is the session's serial, else the USB serial once readable, else "".
-     * Makes no USB transfer, so it costs a deck nothing.
+     * controlFailuresInARow, controlPipeOk, msSinceReport, lastCloseReason,
+     * sick, sickReason}]}. deckId is the session's serial, else the USB
+     * serial once readable, else "". With {quietForMs} above 0, an open
+     * session that heard no input report for that long is sick, QUIET (see
+     * SessionHealth). Makes no USB transfer, so it costs a deck nothing.
      */
     @PluginMethod
     public void getSessionHealth(PluginCall call) {
+        Double quiet = call.getDouble("quietForMs");
+        long quietForMs = quiet != null && quiet > 0 ? quiet.longValue() : 0;
         JSArray arr = new JSArray();
         for (UsbDevice d : usb.getDeviceList().values()) {
             if (!DeckRegistry.isElgato(d.getVendorId())
@@ -731,8 +734,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 permitted, registry.isBusy(name), open, reattach.reopening(name),
                 open && s.readerAlive(), open && s.writerAlive(),
                 open ? s.writeFailuresInARow() : 0, open ? s.controlFailuresInARow() : 0,
-                !open || s.controlPipeOk());
-            String sickness = SessionHealth.sickness(sig);
+                !open || s.controlPipeOk())
+                .heardMsAgo(open ? s.msSinceReport() : 0);
+            String sickness = SessionHealth.sickness(sig, quietForMs);
             String closeReason;
             synchronized (lastCloseReason) { closeReason = lastCloseReason.get(name); }
             JSObject o = new JSObject();
@@ -746,6 +750,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             o.put("writeFailuresInARow", sig.writeFailuresInARow);
             o.put("controlFailuresInARow", sig.controlFailuresInARow);
             o.put("controlPipeOk", sig.controlPipeOk);
+            o.put("msSinceReport", sig.msSinceReport);
             o.put("lastCloseReason", closeReason != null ? closeReason : "");
             o.put("sick", !sickness.isEmpty());
             o.put("sickReason", sickness);

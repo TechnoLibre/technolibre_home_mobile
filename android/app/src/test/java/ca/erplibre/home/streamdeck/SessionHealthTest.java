@@ -22,10 +22,43 @@ public class SessionHealthTest {
 
     @Test
     public void idle_deck_is_not_sick() {
-        // An idle deck sends no input report: the signals carry no
-        // "last report" at all, so silence can never make a deck sick.
-        SessionHealth.Signals idle = healthy();
+        // An idle deck sends no input report: without a quiet bound,
+        // however long the silence, it is no sickness.
+        SessionHealth.Signals idle = healthy().heardMsAgo(3_600_000L);
         assertFalse(SessionHealth.isSick(idle));
+        assertEquals("", SessionHealth.sickness(idle, 0));
+    }
+
+    @Test
+    public void deck_that_heard_nothing_within_the_quiet_bound_is_quiet() {
+        // Asked after a long hide with the hide's length: an interrupt-IN
+        // pipe gone quiet over the hide looks like an idle deck, and a
+        // restart is the only thing that tells them apart.
+        assertEquals(SessionHealth.QUIET, SessionHealth.sickness(
+            healthy().heardMsAgo(60_000L), 60_000L));
+        assertEquals(SessionHealth.QUIET, SessionHealth.sickness(
+            healthy().heardMsAgo(90_000L), 60_000L));
+    }
+
+    @Test
+    public void deck_that_sent_a_report_within_the_quiet_bound_is_not_quiet() {
+        // The press that woke the phone proves the pipe works.
+        assertEquals("", SessionHealth.sickness(healthy().heardMsAgo(800L), 60_000L));
+        assertEquals("", SessionHealth.sickness(healthy(), 60_000L));
+    }
+
+    @Test
+    public void quiet_comes_after_every_other_sickness_and_only_for_an_open_session() {
+        SessionHealth.Signals readerEnded =
+            new SessionHealth.Signals(true, true, true, false, false, true, 0, 0)
+                .heardMsAgo(90_000L);
+        assertEquals(SessionHealth.READER_ENDED, SessionHealth.sickness(readerEnded, 60_000L));
+        assertEquals("", SessionHealth.sickness(
+            new SessionHealth.Signals(true, true, false, false, false, false, 0, 0)
+                .heardMsAgo(90_000L), 60_000L));
+        assertEquals("", SessionHealth.sickness(
+            new SessionHealth.Signals(false, true, true, false, true, true, 0, 0)
+                .heardMsAgo(90_000L), 60_000L));
     }
 
     @Test
