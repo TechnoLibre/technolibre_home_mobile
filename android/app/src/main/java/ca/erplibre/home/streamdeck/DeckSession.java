@@ -73,6 +73,11 @@ public final class DeckSession {
 
     private Thread readerThread;
     private Thread writerThread;
+    /** The reader's request the kernel never gave back, closed after the
+     *  connection; see closeAfterConnection. Guarded by this. */
+    private UsbRequest leftRequest;
+    /** Set once close() has closed the connection. Guarded by this. */
+    private boolean connectionClosed = false;
     /** Heartbeat sends a benign GET_REPORT on EP0 every HEARTBEAT_MS
      *  while the session is open and setHeartbeat(true) asked for it.
      *  Without it, the USB bus enters
@@ -270,11 +275,18 @@ public final class DeckSession {
             Log.w(TAG, "close: " + t.getName() + " still running after "
                 + STOP_WORKERS_MS + " ms; releasing the connection anyway");
         }
+        UsbRequest left;
         synchronized (this) {
             if (connection != null) {
                 try { connection.releaseInterface(iface); } catch (Exception ignored) {}
                 try { connection.close(); } catch (Exception ignored) {}
             }
+            connectionClosed = true;
+            left = leftRequest;
+            leftRequest = null;
+        }
+        if (left != null) {
+            try { left.close(); } catch (RuntimeException ignored) { }
         }
         // Outside the monitor: the listener takes the plugin's registry
         // lock, and the plugin never calls into a session under that lock.
@@ -495,6 +507,16 @@ public final class DeckSession {
                 buf.get(data);
                 return data;
             }
+            // requestWait(0) does not wait, so it skips the poll whose
+            // error ended the previous wait; usbfs keeps a request killed
+            // by a disconnect reapable until the connection closes.
+            @Override public boolean reapNow() {
+                try {
+                    return conn.requestWait(0) == req;
+                } catch (java.util.concurrent.TimeoutException | RuntimeException e) {
+                    return false;
+                }
+            }
             @Override public void cancel() { req.cancel(); }
             @Override public void close()  { req.close(); }
         };
@@ -511,13 +533,25 @@ public final class DeckSession {
         RequestReader reader = new RequestReader(pipe, owner, SystemClock::elapsedRealtime);
         String failure = reader.run();
         if (reader.leftQueued()) {
-            Log.w(TAG, "reader: cancelled UsbRequest never reaped, left to the connection close");
+            Log.w(TAG, "reader: cancelled UsbRequest never reaped, closed after the connection");
+            closeAfterConnection(req);
         }
         // The request is released: closing the connection is safe now.
         if (failure != null && running) {
             Log.w(TAG, "reader (UsbRequest) failed — closing: " + failure);
             close(failure);
         }
+    }
+
+    /** Frees a request the kernel never gave back. Closing the connection
+     *  discards its URB, after which UsbRequest.close() is safe: the
+     *  request is closed by close() then, or here at once if close()
+     *  already closed the connection. */
+    private void closeAfterConnection(UsbRequest req) {
+        synchronized (this) {
+            if (!connectionClosed) { leftRequest = req; return; }
+        }
+        try { req.close(); } catch (RuntimeException ignored) { }
     }
 
     /** A debug breadcrumb for an interrupt-IN reader (userequest, bulk)

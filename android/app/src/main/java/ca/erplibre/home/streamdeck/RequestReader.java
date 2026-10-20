@@ -15,8 +15,10 @@ package ca.erplibre.home.streamdeck;
  *
  * On exit the queued request is cancelled, then reaped, and only then
  * closed, so the kernel holds no pointer into a freed request or buffer. A
- * request the kernel never gives back within DRAIN_WAITS waits is left
- * unclosed (leftQueued); closing the connection afterwards discards it.
+ * wait that fails, as on a device gone, is followed by a reap that does not
+ * wait. A request the kernel never gives back is left unclosed
+ * (leftQueued): its owner closes it once the connection is closed, which
+ * discards it in the kernel.
  *
  * run() never closes the session: it returns the failure reason, and the
  * caller closes once run() has released the request.
@@ -70,6 +72,11 @@ final class RequestReader {
          * classifies by how long the wait took.
          */
         byte[] await(long ms) throws WaitFailed;
+        /**
+         * Takes the queued request back if the kernel has completed it,
+         * without waiting; true when it did.
+         */
+        boolean reapNow();
         /** Asks the kernel to give the queued request back without data. */
         void cancel();
         /** Frees the request. Called only while nothing is queued. */
@@ -188,7 +195,7 @@ final class RequestReader {
             try {
                 if (await(WAIT_MS) != null) return true;
             } catch (WaitFailed e) {
-                return false;
+                try { return pipe.reapNow(); } catch (RuntimeException ignored) { return false; }
             }
         }
         return false;

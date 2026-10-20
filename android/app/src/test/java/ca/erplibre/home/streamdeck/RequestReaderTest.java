@@ -38,6 +38,10 @@ public class RequestReaderTest {
         boolean cancelled = false;
         boolean submitAccepted = true;
         boolean reapsCancelled = true;
+        /** The wait for a cancelled request fails, as on a device gone. */
+        boolean cancelledWaitFails = false;
+        /** reapNow takes a cancelled request back. */
+        boolean reapsNow = true;
         long now = 0;
         long msPerWait = 250;
 
@@ -60,6 +64,7 @@ public class RequestReaderTest {
             if (!queued) throw new AssertionError("await with nothing queued");
             now += msPerWait;
             if (cancelled) {
+                if (cancelledWaitFails) throw new RequestReader.WaitFailed("x");
                 if (!reapsCancelled) return null;
                 queued = false;
                 return new byte[0];
@@ -70,6 +75,13 @@ public class RequestReaderTest {
             if (step instanceof RequestReader.WaitFailed) throw (RequestReader.WaitFailed) step;
             queued = false;
             return (byte[]) step;
+        }
+
+        @Override public boolean reapNow() {
+            calls.add("reapNow");
+            if (!queued || !cancelled || !reapsNow) return false;
+            queued = false;
+            return true;
         }
 
         @Override public void cancel() {
@@ -218,6 +230,30 @@ public class RequestReaderTest {
         assertTrue(r.leftQueued());
         // Bounded: the stop wait plus DRAIN_WAITS.
         assertEquals(1 + RequestReader.DRAIN_WAITS, pipe.count("await"));
+    }
+
+    @Test
+    public void a_failed_drain_wait_reaps_without_waiting() {
+        FakeOwner owner = new FakeOwner();
+        FakePipe pipe = new FakePipe(owner, STOP);
+        pipe.cancelledWaitFails = true;
+        RequestReader r = reader(pipe);
+        assertNull(r.run());
+        int n = pipe.calls.size();
+        assertEquals(List.of("cancel", "await", "reapNow", "close"), pipe.calls.subList(n - 4, n));
+        assertFalse(r.leftQueued());
+    }
+
+    @Test
+    public void a_request_neither_waited_nor_reaped_is_left_unclosed() {
+        FakeOwner owner = new FakeOwner();
+        FakePipe pipe = new FakePipe(owner, STOP);
+        pipe.cancelledWaitFails = true;
+        pipe.reapsNow = false;
+        RequestReader r = reader(pipe);
+        assertNull(r.run());
+        assertEquals(0, pipe.count("close"));
+        assertTrue(r.leftQueued());
     }
 
     @Test
