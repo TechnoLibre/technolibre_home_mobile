@@ -17,8 +17,13 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import ca.erplibre.home.streamdeck.encoder.ImageEncoder;
 import ca.erplibre.home.streamdeck.events.EventEmitter;
@@ -496,12 +501,87 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         call.resolve(infoOf(s));
     }
 
+    /**
+     * Ask the OS for USB permission on one deck ({deckId}) or, without it,
+     * on every attached Stream Deck; PermissionRequestPlan picks the
+     * targets. A device already permitted resolves already_granted without
+     * a dialog; the others go through UsbPermissionRequester, deduplicated
+     * against an attach waiting on the same dialog. Resolves once every
+     * target has its outcome, the 30 s timeout included, with
+     * {granted, results[]}: granted is true only when every target is.
+     * A granted device that is neither open nor opening goes through
+     * onDeckAttached, whose reservation refuses a second session.
+     * Rejects "no_stream_deck" / "no_such_deck:<id>".
+     */
     @PluginMethod
     public void requestPermission(PluginCall call) {
-        DeckSession s = requireSession(call); if (s == null) return;
+        String deckId = call.getString("deckId");
+        DeckSession open = deckId != null && !deckId.isEmpty() ? registry.bySerial(deckId) : null;
+        Map<String, UsbDevice> attached = usb.getDeviceList();
+        List<PermissionRequestPlan.Device> seen = new ArrayList<>();
+        for (UsbDevice d : attached.values()) {
+            seen.add(new PermissionRequestPlan.Device(d.getDeviceName(), d.getVendorId(),
+                d.getProductId(), readableSerial(d), usb.hasPermission(d)));
+        }
+        PermissionRequestPlan.Selection sel = PermissionRequestPlan.select(
+            seen, deckId, open != null ? open.device().getDeviceName() : null);
+        if (sel.error != null) { call.reject(sel.error); return; }
+
+        List<CompletableFuture<JSObject>> rows = new ArrayList<>();
+        List<PermissionRequestPlan.Outcome> outcomes =
+            Collections.synchronizedList(new ArrayList<>());
+        for (PermissionRequestPlan.Device t : sel.targets) {
+            UsbDevice dev = attached.get(t.deviceName);
+            CompletableFuture<Boolean> asked = t.permitted
+                ? CompletableFuture.completedFuture(true)
+                : permissions.request(dev);
+            rows.add(asked.handle((granted, err) -> {
+                PermissionRequestPlan.Outcome o =
+                    PermissionRequestPlan.outcomeOf(t.permitted, granted, err);
+                outcomes.add(o);
+                if (o.granted() && !registry.isBusy(t.deviceName)) {
+                    try { onDeckAttached(dev); }
+                    catch (Throwable e) { Log.w(TAG, "attach after permission failed: " + e.getMessage()); }
+                }
+                return permissionResultOf(dev, o, err);
+            }));
+        }
+        CompletableFuture.allOf(rows.toArray(new CompletableFuture[0])).whenComplete((v, e) -> {
+            if (e != null) { call.reject("permission_result_failed:" + e.getMessage()); return; }
+            JSArray arr = new JSArray();
+            for (CompletableFuture<JSObject> row : rows) arr.put(row.join());
+            JSObject r = new JSObject();
+            r.put("granted", PermissionRequestPlan.allGranted(outcomes));
+            r.put("results", arr);
+            call.resolve(r);
+        });
+    }
+
+    /** One entry of requestPermission's results. deckId is the open
+     *  session's, else the USB serial once readable, else "". */
+    private JSObject permissionResultOf(UsbDevice dev, PermissionRequestPlan.Outcome o, Throwable err) {
+        DeckSession s = registry.byDevice(dev.getDeviceName());
         JSObject r = new JSObject();
-        r.put("granted", true);
-        call.resolve(r);
+        r.put("deviceName", dev.getDeviceName());
+        r.put("deckId", s != null ? s.serial() : o.granted() ? readableSerial(dev) : "");
+        r.put("outcome", o.wire);
+        r.put("granted", o.granted());
+        if (err != null) {
+            Throwable cause = err instanceof CompletionException
+                && err.getCause() != null ? err.getCause() : err;
+            r.put("error", cause.getMessage());
+        }
+        return r;
+    }
+
+    /** USB descriptor serial, "" when absent or hidden for lack of permission. */
+    private static String readableSerial(UsbDevice d) {
+        try {
+            String s = d.getSerialNumber();
+            return s != null ? s : "";
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     /**

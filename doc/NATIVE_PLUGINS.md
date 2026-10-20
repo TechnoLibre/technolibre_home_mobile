@@ -348,7 +348,7 @@ Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 |--------|-------------|
 | `listDecks()` | Returns every known deck, each with its capabilities (keys/dials/lcd/infobars/touchpoints). |
 | `getDeckInfo({deckId})` | Detail of one deck (model, rows/cols, keyImage, dials, lcd…). |
-| `requestPermission({deckId})` | Forces the USB permission request when it is missing. |
+| `requestPermission({deckId?})` | Asks the OS for USB permission on one deck or, without `deckId`, on every attached Stream Deck (the only way to reach a deck whose serial Android still hides). Resolves `{granted, results}` once every device has an outcome: `granted` is true only when all are; each result gives `deviceName`, `deckId`, `granted` and `outcome` (`already_granted` without a dialog, `granted`, `denied`, `timeout` after 30 s, `error`). A granted deck that is not open is opened and announced by `deckConnected`. Rejects `no_stream_deck` / `no_such_deck:<id>`. |
 | `reset({deckId})` | Clears every key image. |
 | `setBrightness({deckId, percent})` | Brightness 0..100. |
 | `setKeyImage({deckId, key, bytes, format})` | Pushes an image. `bytes` is base64. `format = "jpeg"` for v2+/MK.2/XL/Plus/Neo, `"png"` for v1/Mini (Java produces the rotated BMP). Resolves `{dropped: true}` when a newer image was pushed for the same key in the meantime. |

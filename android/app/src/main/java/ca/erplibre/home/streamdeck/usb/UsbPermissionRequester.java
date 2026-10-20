@@ -123,6 +123,8 @@ public final class UsbPermissionRequester {
         // Safety net: if the broadcast never comes back (dialog dismissed
         // by the system, OEM quirk, hub re-enumeration), unstick the UI
         // after TIMEOUT_SECONDS so the user can click the button again.
+        // The future fails with PermissionTimeoutException rather than
+        // completing false, so callers can tell it from a refusal.
         if (isFresh) {
             timeouts.schedule(() -> {
                 CompletableFuture<Boolean> stuck;
@@ -135,8 +137,8 @@ public final class UsbPermissionRequester {
                     }
                 }
                 if (stuck != null) {
-                    Log.w(TAG, "request: timeout, completing as denied for " + key);
-                    stuck.complete(false);
+                    Log.w(TAG, "request: timeout for " + key);
+                    stuck.completeExceptionally(new PermissionTimeoutException());
                 }
             }, TIMEOUT_SECONDS, TimeUnit.SECONDS);
         }

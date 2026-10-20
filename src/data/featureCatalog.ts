@@ -618,18 +618,34 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "UsbHotplugReceiver listens for ACTION_USB_DEVICE_ATTACHED / DETACHED "
                         + "intents from the OS. UsbPermissionRequester wraps the per-device "
                         + "PendingIntent flow: first attach prompts the user; the grant is "
-                        + "sticky per Android session. Detach immediately tears down the "
-                        + "DeckSession to release the FileDescriptor.",
+                        + "sticky per Android session. Detach closes the DeckSession after "
+                        + "a 250 ms debounce. requestPermission (the Options "
+                        + "\"Demander permission\" button) asks again for one deck or "
+                        + "every attached one; PermissionRequestPlan picks the devices and "
+                        + "names each outcome: already_granted, granted, denied, timeout "
+                        + "after 30 s, error.",
                     fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
                         + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
                         + "appareil : premier attach prompt l'utilisateur; l'autorisation est "
-                        + "sticky pour la session Android. Détach démantèle immédiatement la "
-                        + "DeckSession pour libérer le FileDescriptor.",
+                        + "sticky pour la session Android. Détach ferme la DeckSession après "
+                        + "un anti-rebond de 250 ms. requestPermission "
+                        + "(le bouton « Demander permission ») redemande pour un deck ou pour "
+                        + "chaque deck branché ; PermissionRequestPlan choisit les appareils et "
+                        + "nomme chaque issue : already_granted, granted, denied, timeout "
+                        + "après 30 s, error.",
                 },
-                demo: NONE_BG,
+                demo: { kind: "options", sectionId: "streamdeck" },
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbHotplugReceiver.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbPermissionRequester.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionTimeoutException.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/PermissionRequestPlan.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
+                    "src/plugins/streamDeckPlugin.ts",
+                ],
+                tests: [
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/PermissionRequestPlanTest.java",
+                    "src/__tests__/streamDeckPlugin.test.ts",
                 ],
             },
             {

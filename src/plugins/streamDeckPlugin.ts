@@ -117,6 +117,41 @@ export interface UsbDeviceDiag {
     lastAttachError: string;
 }
 
+/** What one device's permission request came to. already_granted: it
+ *  was permitted before the call and no dialog was shown; timeout: the
+ *  dialog got no answer within 30 s. */
+export type DeckPermissionOutcome =
+    | "already_granted"
+    | "granted"
+    | "denied"
+    | "timeout"
+    | "error";
+
+export interface DeckPermissionResult {
+    /** System USB path, the key of listAllUsbDevices and requestPermissionForUsb. */
+    deviceName: string;
+    /** The open deck's id, else the USB serial once readable, else "". */
+    deckId: string;
+    outcome: DeckPermissionOutcome;
+    granted: boolean;
+    error?: string;
+}
+
+export interface DeckPermissionResponse {
+    /** True only when every targeted device is granted. */
+    granted: boolean;
+    results: DeckPermissionResult[];
+}
+
+/** One log line per device of a requestPermission response. */
+export function describePermissionResponse(r: DeckPermissionResponse): string[] {
+    if (!Array.isArray(r.results)) return [`granted=${r.granted}`];
+    return r.results.map((x) =>
+        `${x.deviceName}${x.deckId ? ` (${x.deckId})` : ""} → ${x.outcome}`
+        + (x.error ? `: ${x.error}` : ""),
+    );
+}
+
 interface StreamDeckPluginApi {
     listDecks(): Promise<{ decks: DeckInfo[] }>;
     /** Diagnostic: every USB device on the phone, regardless of vendor. */
@@ -154,7 +189,16 @@ interface StreamDeckPluginApi {
      *  reader-mode change without an unplug. */
     restartSessions(): Promise<{ restarted: number }>;
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
-    requestPermission(opts: { deckId: string }): Promise<{ granted: boolean }>;
+    /**
+     * Ask the OS for USB permission on one deck or, without deckId, on
+     * every attached Stream Deck — the only way to reach a deck whose
+     * serial Android still hides. A device already permitted resolves
+     * already_granted without a dialog; the call resolves once every
+     * device has an outcome. A granted deck that is not open is opened
+     * and announced by deckConnected. Rejects "no_stream_deck" /
+     * "no_such_deck:<id>".
+     */
+    requestPermission(opts?: { deckId?: string }): Promise<DeckPermissionResponse>;
     reset(opts: { deckId: string }): Promise<void>;
     /** Drop every queued image write for a deck. Used to flush the
      *  WriterQueue at the end of camera streaming so leftover frames
