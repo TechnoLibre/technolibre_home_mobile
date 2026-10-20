@@ -623,7 +623,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "\"Demander permission\" button) asks again for one deck or "
                         + "every attached one; PermissionRequestPlan picks the devices and "
                         + "names each outcome: already_granted, granted, denied, timeout "
-                        + "after 30 s, error.",
+                        + "after 30 s, error. A session that closes itself while the deck "
+                        + "stays plugged in (reader failure, polled_reset, failed writes) "
+                        + "is reopened after 2, 4 then 8 s (ReattachPolicy); the count "
+                        + "resets after 60 s of healthy session, and after a third failed "
+                        + "attempt one line goes to the journal and nothing more is tried; "
+                        + "a retry that finds the USB permission missing gives up at once. "
+                        + "Unplug, restartSessions, retryAttach and app destroy cancel it; "
+                        + "restartSessions and retryAttach give every deck its three "
+                        + "attempts back, as does any other reopen of a deck given up, "
+                        + "the permission button included.",
                     fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
                         + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
                         + "appareil : premier attach prompt l'utilisateur; l'autorisation est "
@@ -632,7 +641,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(le bouton « Demander permission ») redemande pour un deck ou pour "
                         + "chaque deck branché ; PermissionRequestPlan choisit les appareils et "
                         + "nomme chaque issue : already_granted, granted, denied, timeout "
-                        + "après 30 s, error.",
+                        + "après 30 s, error. Une session qui se ferme d'elle-même, deck "
+                        + "toujours branché (échec du lecteur, polled_reset, écritures en "
+                        + "échec), est rouverte après 2, 4 puis 8 s (ReattachPolicy) ; le "
+                        + "compte revient à zéro après 60 s de session saine, et après un "
+                        + "troisième essai raté une ligne part au journal et plus rien "
+                        + "n'est tenté ; un essai qui trouve la permission USB absente "
+                        + "abandonne aussitôt. Débranchement, restartSessions, retryAttach "
+                        + "et destruction de l'app l'annulent ; restartSessions et "
+                        + "retryAttach rendent à chaque deck ses trois essais, comme toute "
+                        + "autre réouverture d'un deck abandonné, bouton de permission "
+                        + "compris.",
                 },
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: [
@@ -640,12 +659,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbPermissionRequester.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionTimeoutException.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/PermissionRequestPlan.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachPolicy.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachTimers.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
                     "src/plugins/streamDeckPlugin.ts",
+                    "src/services/streamDeckEventLog.ts",
                 ],
                 tests: [
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/PermissionRequestPlanTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachPolicyTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachTimersTest.java",
                     "src/__tests__/streamDeckPlugin.test.ts",
+                    "src/__tests__/streamDeckEventLog.test.ts",
                 ],
             },
             {
@@ -681,27 +706,103 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "streamdeck.heartbeat",
                 label: { en: "USB heartbeat", fr: "Heartbeat USB" },
                 description: {
-                    en: "700 ms control transfer keeping the bus active.",
-                    fr: "Control transfer 700 ms pour garder le bus actif.",
+                    en: "700 ms control transfer keeping the bus active, with keep-awake on.",
+                    fr: "Control transfer 700 ms pour garder le bus actif, si éveil activé.",
                 },
                 howItWorks: {
                     en: "Per-session daemon thread issuing GET_REPORT (firmware "
-                        + "version) every 700 ms. Without it, Android USB "
+                        + "version) every 700 ms, started and stopped by "
+                        + "DeckSession.setHeartbeat from the keepAwake power "
+                        + "option (off by default). Without it, Android USB "
                         + "selective suspend stops driving SOFs once the "
                         + "screen goes off and the deck firmware reacts by "
                         + "pulsing LCD brightness at ~1 Hz. Cheap (separate "
                         + "endpoint from reader/writer, no contention).",
                     fr: "Thread daemon par session qui envoie un GET_REPORT "
-                        + "(version firmware) toutes les 700 ms. Sans ça, "
+                        + "(version firmware) toutes les 700 ms, démarré et "
+                        + "arrêté par DeckSession.setHeartbeat selon l'option "
+                        + "keepAwake (désactivée par défaut). Sans ça, "
                         + "l'autosuspend USB Android arrête les SOFs dès "
                         + "l'écran off et le firmware réagit en pulsant la "
                         + "LCD à ~1 Hz. Coût faible (endpoint séparé, pas "
                         + "de contention).",
                 },
                 status: "stable",
-                dependsOn: ["streamdeck.plugin-native"],
+                dependsOn: ["streamdeck.plugin-native", "streamdeck.power-options"],
                 demo: NONE_BG,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
+            },
+            {
+                id: "streamdeck.power-options",
+                label: { en: "Power options", fr: "Options d'énergie" },
+                description: {
+                    en: "Let the deck wake the screen and show over the lock screen; keep the phone awake. Both off by default.",
+                    fr: "Laisser le deck allumer l'écran et afficher sur l'écran verrouillé ; garder le téléphone éveillé. Désactivées par défaut.",
+                },
+                status: "stable",
+                howItWorks: {
+                    en: "DeckPowerOptions stores two booleans in SharedPreferences, "
+                        + "both false until the user checks them in Options › Stream "
+                        + "Deck; the plugin's getPowerOptions / setPowerOptions read "
+                        + "and write them. showOverLockScreen: MainActivity calls "
+                        + "setShowWhenLocked / setTurnScreenOn only for a launch "
+                        + "by the deck — USB_DEVICE_ATTACHED, or the wake-on-key-"
+                        + "press relaunch, marked with EXTRA_DECK_WAKE — and "
+                        + "clears them in onStop; any other launch stays behind "
+                        + "the lock screen. A deck key press lights the screen "
+                        + "only with this option (wakeScreenOnKeyPress). keepAwake: the partial wake lock is "
+                        + "held and each session sends its 700 ms heartbeat while "
+                        + "a deck is open; the lock stays held while a self-closed "
+                        + "deck waits to be reopened. Off, the phone may suspend the USB bus "
+                        + "with the screen off: the deck may flicker or go dark "
+                        + "and its keys may not reach the app, nor wake the phone. "
+                        + "deckSleepCoupling ties keepAwake to the Sleep "
+                        + "section's deck-lit option, which needs it: turning "
+                        + "that option on turns keepAwake on first, and leaves "
+                        + "the option off when keepAwake stays off; turning "
+                        + "keepAwake off turns that option off, and the section "
+                        + "that moved the other one shows a line saying so.",
+                    fr: "DeckPowerOptions range deux booléens dans les "
+                        + "SharedPreferences, faux tant que l'utilisateur ne les "
+                        + "coche pas dans Options › Stream Deck ; getPowerOptions / "
+                        + "setPowerOptions du plugin les lisent et les écrivent. "
+                        + "showOverLockScreen : MainActivity n'appelle "
+                        + "setShowWhenLocked / setTurnScreenOn que pour un lancement "
+                        + "par le deck — USB_DEVICE_ATTACHED, ou la relance du "
+                        + "réveil sur touche, marquée par EXTRA_DECK_WAKE — et les "
+                        + "retire dans onStop ; tout autre lancement reste derrière "
+                        + "l'écran verrouillé. Une touche du deck n'allume l'écran "
+                        + "qu'avec cette option (wakeScreenOnKeyPress). keepAwake : le verrou de veille "
+                        + "partiel est tenu et chaque session envoie son battement "
+                        + "de 700 ms tant qu'un deck est ouvert ; le verrou reste "
+                        + "tenu tant qu'un deck fermé de lui-même attend sa "
+                        + "réouverture. Désactivé, le "
+                        + "téléphone peut suspendre le bus USB écran éteint : le "
+                        + "deck peut clignoter ou s'éteindre et ses touches ne plus "
+                        + "atteindre l'application, ni réveiller le téléphone. "
+                        + "deckSleepCoupling lie keepAwake à l'option « deck "
+                        + "allumé en veille » de la section Mise en veille, qui "
+                        + "en a besoin : cocher celle-ci coche d'abord keepAwake, "
+                        + "et la laisse décochée si keepAwake reste désactivé ; "
+                        + "décocher keepAwake la décoche, et la section qui a "
+                        + "changé l'autre affiche une ligne qui le dit.",
+                },
+                dependsOn: ["streamdeck.plugin-native"],
+                demo: { kind: "options", sectionId: "streamdeck" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckPowerOptions.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/MainActivity.java",
+                    "src/services/streamDeckPowerOptions.ts",
+                    "src/services/deckSleepCoupling.ts",
+                    "src/components/options/streamdeck/options_streamdeck_component.ts",
+                ],
+                tests: [
+                    "src/__tests__/streamDeckPowerOptions.test.ts",
+                    "src/__tests__/deckSleepCoupling.test.ts",
+                    "src/__tests__/deckSleepPanels.test.ts",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/DeckPowerOptionsTest.java",
+                ],
             },
             {
                 id: "streamdeck.writer-queue",
@@ -1946,7 +2047,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                       fr: "Batterie : draine proportionnel au temps écran allumé." },
                 ],
                 howItWorks: {
-                    en: "Two independent toggles, each persisted in "
+                    en: "Two toggles, each persisted in "
                         + "localStorage and re-applied on boot. "
                         + "(1) Empêcher la mise en veille — KeepAwakePlugin "
                         + "sets FLAG_KEEP_SCREEN_ON on the activity window, "
@@ -1957,14 +2058,27 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "calls StreamDeckPlugin.setWakeOnKeyPress(true) "
                         + "which arms a native keyPressHook in DeckSession. "
                         + "When a key is pressed while MainActivity is "
-                        + "paused, the plugin acquires SCREEN_BRIGHT_WAKE_LOCK | "
-                        + "ACQUIRE_CAUSES_WAKEUP and starts the launch intent "
-                        + "with REORDER_TO_FRONT. MainActivity's "
-                        + "setShowWhenLocked / setTurnScreenOn (or the "
-                        + "FLAG_SHOW_WHEN_LOCKED window flag on pre-27) lets "
-                        + "it cover the lockscreen so the user lands on the "
-                        + "live UI.",
-                    fr: "Deux toggles indépendants, persistés en "
+                        + "paused, the plugin starts the launch intent with "
+                        + "REORDER_TO_FRONT if the screen is lit already or "
+                        + "the Stream Deck showOverLockScreen power option is "
+                        + "on; only that option makes it acquire "
+                        + "SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP "
+                        + "and show the app over the lock screen. Without "
+                        + "it a screen that is off stays off and the press "
+                        + "arrives as keyChanged only "
+                        + "(DeckPowerOptions.bringAppForwardOnKeyPress, "
+                        + "wakeScreenOnKeyPress). A "
+                        + "press reaches the reader with the screen off "
+                        + "reliably only with keepAwake (see "
+                        + "streamdeck.power-options). Hence toggle (2) is "
+                        + "coupled to keepAwake by deckSleepCoupling: turning "
+                        + "(2) on turns keepAwake on, turning keepAwake off "
+                        + "turns (2) off. App boot (restoreDeckSleepAtBoot) "
+                        + "arms the plugin from storage, except (2) stored "
+                        + "on with keepAwake off: boot turns (2) off, never "
+                        + "keepAwake on, and writes one Stream Deck journal "
+                        + "line saying so.",
+                    fr: "Deux toggles, persistés en "
                         + "localStorage et réappliqués au boot. "
                         + "(1) Empêcher la mise en veille — KeepAwakePlugin "
                         + "pose FLAG_KEEP_SCREEN_ON sur la window de "
@@ -1976,26 +2090,46 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "appelle StreamDeckPlugin.setWakeOnKeyPress(true) "
                         + "qui arme un keyPressHook natif dans "
                         + "DeckSession. Sur pression touche pendant que "
-                        + "MainActivity est en pause, le plugin acquiert "
-                        + "SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP "
-                        + "et lance l'intent avec REORDER_TO_FRONT. Le "
-                        + "setShowWhenLocked / setTurnScreenOn de "
-                        + "MainActivity (ou FLAG_SHOW_WHEN_LOCKED window "
-                        + "flag sur pre-27) lui permet de couvrir l'écran "
-                        + "verrouillé pour que l'utilisateur retrouve l'UI "
-                        + "vivante.",
+                        + "MainActivity est en pause, le plugin lance "
+                        + "l'intent avec REORDER_TO_FRONT si l'écran est déjà "
+                        + "allumé ou si l'option showOverLockScreen du Stream "
+                        + "Deck est activée ; seule cette option lui fait "
+                        + "acquérir SCREEN_BRIGHT_WAKE_LOCK | "
+                        + "ACQUIRE_CAUSES_WAKEUP et montrer l'application "
+                        + "par-dessus l'écran verrouillé. Sans elle, un écran "
+                        + "éteint le reste et la touche n'arrive qu'en "
+                        + "keyChanged (DeckPowerOptions.bringAppForwardOnKeyPress, "
+                        + "wakeScreenOnKeyPress). "
+                        + "Une pression n'atteint le lecteur "
+                        + "écran éteint de façon fiable qu'avec keepAwake (voir "
+                        + "streamdeck.power-options). Le toggle (2) est donc lié "
+                        + "à keepAwake par deckSleepCoupling : cocher (2) coche "
+                        + "keepAwake, décocher keepAwake décoche (2). Le "
+                        + "démarrage (restoreDeckSleepAtBoot) arme le plugin "
+                        + "depuis le stockage, sauf (2) enregistré coché avec "
+                        + "keepAwake désactivé : le démarrage décoche (2), "
+                        + "sans jamais cocher keepAwake, et l'écrit sur une "
+                        + "ligne du journal du Stream Deck.",
                 },
                 demo: { kind: "options", sectionId: "keep-awake" },
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/KeepAwakePlugin.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckPowerOptions.java",
                     "android/app/src/main/java/ca/erplibre/home/MainActivity.java",
                     "src/plugins/keepAwakePlugin.ts",
                     "src/services/streamDeckController.ts",
+                    "src/services/deckSleepCoupling.ts",
                     "src/components/options/keep_awake/options_keep_awake_component.ts",
+                    "src/js/app.ts",
                 ],
-                tests: ["src/__tests__/keepAwakePlugin.test.ts"],
+                tests: [
+                    "src/__tests__/keepAwakePlugin.test.ts",
+                    "src/__tests__/deckSleepCoupling.test.ts",
+                    "src/__tests__/deckSleepPanels.test.ts",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/DeckPowerOptionsTest.java",
+                ],
             },
             {
                 id: "system.device-info",

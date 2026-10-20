@@ -37,6 +37,17 @@ export interface DeckInfo {
     capabilities: string[];
 }
 
+/** Both false until the user turns them on (Options › Stream Deck). */
+export interface DeckPowerOptions {
+    /** A launch caused by the deck — USB attach, or a wake-on-key-press
+     *  relaunch — shows the app over the lock screen and turns the
+     *  screen on. Any other launch never does. */
+    showOverLockScreen: boolean;
+    /** While a deck is open: partial wake lock, and a 700 ms heartbeat
+     *  that keeps the USB bus out of selective suspend. */
+    keepAwake: boolean;
+}
+
 export interface KeyEvent {
     deckId: string;
     key: number;
@@ -77,12 +88,27 @@ export interface DeckLifecycleEvent {
 }
 
 /** Failure of a fire-and-forget key write (setKeyImagesBatch), which has
- *  no Promise to reject. A key failing again for the same reason is sent
- *  once, until a write to it succeeds; a failed USB transfer closes the
- *  deck instead and arrives as deckDisconnected. */
+ *  no Promise to reject: a rejected image or a failed USB transfer. A key
+ *  failing again for the same reason is sent once, until a write to it
+ *  succeeds. Transfers that keep failing also close the deck, which then
+ *  arrives as deckDisconnected with reason "usb_lost:<detail>". */
 export interface WriteFailedEvent {
     deckId: string;
     key: number;
+    reason: string;
+}
+
+/** A deck whose session closed itself is reopened after 2, 4 then 8 s;
+ *  this is sent once when the third attempt fails too, or at once when a
+ *  retry finds the USB permission missing (reason permission_missing).
+ *  Nothing retries it afterwards: unplugging it, restartSessions or
+ *  retryAttach reopens it, and gives it its three attempts back.
+ *  deckId is "" when no serial was read; reason is the last close or
+ *  attach failure. */
+export interface ReattachGaveUpEvent {
+    deckId: string;
+    deviceName: string;
+    attempts: number;
     reason: string;
 }
 
@@ -176,8 +202,10 @@ interface StreamDeckPluginApi {
     setReaderUseBulk(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
     /** @deprecated — use getReaderMode. */
     getReaderUseBulk(): Promise<{ enabled: boolean }>;
-    /** Close every open session and re-attach. Used to pick up a
-     *  reader-mode change without an unplug. */
+    /** Close every open session, then attach every permitted deck that
+     *  has no session — including one whose session closed itself while
+     *  it stayed plugged in. Used to pick up a reader-mode change without
+     *  an unplug. `restarted` counts the decks re-attached. */
     restartSessions(): Promise<{ restarted: number }>;
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
     /**
@@ -198,13 +226,23 @@ interface StreamDeckPluginApi {
     setBrightness(opts: { deckId: string; percent: number }): Promise<void>;
 
     /**
-     * When enabled, a key press while the host activity is paused (phone
-     * locked / app backgrounded) requests the screen to wake and brings
-     * MainActivity to the foreground. The deck reader stays alive across
-     * a phone sleep cycle thanks to the partial wake lock the plugin
-     * already holds — this method only arms the wake-on-press path.
+     * When enabled, a key press while the host activity is paused brings
+     * MainActivity to the foreground. With the screen off it does so only
+     * with the showOverLockScreen power option on, which turns the screen
+     * on and shows the app over the lock screen; without that option the
+     * screen stays off and the press arrives as keyChanged only.
+     * A press reaches the reader with
+     * the screen off reliably only with the keepAwake power option, whose
+     * wake lock and heartbeat keep the USB bus up; this method only arms
+     * the wake-on-press path.
      */
     setWakeOnKeyPress(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
+
+    /** Both power options as stored natively. */
+    getPowerOptions(): Promise<DeckPowerOptions>;
+    /** Store the fields given, leave the others; resolves with both.
+     *  keepAwake applies at once to the open decks. */
+    setPowerOptions(opts: Partial<DeckPowerOptions>): Promise<DeckPowerOptions>;
 
     /** Rejects "missing:key" / "invalid_key:N" for a key the deck lacks,
      *  "image_oversized:WxH>KWxKH" for an image larger than the key, and
@@ -281,6 +319,10 @@ interface StreamDeckPluginApi {
     addListener(
         eventName: "writeFailed",
         listener: (ev: WriteFailedEvent) => void
+    ): Promise<PluginListenerHandle>;
+    addListener(
+        eventName: "reattachGaveUp",
+        listener: (ev: ReattachGaveUpEvent) => void
     ): Promise<PluginListenerHandle>;
     addListener(
         eventName: "rawInputReport",

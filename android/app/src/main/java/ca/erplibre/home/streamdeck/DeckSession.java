@@ -65,15 +65,19 @@ public final class DeckSession {
     private Thread readerThread;
     private Thread writerThread;
     /** Heartbeat sends a benign GET_REPORT on EP0 every HEARTBEAT_MS
-     *  while the session is open. Without it, the USB bus enters
+     *  while the session is open and setHeartbeat(true) asked for it.
+     *  Without it, the USB bus enters
      *  selective suspend within ~1 s after the phone screen turns off
      *  (PARTIAL_WAKE_LOCK keeps the CPU awake but doesn't drive bus
      *  traffic), and the deck firmware reacts to the SOF starvation
      *  by pulsing LCD brightness at ~1 Hz — visible as fast dim
      *  flicker on Plus + XL during sleep. A control transfer is the
      *  cheapest activity we can produce; reader interrupt-IN tokens
-     *  alone aren't enough on at least Pixel 6 / ThinkPhone kernels. */
+     *  alone aren't enough on some kernels. Off by default: it follows
+     *  the user's keepAwake option (DeckPowerOptions). Null while not
+     *  running; guarded by this. */
     private Thread heartbeatThread;
+    private boolean heartbeatOn = false;
     private static final long HEARTBEAT_MS = 700;
     private volatile boolean running = false;
     /** Last known pressed-state per key. Used to dedupe keyChanged
@@ -227,13 +231,11 @@ public final class DeckSession {
         lastKeyPressed = new boolean[spec.keyCount];
         readerThread = new Thread(this::readerLoop, "deck-reader-" + serial);
         writerThread = new Thread(this::writerLoop, "deck-writer-" + serial);
-        heartbeatThread = new Thread(this::heartbeatLoop, "deck-heartbeat-" + serial);
         readerThread.setDaemon(true);
         writerThread.setDaemon(true);
-        heartbeatThread.setDaemon(true);
         readerThread.start();
         writerThread.start();
-        heartbeatThread.start();
+        if (heartbeatOn) startHeartbeat();
         // deckConnected is the plugin's to send, once it has registered
         // this session: JS calls back by deckId as soon as it hears it.
     }
@@ -245,7 +247,7 @@ public final class DeckSession {
             queue.closeAndDrainAsDropped();
             if (readerThread != null) readerThread.interrupt();
             if (writerThread != null) writerThread.interrupt();
-            if (heartbeatThread != null) heartbeatThread.interrupt();
+            stopHeartbeat();
             if (connection != null) {
                 try { connection.releaseInterface(iface); } catch (Exception ignored) {}
                 try { connection.close(); } catch (Exception ignored) {}
@@ -315,10 +317,33 @@ public final class DeckSession {
         if (sent < 0) throw new DeckIoException("reset_failed:" + sent);
     }
 
+    /** Start or stop the heartbeat. Before open() it only records the
+     *  choice, which open() applies; after close() it does nothing. */
+    public synchronized void setHeartbeat(boolean on) {
+        heartbeatOn = on;
+        if (!running) return;
+        if (on) startHeartbeat(); else stopHeartbeat();
+    }
+
+    /** Under this. A stopped thread exits at its next sleep, which an
+     *  interrupt pending from stopHeartbeat ends at once. */
+    private void startHeartbeat() {
+        if (heartbeatThread != null) return;
+        heartbeatThread = new Thread(this::heartbeatLoop, "deck-heartbeat-" + serial);
+        heartbeatThread.setDaemon(true);
+        heartbeatThread.start();
+    }
+
+    /** Under this. */
+    private void stopHeartbeat() {
+        if (heartbeatThread == null) return;
+        heartbeatThread.interrupt();
+        heartbeatThread = null;
+    }
+
     /** Periodic GET_REPORT on EP0 to keep the USB bus visibly active.
      *  Without it, kernels implementing aggressive USB selective
-     *  suspend (Pixel 6, Lenovo ThinkPhone, Motorola Edge 50 — observed
-     *  on all three) stop sending SOFs after ~1 s of phone screen-off
+     *  suspend stop sending SOFs after ~1 s of phone screen-off
      *  and the deck firmware pulses LCD brightness at ~1 Hz. The
      *  control transfer is read-only (firmware-version feature report)
      *  and shares no endpoint with the reader (which polls
@@ -544,10 +569,12 @@ public final class DeckSession {
         final int req     = 0x01;
         final int wValue  = (0x01 << 8) | 0x01;
         // After a sustained starve (no data for >10 s), close the
-        // session so the plugin can re-attach. On Plus, GET_REPORT on
-        // EP0 can stop responding after a few seconds of polling and
-        // never recovers without a fresh open. Closing unregisters the
-        // session, so the next attach or retryAttach opens a new one.
+        // session. On Plus, GET_REPORT on EP0 can stop responding after
+        // a few seconds of polling and never recovers without a fresh
+        // open. Closing unregisters the session while the deck stays
+        // plugged in: the plugin reopens it after 2, 4 then 8 s and gives
+        // up after the third attempt (see ReattachPolicy); restartSessions
+        // or retryAttach reopens it as well (see ReattachPlan).
         final long STARVE_RESET_MS = 10000L;
 
         while (running) {
@@ -565,10 +592,8 @@ public final class DeckSession {
             long now = System.currentTimeMillis();
             if (got <= 0) {
                 if (now - lastDataAt >= STARVE_RESET_MS) {
-                    // Firmware almost certainly latched up — close so the
-                    // plugin re-attaches us with a fresh GET_REPORT
-                    // pipeline. Avoids the user having to mash Restart
-                    // Sessions every 10 s.
+                    // Firmware almost certainly latched up — close so a
+                    // re-attach starts a fresh GET_REPORT pipeline.
                     Log.w(TAG, "reader (polled) starved past reset threshold ("
                         + (now - lastDataAt) + " ms) — closing for re-attach");
                     close("polled_reset");

@@ -49,6 +49,10 @@
         &:not(:disabled):active { background: var(--surface-btn-active); }
     }
 
+    &__power {
+        margin-bottom: 0.6rem;
+    }
+
     &__hint {
         color: var(--text-greyed-out);
         font-size: 0.85rem;

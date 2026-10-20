@@ -7,6 +7,7 @@ import android.hardware.usb.UsbManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Base64;
 import android.util.Log;
 
@@ -24,6 +25,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 import ca.erplibre.home.streamdeck.encoder.ImageEncoder;
 import ca.erplibre.home.streamdeck.events.EventEmitter;
@@ -50,6 +56,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         new SessionRegistry<>(new SessionRegistry.Hooks<DeckSession>() {
             @Override public boolean isOpen(DeckSession s) { return s.isOpen(); }
             @Override public void connected(DeckSession s) {
+                // Under the registry monitor, so it precedes the policy's
+                // closed() for this session, which runs after unregister.
+                reattach.registered(s.device().getDeviceName());
                 // The spec's payload: JS caches the deck from `info`
                 // without a getDeckInfo round-trip.
                 JSObject ev = new JSObject();
@@ -79,15 +88,36 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     private static final long DETACH_DEBOUNCE_MS = 250L;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    /** Single shared partial wake lock — acquired while at least one
-     *  session is open so the USB bus doesn't suspend after the first
-     *  interrupt-IN event. Released when the last session closes. */
+    /** Reopens a deck whose session closed itself; see ReattachPolicy. */
+    private final ReattachPolicy reattach = new ReattachPolicy(SystemClock::elapsedRealtime);
+    /** Runs the retries; created in load(), shut down by stopReattach(). */
+    private volatile ScheduledExecutorService reattachTimer;
+    /** The retry waiting on reattachTimer, by USB device name. */
+    private final ReattachTimers reattachTimers = new ReattachTimers((task, delayMs) -> {
+        ScheduledExecutorService timer = this.reattachTimer;
+        if (timer == null) return null;
+        try {
+            ScheduledFuture<?> f = timer.schedule(task, delayMs, TimeUnit.MILLISECONDS);
+            return () -> f.cancel(false);
+        } catch (RejectedExecutionException e) {
+            return null;  // shut down: the plugin is going away
+        }
+    });
+
+    /** Single shared partial wake lock — held while the keepAwake option
+     *  is on and at least one session is open, so the USB bus doesn't
+     *  suspend after the first interrupt-IN event. updateWakeLock()
+     *  is the only place that takes or drops it. */
     private PowerManager.WakeLock wakeLock;
+    /** Both off by default; see DeckPowerOptions. */
+    private DeckPowerOptions power;
 
     /** "Wake the phone on a deck press while the host activity is
      *  paused" — armed by the JS-side Mise en veille checkbox via
-     *  setWakeOnKeyPress. Static so the per-session keyPressHook can
-     *  read it without holding a reference to the plugin. */
+     *  setWakeOnKeyPress; it lights the screen only with showOverLockScreen
+     *  on (see DeckPowerOptions.bringAppForwardOnKeyPress and
+     *  wakeScreenOnKeyPress). Static so the per-session
+     *  keyPressHook can read it without holding a reference to the plugin. */
     private static volatile boolean wakeOnKeyPress = false;
     /** True between handleOnPause and handleOnResume — the only window
      *  where the wake-on-press path should actually fire an intent.
@@ -102,6 +132,12 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         Context ctx = getContext();
         usb = (UsbManager) ctx.getSystemService(Context.USB_SERVICE);
         permissions = new UsbPermissionRequester(ctx, usb);
+        power = DeckPowerOptions.of(ctx);
+        reattachTimer = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "deck-reattach");
+            t.setDaemon(true);
+            return t;
+        });
         hotplug = new UsbHotplugReceiver(this);
         hotplug.attach(ctx);
         try {
@@ -117,10 +153,14 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // painted with the last tile. The service has no other duties.
         // Arm the wake-on-keypress path: every keyChanged in DeckSession
         // calls this hook, which only does something when the user
-        // opted in (wakeOnKeyPress) and the activity is currently
-        // paused (locked screen / backgrounded).
+        // opted in (wakeOnKeyPress), the activity is currently paused
+        // (locked screen / backgrounded), and the screen is lit already
+        // or showOverLockScreen lets the press light it.
         DeckSession.setKeyPressHook(this::onDeckKeyPressed);
-        StreamDeckLifecycleService.setTaskRemovedHandler(this::resetAllSessions);
+        StreamDeckLifecycleService.setTaskRemovedHandler(() -> {
+            stopReattach();
+            resetAllSessions();
+        });
         try {
             ctx.startService(new Intent(ctx, StreamDeckLifecycleService.class));
         } catch (Throwable t) {
@@ -137,6 +177,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     @Override
     protected void handleOnDestroy() {
+        stopReattach();
         DeckSession.setKeyPressHook(null);
         if (hotplug != null) hotplug.detach(getContext());
         if (permissions != null) permissions.close();
@@ -219,6 +260,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 registry.release(name);
                 String reason = err != null ? err.getMessage() : "permission_denied";
                 recordAttachError(name, reason);
+                applyReattach(name, "", reattach.attachFailed(name, reason));
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
                 ev.put("reason", reason);
@@ -237,11 +279,15 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                     return;
                 }
                 synchronized (lastAttachError) { lastAttachError.remove(name); }
-                acquireWakeLockIfNeeded();
+                // Read after registering: setPowerOptions reaches every
+                // registered session, so a change in between is not lost.
+                session.setHeartbeat(power.heartbeat());
+                updateWakeLock();
             } catch (DeckSession.DeckOpenException e) {
                 registry.release(name);
                 String reason = e.getMessage();
                 recordAttachError(name, reason);
+                applyReattach(name, readableSerial(device), reattach.attachFailed(name, reason));
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
                 ev.put("reason", reason);
@@ -252,6 +298,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 String reason = "open_unexpected:" + t.getClass().getSimpleName()
                     + ":" + t.getMessage();
                 recordAttachError(name, reason);
+                applyReattach(name, readableSerial(device), reattach.attachFailed(name, reason));
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
                 ev.put("reason", reason);
@@ -270,6 +317,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     @Override
     public void onDeckDetached(UsbDevice device) {
         final String name = device.getDeviceName();
+        // The device is gone: a retry has nothing to open, and the
+        // hotplug attach handles its return.
+        forgetReattach(name);
         // Debounce: ThinkPhone (and a few other Android stacks) emit
         // detach + attach in tight succession after the first interrupt
         // event. Closing the session synchronously here would tear the
@@ -278,6 +328,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // device comes back within DETACH_DEBOUNCE_MS.
         Runnable closeJob = () -> {
             synchronized (pendingCloseJobs) { pendingCloseJobs.remove(name); }
+            forgetReattach(name);
             // An attach still waiting on permission or open() for this
             // device will fail to register and close what it opened.
             registry.release(name);
@@ -286,7 +337,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 Log.i(TAG, "onDeckDetached: closing session for " + name + " (debounce expired)");
                 session.close("usb_lost");
             }
-            releaseWakeLockIfIdle();
+            updateWakeLock();
         };
         synchronized (pendingCloseJobs) {
             Runnable prev = pendingCloseJobs.put(name, closeJob);
@@ -299,28 +350,110 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     /**
      * CloseListener of every session, on the thread that closed it — the
      * reader thread when the USB pipe failed. Unregistering here, not only
-     * on detach, is what lets onDeckAttached and retryAttach open the same
-     * device again.
+     * on detach, is what lets onDeckAttached, restartSessions and
+     * retryAttach open the same device again. A session that closed itself
+     * gets a retry scheduled by ReattachPolicy.
      */
     private void onSessionClosed(DeckSession session, String reason) {
         String name = session.device().getDeviceName();
         if (registry.unregister(name, session, reason)) {
             Log.i(TAG, "session for " + name + " closed (" + reason + ") — unregistered");
         }
-        releaseWakeLockIfIdle();
+        // applyReattach updates the wake lock once the retry is pending,
+        // so it is not dropped in the gap before the reopen.
+        applyReattach(name, session.serial(), reattach.closed(name, reason));
     }
 
-    private void acquireWakeLockIfNeeded() {
-        if (wakeLock == null) return;
-        try { if (!wakeLock.isHeld()) wakeLock.acquire(); }
-        catch (Throwable t) { Log.w(TAG, "wake lock acquire failed: " + t.getMessage()); }
+    /**
+     * Act on a ReattachPolicy decision for {@code name}: schedule the
+     * retry, or send reattachGaveUp once the attempts are spent; then
+     * update the wake lock, held while a deck waits to be reopened.
+     * {@code deckId} is the serial last seen, "" when none was read.
+     */
+    private void applyReattach(String name, String deckId, ReattachPolicy.Decision d) {
+        scheduleOrReport(name, deckId, d);
+        updateWakeLock();
     }
 
-    private void releaseWakeLockIfIdle() {
-        if (wakeLock == null) return;
-        if (!registry.isEmpty()) return;
-        try { if (wakeLock.isHeld()) wakeLock.release(); }
-        catch (Throwable t) { Log.w(TAG, "wake lock release failed: " + t.getMessage()); }
+    private void scheduleOrReport(String name, String deckId, ReattachPolicy.Decision d) {
+        if (d.kind == ReattachPolicy.Decision.Kind.RETRY) {
+            Log.i(TAG, "re-attach " + d.attempt + "/" + ReattachPolicy.DELAYS_MS.length
+                + " of " + name + " in " + d.delayMs + " ms (" + d.reason + ")");
+            reattachTimers.schedule(name, d.token, d.delayMs, () -> runReattach(name, d.token));
+        } else if (d.kind == ReattachPolicy.Decision.Kind.GIVE_UP) {
+            Log.w(TAG, "re-attach of " + name + " given up after " + d.attempt
+                + " attempts (" + d.reason + ")");
+            JSObject ev = new JSObject();
+            ev.put("deckId", deckId != null ? deckId : "");
+            ev.put("deviceName", name);
+            ev.put("attempts", d.attempt);
+            ev.put("reason", d.reason);
+            emitter.emit("reattachGaveUp", ev);
+        }
+    }
+
+    /**
+     * A retry's timer fired. Runs only if the policy still holds this
+     * retry, then goes through onDeckAttached — reserve, permission
+     * already granted, open, register — so it can never open a second
+     * session. A device without permission is not reopened, since that
+     * would raise the system dialog, and no later retry would find the
+     * permission granted: the policy gives up at once, and the journal
+     * line of reattachGaveUp points at the request permission button.
+     */
+    private void runReattach(String name, long token) {
+        reattachTimers.fired(name, token);
+        if (!reattach.due(name, token)) return;
+        UsbDevice device = usb.getDeviceList().get(name);
+        if (device == null) {
+            Log.i(TAG, "re-attach of " + name + " dropped: device no longer listed");
+            reattach.forget(name);
+            updateWakeLock();
+            return;
+        }
+        if (registry.isBusy(name)) {
+            // The attach holding the reservation reports its outcome to
+            // the policy: registered, or attachFailed.
+            Log.i(TAG, "re-attach of " + name + " skipped: already open or opening");
+            return;
+        }
+        if (!usb.hasPermission(device)) {
+            applyReattach(name, "",
+                reattach.attachFailed(name, ReattachPolicy.PERMISSION_MISSING));
+            return;
+        }
+        onDeckAttached(device);
+    }
+
+    /** No retry for {@code name} any more: detached. */
+    private void forgetReattach(String name) {
+        reattach.forget(name);
+        reattachTimers.cancel(name);
+        updateWakeLock();
+    }
+
+    /** No retry for any deck any more: the plugin is being destroyed. */
+    private void stopReattach() {
+        reattach.stop();
+        reattachTimers.cancelAll();
+        ScheduledExecutorService timer = reattachTimer;
+        if (timer != null) timer.shutdownNow();
+    }
+
+    /** Take or drop the partial wake lock to match the keepAwake option,
+     *  the open sessions and the decks waiting to be reopened: the retry
+     *  timer does not advance while the CPU sleeps. Synchronized: sessions
+     *  close on their own threads while the option changes on the plugin
+     *  thread. */
+    private synchronized void updateWakeLock() {
+        if (wakeLock == null || power == null) return;
+        boolean want = power.holdWakeLock(!registry.isEmpty() || reattach.reopening());
+        try {
+            if (want && !wakeLock.isHeld()) wakeLock.acquire();
+            else if (!want && wakeLock.isHeld()) wakeLock.release();
+        } catch (Throwable t) {
+            Log.w(TAG, "wake lock update failed: " + t.getMessage());
+        }
     }
 
     // ─────────────────────────── Plugin methods ──────────────────────────────
@@ -433,46 +566,58 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /**
-     * Close every open session and re-attach. Lets the user apply
-     * setReaderUseBulk without unplugging the deck.
+     * Close every open session, then open every idle deck again (see
+     * ReattachPlan): the ones just closed, and any whose session closed
+     * itself earlier while the deck stayed plugged in. Lets the user apply
+     * setReaderMode without unplugging the deck. Resolves {restarted}, the
+     * number of decks re-attached.
      */
     @PluginMethod
     public void restartSessions(PluginCall call) {
-        int closed = 0;
-        java.util.List<UsbDevice> toReattach = new java.util.ArrayList<>();
         for (DeckSession s : registry.sessions()) {
-            toReattach.add(s.device());
             s.close("restart_requested");   // unregisters through onSessionClosed
-            closed++;
         }
-        for (UsbDevice d : toReattach) {
-            if (DeckRegistry.isElgato(d.getVendorId())) onDeckAttached(d);
-        }
+        forgetAllReattach();
         JSObject r = new JSObject();
-        r.put("restarted", closed);
+        r.put("restarted", attachIdleDecks());
         call.resolve(r);
     }
 
     /**
-     * Walk every USB device and re-run onDeckAttached for known Elgato
-     * Stream Decks that already have permission but aren't open. Useful
-     * when the diagnostic UI subscribes after the boot-time attach
-     * already failed silently.
+     * Run onDeckAttached for every known Stream Deck that already has
+     * permission but is neither open nor opening. Useful when the
+     * diagnostic UI subscribes after the boot-time attach already failed
+     * silently, or after a session closed itself.
      */
     @PluginMethod
     public void retryAttach(PluginCall call) {
-        int retried = 0;
-        for (UsbDevice d : usb.getDeviceList().values()) {
-            if (!DeckRegistry.isElgato(d.getVendorId())) continue;
-            if (DeckRegistry.lookup(d.getProductId()) == null) continue;
-            if (registry.isBusy(d.getDeviceName())) continue;
-            if (!usb.hasPermission(d)) continue;
-            onDeckAttached(d);
-            retried++;
-        }
+        forgetAllReattach();
         JSObject r = new JSObject();
-        r.put("retried", retried);
+        r.put("retried", attachIdleDecks());
         call.resolve(r);
+    }
+
+    /** The owner reopens the decks by hand — restartSessions, retryAttach,
+     *  and so the app's restart after more than 5 s hidden: pending retries
+     *  are dropped and every deck gets its three retries back, a deck
+     *  given up for a missing permission included. */
+    private void forgetAllReattach() {
+        reattach.forgetAll();
+        reattachTimers.cancelAll();
+        updateWakeLock();
+    }
+
+    /** onDeckAttached on each of ReattachPlan.idleDecks; returns how many. */
+    private int attachIdleDecks() {
+        Map<String, UsbDevice> attached = usb.getDeviceList();
+        List<PermissionRequestPlan.Device> seen = new ArrayList<>();
+        for (UsbDevice d : attached.values()) {
+            seen.add(new PermissionRequestPlan.Device(d.getDeviceName(), d.getVendorId(),
+                d.getProductId(), "", usb.hasPermission(d)));
+        }
+        List<PermissionRequestPlan.Device> idle = ReattachPlan.idleDecks(seen, registry::isBusy);
+        for (PermissionRequestPlan.Device t : idle) onDeckAttached(attached.get(t.deviceName));
+        return idle.size();
     }
 
     private String tryGetSerial(UsbDevice d) {
@@ -631,11 +776,12 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /**
-     * Arm or disarm the wake-on-keypress path. When armed, every key
-     * press while the host activity is paused (phone screen off /
-     * MainActivity backgrounded) acquires a screen-bright wake lock
-     * and re-launches MainActivity so the user lands back where the
-     * deck press would normally take them.
+     * Arm or disarm the wake-on-keypress path. When armed, a key press
+     * while the host activity is paused re-launches MainActivity so the
+     * user lands back where the deck press would normally take them. With
+     * the screen off, it does so only with showOverLockScreen on, and then
+     * acquires a screen-bright wake lock first; without that option the
+     * screen stays off and the press reaches the app only as keyChanged.
      */
     @PluginMethod
     public void setWakeOnKeyPress(PluginCall call) {
@@ -647,19 +793,60 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /**
+     * The two power options, both false until the user turns them on:
+     * showOverLockScreen (read by MainActivity on a deck launch) and
+     * keepAwake (partial wake lock and per-session heartbeat).
+     */
+    @PluginMethod
+    public void getPowerOptions(PluginCall call) {
+        call.resolve(powerOptionsJson());
+    }
+
+    /**
+     * Change either option or both; an absent field is left as it is.
+     * keepAwake applies at once to the open sessions and the wake lock.
+     * Resolves with both values as stored.
+     */
+    @PluginMethod
+    public void setPowerOptions(PluginCall call) {
+        Boolean show = call.getBoolean("showOverLockScreen");
+        Boolean keep = call.getBoolean("keepAwake");
+        if (show != null) power.setShowOverLockScreen(show);
+        if (keep != null) {
+            power.setKeepAwake(keep);
+            for (DeckSession s : registry.sessions()) s.setHeartbeat(power.heartbeat());
+            updateWakeLock();
+        }
+        call.resolve(powerOptionsJson());
+    }
+
+    private JSObject powerOptionsJson() {
+        JSObject r = new JSObject();
+        r.put("showOverLockScreen", power.showOverLockScreen());
+        r.put("keepAwake", power.keepAwake());
+        return r;
+    }
+
+    /**
      * keyPressHook from DeckSession. Fires on every accepted key down
-     * (release events are filtered upstream). Cheap fast-path: bail
-     * unless both the user opted in and the activity is currently
-     * paused — otherwise this runs on every press and we don't want
-     * to relaunch the activity while the user is already in it.
+     * (release events are filtered upstream), after keyChanged has been
+     * emitted. Returns at once unless DeckPowerOptions
+     * .bringAppForwardOnKeyPress holds: wakeOnKeyPress armed, the activity
+     * paused, and the screen lit already or showOverLockScreen on. The
+     * activity is never relaunched while the user is in it, and the screen
+     * is turned on only under wakeScreenOnKeyPress, which needs
+     * showOverLockScreen.
      */
     @SuppressWarnings("deprecation")
     private void onDeckKeyPressed() {
-        if (!wakeOnKeyPress) return;
-        if (!activityPaused) return;
+        DeckPowerOptions p = power;
+        if (p == null) return;
         Context ctx = getContext();
         if (ctx == null) return;
         try {
+            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+            boolean interactive = pm != null && pm.isInteractive();
+            if (!p.bringAppForwardOnKeyPress(wakeOnKeyPress, activityPaused, interactive)) return;
             // SCREEN_BRIGHT_WAKE_LOCK + ACQUIRE_CAUSES_WAKEUP +
             // ON_AFTER_RELEASE is the smallest API surface that
             // actually wakes the display from off — modern guidance
@@ -668,8 +855,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             // foreground. We need the wake to happen even when the
             // OS is throttling activity launches, so the deprecated
             // wake lock combo is the right tool here.
-            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
-            if (pm != null) {
+            if (pm != null && p.wakeScreenOnKeyPress(wakeOnKeyPress, activityPaused)) {
                 int flags = PowerManager.SCREEN_BRIGHT_WAKE_LOCK
                           | PowerManager.ACQUIRE_CAUSES_WAKEUP
                           | PowerManager.ON_AFTER_RELEASE;
@@ -679,9 +865,14 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             // Bring MainActivity back to the front so the press lands
             // on a live UI. SINGLE_TOP avoids a duplicate instance,
             // REORDER_TO_FRONT covers the case where the activity is
-            // still in the back stack but not on top.
+            // still in the back stack but not on top. EXTRA_DECK_WAKE
+            // marks the launch as the deck's: MainActivity shows over the
+            // keyguard only for such a launch, and only with the
+            // showOverLockScreen option; without it, a launch over a lit
+            // lock screen stays behind the keyguard.
             Intent i = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
             if (i != null) {
+                i.putExtra(DeckPowerOptions.EXTRA_DECK_WAKE, true);
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                          | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                          | Intent.FLAG_ACTIVITY_SINGLE_TOP);

@@ -35,8 +35,9 @@ import { CodeStyleService } from "../services/codeStyleService";
 import { StreamDeckController } from "../services/streamDeckController";
 import { StreamDeckCameraStreamer } from "../services/streamDeckCameraStreamer";
 import { StreamDeckLcdTextRenderer } from "../services/streamDeckLcdTextRenderer";
-import { streamDeckEventLog } from "../services/streamDeckEventLog";
+import { streamDeckEventLog, reattachGaveUpText } from "../services/streamDeckEventLog";
 import { StreamDeckPlugin } from "../plugins/streamDeckPlugin";
+import { restoreDeckSleepAtBoot } from "../services/deckSleepCoupling";
 import { TagService } from "../services/tagService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
@@ -288,6 +289,11 @@ async function startApp() {
 	streamDeckController.start().catch((e) =>
 		console.warn("[boot] StreamDeckController.start failed:", e),
 	);
+	// After the controller exists: it follows the restored deck-lit
+	// option through STREAMDECK_KEEP_AWAKE.
+	restoreDeckSleepAtBoot(eventBus).catch((e) =>
+		console.warn("[boot] restoreDeckSleepAtBoot failed:", e),
+	);
 	const streamDeckCameraStreamer = new StreamDeckCameraStreamer(streamDeckController);
 	const streamDeckLcdTextRenderer = new StreamDeckLcdTextRenderer();
 	streamDeckLcdTextRenderer.start().catch((e) =>
@@ -325,6 +331,9 @@ async function startApp() {
 	}).catch(() => {});
 	StreamDeckPlugin.addListener("writeFailed", (ev) =>
 		streamDeckEventLog.add(`writeFailed: deck=${ev.deckId} key=${ev.key} (${ev.reason})`),
+	).catch(() => {});
+	StreamDeckPlugin.addListener("reattachGaveUp", (ev) =>
+		streamDeckEventLog.add(reattachGaveUpText(ev)),
 	).catch(() => {});
 	StreamDeckPlugin.addListener("rawInputReport", (ev) =>
 		streamDeckEventLog.add(`raw[${ev.len}]: ${ev.bytes}`),

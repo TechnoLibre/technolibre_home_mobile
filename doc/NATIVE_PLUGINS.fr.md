@@ -342,8 +342,8 @@ la gestion des modèles fonctionnent malgré tout sans la bibliothèque native.
 **Bibliothèque :** Android USB Host API natif (`UsbManager`, `UsbDeviceConnection`, `bulkTransfer`, `controlTransfer`).
 
 **Modèles supportés :** Elgato Stream Deck Original v1 (`0x0060`), Mini
-(`0x0063`), XL (`0x006c`), Original v2 (`0x006d`), MK.2 (`0x0080`),
-Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
+(`0x0063`), XL (`0x006c`), XL v2 (`0x008f`), Original v2 (`0x006d`),
+MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 
 ### API
 
@@ -355,24 +355,60 @@ Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `reset({deckId})` | Efface toutes les images des touches. |
 | `setBrightness({deckId, percent})` | Luminosité 0..100. |
 | `setKeyImage({deckId, key, bytes, format})` | Pousse une image. `bytes` = base64. `format = "jpeg"` pour v2+/MK.2/XL/Plus/Neo, `"png"` pour v1/Mini (Java fait BMP rotaté). Résout `{dropped: true}` si une image plus récente a été poussée pour la même touche entre-temps. |
-| `clearKey({deckId, key})` | Image noire 1×1 → touche éteinte. |
+| `setKeyImagesBatch({deckId, format, entries})` | Met en file chaque `{key, bytes}` de `entries` sans promesse par touche, pour le flux caméra. Résout `{queued, dropped}` une fois décodés et mis en file, pas à la fin de l'USB. Une entrée qui échoue ensuite part en `writeFailed`. |
+| `clearKey({deckId, key})` | Peint la touche en noir à sa taille native → touche éteinte. |
 | `clearAllKeys({deckId})` | Identique à `reset`. |
 | `setLcdImage({deckId, bytes})` | Plus uniquement — JPEG plein 800×100. |
 | `setLcdRegion({deckId, x, y, w, h, bytes})` | Plus uniquement — JPEG région partielle. |
 | `setInfoBar({deckId, index, bytes})` | Neo uniquement — JPEG 248×58 sur l'écran d'info. Le Neo n'a qu'un seul écran ; `index` doit être 0 (forward-compat pour de futurs modèles). L'écran est monté comme les touches : envoyer l'image tournée de 180°. |
+| `getPowerOptions()` | Résout `{showOverLockScreen, keepAwake}`, tous deux `false` tant que l'utilisateur ne les active pas. |
+| `setPowerOptions({showOverLockScreen?, keepAwake?})` | Enregistre les champs donnés, laisse les autres ; résout avec les deux. `keepAwake` — un wake lock partiel et un battement USB de 700 ms tant qu'un deck est ouvert, le wake lock aussi tant qu'un deck fermé de lui-même attend sa réouverture — s'applique tout de suite aux decks ouverts. `showOverLockScreen` permet à un lancement causé par le deck d'afficher l'app par-dessus l'écran de verrouillage, et c'est la seule façon pour une touche du deck d'allumer l'écran. L'app lie `keepAwake` à l'option « garder le deck allumé » de la section Mise en veille, qui arme `setWakeOnKeyPress` et en a besoin : cocher cette option coche d'abord `keepAwake`, et la laisse décochée si `keepAwake` reste désactivé ; décocher `keepAwake` la décoche d'abord. Le démarrage de l'app arme `setWakeOnKeyPress` comme enregistré, sauf cette option enregistrée cochée avec `keepAwake` désactivé : le démarrage la décoche, sans jamais cocher `keepAwake`, et l'écrit sur une ligne du journal du Stream Deck (`src/services/deckSleepCoupling.ts`). |
+| `setWakeOnKeyPress({enabled})` | Arme ou désarme le réveil par touche ; résout `{enabled}`, que le plugin n'enregistre pas. Réveil armé, une touche pressée pendant que l'app est en pause ramène l'app au premier plan si l'écran est déjà allumé, ou si `showOverLockScreen` est activé, seule option qui permet à la touche d'allumer l'écran (`DeckPowerOptions.bringAppForwardOnKeyPress`, `wakeScreenOnKeyPress`). Sinon l'écran reste éteint et la touche n'arrive qu'en `keyChanged`. |
+| `restartSessions()` | Ferme toutes les sessions ouvertes, puis ouvre chaque deck permis qui n'en a pas, y compris celui dont la session s'est fermée d'elle-même alors qu'il restait branché. Annule les réouvertures automatiques en attente et rend à chaque deck ses trois essais. Résout `{restarted}`, le nombre de decks rattachés. |
+| `retryAttach()` | Ouvre chaque deck permis qui n'a pas de session, sans en fermer aucune. Annule les réouvertures automatiques en attente et rend à chaque deck ses trois essais. Résout `{retried}`. |
 
 ### Events
 
 | Event | Payload |
 |-------|---------|
 | `deckConnected` | `{deckId, info, reason?}` |
-| `deckDisconnected` | `{deckId, reason}` (`usb_lost`, `app_destroyed`) |
+| `deckDisconnected` | `{deckId, reason}`. `reason` vaut `usb_lost` (débranché), `usb_lost:<détail du transfert>` (les écritures échouaient de suite), `restart_requested`, `app_destroyed`, ou un échec du lecteur (`polled_reset`, `usb_request_…`, `bulk_read_threw:…`, `polled_threw:…`) : comparer le préfixe. Envoyé une fois par deck, quand sa dernière session se ferme. |
 | `permissionDenied` | `{deckId, reason}` |
 | `keyChanged` | `{deckId, key, pressed}` |
 | `dialRotated` | `{deckId, dial, delta}` (Plus) |
 | `dialPressed` | `{deckId, dial, pressed}` (Plus) |
 | `lcdTouched` | `{deckId, type, x, y, xEnd?, yEnd?}` (Plus) |
 | `neoTouched` | `{deckId, index, pressed}` (Neo) |
+| `writeFailed` | `{deckId, key, reason}` — une entrée de `setKeyImagesBatch` en échec (image refusée, transfert en échec). Envoyé une fois par touche et raison, jusqu'à ce qu'une écriture sur cette touche réussisse. |
+| `reattachGaveUp` | `{deckId, deviceName, attempts, reason}` — la réouverture automatique a échoué trois fois, ou a trouvé la permission USB absente (`permission_missing`, envoyé dès ce constat) ; plus rien ne la retente. `deckId` vaut `""` si aucun numéro de série n'a été lu ; `reason` est le dernier échec de fermeture ou d'attachement. L'app l'écrit en une ligne dans le journal du Stream Deck. |
+
+### Réouverture automatique
+
+Une session qui se ferme d'elle-même — un échec du lecteur (`polled_reset`
+après 10 s sans données, `usb_request_…`, `bulk_read_threw:…`,
+`polled_threw:…`) ou trois écritures en échec de suite
+(`usb_lost:<détail>`) — laisse son deck branché sans session. Le plugin le
+rouvre après 2 s, puis 4 s, puis 8 s : trois essais au plus, chacun par le
+même chemin qu'un branchement (réservation, permission déjà accordée,
+ouverture, enregistrement), sans jamais ouvrir une deuxième session ni
+afficher de dialogue. Le compte revient à zéro dès qu'une session est
+restée enregistrée 60 s. Après le troisième essai raté, `reattachGaveUp`
+part une fois et plus rien n'est tenté. Un essai qui trouve le deck sans
+permission USB abandonne aussitôt : aucun essai suivant ne pourrait ouvrir
+le dialogue qui l'accorde, donc `reattachGaveUp` part avec
+`permission_missing` et sa ligne au journal renvoie au bouton de demande
+de permission. Avec `keepAwake`, le
+wake lock partiel reste tenu pendant qu'une réouverture attend : la
+minuterie de reprise n'avance pas quand le CPU dort.
+
+Rien n'est rouvert après un débranchement (`usb_lost` : le hotplug gère
+le retour), `restartSessions`, `retryAttach` ou la destruction de l'app ;
+ceux-ci annulent les réouvertures en attente. `restartSessions` et
+`retryAttach` — y compris le `restartSessions` de l'app après plus de 5 s
+masquée — rendent à chaque deck ses trois essais, même à un deck
+abandonné faute de permission. Un deck abandonné qui s'ouvre de nouveau
+par un autre chemin — le bouton de demande de permission, un branchement —
+retrouve lui aussi ses trois essais.
 
 ### Identité persistante
 
