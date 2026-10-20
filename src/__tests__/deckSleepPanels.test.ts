@@ -200,3 +200,16 @@ describe("i18n — coupled deck sleep settings", () => {
         expect(dict["streamdeck.power_keep_awake_hint"]).toContain(dict["sleep.deck_awake"]);
     });
 });
+
+describe("i18n — screen wake by a deck key press", () => {
+    // A key press turns the screen on only with showOverLockScreen
+    // (DeckPowerOptions.wakeScreenOnKeyPress): each hint names the other
+    // option by the label its section shows.
+    it.each([["en", en], ["fr", fr]])("%s Sleep hint names the lock-screen option", (_, dict) => {
+        expect(dict["sleep.deck_awake_hint"]).toContain(dict["streamdeck.power_show_over_lock_screen"]);
+    });
+
+    it.each([["en", en], ["fr", fr]])("%s lock-screen hint names the Sleep option", (_, dict) => {
+        expect(dict["streamdeck.power_show_over_lock_screen_hint"]).toContain(dict["sleep.deck_awake"]);
+    });
+});

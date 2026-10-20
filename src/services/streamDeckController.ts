@@ -134,7 +134,8 @@ export class StreamDeckController {
      *  visibilitychange:hidden does not dim the deck, the LCDs keep
      *  their last image, and the wake-on-keypress native path (armed
      *  via StreamDeckPlugin.setWakeOnKeyPress) brings the phone back
-     *  on — reliably only with the keepAwake power option, which keeps
+     *  on — only with the showOverLockScreen power option, and reliably
+     *  only with the keepAwake power option, which keeps
      *  the USB bus up and which deckSleepCoupling turns on with this
      *  flag, and turns this flag off with. The flag is rehydrated from localStorage at boot
      *  so it survives an app restart without relying on the toggle's

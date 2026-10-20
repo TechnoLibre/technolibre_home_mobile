@@ -105,8 +105,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     /** "Wake the phone on a deck press while the host activity is
      *  paused" — armed by the JS-side Mise en veille checkbox via
-     *  setWakeOnKeyPress. Static so the per-session keyPressHook can
-     *  read it without holding a reference to the plugin. */
+     *  setWakeOnKeyPress; it acts only with showOverLockScreen on (see
+     *  DeckPowerOptions.wakeScreenOnKeyPress). Static so the per-session
+     *  keyPressHook can read it without holding a reference to the plugin. */
     private static volatile boolean wakeOnKeyPress = false;
     /** True between handleOnPause and handleOnResume — the only window
      *  where the wake-on-press path should actually fire an intent.
@@ -142,8 +143,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // painted with the last tile. The service has no other duties.
         // Arm the wake-on-keypress path: every keyChanged in DeckSession
         // calls this hook, which only does something when the user
-        // opted in (wakeOnKeyPress) and the activity is currently
-        // paused (locked screen / backgrounded).
+        // opted in (wakeOnKeyPress and showOverLockScreen) and the
+        // activity is currently paused (locked screen / backgrounded).
         DeckSession.setKeyPressHook(this::onDeckKeyPressed);
         StreamDeckLifecycleService.setTaskRemovedHandler(() -> {
             stopReattach();
@@ -761,11 +762,13 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /**
-     * Arm or disarm the wake-on-keypress path. When armed, every key
-     * press while the host activity is paused (phone screen off /
-     * MainActivity backgrounded) acquires a screen-bright wake lock
-     * and re-launches MainActivity so the user lands back where the
-     * deck press would normally take them.
+     * Arm or disarm the wake-on-keypress path. When armed and the
+     * showOverLockScreen option is on, every key press while the host
+     * activity is paused (phone screen off / MainActivity backgrounded)
+     * acquires a screen-bright wake lock and re-launches MainActivity so
+     * the user lands back where the deck press would normally take them.
+     * With showOverLockScreen off the screen stays as it is; the press
+     * reaches the app only as its keyChanged event.
      */
     @PluginMethod
     public void setWakeOnKeyPress(PluginCall call) {
@@ -813,15 +816,16 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     /**
      * keyPressHook from DeckSession. Fires on every accepted key down
-     * (release events are filtered upstream). Cheap fast-path: bail
-     * unless both the user opted in and the activity is currently
-     * paused — otherwise this runs on every press and we don't want
-     * to relaunch the activity while the user is already in it.
+     * (release events are filtered upstream), after keyChanged has been
+     * emitted. Returns at once unless DeckPowerOptions.wakeScreenOnKeyPress
+     * holds: wakeOnKeyPress armed, the activity paused, showOverLockScreen
+     * on. The activity is never relaunched while the user is in it, and
+     * the screen never lights without showOverLockScreen.
      */
     @SuppressWarnings("deprecation")
     private void onDeckKeyPressed() {
-        if (!wakeOnKeyPress) return;
-        if (!activityPaused) return;
+        DeckPowerOptions p = power;
+        if (p == null || !p.wakeScreenOnKeyPress(wakeOnKeyPress, activityPaused)) return;
         Context ctx = getContext();
         if (ctx == null) return;
         try {
@@ -847,8 +851,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             // still in the back stack but not on top. EXTRA_DECK_WAKE
             // marks the launch as the deck's: MainActivity shows over the
             // keyguard only for such a launch, and only with the
-            // showOverLockScreen option; otherwise the screen lights on
-            // the lock screen.
+            // showOverLockScreen option, which this path already requires.
             Intent i = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
             if (i != null) {
                 i.putExtra(DeckPowerOptions.EXTRA_DECK_WAKE, true);
