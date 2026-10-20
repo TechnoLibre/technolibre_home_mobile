@@ -14,12 +14,17 @@ import java.util.Map;
  * its session registers counts as an attempt through {@link #attachFailed}.
  * Once the attempts are spent, the next failure answers GIVE_UP once, for
  * one line in the journal, and every later one answers NONE: no loop.
+ * A retry that finds the USB permission missing ({@link #PERMISSION_MISSING})
+ * answers GIVE_UP at once and spends the rest of the budget: a retry never
+ * raises the system dialog, so a later one cannot succeed either.
  *
  * A session that stayed registered for {@link #HEALTHY_MS} before closing
  * resets the count, so a deck that fails once a day keeps its three
  * retries. A close by the owner — detach (usb_lost), restartSessions,
  * app_destroyed — or {@link #forget} drops the device's state and its
- * pending retry; after {@link #stop} nothing is ever retried.
+ * pending retry; after {@link #stop} nothing is ever retried. A manual
+ * restart calls {@link #forgetAll}, which gives every deck its three
+ * retries back, a deck given up for its permission included.
  *
  * Keys are USB device names: a deck plugged back in gets a new one, and the
  * hotplug attach handles it. Each RETRY carries a token; the retry runs
@@ -35,6 +40,10 @@ final class ReattachPolicy {
 
     /** Registered this long before closing, a session resets the count. */
     static final long HEALTHY_MS = 60_000L;
+
+    /** Attach failure of a retry that finds the deck without USB
+     *  permission: given up at once, see {@link #attachFailed}. */
+    static final String PERMISSION_MISSING = "permission_missing";
 
     /** Reason prefixes of a session that closed itself: the reader and
      *  the writer of DeckSession. A reason outside this list is never
@@ -145,11 +154,13 @@ final class ReattachPolicy {
 
     /** A reopen of {@code deviceName} failed before its session
      *  registered. Counts only within a retry sequence: a hotplug or
-     *  manual attach that fails is not retried. */
+     *  manual attach that fails is not retried. {@link #PERMISSION_MISSING}
+     *  gives up at once, whatever attempts are left. */
     synchronized Decision attachFailed(String deviceName, String reason) {
         if (stopped) return Decision.NONE;
         State s = states.get(deviceName);
         if (s == null || s.attempts == 0) return Decision.NONE;
+        if (PERMISSION_MISSING.equals(reason)) return giveUp(s, reason);
         return next(s, reason);
     }
 
@@ -160,10 +171,18 @@ final class ReattachPolicy {
             s.pending = ++lastToken;
             return new Decision(Decision.Kind.RETRY, delay, s.attempts, s.pending, reason);
         }
+        return giveUp(s, reason);
+    }
+
+    /** GIVE_UP with the attempts made, once; the budget is then spent, so
+     *  a later close answers NONE until a healthy session or forgetAll. */
+    private Decision giveUp(State s, String reason) {
         s.pending = 0L;
         if (s.gaveUp) return Decision.NONE;
         s.gaveUp = true;
-        return new Decision(Decision.Kind.GIVE_UP, 0L, s.attempts, 0L, reason);
+        int made = s.attempts;
+        s.attempts = DELAYS_MS.length;
+        return new Decision(Decision.Kind.GIVE_UP, 0L, made, 0L, reason);
     }
 
     /** True once for the retry {@code token} of {@code deviceName}, if it
@@ -190,7 +209,9 @@ final class ReattachPolicy {
     /** Drop the state and pending retry of {@code deviceName}: detached. */
     synchronized void forget(String deviceName) { states.remove(deviceName); }
 
-    /** Drop every device's state: the owner reopened the decks by hand. */
+    /** Drop every device's state: the owner reopened the decks by hand
+     *  (restartSessions, retryAttach), and every deck gets its three
+     *  retries back, a deck given up for its permission included. */
     synchronized void forgetAll() { states.clear(); }
 
     /** The plugin is going away: no retry is due ever again. */

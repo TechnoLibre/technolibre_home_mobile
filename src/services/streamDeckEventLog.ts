@@ -51,7 +51,9 @@ class StreamDeckEventLog {
 export const streamDeckEventLog = new StreamDeckEventLog();
 
 /** Last reason of a retry that found the USB permission gone: the retry
- *  never raises the system dialog, so the permission button is the fix. */
+ *  never raises the system dialog, so the permission button is the fix.
+ *  The plugin gives up at that first finding, so the line counts no
+ *  attempts. */
 const PERMISSION_MISSING = "permission_missing";
 
 /** Journal line of reattachGaveUp, in the user's language; names the deck
@@ -60,7 +62,6 @@ export function reattachGaveUpText(ev: ReattachGaveUpEvent): string {
     if (ev.reason === PERMISSION_MISSING) {
         return t("streamdeck.event_reattach_gave_up_permission", {
             deck: ev.deckId || ev.deviceName,
-            attempts: ev.attempts,
             button: t("streamdeck.request_permission"),
         });
     }

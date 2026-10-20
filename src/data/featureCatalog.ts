@@ -627,8 +627,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "stays plugged in (reader failure, polled_reset, failed writes) "
                         + "is reopened after 2, 4 then 8 s (ReattachPolicy); the count "
                         + "resets after 60 s of healthy session, and after a third failed "
-                        + "attempt one line goes to the journal and nothing more is tried. "
-                        + "Unplug, restartSessions, retryAttach and app destroy cancel it.",
+                        + "attempt one line goes to the journal and nothing more is tried; "
+                        + "a retry that finds the USB permission missing gives up at once. "
+                        + "Unplug, restartSessions, retryAttach and app destroy cancel it; "
+                        + "restartSessions and retryAttach give every deck its three "
+                        + "attempts back.",
                     fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
                         + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
                         + "appareil : premier attach prompt l'utilisateur; l'autorisation est "
@@ -642,8 +645,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "échec), est rouverte après 2, 4 puis 8 s (ReattachPolicy) ; le "
                         + "compte revient à zéro après 60 s de session saine, et après un "
                         + "troisième essai raté une ligne part au journal et plus rien "
-                        + "n'est tenté. Débranchement, restartSessions, retryAttach et "
-                        + "destruction de l'app l'annulent.",
+                        + "n'est tenté ; un essai qui trouve la permission USB absente "
+                        + "abandonne aussitôt. Débranchement, restartSessions, retryAttach "
+                        + "et destruction de l'app l'annulent ; restartSessions et "
+                        + "retryAttach rendent à chaque deck ses trois essais.",
                 },
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: [

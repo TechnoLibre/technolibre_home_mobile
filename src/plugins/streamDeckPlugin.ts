@@ -99,8 +99,10 @@ export interface WriteFailedEvent {
 }
 
 /** A deck whose session closed itself is reopened after 2, 4 then 8 s;
- *  this is sent once when the third attempt fails too. Nothing retries it
- *  afterwards: unplugging it, restartSessions or retryAttach reopens it.
+ *  this is sent once when the third attempt fails too, or at once when a
+ *  retry finds the USB permission missing (reason permission_missing).
+ *  Nothing retries it afterwards: unplugging it, restartSessions or
+ *  retryAttach reopens it, and gives it its three attempts back.
  *  deckId is "" when no serial was read; reason is the last close or
  *  attach failure. */
 export interface ReattachGaveUpEvent {

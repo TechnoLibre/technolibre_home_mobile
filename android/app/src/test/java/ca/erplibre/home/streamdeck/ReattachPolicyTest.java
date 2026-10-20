@@ -158,6 +158,63 @@ public class ReattachPolicyTest {
     }
 
     @Test
+    public void a_missing_permission_gives_up_at_once_on_the_first_retry() {
+        Decision d = policy.closed(DEV, READER);
+        clock.advance(d.delayMs);
+        assertTrue(policy.due(DEV, d.token));
+        d = policy.attachFailed(DEV, ReattachPolicy.PERMISSION_MISSING);
+        assertEquals(Decision.Kind.GIVE_UP, d.kind);
+        assertEquals(1, d.attempt);
+        assertEquals(ReattachPolicy.PERMISSION_MISSING, d.reason);
+        assertFalse(policy.reopening());
+        // Reported once: a second failure adds no line.
+        assertEquals(Decision.Kind.NONE,
+            policy.attachFailed(DEV, ReattachPolicy.PERMISSION_MISSING).kind);
+    }
+
+    @Test
+    public void a_missing_permission_on_a_later_retry_gives_up_without_the_8_s_one() {
+        Decision d = policy.closed(DEV, READER);
+        d = failAgain(d, READER);
+        assertRetry(d, 4_000L, 2);
+        clock.advance(d.delayMs);
+        assertTrue(policy.due(DEV, d.token));
+        d = policy.attachFailed(DEV, ReattachPolicy.PERMISSION_MISSING);
+        assertEquals(Decision.Kind.GIVE_UP, d.kind);
+        assertEquals(2, d.attempt);
+    }
+
+    @Test
+    public void a_deck_given_up_for_its_permission_spends_its_whole_budget() {
+        Decision d = policy.closed(DEV, READER);
+        assertTrue(policy.due(DEV, d.token));
+        policy.attachFailed(DEV, ReattachPolicy.PERMISSION_MISSING);
+        // Reopened by hand, then closed before 60 s: no retry, no line.
+        policy.registered(DEV);
+        assertEquals(Decision.Kind.NONE, policy.closed(DEV, READER).kind);
+    }
+
+    @Test
+    public void forget_all_gives_a_deck_given_up_for_its_permission_three_retries() {
+        Decision d = policy.closed(DEV, READER);
+        assertTrue(policy.due(DEV, d.token));
+        policy.attachFailed(DEV, ReattachPolicy.PERMISSION_MISSING);
+        policy.forgetAll();
+        d = policy.closed(DEV, READER);
+        assertRetry(d, 2_000L, 1);
+        d = failAgain(d, READER);
+        assertRetry(d, 4_000L, 2);
+        d = failAgain(d, READER);
+        assertRetry(d, 8_000L, 3);
+    }
+
+    @Test
+    public void a_missing_permission_outside_a_retry_is_not_reported() {
+        assertEquals(Decision.Kind.NONE,
+            policy.attachFailed(DEV, ReattachPolicy.PERMISSION_MISSING).kind);
+    }
+
+    @Test
     public void attach_failure_outside_a_retry_is_not_retried() {
         // Hotplug or a manual attach that fails is reported as it was.
         assertEquals(Decision.Kind.NONE, policy.attachFailed(DEV, "permission_denied").kind);

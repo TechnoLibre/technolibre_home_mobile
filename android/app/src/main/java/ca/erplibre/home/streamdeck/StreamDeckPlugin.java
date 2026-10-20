@@ -397,7 +397,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * retry, then goes through onDeckAttached — reserve, permission
      * already granted, open, register — so it can never open a second
      * session. A device without permission is not reopened, since that
-     * would raise the system dialog: it counts as a failed attempt.
+     * would raise the system dialog, and no later retry would find the
+     * permission granted: the policy gives up at once, and the journal
+     * line of reattachGaveUp points at the request permission button.
      */
     private void runReattach(String name, long token) {
         reattachTimers.fired(name, token);
@@ -416,7 +418,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             return;
         }
         if (!usb.hasPermission(device)) {
-            applyReattach(name, "", reattach.attachFailed(name, "permission_missing"));
+            applyReattach(name, "",
+                reattach.attachFailed(name, ReattachPolicy.PERMISSION_MISSING));
             return;
         }
         onDeckAttached(device);
@@ -594,8 +597,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         call.resolve(r);
     }
 
-    /** The owner reopens the decks by hand: pending retries are dropped
-     *  and every deck gets its three retries back. */
+    /** The owner reopens the decks by hand — restartSessions, retryAttach,
+     *  and so the app's restart after more than 5 s hidden: pending retries
+     *  are dropped and every deck gets its three retries back, a deck
+     *  given up for a missing permission included. */
     private void forgetAllReattach() {
         reattach.forgetAll();
         reattachTimers.cancelAll();

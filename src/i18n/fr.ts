@@ -742,7 +742,7 @@ export const translations: Record<string, string> = {
   "sms_gateway.warn_dev_url": "Cette adresse n'est pas routable : elle ne sert qu'au développement contre un serveur local. Une passerelle réelle doit pointer une URL HTTPS.",
   "sms_gateway.device_summary": "{model}, Android SDK {sdk}. Limite système : {limit} segments par minute.",
   "streamdeck.event_reattach_gave_up": "Deck {deck} non rouvert après {attempts} essais ({reason}) : débranchez-le puis rebranchez-le.",
-  "streamdeck.event_reattach_gave_up_permission": "Deck {deck} non rouvert après {attempts} essais : sa permission USB manque. Appuyez sur « {button} » dans Options › Stream Deck.",
+  "streamdeck.event_reattach_gave_up_permission": "Deck {deck} non rouvert : sa permission USB manque. Appuyez sur « {button} » dans Options › Stream Deck.",
   "streamdeck.event_wake_off_at_boot": "L'option « Garder le Stream Deck allumé en veille » a été décochée au démarrage de l'application : elle a besoin de « Garder le téléphone éveillé tant qu'un deck est branché » (Options › Stream Deck), qui est désactivée.",
   "streamdeck.request_permission": "🔓 Demander permission",
   "streamdeck.power_title": "🔋 Veille du téléphone",

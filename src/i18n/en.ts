@@ -742,7 +742,7 @@ export const translations: Record<string, string> = {
   "sms_gateway.warn_dev_url": "This address is not routable: it is only for development against a local server. A real gateway must point at an HTTPS URL.",
   "sms_gateway.device_summary": "{model}, Android SDK {sdk}. System limit: {limit} segments per minute.",
   "streamdeck.event_reattach_gave_up": "Deck {deck} not reopened after {attempts} attempts ({reason}): unplug it and plug it back in.",
-  "streamdeck.event_reattach_gave_up_permission": "Deck {deck} not reopened after {attempts} attempts: its USB permission is missing. Press “{button}” in Options › Stream Deck.",
+  "streamdeck.event_reattach_gave_up_permission": "Deck {deck} not reopened: its USB permission is missing. Press “{button}” in Options › Stream Deck.",
   "streamdeck.event_wake_off_at_boot": "“Keep the Stream Deck lit during sleep” was turned off at app start: it needs “Keep the phone awake while a deck is connected” (Options › Stream Deck), which is off.",
   "streamdeck.request_permission": "🔓 Request permission",
   "streamdeck.power_title": "🔋 Phone sleep",

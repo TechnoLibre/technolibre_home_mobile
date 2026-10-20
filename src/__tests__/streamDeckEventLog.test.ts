@@ -138,5 +138,19 @@ describe("streamDeckEventLog", () => {
                 expect(text).not.toContain("{");
             },
         );
+
+        it.each(["en", "fr"] as const)(
+            "%s: a missing permission gives no attempt count, given up at the first",
+            (locale) => {
+                stubLocale(locale);
+                const text = reattachGaveUpText({
+                    ...ev,
+                    attempts: 1,
+                    reason: "permission_missing",
+                });
+                expect(text).toContain("CL00A0000000");
+                expect(text).not.toMatch(/\b1\b/);
+            },
+        );
     });
 });
