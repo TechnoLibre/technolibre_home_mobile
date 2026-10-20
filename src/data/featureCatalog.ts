@@ -625,7 +625,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "report, so silence is not a sickness. Once its "
                         + "keyChanged handler is subscribed it calls "
                         + "keyListenerReady, so a press the plugin held since "
-                        + "launch reaches that handler.",
+                        + "launch reaches that handler; the decks found at "
+                        + "boot are painted only after that call, so their "
+                        + "USB writes do not age the held presses.",
                     fr: "S'abonne à keyChanged sur chaque deck, throttlé à 150 "
                         + "ms pour éviter le crash IME du WebView. La touche 0 "
                         + "navigue toujours vers /note/<id>; les touches 1-3 ne "
@@ -648,7 +650,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "pas une maladie. Une fois son gestionnaire keyChanged "
                         + "abonné, il appelle keyListenerReady : une touche que "
                         + "le plugin a retenue depuis le lancement atteint ce "
-                        + "gestionnaire.",
+                        + "gestionnaire ; les decks trouvés au démarrage ne "
+                        + "sont peints qu'après cet appel, pour que leurs "
+                        + "écritures USB ne vieillissent pas les touches "
+                        + "retenues.",
                 },
                 status: "stable",
                 dependsOn: [

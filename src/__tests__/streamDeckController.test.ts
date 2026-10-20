@@ -197,6 +197,37 @@ describe("StreamDeckController", () => {
             expect(subscribedAtReady).toBe(true);
         });
 
+        // Held presses age out after 10 s: painting the boot decks first
+        // would spend that budget on USB writes.
+        it("calls keyListenerReady before painting the boot decks", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
+            let readyBeforePaint: boolean | undefined;
+            mockPlugin.setBrightness.mockImplementation(async () => {
+                readyBeforePaint ??= mockPlugin.keyListenerReady.mock.calls.length > 0;
+            });
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            ctrl.setCameraStreaming(true);
+            await ctrl.start();
+            expect(readyBeforePaint).toBe(true);
+        });
+
+        it("knows the boot decks when a held gallery key press arrives", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
+            mockPlugin.keyListenerReady.mockImplementation(async () => {
+                listeners["keyChanged"]({
+                    deckId: "AL01", key: galleryKeyFor(DECK as any), pressed: true,
+                });
+                return { delivered: 1, dropped: 0 };
+            });
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            expect(trigger).toHaveBeenCalledWith(
+                Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
+            );
+        });
+
         it("acts on a press the plugin delivers at keyListenerReady", async () => {
             mockPlugin.keyListenerReady.mockImplementation(async () => {
                 listeners["keyChanged"]({ deckId: "AL01", key: 0, pressed: true });
