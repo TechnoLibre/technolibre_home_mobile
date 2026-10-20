@@ -56,6 +56,14 @@ public final class BmpEncoder implements ImageEncoder {
         return wrapAsBmpFile(bgr, outW, outH);
     }
 
+    /** Black needs no rotation: only the BMP header carries the size. */
+    @Override
+    public byte[] blank(int targetW, int targetH) {
+        int outW = (rotationDegrees == 270) ? targetH : targetW;
+        int outH = (rotationDegrees == 270) ? targetW : targetH;
+        return wrapAsBmpFile(new byte[outW * outH * 3], outW, outH);
+    }
+
     /**
      * Wraps raw BGR pixels in a 54-byte BITMAPINFOHEADER BMP file. The deck
      * firmware reads this exact layout. Rows are NOT padded because BGR width

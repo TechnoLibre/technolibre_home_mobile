@@ -160,6 +160,8 @@ interface StreamDeckPluginApi {
      */
     setWakeOnKeyPress(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
 
+    /** Rejects "missing:key" / "invalid_key:N" for a key the deck lacks,
+     *  and "image_oversized:WxH>KWxKH" for an image larger than the key. */
     setKeyImage(opts: {
         deckId: string;
         key: number;
@@ -178,6 +180,7 @@ interface StreamDeckPluginApi {
         format: "jpeg" | "png";
         entries: { key: number; bytes: string }[];
     }): Promise<{ queued: number; dropped: number }>;
+    /** Paints the key black at its native size; same key checks as setKeyImage. */
     clearKey(opts: { deckId: string; key: number }): Promise<ImageWriteResult>;
     clearAllKeys(opts: { deckId: string }): Promise<void>;
 

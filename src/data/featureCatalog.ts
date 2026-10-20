@@ -743,14 +743,23 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Per-model image encoder picked by DeckSpec: V1 decks accept BMP raw, "
                         + "V2 decks accept JPEG (better compression, faster USB transfer). "
                         + "Encoders run on a worker thread so the main thread isn't blocked "
-                        + "during a full-deck refresh.",
+                        + "during a full-deck refresh. KeyImages rejects a key index outside "
+                        + "the deck and an image whose header is larger than the key "
+                        + "(image_oversized); clearKey sends each encoder's black image at "
+                        + "the key's native size.",
                     fr: "Encoder image par modèle choisi par DeckSpec : decks V1 acceptent du "
                         + "BMP brut, decks V2 du JPEG (meilleure compression, transfert USB plus "
                         + "rapide). Les encoders tournent sur un thread worker pour ne pas "
-                        + "bloquer le main thread lors d'un refresh complet.",
+                        + "bloquer le main thread lors d'un refresh complet. KeyImages refuse "
+                        + "un index de touche hors du deck et une image dont l'en-tête dépasse "
+                        + "la touche (image_oversized) ; clearKey envoie l'image noire de "
+                        + "chaque encoder à la taille native de la touche.",
                 },
                 demo: NONE_PLUMBING,
-                files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/encoder"],
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/encoder",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/KeyImages.java",
+                ],
             },
             {
                 id: "streamdeck.transports",

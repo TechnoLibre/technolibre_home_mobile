@@ -20,6 +20,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.util.HashMap;
 import java.util.Map;
 
+import ca.erplibre.home.streamdeck.encoder.ImageEncoder;
 import ca.erplibre.home.streamdeck.events.EventEmitter;
 import ca.erplibre.home.streamdeck.usb.UsbHotplugReceiver;
 import ca.erplibre.home.streamdeck.usb.UsbPermissionRequester;
@@ -615,14 +616,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     public void setKeyImage(PluginCall call) {
         DeckSession s = requireSession(call); if (s == null) return;
         Integer key = call.getInt("key");
-        if (key == null || key < 0 || key >= s.spec().keyCount) {
-            call.reject("invalid_key:" + key); return;
-        }
-        String b64 = call.getString("bytes");
-        if (b64 == null) { call.reject("missing:bytes"); return; }
-        byte[] raw;
-        try { raw = Base64.decode(b64, Base64.NO_WRAP); }
-        catch (IllegalArgumentException e) { call.reject("bad_base64"); return; }
+        String err = KeyImages.checkKey(key, s.spec());
+        if (err != null) { call.reject(err); return; }
+        byte[] raw = decodeBytes(call); if (raw == null) return;
+        err = KeyImages.checkSize(raw, s.spec());
+        if (err != null) { call.reject(err); return; }
 
         s.queue().offerCoalesce(new ImageWriteJob(s, key, raw, call));
         call.setKeepAlive(true);
@@ -633,7 +631,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * crossing. Each entry is fire-and-forget on the WriterQueue (no
      * per-key resolve), so the call returns the moment everything is
      * decoded and offered. The queue's coalescing keeps backpressure
-     * bounded — only the latest job per key actually hits USB.
+     * bounded — only the latest job per key actually hits USB. An entry
+     * with a bad key, bad base64 or an oversized image counts as dropped.
      */
     @PluginMethod
     public void setKeyImagesBatch(PluginCall call) {
@@ -647,10 +646,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 org.json.JSONObject o = entries.getJSONObject(i);
                 int key = o.getInt("key");
                 String b64 = o.getString("bytes");
-                if (key < 0 || key >= s.spec().keyCount) { dropped++; continue; }
+                if (KeyImages.checkKey(key, s.spec()) != null) { dropped++; continue; }
                 byte[] raw;
                 try { raw = Base64.decode(b64, Base64.NO_WRAP); }
                 catch (IllegalArgumentException ex) { dropped++; continue; }
+                if (KeyImages.checkSize(raw, s.spec()) != null) { dropped++; continue; }
                 s.queue().offerCoalesce(new ImageWriteJob(s, key, raw, null));
                 queued++;
             } catch (Throwable t) {
@@ -667,14 +667,14 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     public void clearKey(PluginCall call) {
         DeckSession s = requireSession(call); if (s == null) return;
         Integer key = call.getInt("key");
-        if (key == null) { call.reject("missing:key"); return; }
+        String err = KeyImages.checkKey(key, s.spec());
+        if (err != null) { call.reject(err); return; }
+        // Black at the key's native size, already in the wire format: the
+        // deck does not scale what it receives to fill the key.
         byte[] black;
-        if (s.spec().keyImageFormat == DeckSpec.ImageFormat.JPEG) {
-            black = MINIMAL_BLACK_JPEG;
-        } else {
-            black = MINIMAL_BLACK_PNG;
-        }
-        s.queue().offerCoalesce(new ImageWriteJob(s, key, black, call));
+        try { black = s.encoder().blank(s.spec().keyImageW, s.spec().keyImageH); }
+        catch (ImageEncoder.ImageEncodeException e) { call.reject(e.getMessage()); return; }
+        s.queue().offerCoalesce(ImageWriteJob.preEncoded(s, key, black, call));
         call.setKeepAlive(true);
     }
 
@@ -776,17 +776,4 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         o.put("capabilities", caps);
         return o;
     }
-
-    /** Tiny black JPEG placeholder for clearKey on JPEG models. */
-    private static final byte[] MINIMAL_BLACK_JPEG = Base64.decode(
-        "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB"
-        + "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB/9sAQwEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB"
-        + "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAA"
-        + "AAAAAAAAAAAAAAr/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEA"
-        + "AAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwA/AAH/2Q==", Base64.NO_WRAP);
-
-    /** 1×1 black PNG placeholder for clearKey on BMP models. */
-    private static final byte[] MINIMAL_BLACK_PNG = Base64.decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
-        Base64.NO_WRAP);
 }
