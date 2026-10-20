@@ -52,9 +52,10 @@ public final class DeckSession {
      *  within one page's BULK_WRITE_TIMEOUT_MS; a heartbeat within its
      *  500 ms transfer; setBrightness and reset within their 1000 ms. */
     private static final long   STOP_WORKERS_MS = 2000;
-    /** Bound of a second close()'s wait for the first: its workers, then
-     *  its connection release and CloseListener. */
-    private static final long   CLOSE_WAIT_MS = STOP_WORKERS_MS + 1000;
+    /** Bound of a wait for a close(): its workers, then its connection
+     *  release and CloseListener. A second close() waits that long for the
+     *  first, and so does the plugin for the closes it hands over. */
+    static final long           CLOSE_WAIT_MS = STOP_WORKERS_MS + 1000;
 
     /** Told once, after the session stopped, whoever called close(). */
     public interface CloseListener {

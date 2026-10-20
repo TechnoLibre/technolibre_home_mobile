@@ -184,7 +184,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         if (hotplug != null) hotplug.detach(getContext());
         if (permissions != null) permissions.close();
         resetAllSessions();
-        for (DeckSession s : registry.sessions()) s.close("app_destroyed");
+        closeSessions(registry.sessions(), "app_destroyed", DeckSession.CLOSE_WAIT_MS);
         StreamDeckLifecycleService.setTaskRemovedHandler(null);
         if (wakeLock != null) {
             try { if (wakeLock.isHeld()) wakeLock.release(); }
@@ -207,6 +207,22 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             catch (Throwable t) {
                 Log.w(TAG, "reset failed for " + s.serial() + ": " + t.getMessage());
             }
+        }
+    }
+
+    /**
+     * Closes {@code sessions} side by side, each on its own thread, and
+     * waits for them at most {@code boundMs}, 0 for not at all; see
+     * ParallelClose. A close blocks while its session's workers end, which
+     * neither the main thread nor the shared plugin thread can afford.
+     */
+    private void closeSessions(List<DeckSession> sessions, String reason, long boundMs) {
+        List<Runnable> closes = new ArrayList<>();
+        for (DeckSession s : sessions) closes.add(() -> s.close(reason));
+        int running = ParallelClose.run(closes, "deck-close", boundMs);
+        if (running > 0 && boundMs > 0) {
+            Log.w(TAG, running + " session close(s) still running after " + boundMs
+                + " ms (" + reason + ")");
         }
     }
 
@@ -277,7 +293,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                     // registration: nothing stays registered, and an
                     // open session here would run without an owner.
                     Log.w(TAG, "onDeckAttached: " + name + " left while opening — closing");
-                    session.close("usb_lost");
+                    closeSessions(Collections.singletonList(session), "usb_lost", 0);
                     return;
                 }
                 synchronized (lastAttachError) { lastAttachError.remove(name); }
@@ -296,7 +312,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 emitter.emit("permissionDenied", ev);
             } catch (Throwable t) {
                 registry.release(name);
-                session.close("open_failed");
+                closeSessions(Collections.singletonList(session), "open_failed", 0);
                 String reason = "open_unexpected:" + t.getClass().getSimpleName()
                     + ":" + t.getMessage();
                 recordAttachError(name, reason);
@@ -337,7 +353,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             DeckSession session = registry.byDevice(name);
             if (session != null) {
                 Log.i(TAG, "onDeckDetached: closing session for " + name + " (debounce expired)");
-                session.close("usb_lost");
+                closeSessions(Collections.singletonList(session), "usb_lost", 0);
             }
             updateWakeLock();
         };
@@ -572,17 +588,19 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * ReattachPlan): the ones just closed, and any whose session closed
      * itself earlier while the deck stayed plugged in. Lets the user apply
      * setReaderMode without unplugging the deck. Resolves {restarted}, the
-     * number of decks re-attached.
+     * number of decks re-attached. Runs on its own thread, off the plugin
+     * thread every plugin shares: the closes wait for the sessions' workers.
      */
     @PluginMethod
     public void restartSessions(PluginCall call) {
-        for (DeckSession s : registry.sessions()) {
-            s.close("restart_requested");   // unregisters through onSessionClosed
-        }
-        forgetAllReattach();
-        JSObject r = new JSObject();
-        r.put("restarted", attachIdleDecks());
-        call.resolve(r);
+        ParallelClose.run(Collections.singletonList(() -> {
+            // Each close unregisters its session through onSessionClosed.
+            closeSessions(registry.sessions(), "restart_requested", DeckSession.CLOSE_WAIT_MS);
+            forgetAllReattach();
+            JSObject r = new JSObject();
+            r.put("restarted", attachIdleDecks());
+            call.resolve(r);
+        }), "deck-restart", 0);
     }
 
     /**
