@@ -133,6 +133,27 @@ describe("IntentService", () => {
             expect(handler).not.toHaveBeenCalled();
         });
 
+        it("treats a rejected check as no pending intent", async () => {
+            // The plugin rejects every launch that is not a share.
+            mockSendIntent.checkSendIntentReceived.mockRejectedValue(
+                new Error("No processing needed"),
+            );
+            const unhandled = vi.fn();
+            process.on("unhandledRejection", unhandled);
+            try {
+                const bus = new EventBus();
+                const handler = vi.fn();
+                bus.addEventListener(Events.ROUTER_NAVIGATION, handler);
+                const svc = new IntentService(bus);
+                await new Promise((r) => setTimeout(r, 0));
+                expect(unhandled).not.toHaveBeenCalled();
+                expect(svc.intent).toBeUndefined();
+                expect(handler).not.toHaveBeenCalled();
+            } finally {
+                process.off("unhandledRejection", unhandled);
+            }
+        });
+
         it("does nothing when no intent is pending", async () => {
             mockSendIntent.checkSendIntentReceived.mockResolvedValue(null);
             const bus = new EventBus();
