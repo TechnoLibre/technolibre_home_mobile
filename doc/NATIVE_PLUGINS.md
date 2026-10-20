@@ -359,8 +359,8 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `setLcdRegion({deckId, x, y, w, h, bytes})` | Plus only — a JPEG for a partial region. |
 | `setInfoBar({deckId, index, bytes})` | Neo only — a 248×58 JPEG on the info screen. The Neo has a single screen; `index` must be 0 (forward compatibility with future models). The screen is mounted like the keys: send the image rotated 180°. |
 | `getPowerOptions()` | Resolves `{showOverLockScreen, keepAwake}`, both `false` until the user turns them on. |
-| `setPowerOptions({showOverLockScreen?, keepAwake?})` | Stores the fields given and leaves the others; resolves with both. `keepAwake` — a partial wake lock and a 700 ms USB heartbeat while a deck is open — applies at once to the open decks. `showOverLockScreen` lets a launch caused by the deck show the app over the lock screen, and is the only way a deck key press turns the screen on. The app couples `keepAwake` with the Sleep section's "keep the deck lit" option, which arms `setWakeOnKeyPress` and needs it: turning that option on turns `keepAwake` on, turning `keepAwake` off turns that option off (`src/services/deckSleepCoupling.ts`). |
-| `setWakeOnKeyPress({enabled})` | Arms or disarms the key-press wake; resolves `{enabled}`, not stored by the plugin. A key press while the app is paused turns the screen on and brings the app forward only when it is armed AND `showOverLockScreen` is on (`DeckPowerOptions.wakeScreenOnKeyPress`). Otherwise the screen stays as it is and the press arrives as `keyChanged` only. |
+| `setPowerOptions({showOverLockScreen?, keepAwake?})` | Stores the fields given and leaves the others; resolves with both. `keepAwake` — a partial wake lock and a 700 ms USB heartbeat while a deck is open, the lock also while a self-closed deck waits to be reopened — applies at once to the open decks. `showOverLockScreen` lets a launch caused by the deck show the app over the lock screen, and is the only way a deck key press turns the screen on. The app couples `keepAwake` with the Sleep section's "keep the deck lit" option, which arms `setWakeOnKeyPress` and needs it: turning that option on turns `keepAwake` on first, and leaves the option off when `keepAwake` stays off; turning `keepAwake` off turns that option off first. App boot arms `setWakeOnKeyPress` as stored and repairs that option stored on with `keepAwake` off (`src/services/deckSleepCoupling.ts`). |
+| `setWakeOnKeyPress({enabled})` | Arms or disarms the key-press wake; resolves `{enabled}`, not stored by the plugin. When it is armed, a key press while the app is paused brings the app forward if the screen is already lit, or if `showOverLockScreen` is on, which alone lets the press turn the screen on (`DeckPowerOptions.bringAppForwardOnKeyPress`, `wakeScreenOnKeyPress`). Otherwise the screen stays off and the press arrives as `keyChanged` only. |
 | `restartSessions()` | Closes every open session, then opens every permitted deck that has none, including one whose session closed itself while it stayed plugged in. Cancels the pending automatic reopens and gives every deck its three attempts back. Resolves `{restarted}`, the number of decks re-attached. |
 | `retryAttach()` | Opens every permitted deck that has no session, without closing any. Cancels the pending automatic reopens and gives every deck its three attempts back. Resolves `{retried}`. |
 
@@ -390,7 +390,11 @@ path as a hotplug attach (reservation, permission already granted, open,
 registration), so it never opens a second session nor shows a dialog. A
 deck without permission counts as a failed attempt. The count resets once
 a session has stayed registered for 60 s. After the third failed attempt
-`reattachGaveUp` is sent once and nothing more is tried.
+`reattachGaveUp` is sent once and nothing more is tried; when the last
+failure is `permission_missing`, its journal line points at the request
+permission button. With `keepAwake` on, the partial wake lock stays held
+while a reopen waits: the retry timer does not advance while the CPU
+sleeps.
 
 Nothing is reopened after an unplug (`usb_lost`: hotplug handles the
 return), `restartSessions`, `retryAttach` or the destruction of the app;

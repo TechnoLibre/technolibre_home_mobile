@@ -362,8 +362,8 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `setLcdRegion({deckId, x, y, w, h, bytes})` | Plus uniquement — JPEG région partielle. |
 | `setInfoBar({deckId, index, bytes})` | Neo uniquement — JPEG 248×58 sur l'écran d'info. Le Neo n'a qu'un seul écran ; `index` doit être 0 (forward-compat pour de futurs modèles). L'écran est monté comme les touches : envoyer l'image tournée de 180°. |
 | `getPowerOptions()` | Résout `{showOverLockScreen, keepAwake}`, tous deux `false` tant que l'utilisateur ne les active pas. |
-| `setPowerOptions({showOverLockScreen?, keepAwake?})` | Enregistre les champs donnés, laisse les autres ; résout avec les deux. `keepAwake` — un wake lock partiel et un battement USB de 700 ms tant qu'un deck est ouvert — s'applique tout de suite aux decks ouverts. `showOverLockScreen` permet à un lancement causé par le deck d'afficher l'app par-dessus l'écran de verrouillage, et c'est la seule façon pour une touche du deck d'allumer l'écran. L'app lie `keepAwake` à l'option « garder le deck allumé » de la section Mise en veille, qui arme `setWakeOnKeyPress` et en a besoin : cocher cette option coche `keepAwake`, décocher `keepAwake` la décoche (`src/services/deckSleepCoupling.ts`). |
-| `setWakeOnKeyPress({enabled})` | Arme ou désarme le réveil par touche ; résout `{enabled}`, que le plugin n'enregistre pas. Une touche pressée pendant que l'app est en pause n'allume l'écran et ne ramène l'app au premier plan que si le réveil est armé ET `showOverLockScreen` activé (`DeckPowerOptions.wakeScreenOnKeyPress`). Sinon l'écran reste tel quel et la touche n'arrive qu'en `keyChanged`. |
+| `setPowerOptions({showOverLockScreen?, keepAwake?})` | Enregistre les champs donnés, laisse les autres ; résout avec les deux. `keepAwake` — un wake lock partiel et un battement USB de 700 ms tant qu'un deck est ouvert, le wake lock aussi tant qu'un deck fermé de lui-même attend sa réouverture — s'applique tout de suite aux decks ouverts. `showOverLockScreen` permet à un lancement causé par le deck d'afficher l'app par-dessus l'écran de verrouillage, et c'est la seule façon pour une touche du deck d'allumer l'écran. L'app lie `keepAwake` à l'option « garder le deck allumé » de la section Mise en veille, qui arme `setWakeOnKeyPress` et en a besoin : cocher cette option coche d'abord `keepAwake`, et la laisse décochée si `keepAwake` reste désactivé ; décocher `keepAwake` la décoche d'abord. Le démarrage de l'app arme `setWakeOnKeyPress` comme enregistré et répare cette option enregistrée cochée avec `keepAwake` désactivé (`src/services/deckSleepCoupling.ts`). |
+| `setWakeOnKeyPress({enabled})` | Arme ou désarme le réveil par touche ; résout `{enabled}`, que le plugin n'enregistre pas. Réveil armé, une touche pressée pendant que l'app est en pause ramène l'app au premier plan si l'écran est déjà allumé, ou si `showOverLockScreen` est activé, seule option qui permet à la touche d'allumer l'écran (`DeckPowerOptions.bringAppForwardOnKeyPress`, `wakeScreenOnKeyPress`). Sinon l'écran reste éteint et la touche n'arrive qu'en `keyChanged`. |
 | `restartSessions()` | Ferme toutes les sessions ouvertes, puis ouvre chaque deck permis qui n'en a pas, y compris celui dont la session s'est fermée d'elle-même alors qu'il restait branché. Annule les réouvertures automatiques en attente et rend à chaque deck ses trois essais. Résout `{restarted}`, le nombre de decks rattachés. |
 | `retryAttach()` | Ouvre chaque deck permis qui n'a pas de session, sans en fermer aucune. Annule les réouvertures automatiques en attente et rend à chaque deck ses trois essais. Résout `{retried}`. |
 
@@ -394,7 +394,10 @@ ouverture, enregistrement), sans jamais ouvrir une deuxième session ni
 afficher de dialogue. Un deck sans permission compte comme un essai raté.
 Le compte revient à zéro dès qu'une session est restée enregistrée 60 s.
 Après le troisième essai raté, `reattachGaveUp` part une fois et plus rien
-n'est tenté.
+n'est tenté ; quand le dernier échec est `permission_missing`, sa ligne au
+journal renvoie au bouton de demande de permission. Avec `keepAwake`, le
+wake lock partiel reste tenu pendant qu'une réouverture attend : la
+minuterie de reprise n'avance pas quand le CPU dort.
 
 Rien n'est rouvert après un débranchement (`usb_lost` : le hotplug gère
 le retour), `restartSessions`, `retryAttach` ou la destruction de l'app ;
