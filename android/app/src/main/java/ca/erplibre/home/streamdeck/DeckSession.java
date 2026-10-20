@@ -33,8 +33,8 @@ import ca.erplibre.home.streamdeck.transport.TransportV2;
  *   open(usbConnection, iface) — claim, read serial, start threads
  *   close() — drain queue with rejected promises, end the threads (see
  *             WorkerShutdown) and the calls from other threads (see
- *             UsbCallGate), release iface, then tell the owner through
- *             the CloseListener
+ *             UsbCallGate), close the connection, then tell the owner
+ *             through the CloseListener
  *
  * close() runs from the owner (detach, restart, destroy), from the reader
  * thread itself when the USB pipe fails, or from the writer thread when
@@ -54,7 +54,7 @@ public final class DeckSession {
      *  500 ms transfer; setBrightness and reset within their 1000 ms. */
     private static final long   STOP_WORKERS_MS = 2000;
     /** Bound of a wait for a close(): its workers, then its connection
-     *  release and CloseListener. A second close() waits that long for the
+     *  close and CloseListener. A second close() waits that long for the
      *  first, and so does the plugin for the closes it hands over. */
     static final long           CLOSE_WAIT_MS = STOP_WORKERS_MS + 1000;
 
@@ -317,7 +317,8 @@ public final class DeckSession {
         // released: close() frees the native device their USB calls use.
         // Outside the monitor, which setHeartbeat takes; the calling
         // worker, if any, is skipped. One deadline bounds both waits.
-        long deadline = System.nanoTime() + STOP_WORKERS_MS * 1_000_000L;
+        long start = System.nanoTime();
+        long deadline = start + STOP_WORKERS_MS * 1_000_000L;
         for (Thread t : WorkerShutdown.stop(workers, STOP_WORKERS_MS)) {
             Log.w(TAG, "close: " + t.getName() + " still running after "
                 + STOP_WORKERS_MS + " ms; releasing the connection anyway");
@@ -327,10 +328,16 @@ public final class DeckSession {
             Log.w(TAG, "close: a USB call from another thread still running after "
                 + STOP_WORKERS_MS + " ms; releasing the connection anyway");
         }
+        long stoppedAt = System.nanoTime();
+        // No releaseInterface: the framework follows a release with
+        // USBDEVFS_CONNECT, which binds the kernel's HID driver again
+        // inside the call, and that driver's probe opens with a SET_IDLE
+        // a deck may never answer, a 5 s control timeout. Closing the file
+        // descriptor releases the claim without binding anything, and the
+        // next claimInterface finds no driver to disconnect.
         UsbRequest left;
         synchronized (this) {
             if (connection != null) {
-                try { connection.releaseInterface(iface); } catch (Exception ignored) {}
                 try { connection.close(); } catch (Exception ignored) {}
             }
             connectionClosed = true;
@@ -340,6 +347,10 @@ public final class DeckSession {
         if (left != null) {
             try { left.close(); } catch (RuntimeException ignored) { }
         }
+        long closedAt = System.nanoTime();
+        Log.i(TAG, "close(" + reason + "): workers and calls "
+            + (stoppedAt - start) / 1_000_000L + " ms, connection "
+            + (closedAt - stoppedAt) / 1_000_000L + " ms");
         // Outside the monitor: the listener takes the plugin's registry
         // lock, and the plugin never calls into a session under that lock.
         // The plugin also sends deckDisconnected from there.
