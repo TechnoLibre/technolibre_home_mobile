@@ -83,6 +83,10 @@ public final class DeckSession {
     private UsbEndpoint epOut;
     private String serial = "";
     private String firmware = "";
+    /** Set by open(): the control pipe answered a feature report (see
+     *  FeatureReads). False, setBrightness and reset fail at once rather
+     *  than each costing its control timeout. */
+    private volatile boolean controlPipeOk = true;
 
     /** Set by open() under this; volatile for the health getters. */
     private volatile Thread readerThread;
@@ -193,6 +197,9 @@ public final class DeckSession {
     public UsbDevice device(){ return device; }
     public String serial()   { return serial; }
     public String firmware() { return firmware; }
+    /** False when no feature report went through at open: brightness and
+     *  reset are refused until the deck is replugged. */
+    public boolean controlPipeOk() { return controlPipeOk; }
     /** False from the moment close() starts. */
     public boolean isOpen()  { return running; }
 
@@ -268,13 +275,40 @@ public final class DeckSession {
         // garbled key at most, which the writer's own failures report.
         resetKeyStream();
 
-        try {
-            this.serial   = readSerial();
-            this.firmware = readFirmware();
-        } catch (Exception e) {
-            Log.w(TAG, "feature read failed for " + device.getDeviceName(), e);
-            this.serial = device.getSerialNumber() != null ? device.getSerialNumber() : "unknown";
-            this.firmware = "unknown";
+        // Before the reader starts: nothing else uses EP0 yet.
+        final UsbDeviceConnection c = connection;
+        FeatureReads.Result reads = FeatureReads.read(
+            spec.transport == DeckSpec.TransportKind.V2,
+            new FeatureReads.Ep0() {
+                @Override public int getFeature(int reportId, byte[] buf, int timeoutMs) {
+                    // GET_REPORT: request type 0xa1, request 0x01, value
+                    // (Feature << 8) | reportId.
+                    return c.controlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, 0,
+                        buf, buf.length, timeoutMs);
+                }
+                @Override public int getDeviceDescriptor(byte[] buf, int timeoutMs) {
+                    // GET_DESCRIPTOR: request type 0x80, request 0x06,
+                    // value (DEVICE << 8) | 0.
+                    return c.controlTransfer(0x80, 0x06, 0x0100, 0,
+                        buf, buf.length, timeoutMs);
+                }
+            },
+            Thread::sleep);
+        this.controlPipeOk = reads.controlPipeOk;
+        // The USB serial string the system read at enumeration matches the
+        // feature report's on the decks the registry knows.
+        String usbSerial = device.getSerialNumber();
+        this.serial = reads.serial != null ? reads.serial
+            : usbSerial != null ? usbSerial : "unknown";
+        this.firmware = reads.firmware != null ? reads.firmware : "unknown";
+        if (!reads.controlPipeOk) {
+            Log.w(TAG, "control pipe of " + device.getDeviceName()
+                + " answers no feature report; standard requests "
+                + (reads.standardRequestsAnswer ? "answer" : "fail too")
+                + ". Brightness and reset are off until the deck is replugged");
+        } else if (reads.serial == null) {
+            Log.w(TAG, "serial read failed for " + device.getDeviceName()
+                + "; using the USB serial string");
         }
 
         running = true;
@@ -409,6 +443,7 @@ public final class DeckSession {
 
     /** Set brightness 0..100 via feature report. */
     public void setBrightness(int percent) throws DeckIoException {
+        if (!controlPipeOk) throw new DeckIoException("control_pipe_down");
         int p = Math.max(0, Math.min(100, percent));
         // Feature report: 0x03 0x08 <pct>. SET_REPORT request type 0x21,
         // request 0x09 (SET_REPORT), value (Feature << 8) | reportId.
@@ -428,6 +463,7 @@ public final class DeckSession {
 
     /** Reset (clear all key images) via feature report. */
     public void reset() throws DeckIoException {
+        if (!controlPipeOk) throw new DeckIoException("control_pipe_down");
         byte[] payload;
         if (spec.transport == DeckSpec.TransportKind.V2) {
             payload = new byte[32];
@@ -512,33 +548,6 @@ public final class DeckSession {
                 Log.w(TAG, "heartbeat failed (continuing)", t);
             }
         }
-    }
-
-    private String readSerial() throws DeckIoException {
-        // GET_REPORT (request type 0xa1, request 0x01), feature report ID per generation.
-        byte[] buf = new byte[32];
-        int reportId = (spec.transport == DeckSpec.TransportKind.V2) ? 0x06 : 0x03;
-        int got = connection.controlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, 0, buf, buf.length, 1000);
-        if (got < 0) throw new DeckIoException("read_serial_failed:" + got);
-        return parseAsciiAfterHeader(buf, /*headerLen=*/ (spec.transport == DeckSpec.TransportKind.V2) ? 2 : 5, got);
-    }
-
-    private String readFirmware() throws DeckIoException {
-        byte[] buf = new byte[32];
-        int reportId = (spec.transport == DeckSpec.TransportKind.V2) ? 0x05 : 0x04;
-        int got = connection.controlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, 0, buf, buf.length, 1000);
-        if (got < 0) throw new DeckIoException("read_firmware_failed:" + got);
-        return parseAsciiAfterHeader(buf, /*headerLen=*/ (spec.transport == DeckSpec.TransportKind.V2) ? 6 : 5, got);
-    }
-
-    private static String parseAsciiAfterHeader(byte[] buf, int headerLen, int totalLen) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = headerLen; i < totalLen; i++) {
-            byte b = buf[i];
-            if (b == 0) break;
-            if (b >= 0x20 && b < 0x7f) sb.append((char) b);
-        }
-        return sb.toString();
     }
 
     private void readerLoop() {

@@ -34,6 +34,9 @@ export interface DeckInfo {
     infoBars?: { w: number; h: number; count: number };
     touchPoints: number;
     firmwareVersion: string;
+    /** False when the deck answered no feature report at open: brightness
+     *  and reset are refused (control_pipe_down) until it is replugged. */
+    controlPipeOk: boolean;
     capabilities: string[];
 }
 
@@ -130,6 +133,10 @@ export interface DeckHealth {
     writerAlive: boolean;
     writeFailuresInARow: number;
     controlFailuresInARow: number;
+    /** False for an open session whose control pipe answered nothing at
+     *  open; its control failures are then no sickness, since a restart
+     *  does not clear them. True when no session is open. */
+    controlPipeOk: boolean;
     lastCloseReason: string;
     sick: boolean;
     sickReason: string;

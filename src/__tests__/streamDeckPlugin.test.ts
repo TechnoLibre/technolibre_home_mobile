@@ -43,6 +43,7 @@ describe("StreamDeckPlugin TS bridge", () => {
             dialCount: 0,
             touchPoints: 0,
             firmwareVersion: "1.0",
+            controlPipeOk: true,
             capabilities: ["keys"],
         };
         mockListDecks.mockResolvedValue({ decks: [sample] });

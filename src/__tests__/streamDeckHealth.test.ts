@@ -17,6 +17,7 @@ function deck(over: Partial<DeckHealth> = {}): DeckHealth {
         writerAlive: true,
         writeFailuresInARow: 0,
         controlFailuresInARow: 0,
+        controlPipeOk: true,
         lastCloseReason: "",
         sick: false,
         sickReason: "",

@@ -707,7 +707,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * For each attached known Stream Deck, the signals SessionHealth reads
      * and its verdict: {decks: [{deviceName, deckId, hasPermission, open,
      * reopening, readerAlive, writerAlive, writeFailuresInARow,
-     * controlFailuresInARow, lastCloseReason, sick, sickReason}]}. deckId
+     * controlFailuresInARow, controlPipeOk, lastCloseReason, sick,
+     * sickReason}]}. deckId
      * is the session's serial, else the USB serial once readable, else "".
      * Makes no USB transfer, so it costs a deck nothing.
      */
@@ -724,7 +725,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             SessionHealth.Signals sig = new SessionHealth.Signals(
                 permitted, registry.isBusy(name), open, reattach.reopening(name),
                 open && s.readerAlive(), open && s.writerAlive(),
-                open ? s.writeFailuresInARow() : 0, open ? s.controlFailuresInARow() : 0);
+                open ? s.writeFailuresInARow() : 0, open ? s.controlFailuresInARow() : 0,
+                !open || s.controlPipeOk());
             String sickness = SessionHealth.sickness(sig);
             String closeReason;
             synchronized (lastCloseReason) { closeReason = lastCloseReason.get(name); }
@@ -738,6 +740,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             o.put("writerAlive", sig.writerAlive);
             o.put("writeFailuresInARow", sig.writeFailuresInARow);
             o.put("controlFailuresInARow", sig.controlFailuresInARow);
+            o.put("controlPipeOk", sig.controlPipeOk);
             o.put("lastCloseReason", closeReason != null ? closeReason : "");
             o.put("sick", !sickness.isEmpty());
             o.put("sickReason", sickness);
@@ -1209,6 +1212,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         }
         o.put("touchPoints", spec.touchPoints);
         o.put("firmwareVersion", s.firmware());
+        o.put("controlPipeOk", s.controlPipeOk());
         JSArray caps = new JSArray();
         for (String c : spec.capabilities) caps.put(c);
         o.put("capabilities", caps);

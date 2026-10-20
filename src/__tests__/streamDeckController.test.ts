@@ -364,7 +364,8 @@ describe("StreamDeckController", () => {
                 deviceName, deckId, hasPermission: true, open: true,
                 reopening: false, readerAlive: sickReason !== "reader_ended",
                 writerAlive: true, writeFailuresInARow: 0,
-                controlFailuresInARow: 0, lastCloseReason: "",
+                controlFailuresInARow: 0, controlPipeOk: true,
+                lastCloseReason: "",
                 sick: sickReason !== "", sickReason,
             };
         }

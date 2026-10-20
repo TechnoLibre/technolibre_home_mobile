@@ -21,7 +21,10 @@ package ca.erplibre.home.streamdeck;
  *   WRITER_ENDED    — same for the writer thread.
  *   WRITES_FAILING  — FAILURES_SICK bulk writes failed in a row.
  *   CONTROL_FAILING — FAILURES_SICK EP0 transfers failed in a row
- *                     (brightness, reset, heartbeat).
+ *                     (brightness, reset, heartbeat), on a session whose
+ *                     control pipe answered at open (FeatureReads). One
+ *                     down since open stays down across a restart, until
+ *                     a replug, so its failures are no sickness.
  * A deck without permission is never sick: a restart does not ask for
  * it. A device busy but not open — an attach holding the reservation, a
  * close in progress — is left to that path, as is a deck whose automatic
@@ -55,10 +58,21 @@ final class SessionHealth {
         final boolean writerAlive;
         final int writeFailuresInARow;
         final int controlFailuresInARow;
+        /** The session's control pipe answered at open; true without one. */
+        final boolean controlPipeOk;
 
+        /** A session whose control pipe answered at open. */
         Signals(boolean permitted, boolean busy, boolean open, boolean reopening,
                 boolean readerAlive, boolean writerAlive,
                 int writeFailuresInARow, int controlFailuresInARow) {
+            this(permitted, busy, open, reopening, readerAlive, writerAlive,
+                writeFailuresInARow, controlFailuresInARow, true);
+        }
+
+        Signals(boolean permitted, boolean busy, boolean open, boolean reopening,
+                boolean readerAlive, boolean writerAlive,
+                int writeFailuresInARow, int controlFailuresInARow,
+                boolean controlPipeOk) {
             this.permitted = permitted;
             this.busy = busy;
             this.open = open;
@@ -67,6 +81,7 @@ final class SessionHealth {
             this.writerAlive = writerAlive;
             this.writeFailuresInARow = writeFailuresInARow;
             this.controlFailuresInARow = controlFailuresInARow;
+            this.controlPipeOk = controlPipeOk;
         }
     }
 
@@ -78,7 +93,9 @@ final class SessionHealth {
         if (!s.readerAlive) return READER_ENDED;
         if (!s.writerAlive) return WRITER_ENDED;
         if (s.writeFailuresInARow >= FAILURES_SICK) return WRITES_FAILING;
-        if (s.controlFailuresInARow >= FAILURES_SICK) return CONTROL_FAILING;
+        if (s.controlPipeOk && s.controlFailuresInARow >= FAILURES_SICK) {
+            return CONTROL_FAILING;
+        }
         return "";
     }
 

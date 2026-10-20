@@ -531,7 +531,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "keyChanged until the page's key handler calls "
                         + "keyListenerReady (at launch and after each page load): "
                         + "the last 16 events at most, those older than 10 s "
-                        + "dropped, the rest delivered in arrival order.",
+                        + "dropped, the rest delivered in arrival order. "
+                        + "FeatureReads probes the control pipe at open with "
+                        + "the firmware report (250 ms, one retry): a deck "
+                        + "that answers neither opens with controlPipeOk "
+                        + "false, its USB serial string as deckId, and "
+                        + "brightness and reset refused at once until it is "
+                        + "replugged.",
                     fr: "Plugin Capacitor (Java) qui enveloppe le stack USB host. DeckRegistry "
                         + "garde une DeckSession par appareil branché; DeckSpec porte product id "
                         + "→ nb touches, taille image, version transport. La surface bridge est "
@@ -541,7 +547,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "touches de la page appelle keyListenerReady (au lancement "
                         + "et après chaque chargement de page) : 16 événements au "
                         + "plus, ceux de plus de 10 s écartés, les autres livrés "
-                        + "dans leur ordre d'arrivée.",
+                        + "dans leur ordre d'arrivée. FeatureReads sonde le "
+                        + "canal de contrôle à l'ouverture avec le rapport "
+                        + "firmware (250 ms, un nouvel essai) : un deck qui "
+                        + "ne répond à aucun s'ouvre avec controlPipeOk faux, "
+                        + "sa chaîne de série USB pour deckId, et luminosité "
+                        + "et reset refusés aussitôt jusqu'à son "
+                        + "rebranchement.",
                 },
                 demo: NONE_PLUMBING,
                 files: [
@@ -554,6 +566,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSpec.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckRegistry.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/KeyEventGate.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/FeatureReads.java",
+                ],
+                tests: [
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/FeatureReadsTest.java",
                 ],
             },
             {
@@ -601,7 +617,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "getSessionHealth and restarts only the decks the "
                         + "plugin reports sick (no session and no automatic "
                         + "reopen pending, reader or writer thread ended, two "
-                        + "failed writes or EP0 transfers in a row) through "
+                        + "failed writes or EP0 transfers in a row, the latter "
+                        + "only on a deck whose control pipe answered at "
+                        + "open) through "
                         + "restartSessions({deviceNames}); a healthy deck is "
                         + "restored, never closed. An idle deck sends no "
                         + "report, so silence is not a sickness. Once its "
@@ -622,7 +640,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "le plugin déclare malades (pas de session et aucune "
                         + "réouverture automatique en attente, fil lecteur ou "
                         + "écrivain terminé, deux écritures ou transferts EP0 "
-                        + "ratés de suite) via restartSessions({deviceNames}) ; "
+                        + "ratés de suite, ces derniers seulement sur un deck "
+                        + "dont le canal de contrôle a répondu à l'ouverture) "
+                        + "via restartSessions({deviceNames}) ; "
                         + "un deck sain est restauré, jamais fermé. Un deck "
                         + "inactif n'envoie aucun rapport : le silence n'est "
                         + "pas une maladie. Une fois son gestionnaire keyChanged "

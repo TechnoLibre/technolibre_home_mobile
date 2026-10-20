@@ -89,6 +89,20 @@ public class SessionHealthTest {
     }
 
     @Test
+    public void control_failures_on_a_pipe_down_since_open_are_no_sickness() {
+        // A restart reopens the deck with the same dead control pipe:
+        // only a replug clears it, so the restart would cost the keys'
+        // images for nothing.
+        assertEquals("", SessionHealth.sickness(
+            new SessionHealth.Signals(true, true, true, false, true, true,
+                0, SessionHealth.FAILURES_SICK, false)));
+        // Write failures on such a session still count.
+        assertEquals(SessionHealth.WRITES_FAILING, SessionHealth.sickness(
+            new SessionHealth.Signals(true, true, true, false, true, true,
+                SessionHealth.FAILURES_SICK, SessionHealth.FAILURES_SICK, false)));
+    }
+
+    @Test
     public void sick_threshold_stays_below_the_writer_close() {
         // The writer closes the session at FAILURES_TO_CLOSE: a session
         // still open with failures in a row is caught before that.
