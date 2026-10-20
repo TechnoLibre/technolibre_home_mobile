@@ -360,8 +360,8 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `setInfoBar({deckId, index, bytes})` | Neo only — a 248×58 JPEG on the info screen. The Neo has a single screen; `index` must be 0 (forward compatibility with future models). The screen is mounted like the keys: send the image rotated 180°. |
 | `getPowerOptions()` | Resolves `{showOverLockScreen, keepAwake}`, both `false` until the user turns them on. |
 | `setPowerOptions({showOverLockScreen?, keepAwake?})` | Stores the fields given and leaves the others; resolves with both. `keepAwake` — a partial wake lock and a 700 ms USB heartbeat while a deck is open — applies at once to the open decks. `showOverLockScreen` lets a launch caused by the deck show the app over the lock screen. |
-| `restartSessions()` | Closes every open session, then opens every permitted deck that has none, including one whose session closed itself while it stayed plugged in. Resolves `{restarted}`, the number of decks re-attached. |
-| `retryAttach()` | Opens every permitted deck that has no session, without closing any. Resolves `{retried}`. |
+| `restartSessions()` | Closes every open session, then opens every permitted deck that has none, including one whose session closed itself while it stayed plugged in. Cancels the pending automatic reopens and gives every deck its three attempts back. Resolves `{restarted}`, the number of decks re-attached. |
+| `retryAttach()` | Opens every permitted deck that has no session, without closing any. Cancels the pending automatic reopens and gives every deck its three attempts back. Resolves `{retried}`. |
 
 ### Events
 
@@ -376,6 +376,24 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `lcdTouched` | `{deckId, type, x, y, xEnd?, yEnd?}` (Plus) |
 | `neoTouched` | `{deckId, index, pressed}` (Neo) |
 | `writeFailed` | `{deckId, key, reason}` — a `setKeyImagesBatch` entry that failed (rejected image, failed transfer). Sent once per key and reason, until a write to that key succeeds. |
+| `reattachGaveUp` | `{deckId, deviceName, attempts, reason}` — the automatic reopen failed three times; nothing retries it afterwards. `deckId` is `""` when no serial was read; `reason` is the last close or attach failure. The app writes it as one line in the Stream Deck journal. |
+
+### Automatic reopen
+
+A session that closes itself — a reader failure (`polled_reset` after
+10 s without data, `usb_request_…`, `bulk_read_threw:…`,
+`polled_threw:…`) or three write failures in a row (`usb_lost:<detail>`)
+— leaves its deck plugged in with no session. The plugin reopens it after
+2 s, then 4 s, then 8 s: three attempts at most, each through the same
+path as a hotplug attach (reservation, permission already granted, open,
+registration), so it never opens a second session nor shows a dialog. A
+deck without permission counts as a failed attempt. The count resets once
+a session has stayed registered for 60 s. After the third failed attempt
+`reattachGaveUp` is sent once and nothing more is tried.
+
+Nothing is reopened after an unplug (`usb_lost`: hotplug handles the
+return), `restartSessions`, `retryAttach` or the destruction of the app;
+those cancel the pending reopens.
 
 ### Persistent identity
 

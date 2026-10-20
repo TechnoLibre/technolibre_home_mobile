@@ -623,7 +623,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "\"Demander permission\" button) asks again for one deck or "
                         + "every attached one; PermissionRequestPlan picks the devices and "
                         + "names each outcome: already_granted, granted, denied, timeout "
-                        + "after 30 s, error.",
+                        + "after 30 s, error. A session that closes itself while the deck "
+                        + "stays plugged in (reader failure, polled_reset, failed writes) "
+                        + "is reopened after 2, 4 then 8 s (ReattachPolicy); the count "
+                        + "resets after 60 s of healthy session, and after a third failed "
+                        + "attempt one line goes to the journal and nothing more is tried. "
+                        + "Unplug, restartSessions, retryAttach and app destroy cancel it.",
                     fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
                         + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
                         + "appareil : premier attach prompt l'utilisateur; l'autorisation est "
@@ -632,7 +637,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(le bouton « Demander permission ») redemande pour un deck ou pour "
                         + "chaque deck branché ; PermissionRequestPlan choisit les appareils et "
                         + "nomme chaque issue : already_granted, granted, denied, timeout "
-                        + "après 30 s, error.",
+                        + "après 30 s, error. Une session qui se ferme d'elle-même, deck "
+                        + "toujours branché (échec du lecteur, polled_reset, écritures en "
+                        + "échec), est rouverte après 2, 4 puis 8 s (ReattachPolicy) ; le "
+                        + "compte revient à zéro après 60 s de session saine, et après un "
+                        + "troisième essai raté une ligne part au journal et plus rien "
+                        + "n'est tenté. Débranchement, restartSessions, retryAttach et "
+                        + "destruction de l'app l'annulent.",
                 },
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: [
@@ -640,11 +651,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbPermissionRequester.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionTimeoutException.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/PermissionRequestPlan.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachPolicy.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
                     "src/plugins/streamDeckPlugin.ts",
                 ],
                 tests: [
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/PermissionRequestPlanTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachPolicyTest.java",
                     "src/__tests__/streamDeckPlugin.test.ts",
                 ],
             },

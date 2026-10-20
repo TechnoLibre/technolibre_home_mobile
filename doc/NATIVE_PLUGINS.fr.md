@@ -363,8 +363,8 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `setInfoBar({deckId, index, bytes})` | Neo uniquement — JPEG 248×58 sur l'écran d'info. Le Neo n'a qu'un seul écran ; `index` doit être 0 (forward-compat pour de futurs modèles). L'écran est monté comme les touches : envoyer l'image tournée de 180°. |
 | `getPowerOptions()` | Résout `{showOverLockScreen, keepAwake}`, tous deux `false` tant que l'utilisateur ne les active pas. |
 | `setPowerOptions({showOverLockScreen?, keepAwake?})` | Enregistre les champs donnés, laisse les autres ; résout avec les deux. `keepAwake` — un wake lock partiel et un battement USB de 700 ms tant qu'un deck est ouvert — s'applique tout de suite aux decks ouverts. `showOverLockScreen` permet à un lancement causé par le deck d'afficher l'app par-dessus l'écran de verrouillage. |
-| `restartSessions()` | Ferme toutes les sessions ouvertes, puis ouvre chaque deck permis qui n'en a pas, y compris celui dont la session s'est fermée d'elle-même alors qu'il restait branché. Résout `{restarted}`, le nombre de decks rattachés. |
-| `retryAttach()` | Ouvre chaque deck permis qui n'a pas de session, sans en fermer aucune. Résout `{retried}`. |
+| `restartSessions()` | Ferme toutes les sessions ouvertes, puis ouvre chaque deck permis qui n'en a pas, y compris celui dont la session s'est fermée d'elle-même alors qu'il restait branché. Annule les réouvertures automatiques en attente et rend à chaque deck ses trois essais. Résout `{restarted}`, le nombre de decks rattachés. |
+| `retryAttach()` | Ouvre chaque deck permis qui n'a pas de session, sans en fermer aucune. Annule les réouvertures automatiques en attente et rend à chaque deck ses trois essais. Résout `{retried}`. |
 
 ### Events
 
@@ -379,6 +379,25 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `lcdTouched` | `{deckId, type, x, y, xEnd?, yEnd?}` (Plus) |
 | `neoTouched` | `{deckId, index, pressed}` (Neo) |
 | `writeFailed` | `{deckId, key, reason}` — une entrée de `setKeyImagesBatch` en échec (image refusée, transfert en échec). Envoyé une fois par touche et raison, jusqu'à ce qu'une écriture sur cette touche réussisse. |
+| `reattachGaveUp` | `{deckId, deviceName, attempts, reason}` — la réouverture automatique a échoué trois fois ; plus rien ne la retente. `deckId` vaut `""` si aucun numéro de série n'a été lu ; `reason` est le dernier échec de fermeture ou d'attachement. L'app l'écrit en une ligne dans le journal du Stream Deck. |
+
+### Réouverture automatique
+
+Une session qui se ferme d'elle-même — un échec du lecteur (`polled_reset`
+après 10 s sans données, `usb_request_…`, `bulk_read_threw:…`,
+`polled_threw:…`) ou trois écritures en échec de suite
+(`usb_lost:<détail>`) — laisse son deck branché sans session. Le plugin le
+rouvre après 2 s, puis 4 s, puis 8 s : trois essais au plus, chacun par le
+même chemin qu'un branchement (réservation, permission déjà accordée,
+ouverture, enregistrement), sans jamais ouvrir une deuxième session ni
+afficher de dialogue. Un deck sans permission compte comme un essai raté.
+Le compte revient à zéro dès qu'une session est restée enregistrée 60 s.
+Après le troisième essai raté, `reattachGaveUp` part une fois et plus rien
+n'est tenté.
+
+Rien n'est rouvert après un débranchement (`usb_lost` : le hotplug gère
+le retour), `restartSessions`, `retryAttach` ou la destruction de l'app ;
+ceux-ci annulent les réouvertures en attente.
 
 ### Identité persistante
 
