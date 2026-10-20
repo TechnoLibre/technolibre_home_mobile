@@ -2,6 +2,7 @@ package ca.erplibre.home.streamdeck;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Predicate;
 
 import ca.erplibre.home.streamdeck.PermissionRequestPlan.Device;
@@ -26,8 +27,16 @@ final class ReattachPlan {
      * left out: attaching it would raise the system dialog.
      */
     static List<Device> idleDecks(List<Device> attached, Predicate<String> busy) {
+        return idleDecks(attached, busy, null);
+    }
+
+    /** idleDecks limited to the device names in {@code only}; null means
+     *  every device, as restartSessions without deviceNames. */
+    static List<Device> idleDecks(List<Device> attached, Predicate<String> busy,
+                                  Set<String> only) {
         List<Device> out = new ArrayList<>();
         for (Device d : attached) {
+            if (only != null && !only.contains(d.deviceName)) continue;
             if (!d.isStreamDeck() || !d.permitted) continue;
             if (busy.test(d.deviceName)) continue;
             out.add(d);

@@ -784,6 +784,7 @@ export const translations: Record<string, string> = {
   "streamdeck.deck_key_image": "image {w}×{h} ({format})",
   "streamdeck.deck_product_id": "productId 0x{id}",
   "streamdeck.deck_firmware": "fw {version}",
+  "streamdeck.deck_control_pipe_down": "This deck answers no control request: brightness and key clearing are off until it answers again, tried every 5 seconds. Unplugging it and plugging it back in restores them.",
   "streamdeck.deck_dials": "{count} dials",
   "streamdeck.deck_lcd": "LCD {w}×{h}",
   "streamdeck.deck_capabilities": "capabilities: {list}",

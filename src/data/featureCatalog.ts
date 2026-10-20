@@ -527,12 +527,29 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "keeps one DeckSession per attached device; DeckSpec carries product "
                         + "id → key count, image size, transport version. The bridge surface is "
                         + "JSON over the Capacitor JS↔Java pipe; binary frames travel as base64 "
-                        + "batched on a single JNI call per deck.",
+                        + "batched on a single JNI call per deck. "
+                        + "FeatureReads probes the control pipe at open with "
+                        + "the firmware report (250 ms, one retry): a deck "
+                        + "that answers neither opens with controlPipeOk "
+                        + "false and its usual deckId (the USB serial "
+                        + "string, read without EP0), and "
+                        + "brightness and reset refused at once but for one "
+                        + "250 ms try every 5 s (ControlPipe); the first "
+                        + "control request that goes through sets it back "
+                        + "to true.",
                     fr: "Plugin Capacitor (Java) qui enveloppe le stack USB host. DeckRegistry "
                         + "garde une DeckSession par appareil branché; DeckSpec porte product id "
                         + "→ nb touches, taille image, version transport. La surface bridge est "
                         + "JSON sur le pipe Capacitor JS↔Java; les frames binaires passent en "
-                        + "base64 batchées en un seul appel JNI par deck.",
+                        + "base64 batchées en un seul appel JNI par deck. FeatureReads sonde le "
+                        + "canal de contrôle à l'ouverture avec le rapport "
+                        + "firmware (250 ms, un nouvel essai) : un deck qui "
+                        + "ne répond à aucun s'ouvre avec controlPipeOk faux, "
+                        + "son deckId habituel (la chaîne de série USB, lue "
+                        + "sans EP0), et luminosité "
+                        + "et reset refusés aussitôt sauf un essai de 250 ms "
+                        + "toutes les 5 s (ControlPipe) ; la première requête "
+                        + "de contrôle qui passe le remet à vrai.",
                 },
                 demo: NONE_PLUMBING,
                 files: [
@@ -544,6 +561,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ParallelClose.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSpec.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckRegistry.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/FeatureReads.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ControlPipe.java",
+                ],
+                tests: [
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/FeatureReadsTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ControlPipeTest.java",
                 ],
             },
             {
@@ -586,9 +609,22 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "bus event) and fire STREAMDECK_ADD_VIDEO/AUDIO/"
                         + "LOCATION events that the note re-uses to add an "
                         + "entry. On visibilitychange:hidden each deck dims to "
-                        + "0 %; brief hides only restore brightness, hides over "
-                        + "5 s trigger a full restartSessions to wake the "
-                        + "post-sleep-silent reader.",
+                        + "0 %; a brief hide only restores brightness and "
+                        + "repaints. After a hide over 5 s the controller asks "
+                        + "getSessionHealth and restarts only the decks the "
+                        + "plugin reports sick (no session and no automatic "
+                        + "reopen pending, reader or writer thread ended, two "
+                        + "failed writes or EP0 transfers in a row, heartbeat "
+                        + "failures not counted, the latter "
+                        + "only on a deck whose control pipe answered at "
+                        + "open) through "
+                        + "restartSessions({deviceNames}); a healthy deck is "
+                        + "restored, never closed. The hide's length goes as "
+                        + "quietForMs: an interrupt-IN pipe gone quiet over a "
+                        + "sleep looks like an idle deck, so a deck that sent "
+                        + "no report over the whole hide is sick (quiet), "
+                        + "while one that did, as the press that woke the "
+                        + "phone, keeps its session.",
                     fr: "S'abonne à keyChanged sur chaque deck, throttlé à 150 "
                         + "ms pour éviter le crash IME du WebView. La touche 0 "
                         + "navigue toujours vers /note/<id>; les touches 1-3 ne "
@@ -597,9 +633,23 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "et émettent STREAMDECK_ADD_VIDEO/AUDIO/LOCATION que "
                         + "la note ré-utilise pour ajouter une entrée. Sur "
                         + "visibilitychange:hidden chaque deck dimme à 0 %; "
-                        + "hides courtes restaurent juste la luminosité, hides "
-                        + ">5 s déclenchent un restartSessions complet pour "
-                        + "réveiller le reader silencieux après wake.",
+                        + "un masquage bref restaure la luminosité et repeint. "
+                        + "Après plus de 5 s masqué, le contrôleur interroge "
+                        + "getSessionHealth et ne redémarre que les decks que "
+                        + "le plugin déclare malades (pas de session et aucune "
+                        + "réouverture automatique en attente, fil lecteur ou "
+                        + "écrivain terminé, deux écritures ou transferts EP0 "
+                        + "ratés de suite, sans compter les battements ratés, "
+                        + "ces derniers seulement sur un deck "
+                        + "dont le canal de contrôle a répondu à l'ouverture) "
+                        + "via restartSessions({deviceNames}) ; "
+                        + "un deck sain est restauré, jamais fermé. La durée du "
+                        + "masquage passe en quietForMs : un canal interrupt-IN "
+                        + "devenu muet pendant une veille ressemble à un deck "
+                        + "inactif, donc un deck qui n'a envoyé aucun rapport "
+                        + "de tout le masquage est malade (quiet), tandis qu'un "
+                        + "deck qui en a envoyé, comme la touche qui a réveillé "
+                        + "le téléphone, garde sa session.",
                 },
                 status: "stable",
                 dependsOn: [
@@ -607,8 +657,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "streamdeck.lifecycle-service",
                 ],
                 demo: NONE_BG,
-                files: ["src/services/streamDeckController.ts"],
-                tests: ["src/__tests__/streamDeckController.test.ts"],
+                files: [
+                    "src/services/streamDeckController.ts",
+                    "src/services/streamDeckHealth.ts",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/SessionHealth.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ControlPipe.java",
+                ],
+                tests: [
+                    "src/__tests__/streamDeckController.test.ts",
+                    "src/__tests__/streamDeckHealth.test.ts",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/SessionHealthTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ControlPipeTest.java",
+                ],
             },
             {
                 id: "streamdeck.usb",
@@ -635,8 +695,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "a retry that finds the USB permission missing gives up at once. "
                         + "Unplug, restartSessions, retryAttach and app destroy cancel it; "
                         + "restartSessions and retryAttach give every deck its three "
-                        + "attempts back, as does any other reopen of a deck given up, "
-                        + "the permission button included.",
+                        + "attempts back (restartSessions with deviceNames: those decks "
+                        + "only), as does any other reopen of a deck given up, "
+                        + "the permission button included. A deck whose restart close "
+                        + "outlasts the 3 s wait is reopened once that close ends "
+                        + "(RestartReopen).",
                     fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
                         + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
                         + "appareil : premier attach prompt l'utilisateur; l'autorisation est "
@@ -653,9 +716,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "n'est tenté ; un essai qui trouve la permission USB absente "
                         + "abandonne aussitôt. Débranchement, restartSessions, retryAttach "
                         + "et destruction de l'app l'annulent ; restartSessions et "
-                        + "retryAttach rendent à chaque deck ses trois essais, comme toute "
-                        + "autre réouverture d'un deck abandonné, bouton de permission "
-                        + "compris.",
+                        + "retryAttach rendent à chaque deck ses trois essais "
+                        + "(restartSessions avec deviceNames : à ces decks seulement), "
+                        + "comme toute autre réouverture d'un deck abandonné, bouton de "
+                        + "permission compris. Un deck dont la fermeture au redémarrage "
+                        + "dépasse l'attente de 3 s est rouvert dès qu'elle se termine "
+                        + "(RestartReopen).",
                 },
                 demo: { kind: "options", sectionId: "streamdeck" },
                 files: [
@@ -665,6 +731,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/PermissionRequestPlan.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachPolicy.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachTimers.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/RestartReopen.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
                     "src/plugins/streamDeckPlugin.ts",
                     "src/services/streamDeckEventLog.ts",
@@ -673,6 +740,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/PermissionRequestPlanTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachPolicyTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachTimersTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/RestartReopenTest.java",
                     "src/__tests__/streamDeckPlugin.test.ts",
                     "src/__tests__/streamDeckEventLog.test.ts",
                 ],
@@ -1081,12 +1149,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(persisted localStorage), reader-mode dropdown (request/bulk/polled), "
                         + "bezel-gap sliders for the camera-stream cover-fit, and a manual "
                         + "restart button that triggers restartSessions to recover from the "
-                        + "post-sleep silent-reader state.",
+                        + "post-sleep silent-reader state. A deck whose info carries "
+                        + "controlPipeOk false shows a line saying brightness and key "
+                        + "clearing are off until it answers again, and that a "
+                        + "replug restores them.",
                     fr: "Panel Owl listant chaque deck connecté avec : slider brightness "
                         + "(persisté localStorage), dropdown reader-mode (request/bulk/polled), "
                         + "sliders gap de bezels pour le cover-fit camera-stream, et un bouton "
                         + "restart manuel qui déclenche restartSessions pour récupérer du state "
-                        + "reader-silencieux post-sleep.",
+                        + "reader-silencieux post-sleep. Un deck dont les infos portent "
+                        + "controlPipeOk faux affiche une ligne disant que luminosité et "
+                        + "effacement des touches sont coupés jusqu'à ce qu'il réponde "
+                        + "de nouveau, et qu'un rebranchement les rétablit.",
                 },
                 dependsOn: [
                     "streamdeck.controller",

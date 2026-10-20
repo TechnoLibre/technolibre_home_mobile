@@ -47,6 +47,8 @@ public final class DeckSession {
     private static final String TAG = "StreamDeckSession";
     private static final int    BULK_WRITE_TIMEOUT_MS = 500;
     private static final int    BULK_READ_TIMEOUT_MS  = 1000;
+    /** Timeout of a brightness or reset request on a pipe up. */
+    private static final int    CONTROL_TIMEOUT_MS    = 1000;
     /** Bound of close()'s wait for the workers and the gated calls
      *  together. The reader sees a close at once through
      *  RequestReader.wake(), else within RequestReader.WAIT_MS, and then
@@ -82,12 +84,18 @@ public final class DeckSession {
     private UsbEndpoint epOut;
     private String serial = "";
     private String firmware = "";
-
-    private Thread readerThread;
-    private Thread writerThread;
+    /** Set by open() under this; volatile for the health getters. */
+    private volatile Thread readerThread;
+    private volatile Thread writerThread;
     /** The userequest reader, null before it starts and in the other
      *  reader modes; close() wakes it. */
     private volatile RequestReader requestReader;
+    /** The writer thread's WriterStep, null before it starts. */
+    private volatile WriterStep writerStep;
+    /** Whether EP0 answers, set by open() from the firmware probe (see
+     *  FeatureReads), and the failed transfers of gatedControlTransfer in
+     *  a row, the heartbeat's not counted (see ControlPipe). */
+    private final ControlPipe control = new ControlPipe();
     /** The reader's request the kernel never gave back, closed after the
      *  connection; see closeAfterConnection. Guarded by this. */
     private UsbRequest leftRequest;
@@ -123,6 +131,9 @@ public final class DeckSession {
     private byte[] lastRawBytes;
     /** Set by the reader once it logged its first report. */
     private boolean firstReportLogged = false;
+    /** SystemClock.elapsedRealtime of the last input report, of open()
+     *  before the first; deep sleep counts. */
+    private volatile long lastReportAt = 0;
     /** When true the reader thread emits a `rawInputReport` event for every
      * successful bulkTransfer (stripped to first 32 bytes hex). Off by
      * default — flips on via StreamDeckPlugin.setDebugLogging. */
@@ -186,8 +197,33 @@ public final class DeckSession {
     public UsbDevice device(){ return device; }
     public String serial()   { return serial; }
     public String firmware() { return firmware; }
+    /** False from a firmware probe that failed at open until a control
+     *  request goes through: brightness and reset are refused meanwhile,
+     *  but for one short try every ControlPipe.RETRY_MS. */
+    public boolean controlPipeOk() { return control.up(); }
     /** False from the moment close() starts. */
     public boolean isOpen()  { return running; }
+
+    /** True while the reader thread runs; false before open(). */
+    public boolean readerAlive() { return isAlive(readerThread); }
+    /** True while the writer thread runs; false before open(). */
+    public boolean writerAlive() { return isAlive(writerThread); }
+    /** Bulk writes failed in a row (WriterStep), 0 before the writer starts. */
+    public int writeFailuresInARow() {
+        WriterStep step = writerStep;
+        return step != null ? step.failuresInARow() : 0;
+    }
+    /** Since the last input report, or open() when none came; 0 before
+     *  open(). In polled mode every poll that answers counts. */
+    public long msSinceReport() {
+        long at = lastReportAt;
+        return at == 0 ? 0 : SystemClock.elapsedRealtime() - at;
+    }
+    /** EP0 transfers failed in a row: brightness and reset; a heartbeat
+     *  that answers resets the count, one that fails is not counted. */
+    public int controlFailuresInARow() { return control.failuresInARow(); }
+
+    private static boolean isAlive(Thread t) { return t != null && t.isAlive(); }
 
     public synchronized void open(UsbManager usb) throws DeckOpenException {
         if (running) return;
@@ -247,15 +283,48 @@ public final class DeckSession {
         // garbled key at most, which the writer's own failures report.
         resetKeyStream();
 
+        // Before the reader starts: nothing else uses EP0 yet.
+        final UsbDeviceConnection c = connection;
+        FeatureReads.Result reads = FeatureReads.read(
+            spec.transport == DeckSpec.TransportKind.V2,
+            new FeatureReads.Ep0() {
+                @Override public int getFeature(int reportId, byte[] buf, int timeoutMs) {
+                    // GET_REPORT: request type 0xa1, request 0x01, value
+                    // (Feature << 8) | reportId.
+                    return c.controlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, 0,
+                        buf, buf.length, timeoutMs);
+                }
+                @Override public int getDeviceDescriptor(byte[] buf, int timeoutMs) {
+                    // GET_DESCRIPTOR: request type 0x80, request 0x06,
+                    // value (DEVICE << 8) | 0.
+                    return c.controlTransfer(0x80, 0x06, 0x0100, 0,
+                        buf, buf.length, timeoutMs);
+                }
+            },
+            Thread::sleep);
+        control.opened(reads.controlPipeOk, SystemClock.elapsedRealtime());
+        String usbSerial;
         try {
-            this.serial   = readSerial();
-            this.firmware = readFirmware();
-        } catch (Exception e) {
-            Log.w(TAG, "feature read failed for " + device.getDeviceName(), e);
-            this.serial = device.getSerialNumber() != null ? device.getSerialNumber() : "unknown";
-            this.firmware = "unknown";
+            usbSerial = device.getSerialNumber();
+        } catch (SecurityException e) {
+            usbSerial = null;
+        }
+        this.serial = FeatureReads.deckId(usbSerial, reads.serial);
+        this.firmware = reads.firmware != null ? reads.firmware : "unknown";
+        if (!reads.controlPipeOk) {
+            Log.w(TAG, "control pipe of " + device.getDeviceName()
+                + " answers no feature report; standard requests "
+                + (reads.standardRequestsAnswer ? "answer" : "fail too")
+                + ". Brightness and reset are refused, tried again every "
+                + ControlPipe.RETRY_MS + " ms");
+        } else if (reads.serial == null) {
+            Log.w(TAG, "serial read failed for " + device.getDeviceName());
+        } else if (!reads.serial.equals(serial)) {
+            Log.w(TAG, "feature report serial of " + device.getDeviceName()
+                + " differs from its USB serial string; deckId is the latter");
         }
 
+        lastReportAt = SystemClock.elapsedRealtime();
         running = true;
         lastKeyPressed = new boolean[spec.keyCount];
         readerThread = new Thread(this::readerLoop, "deck-reader-" + serial);
@@ -388,6 +457,7 @@ public final class DeckSession {
 
     /** Set brightness 0..100 via feature report. */
     public void setBrightness(int percent) throws DeckIoException {
+        int timeoutMs = controlTimeout();
         int p = Math.max(0, Math.min(100, percent));
         // Feature report: 0x03 0x08 <pct>. SET_REPORT request type 0x21,
         // request 0x09 (SET_REPORT), value (Feature << 8) | reportId.
@@ -401,12 +471,13 @@ public final class DeckSession {
             payload[3] = (byte) 0xD1; payload[4] = 0x01; payload[5] = (byte) p;
         }
         int wValue = (0x03 << 8) | (payload[0] & 0xFF);
-        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, 1000);
+        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, timeoutMs);
         if (sent < 0) throw new DeckIoException("set_brightness_failed:" + sent);
     }
 
     /** Reset (clear all key images) via feature report. */
     public void reset() throws DeckIoException {
+        int timeoutMs = controlTimeout();
         byte[] payload;
         if (spec.transport == DeckSpec.TransportKind.V2) {
             payload = new byte[32];
@@ -416,19 +487,42 @@ public final class DeckSession {
             payload[0] = 0x0B; payload[1] = 0x63;
         }
         int wValue = (0x03 << 8) | (payload[0] & 0xFF);
-        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, 1000);
+        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, timeoutMs);
         if (sent < 0) throw new DeckIoException("reset_failed:" + sent);
     }
 
+    /** The timeout of a brightness or reset request: CONTROL_TIMEOUT_MS,
+     *  the probe's on a pipe down due for a try (see ControlPipe). */
+    private int controlTimeout() throws DeckIoException {
+        int ms = control.timeoutFor(CONTROL_TIMEOUT_MS, SystemClock.elapsedRealtime());
+        if (ms < 0) throw new DeckIoException("control_pipe_down");
+        return ms;
+    }
+
     /** controlTransfer on EP0 with index 0 for a thread close() does not
-     *  join; see UsbCallGate. A closing session refuses it. */
+     *  join; see UsbCallGate. A closing session refuses it. A failure
+     *  counts toward controlFailuresInARow unless {@code heartbeat}. */
     private int gatedControlTransfer(int reqType, int req, int value, byte[] buf,
                                      int timeoutMs) throws DeckIoException {
+        return gatedControlTransfer(reqType, req, value, buf, timeoutMs, false);
+    }
+
+    private int gatedControlTransfer(int reqType, int req, int value, byte[] buf,
+                                     int timeoutMs, boolean heartbeat)
+            throws DeckIoException {
         if (!calls.enter()) throw new DeckIoException("session_closed");
+        boolean ok = false;
         try {
-            return connection.controlTransfer(reqType, req, value, 0, buf, buf.length, timeoutMs);
+            int got = connection.controlTransfer(reqType, req, value, 0, buf, buf.length, timeoutMs);
+            ok = got >= 0;
+            return got;
         } finally {
             calls.leave();
+            if (!ok) {
+                control.failed(!heartbeat);
+            } else if (control.answered()) {
+                Log.i(TAG, "control pipe of " + device.getDeviceName() + " answers again");
+            }
         }
     }
 
@@ -465,10 +559,11 @@ public final class DeckSession {
      *  interrupt-IN) or the writer (which sends bulk-OUT), so the
      *  three threads don't contend.
      *
-     *  Heartbeat failures are logged and swallowed — the deck might
-     *  briefly hang during high writer queue pressure (e.g., camera
-     *  streaming saturating bulk-OUT) and we don't want to tear the
-     *  session down for what's almost always a transient stall. */
+     *  Heartbeat failures are swallowed and not counted toward
+     *  controlFailuresInARow (see ControlPipe) — the deck might briefly
+     *  hang during high writer queue pressure (e.g., camera streaming
+     *  saturating bulk-OUT), and such a transient stall neither closes
+     *  the session nor makes SessionHealth restart it. */
     private void heartbeatLoop() {
         int reportId = (spec.transport == DeckSpec.TransportKind.V2) ? 0x05 : 0x04;
         byte[] buf = new byte[32];
@@ -480,40 +575,13 @@ public final class DeckSession {
             }
             if (!running) return;
             try {
-                gatedControlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, buf, 500);
+                gatedControlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, buf, 500, true);
             } catch (DeckIoException closing) {
                 return;
             } catch (Throwable t) {
                 Log.w(TAG, "heartbeat failed (continuing)", t);
             }
         }
-    }
-
-    private String readSerial() throws DeckIoException {
-        // GET_REPORT (request type 0xa1, request 0x01), feature report ID per generation.
-        byte[] buf = new byte[32];
-        int reportId = (spec.transport == DeckSpec.TransportKind.V2) ? 0x06 : 0x03;
-        int got = connection.controlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, 0, buf, buf.length, 1000);
-        if (got < 0) throw new DeckIoException("read_serial_failed:" + got);
-        return parseAsciiAfterHeader(buf, /*headerLen=*/ (spec.transport == DeckSpec.TransportKind.V2) ? 2 : 5, got);
-    }
-
-    private String readFirmware() throws DeckIoException {
-        byte[] buf = new byte[32];
-        int reportId = (spec.transport == DeckSpec.TransportKind.V2) ? 0x05 : 0x04;
-        int got = connection.controlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, 0, buf, buf.length, 1000);
-        if (got < 0) throw new DeckIoException("read_firmware_failed:" + got);
-        return parseAsciiAfterHeader(buf, /*headerLen=*/ (spec.transport == DeckSpec.TransportKind.V2) ? 6 : 5, got);
-    }
-
-    private static String parseAsciiAfterHeader(byte[] buf, int headerLen, int totalLen) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = headerLen; i < totalLen; i++) {
-            byte b = buf[i];
-            if (b == 0) break;
-            if (b >= 0x20 && b < 0x7f) sb.append((char) b);
-        }
-        return sb.toString();
     }
 
     private void readerLoop() {
@@ -837,6 +905,7 @@ public final class DeckSession {
      * Neo touch: 0x01 0x04 ...
      */
     private void parseInputReport(byte[] buf, int len) {
+        lastReportAt = SystemClock.elapsedRealtime();
         if (!firstReportLogged) {
             firstReportLogged = true;
             Log.i(TAG, "reader: first input report for " + serial + ", " + len + " bytes");
@@ -940,6 +1009,7 @@ public final class DeckSession {
                 DeckSession.this.closeAfterWriteFailure(reason);
             }
         });
+        writerStep = step;
         while (running) {
             try {
                 if (!step.run(queue.take())) return;

@@ -34,6 +34,11 @@ export interface DeckInfo {
     infoBars?: { w: number; h: number; count: number };
     touchPoints: number;
     firmwareVersion: string;
+    /** False when the deck answered no feature report at open: brightness
+     *  and reset are refused (control_pipe_down), but for one short try
+     *  every 5 s, until a control request goes through. As of when this
+     *  info was read. */
+    controlPipeOk: boolean;
     capabilities: string[];
 }
 
@@ -110,6 +115,38 @@ export interface ReattachGaveUpEvent {
     deviceName: string;
     attempts: number;
     reason: string;
+}
+
+/** One attached Stream Deck as getSessionHealth reports it. sick is the
+ *  plugin's verdict (SessionHealth.java): restarting this deck would help.
+ *  sickReason is "" when healthy, else no_session, reader_ended,
+ *  writer_ended, writes_failing, control_failing or quiet. An idle deck
+ *  sends no input report, so its silence is a sickness only when the
+ *  caller asks with quietForMs: quiet is an open session that heard
+ *  nothing for that long. */
+export interface DeckHealth {
+    /** System USB path, the key of restartSessions({deviceNames}). */
+    deviceName: string;
+    /** The session's serial, else the USB serial once readable, else "". */
+    deckId: string;
+    hasPermission: boolean;
+    open: boolean;
+    /** An automatic reopen (2, 4, 8 s) is underway for this deck. */
+    reopening: boolean;
+    readerAlive: boolean;
+    writerAlive: boolean;
+    writeFailuresInARow: number;
+    controlFailuresInARow: number;
+    /** False for an open session whose control pipe answered nothing at
+     *  open and nothing since; its control failures are then no sickness,
+     *  since a restart does not clear them. True when no session is open. */
+    controlPipeOk: boolean;
+    /** Since the session's last input report, or its open when none
+     *  came; 0 without a session. */
+    msSinceReport: number;
+    lastCloseReason: string;
+    sick: boolean;
+    sickReason: string;
 }
 
 export interface ImageWriteResult {
@@ -205,8 +242,16 @@ interface StreamDeckPluginApi {
     /** Close every open session, then attach every permitted deck that
      *  has no session — including one whose session closed itself while
      *  it stayed plugged in. Used to pick up a reader-mode change without
-     *  an unplug. `restarted` counts the decks re-attached. */
-    restartSessions(): Promise<{ restarted: number }>;
+     *  an unplug. With deviceNames, only those USB devices are closed and
+     *  reopened. `restarted` counts the decks re-attached, a deck whose
+     *  close outlasts the 3 s wait included: it reopens once that close
+     *  ends. */
+    restartSessions(opts?: { deviceNames?: string[] }): Promise<{ restarted: number }>;
+    /** Per attached Stream Deck, the session signals and the plugin's
+     *  sick verdict; makes no USB transfer. With quietForMs above 0, an
+     *  open session that heard no input report for that long is sick
+     *  (quiet). */
+    getSessionHealth(opts?: { quietForMs?: number }): Promise<{ decks: DeckHealth[] }>;
     getDeckInfo(opts: { deckId: string }): Promise<DeckInfo>;
     /**
      * Ask the OS for USB permission on one deck or, without deckId, on

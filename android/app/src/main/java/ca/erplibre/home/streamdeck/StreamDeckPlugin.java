@@ -21,8 +21,10 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executors;
@@ -77,6 +79,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * so the diagnostic UI can show why a known device is not in listDecks
      * even when the failure event was emitted before any listener attached. */
     private final Map<String, String> lastAttachError = new HashMap<>();
+    /** Reason of the last session close per USB device name, for
+     *  getSessionHealth; guarded by itself. */
+    private final Map<String, String> lastCloseReason = new HashMap<>();
 
     /** Pending detach close jobs, keyed by USB deviceName. Detach events
      *  are debounced — some Android stacks fire detach immediately
@@ -90,6 +95,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     /** Reopens a deck whose session closed itself; see ReattachPolicy. */
     private final ReattachPolicy reattach = new ReattachPolicy(SystemClock::elapsedRealtime);
+    /** Decks a restartSessions reopens once their close outlasts its wait. */
+    private final RestartReopen restartReopen = new RestartReopen();
     /** Runs the retries; created in load(), shut down by stopReattach(). */
     private volatile ScheduledExecutorService reattachTimer;
     /** The retry waiting on reattachTimer, by USB device name. */
@@ -338,6 +345,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // The device is gone: a retry has nothing to open, and the
         // hotplug attach handles its return.
         forgetReattach(name);
+        // The restart's late-reopen mark is dropped by the close job only:
+        // through a detach and attach bounce, the attach finds the late
+        // close still registered and skips, and the mark is what reopens
+        // the deck once that close ends. On a real unplug, a close ending
+        // inside the debounce finds no device and reopens nothing.
         // Debounce: ThinkPhone (and a few other Android stacks) emit
         // detach + attach in tight succession after the first interrupt
         // event. Closing the session synchronously here would tear the
@@ -347,6 +359,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         Runnable closeJob = () -> {
             synchronized (pendingCloseJobs) { pendingCloseJobs.remove(name); }
             forgetReattach(name);
+            restartReopen.forget(name);
             // An attach still waiting on permission or open() for this
             // device will fail to register and close what it opened.
             registry.release(name);
@@ -375,12 +388,29 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      */
     private void onSessionClosed(DeckSession session, String reason) {
         String name = session.device().getDeviceName();
+        synchronized (lastCloseReason) { lastCloseReason.put(name, reason); }
         if (registry.unregister(name, session, reason)) {
             Log.i(TAG, "session for " + name + " closed (" + reason + ") — unregistered");
         }
         // applyReattach updates the wake lock once the retry is pending,
         // so it is not dropped in the gap before the reopen.
         applyReattach(name, session.serial(), reattach.closed(name, reason));
+        if (restartReopen.closed(name)) reopenAfterRestart(name);
+    }
+
+    /**
+     * Opens again a deck whose restart stopped waiting for its close (see
+     * RestartReopen), on a thread of its own: this runs inside the close,
+     * which a second close() waits for, and an open makes EP0 transfers.
+     * A deck unplugged or without permission meanwhile is left alone.
+     */
+    private void reopenAfterRestart(String name) {
+        UsbDevice device = usb.getDeviceList().get(name);
+        if (device == null || !usb.hasPermission(device)) return;
+        Log.i(TAG, "restartSessions: " + name + " closed after the wait, reopening");
+        Thread t = new Thread(() -> onDeckAttached(device), "deck-reopen");
+        t.setDaemon(true);
+        t.start();
     }
 
     /**
@@ -454,6 +484,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     /** No retry for any deck any more: the plugin is being destroyed. */
     private void stopReattach() {
         reattach.stop();
+        restartReopen.clear();
         reattachTimers.cancelAll();
         ScheduledExecutorService timer = reattachTimer;
         if (timer != null) timer.shutdownNow();
@@ -588,20 +619,107 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * Close every open session, then open every idle deck again (see
      * ReattachPlan): the ones just closed, and any whose session closed
      * itself earlier while the deck stayed plugged in. Lets the user apply
-     * setReaderMode without unplugging the deck. Resolves {restarted}, the
-     * number of decks re-attached. Runs on its own thread, off the plugin
-     * thread every plugin shares: the closes wait for the sessions' workers.
+     * setReaderMode without unplugging the deck. With {deviceNames}, only
+     * those USB devices are closed, reopened and get their retries back;
+     * the other decks are not touched. Resolves {restarted}, the number of
+     * decks re-attached. Runs on its own thread, off the plugin thread
+     * every plugin shares: the closes wait for the sessions' workers. A
+     * close that outlasts CLOSE_WAIT_MS keeps its session registered, which
+     * the reopen here would skip: that deck is reopened when its close
+     * ends instead (see RestartReopen), and counts in {restarted}, once
+     * even when its close ends in time for the reopen here as well.
      */
     @PluginMethod
     public void restartSessions(PluginCall call) {
+        Set<String> only = deviceNamesOf(call);
         ParallelClose.run(Collections.singletonList(() -> {
+            List<DeckSession> targets = new ArrayList<>();
+            for (DeckSession s : registry.sessions()) {
+                if (only == null || only.contains(s.device().getDeviceName())) targets.add(s);
+            }
+            Log.i(TAG, "restartSessions: " + (only == null ? "every deck" : only)
+                + ", closing " + targets.size() + " session(s)");
+            List<String> closing = new ArrayList<>();
+            for (DeckSession s : targets) closing.add(s.device().getDeviceName());
+            restartReopen.begin(closing);
             // Each close unregisters its session through onSessionClosed.
-            closeSessions(registry.sessions(), "restart_requested", DeckSession.CLOSE_WAIT_MS);
-            forgetAllReattach();
+            closeSessions(targets, "restart_requested", DeckSession.CLOSE_WAIT_MS);
+            if (only == null) forgetAllReattach();
+            else for (String name : only) forgetReattach(name);
+            Set<String> late = restartReopen.endWait(closing);
+            if (!late.isEmpty()) {
+                Log.w(TAG, "restartSessions: " + late + " still closing, reopened once closed");
+            }
             JSObject r = new JSObject();
-            r.put("restarted", attachIdleDecks());
+            r.put("restarted", RestartReopen.restarted(attachIdleDeckNames(only), late));
             call.resolve(r);
         }), "deck-restart", 0);
+    }
+
+    /** The deviceNames option of {@code call}; null when absent, which
+     *  means every device. */
+    private static Set<String> deviceNamesOf(PluginCall call) {
+        JSArray arr = call.getArray("deviceNames");
+        if (arr == null) return null;
+        Set<String> out = new HashSet<>();
+        for (int i = 0; i < arr.length(); i++) {
+            String n = arr.optString(i, "");
+            if (!n.isEmpty()) out.add(n);
+        }
+        return out;
+    }
+
+    /**
+     * For each attached known Stream Deck, the signals SessionHealth reads
+     * and its verdict: {decks: [{deviceName, deckId, hasPermission, open,
+     * reopening, readerAlive, writerAlive, writeFailuresInARow,
+     * controlFailuresInARow, controlPipeOk, msSinceReport, lastCloseReason,
+     * sick, sickReason}]}. deckId is the session's serial, else the USB
+     * serial once readable, else "". With {quietForMs} above 0, an open
+     * session that heard no input report for that long is sick, QUIET (see
+     * SessionHealth). Makes no USB transfer, so it costs a deck nothing.
+     */
+    @PluginMethod
+    public void getSessionHealth(PluginCall call) {
+        Double quiet = call.getDouble("quietForMs");
+        long quietForMs = quiet != null && quiet > 0 ? quiet.longValue() : 0;
+        JSArray arr = new JSArray();
+        for (UsbDevice d : usb.getDeviceList().values()) {
+            if (!DeckRegistry.isElgato(d.getVendorId())
+                || DeckRegistry.lookup(d.getProductId()) == null) continue;
+            String name = d.getDeviceName();
+            boolean permitted = usb.hasPermission(d);
+            DeckSession s = registry.byDevice(name);
+            boolean open = s != null && s.isOpen();
+            SessionHealth.Signals sig = new SessionHealth.Signals(
+                permitted, registry.isBusy(name), open, reattach.reopening(name),
+                open && s.readerAlive(), open && s.writerAlive(),
+                open ? s.writeFailuresInARow() : 0, open ? s.controlFailuresInARow() : 0,
+                !open || s.controlPipeOk())
+                .heardMsAgo(open ? s.msSinceReport() : 0);
+            String sickness = SessionHealth.sickness(sig, quietForMs);
+            String closeReason;
+            synchronized (lastCloseReason) { closeReason = lastCloseReason.get(name); }
+            JSObject o = new JSObject();
+            o.put("deviceName", name);
+            o.put("deckId", s != null ? s.serial() : permitted ? readableSerial(d) : "");
+            o.put("hasPermission", permitted);
+            o.put("open", open);
+            o.put("reopening", sig.reopening);
+            o.put("readerAlive", sig.readerAlive);
+            o.put("writerAlive", sig.writerAlive);
+            o.put("writeFailuresInARow", sig.writeFailuresInARow);
+            o.put("controlFailuresInARow", sig.controlFailuresInARow);
+            o.put("controlPipeOk", sig.controlPipeOk);
+            o.put("msSinceReport", sig.msSinceReport);
+            o.put("lastCloseReason", closeReason != null ? closeReason : "");
+            o.put("sick", !sickness.isEmpty());
+            o.put("sickReason", sickness);
+            arr.put(o);
+        }
+        JSObject r = new JSObject();
+        r.put("decks", arr);
+        call.resolve(r);
     }
 
     /**
@@ -618,10 +736,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         call.resolve(r);
     }
 
-    /** The owner reopens the decks by hand — restartSessions, retryAttach,
-     *  and so the app's restart after more than 5 s hidden: pending retries
-     *  are dropped and every deck gets its three retries back, a deck
-     *  given up for a missing permission included. */
+    /** The owner reopens every deck by hand — restartSessions without
+     *  deviceNames, retryAttach: pending retries are dropped and every deck
+     *  gets its three retries back, a deck given up for a missing
+     *  permission included. */
     private void forgetAllReattach() {
         reattach.forgetAll();
         reattachTimers.cancelAll();
@@ -629,16 +747,29 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /** onDeckAttached on each of ReattachPlan.idleDecks; returns how many. */
-    private int attachIdleDecks() {
+    private int attachIdleDecks() { return attachIdleDecks(null); }
+
+    /** attachIdleDecks limited to the device names in {@code only}, null
+     *  for every device. */
+    private int attachIdleDecks(Set<String> only) {
+        return attachIdleDeckNames(only).size();
+    }
+
+    /** attachIdleDecks(only), returning the device names it attached. */
+    private List<String> attachIdleDeckNames(Set<String> only) {
         Map<String, UsbDevice> attached = usb.getDeviceList();
         List<PermissionRequestPlan.Device> seen = new ArrayList<>();
         for (UsbDevice d : attached.values()) {
             seen.add(new PermissionRequestPlan.Device(d.getDeviceName(), d.getVendorId(),
                 d.getProductId(), "", usb.hasPermission(d)));
         }
-        List<PermissionRequestPlan.Device> idle = ReattachPlan.idleDecks(seen, registry::isBusy);
-        for (PermissionRequestPlan.Device t : idle) onDeckAttached(attached.get(t.deviceName));
-        return idle.size();
+        List<PermissionRequestPlan.Device> idle = ReattachPlan.idleDecks(seen, registry::isBusy, only);
+        List<String> names = new ArrayList<>();
+        for (PermissionRequestPlan.Device t : idle) {
+            onDeckAttached(attached.get(t.deviceName));
+            names.add(t.deviceName);
+        }
+        return names;
     }
 
     private String tryGetSerial(UsbDevice d) {
@@ -1061,6 +1192,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         }
         o.put("touchPoints", spec.touchPoints);
         o.put("firmwareVersion", s.firmware());
+        o.put("controlPipeOk", s.controlPipeOk());
         JSArray caps = new JSArray();
         for (String c : spec.capabilities) caps.put(c);
         o.put("capabilities", caps);

@@ -9,6 +9,7 @@ const { mockPlugin, listeners } = vi.hoisted(() => {
             setBrightness: vi.fn().mockResolvedValue(undefined),
             setKeyImage: vi.fn().mockResolvedValue(undefined),
             restartSessions: vi.fn().mockResolvedValue(undefined),
+            getSessionHealth: vi.fn().mockResolvedValue({ decks: [] }),
             addListener: vi.fn(async (name: string, fn: any) => {
                 ls[name] = fn;
                 return { remove: vi.fn() };
@@ -84,6 +85,7 @@ describe("StreamDeckController", () => {
         mockPlugin.setBrightness.mockResolvedValue(undefined);
         mockPlugin.setKeyImage.mockResolvedValue(undefined);
         mockPlugin.restartSessions.mockResolvedValue(undefined);
+        mockPlugin.getSessionHealth.mockResolvedValue({ decks: [] });
         mockPlugin.addListener.mockImplementation(async (name: string, fn: any) => {
             listeners[name] = fn;
             return { remove: vi.fn() };
@@ -287,7 +289,102 @@ describe("StreamDeckController", () => {
             );
         });
 
-        it("restartSessions on visible after >5 s sleep", async () => {
+        /** Start with DECK (and `extra`) known, hide at 2000, show at
+         *  10 000: a hide longer than the health-check threshold. */
+        async function longHide(extra: any[] = []) {
+            vi.useFakeTimers();
+            vi.setSystemTime(1000);
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK, ...extra] });
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            ctrl.setCameraStreaming(true);
+            visibilityState = "hidden";
+            await ctrl.start();
+            mockPlugin.restartSessions.mockClear();
+            mockPlugin.setBrightness.mockClear();
+
+            visibilityState = "hidden";
+            vi.setSystemTime(2000);
+            visibilityCb!();
+            mockPlugin.setBrightness.mockClear();
+
+            visibilityState = "visible";
+            vi.setSystemTime(10_000);
+            visibilityCb!();
+            await vi.runAllTimersAsync();
+            return ctrl;
+        }
+
+        function health(deviceName: string, deckId: string, sickReason = "") {
+            return {
+                deviceName, deckId, hasPermission: true, open: true,
+                reopening: false, readerAlive: sickReason !== "reader_ended",
+                writerAlive: true, writeFailuresInARow: 0,
+                controlFailuresInARow: 0, controlPipeOk: true,
+                msSinceReport: 0, lastCloseReason: "",
+                sick: sickReason !== "", sickReason,
+            };
+        }
+
+        it("after a long hide, healthy decks are restored, not restarted", async () => {
+            mockPlugin.getSessionHealth.mockResolvedValue({
+                decks: [health("/dev/bus/usb/001/002", "AL01")],
+            });
+            await longHide();
+            expect(mockPlugin.getSessionHealth).toHaveBeenCalledTimes(1);
+            expect(mockPlugin.restartSessions).not.toHaveBeenCalled();
+            expect(mockPlugin.setBrightness).toHaveBeenCalledWith(
+                { deckId: "AL01", percent: 50 },
+            );
+        });
+
+        it("after a long hide, only the sick deck is restarted", async () => {
+            const other = { ...DECK, deckId: "AL02" };
+            mockPlugin.getSessionHealth.mockResolvedValue({
+                decks: [
+                    health("/dev/bus/usb/001/002", "AL01"),
+                    health("/dev/bus/usb/001/003", "AL02", "reader_ended"),
+                ],
+            });
+            await longHide([other]);
+            expect(mockPlugin.restartSessions).toHaveBeenCalledTimes(1);
+            expect(mockPlugin.restartSessions).toHaveBeenCalledWith(
+                { deviceNames: ["/dev/bus/usb/001/003"] },
+            );
+            // The healthy deck is restored here; the restarted one by
+            // deckConnected once it reopens.
+            expect(mockPlugin.setBrightness).toHaveBeenCalledWith(
+                { deckId: "AL01", percent: 50 },
+            );
+            expect(mockPlugin.setBrightness).not.toHaveBeenCalledWith(
+                { deckId: "AL02", percent: 50 },
+            );
+        });
+
+        // An interrupt-IN pipe can go quiet over a sleep and look idle:
+        // the plugin calls a deck that heard nothing over the hide quiet.
+        it("asks for the decks quiet over the whole hide", async () => {
+            mockPlugin.getSessionHealth.mockResolvedValue({
+                decks: [health("/dev/bus/usb/001/002", "AL01", "quiet")],
+            });
+            await longHide();
+            expect(mockPlugin.getSessionHealth).toHaveBeenCalledWith({ quietForMs: 8000 });
+            expect(mockPlugin.restartSessions).toHaveBeenCalledWith(
+                { deviceNames: ["/dev/bus/usb/001/002"] },
+            );
+        });
+
+        it("a failed health query restarts nothing and still restores", async () => {
+            mockPlugin.getSessionHealth.mockRejectedValue(new Error("not_implemented"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+            await longHide();
+            warn.mockRestore();
+            expect(mockPlugin.restartSessions).not.toHaveBeenCalled();
+            expect(mockPlugin.setBrightness).toHaveBeenCalledWith(
+                { deckId: "AL01", percent: 50 },
+            );
+        });
+
+        it("a brief hide does not query health", async () => {
             vi.useFakeTimers();
             vi.setSystemTime(1000);
             mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
@@ -295,17 +392,11 @@ describe("StreamDeckController", () => {
             ctrl.setCameraStreaming(true);
             visibilityState = "hidden";
             await ctrl.start();
-            mockPlugin.restartSessions.mockClear();
-
-            visibilityState = "hidden";
-            vi.setSystemTime(2000);
             visibilityCb!();
-
             visibilityState = "visible";
-            vi.setSystemTime(10_000);
+            vi.setSystemTime(3000);
             visibilityCb!();
-
-            expect(mockPlugin.restartSessions).toHaveBeenCalledTimes(1);
+            expect(mockPlugin.getSessionHealth).not.toHaveBeenCalled();
         });
     });
 
