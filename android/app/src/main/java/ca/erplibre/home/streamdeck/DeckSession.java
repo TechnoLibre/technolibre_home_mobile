@@ -7,6 +7,7 @@ import android.hardware.usb.UsbEndpoint;
 import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.hardware.usb.UsbRequest;
+import android.os.Build;
 import android.util.Log;
 
 import java.nio.ByteBuffer;
@@ -130,10 +131,11 @@ public final class DeckSession {
      *  perceptible gain. */
     private static final int POLLED_INTERVAL_MS = 30;
 
-    /** Optional hook invoked after every keyChanged emit. Used by the
-     *  plugin to request a screen-wake when the host activity is
-     *  paused — kept as a static plain Runnable so DeckSession does
-     *  not have to import Android lifecycle types. */
+    /** Optional hook invoked, on the reader thread, after every key-down
+     *  keyChanged emit. Used by the plugin to request a screen-wake when
+     *  the host activity is paused — kept as a static plain Runnable so
+     *  DeckSession does not have to import Android lifecycle types. The
+     *  hook only posts: the reader thread makes no binder call. */
     private static volatile Runnable keyPressHook;
     public static void setKeyPressHook(Runnable hook) { keyPressHook = hook; }
 
@@ -406,91 +408,97 @@ public final class DeckSession {
         // kernels where THAT is shadowed, bulk picks up the slack; on
         // kernels where BOTH interrupt-IN paths are dead, polled
         // GET_REPORT on the control endpoint sometimes works.
-        switch (readerMode) {
+        // UsbRequest.queue(ByteBuffer) and requestWait(long) start at API
+        // 26; below it the userequest mode reads as bulk.
+        String mode = readerMode;
+        if (READER_MODE_USEREQUEST.equals(mode)
+            && Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            mode = READER_MODE_BULK;
+        }
+        switch (mode) {
             case READER_MODE_BULK:   readerLoopBulk();       break;
             case READER_MODE_POLLED: readerLoopPolled();     break;
             default:                 readerLoopUsbRequest();
         }
     }
 
+    /** The userequest reader: one UsbRequest on interrupt-IN, run by
+     *  RequestReader. The buffer is direct, so the kernel writes each
+     *  report into memory this session owns for as long as the request
+     *  lives; queue(ByteBuffer) refuses a request already queued. */
     private void readerLoopUsbRequest() {
-        UsbRequest req = new UsbRequest();
+        final UsbRequest req = new UsbRequest();
         if (!req.initialize(connection, epIn)) {
             Log.w(TAG, "UsbRequest.initialize failed for reader");
             close("usb_request_init_failed");
             return;
         }
-        // The IN endpoint's max packet size is the only safe buffer size.
-        // Stream Deck XL/Plus send 512-byte reports — using 64 bytes
-        // returned EOVERFLOW (errno 75) on Pixel 6 / ThinkPhone kernels
-        // and silent truncation on Motorola. Match the device.
+        // The IN endpoint's max packet size is the only safe buffer size:
+        // Stream Deck XL/Plus send 512-byte reports, and a smaller buffer
+        // ends in EOVERFLOW or a truncated report depending on the kernel.
         int bufSize = epIn != null ? epIn.getMaxPacketSize() : 64;
         if (bufSize < 64) bufSize = 64;
-        ByteBuffer buf = ByteBuffer.allocate(bufSize);
-        long lastDataAt = System.currentTimeMillis();
-        long lastStarveLog = lastDataAt;
+        final ByteBuffer buf = ByteBuffer.allocateDirect(bufSize);
+        final UsbDeviceConnection conn = connection;
 
-        try {
-            while (running) {
+        RequestReader.Pipe pipe = new RequestReader.Pipe() {
+            @Override public boolean submit() {
                 buf.clear();
-                if (!req.queue(buf, buf.capacity())) {
-                    if (!running) return;
-                    Log.w(TAG, "UsbRequest.queue failed");
-                    close("usb_request_queue_failed");
-                    return;
-                }
-                UsbRequest finished = null;
-                boolean timedOut = false;
                 try {
-                    finished = connection.requestWait(5000);
-                } catch (java.util.concurrent.TimeoutException te) {
-                    // requestWait(timeout) throws on timeout in API 26+;
-                    // earlier API returns null. Either way it just means
-                    // "nothing in the last 5 s" — NOT a fatal error.
-                    timedOut = true;
-                } catch (Throwable t) {
-                    if (!running) return;
-                    Log.w(TAG, "requestWait threw — closing", t);
-                    close("usb_request_wait_threw:" + t.getClass().getSimpleName());
-                    return;
+                    return req.queue(buf);
+                } catch (RuntimeException e) {
+                    Log.w(TAG, "UsbRequest.queue threw", e);
+                    return false;
                 }
-                if (!running) break;
-                long now = System.currentTimeMillis();
-                if (timedOut || finished == null) {
-                    // Cancel the in-flight request before re-queueing.
-                    // Without this, some Android kernels leave the
-                    // request hanging in driver state and the next
-                    // queue() call fails outright (we saw that on
-                    // ThinkPhone after ~100 s of starvation).
-                    try { req.cancel(); } catch (Throwable ignored) {}
-                    if (now - lastStarveLog >= 5000) {
-                        Log.w(TAG, "reader (UsbRequest) starving — "
-                            + (now - lastDataAt) + " ms since last data");
-                        lastStarveLog = now;
-                        if (debugLogging) {
-                            JSObject ev = new JSObject();
-                            ev.put("deckId", serial);
-                            ev.put("len", 0);
-                            ev.put("bytes", "(starving UsbRequest "
-                                + (now - lastDataAt) + "ms)");
-                            emitter.emit("rawInputReport", ev);
-                        }
-                    }
-                    continue;
-                }
-                int got = buf.position();
-                if (got <= 0) continue;
-                lastDataAt = now;
-
-                byte[] data = new byte[got];
-                buf.position(0);
-                buf.get(data, 0, got);
-
-                if (debugLogging) emitRaw(data, got);
-                parseInputReport(data, got);
             }
-        } finally {
-            try { req.close(); } catch (Throwable ignored) {}
+            @Override public byte[] await(long ms) throws RequestReader.WaitFailed {
+                UsbRequest done;
+                try {
+                    done = conn.requestWait(ms);
+                } catch (java.util.concurrent.TimeoutException e) {
+                    return null;
+                } catch (RuntimeException e) {
+                    throw new RequestReader.WaitFailed(e.getClass().getSimpleName());
+                }
+                // requestWait(long) answers a timeout by TimeoutException
+                // and an error by null.
+                if (done == null) throw new RequestReader.WaitFailed("null");
+                if (done != req) return null;
+                byte[] data = new byte[buf.position()];
+                buf.flip();
+                buf.get(data);
+                return data;
+            }
+            @Override public void cancel() { req.cancel(); }
+            @Override public void close()  { req.close(); }
+        };
+        RequestReader.Owner owner = new RequestReader.Owner() {
+            @Override public boolean isOpen() { return running; }
+            @Override public void onReport(byte[] data) {
+                if (debugLogging) emitRaw(data, data.length);
+                parseInputReport(data, data.length);
+            }
+            @Override public void onIdle(long msSinceData) {
+                Log.w(TAG, "reader (UsbRequest) starving — "
+                    + msSinceData + " ms since last data");
+                if (debugLogging) {
+                    JSObject ev = new JSObject();
+                    ev.put("deckId", serial);
+                    ev.put("len", 0);
+                    ev.put("bytes", "(starving UsbRequest " + msSinceData + "ms)");
+                    emitter.emit("rawInputReport", ev);
+                }
+            }
+        };
+        RequestReader reader = new RequestReader(pipe, owner, System::currentTimeMillis);
+        String failure = reader.run();
+        if (reader.leftQueued()) {
+            Log.w(TAG, "reader: cancelled UsbRequest never reaped, left to the connection close");
+        }
+        // The request is released: closing the connection is safe now.
+        if (failure != null && running) {
+            Log.w(TAG, "reader (UsbRequest) failed — closing: " + failure);
+            close(failure);
         }
     }
 

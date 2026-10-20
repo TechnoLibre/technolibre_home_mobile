@@ -155,8 +155,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // calls this hook, which only does something when the user
         // opted in (wakeOnKeyPress), the activity is currently paused
         // (locked screen / backgrounded), and the screen is lit already
-        // or showOverLockScreen lets the press light it.
-        DeckSession.setKeyPressHook(this::onDeckKeyPressed);
+        // or showOverLockScreen lets the press light it. The hook runs on
+        // the main thread: PowerManager and startActivity are binder calls,
+        // and the USB reader thread makes none.
+        DeckSession.setKeyPressHook(() -> mainHandler.post(this::onDeckKeyPressed));
         StreamDeckLifecycleService.setTaskRemovedHandler(() -> {
             stopReattach();
             resetAllSessions();
@@ -828,9 +830,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /**
-     * keyPressHook from DeckSession. Fires on every accepted key down
-     * (release events are filtered upstream), after keyChanged has been
-     * emitted. Returns at once unless DeckPowerOptions
+     * keyPressHook from DeckSession, posted to the main thread. Fires on
+     * every accepted key down (release events are filtered upstream),
+     * after keyChanged has been emitted. Returns at once unless DeckPowerOptions
      * .bringAppForwardOnKeyPress holds: wakeOnKeyPress armed, the activity
      * paused, and the screen lit already or showOverLockScreen on. The
      * activity is never relaunched while the user is in it, and the screen
