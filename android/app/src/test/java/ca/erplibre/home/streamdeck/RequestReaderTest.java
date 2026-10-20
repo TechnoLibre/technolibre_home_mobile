@@ -135,6 +135,48 @@ public class RequestReaderTest {
     }
 
     @Test
+    public void a_burst_of_empty_completions_ends_the_reader() {
+        // A halted endpoint completes every request at once with no data:
+        // without a bound the loop resubmits at full speed, forever.
+        FakeOwner owner = new FakeOwner();
+        Object[] steps = new Object[RequestReader.EMPTY_BURST + 10];
+        for (int i = 0; i < steps.length; i++) steps[i] = new byte[0];
+        FakePipe pipe = new FakePipe(owner, steps);
+        pipe.msPerWait = 1;
+        RequestReader r = reader(pipe);
+        assertEquals(RequestReader.EMPTY_FAILED, r.run());
+        assertEquals(RequestReader.EMPTY_BURST, pipe.count("submit"));
+        assertEquals(1, pipe.count("close"));
+        assertFalse(r.leftQueued());
+    }
+
+    @Test
+    public void empty_completions_spread_out_keep_the_reader() {
+        FakeOwner owner = new FakeOwner();
+        Object[] steps = new Object[2 * RequestReader.EMPTY_BURST + 1];
+        for (int i = 0; i < steps.length - 1; i++) steps[i] = new byte[0];
+        steps[steps.length - 1] = STOP;
+        FakePipe pipe = new FakePipe(owner, steps);
+        pipe.msPerWait = 2 * RequestReader.EMPTY_BURST_MS / RequestReader.EMPTY_BURST;
+        assertNull(reader(pipe).run());
+    }
+
+    @Test
+    public void a_report_resets_the_empty_count() {
+        FakeOwner owner = new FakeOwner();
+        List<Object> steps = new ArrayList<>();
+        for (int round = 0; round < 3; round++) {
+            for (int i = 1; i < RequestReader.EMPTY_BURST; i++) steps.add(new byte[0]);
+            steps.add(report(0x01, 0x00));
+        }
+        steps.add(STOP);
+        FakePipe pipe = new FakePipe(owner, steps.toArray());
+        pipe.msPerWait = 1;
+        assertNull(reader(pipe).run());
+        assertEquals(3, owner.reports.size());
+    }
+
+    @Test
     public void exit_cancels_and_reaps_the_queued_request_before_closing_it() {
         FakeOwner owner = new FakeOwner();
         FakePipe pipe = new FakePipe(owner, STOP);

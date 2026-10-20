@@ -31,9 +31,19 @@ final class RequestReader {
     static final int WAIT_FAILURES_TO_CLOSE = 3;
     /** Shortest interval between two onIdle notes. */
     static final long IDLE_NOTE_MS = 5000;
+    /**
+     * Empty completions within EMPTY_BURST_MS that end the reader. The Java
+     * API hands back a request that ended in error (halted endpoint,
+     * protocol error) as an empty completion without its status; a deck
+     * sends no empty report, so a burst of them is a pipe that fails every
+     * request at once, and resubmitting it would spin a core forever.
+     */
+    static final int EMPTY_BURST = 50;
+    static final long EMPTY_BURST_MS = 1000;
 
     static final String QUEUE_FAILED = "usb_request_queue_failed";
     static final String WAIT_FAILED = "usb_request_wait_failed";
+    static final String EMPTY_FAILED = "usb_request_empty_completions";
 
     /** A wait that failed rather than timed out; the message is its detail. */
     static final class WaitFailed extends Exception {
@@ -103,6 +113,8 @@ final class RequestReader {
         int failuresInARow = 0;
         long lastDataAt = clock.now();
         long lastIdleNote = lastDataAt;
+        int empties = 0;
+        long emptiesSince = 0;
         String failure = null;
         try {
             while (owner.isOpen()) {
@@ -132,7 +144,15 @@ final class RequestReader {
                     }
                     continue;
                 }
-                if (got.length == 0) continue;
+                if (got.length == 0) {
+                    if (empties == 0 || now - emptiesSince >= EMPTY_BURST_MS) {
+                        empties = 0;
+                        emptiesSince = now;
+                    }
+                    if (++empties >= EMPTY_BURST) { failure = EMPTY_FAILED; break; }
+                    continue;
+                }
+                empties = 0;
                 lastDataAt = now;
                 owner.onReport(got);
             }
