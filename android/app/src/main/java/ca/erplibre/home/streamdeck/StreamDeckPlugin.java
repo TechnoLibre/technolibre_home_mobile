@@ -750,8 +750,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         err = KeyImages.checkSize(raw, s.spec());
         if (err != null) { call.reject(err); return; }
 
+        // Settled once, by the writer or by the queue as dropped. Not kept
+        // alive: the Bridge would hold a kept-alive call and its bytes
+        // until releaseCall, for every frame.
         s.queue().offerCoalesce(new ImageWriteJob(s, key, raw, call));
-        call.setKeepAlive(true);
     }
 
     /**
@@ -803,7 +805,6 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         try { black = s.encoder().blank(s.spec().keyImageW, s.spec().keyImageH); }
         catch (ImageEncoder.ImageEncodeException e) { call.reject(e.getMessage()); return; }
         s.queue().offerCoalesce(ImageWriteJob.preEncoded(s, key, black, call));
-        call.setKeepAlive(true);
     }
 
     @PluginMethod
@@ -820,7 +821,6 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         byte[] raw = decodeBytes(call); if (raw == null) return;
         s.queue().offerCoalesce(new LcdWriteJob(
             s, 0, 0, s.spec().lcdW, s.spec().lcdH, raw, call, "lcd"));
-        call.setKeepAlive(true);
     }
 
     @PluginMethod
@@ -835,7 +835,6 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         byte[] raw = decodeBytes(call); if (raw == null) return;
         String slot = "lcd:" + x + "," + y + "," + w + "," + h;
         s.queue().offerCoalesce(new LcdWriteJob(s, x, y, w, h, raw, call, slot));
-        call.setKeepAlive(true);
     }
 
     @PluginMethod
@@ -849,7 +848,6 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         }
         byte[] raw = decodeBytes(call); if (raw == null) return;
         s.queue().offerCoalesce(new NeoInfoBarWriteJob(s, index, raw, call));
-        call.setKeepAlive(true);
     }
 
     private byte[] decodeBytes(PluginCall call) {
