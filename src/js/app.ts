@@ -323,6 +323,9 @@ async function startApp() {
 		if (!ev.pressed) return;
 		streamDeckEventLog.add(`neoTouched: index=${ev.index}`);
 	}).catch(() => {});
+	StreamDeckPlugin.addListener("writeFailed", (ev) =>
+		streamDeckEventLog.add(`writeFailed: deck=${ev.deckId} key=${ev.key} (${ev.reason})`),
+	).catch(() => {});
 	StreamDeckPlugin.addListener("rawInputReport", (ev) =>
 		streamDeckEventLog.add(`raw[${ev.len}]: ${ev.bytes}`),
 	).catch(() => {});

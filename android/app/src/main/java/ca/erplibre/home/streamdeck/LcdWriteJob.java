@@ -38,7 +38,7 @@ final class LcdWriteJob extends WriteJob {
     }
 
     @Override
-    public void runTransport() {
+    public void runTransport() throws DeckSession.DeckIoException {
         try {
             if (jpegBytes.length < 3
                     || (jpegBytes[0] & 0xFF) != 0xFF
@@ -56,6 +56,7 @@ final class LcdWriteJob extends WriteJob {
             call.reject("image_oversized:" + e.getMessage());
         } catch (DeckSession.DeckIoException e) {
             call.reject(e.getMessage());
+            throw e;    // the writer closes the session
         } catch (Throwable t) {
             call.reject("lcd_write_failed:" + t.getMessage());
         }

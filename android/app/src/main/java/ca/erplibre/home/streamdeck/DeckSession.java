@@ -32,8 +32,9 @@ import ca.erplibre.home.streamdeck.transport.TransportV2;
  *   close() — kill threads, drain queue with rejected promises, release iface,
  *             then tell the owner through the CloseListener
  *
- * close() runs from the owner (detach, restart, destroy) or from the reader
- * thread itself when the USB pipe fails; the listener fires once either way.
+ * close() runs from the owner (detach, restart, destroy), from the reader
+ * thread itself when the USB pipe fails, or from the writer thread when a
+ * transfer fails (see WriterStep); the listener fires once either way.
  */
 public final class DeckSession {
 
@@ -51,6 +52,7 @@ public final class DeckSession {
     private final EventEmitter emitter;
     private final CloseListener closeListener;
     private final WriterQueue queue = new WriterQueue();
+    private final WriteFailureReporter writeFailures = new WriteFailureReporter();
     private final DeckTransport transport;
     private final ImageEncoder encoder;
 
@@ -272,10 +274,17 @@ public final class DeckSession {
     public DeckTransport transport(){ return transport; }
     public WriterQueue queue()      { return queue; }
 
-    /** Synchronously write all pages of a pre-paginated payload to the OUT endpoint. */
+    /** Synchronously write all pages of a pre-paginated payload to the OUT
+     *  endpoint. Any failed transfer, thrown or short, is a DeckIoException:
+     *  the writer closes the session on it. */
     public void writePages(List<byte[]> pages) throws DeckIoException {
         for (byte[] page : pages) {
-            int sent = connection.bulkTransfer(epOut, page, page.length, BULK_WRITE_TIMEOUT_MS);
+            int sent;
+            try {
+                sent = connection.bulkTransfer(epOut, page, page.length, BULK_WRITE_TIMEOUT_MS);
+            } catch (RuntimeException e) {
+                throw new DeckIoException("bulk_write_threw:" + e.getClass().getSimpleName());
+            }
             if (sent != page.length) {
                 throw new DeckIoException("bulk_write_short:" + sent + "/" + page.length);
             }
@@ -752,17 +761,42 @@ public final class DeckSession {
     }
 
     private void writerLoop() {
+        WriterStep.Owner owner = this::closeAfterWriteFailure;
         while (running) {
             try {
                 WriteJob job = queue.take();
                 if (!running) return;
-                job.runTransport();
+                if (!WriterStep.run(job, owner)) return;
             } catch (InterruptedException e) {
                 return; // closed
             } catch (Throwable t) {
                 Log.w(TAG, "writer job error", t);
             }
         }
+    }
+
+    /** WriterStep's close on a failed transfer. A transfer that failed
+     *  because the owner already closed the session changes nothing. */
+    private void closeAfterWriteFailure(String reason) {
+        if (!running) return;
+        Log.w(TAG, "write failed — closing: " + reason);
+        close(reason);
+    }
+
+    /** A fire-and-forget write to {@code key} went through; see
+     *  WriteFailureReporter. */
+    void writeSucceeded(int key) { writeFailures.succeeded("key:" + key); }
+
+    /** Failure of a fire-and-forget write: nobody holds a Promise for it,
+     *  so it goes to JS as writeFailed, once per new reason for that key. */
+    void reportWriteFailure(int key, String reason) {
+        if (!writeFailures.shouldReport("key:" + key, reason)) return;
+        Log.w(TAG, "fire-and-forget write failed on key " + key + ": " + reason);
+        JSObject ev = new JSObject();
+        ev.put("deckId", serial);
+        ev.put("key", key);
+        ev.put("reason", reason);
+        emitter.emit("writeFailed", ev);
     }
 
     public static final class DeckOpenException extends Exception {
