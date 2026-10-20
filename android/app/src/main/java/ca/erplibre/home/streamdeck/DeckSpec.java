@@ -11,7 +11,7 @@ public final class DeckSpec {
     public enum ImageFormat { JPEG, BMP_BGR_ROT180, BMP_BGR_ROT270 }
     public enum TransportKind { V1, V2 }
 
-    public final String model;            // "mk2", "xl", "plus", "neo", "original_v1", "original_v2", "mini"
+    public final String model;            // "mk2", "xl", "xl_v2", "plus", "neo", "original_v1", "original_v2", "mini"
     public final int productId;           // 0x0080 etc.
     public final int rows;
     public final int cols;

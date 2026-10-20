@@ -7,6 +7,7 @@ export type DeckModel =
     | "mini"
     | "mk2"
     | "xl"
+    | "xl_v2"
     | "plus"
     | "neo";
 

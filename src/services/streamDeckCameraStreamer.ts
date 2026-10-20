@@ -71,8 +71,9 @@ export class StreamDeckCameraStreamer {
     // defaults just put the user in the neighbourhood.
     //
     //   original_v1/v2/mk2 — 30 mm cap, ~24 mm LCD,  3+3+3 mm gap → 0.40 / 0.40
-    //   xl                — 30 mm cap, ~24 mm LCD,  3+7+3 mm gap → 0.54 / 0.54
-    //                                       (confirmed empirically)
+    //   xl / xl_v2        — 30 mm cap, ~24 mm LCD,  3+7+3 mm gap → 0.54 / 0.54
+    //                                       (confirmed empirically; the v2
+    //                                       is the same 8x4 panel)
     //   mini              — 24 mm cap, ~20 mm LCD,  2+3+2 mm gap → 0.30 / 0.30
     //   plus              — 0.68 W / 0.30 H (confirmed empirically)
     //                       Vertical is lower than the geometry-only
@@ -86,6 +87,7 @@ export class StreamDeckCameraStreamer {
         mini:        { w: 0.30, h: 0.30 },
         mk2:         { w: 0.40, h: 0.40 },
         xl:          { w: 0.54, h: 0.54 },
+        xl_v2:       { w: 0.54, h: 0.54 },
         plus:        { w: 0.68, h: 0.30 },
         neo:         { w: 0.40, h: 0.40 },
     };

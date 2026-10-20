@@ -12,7 +12,8 @@ There is no CI runner with hardware, so this is the safety net.
 
 ## Checklist (per physical deck)
 
-For each of: Original v1, Mini, Original v2, MK.2, XL, Plus, Neo.
+For each of: Original v1, Mini, Original v2, MK.2, XL, XL v2 (PID 0x008f),
+Plus, Neo.
 
 - [ ] Plug deck in with app **closed**. App should launch via the USB
       ATTACHED intent-filter and show the deck in `listDecks()`.
