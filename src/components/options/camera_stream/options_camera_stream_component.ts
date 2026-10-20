@@ -21,16 +21,13 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
               t-att-aria-expanded="state.expanded ? 'true' : 'false'"
               t-on-click="toggle"
               t-on-keydown="onHeaderKey">
-            <span>📷 <t t-esc="t('section.camera_to_deck')"/></span>
+            <span t-esc="t('section.camera_to_deck')"/>
             <span t-esc="state.expanded ? '▲' : '▼'"/>
           </div>
 
           <div t-if="state.expanded" class="options-camera-stream__body">
-            <p class="options-camera-stream__hint">
-              Diffuse l'image de la caméra arrière sur tous les Stream Deck
-              connectés. Une pression sur n'importe quelle touche du deck
-              arrête la diffusion.
-            </p>
+            <p class="options-camera-stream__hint"
+               t-esc="t('camera_stream.hint')"/>
 
             <div class="options-camera-stream__row">
               <button
@@ -38,8 +35,7 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
                   t-att-class="{ 'options-camera-stream__button--on': state.active }"
                   t-att-disabled="isToggleDisabled"
                   t-on-click="() => this.onToggle()">
-                <t t-if="state.active">⏹ <t t-esc="t('button.deactivate')"/></t>
-                <t t-else="">▶ <t t-esc="t('button.activate')"/><t t-esc="state.deckCount" /><t t-esc="t('label.deck')"/><t t-if="state.deckCount !== 1">s</t>)</t>
+                <t t-esc="toggleLabel()"/>
               </button>
               <button
                   class="options-camera-stream__refresh"
@@ -55,36 +51,31 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
 
             <!-- Streaming options. Visible whether or not streaming is
                  active so the user can preview/tune defaults before
-                 hitting Activer; setters apply live mid-stream when
+                 starting the stream; setters apply live mid-stream when
                  it's running (timer swap, MediaStream swap, etc.). -->
             <div class="options-camera-stream__settings">
               <div class="options-camera-stream__setting">
                 <label class="options-camera-stream__setting-label">
-                  Qualité JPEG —
-                  <strong t-esc="state.qualityLabel" />
+                  <t t-esc="t('camera_stream.quality')"/> <strong t-esc="state.qualityLabel" />
                 </label>
                 <input type="range" min="10" max="100" step="5"
                        class="options-camera-stream__slider"
                        t-att-value="state.qualityX100"
                        t-on-input="onQualityInput" />
-                <p class="options-camera-stream__setting-hint">
-                  Plus haut = image plus nette mais plus lent à transmettre.
-                  Défaut 0.10.
-                </p>
+                <p class="options-camera-stream__setting-hint"
+                   t-esc="t('camera_stream.quality_hint')"/>
               </div>
 
               <div class="options-camera-stream__setting">
                 <label class="options-camera-stream__setting-label">
-                  Images par seconde — <strong t-esc="state.fps" /> i/s
+                  <t t-esc="t('camera_stream.fps')"/> <strong t-esc="state.fps" /> <t t-esc="t('camera_stream.fps_unit')"/>
                 </label>
                 <input type="range" min="1" max="30" step="1"
                        class="options-camera-stream__slider"
                        t-att-value="state.fps"
                        t-on-input="onFpsInput" />
-                <p class="options-camera-stream__setting-hint">
-                  Plafond effectif limité par le temps d'encodage et le
-                  drain USB. Défaut 5 i/s.
-                </p>
+                <p class="options-camera-stream__setting-hint"
+                   t-esc="t('camera_stream.fps_hint')"/>
               </div>
 
               <div class="options-camera-stream__setting">
@@ -93,12 +84,12 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
                   <button class="options-camera-stream__refresh"
                           t-att-class="{ 'options-camera-stream__button--on': state.facingMode === 'environment' }"
                           t-on-click="() => this.applyFacingMode('environment')">
-                    📷 Arrière
+                    <t t-esc="t('camera_stream.rear')"/>
                   </button>
                   <button class="options-camera-stream__refresh"
                           t-att-class="{ 'options-camera-stream__button--on': state.facingMode === 'user' }"
                           t-on-click="() => this.applyFacingMode('user')">
-                    🤳 Avant
+                    <t t-esc="t('camera_stream.front')"/>
                   </button>
                 </div>
               </div>
@@ -108,12 +99,10 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
                   <input type="checkbox"
                          t-att-checked="state.skipIdentical"
                          t-on-change="onSkipIdenticalChange" />
-                  Sauter les images identiques
+                  <t t-esc="t('camera_stream.skip_identical')"/>
                 </label>
-                <p class="options-camera-stream__setting-hint">
-                  Hash 32×16 du flux vidéo. Si la scène n'a pas changé,
-                  on saute encodage + USB. Gratuit pour scènes statiques.
-                </p>
+                <p class="options-camera-stream__setting-hint"
+                   t-esc="t('camera_stream.skip_identical_hint')"/>
               </div>
 
               <div class="options-camera-stream__setting">
@@ -121,17 +110,14 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
                   <input type="checkbox"
                          t-att-checked="state.faceDetect"
                          t-on-change="onFaceDetectChange" />
-                  Détection de visage (bordure verte)
+                  <t t-esc="t('camera_stream.face_detect')"/>
                 </label>
-                <p class="options-camera-stream__setting-hint">
-                  ML Kit (natif Android). Les touches contenant un visage
-                  reçoivent un cadre vert. Détection asynchrone, cadence
-                  alignée sur le FPS du stream.
-                </p>
+                <p class="options-camera-stream__setting-hint"
+                   t-esc="t('camera_stream.face_detect_hint')"/>
                 <p t-if="state.faceDetect" class="options-camera-stream__setting-hint">
-                  Diagnostic — appels: <strong t-esc="state.faceCalls" />,
-                  hits: <strong t-esc="state.faceHits" />,
-                  visages courants: <strong t-esc="state.faceLast" />
+                  <t t-esc="t('camera_stream.face_calls')"/> <strong t-esc="state.faceCalls" />,
+                  <t t-esc="t('camera_stream.face_hits')"/> <strong t-esc="state.faceHits" />,
+                  <t t-esc="t('camera_stream.face_current')"/> <strong t-esc="state.faceLast" />
                 </p>
               </div>
             </div>
@@ -222,6 +208,16 @@ export class OptionsCameraStreamComponent extends EnhancedComponent {
         // `and` that can land an HTML `disabled="false"` attribute (which
         // browsers still treat as disabled).
         return !this.state.active && this.state.deckCount === 0;
+    }
+
+    /** The start/stop button's text: stop while streaming, otherwise
+     *  start with the number of connected decks, plural from 0 up. */
+    toggleLabel(): string {
+        if (this.state.active) return this.t("button.deactivate");
+        const count = this.state.deckCount;
+        return count === 1
+            ? this.t("camera_stream.start_one", { count })
+            : this.t("camera_stream.start_other", { count });
     }
 
     toggle(): void {
