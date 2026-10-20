@@ -166,16 +166,6 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             Log.i(TAG, "onDeckAttached: cancelled pending close for " + name + " (transient detach)");
         }
 
-        // Idempotent: if we already have an open session for this USB
-        // device path, the second attach is just hotplug noise (or a
-        // race after a quick detach we already debounced). Bail early
-        // so we don't construct a parallel session that fights the
-        // first one for the interface and surfaces as permissionDenied.
-        if (registry.hasSession(name)) {
-            Log.i(TAG, "onDeckAttached: session already open for " + name + " — skipping");
-            return;
-        }
-
         DeckSpec spec = DeckRegistry.lookup(device.getProductId());
         if (spec == null) {
             Log.w(TAG, "unknown Elgato product 0x" + Integer.toHexString(device.getProductId()));
@@ -191,8 +181,20 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             emitter.emit("permissionDenied", ev);
             return;
         }
+
+        // Idempotent: the reservation is held from here until the session
+        // is registered or the attempt fails. A second attach meanwhile —
+        // hotplug noise, a debounced bounce, or requestPermissionForUsb
+        // resolving the same permission future — is refused instead of
+        // opening a parallel session that would steal the interface from
+        // the first and orphan its threads. An open session is reused.
+        if (!registry.reserve(name)) {
+            Log.i(TAG, "onDeckAttached: " + name + " already open or opening — skipping");
+            return;
+        }
         permissions.request(device).whenComplete((granted, err) -> {
             if (err != null || granted == null || !granted) {
+                registry.release(name);
                 String reason = err != null ? err.getMessage() : "permission_denied";
                 recordAttachError(name, reason);
                 JSObject ev = new JSObject();
@@ -205,14 +207,17 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             try {
                 session.open(usb);
                 if (!registry.register(name, session.serial(), session)) {
-                    // Closed itself between open() and here; its close
-                    // already reported it and nothing stays registered.
-                    Log.w(TAG, "onDeckAttached: session for " + name + " closed while opening");
+                    // Detached while opening, or closed itself before
+                    // registration: nothing stays registered, and an
+                    // open session here would run without an owner.
+                    Log.w(TAG, "onDeckAttached: " + name + " left while opening — closing");
+                    session.close("usb_lost");
                     return;
                 }
                 synchronized (lastAttachError) { lastAttachError.remove(name); }
                 acquireWakeLockIfNeeded();
             } catch (DeckSession.DeckOpenException e) {
+                registry.release(name);
                 String reason = e.getMessage();
                 recordAttachError(name, reason);
                 JSObject ev = new JSObject();
@@ -220,6 +225,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 ev.put("reason", reason);
                 emitter.emit("permissionDenied", ev);
             } catch (Throwable t) {
+                registry.release(name);
+                session.close("open_failed");
                 String reason = "open_unexpected:" + t.getClass().getSimpleName()
                     + ":" + t.getMessage();
                 recordAttachError(name, reason);
@@ -249,6 +256,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // device comes back within DETACH_DEBOUNCE_MS.
         Runnable closeJob = () -> {
             synchronized (pendingCloseJobs) { pendingCloseJobs.remove(name); }
+            // An attach still waiting on permission or open() for this
+            // device will fail to register and close what it opened.
+            registry.release(name);
             DeckSession session = registry.byDevice(name);
             if (session != null) {
                 Log.i(TAG, "onDeckDetached: closing session for " + name + " (debounce expired)");
@@ -433,7 +443,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         for (UsbDevice d : usb.getDeviceList().values()) {
             if (!DeckRegistry.isElgato(d.getVendorId())) continue;
             if (DeckRegistry.lookup(d.getProductId()) == null) continue;
-            if (registry.hasSession(d.getDeviceName())) continue;
+            if (registry.isBusy(d.getDeviceName())) continue;
             if (!usb.hasPermission(d)) continue;
             onDeckAttached(d);
             retried++;
