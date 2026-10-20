@@ -6,7 +6,6 @@ import { KeepAwakePlugin } from "../../../plugins/keepAwakePlugin";
 import { useFeatureSection } from "../../../utils/featureSection";
 import {
     applyDeckSleepChange,
-    applyWakeOnKeyPress,
     deckSleepEffects,
     storedWakeOnKeyPress,
 } from "../../../services/deckSleepCoupling";
@@ -114,9 +113,9 @@ export class OptionsKeepAwakeComponent extends EnhancedComponent {
                     // Re-apply on app start so the flag survives a reboot.
                     await KeepAwakePlugin.setEnabled({ enabled: true });
                 }
-                const deckWant = storedWakeOnKeyPress();
-                this.state.deckEnabled = deckWant;
-                await applyWakeOnKeyPress(this._bus, deckWant);
+                // Shown as stored; app boot (restoreDeckSleepAtBoot)
+                // arms the plugin and keeps it coupled with keepAwake.
+                this.state.deckEnabled = storedWakeOnKeyPress();
             } catch (e) {
                 this.state.error = e instanceof Error ? e.message : String(e);
             }

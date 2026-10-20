@@ -1,7 +1,7 @@
 import type { EventBus } from "@odoo/owl";
 import { Events } from "../constants/events";
 import { StreamDeckPlugin, DeckPowerOptions } from "../plugins/streamDeckPlugin";
-import { setDeckPowerOption } from "./streamDeckPowerOptions";
+import { loadDeckPowerOptions, setDeckPowerOption } from "./streamDeckPowerOptions";
 import { t } from "../i18n";
 
 /**
@@ -148,6 +148,44 @@ export function storedWakeOnKeyPress(): boolean {
     } catch {
         return false;
     }
+}
+
+/**
+ * Brings the stored settings back into force: the plugin's
+ * wake-on-key-press is a static that starts off with every process, so
+ * it is armed again as stored. wakeOnKeyPress stored on with keepAwake
+ * off breaks the coupling, and is repaired the way turning it on works:
+ * keepAwake goes on first, and when it stays off wakeOnKeyPress is
+ * stored off. Resolves with both settings as left.
+ */
+export async function restoreDeckSleepSettings(
+    stored: DeckSleepSettings,
+    effects: DeckSleepEffects,
+): Promise<DeckSleepOutcome> {
+    if (!stored.wakeOnKeyPress || stored.keepAwake) {
+        await effects.setWakeOnKeyPress(stored.wakeOnKeyPress);
+        return { settings: { ...stored }, notice: null, coupledError: null };
+    }
+    const r = await applyDeckSleepChange(
+        { ...stored, wakeOnKeyPress: false },
+        { setting: "wakeOnKeyPress", enabled: true },
+        effects,
+    );
+    if (r.coupledError) await effects.setWakeOnKeyPress(false);
+    return r;
+}
+
+/**
+ * restoreDeckSleepSettings on the stored values and the device writes,
+ * run once at app start: no Options section has to be opened for the
+ * settings to apply. Announces the result on `bus` like any change.
+ */
+export async function restoreDeckSleepAtBoot(bus?: EventBus): Promise<DeckSleepOutcome> {
+    const power = await loadDeckPowerOptions();
+    return restoreDeckSleepSettings(
+        { wakeOnKeyPress: storedWakeOnKeyPress(), keepAwake: power.keepAwake },
+        deckSleepEffects(bus),
+    );
 }
 
 /**

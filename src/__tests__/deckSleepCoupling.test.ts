@@ -14,6 +14,8 @@ import {
     applyDeckSleepChange,
     deckSleepEffects,
     planDeckSleepChange,
+    restoreDeckSleepAtBoot,
+    restoreDeckSleepSettings,
     storedWakeOnKeyPress,
     type DeckSleepEffects,
     type DeckSleepSettings,
@@ -174,6 +176,92 @@ describe("applyDeckSleepChange", () => {
         expect(r.power).toEqual({ showOverLockScreen: false, keepAwake: false });
         expect(r.notice).toBeNull();
         expect(r.coupledError).toBe(t(ERROR_KEEP_AWAKE_NOT_STORED));
+    });
+});
+
+describe("restoreDeckSleepSettings", () => {
+    it.each(ON_OFF)("arms wake-on-key-press=%s as stored when keepAwake is on", async (wake) => {
+        const { calls, effects } = recordingEffects();
+        const r = await restoreDeckSleepSettings(settings(wake, true), effects);
+        expect(calls).toEqual([`wakeOnKeyPress=${wake}`]);
+        expect(r.settings).toEqual(settings(wake, true));
+        expect(r.notice).toBeNull();
+    });
+
+    it("disarms wake-on-key-press stored off with keepAwake off", async () => {
+        const { calls, effects } = recordingEffects();
+        const r = await restoreDeckSleepSettings(settings(false, false), effects);
+        expect(calls).toEqual(["wakeOnKeyPress=false"]);
+        expect(r.settings).toEqual(settings(false, false));
+    });
+
+    it("turns keepAwake on for wake-on-key-press stored on without it", async () => {
+        const { calls, effects } = recordingEffects();
+        const r = await restoreDeckSleepSettings(settings(true, false), effects);
+        expect(calls).toEqual(["keepAwake=true", "wakeOnKeyPress=true"]);
+        expect(r.settings).toEqual(settings(true, true));
+        expect(r.notice).toBe(NOTICE_KEEP_AWAKE_TURNED_ON);
+    });
+
+    it("turns wake-on-key-press off when keepAwake cannot go on", async () => {
+        const { calls, effects } = recordingEffects();
+        effects.setKeepAwake = vi.fn().mockRejectedValue(new Error("no plugin"));
+        const r = await restoreDeckSleepSettings(settings(true, false), effects);
+        expect(calls).toEqual(["wakeOnKeyPress=false"]);
+        expect(r.settings).toEqual(settings(false, false));
+        expect(r.coupledError).toContain("no plugin");
+    });
+});
+
+describe("restoreDeckSleepAtBoot", () => {
+    beforeEach(() => {
+        __clearPluginMocks();
+    });
+
+    it("re-arms the plugin from storage, keepAwake on", async () => {
+        stubStorage({ [WAKE_ON_KEY_PRESS_KEY]: "true" });
+        const wake = vi.fn().mockResolvedValue({ enabled: true });
+        const set = vi.fn();
+        __setPluginMock("StreamDeckPlugin", {
+            getPowerOptions: vi.fn().mockResolvedValue({ showOverLockScreen: true, keepAwake: true }),
+            setPowerOptions: set,
+            setWakeOnKeyPress: wake,
+        });
+        const bus = new EventBus();
+        const seen: unknown[] = [];
+        bus.addEventListener(Events.STREAMDECK_KEEP_AWAKE, (e: any) => seen.push(e.detail));
+
+        await restoreDeckSleepAtBoot(bus);
+
+        expect(wake).toHaveBeenCalledWith({ enabled: true });
+        expect(set).not.toHaveBeenCalled();
+        expect(seen).toEqual([{ enabled: true }]);
+    });
+
+    it("turns keepAwake on for a deck-lit option stored without it", async () => {
+        const store = stubStorage({ [WAKE_ON_KEY_PRESS_KEY]: "true" });
+        let power = { showOverLockScreen: false, keepAwake: false };
+        const set = vi.fn(async (o: object) => (power = { ...power, ...o }));
+        const wake = vi.fn().mockResolvedValue({ enabled: true });
+        __setPluginMock("StreamDeckPlugin", {
+            getPowerOptions: vi.fn(async () => power),
+            setPowerOptions: set,
+            setWakeOnKeyPress: wake,
+        });
+
+        const r = await restoreDeckSleepAtBoot();
+
+        expect(set).toHaveBeenCalledWith({ keepAwake: true });
+        expect(wake).toHaveBeenCalledWith({ enabled: true });
+        expect(store.get(WAKE_ON_KEY_PRESS_KEY)).toBe("true");
+        expect(r.settings).toEqual(settings(true, true));
+    });
+
+    it("stores the deck-lit option off where the plugin is missing", async () => {
+        const store = stubStorage({ [WAKE_ON_KEY_PRESS_KEY]: "true" });
+        const r = await restoreDeckSleepAtBoot();
+        expect(store.get(WAKE_ON_KEY_PRESS_KEY)).toBe("false");
+        expect(r.settings.wakeOnKeyPress).toBe(false);
     });
 });
 
