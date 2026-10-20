@@ -380,7 +380,7 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 | `lcdTouched` | `{deckId, type, x, y, xEnd?, yEnd?}` (Plus) |
 | `neoTouched` | `{deckId, index, pressed}` (Neo) |
 | `writeFailed` | `{deckId, key, reason}` — une entrée de `setKeyImagesBatch` en échec (image refusée, transfert en échec). Envoyé une fois par touche et raison, jusqu'à ce qu'une écriture sur cette touche réussisse. |
-| `reattachGaveUp` | `{deckId, deviceName, attempts, reason}` — la réouverture automatique a échoué trois fois ; plus rien ne la retente. `deckId` vaut `""` si aucun numéro de série n'a été lu ; `reason` est le dernier échec de fermeture ou d'attachement. L'app l'écrit en une ligne dans le journal du Stream Deck. |
+| `reattachGaveUp` | `{deckId, deviceName, attempts, reason}` — la réouverture automatique a échoué trois fois, ou a trouvé la permission USB absente (`permission_missing`, envoyé dès ce constat) ; plus rien ne la retente. `deckId` vaut `""` si aucun numéro de série n'a été lu ; `reason` est le dernier échec de fermeture ou d'attachement. L'app l'écrit en une ligne dans le journal du Stream Deck. |
 
 ### Réouverture automatique
 
@@ -391,17 +391,22 @@ après 10 s sans données, `usb_request_…`, `bulk_read_threw:…`,
 rouvre après 2 s, puis 4 s, puis 8 s : trois essais au plus, chacun par le
 même chemin qu'un branchement (réservation, permission déjà accordée,
 ouverture, enregistrement), sans jamais ouvrir une deuxième session ni
-afficher de dialogue. Un deck sans permission compte comme un essai raté.
-Le compte revient à zéro dès qu'une session est restée enregistrée 60 s.
-Après le troisième essai raté, `reattachGaveUp` part une fois et plus rien
-n'est tenté ; quand le dernier échec est `permission_missing`, sa ligne au
-journal renvoie au bouton de demande de permission. Avec `keepAwake`, le
+afficher de dialogue. Le compte revient à zéro dès qu'une session est
+restée enregistrée 60 s. Après le troisième essai raté, `reattachGaveUp`
+part une fois et plus rien n'est tenté. Un essai qui trouve le deck sans
+permission USB abandonne aussitôt : aucun essai suivant ne pourrait ouvrir
+le dialogue qui l'accorde, donc `reattachGaveUp` part avec
+`permission_missing` et sa ligne au journal renvoie au bouton de demande
+de permission. Avec `keepAwake`, le
 wake lock partiel reste tenu pendant qu'une réouverture attend : la
 minuterie de reprise n'avance pas quand le CPU dort.
 
 Rien n'est rouvert après un débranchement (`usb_lost` : le hotplug gère
 le retour), `restartSessions`, `retryAttach` ou la destruction de l'app ;
-ceux-ci annulent les réouvertures en attente.
+ceux-ci annulent les réouvertures en attente. `restartSessions` et
+`retryAttach` — y compris le `restartSessions` de l'app après plus de 5 s
+masquée — rendent à chaque deck ses trois essais, même à un deck
+abandonné faute de permission.
 
 ### Identité persistante
 
