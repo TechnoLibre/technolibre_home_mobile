@@ -436,6 +436,8 @@ export const translations: Record<string, string> = {
   "button.rescan_decks": "Re-scan the decks",
   "section.code_style": "🎨 Style — Code tool",
   "section.sleep": "🌙 Sleep",
+  "sleep.deck_awake": "Keep the Stream Deck lit during sleep",
+  "sleep.deck_awake_hint": "When the phone goes to sleep, the Stream Deck keeps its last image instead of going dark. It only stays lit, and a key press only wakes the phone, with “Keep the phone awake while a deck is connected” on in Options › Stream Deck. Independent of the setting above.",
   "label.refresh_rate": "Refresh rate",
   "label.one_second": "1 second",
   "label.five_seconds": "5 seconds",

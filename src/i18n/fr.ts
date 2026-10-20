@@ -436,6 +436,8 @@ export const translations: Record<string, string> = {
   "button.rescan_decks": "Re-scanner les decks",
   "section.code_style": "🎨 Style — outil Code",
   "section.sleep": "🌙 Mise en veille",
+  "sleep.deck_awake": "Garder le Stream Deck allumé en veille",
+  "sleep.deck_awake_hint": "Quand le téléphone se met en veille, le Stream Deck garde sa dernière image plutôt que de s'éteindre. Il ne reste allumé, et une pression sur une touche ne réveille le téléphone, que si « Garder le téléphone éveillé tant qu'un deck est branché » est coché dans Options › Stream Deck. Indépendant du réglage ci-dessus.",
   "label.refresh_rate": "Rafraîchissement",
   "label.one_second": "1 seconde",
   "label.five_seconds": "5 secondes",

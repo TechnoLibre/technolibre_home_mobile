@@ -8,8 +8,9 @@ import { useFeatureSection } from "../../../utils/featureSection";
 const STORAGE_KEY = "options.keepAwake.enabled";
 /** Persisted independently of the screen-on flag — users may want
  *  the deck to stay lit through a phone sleep cycle without forcing
- *  the screen on. The actual deck-staying-lit behaviour is handled
- *  by StreamDeckController on the visibilitychange event. */
+ *  the screen on. StreamDeckController skips the dim on hidden for it;
+ *  the USB bus stays up only with the plugin's keepAwake power option
+ *  (Options › Stream Deck), which this flag does not set. */
 const DECK_AWAKE_KEY = "options.keepAwake.deckEnabled";
 
 /**
@@ -55,14 +56,10 @@ export class OptionsKeepAwakeComponent extends EnhancedComponent {
                 <input type="checkbox"
                        t-att-checked="state.deckEnabled"
                        t-on-change="onToggleDeck" />
-                Garder le Stream Deck allumé en veille
+                <t t-esc="t('sleep.deck_awake')"/>
               </label>
-              <p class="options-camera-stream__setting-hint">
-                Quand le téléphone se met en veille, le Stream Deck
-                garde sa dernière image affichée plutôt que de
-                s'éteindre. Une pression sur une touche réveille le
-                téléphone. Indépendant du réglage ci-dessus.
-              </p>
+              <p class="options-camera-stream__setting-hint"
+                 t-esc="t('sleep.deck_awake_hint')"/>
             </div>
             <t t-if="state.error">
               <p class="options-camera-stream__error" t-esc="state.error" />

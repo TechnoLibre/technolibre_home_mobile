@@ -102,8 +102,8 @@ export class StreamDeckController {
      *  full session restart on visible. Brief hides (<5 s, e.g. a
      *  notification briefly waking the screen) don't need it; a real
      *  sleep cycle does, because the reader's interrupt-IN endpoint
-     *  consistently goes silent for ~10 s post-wake even though the
-     *  USB bus stayed alive via the heartbeat. */
+     *  goes silent for ~10 s post-wake — whether the USB bus stayed up
+     *  through the keepAwake power option's heartbeat or suspended. */
     private hiddenAt = 0;
     private static readonly RESTART_AFTER_HIDDEN_MS = 5000;
     /** Per-key timestamp of the last accepted press. The debounce
@@ -134,8 +134,10 @@ export class StreamDeckController {
      *  visibilitychange:hidden does not dim the deck, the LCDs keep
      *  their last image, and the wake-on-keypress native path (armed
      *  via StreamDeckPlugin.setWakeOnKeyPress) brings the phone back
-     *  on. The flag is rehydrated from localStorage at boot so it
-     *  survives an app restart without relying on the toggle's mount. */
+     *  on — reliably only with the keepAwake power option, which keeps
+     *  the USB bus up. The flag is rehydrated from localStorage at boot
+     *  so it survives an app restart without relying on the toggle's
+     *  mount. */
     private keepDeckAwake = false;
     private keepAwakeListener?: (e: any) => void;
 
@@ -433,10 +435,12 @@ export class StreamDeckController {
                 if (this.keepDeckAwake) {
                     // User opted in to "keep the deck lit during phone
                     // sleep" — skip the dim so the LCDs keep their
-                    // last frame. The plugin's partial wake lock keeps
-                    // USB enumerated; the wake-on-keypress native path
-                    // (armed separately) takes care of bringing the
-                    // phone back on a press.
+                    // last frame. USB stays enumerated only with the
+                    // plugin's keepAwake power option (wake lock and
+                    // heartbeat), which is off by default and set apart
+                    // from this flag; without it the deck may flicker
+                    // or go dark, and a press reaches neither the
+                    // reader nor the wake-on-keypress path.
                     return;
                 }
                 for (const info of this.decks.values()) {
@@ -451,8 +455,8 @@ export class StreamDeckController {
             const hiddenFor = this.hiddenAt > 0 ? Date.now() - this.hiddenAt : 0;
             this.hiddenAt = 0;
             // After a real sleep cycle (>5 s), the deck's reader pipe
-            // can sit silent for ~10 s post-wake even with the
-            // heartbeat keeping the bus active. A full session
+            // can sit silent for ~10 s post-wake, even when the
+            // keepAwake heartbeat kept the bus active. A full session
             // restart re-creates the reader/writer threads from
             // scratch and the next press lands instantly. The
             // deckConnected listener above will repaint Note for each
