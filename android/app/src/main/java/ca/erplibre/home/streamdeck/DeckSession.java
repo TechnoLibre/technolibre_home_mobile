@@ -7,12 +7,15 @@ import android.hardware.usb.UsbEndpoint;
 import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.hardware.usb.UsbRequest;
+import android.os.Build;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.nio.ByteBuffer;
 
 import com.getcapacitor.JSObject;
 
+import java.util.Arrays;
 import java.util.List;
 
 import ca.erplibre.home.streamdeck.encoder.ImageEncoder;
@@ -26,20 +29,35 @@ import ca.erplibre.home.streamdeck.transport.TransportV2;
  *
  * Lifecycle:
  *   constructor (no I/O)
- *   open(usbConnection, iface) — claim, read serial, start threads
- *   close() — kill threads, drain queue with rejected promises, release iface,
- *             then tell the owner through the CloseListener
+ *   open(usbConnection, iface) — claim, reset the key stream, read
+ *             serial and firmware, start threads
+ *   close() — drain queue with rejected promises, end the threads (see
+ *             WorkerShutdown) and the calls from other threads (see
+ *             UsbCallGate), close the connection, then tell the owner
+ *             through the CloseListener
  *
  * close() runs from the owner (detach, restart, destroy), from the reader
  * thread itself when the USB pipe fails, or from the writer thread when
  * transfers keep failing (see WriterStep); the listener fires once either
- * way.
+ * way. A close() that finds another one running waits for it (see
+ * CloseOnce), unless it runs on the reader or the writer.
  */
 public final class DeckSession {
 
     private static final String TAG = "StreamDeckSession";
     private static final int    BULK_WRITE_TIMEOUT_MS = 500;
     private static final int    BULK_READ_TIMEOUT_MS  = 1000;
+    /** Bound of close()'s wait for the workers and the gated calls
+     *  together. The reader sees a close at once through
+     *  RequestReader.wake(), else within RequestReader.WAIT_MS, and then
+     *  drains its request, at most DRAIN_WAITS more waits; the writer
+     *  within one page's BULK_WRITE_TIMEOUT_MS; a heartbeat within its
+     *  500 ms transfer; setBrightness and reset within their 1000 ms. */
+    private static final long   STOP_WORKERS_MS = 2000;
+    /** Bound of a wait for a close(): its workers, then its connection
+     *  close and CloseListener. A second close() waits that long for the
+     *  first, and so does the plugin for the closes it hands over. */
+    static final long           CLOSE_WAIT_MS = STOP_WORKERS_MS + 1000;
 
     /** Told once, after the session stopped, whoever called close(). */
     public interface CloseListener {
@@ -51,6 +69,9 @@ public final class DeckSession {
     private final EventEmitter emitter;
     private final CloseListener closeListener;
     private final WriterQueue queue = new WriterQueue();
+    /** USB calls from threads close() does not join; see UsbCallGate. */
+    private final UsbCallGate calls = new UsbCallGate();
+    private final CloseOnce closeOnce = new CloseOnce();
     private final WriteFailureReporter writeFailures = new WriteFailureReporter();
     private final DeckTransport transport;
     private final ImageEncoder encoder;
@@ -64,6 +85,14 @@ public final class DeckSession {
 
     private Thread readerThread;
     private Thread writerThread;
+    /** The userequest reader, null before it starts and in the other
+     *  reader modes; close() wakes it. */
+    private volatile RequestReader requestReader;
+    /** The reader's request the kernel never gave back, closed after the
+     *  connection; see closeAfterConnection. Guarded by this. */
+    private UsbRequest leftRequest;
+    /** Set once close() has closed the connection. Guarded by this. */
+    private boolean connectionClosed = false;
     /** Heartbeat sends a benign GET_REPORT on EP0 every HEARTBEAT_MS
      *  while the session is open and setHeartbeat(true) asked for it.
      *  Without it, the USB bus enters
@@ -75,7 +104,8 @@ public final class DeckSession {
      *  cheapest activity we can produce; reader interrupt-IN tokens
      *  alone aren't enough on some kernels. Off by default: it follows
      *  the user's keepAwake option (DeckPowerOptions). Null while not
-     *  running; guarded by this. */
+     *  running; guarded by this. A heartbeat stopped by setHeartbeat can
+     *  still be inside its transfer, which goes through the call gate. */
     private Thread heartbeatThread;
     private boolean heartbeatOn = false;
     private static final long HEARTBEAT_MS = 700;
@@ -91,6 +121,8 @@ public final class DeckSession {
      *  the user presses a key in polled mode, GET_REPORT is returning
      *  cached data and polled is a dead end on that kernel. */
     private byte[] lastRawBytes;
+    /** Set by the reader once it logged its first report. */
+    private boolean firstReportLogged = false;
     /** When true the reader thread emits a `rawInputReport` event for every
      * successful bulkTransfer (stripped to first 32 bytes hex). Off by
      * default — flips on via StreamDeckPlugin.setDebugLogging. */
@@ -130,10 +162,13 @@ public final class DeckSession {
      *  perceptible gain. */
     private static final int POLLED_INTERVAL_MS = 30;
 
-    /** Optional hook invoked after every keyChanged emit. Used by the
-     *  plugin to request a screen-wake when the host activity is
-     *  paused — kept as a static plain Runnable so DeckSession does
-     *  not have to import Android lifecycle types. */
+    /** Optional hook invoked, on the reader thread, after every key-down
+     *  keyChanged emit. Used by the plugin to request a screen-wake when
+     *  the host activity is paused — kept as a static plain Runnable so
+     *  DeckSession does not have to import Android lifecycle types. The
+     *  hook only posts: a key press costs the reader no binder call. A
+     *  reader that closes its session does make some, through the
+     *  CloseListener (the plugin's wake lock update). */
     private static volatile Runnable keyPressHook;
     public static void setKeyPressHook(Runnable hook) { keyPressHook = hook; }
 
@@ -201,22 +236,16 @@ public final class DeckSession {
             + " epOut=0x" + Integer.toHexString(epOut.getAddress())
             + " readerMode=" + readerMode);
 
-        // HID class SET_IDLE 0 — tells the device to send reports only on
-        // change, no idle re-transmission. On some Android kernels the
-        // built-in HID driver auto-polls the IN endpoint and shadow-
-        // consumes our reads; SET_IDLE 0 makes the device stop honouring
-        // those polls so our reader gets the actual key-state reports.
-        // Best-effort: a stall here is informational, not fatal.
-        try {
-            int sent = connection.controlTransfer(
-                /*reqType=*/0x21, /*req=*/0x0A,
-                /*value=*/0x0000, /*index=*/chosenIface.getId(),
-                /*data=*/null, /*len=*/0,
-                /*timeout=*/1000);
-            Log.i(TAG, "SET_IDLE 0 → " + sent);
-        } catch (Throwable t) {
-            Log.w(TAG, "SET_IDLE failed (non-fatal): " + t.getMessage());
-        }
+        // No HID SET_IDLE: the Elgato protocol is feature reports and the
+        // two data endpoints, and a deck may leave SET_IDLE unanswered for
+        // its whole control timeout. The claim above has disconnected the
+        // kernel's HID driver, so nothing else polls the IN endpoint.
+
+        // A session that ended mid-image leaves the deck waiting for the
+        // rest of it; the reset makes it drop that image, as the Elgato
+        // reference library does on every open. A failure here costs one
+        // garbled key at most, which the writer's own failures report.
+        resetKeyStream();
 
         try {
             this.serial   = readSerial();
@@ -241,24 +270,79 @@ public final class DeckSession {
     }
 
     public void close(String reason) {
+        List<Thread> workers;
+        boolean first;
         synchronized (this) {
-            if (!running) return;
-            running = false;
-            queue.closeAndDrainAsDropped();
-            if (readerThread != null) readerThread.interrupt();
-            if (writerThread != null) writerThread.interrupt();
-            stopHeartbeat();
-            if (connection != null) {
-                try { connection.releaseInterface(iface); } catch (Exception ignored) {}
-                try { connection.close(); } catch (Exception ignored) {}
+            workers = Arrays.asList(readerThread, writerThread, heartbeatThread);
+            first = running && closeOnce.claim();
+            if (first) {
+                running = false;
+                calls.shut();
+                queue.closeAndDrainAsDropped();
+                heartbeatThread = null;
             }
         }
+        if (!first) {
+            // Never opened, or closed or closing already: a close in
+            // progress is waited for, so the session is gone on return.
+            if (!closeOnce.awaitFinished(workers, CLOSE_WAIT_MS)) {
+                Log.w(TAG, "close(" + reason + "): the close in progress still running after "
+                    + CLOSE_WAIT_MS + " ms");
+            }
+            return;
+        }
+        long start = System.nanoTime();
+        // The reader's wait ends at once rather than after its WAIT_MS.
+        // A native call on the connection, made before this thread closes
+        // it; a no-op when the reader is the thread closing.
+        RequestReader reader = requestReader;
+        if (reader != null) reader.wake();
+        // The workers and the gated calls end before the connection is
+        // released: close() frees the native device their USB calls use.
+        // Outside the monitor, which setHeartbeat takes; the calling
+        // worker, if any, is skipped. One deadline bounds both waits.
+        long deadline = start + STOP_WORKERS_MS * 1_000_000L;
+        for (Thread t : WorkerShutdown.stop(workers, STOP_WORKERS_MS)) {
+            Log.w(TAG, "close: " + t.getName() + " still running after "
+                + STOP_WORKERS_MS + " ms; releasing the connection anyway");
+        }
+        long leftMs = Math.max(0, (deadline - System.nanoTime()) / 1_000_000L);
+        if (!calls.awaitEmpty(leftMs)) {
+            Log.w(TAG, "close: a USB call from another thread still running after "
+                + STOP_WORKERS_MS + " ms; releasing the connection anyway");
+        }
+        long stoppedAt = System.nanoTime();
+        // No releaseInterface: the framework follows a release with
+        // USBDEVFS_CONNECT, which binds the kernel's HID driver again
+        // inside the call, and that driver's probe opens with a SET_IDLE
+        // a deck may never answer, a 5 s control timeout. Closing the file
+        // descriptor releases the claim without binding anything, and the
+        // next claimInterface finds no driver to disconnect.
+        UsbRequest left;
+        synchronized (this) {
+            if (connection != null) {
+                try { connection.close(); } catch (Exception ignored) {}
+            }
+            connectionClosed = true;
+            left = leftRequest;
+            leftRequest = null;
+        }
+        if (left != null) {
+            try { left.close(); } catch (RuntimeException ignored) { }
+        }
+        long closedAt = System.nanoTime();
+        Log.i(TAG, "close(" + reason + "): workers and calls "
+            + (stoppedAt - start) / 1_000_000L + " ms, connection "
+            + (closedAt - stoppedAt) / 1_000_000L + " ms");
         // Outside the monitor: the listener takes the plugin's registry
         // lock, and the plugin never calls into a session under that lock.
         // The plugin also sends deckDisconnected from there.
-        if (closeListener != null) {
-            try { closeListener.onClosed(this, reason); }
-            catch (Throwable t) { Log.w(TAG, "closeListener: " + t.getMessage()); }
+        try {
+            if (closeListener != null) closeListener.onClosed(this, reason);
+        } catch (Throwable t) {
+            Log.w(TAG, "closeListener: " + t.getMessage());
+        } finally {
+            closeOnce.finish();
         }
     }
 
@@ -271,6 +355,9 @@ public final class DeckSession {
      *  the writer closes the session after a few in a row (see WriterStep). */
     public void writePages(List<byte[]> pages) throws DeckIoException {
         for (byte[] page : pages) {
+            // close() waits for the writer: a closing session stops
+            // between pages rather than after the whole image.
+            if (!running) throw new DeckIoException("session_closed");
             int sent;
             try {
                 sent = connection.bulkTransfer(epOut, page, page.length, BULK_WRITE_TIMEOUT_MS);
@@ -280,6 +367,22 @@ public final class DeckSession {
             if (sent != page.length) {
                 throw new DeckIoException("bulk_write_short:" + sent + "/" + page.length);
             }
+        }
+    }
+
+    /** Writes the transport's key-stream reset page to the OUT endpoint.
+     *  Called by open() before the writer starts, so nothing else writes. */
+    private void resetKeyStream() {
+        byte[] page = transport.keyStreamReset();
+        int sent;
+        try {
+            sent = connection.bulkTransfer(epOut, page, page.length, BULK_WRITE_TIMEOUT_MS);
+        } catch (RuntimeException e) {
+            sent = -1;
+        }
+        if (sent != page.length) {
+            Log.w(TAG, "key stream reset failed for " + device.getDeviceName()
+                + ": " + sent + "/" + page.length);
         }
     }
 
@@ -298,7 +401,7 @@ public final class DeckSession {
             payload[3] = (byte) 0xD1; payload[4] = 0x01; payload[5] = (byte) p;
         }
         int wValue = (0x03 << 8) | (payload[0] & 0xFF);
-        int sent = connection.controlTransfer(0x21, 0x09, wValue, 0, payload, payload.length, 1000);
+        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, 1000);
         if (sent < 0) throw new DeckIoException("set_brightness_failed:" + sent);
     }
 
@@ -313,8 +416,20 @@ public final class DeckSession {
             payload[0] = 0x0B; payload[1] = 0x63;
         }
         int wValue = (0x03 << 8) | (payload[0] & 0xFF);
-        int sent = connection.controlTransfer(0x21, 0x09, wValue, 0, payload, payload.length, 1000);
+        int sent = gatedControlTransfer(0x21, 0x09, wValue, payload, 1000);
         if (sent < 0) throw new DeckIoException("reset_failed:" + sent);
+    }
+
+    /** controlTransfer on EP0 with index 0 for a thread close() does not
+     *  join; see UsbCallGate. A closing session refuses it. */
+    private int gatedControlTransfer(int reqType, int req, int value, byte[] buf,
+                                     int timeoutMs) throws DeckIoException {
+        if (!calls.enter()) throw new DeckIoException("session_closed");
+        try {
+            return connection.controlTransfer(reqType, req, value, 0, buf, buf.length, timeoutMs);
+        } finally {
+            calls.leave();
+        }
     }
 
     /** Start or stop the heartbeat. Before open() it only records the
@@ -365,8 +480,9 @@ public final class DeckSession {
             }
             if (!running) return;
             try {
-                connection.controlTransfer(0xa1, 0x01,
-                    (0x03 << 8) | reportId, 0, buf, buf.length, 500);
+                gatedControlTransfer(0xa1, 0x01, (0x03 << 8) | reportId, buf, 500);
+            } catch (DeckIoException closing) {
+                return;
             } catch (Throwable t) {
                 Log.w(TAG, "heartbeat failed (continuing)", t);
             }
@@ -406,105 +522,154 @@ public final class DeckSession {
         // kernels where THAT is shadowed, bulk picks up the slack; on
         // kernels where BOTH interrupt-IN paths are dead, polled
         // GET_REPORT on the control endpoint sometimes works.
-        switch (readerMode) {
-            case READER_MODE_BULK:   readerLoopBulk();       break;
-            case READER_MODE_POLLED: readerLoopPolled();     break;
-            default:                 readerLoopUsbRequest();
+        // UsbRequest.queue(ByteBuffer) and requestWait(long) start at API
+        // 26; below it the userequest mode reads as bulk.
+        String mode = readerMode;
+        if (READER_MODE_USEREQUEST.equals(mode)
+            && Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            mode = READER_MODE_BULK;
+        }
+        // Always logged, with the first report in parseInputReport: an
+        // idle deck is silent, and these lines tell a reader that runs and
+        // hears nothing from one that has ended.
+        Log.i(TAG, "reader (" + mode + ") started for " + serial);
+        try {
+            switch (mode) {
+                case READER_MODE_BULK:   readerLoopBulk();       break;
+                case READER_MODE_POLLED: readerLoopPolled();     break;
+                default:                 readerLoopUsbRequest();
+            }
+        } finally {
+            Log.i(TAG, "reader (" + mode + ") ended for " + serial);
         }
     }
 
+    /** The userequest reader: one UsbRequest on interrupt-IN, run by
+     *  RequestReader. The buffer is direct, so the kernel writes each
+     *  report into memory this session owns for as long as the request
+     *  lives; queue(ByteBuffer) refuses a request already queued. */
     private void readerLoopUsbRequest() {
-        UsbRequest req = new UsbRequest();
+        final UsbRequest req = new UsbRequest();
         if (!req.initialize(connection, epIn)) {
             Log.w(TAG, "UsbRequest.initialize failed for reader");
             close("usb_request_init_failed");
             return;
         }
-        // The IN endpoint's max packet size is the only safe buffer size.
-        // Stream Deck XL/Plus send 512-byte reports — using 64 bytes
-        // returned EOVERFLOW (errno 75) on Pixel 6 / ThinkPhone kernels
-        // and silent truncation on Motorola. Match the device.
+        // The IN endpoint's max packet size is the only safe buffer size:
+        // Stream Deck XL/Plus send 512-byte reports, and a smaller buffer
+        // ends in EOVERFLOW or a truncated report depending on the kernel.
         int bufSize = epIn != null ? epIn.getMaxPacketSize() : 64;
         if (bufSize < 64) bufSize = 64;
-        ByteBuffer buf = ByteBuffer.allocate(bufSize);
-        long lastDataAt = System.currentTimeMillis();
-        long lastStarveLog = lastDataAt;
+        final ByteBuffer buf = ByteBuffer.allocateDirect(bufSize);
+        final UsbDeviceConnection conn = connection;
 
-        try {
-            while (running) {
+        RequestReader.Pipe pipe = new RequestReader.Pipe() {
+            @Override public boolean submit() {
                 buf.clear();
-                if (!req.queue(buf, buf.capacity())) {
-                    if (!running) return;
-                    Log.w(TAG, "UsbRequest.queue failed");
-                    close("usb_request_queue_failed");
-                    return;
-                }
-                UsbRequest finished = null;
-                boolean timedOut = false;
                 try {
-                    finished = connection.requestWait(5000);
-                } catch (java.util.concurrent.TimeoutException te) {
-                    // requestWait(timeout) throws on timeout in API 26+;
-                    // earlier API returns null. Either way it just means
-                    // "nothing in the last 5 s" — NOT a fatal error.
-                    timedOut = true;
-                } catch (Throwable t) {
-                    if (!running) return;
-                    Log.w(TAG, "requestWait threw — closing", t);
-                    close("usb_request_wait_threw:" + t.getClass().getSimpleName());
-                    return;
+                    return req.queue(buf);
+                } catch (RuntimeException e) {
+                    Log.w(TAG, "UsbRequest.queue threw", e);
+                    return false;
                 }
-                if (!running) break;
-                long now = System.currentTimeMillis();
-                if (timedOut || finished == null) {
-                    // Cancel the in-flight request before re-queueing.
-                    // Without this, some Android kernels leave the
-                    // request hanging in driver state and the next
-                    // queue() call fails outright (we saw that on
-                    // ThinkPhone after ~100 s of starvation).
-                    try { req.cancel(); } catch (Throwable ignored) {}
-                    if (now - lastStarveLog >= 5000) {
-                        Log.w(TAG, "reader (UsbRequest) starving — "
-                            + (now - lastDataAt) + " ms since last data");
-                        lastStarveLog = now;
-                        if (debugLogging) {
-                            JSObject ev = new JSObject();
-                            ev.put("deckId", serial);
-                            ev.put("len", 0);
-                            ev.put("bytes", "(starving UsbRequest "
-                                + (now - lastDataAt) + "ms)");
-                            emitter.emit("rawInputReport", ev);
-                        }
-                    }
-                    continue;
-                }
-                int got = buf.position();
-                if (got <= 0) continue;
-                lastDataAt = now;
-
-                byte[] data = new byte[got];
-                buf.position(0);
-                buf.get(data, 0, got);
-
-                if (debugLogging) emitRaw(data, got);
-                parseInputReport(data, got);
             }
-        } finally {
-            try { req.close(); } catch (Throwable ignored) {}
+            @Override public byte[] await(long ms) throws RequestReader.WaitFailed {
+                UsbRequest done;
+                try {
+                    done = conn.requestWait(ms);
+                } catch (java.util.concurrent.TimeoutException e) {
+                    return null;
+                } catch (RuntimeException e) {
+                    throw new RequestReader.WaitFailed(e.getClass().getSimpleName());
+                }
+                // requestWait(long) answers a timeout by TimeoutException
+                // and an error by null; RequestReader reads a null that
+                // took the whole wait as a timeout.
+                if (done == null) throw RequestReader.WaitFailed.nullReturn();
+                if (done != req) return null;
+                byte[] data = new byte[buf.position()];
+                buf.flip();
+                buf.get(data);
+                return data;
+            }
+            // requestWait(0) does not wait, so it skips the poll whose
+            // error ended the previous wait; usbfs keeps a request killed
+            // by a disconnect reapable until the connection closes.
+            @Override public boolean reapNow() {
+                try {
+                    return conn.requestWait(0) == req;
+                } catch (java.util.concurrent.TimeoutException | RuntimeException e) {
+                    return false;
+                }
+            }
+            @Override public void cancel() { req.cancel(); }
+            @Override public void close()  { req.close(); }
+        };
+        RequestReader.Owner owner = new RequestReader.Owner() {
+            @Override public boolean isOpen() { return running; }
+            @Override public void onReport(byte[] data) {
+                if (debugLogging) emitRaw(data, data.length);
+                parseInputReport(data, data.length);
+            }
+            @Override public void onIdle(long msSinceData) {
+                noteIdle("UsbRequest", msSinceData);
+            }
+        };
+        RequestReader reader = new RequestReader(pipe, owner, SystemClock::elapsedRealtime);
+        requestReader = reader;
+        String failure = reader.run();
+        if (reader.leftQueued()) {
+            Log.w(TAG, "reader: cancelled UsbRequest never reaped, closed after the connection");
+            closeAfterConnection(req);
         }
+        // The request is released: closing the connection is safe now.
+        if (failure != null && running) {
+            Log.w(TAG, "reader (UsbRequest) failed — closing: " + failure);
+            close(failure);
+        }
+    }
+
+    /** Frees a request the kernel never gave back. Closing the connection
+     *  discards its URB, after which UsbRequest.close() is safe: the
+     *  request is closed by close() then, or here at once if close()
+     *  already closed the connection. */
+    private void closeAfterConnection(UsbRequest req) {
+        synchronized (this) {
+            if (!connectionClosed) { leftRequest = req; return; }
+        }
+        try { req.close(); } catch (RuntimeException ignored) { }
+    }
+
+    /** A debug breadcrumb for an interrupt-IN reader (userequest, bulk)
+     *  that has received nothing for msSinceData. A deck sends an input
+     *  report only when a key changes, so silence is the normal state of
+     *  an idle deck and not a fault: the note exists only with
+     *  debugLogging on, in logcat at debug level and as a rawInputReport
+     *  of length 0. The reader's start, end and first report are logged
+     *  in any case. The polled reader differs: GET_REPORT answers even on
+     *  an idle deck, so its silence stays a warning. */
+    private void noteIdle(String reader, long msSinceData) {
+        if (!debugLogging) return;
+        Log.d(TAG, "reader (" + reader + ") idle — "
+            + msSinceData + " ms since last data");
+        JSObject ev = new JSObject();
+        ev.put("deckId", serial);
+        ev.put("len", 0);
+        ev.put("bytes", "(idle " + reader + " " + msSinceData + "ms)");
+        emitter.emit("rawInputReport", ev);
     }
 
     private void readerLoopBulk() {
         // Sync read on the interrupt-IN endpoint. Shorter timeout (250 ms)
         // so the loop iterates often enough to react to running=false
-        // and to surface starvation breadcrumbs. Buffer must match the
+        // and to leave idle breadcrumbs. Buffer must match the
         // endpoint's max packet (512 on XL/Plus) — undersized buffers
         // return EOVERFLOW on stricter kernels (Pixel 6 / ThinkPhone).
         int bufSize = epIn != null ? epIn.getMaxPacketSize() : 64;
         if (bufSize < 64) bufSize = 64;
         byte[] buf = new byte[bufSize];
         long lastDataAt = System.currentTimeMillis();
-        long lastStarveLog = lastDataAt;
+        long lastIdleNote = lastDataAt;
         while (running) {
             int got;
             try {
@@ -518,18 +683,9 @@ public final class DeckSession {
             if (!running) break;
             long now = System.currentTimeMillis();
             if (got <= 0) {
-                if (now - lastStarveLog >= 5000) {
-                    Log.w(TAG, "reader (bulk) starving — "
-                        + (now - lastDataAt) + " ms since last data");
-                    lastStarveLog = now;
-                    if (debugLogging) {
-                        JSObject ev = new JSObject();
-                        ev.put("deckId", serial);
-                        ev.put("len", 0);
-                        ev.put("bytes", "(starving bulk "
-                            + (now - lastDataAt) + "ms)");
-                        emitter.emit("rawInputReport", ev);
-                    }
+                if (now - lastIdleNote >= RequestReader.IDLE_NOTE_MS) {
+                    noteIdle("bulk", now - lastDataAt);
+                    lastIdleNote = now;
                 }
                 continue;
             }
@@ -628,15 +784,13 @@ public final class DeckSession {
     }
 
     /**
-     * Native USBDEVFS reader path. Uses ioctl(USBDEVFS_DISCONNECT) to
-     * detach any in-kernel HID driver from the interface BEFORE we
-     * claim it — this is the part Java's claimInterface(force=true)
-     * does not do, and the reason interrupt-IN reads silently return
-     * nothing on certain phone kernels (Lenovo ThinkPhone, Pixel 6).
-     *
-     * If the native lib isn't loaded (build skipped or arch mismatch),
-     * we fall through to the UsbRequest path so the session still
-     * works with output-only.
+     * Debug echo of one IN report: a rawInputReport event and a logcat
+     * line carrying its first 32 bytes in hex. Each of the three readers
+     * calls it while debug logging is on, before parseInputReport —
+     * "userequest" (UsbRequest on interrupt-IN), "bulk" (bulkTransfer on
+     * interrupt-IN) and "polled" (GET_REPORT on EP0), chosen by
+     * readerMode when the session opens. A report identical to the
+     * previous one is skipped.
      */
     private void emitRaw(byte[] data, int got) {
         // Dedupe — only emit when bytes actually changed since the
@@ -683,6 +837,10 @@ public final class DeckSession {
      * Neo touch: 0x01 0x04 ...
      */
     private void parseInputReport(byte[] buf, int len) {
+        if (!firstReportLogged) {
+            firstReportLogged = true;
+            Log.i(TAG, "reader: first input report for " + serial + ", " + len + " bytes");
+        }
         if (len < 2) return;
         int reportId = buf[0] & 0xFF;
         int subType = buf[1] & 0xFF;

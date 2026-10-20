@@ -538,6 +538,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/WorkerShutdown.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/UsbCallGate.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/CloseOnce.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ParallelClose.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSpec.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckRegistry.java",
                 ],
@@ -686,13 +690,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "so bulkTransfer is offered as a sync fallback, and "
                         + "polled GET_REPORT on EP0 as last resort. Buffer "
                         + "size matches epIn.maxPacketSize (key fix: 64 B "
-                        + "returned EOVERFLOW on Pixel 6 / ThinkPhone XL).",
+                        + "returned EOVERFLOW on Pixel 6 / ThinkPhone XL). "
+                        + "UsbRequest mode keeps one request in flight on a "
+                        + "direct buffer, queued again only once reaped, and "
+                        + "reaps it before closing it (RequestReader).",
                     fr: "Par défaut UsbRequest async sur interrupt-IN. Certains "
                         + "kernels Android cachent cet endpoint, on offre "
                         + "bulkTransfer en repli sync, et polled GET_REPORT "
                         + "sur EP0 en dernier recours. Buffer = "
                         + "epIn.maxPacketSize (fix clé: 64 B retournait "
-                        + "EOVERFLOW sur Pixel 6 / ThinkPhone XL).",
+                        + "EOVERFLOW sur Pixel 6 / ThinkPhone XL). Le mode "
+                        + "UsbRequest garde une seule requête en vol sur un "
+                        + "buffer direct, remise en file seulement une fois "
+                        + "récoltée, et la récolte avant de la fermer "
+                        + "(RequestReader).",
                 },
                 status: "stable",
                 dependsOn: [
@@ -700,7 +711,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "streamdeck.usb",
                 ],
                 demo: { kind: "options", sectionId: "streamdeck" },
-                files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/RequestReader.java",
+                ],
             },
             {
                 id: "streamdeck.heartbeat",
@@ -889,19 +903,28 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 status: "stable",
                 howItWorks: {
-                    en: "V1 transport (Original Stream Deck) writes 16 KiB pages with a "
+                    en: "V1 transport (Original Stream Deck) writes 8191-byte pages with a "
                         + "prepended report id and page index; V2 transport (Mk.2, XL, Plus, "
                         + "Neo, Pedal) writes 1024-byte pages with the new framing. Choice is "
-                        + "driven by DeckSpec.transportVersion — encoders never see the wire "
-                        + "format directly.",
-                    fr: "Transport V1 (Stream Deck Original) écrit des pages de 16 KiB avec "
+                        + "driven by DeckSpec.transport — encoders never see the wire "
+                        + "format directly. keyStreamReset is one page holding only the "
+                        + "report id 0x02: DeckSession.open writes it first, so the deck "
+                        + "drops an image the previous session left unfinished.",
+                    fr: "Transport V1 (Stream Deck Original) écrit des pages de 8191 octets avec "
                         + "report id + index de page en préfixe; transport V2 (Mk.2, XL, Plus, "
                         + "Neo, Pedal) écrit des pages 1024 bytes avec le nouveau framing. Le "
-                        + "choix est piloté par DeckSpec.transportVersion — les encoders ne "
-                        + "voient pas le format wire directement.",
+                        + "choix est piloté par DeckSpec.transport — les encoders ne "
+                        + "voient pas le format wire directement. keyStreamReset est une "
+                        + "page qui ne porte que le report id 0x02 : DeckSession.open l'écrit "
+                        + "d'abord, et le deck abandonne une image que la session précédente "
+                        + "a laissée inachevée.",
                 },
                 demo: NONE_PLUMBING,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/transport"],
+                tests: [
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/transport/TransportV1Test.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/transport/TransportV2Test.java",
+                ],
             },
             {
                 id: "streamdeck.lifecycle-service",

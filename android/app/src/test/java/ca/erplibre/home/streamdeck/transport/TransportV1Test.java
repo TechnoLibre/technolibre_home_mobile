@@ -59,4 +59,25 @@ public class TransportV1Test {
     public void empty_image_yields_no_pages() {
         assertTrue(TransportV1.paginateKeyImageStatic(0, new byte[0]).isEmpty());
     }
+
+    @Test
+    public void key_stream_reset_is_one_blank_page_with_the_report_id() {
+        // python-elgato-streamdeck _reset_key_stream: a full image report,
+        // report ID 0x02 and nothing else, so the deck drops an image
+        // whose pages stopped before the last one.
+        byte[] r = new TransportV1().keyStreamReset();
+        assertEquals(8191, r.length);
+        assertEquals(0x02, r[0] & 0xFF);
+        for (int i = 1; i < r.length; i++) {
+            assertEquals("byte " + i, 0, r[i]);
+        }
+    }
+
+    @Test
+    public void key_stream_reset_is_a_fresh_buffer_each_time() {
+        TransportV1 t = new TransportV1();
+        byte[] first = t.keyStreamReset();
+        first[1] = 0x55;
+        assertEquals(0, t.keyStreamReset()[1]);
+    }
 }

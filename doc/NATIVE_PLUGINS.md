@@ -419,7 +419,10 @@ A strategy pattern. `DeckRegistry` maps `productId → DeckSpec`. One
 writer thread (HID OUT consuming a `WriterQueue`), and a
 `DeckTransport` + `ImageEncoder` chosen from the spec. Images pushed in
 quick succession for the same key are coalesced: the last one wins, the
-older ones resolve their Promise with `{dropped: true}`.
+older ones resolve their Promise with `{dropped: true}`. A session that
+opens first writes one blank image page (report ID `0x02`, the rest zero),
+as the Elgato reference library does: the deck drops an image the previous
+session left unfinished.
 
 ### Manual tests
 
