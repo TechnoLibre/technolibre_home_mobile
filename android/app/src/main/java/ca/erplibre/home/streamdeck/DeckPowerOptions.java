@@ -10,7 +10,8 @@ import android.hardware.usb.UsbManager;
  *
  *   showOverLockScreen — a launch caused by the deck (USB attach, or the
  *       wake-on-key-press relaunch) may show the app over the keyguard and
- *       turn the screen on. Any other launch never does.
+ *       turn the screen on. Any other launch never does, and a key press
+ *       never lights the screen without it.
  *   keepAwake — while a deck is open, a partial wake lock holds the CPU and
  *       each session sends its heartbeat. Off, the phone may suspend the USB
  *       bus with the screen off: the deck LCD may pulse or go dark and key
@@ -65,6 +66,17 @@ public final class DeckPowerOptions {
     public boolean showOverLockScreenFor(String action, boolean deckWake) {
         if (!showOverLockScreen()) return false;
         return deckWake || UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action);
+    }
+
+    /**
+     * Whether a deck key press turns the screen on and brings the app to
+     * the front: wake-on-key-press armed, the host activity paused, and
+     * showOverLockScreen on. Otherwise the screen stays as it is; the press
+     * still reaches a running app as a keyChanged event. keepAwake plays no
+     * part here: it decides whether the press arrives at all.
+     */
+    public boolean wakeScreenOnKeyPress(boolean wakeOnKeyPress, boolean activityPaused) {
+        return wakeOnKeyPress && activityPaused && showOverLockScreen();
     }
 
     /** The partial wake lock is held only with keepAwake and an open deck. */

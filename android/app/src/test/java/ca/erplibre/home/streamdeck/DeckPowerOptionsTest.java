@@ -88,4 +88,39 @@ public class DeckPowerOptionsTest {
         p.setKeepAwake(true);
         assertTrue(p.heartbeat());
     }
+
+    @Test
+    public void key_press_wakes_the_screen_only_with_wake_on_key_press_and_lock_screen_option() {
+        // wakeOnKeyPress x showOverLockScreen, with the host activity paused.
+        boolean[][] table = {
+            // wakeOnKeyPress, showOverLockScreen, wakes
+            { false, false, false },
+            { false, true,  false },
+            { true,  false, false },
+            { true,  true,  true  },
+        };
+        for (boolean[] row : table) {
+            DeckPowerOptions p = new DeckPowerOptions(new MapStore());
+            p.setShowOverLockScreen(row[1]);
+            assertEquals("wakeOnKeyPress=" + row[0] + " showOverLockScreen=" + row[1],
+                row[2], p.wakeScreenOnKeyPress(row[0], true));
+        }
+    }
+
+    @Test
+    public void key_press_never_wakes_the_screen_while_the_app_is_in_front() {
+        DeckPowerOptions p = new DeckPowerOptions(new MapStore());
+        p.setShowOverLockScreen(true);
+        assertFalse(p.wakeScreenOnKeyPress(true, false));
+    }
+
+    @Test
+    public void key_press_wake_ignores_keep_awake() {
+        DeckPowerOptions p = new DeckPowerOptions(new MapStore());
+        p.setKeepAwake(true);
+        assertFalse(p.wakeScreenOnKeyPress(true, true));
+        p.setShowOverLockScreen(true);
+        p.setKeepAwake(false);
+        assertTrue(p.wakeScreenOnKeyPress(true, true));
+    }
 }
