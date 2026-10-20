@@ -256,22 +256,10 @@ public final class DeckSession {
             + " epOut=0x" + Integer.toHexString(epOut.getAddress())
             + " readerMode=" + readerMode);
 
-        // HID class SET_IDLE 0 — tells the device to send reports only on
-        // change, no idle re-transmission. On some Android kernels the
-        // built-in HID driver auto-polls the IN endpoint and shadow-
-        // consumes our reads; SET_IDLE 0 makes the device stop honouring
-        // those polls so our reader gets the actual key-state reports.
-        // Best-effort: a stall here is informational, not fatal.
-        try {
-            int sent = connection.controlTransfer(
-                /*reqType=*/0x21, /*req=*/0x0A,
-                /*value=*/0x0000, /*index=*/chosenIface.getId(),
-                /*data=*/null, /*len=*/0,
-                /*timeout=*/1000);
-            Log.i(TAG, "SET_IDLE 0 → " + sent);
-        } catch (Throwable t) {
-            Log.w(TAG, "SET_IDLE failed (non-fatal): " + t.getMessage());
-        }
+        // No HID SET_IDLE: the Elgato protocol is feature reports and the
+        // two data endpoints, and a deck may leave SET_IDLE unanswered for
+        // its whole control timeout. The claim above has disconnected the
+        // kernel's HID driver, so nothing else polls the IN endpoint.
 
         try {
             this.serial   = readSerial();

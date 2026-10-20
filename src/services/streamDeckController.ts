@@ -482,7 +482,7 @@ export class StreamDeckController {
      * health (getSessionHealth, no USB transfer) and only the decks it
      * finds sick are restarted, through restartSessions({deviceNames}).
      * Reopening a healthy session is not free: its first EP0 transfers
-     * (SET_IDLE, the serial read, brightness) can each run into their 1 s
+     * (the serial read, brightness) can each run into their 1 s
      * timeout, and the serial falls back to the USB descriptor's.
      * deckConnected restores and repaints a restarted
      * deck; every other deck is restored here. A failed health query
