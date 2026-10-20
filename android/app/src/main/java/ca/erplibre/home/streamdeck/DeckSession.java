@@ -294,11 +294,13 @@ public final class DeckSession {
             },
             Thread::sleep);
         control.opened(reads.controlPipeOk, SystemClock.elapsedRealtime());
-        // The USB serial string the system read at enumeration matches the
-        // feature report's on the decks the registry knows.
-        String usbSerial = device.getSerialNumber();
-        this.serial = reads.serial != null ? reads.serial
-            : usbSerial != null ? usbSerial : "unknown";
+        String usbSerial;
+        try {
+            usbSerial = device.getSerialNumber();
+        } catch (SecurityException e) {
+            usbSerial = null;
+        }
+        this.serial = FeatureReads.deckId(usbSerial, reads.serial);
         this.firmware = reads.firmware != null ? reads.firmware : "unknown";
         if (!reads.controlPipeOk) {
             Log.w(TAG, "control pipe of " + device.getDeviceName()
@@ -307,8 +309,10 @@ public final class DeckSession {
                 + ". Brightness and reset are refused, tried again every "
                 + ControlPipe.RETRY_MS + " ms");
         } else if (reads.serial == null) {
-            Log.w(TAG, "serial read failed for " + device.getDeviceName()
-                + "; using the USB serial string");
+            Log.w(TAG, "serial read failed for " + device.getDeviceName());
+        } else if (!reads.serial.equals(serial)) {
+            Log.w(TAG, "feature report serial of " + device.getDeviceName()
+                + " differs from its USB serial string; deckId is the latter");
         }
 
         running = true;

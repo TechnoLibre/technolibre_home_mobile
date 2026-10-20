@@ -116,6 +116,19 @@ final class FeatureReads {
         }
     }
 
+    /**
+     * The session's deckId: the USB serial string the system read at
+     * enumeration when there is one, else the feature report's serial,
+     * else "unknown". The USB string needs no EP0 transfer, so the id of
+     * a deck stays the same from one open to the next whatever the probe
+     * did; the plugin also names a deck without a session by it.
+     */
+    static String deckId(String usbSerial, String featureSerial) {
+        if (usbSerial != null && !usbSerial.isEmpty()) return usbSerial;
+        if (featureSerial != null && !featureSerial.isEmpty()) return featureSerial;
+        return "unknown";
+    }
+
     /** Printable ASCII of buf from headerLen up to len or the first NUL. */
     static String ascii(byte[] buf, int headerLen, int len) {
         StringBuilder sb = new StringBuilder();

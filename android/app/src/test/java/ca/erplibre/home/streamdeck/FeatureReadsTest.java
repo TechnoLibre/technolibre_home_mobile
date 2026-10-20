@@ -177,4 +177,21 @@ public class FeatureReadsTest {
         // Never past what the transfer returned.
         assertEquals("1", FeatureReads.ascii(buf, 6, 7));
     }
+
+    @Test
+    public void deck_id_is_the_usb_serial_whatever_the_probe_did() {
+        // The system reads the USB serial string at enumeration, without
+        // EP0: a reopen whose probe fails keeps the deckId of one whose
+        // probe passed, even where the two serials differ.
+        assertEquals("TESTUSB01", FeatureReads.deckId("TESTUSB01", "TESTFEAT01"));
+        assertEquals("TESTUSB01", FeatureReads.deckId("TESTUSB01", null));
+    }
+
+    @Test
+    public void deck_id_falls_back_to_the_feature_serial_then_unknown() {
+        assertEquals("TESTFEAT01", FeatureReads.deckId(null, "TESTFEAT01"));
+        assertEquals("TESTFEAT01", FeatureReads.deckId("", "TESTFEAT01"));
+        assertEquals("unknown", FeatureReads.deckId(null, null));
+        assertEquals("unknown", FeatureReads.deckId("", ""));
+    }
 }

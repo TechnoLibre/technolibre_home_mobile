@@ -752,8 +752,10 @@ permission button, a hotplug attach — gets its three attempts back too.
 
 ### Persistent identity
 
-Decks are identified by their **USB serial number** (read through a
-feature report on connection). A deck that is plugged back in therefore
+Decks are identified by their **USB serial number**: the string the
+system read at enumeration, else the serial feature report read at
+connection. It takes no control transfer, so a deck keeps its `deckId`
+from one session to the next even when its control pipe fails. A deck that is plugged back in therefore
 keeps its `deckId` — preferences, layouts and snapshots can safely be
 indexed by that serial.
 
@@ -761,9 +763,8 @@ Opening a session reads the firmware report first, as a probe: 250 ms,
 then one retry after 100 ms. A deck that answers neither has a control
 pipe that fails every feature report until it is replugged, reopened or
 not. The session opens anyway — keys and images use the other endpoints —
-with `controlPipeOk: false` in its info and the USB serial string the
-system read at enumeration as `deckId`, the same value on the decks the
-registry knows. `setBrightness` and `reset` are then refused at once
+with `controlPipeOk: false` in its info and its usual `deckId`.
+`setBrightness` and `reset` are then refused at once
 rather than each costing its 1 s control timeout, except one try every
 5 s with the probe's 250 ms timeout (`ControlPipe`): a deck slow to
 answer right after open is not down for the whole session. The first
@@ -874,8 +875,11 @@ retrouve lui aussi ses trois essais.
 
 ### Identité persistante
 
-Les decks sont identifiés par leur **numéro de série USB** (lu via
-feature report à la connexion). Un deck rebranché conserve donc son
+Les decks sont identifiés par leur **numéro de série USB** : la chaîne
+que le système a lue à l'énumération, sinon le feature report de série
+lu à la connexion. Il ne coûte aucun transfert de contrôle : un deck garde
+son `deckId` d'une session à l'autre même quand son canal de contrôle
+échoue. Un deck rebranché conserve donc son
 `deckId` — les préférences/layouts/snapshots peuvent être indexés par
 ce serial sans risque.
 
@@ -884,9 +888,7 @@ L'ouverture d'une session lit d'abord le rapport firmware, comme sonde :
 a un canal de contrôle qui rate tout feature report jusqu'à son
 rebranchement, rouvert ou non. La session s'ouvre quand même — touches et
 images passent par les autres points d'accès — avec `controlPipeOk: false`
-dans ses infos et, pour `deckId`, la chaîne de série USB que le système a
-lue à l'énumération, la même valeur sur les decks que connaît le
-registre. `setBrightness` et `reset` sont alors refusés aussitôt plutôt
+dans ses infos et son `deckId` habituel. `setBrightness` et `reset` sont alors refusés aussitôt plutôt
 que de coûter chacun son délai de contrôle de 1 s, sauf un essai toutes
 les 5 s avec le délai de 250 ms de la sonde (`ControlPipe`) : un deck lent
 à répondre juste après l'ouverture n'est pas coupé pour toute la session.

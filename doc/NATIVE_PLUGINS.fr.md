@@ -417,8 +417,11 @@ retrouve lui aussi ses trois essais.
 
 ### Identité persistante
 
-Les decks sont identifiés par leur **numéro de série USB** (lu via
-feature report à la connexion). Un deck rebranché conserve donc son
+Les decks sont identifiés par leur **numéro de série USB** : la chaîne
+que le système a lue à l'énumération, sinon le feature report de série
+lu à la connexion. Il ne coûte aucun transfert de contrôle : un deck garde
+son `deckId` d'une session à l'autre même quand son canal de contrôle
+échoue. Un deck rebranché conserve donc son
 `deckId` — les préférences/layouts/snapshots peuvent être indexés par
 ce serial sans risque.
 
@@ -427,9 +430,7 @@ L'ouverture d'une session lit d'abord le rapport firmware, comme sonde :
 a un canal de contrôle qui rate tout feature report jusqu'à son
 rebranchement, rouvert ou non. La session s'ouvre quand même — touches et
 images passent par les autres points d'accès — avec `controlPipeOk: false`
-dans ses infos et, pour `deckId`, la chaîne de série USB que le système a
-lue à l'énumération, la même valeur sur les decks que connaît le
-registre. `setBrightness` et `reset` sont alors refusés aussitôt plutôt
+dans ses infos et son `deckId` habituel. `setBrightness` et `reset` sont alors refusés aussitôt plutôt
 que de coûter chacun son délai de contrôle de 1 s, sauf un essai toutes
 les 5 s avec le délai de 250 ms de la sonde (`ControlPipe`) : un deck lent
 à répondre juste après l'ouverture n'est pas coupé pour toute la session.

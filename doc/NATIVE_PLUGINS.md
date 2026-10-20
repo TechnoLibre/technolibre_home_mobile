@@ -412,8 +412,10 @@ permission button, a hotplug attach — gets its three attempts back too.
 
 ### Persistent identity
 
-Decks are identified by their **USB serial number** (read through a
-feature report on connection). A deck that is plugged back in therefore
+Decks are identified by their **USB serial number**: the string the
+system read at enumeration, else the serial feature report read at
+connection. It takes no control transfer, so a deck keeps its `deckId`
+from one session to the next even when its control pipe fails. A deck that is plugged back in therefore
 keeps its `deckId` — preferences, layouts and snapshots can safely be
 indexed by that serial.
 
@@ -421,9 +423,8 @@ Opening a session reads the firmware report first, as a probe: 250 ms,
 then one retry after 100 ms. A deck that answers neither has a control
 pipe that fails every feature report until it is replugged, reopened or
 not. The session opens anyway — keys and images use the other endpoints —
-with `controlPipeOk: false` in its info and the USB serial string the
-system read at enumeration as `deckId`, the same value on the decks the
-registry knows. `setBrightness` and `reset` are then refused at once
+with `controlPipeOk: false` in its info and its usual `deckId`.
+`setBrightness` and `reset` are then refused at once
 rather than each costing its 1 s control timeout, except one try every
 5 s with the probe's 250 ms timeout (`ControlPipe`): a deck slow to
 answer right after open is not down for the whole session. The first
