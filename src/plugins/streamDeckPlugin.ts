@@ -29,6 +29,8 @@ export interface DeckInfo {
     };
     dialCount: number;
     lcd?: { w: number; h: number };
+    /** Neo only: one 248x58 screen (count 1), mounted like the keys, so
+     *  its image is rotated 180° as well. */
     infoBars?: { w: number; h: number; count: number };
     touchPoints: number;
     firmwareVersion: string;
@@ -259,7 +261,9 @@ interface StreamDeckPluginApi {
         h: number;
         bytes: string;
     }): Promise<ImageWriteResult>;
-    setInfoBar(opts: { deckId: string; index: 0 | 1; bytes: string }): Promise<ImageWriteResult>;
+    /** index runs 0..infoBars.count-1, so 0 on the Neo; any other rejects
+     *  "invalid_index:N". */
+    setInfoBar(opts: { deckId: string; index: number; bytes: string }): Promise<ImageWriteResult>;
 
     addListener(
         eventName: "deckConnected",

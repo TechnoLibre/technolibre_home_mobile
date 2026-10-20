@@ -10,7 +10,9 @@ import ca.erplibre.home.streamdeck.lcd.LcdEncoder;
 /**
  * Writes the Neo info screen (248x58 JPEG, command 0x0B). The Neo physically
  * has a single screen — the {@code index} parameter exists in the public API
- * for forward compatibility but only index 0 is currently meaningful.
+ * for forward compatibility but only index 0 is currently meaningful. The
+ * screen is mounted like the keys: the caller sends the image rotated 180°,
+ * python-elgato-streamdeck's SCREEN_FLIP (True, True).
  *
  * Validation of {@code index} happens in StreamDeckPlugin before this job is
  * queued; here we just paginate and write.
