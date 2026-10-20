@@ -723,7 +723,8 @@ export class StreamDeckCameraStreamer {
                     if (hit) {
                         // Border is drawn in tile-local identity space so
                         // it stays on the visible LCD edges regardless of
-                        // the deck's rotation (Plus needs 180°, Mini 270°).
+                        // the deck's rotation (180° on XL, MK.2, Original
+                        // v2 and Neo, none on Plus; BMP decks rotate in Java).
                         tctx.setTransform(1, 0, 0, 1, 0, 0);
                         const lw = Math.max(2, Math.round(Math.min(kw, kh) * 0.06));
                         tctx.strokeStyle = "#00ff00";
