@@ -576,6 +576,81 @@ describe("StreamDeckController", () => {
         });
     });
 
+    describe("tile encoding", () => {
+        /** Canvas stub that records the MIME type each tile is encoded to
+         *  and answers with bytes carrying that type's signature. */
+        function stubCanvas(mimes: string[]) {
+            vi.stubGlobal("document", {
+                get visibilityState() { return visibilityState; },
+                addEventListener: vi.fn(),
+                createElement: () => ({
+                    width: 0, height: 0,
+                    getContext: () => ({
+                        translate: vi.fn(), rotate: vi.fn(),
+                        fillRect: vi.fn(), fillText: vi.fn(),
+                        set fillStyle(_: string) {},
+                        set font(_: string) {},
+                        set textAlign(_: string) {},
+                        set textBaseline(_: string) {},
+                    }),
+                    toBlob: (cb: any, mime: string) => {
+                        mimes.push(mime);
+                        const sig = mime === "image/png"
+                            ? [0x89, 0x50, 0x4e, 0x47] : [0xff, 0xd8, 0xff];
+                        cb(new Blob([new Uint8Array(sig)]));
+                    },
+                }),
+            });
+        }
+
+        const MINI = {
+            deckId: "MINI1",
+            model: "mini",
+            rows: 2,
+            cols: 3,
+            keyCount: 6,
+            keyImage: { w: 80, h: 80, format: "bmp_bgr_rot270", rotation: 0 },
+        };
+
+        it("sends PNG to a BMP deck, whose encoder refuses anything else", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [MINI] });
+            const mimes: string[] = [];
+            visibilityState = "visible";
+            stubCanvas(mimes);
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            await ctrl.start();
+            await ctrl.setNoteActive(true);
+
+            const calls = mockPlugin.setKeyImage.mock.calls.map((c: any) => c[0]);
+            // Note on key 0, the gallery shortcut on key 5, keys 1-3.
+            expect(calls.map((c: any) => c.key).sort()).toEqual(
+                expect.arrayContaining([0, 1, 2, 3, 5]),
+            );
+            expect(mimes.length).toBeGreaterThan(0);
+            expect(new Set(mimes)).toEqual(new Set(["image/png"]));
+            for (const c of calls) {
+                expect(c.format).toBe("png");
+                // PNG signature, as the plugin's BMP encoder checks it.
+                expect(atob(c.bytes).charCodeAt(0)).toBe(0x89);
+            }
+        });
+
+        it("sends JPEG to a JPEG deck", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
+            const mimes: string[] = [];
+            visibilityState = "visible";
+            stubCanvas(mimes);
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            await ctrl.start();
+
+            expect(mimes.length).toBeGreaterThan(0);
+            expect(new Set(mimes)).toEqual(new Set(["image/jpeg"]));
+            for (const c of mockPlugin.setKeyImage.mock.calls) {
+                expect(c[0].format).toBe("jpeg");
+            }
+        });
+    });
+
     describe("galleryKeyFor", () => {
         it("puts the shortcut directly below key 0", () => {
             expect(galleryKeyFor({ rows: 3, cols: 5, keyCount: 15 })).toBe(5);

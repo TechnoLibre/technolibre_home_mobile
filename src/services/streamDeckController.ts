@@ -43,6 +43,28 @@ export function galleryKeyFor(
 }
 const GALLERY_TILE = { icon: "🖼️", label: "Galerie", bg: "#0e7490" };
 
+type TileFormat = "jpeg" | "png";
+
+/** What setKeyImage takes for a deck: JPEG on the JPEG models, PNG on the
+ *  BMP ones (Original v1, Mini), which the plugin converts to BMP and
+ *  refuses in any other format. */
+function tileFormat(keyImage: DeckInfo["keyImage"]): TileFormat {
+    return keyImage.format === "jpeg" ? "jpeg" : "png";
+}
+
+/** Canvas encoding of a tile; `quality` only applies to JPEG. */
+function encodeCanvas(
+    canvas: HTMLCanvasElement, format: TileFormat, quality: number,
+): Promise<Blob> {
+    return new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+            (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
+            format === "jpeg" ? "image/jpeg" : "image/png",
+            quality,
+        );
+    });
+}
+
 /** While the gallery page is mounted on the mobile, the deck switches
  *  to a remote-control layout: thumbnail tiles fill the top of the
  *  deck, with the last three keys reserved for prev / next / back. */
@@ -507,14 +529,15 @@ export class StreamDeckController {
     }
 
     private async _renderHome(deck: DeckInfo): Promise<void> {
-        const { w, h, format, rotation } = deck.keyImage;
-        const blob = await this._renderTile(w, h, rotation ?? 0, "📝", "Note", "#1e3a8a");
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
+        const blob = await this._renderTile(fmt, w, h, rotation ?? 0, "📝", "Note", "#1e3a8a");
         const bytes = await this._blobToBase64(blob);
         await StreamDeckPlugin.setKeyImage({
             deckId: deck.deckId,
             key: 0,
             bytes,
-            format: format === "jpeg" ? "jpeg" : "png",
+            format: fmt,
         });
     }
 
@@ -522,13 +545,13 @@ export class StreamDeckController {
      *  setNoteActive, on (re)connect, on visibility:visible, and from
      *  repaintAll after the camera streamer stops. */
     private async _paintNotePageKeys(deck: DeckInfo): Promise<void> {
-        const { w, h, format, rotation } = deck.keyImage;
-        const fmt = format === "jpeg" ? "jpeg" : "png";
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
         for (const keyStr of Object.keys(NOTE_PAGE_TILES)) {
             const key = Number(keyStr);
             if (this.noteActive) {
                 const t = NOTE_PAGE_TILES[key];
-                const blob = await this._renderTile(w, h, rotation ?? 0, t.icon, t.label, t.bg);
+                const blob = await this._renderTile(fmt, w, h, rotation ?? 0, t.icon, t.label, t.bg);
                 const bytes = await this._blobToBase64(blob);
                 await StreamDeckPlugin.setKeyImage({
                     deckId: deck.deckId, key, bytes, format: fmt,
@@ -540,18 +563,20 @@ export class StreamDeckController {
     }
 
     private async _blankKey(deck: DeckInfo, key: number): Promise<void> {
-        const { w, h, format, rotation } = deck.keyImage;
-        const blob = await this._renderTile(w, h, rotation ?? 0, "", "", "#000000");
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
+        const blob = await this._renderTile(fmt, w, h, rotation ?? 0, "", "", "#000000");
         const bytes = await this._blobToBase64(blob);
         await StreamDeckPlugin.setKeyImage({
             deckId: deck.deckId,
             key,
             bytes,
-            format: format === "jpeg" ? "jpeg" : "png",
+            format: fmt,
         });
     }
 
     private async _renderTile(
+        format: TileFormat,
         w: number,
         h: number,
         rotationDeg: number,
@@ -567,7 +592,7 @@ export class StreamDeckController {
 
         // Some Stream Deck models (XL, MK.2, Original v2…) have their LCD
         // mounted upside-down. Rotate the entire context BEFORE drawing so
-        // the JPEG bytes we ship out come pre-flipped — the user sees it
+        // the bytes we ship out come pre-flipped — the user sees it
         // upright when looking at the deck normally.
         if (rotationDeg !== 0) {
             ctx.translate(w / 2, h / 2);
@@ -590,13 +615,7 @@ export class StreamDeckController {
         ctx.font = `bold ${Math.floor(h * 0.18)}px sans-serif`;
         ctx.fillText(label, w / 2, h * 0.78);
 
-        return await new Promise<Blob>((resolve, reject) => {
-            canvas.toBlob(
-                (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
-                "image/jpeg",
-                0.9,
-            );
-        });
+        return await encodeCanvas(canvas, format, 0.9);
     }
 
     private async _blobToBase64(blob: Blob): Promise<string> {
@@ -615,9 +634,10 @@ export class StreamDeckController {
     private async _paintGalleryKey(deck: DeckInfo): Promise<void> {
         const key = galleryKeyFor(deck);
         if (key === null) return;
-        const { w, h, format, rotation } = deck.keyImage;
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
         const blob = await this._renderTile(
-            w, h, rotation ?? 0,
+            fmt, w, h, rotation ?? 0,
             GALLERY_TILE.icon, GALLERY_TILE.label, GALLERY_TILE.bg,
         );
         const bytes = await this._blobToBase64(blob);
@@ -625,7 +645,7 @@ export class StreamDeckController {
             deckId: deck.deckId,
             key,
             bytes,
-            format: format === "jpeg" ? "jpeg" : "png",
+            format: fmt,
         });
     }
 
@@ -680,44 +700,46 @@ export class StreamDeckController {
         label: string,
         bg: string,
     ): Promise<void> {
-        const { w, h, format, rotation } = deck.keyImage;
-        const blob = await this._renderTile(w, h, rotation ?? 0, icon, label, bg);
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
+        const blob = await this._renderTile(fmt, w, h, rotation ?? 0, icon, label, bg);
         const bytes = await this._blobToBase64(blob);
         await StreamDeckPlugin.setKeyImage({
             deckId: deck.deckId, key, bytes,
-            format: format === "jpeg" ? "jpeg" : "png",
+            format: fmt,
         });
     }
 
     /** Paint a single thumbnail key. Loads the image via <img>, draws
-     *  a "cover" crop onto a deck-sized canvas, and ships JPEG bytes
-     *  to the deck. Fallback on load failure: a placeholder tile with
-     *  the image's gallery index. Errors during paint never bubble —
-     *  one bad path should not freeze the whole grid. */
+     *  a "cover" crop onto a deck-sized canvas, and ships it to the
+     *  deck in its tile format. Fallback on load failure: a placeholder
+     *  tile with the image's gallery index. Errors during paint never
+     *  bubble — one bad path should not freeze the whole grid. */
     private async _renderThumbnailKey(
         deck: DeckInfo,
         key: number,
         url: string,
         index: number,
     ): Promise<void> {
-        const { w, h, format, rotation } = deck.keyImage;
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
         let blob: Blob;
         try {
-            blob = await this._renderThumbnailTile(w, h, rotation ?? 0, url);
+            blob = await this._renderThumbnailTile(fmt, w, h, rotation ?? 0, url);
         } catch {
             blob = await this._renderTile(
-                w, h, rotation ?? 0, "🖼️", `#${index + 1}`, "#1f2937",
+                fmt, w, h, rotation ?? 0, "🖼️", `#${index + 1}`, "#1f2937",
             );
         }
         const bytes = await this._blobToBase64(blob);
         await StreamDeckPlugin.setKeyImage({
             deckId: deck.deckId, key, bytes,
-            format: format === "jpeg" ? "jpeg" : "png",
+            format: fmt,
         });
     }
 
     private async _renderThumbnailTile(
-        w: number, h: number, rotationDeg: number, url: string,
+        format: TileFormat, w: number, h: number, rotationDeg: number, url: string,
     ): Promise<Blob> {
         const img = await this._loadImage(url);
         const canvas = document.createElement("canvas");
@@ -744,13 +766,7 @@ export class StreamDeckController {
             sy = (img.naturalHeight - sh) / 2;
         }
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
-        return await new Promise<Blob>((resolve, reject) => {
-            canvas.toBlob(
-                (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
-                "image/jpeg",
-                0.85,
-            );
-        });
+        return await encodeCanvas(canvas, format, 0.85);
     }
 
     private _loadImage(url: string): Promise<HTMLImageElement> {
