@@ -2,6 +2,7 @@ import type { EventBus } from "@odoo/owl";
 import { Events } from "../constants/events";
 import { StreamDeckPlugin, DeckPowerOptions } from "../plugins/streamDeckPlugin";
 import { setDeckPowerOption } from "./streamDeckPowerOptions";
+import { t } from "../i18n";
 
 /**
  * Couples two settings shown in two Options sections:
@@ -13,7 +14,8 @@ import { setDeckPowerOption } from "./streamDeckPowerOptions";
  *    so the deck goes dark and a press reaches nothing.
  * wakeOnKeyPress depends on keepAwake: turning it on turns keepAwake on,
  * turning keepAwake off turns it off. The other two directions change
- * one setting only.
+ * one setting only. wakeOnKeyPress is never stored on while keepAwake
+ * is off.
  */
 
 /** localStorage key of wakeOnKeyPress; StreamDeckController reads it at boot. */
@@ -23,6 +25,9 @@ export const WAKE_ON_KEY_PRESS_KEY = "options.keepAwake.deckEnabled";
 export const NOTICE_KEEP_AWAKE_TURNED_ON = "sleep.keep_awake_turned_on";
 /** i18n key of the line telling why wakeOnKeyPress was turned off. */
 export const NOTICE_WAKE_TURNED_OFF = "streamdeck.wake_turned_off";
+/** i18n key of the line telling that keepAwake stayed off, and so did
+ *  wakeOnKeyPress. */
+export const ERROR_KEEP_AWAKE_NOT_STORED = "sleep.keep_awake_not_stored";
 
 export interface DeckSleepSettings {
     wakeOnKeyPress: boolean;
@@ -79,17 +84,20 @@ export interface DeckSleepOutcome {
     settings: DeckSleepSettings;
     /** Both power options as stored, when keepAwake was written. */
     power?: DeckPowerOptions;
-    /** i18n key of the line to show, set only when the coupled write succeeded. */
+    /** i18n key of the line to show, set only when both writes took. */
     notice: string | null;
-    /** Why the coupled write failed, or null. */
+    /** Why the coupled write did not take, the change asked then left
+     *  unwritten; null otherwise. */
     coupledError: string | null;
 }
 
 /**
- * Writes the asked change, then the change it drags along. A refused
- * asked change rejects before anything else is written. A refused
- * coupled change leaves the asked one in place and comes back as
- * coupledError, with no notice.
+ * Writes the coupled change first, then the change asked: keepAwake is
+ * stored on before wakeOnKeyPress goes on, and wakeOnKeyPress is off
+ * before keepAwake goes off, so no failure leaves the dependant on
+ * without keepAwake. A coupled write that is refused, or that the plugin
+ * stores otherwise than asked, stops there: the change asked is not
+ * written and coupledError says why. A refused change asked rejects.
  */
 export async function applyDeckSleepChange(
     current: DeckSleepSettings,
@@ -102,14 +110,19 @@ export async function applyDeckSleepChange(
         notice: null,
         coupledError: null,
     };
-    await write(change, effects, out);
-    if (!plan.coupled) return out;
-    try {
-        await write(plan.coupled, effects, out);
-    } catch (e) {
-        out.coupledError = e instanceof Error ? e.message : String(e);
-        return out;
+    if (plan.coupled) {
+        try {
+            await write(plan.coupled, effects, out);
+        } catch (e) {
+            out.coupledError = e instanceof Error ? e.message : String(e);
+            return out;
+        }
+        if (out.settings[plan.coupled.setting] !== plan.coupled.enabled) {
+            out.coupledError = t(ERROR_KEEP_AWAKE_NOT_STORED);
+            return out;
+        }
     }
+    await write(change, effects, out);
     out.notice = plan.notice;
     return out;
 }

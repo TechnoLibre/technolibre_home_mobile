@@ -5,7 +5,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { __setPluginMock, __clearPluginMocks } from "@capacitor/core";
 import { EventBus } from "@odoo/owl";
 import { Events } from "../constants/events";
+import { t } from "../i18n";
 import {
+    ERROR_KEEP_AWAKE_NOT_STORED,
     NOTICE_KEEP_AWAKE_TURNED_ON,
     NOTICE_WAKE_TURNED_OFF,
     WAKE_ON_KEY_PRESS_KEY,
@@ -105,24 +107,24 @@ describe("planDeckSleepChange", () => {
 });
 
 describe("applyDeckSleepChange", () => {
-    it("writes wake-on-key-press, then keepAwake", async () => {
+    it("stores keepAwake on before it turns wake-on-key-press on", async () => {
         const { calls, effects } = recordingEffects(true);
         const r = await applyDeckSleepChange(settings(false, false), {
             setting: "wakeOnKeyPress", enabled: true,
         }, effects);
-        expect(calls).toEqual(["wakeOnKeyPress=true", "keepAwake=true"]);
+        expect(calls).toEqual(["keepAwake=true", "wakeOnKeyPress=true"]);
         expect(r.settings).toEqual(settings(true, true));
         expect(r.power).toEqual({ showOverLockScreen: true, keepAwake: true });
         expect(r.notice).toBe(NOTICE_KEEP_AWAKE_TURNED_ON);
         expect(r.coupledError).toBeNull();
     });
 
-    it("writes keepAwake, then wake-on-key-press", async () => {
+    it("turns wake-on-key-press off before it stores keepAwake off", async () => {
         const { calls, effects } = recordingEffects();
         const r = await applyDeckSleepChange(settings(true, true), {
             setting: "keepAwake", enabled: false,
         }, effects);
-        expect(calls).toEqual(["keepAwake=false", "wakeOnKeyPress=false"]);
+        expect(calls).toEqual(["wakeOnKeyPress=false", "keepAwake=false"]);
         expect(r.settings).toEqual(settings(false, false));
         expect(r.notice).toBe(NOTICE_WAKE_TURNED_OFF);
     });
@@ -138,28 +140,28 @@ describe("applyDeckSleepChange", () => {
         expect(r.notice).toBeNull();
     });
 
-    it("rejects, writing nothing more, when the setting asked is refused", async () => {
+    it("rejects when the setting asked is refused, its dependant already off", async () => {
         const { calls, effects } = recordingEffects();
         effects.setKeepAwake = vi.fn().mockRejectedValue(new Error("refused"));
         await expect(applyDeckSleepChange(settings(true, true), {
             setting: "keepAwake", enabled: false,
         }, effects)).rejects.toThrow("refused");
-        expect(calls).toEqual([]);
+        expect(calls).toEqual(["wakeOnKeyPress=false"]);
     });
 
-    it("keeps the change asked and reports a refused coupled write", async () => {
-        const { calls, effects } = recordingEffects();
+    it("leaves wake-on-key-press off when keepAwake is refused", async () => {
+        const { effects } = recordingEffects();
         effects.setKeepAwake = vi.fn().mockRejectedValue(new Error("no plugin"));
         const r = await applyDeckSleepChange(settings(false, false), {
             setting: "wakeOnKeyPress", enabled: true,
         }, effects);
-        expect(calls).toEqual(["wakeOnKeyPress=true"]);
-        expect(r.settings).toEqual(settings(true, false));
+        expect(effects.setWakeOnKeyPress).not.toHaveBeenCalled();
+        expect(r.settings).toEqual(settings(false, false));
         expect(r.notice).toBeNull();
         expect(r.coupledError).toContain("no plugin");
     });
 
-    it("shows keepAwake as the plugin stored it", async () => {
+    it("leaves wake-on-key-press off when the plugin stores keepAwake off", async () => {
         const { effects } = recordingEffects();
         effects.setKeepAwake = vi.fn().mockResolvedValue({
             showOverLockScreen: false, keepAwake: false,
@@ -167,7 +169,11 @@ describe("applyDeckSleepChange", () => {
         const r = await applyDeckSleepChange(settings(false, false), {
             setting: "wakeOnKeyPress", enabled: true,
         }, effects);
-        expect(r.settings).toEqual(settings(true, false));
+        expect(effects.setWakeOnKeyPress).not.toHaveBeenCalled();
+        expect(r.settings).toEqual(settings(false, false));
+        expect(r.power).toEqual({ showOverLockScreen: false, keepAwake: false });
+        expect(r.notice).toBeNull();
+        expect(r.coupledError).toBe(t(ERROR_KEEP_AWAKE_NOT_STORED));
     });
 });
 

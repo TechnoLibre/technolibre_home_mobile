@@ -147,10 +147,13 @@ export class OptionsKeepAwakeComponent extends EnhancedComponent {
         }
     }
 
-    /** Turning it on also turns on the Stream Deck keepAwake power
-     *  option it depends on (deckSleepCoupling), and says so. */
+    /** Turning it on first turns on the Stream Deck keepAwake power
+     *  option it depends on (deckSleepCoupling), and says so; when that
+     *  option stays off, this one does too and the error says why. The
+     *  checkbox is set back by hand: an unchanged state renders nothing. */
     async onToggleDeck(ev: Event): Promise<void> {
-        const checked = (ev.target as HTMLInputElement).checked;
+        const box = ev.target as HTMLInputElement;
+        const checked = box.checked;
         this.state.error = "";
         this.state.notice = "";
         try {
@@ -167,5 +170,6 @@ export class OptionsKeepAwakeComponent extends EnhancedComponent {
             this.state.error = e instanceof Error ? e.message : String(e);
             this.state.deckEnabled = !checked;
         }
+        box.checked = this.state.deckEnabled;
     }
 }

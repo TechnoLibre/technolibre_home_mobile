@@ -439,6 +439,7 @@ export const translations: Record<string, string> = {
   "sleep.deck_awake": "Garder le Stream Deck allumé en veille",
   "sleep.deck_awake_hint": "Quand le téléphone se met en veille, le Stream Deck garde sa dernière image plutôt que de s'éteindre. Il faut pour cela « Garder le téléphone éveillé tant qu'un deck est branché » dans Options › Stream Deck : cocher cette option-ci coche aussi celle-là, et décocher celle-là décoche aussi celle-ci. Une touche ne rallume l'écran qu'avec « Laisser le deck allumer l'écran et afficher l'application par-dessus l'écran verrouillé », au même endroit ; sans elle, l'écran reste éteint et la touche parvient à l'application si elle est ouverte. Indépendant du réglage ci-dessus.",
   "sleep.keep_awake_turned_on": "L'option « Garder le téléphone éveillé tant qu'un deck est branché » a été cochée dans Options › Stream Deck : garder le deck allumé en veille en a besoin.",
+  "sleep.keep_awake_not_stored": "L'option « Garder le téléphone éveillé tant qu'un deck est branché » n'a pas pu être cochée dans Options › Stream Deck, donc « Garder le Stream Deck allumé en veille » reste décochée : elle en a besoin.",
   "label.refresh_rate": "Rafraîchissement",
   "label.one_second": "1 seconde",
   "label.five_seconds": "5 secondes",

@@ -9,6 +9,7 @@ import { t } from "../i18n";
 import { translations as en } from "../i18n/en";
 import { translations as fr } from "../i18n/fr";
 import {
+    ERROR_KEEP_AWAKE_NOT_STORED,
     NOTICE_KEEP_AWAKE_TURNED_ON,
     NOTICE_WAKE_TURNED_OFF,
     WAKE_ON_KEY_PRESS_KEY,
@@ -100,20 +101,44 @@ describe("Options › Sleep › keep the deck lit", () => {
         expect(c.state.deckEnabled).toBe(false);
     });
 
-    it("stays on and says why when keepAwake cannot be stored", async () => {
-        stubStorage();
+    it("stays off and says why when keepAwake cannot be stored", async () => {
+        const store = stubStorage();
+        const setWakeOnKeyPress = vi.fn().mockResolvedValue({ enabled: true });
         __setPluginMock("StreamDeckPlugin", {
             getPowerOptions: vi.fn().mockResolvedValue({ keepAwake: false }),
             setPowerOptions: vi.fn().mockRejectedValue(new Error("refused")),
+            setWakeOnKeyPress,
+        });
+        const c = sleepPanel();
+        const box = { checked: true };
+
+        await c.onToggleDeck({ target: box });
+
+        expect(setWakeOnKeyPress).not.toHaveBeenCalled();
+        expect(store.has(WAKE_ON_KEY_PRESS_KEY)).toBe(false);
+        expect(c.state.deckEnabled).toBe(false);
+        expect(box.checked).toBe(false);
+        expect(c.state.notice).toBe("");
+        expect(c.state.error).toContain("refused");
+    });
+
+    it("stays off and says why when the plugin stores keepAwake off", async () => {
+        const store = stubStorage();
+        __setPluginMock("StreamDeckPlugin", {
+            getPowerOptions: vi.fn().mockResolvedValue({ keepAwake: false }),
+            setPowerOptions: vi.fn().mockResolvedValue({ keepAwake: false }),
             setWakeOnKeyPress: vi.fn().mockResolvedValue({ enabled: true }),
         });
         const c = sleepPanel();
+        const box = { checked: true };
 
-        await c.onToggleDeck({ target: { checked: true } });
+        await c.onToggleDeck({ target: box });
 
-        expect(c.state.deckEnabled).toBe(true);
+        expect(store.has(WAKE_ON_KEY_PRESS_KEY)).toBe(false);
+        expect(c.state.deckEnabled).toBe(false);
+        expect(box.checked).toBe(false);
         expect(c.state.notice).toBe("");
-        expect(c.state.error).toContain("refused");
+        expect(c.state.error).toBe(t(ERROR_KEEP_AWAKE_NOT_STORED));
     });
 
     it("follows a change made from the Stream Deck section", () => {
@@ -193,6 +218,11 @@ describe("i18n — coupled deck sleep settings", () => {
     it.each([["en", en], ["fr", fr]])("%s lines name the setting that moved", (_, dict) => {
         expect(dict[NOTICE_KEEP_AWAKE_TURNED_ON]).toContain(dict["streamdeck.power_keep_awake"]);
         expect(dict[NOTICE_WAKE_TURNED_OFF]).toContain(dict["sleep.deck_awake"]);
+    });
+
+    it.each([["en", en], ["fr", fr]])("%s refusal names the option that stayed off", (_, dict) => {
+        expect(dict[ERROR_KEEP_AWAKE_NOT_STORED]).toContain(dict["streamdeck.power_keep_awake"]);
+        expect(dict[ERROR_KEEP_AWAKE_NOT_STORED]).toContain(dict["sleep.deck_awake"]);
     });
 
     it.each([["en", en], ["fr", fr]])("%s hints name the setting they move", (_, dict) => {

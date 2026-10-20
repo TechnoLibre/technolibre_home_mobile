@@ -439,6 +439,7 @@ export const translations: Record<string, string> = {
   "sleep.deck_awake": "Keep the Stream Deck lit during sleep",
   "sleep.deck_awake_hint": "When the phone goes to sleep, the Stream Deck keeps its last image instead of going dark. This needs “Keep the phone awake while a deck is connected” in Options › Stream Deck: turning this on turns that on, and turning that off turns this off. A key press turns the screen back on only with “Let the deck turn the screen on and show the app over the lock screen”, in the same place; without it, the screen stays off and the press reaches the app if it is running. Independent of the setting above.",
   "sleep.keep_awake_turned_on": "“Keep the phone awake while a deck is connected” was turned on in Options › Stream Deck: keeping the deck lit during sleep needs it.",
+  "sleep.keep_awake_not_stored": "“Keep the phone awake while a deck is connected” could not be turned on in Options › Stream Deck, so “Keep the Stream Deck lit during sleep” stays off: it needs that option.",
   "label.refresh_rate": "Refresh rate",
   "label.one_second": "1 second",
   "label.five_seconds": "5 seconds",
