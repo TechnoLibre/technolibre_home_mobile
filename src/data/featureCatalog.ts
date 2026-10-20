@@ -724,8 +724,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "streamdeck.power-options",
                 label: { en: "Power options", fr: "Options d'énergie" },
                 description: {
-                    en: "Show over the lock screen on a deck wake; keep the phone awake. Both off by default.",
-                    fr: "Afficher sur l'écran verrouillé au réveil par le deck ; garder le téléphone éveillé. Désactivées par défaut.",
+                    en: "Let the deck wake the screen and show over the lock screen; keep the phone awake. Both off by default.",
+                    fr: "Laisser le deck allumer l'écran et afficher sur l'écran verrouillé ; garder le téléphone éveillé. Désactivées par défaut.",
                 },
                 status: "stable",
                 howItWorks: {
@@ -737,7 +737,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "by the deck — USB_DEVICE_ATTACHED, or the wake-on-key-"
                         + "press relaunch, marked with EXTRA_DECK_WAKE — and "
                         + "clears them in onStop; any other launch stays behind "
-                        + "the lock screen. keepAwake: the partial wake lock is "
+                        + "the lock screen. A deck key press lights the screen "
+                        + "only with this option (wakeScreenOnKeyPress). keepAwake: the partial wake lock is "
                         + "held and each session sends its 700 ms heartbeat while "
                         + "a deck is open. Off, the phone may suspend the USB bus "
                         + "with the screen off: the deck may flicker or go dark "
@@ -756,7 +757,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "par le deck — USB_DEVICE_ATTACHED, ou la relance du "
                         + "réveil sur touche, marquée par EXTRA_DECK_WAKE — et les "
                         + "retire dans onStop ; tout autre lancement reste derrière "
-                        + "l'écran verrouillé. keepAwake : le verrou de veille "
+                        + "l'écran verrouillé. Une touche du deck n'allume l'écran "
+                        + "qu'avec cette option (wakeScreenOnKeyPress). keepAwake : le verrou de veille "
                         + "partiel est tenu et chaque session envoie son battement "
                         + "de 700 ms tant qu'un deck est ouvert. Désactivé, le "
                         + "téléphone peut suspendre le bus USB écran éteint : le "
@@ -2039,11 +2041,14 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "calls StreamDeckPlugin.setWakeOnKeyPress(true) "
                         + "which arms a native keyPressHook in DeckSession. "
                         + "When a key is pressed while MainActivity is "
-                        + "paused, the plugin acquires SCREEN_BRIGHT_WAKE_LOCK | "
-                        + "ACQUIRE_CAUSES_WAKEUP and starts the launch intent "
-                        + "with REORDER_TO_FRONT. The screen lights on the "
-                        + "lock screen; the app covers it only with the "
-                        + "Stream Deck showOverLockScreen power option, and a "
+                        + "paused and the Stream Deck showOverLockScreen "
+                        + "power option is on, the plugin acquires "
+                        + "SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP and "
+                        + "starts the launch intent with REORDER_TO_FRONT, "
+                        + "which shows the app over the lock screen. Without "
+                        + "that option the screen stays off and the press "
+                        + "arrives as keyChanged only "
+                        + "(DeckPowerOptions.wakeScreenOnKeyPress). A "
                         + "press reaches the reader with the screen off "
                         + "reliably only with keepAwake (see "
                         + "streamdeck.power-options). Hence toggle (2) is "
@@ -2062,12 +2067,15 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "appelle StreamDeckPlugin.setWakeOnKeyPress(true) "
                         + "qui arme un keyPressHook natif dans "
                         + "DeckSession. Sur pression touche pendant que "
-                        + "MainActivity est en pause, le plugin acquiert "
-                        + "SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP "
-                        + "et lance l'intent avec REORDER_TO_FRONT. L'écran "
-                        + "s'allume sur l'écran verrouillé ; l'application ne "
-                        + "le couvre qu'avec l'option showOverLockScreen du "
-                        + "Stream Deck, et une pression n'atteint le lecteur "
+                        + "MainActivity est en pause et que l'option "
+                        + "showOverLockScreen du Stream Deck est activée, le "
+                        + "plugin acquiert SCREEN_BRIGHT_WAKE_LOCK | "
+                        + "ACQUIRE_CAUSES_WAKEUP et lance l'intent avec "
+                        + "REORDER_TO_FRONT, qui montre l'application "
+                        + "par-dessus l'écran verrouillé. Sans cette option "
+                        + "l'écran reste éteint et la touche n'arrive qu'en "
+                        + "keyChanged (DeckPowerOptions.wakeScreenOnKeyPress). "
+                        + "Une pression n'atteint le lecteur "
                         + "écran éteint de façon fiable qu'avec keepAwake (voir "
                         + "streamdeck.power-options). Le toggle (2) est donc lié "
                         + "à keepAwake par deckSleepCoupling : cocher (2) coche "
@@ -2078,6 +2086,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/KeepAwakePlugin.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckPowerOptions.java",
                     "android/app/src/main/java/ca/erplibre/home/MainActivity.java",
                     "src/plugins/keepAwakePlugin.ts",
                     "src/services/streamDeckController.ts",
