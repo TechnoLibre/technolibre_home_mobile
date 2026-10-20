@@ -652,13 +652,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionTimeoutException.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/PermissionRequestPlan.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachPolicy.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachTimers.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
                     "src/plugins/streamDeckPlugin.ts",
+                    "src/services/streamDeckEventLog.ts",
                 ],
                 tests: [
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/PermissionRequestPlanTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachPolicyTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachTimersTest.java",
                     "src/__tests__/streamDeckPlugin.test.ts",
+                    "src/__tests__/streamDeckEventLog.test.ts",
                 ],
             },
             {
@@ -2092,10 +2096,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/streamDeckController.ts",
                     "src/services/deckSleepCoupling.ts",
                     "src/components/options/keep_awake/options_keep_awake_component.ts",
+                    "src/js/app.ts",
                 ],
                 tests: [
                     "src/__tests__/keepAwakePlugin.test.ts",
+                    "src/__tests__/deckSleepCoupling.test.ts",
                     "src/__tests__/deckSleepPanels.test.ts",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/DeckPowerOptionsTest.java",
                 ],
             },
             {
