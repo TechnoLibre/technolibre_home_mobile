@@ -401,8 +401,18 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         reattachTimers.fired(name, token);
         if (!reattach.due(name, token)) return;
         UsbDevice device = usb.getDeviceList().get(name);
-        if (device == null) { reattach.forget(name); updateWakeLock(); return; }
-        if (registry.isBusy(name)) return;
+        if (device == null) {
+            Log.i(TAG, "re-attach of " + name + " dropped: device no longer listed");
+            reattach.forget(name);
+            updateWakeLock();
+            return;
+        }
+        if (registry.isBusy(name)) {
+            // The attach holding the reservation reports its outcome to
+            // the policy: registered, or attachFailed.
+            Log.i(TAG, "re-attach of " + name + " skipped: already open or opening");
+            return;
+        }
         if (!usb.hasPermission(device)) {
             applyReattach(name, "", reattach.attachFailed(name, "permission_missing"));
             return;
