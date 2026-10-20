@@ -48,8 +48,9 @@ public final class DeckSession {
     private static final int    BULK_WRITE_TIMEOUT_MS = 500;
     private static final int    BULK_READ_TIMEOUT_MS  = 1000;
     /** Bound of close()'s wait for the workers and the gated calls
-     *  together. The reader sees a close within RequestReader.WAIT_MS and
-     *  then drains its request, at most DRAIN_WAITS more waits; the writer
+     *  together. The reader sees a close at once through
+     *  RequestReader.wake(), else within RequestReader.WAIT_MS, and then
+     *  drains its request, at most DRAIN_WAITS more waits; the writer
      *  within one page's BULK_WRITE_TIMEOUT_MS; a heartbeat within its
      *  500 ms transfer; setBrightness and reset within their 1000 ms. */
     private static final long   STOP_WORKERS_MS = 2000;
@@ -85,6 +86,9 @@ public final class DeckSession {
     /** Set by open() under this; volatile for the health getters. */
     private volatile Thread readerThread;
     private volatile Thread writerThread;
+    /** The userequest reader, null before it starts and in the other
+     *  reader modes; close() wakes it. */
+    private volatile RequestReader requestReader;
     /** The writer thread's WriterStep, null before it starts. */
     private volatile WriterStep writerStep;
     /** EP0 transfers of gatedControlTransfer that failed since the last
@@ -313,11 +317,16 @@ public final class DeckSession {
             }
             return;
         }
+        long start = System.nanoTime();
+        // The reader's wait ends at once rather than after its WAIT_MS.
+        // A native call on the connection, made before this thread closes
+        // it; a no-op when the reader is the thread closing.
+        RequestReader reader = requestReader;
+        if (reader != null) reader.wake();
         // The workers and the gated calls end before the connection is
         // released: close() frees the native device their USB calls use.
         // Outside the monitor, which setHeartbeat takes; the calling
         // worker, if any, is skipped. One deadline bounds both waits.
-        long start = System.nanoTime();
         long deadline = start + STOP_WORKERS_MS * 1_000_000L;
         for (Thread t : WorkerShutdown.stop(workers, STOP_WORKERS_MS)) {
             Log.w(TAG, "close: " + t.getName() + " still running after "
@@ -621,6 +630,7 @@ public final class DeckSession {
             }
         };
         RequestReader reader = new RequestReader(pipe, owner, SystemClock::elapsedRealtime);
+        requestReader = reader;
         String failure = reader.run();
         if (reader.leftQueued()) {
             Log.w(TAG, "reader: cancelled UsbRequest never reaped, closed after the connection");

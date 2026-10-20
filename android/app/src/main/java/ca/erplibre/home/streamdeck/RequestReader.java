@@ -13,6 +13,14 @@ package ca.erplibre.home.streamdeck;
  * A wait that times out therefore cancels nothing: the request stays queued
  * and the next wait is on it. An idle deck sends no report at all.
  *
+ * The owner's close() calls wake() from its own thread once isOpen() reads
+ * false: the cancel gives the queued request back at once, empty, and the
+ * loop leaves with nothing queued instead of after its WAIT_MS. A wake
+ * that lands between two waits cancels nothing, and the loop then sees the
+ * close within WAIT_MS. wake() and the release of the request share a
+ * lock, and a wake after the release does nothing: UsbRequest.cancel reads
+ * its native pointer without the request's own lock.
+ *
  * On exit the queued request is cancelled, then reaped, and only then
  * closed, so the kernel holds no pointer into a freed request or buffer. A
  * wait that fails, as on a device gone, is followed by a reap that does not
@@ -25,7 +33,8 @@ package ca.erplibre.home.streamdeck;
  */
 final class RequestReader {
 
-    /** Longest wait for one completion: also how late the loop sees a close. */
+    /** Longest wait for one completion: also how late the loop sees a
+     *  close that wake() missed. */
     static final long WAIT_MS = 250;
     /** Waits for a cancelled request to be reaped before giving up on it. */
     static final int DRAIN_WAITS = 4;
@@ -100,11 +109,27 @@ final class RequestReader {
     private final Owner owner;
     private final Clock clock;
     private boolean leftQueued = false;
+    /** Guards released against wake(). */
+    private final Object wakeLock = new Object();
+    /** Set once run() no longer owns a request wake() may cancel. */
+    private boolean released = false;
 
     RequestReader(Pipe pipe, Owner owner, Clock clock) {
         this.pipe = pipe;
         this.owner = owner;
         this.clock = clock;
+    }
+
+    /**
+     * Cancels the queued request so that the wait in progress returns at
+     * once. Called by the owner from another thread, after isOpen() turned
+     * false; does nothing once run() has released the request.
+     */
+    void wake() {
+        synchronized (wakeLock) {
+            if (released) return;
+            try { pipe.cancel(); } catch (RuntimeException ignored) { }
+        }
     }
 
     /** True when run() ended with a request the kernel never gave back. */
@@ -168,6 +193,8 @@ final class RequestReader {
             }
         } finally {
             leftQueued = queued && !drain();
+            // A request left queued is the owner's to free from now on.
+            synchronized (wakeLock) { released = true; }
             if (!leftQueued) {
                 try { pipe.close(); } catch (RuntimeException ignored) { }
             }

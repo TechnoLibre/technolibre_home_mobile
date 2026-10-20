@@ -15,6 +15,9 @@ public class RequestReaderTest {
     static final Object TIMEOUT = new Object();
     /** Script entry: the session closes during this wait, which times out. */
     static final Object STOP = new Object();
+    /** Script entry: the session closes during this wait and wakes the
+     *  reader, as close() does from its own thread. */
+    static final Object WAKE = new Object();
 
     static final class FakeOwner implements RequestReader.Owner {
         boolean open = true;
@@ -44,6 +47,8 @@ public class RequestReaderTest {
         boolean reapsNow = true;
         long now = 0;
         long msPerWait = 250;
+        /** The reader under test, which a WAKE step wakes. */
+        RequestReader reader;
 
         FakePipe(FakeOwner owner, Object... steps) {
             this.owner = owner;
@@ -71,6 +76,13 @@ public class RequestReaderTest {
             }
             Object step = script.isEmpty() ? STOP : script.poll();
             if (step == STOP) { owner.open = false; return null; }
+            if (step == WAKE) {
+                owner.open = false;
+                reader.wake();
+                // The cancel gives the request back empty.
+                queued = false;
+                return new byte[0];
+            }
             if (step == TIMEOUT) return null;
             if (step instanceof RequestReader.WaitFailed) throw (RequestReader.WaitFailed) step;
             queued = false;
@@ -102,7 +114,8 @@ public class RequestReaderTest {
     }
 
     static RequestReader reader(FakePipe pipe) {
-        return new RequestReader(pipe, pipe.owner, () -> pipe.now);
+        pipe.reader = new RequestReader(pipe, pipe.owner, () -> pipe.now);
+        return pipe.reader;
     }
 
     static byte[] report(int... bytes) {
@@ -328,5 +341,46 @@ public class RequestReaderTest {
         assertEquals(2, owner.idleNotes.size());
         assertEquals(RequestReader.IDLE_NOTE_MS, (long) owner.idleNotes.get(0));
         assertEquals(2 * RequestReader.IDLE_NOTE_MS, (long) owner.idleNotes.get(1));
+    }
+
+    @Test
+    public void a_wake_ends_the_wait_without_a_drain() {
+        // close() cancels the queued request: the wait returns it at once,
+        // so the reader leaves with nothing queued and closes it, with no
+        // WAIT_MS of its own.
+        FakeOwner owner = new FakeOwner();
+        FakePipe pipe = new FakePipe(owner, TIMEOUT, WAKE);
+        RequestReader r = reader(pipe);
+        assertNull(r.run());
+        assertEquals(List.of("submit", "await", "await", "cancel", "close"), pipe.calls);
+        assertFalse(r.leftQueued());
+        assertTrue(owner.reports.isEmpty());
+    }
+
+    @Test
+    public void a_wake_after_run_released_the_request_does_nothing() {
+        // The request is freed once run() returns: a cancel then would
+        // reach freed native memory.
+        FakeOwner owner = new FakeOwner();
+        FakePipe pipe = new FakePipe(owner, STOP);
+        RequestReader r = reader(pipe);
+        assertNull(r.run());
+        int cancels = pipe.count("cancel");
+        r.wake();
+        assertEquals(cancels, pipe.count("cancel"));
+    }
+
+    @Test
+    public void a_wake_after_a_request_left_queued_does_nothing() {
+        // The owner frees that request once the connection is closed.
+        FakeOwner owner = new FakeOwner();
+        FakePipe pipe = new FakePipe(owner, STOP);
+        pipe.reapsCancelled = false;
+        RequestReader r = reader(pipe);
+        assertNull(r.run());
+        assertTrue(r.leftQueued());
+        int cancels = pipe.count("cancel");
+        r.wake();
+        assertEquals(cancels, pipe.count("cancel"));
     }
 }
