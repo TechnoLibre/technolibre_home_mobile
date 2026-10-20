@@ -93,6 +93,12 @@ public class BmpEncoderTest {
 
     // ── rejections ─────────────────────────────────────────────────────
 
+    @Test
+    public void takes_png() {
+        assertEquals("png", new BmpEncoder(180).inputFormat());
+        assertEquals("png", new BmpEncoder(270).inputFormat());
+    }
+
     @Test(expected = IllegalArgumentException.class)
     public void rotation_other_than_a_bmp_model_is_refused() {
         new BmpEncoder(90);
