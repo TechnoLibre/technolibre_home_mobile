@@ -27,7 +27,11 @@ import ca.erplibre.home.streamdeck.transport.TransportV2;
  * Lifecycle:
  *   constructor (no I/O)
  *   open(usbConnection, iface) — claim, read serial, start threads
- *   close() — kill threads, drain queue with rejected promises, release iface
+ *   close() — kill threads, drain queue with rejected promises, release iface,
+ *             then tell the owner through the CloseListener
+ *
+ * close() runs from the owner (detach, restart, destroy) or from the reader
+ * thread itself when the USB pipe fails; the listener fires once either way.
  */
 public final class DeckSession {
 
@@ -35,9 +39,15 @@ public final class DeckSession {
     private static final int    BULK_WRITE_TIMEOUT_MS = 500;
     private static final int    BULK_READ_TIMEOUT_MS  = 1000;
 
+    /** Told once, after the session stopped, whoever called close(). */
+    public interface CloseListener {
+        void onClosed(DeckSession session, String reason);
+    }
+
     private final DeckSpec spec;
     private final UsbDevice device;
     private final EventEmitter emitter;
+    private final CloseListener closeListener;
     private final WriterQueue queue = new WriterQueue();
     private final DeckTransport transport;
     private final ImageEncoder encoder;
@@ -120,10 +130,12 @@ public final class DeckSession {
     private static volatile Runnable keyPressHook;
     public static void setKeyPressHook(Runnable hook) { keyPressHook = hook; }
 
-    public DeckSession(DeckSpec spec, UsbDevice device, EventEmitter emitter) {
+    public DeckSession(DeckSpec spec, UsbDevice device, EventEmitter emitter,
+                       CloseListener closeListener) {
         this.spec = spec;
         this.device = device;
         this.emitter = emitter;
+        this.closeListener = closeListener;
         this.transport = (spec.transport == DeckSpec.TransportKind.V1) ? new TransportV1() : new TransportV2();
         this.encoder = KeyImages.encoderFor(spec);
     }
@@ -132,6 +144,8 @@ public final class DeckSession {
     public UsbDevice device(){ return device; }
     public String serial()   { return serial; }
     public String firmware() { return firmware; }
+    /** False from the moment close() starts. */
+    public boolean isOpen()  { return running; }
 
     public synchronized void open(UsbManager usb) throws DeckOpenException {
         if (running) return;
@@ -217,22 +231,30 @@ public final class DeckSession {
         readerThread.start();
         writerThread.start();
         heartbeatThread.start();
-
-        emitLifecycle("deckConnected", null);
+        // deckConnected is the plugin's to send, once it has registered
+        // this session: JS calls back by deckId as soon as it hears it.
     }
 
-    public synchronized void close(String reason) {
-        if (!running) return;
-        running = false;
-        queue.closeAndDrainAsDropped();
-        if (readerThread != null) readerThread.interrupt();
-        if (writerThread != null) writerThread.interrupt();
-        if (heartbeatThread != null) heartbeatThread.interrupt();
-        if (connection != null) {
-            try { connection.releaseInterface(iface); } catch (Exception ignored) {}
-            try { connection.close(); } catch (Exception ignored) {}
+    public void close(String reason) {
+        synchronized (this) {
+            if (!running) return;
+            running = false;
+            queue.closeAndDrainAsDropped();
+            if (readerThread != null) readerThread.interrupt();
+            if (writerThread != null) writerThread.interrupt();
+            if (heartbeatThread != null) heartbeatThread.interrupt();
+            if (connection != null) {
+                try { connection.releaseInterface(iface); } catch (Exception ignored) {}
+                try { connection.close(); } catch (Exception ignored) {}
+            }
         }
-        emitLifecycle("deckDisconnected", reason);
+        // Outside the monitor: the listener takes the plugin's registry
+        // lock, and the plugin never calls into a session under that lock.
+        // The plugin also sends deckDisconnected from there.
+        if (closeListener != null) {
+            try { closeListener.onClosed(this, reason); }
+            catch (Throwable t) { Log.w(TAG, "closeListener: " + t.getMessage()); }
+        }
     }
 
     public ImageEncoder encoder()   { return encoder; }
@@ -512,10 +534,10 @@ public final class DeckSession {
         final int req     = 0x01;
         final int wValue  = (0x01 << 8) | 0x01;
         // After a sustained starve (no data for >10 s), close the
-        // session so the plugin can re-attach. Observed on Plus: GET_
-        // REPORT on EP0 stops responding after ~3 s of polling and
-        // never recovers without a fresh open. The hotplug retryAttach
-        // / camera-streamer keepalive will reopen us within the second.
+        // session so the plugin can re-attach. On Plus, GET_REPORT on
+        // EP0 can stop responding after a few seconds of polling and
+        // never recovers without a fresh open. Closing unregisters the
+        // session, so the next attach or retryAttach opens a new one.
         final long STARVE_RESET_MS = 10000L;
 
         while (running) {
@@ -730,13 +752,6 @@ public final class DeckSession {
                 Log.w(TAG, "writer job error", t);
             }
         }
-    }
-
-    private void emitLifecycle(String name, String reason) {
-        JSObject ev = new JSObject();
-        ev.put("deckId", serial);
-        if (reason != null) ev.put("reason", reason);
-        emitter.emit(name, ev);
     }
 
     public static final class DeckOpenException extends Exception {

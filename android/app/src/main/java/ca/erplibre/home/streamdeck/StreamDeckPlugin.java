@@ -38,10 +38,27 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     private UsbHotplugReceiver hotplug;
     private UsbPermissionRequester permissions;
 
-    /** Map keyed by USB device name (stable while plugged in). */
-    private final Map<String, DeckSession> sessionsByDevice = new HashMap<>();
-    /** Map keyed by serial number. Filled once the device is opened. */
-    private final Map<String, DeckSession> sessionsBySerial = new HashMap<>();
+    /** Open sessions by USB device name and by serial. A session leaves it
+     *  from its own close(), whoever closed it, so a deck whose reader
+     *  failed can be attached again. */
+    private final SessionRegistry<DeckSession> registry =
+        new SessionRegistry<>(new SessionRegistry.Hooks<DeckSession>() {
+            @Override public boolean isOpen(DeckSession s) { return s.isOpen(); }
+            @Override public void connected(DeckSession s) {
+                // The spec's payload: JS caches the deck from `info`
+                // without a getDeckInfo round-trip.
+                JSObject ev = new JSObject();
+                ev.put("deckId", s.serial());
+                ev.put("info", infoOf(s));
+                emitter.emit("deckConnected", ev);
+            }
+            @Override public void disconnected(DeckSession s, String reason) {
+                JSObject ev = new JSObject();
+                ev.put("deckId", s.serial());
+                if (reason != null) ev.put("reason", reason);
+                emitter.emit("deckDisconnected", ev);
+            }
+        });
     /** Last attach error per USB device name — surfaced via listAllUsbDevices
      * so the diagnostic UI can show why a known device is not in listDecks
      * even when the failure event was emitted before any listener attached. */
@@ -119,11 +136,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         if (hotplug != null) hotplug.detach(getContext());
         if (permissions != null) permissions.close();
         resetAllSessions();
-        synchronized (sessionsByDevice) {
-            for (DeckSession s : sessionsByDevice.values()) s.close("app_destroyed");
-            sessionsByDevice.clear();
-            sessionsBySerial.clear();
-        }
+        for (DeckSession s : registry.sessions()) s.close("app_destroyed");
         StreamDeckLifecycleService.setTaskRemovedHandler(null);
         if (wakeLock != null) {
             try { if (wakeLock.isHeld()) wakeLock.release(); }
@@ -141,12 +154,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * the process and a crash here would surface as a misleading ANR.
      */
     private void resetAllSessions() {
-        synchronized (sessionsByDevice) {
-            for (DeckSession s : sessionsByDevice.values()) {
-                try { s.reset(); }
-                catch (Throwable t) {
-                    Log.w(TAG, "reset failed for " + s.serial() + ": " + t.getMessage());
-                }
+        for (DeckSession s : registry.sessions()) {
+            try { s.reset(); }
+            catch (Throwable t) {
+                Log.w(TAG, "reset failed for " + s.serial() + ": " + t.getMessage());
             }
         }
     }
@@ -166,22 +177,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // (transient enumeration) and we want to keep the existing
         // session alive instead of churning through a close+reopen.
         Runnable pending;
-        synchronized (sessionsByDevice) { pending = pendingCloseJobs.remove(name); }
+        synchronized (pendingCloseJobs) { pending = pendingCloseJobs.remove(name); }
         if (pending != null) {
             mainHandler.removeCallbacks(pending);
             Log.i(TAG, "onDeckAttached: cancelled pending close for " + name + " (transient detach)");
-        }
-
-        // Idempotent: if we already have an open session for this USB
-        // device path, the second attach is just hotplug noise (or a
-        // race after a quick detach we already debounced). Bail early
-        // so we don't construct a parallel session that fights the
-        // first one for the interface and surfaces as permissionDenied.
-        synchronized (sessionsByDevice) {
-            if (sessionsByDevice.containsKey(name)) {
-                Log.i(TAG, "onDeckAttached: session already open for " + name + " — skipping");
-                return;
-            }
         }
 
         DeckSpec spec = DeckRegistry.lookup(device.getProductId());
@@ -199,8 +198,20 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             emitter.emit("permissionDenied", ev);
             return;
         }
+
+        // Idempotent: the reservation is held from here until the session
+        // is registered or the attempt fails. A second attach meanwhile —
+        // hotplug noise, a debounced bounce, or requestPermissionForUsb
+        // resolving the same permission future — is refused instead of
+        // opening a parallel session that would steal the interface from
+        // the first and orphan its threads. An open session is reused.
+        if (!registry.reserve(name)) {
+            Log.i(TAG, "onDeckAttached: " + name + " already open or opening — skipping");
+            return;
+        }
         permissions.request(device).whenComplete((granted, err) -> {
             if (err != null || granted == null || !granted) {
+                registry.release(name);
                 String reason = err != null ? err.getMessage() : "permission_denied";
                 recordAttachError(name, reason);
                 JSObject ev = new JSObject();
@@ -209,18 +220,21 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 emitter.emit("permissionDenied", ev);
                 return;
             }
-            DeckSession session = new DeckSession(spec, device, emitter);
+            DeckSession session = new DeckSession(spec, device, emitter, this::onSessionClosed);
             try {
                 session.open(usb);
-                synchronized (sessionsByDevice) {
-                    sessionsByDevice.put(name, session);
-                    if (!session.serial().isEmpty()) {
-                        sessionsBySerial.put(session.serial(), session);
-                    }
-                    lastAttachError.remove(name);
+                if (!registry.register(name, session.serial(), session)) {
+                    // Detached while opening, or closed itself before
+                    // registration: nothing stays registered, and an
+                    // open session here would run without an owner.
+                    Log.w(TAG, "onDeckAttached: " + name + " left while opening — closing");
+                    session.close("usb_lost");
+                    return;
                 }
+                synchronized (lastAttachError) { lastAttachError.remove(name); }
                 acquireWakeLockIfNeeded();
             } catch (DeckSession.DeckOpenException e) {
+                registry.release(name);
                 String reason = e.getMessage();
                 recordAttachError(name, reason);
                 JSObject ev = new JSObject();
@@ -228,6 +242,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 ev.put("reason", reason);
                 emitter.emit("permissionDenied", ev);
             } catch (Throwable t) {
+                registry.release(name);
+                session.close("open_failed");
                 String reason = "open_unexpected:" + t.getClass().getSimpleName()
                     + ":" + t.getMessage();
                 recordAttachError(name, reason);
@@ -240,7 +256,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     private void recordAttachError(String deviceName, String reason) {
-        synchronized (sessionsByDevice) {
+        synchronized (lastAttachError) {
             lastAttachError.put(deviceName, reason);
         }
         Log.w(TAG, "attach failed for " + deviceName + ": " + reason);
@@ -256,24 +272,37 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // Schedule the close, and let onDeckAttached cancel it if the
         // device comes back within DETACH_DEBOUNCE_MS.
         Runnable closeJob = () -> {
-            DeckSession session;
-            synchronized (sessionsByDevice) {
-                session = sessionsByDevice.remove(name);
-                pendingCloseJobs.remove(name);
-                if (session != null) sessionsBySerial.remove(session.serial());
-            }
+            synchronized (pendingCloseJobs) { pendingCloseJobs.remove(name); }
+            // An attach still waiting on permission or open() for this
+            // device will fail to register and close what it opened.
+            registry.release(name);
+            DeckSession session = registry.byDevice(name);
             if (session != null) {
                 Log.i(TAG, "onDeckDetached: closing session for " + name + " (debounce expired)");
                 session.close("usb_lost");
             }
             releaseWakeLockIfIdle();
         };
-        synchronized (sessionsByDevice) {
+        synchronized (pendingCloseJobs) {
             Runnable prev = pendingCloseJobs.put(name, closeJob);
             if (prev != null) mainHandler.removeCallbacks(prev);
         }
         Log.i(TAG, "onDeckDetached: scheduled close for " + name + " in " + DETACH_DEBOUNCE_MS + " ms");
         mainHandler.postDelayed(closeJob, DETACH_DEBOUNCE_MS);
+    }
+
+    /**
+     * CloseListener of every session, on the thread that closed it — the
+     * reader thread when the USB pipe failed. Unregistering here, not only
+     * on detach, is what lets onDeckAttached and retryAttach open the same
+     * device again.
+     */
+    private void onSessionClosed(DeckSession session, String reason) {
+        String name = session.device().getDeviceName();
+        if (registry.unregister(name, session, reason)) {
+            Log.i(TAG, "session for " + name + " closed (" + reason + ") — unregistered");
+        }
+        releaseWakeLockIfIdle();
     }
 
     private void acquireWakeLockIfNeeded() {
@@ -284,9 +313,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     private void releaseWakeLockIfIdle() {
         if (wakeLock == null) return;
-        boolean any;
-        synchronized (sessionsByDevice) { any = !sessionsByDevice.isEmpty(); }
-        if (any) return;
+        if (!registry.isEmpty()) return;
         try { if (wakeLock.isHeld()) wakeLock.release(); }
         catch (Throwable t) { Log.w(TAG, "wake lock release failed: " + t.getMessage()); }
     }
@@ -296,11 +323,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     @PluginMethod
     public void listDecks(PluginCall call) {
         JSArray arr = new JSArray();
-        synchronized (sessionsByDevice) {
-            for (DeckSession s : sessionsByDevice.values()) {
-                arr.put(infoOf(s));
-            }
-        }
+        for (DeckSession s : registry.sessions()) arr.put(infoOf(s));
         JSObject r = new JSObject();
         r.put("decks", arr);
         call.resolve(r);
@@ -337,10 +360,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             // USB device path — i.e. the deck would also appear in listDecks.
             boolean inSession;
             String lastErr;
-            synchronized (sessionsByDevice) {
-                inSession = sessionsByDevice.containsKey(d.getDeviceName());
-                lastErr = lastAttachError.get(d.getDeviceName());
-            }
+            inSession = registry.hasSession(d.getDeviceName());
+            synchronized (lastAttachError) { lastErr = lastAttachError.get(d.getDeviceName()); }
             o.put("inSession", inSession);
             o.put("lastAttachError", lastErr != null ? lastErr : "");
             arr.put(o);
@@ -414,14 +435,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     public void restartSessions(PluginCall call) {
         int closed = 0;
         java.util.List<UsbDevice> toReattach = new java.util.ArrayList<>();
-        synchronized (sessionsByDevice) {
-            for (DeckSession s : sessionsByDevice.values()) {
-                toReattach.add(s.device());
-                s.close("restart_requested");
-                closed++;
-            }
-            sessionsByDevice.clear();
-            sessionsBySerial.clear();
+        for (DeckSession s : registry.sessions()) {
+            toReattach.add(s.device());
+            s.close("restart_requested");   // unregisters through onSessionClosed
+            closed++;
         }
         for (UsbDevice d : toReattach) {
             if (DeckRegistry.isElgato(d.getVendorId())) onDeckAttached(d);
@@ -443,11 +460,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         for (UsbDevice d : usb.getDeviceList().values()) {
             if (!DeckRegistry.isElgato(d.getVendorId())) continue;
             if (DeckRegistry.lookup(d.getProductId()) == null) continue;
-            boolean already;
-            synchronized (sessionsByDevice) {
-                already = sessionsByDevice.containsKey(d.getDeviceName());
-            }
-            if (already) continue;
+            if (registry.isBusy(d.getDeviceName())) continue;
             if (!usb.hasPermission(d)) continue;
             onDeckAttached(d);
             retried++;
@@ -609,8 +622,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         err = KeyImages.checkSize(raw, s.spec());
         if (err != null) { call.reject(err); return; }
 
+        // Settled once, by the writer or by the queue as dropped. Not kept
+        // alive: the Bridge would hold a kept-alive call and its bytes
+        // until releaseCall, for every frame.
         s.queue().offerCoalesce(new ImageWriteJob(s, key, raw, call));
-        call.setKeepAlive(true);
     }
 
     /**
@@ -662,7 +677,6 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         try { black = s.encoder().blank(s.spec().keyImageW, s.spec().keyImageH); }
         catch (ImageEncoder.ImageEncodeException e) { call.reject(e.getMessage()); return; }
         s.queue().offerCoalesce(ImageWriteJob.preEncoded(s, key, black, call));
-        call.setKeepAlive(true);
     }
 
     @PluginMethod
@@ -679,7 +693,6 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         byte[] raw = decodeBytes(call); if (raw == null) return;
         s.queue().offerCoalesce(new LcdWriteJob(
             s, 0, 0, s.spec().lcdW, s.spec().lcdH, raw, call, "lcd"));
-        call.setKeepAlive(true);
     }
 
     @PluginMethod
@@ -694,7 +707,6 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         byte[] raw = decodeBytes(call); if (raw == null) return;
         String slot = "lcd:" + x + "," + y + "," + w + "," + h;
         s.queue().offerCoalesce(new LcdWriteJob(s, x, y, w, h, raw, call, slot));
-        call.setKeepAlive(true);
     }
 
     @PluginMethod
@@ -708,7 +720,6 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         }
         byte[] raw = decodeBytes(call); if (raw == null) return;
         s.queue().offerCoalesce(new NeoInfoBarWriteJob(s, index, raw, call));
-        call.setKeepAlive(true);
     }
 
     private byte[] decodeBytes(PluginCall call) {
@@ -723,8 +734,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     private DeckSession requireSession(PluginCall call) {
         String id = call.getString("deckId");
         if (id == null) { call.reject("missing:deckId"); return null; }
-        DeckSession s;
-        synchronized (sessionsByDevice) { s = sessionsBySerial.get(id); }
+        DeckSession s = registry.bySerial(id);
         if (s == null) { call.reject("no_such_deck:" + id); return null; }
         return s;
     }
