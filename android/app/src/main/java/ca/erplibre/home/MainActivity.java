@@ -1,5 +1,6 @@
 package ca.erplibre.home;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
@@ -15,30 +16,13 @@ import com.getcapacitor.Plugin;
 
 import android.util.Log;
 
+import ca.erplibre.home.streamdeck.DeckPowerOptions;
 import ca.erplibre.home.streamdeck.StreamDeckPlugin;
 
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        // Cooperate with the StreamDeckPlugin wake-on-keypress path:
-        // when the activity is relaunched after a deck press during
-        // phone sleep, the OS needs explicit consent to display this
-        // window over the keyguard and to turn the screen on. Without
-        // these flags the wake-lock acquired by the plugin would only
-        // light the LCD and leave the lockscreen on top.
-        // setShowWhenLocked / setTurnScreenOn are API 27+. minSdk=24,
-        // so the older path falls back to FLAG_DISMISS_KEYGUARD +
-        // FLAG_TURN_SCREEN_ON on the window which has the same effect.
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true);
-            setTurnScreenOn(true);
-        } else {
-            getWindow().addFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-                | android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-                | android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-            );
-        }
+        applyLockScreenPolicy(getIntent());
         registerPlugin(RawHttpPlugin.class);
         registerPlugin(SshPlugin.class);
         // Whisper plugin pulls in libwhisper_jni.so / libggml.so. When the
@@ -66,6 +50,57 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(SmsGatewayPlugin.class);
         super.onCreate(savedInstanceState);
         CastContext.getSharedInstance(this);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        // singleTask: a USB attach or a wake-on-key-press relaunch reaches
+        // the running activity here, before it resumes.
+        applyLockScreenPolicy(intent);
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        // Showing over the keyguard lasts for one deck launch: once the
+        // screen goes off or the user leaves, the next ordinary wake lands
+        // on the lock screen again.
+        setOverLockScreen(false);
+    }
+
+    /**
+     * Show this window over the keyguard and turn the screen on only for a
+     * launch caused by the deck (USB attach, or the plugin's wake-on-key-
+     * press relaunch) and only when the user turned showOverLockScreen on;
+     * see DeckPowerOptions. Any other launch clears both.
+     */
+    private void applyLockScreenPolicy(Intent intent) {
+        boolean show = false;
+        if (intent != null) {
+            show = DeckPowerOptions.of(this).showOverLockScreenFor(
+                intent.getAction(),
+                intent.getBooleanExtra(DeckPowerOptions.EXTRA_DECK_WAKE, false));
+        }
+        setOverLockScreen(show);
+    }
+
+    /**
+     * setShowWhenLocked / setTurnScreenOn are API 27+. minSdk=24, so the
+     * older path uses FLAG_SHOW_WHEN_LOCKED + FLAG_TURN_SCREEN_ON +
+     * FLAG_DISMISS_KEYGUARD on the window, which has the same effect.
+     */
+    private void setOverLockScreen(boolean on) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(on);
+            setTurnScreenOn(on);
+        } else {
+            int flags = android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                | android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                | android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD;
+            if (on) getWindow().addFlags(flags);
+            else getWindow().clearFlags(flags);
+        }
     }
 
     @Override

@@ -10,6 +10,12 @@ import {
     streamDeckEventLog,
     StreamDeckEventLogEntry,
 } from "../../../services/streamDeckEventLog";
+import {
+    DECK_POWER_DEFAULTS,
+    loadDeckPowerOptions,
+    setDeckPowerOption,
+} from "../../../services/streamDeckPowerOptions";
+import type { DeckPowerOptions } from "../../../plugins/streamDeckPlugin";
 import { useFeatureSection } from "../../../utils/featureSection";
 
 interface DeckRow {
@@ -78,6 +84,27 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
             <t t-if="state.error">
               <div class="options-streamdeck__error" t-esc="state.error" />
             </t>
+
+            <div class="options-streamdeck__power">
+              <div class="options-streamdeck__deck-params-header"
+                   t-esc="t('streamdeck.power_title')" />
+              <label class="options-streamdeck__checkbox-label">
+                <input type="checkbox"
+                       t-att-checked="state.power.showOverLockScreen"
+                       t-on-change="(ev) => this.togglePowerOption('showOverLockScreen', ev.target.checked, ev.target)" />
+                <t t-esc="t('streamdeck.power_show_over_lock_screen')" />
+              </label>
+              <p class="options-streamdeck__hint options-streamdeck__hint--inline"
+                 t-esc="t('streamdeck.power_show_over_lock_screen_hint')" />
+              <label class="options-streamdeck__checkbox-label">
+                <input type="checkbox"
+                       t-att-checked="state.power.keepAwake"
+                       t-on-change="(ev) => this.togglePowerOption('keepAwake', ev.target.checked, ev.target)" />
+                <t t-esc="t('streamdeck.power_keep_awake')" />
+              </label>
+              <p class="options-streamdeck__hint options-streamdeck__hint--inline"
+                 t-esc="t('streamdeck.power_keep_awake_hint')" />
+            </div>
 
             <t t-if="state.decks.length === 0">
               <p class="options-streamdeck__hint">
@@ -324,6 +351,9 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         debugLogging: false,
         readerMode: "userequest" as "userequest" | "bulk" | "polled",
         autoRefresh: false,
+        // Mirror of the two native power options; both off until
+        // loadPowerOptions reads what the plugin stores.
+        power: { ...DECK_POWER_DEFAULTS } as DeckPowerOptions,
         // Which deck row's parameter panel is open (deckId, "" = none).
         // Single-open at a time keeps the diagnostic panel scannable.
         expandedDeckId: "",
@@ -377,6 +407,7 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         useFeatureSection("streamdeck", () => { this.state.expanded = true; });
 
         onMounted(async () => {
+            await this.loadPowerOptions();
             await this.refresh();
             await this._wireListeners();
             try {
@@ -422,6 +453,30 @@ export class OptionsStreamDeckComponent extends EnhancedComponent {
         if (!this._autoRefreshTimer) return;
         clearInterval(this._autoRefreshTimer);
         this._autoRefreshTimer = undefined;
+    }
+
+    async loadPowerOptions(): Promise<void> {
+        this.state.power = await loadDeckPowerOptions();
+    }
+
+    /** The checkbox shows what the plugin stored, so a refused change
+     *  puts it back and says why. `input` is the checkbox itself: the
+     *  state did not change, so no render would uncheck it. */
+    async togglePowerOption(
+        name: keyof DeckPowerOptions,
+        enabled: boolean,
+        input?: { checked: boolean },
+    ): Promise<void> {
+        this.state.error = "";
+        try {
+            this.state.power = await setDeckPowerOption(name, enabled);
+            this._log(`power ${name} → ${this.state.power[name] ? "ON" : "OFF"}`);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            this.state.error = msg;
+            this._log(`setPowerOptions ERROR: ${msg}`);
+        }
+        if (input) input.checked = this.state.power[name];
     }
 
     toggle(): void { this.state.expanded = !this.state.expanded; }

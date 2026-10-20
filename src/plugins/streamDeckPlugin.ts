@@ -35,6 +35,17 @@ export interface DeckInfo {
     capabilities: string[];
 }
 
+/** Both false until the user turns them on (Options › Stream Deck). */
+export interface DeckPowerOptions {
+    /** A launch caused by the deck — USB attach, or a wake-on-key-press
+     *  relaunch — shows the app over the lock screen and turns the
+     *  screen on. Any other launch never does. */
+    showOverLockScreen: boolean;
+    /** While a deck is open: partial wake lock, and a 700 ms heartbeat
+     *  that keeps the USB bus out of selective suspend. */
+    keepAwake: boolean;
+}
+
 export interface KeyEvent {
     deckId: string;
     key: number;
@@ -154,11 +165,19 @@ interface StreamDeckPluginApi {
     /**
      * When enabled, a key press while the host activity is paused (phone
      * locked / app backgrounded) requests the screen to wake and brings
-     * MainActivity to the foreground. The deck reader stays alive across
-     * a phone sleep cycle thanks to the partial wake lock the plugin
-     * already holds — this method only arms the wake-on-press path.
+     * MainActivity to the foreground — over the lock screen only with
+     * the showOverLockScreen power option. A press reaches the reader with
+     * the screen off reliably only with the keepAwake power option, whose
+     * wake lock and heartbeat keep the USB bus up; this method only arms
+     * the wake-on-press path.
      */
     setWakeOnKeyPress(opts: { enabled: boolean }): Promise<{ enabled: boolean }>;
+
+    /** Both power options as stored natively. */
+    getPowerOptions(): Promise<DeckPowerOptions>;
+    /** Store the fields given, leave the others; resolves with both.
+     *  keepAwake applies at once to the open decks. */
+    setPowerOptions(opts: Partial<DeckPowerOptions>): Promise<DeckPowerOptions>;
 
     /** Rejects "missing:key" / "invalid_key:N" for a key the deck lacks,
      *  and "image_oversized:WxH>KWxKH" for an image larger than the key. */

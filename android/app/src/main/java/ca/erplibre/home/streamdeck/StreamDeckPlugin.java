@@ -74,10 +74,13 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     private static final long DETACH_DEBOUNCE_MS = 250L;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    /** Single shared partial wake lock — acquired while at least one
-     *  session is open so the USB bus doesn't suspend after the first
-     *  interrupt-IN event. Released when the last session closes. */
+    /** Single shared partial wake lock — held while the keepAwake option
+     *  is on and at least one session is open, so the USB bus doesn't
+     *  suspend after the first interrupt-IN event. updateWakeLock()
+     *  is the only place that takes or drops it. */
     private PowerManager.WakeLock wakeLock;
+    /** Both off by default; see DeckPowerOptions. */
+    private DeckPowerOptions power;
 
     /** "Wake the phone on a deck press while the host activity is
      *  paused" — armed by the JS-side Mise en veille checkbox via
@@ -97,6 +100,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         Context ctx = getContext();
         usb = (UsbManager) ctx.getSystemService(Context.USB_SERVICE);
         permissions = new UsbPermissionRequester(ctx, usb);
+        power = DeckPowerOptions.of(ctx);
         hotplug = new UsbHotplugReceiver(this);
         hotplug.attach(ctx);
         try {
@@ -232,7 +236,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                     return;
                 }
                 synchronized (lastAttachError) { lastAttachError.remove(name); }
-                acquireWakeLockIfNeeded();
+                // Read after registering: setPowerOptions reaches every
+                // registered session, so a change in between is not lost.
+                session.setHeartbeat(power.heartbeat());
+                updateWakeLock();
             } catch (DeckSession.DeckOpenException e) {
                 registry.release(name);
                 String reason = e.getMessage();
@@ -281,7 +288,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 Log.i(TAG, "onDeckDetached: closing session for " + name + " (debounce expired)");
                 session.close("usb_lost");
             }
-            releaseWakeLockIfIdle();
+            updateWakeLock();
         };
         synchronized (pendingCloseJobs) {
             Runnable prev = pendingCloseJobs.put(name, closeJob);
@@ -302,20 +309,21 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         if (registry.unregister(name, session, reason)) {
             Log.i(TAG, "session for " + name + " closed (" + reason + ") — unregistered");
         }
-        releaseWakeLockIfIdle();
+        updateWakeLock();
     }
 
-    private void acquireWakeLockIfNeeded() {
-        if (wakeLock == null) return;
-        try { if (!wakeLock.isHeld()) wakeLock.acquire(); }
-        catch (Throwable t) { Log.w(TAG, "wake lock acquire failed: " + t.getMessage()); }
-    }
-
-    private void releaseWakeLockIfIdle() {
-        if (wakeLock == null) return;
-        if (!registry.isEmpty()) return;
-        try { if (wakeLock.isHeld()) wakeLock.release(); }
-        catch (Throwable t) { Log.w(TAG, "wake lock release failed: " + t.getMessage()); }
+    /** Take or drop the partial wake lock to match the keepAwake option
+     *  and the open sessions. Synchronized: sessions close on their own
+     *  threads while the option changes on the plugin thread. */
+    private synchronized void updateWakeLock() {
+        if (wakeLock == null || power == null) return;
+        boolean want = power.holdWakeLock(!registry.isEmpty());
+        try {
+            if (want && !wakeLock.isHeld()) wakeLock.acquire();
+            else if (!want && wakeLock.isHeld()) wakeLock.release();
+        } catch (Throwable t) {
+            Log.w(TAG, "wake lock update failed: " + t.getMessage());
+        }
     }
 
     // ─────────────────────────── Plugin methods ──────────────────────────────
@@ -567,6 +575,41 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /**
+     * The two power options, both false until the user turns them on:
+     * showOverLockScreen (read by MainActivity on a deck launch) and
+     * keepAwake (partial wake lock and per-session heartbeat).
+     */
+    @PluginMethod
+    public void getPowerOptions(PluginCall call) {
+        call.resolve(powerOptionsJson());
+    }
+
+    /**
+     * Change either option or both; an absent field is left as it is.
+     * keepAwake applies at once to the open sessions and the wake lock.
+     * Resolves with both values as stored.
+     */
+    @PluginMethod
+    public void setPowerOptions(PluginCall call) {
+        Boolean show = call.getBoolean("showOverLockScreen");
+        Boolean keep = call.getBoolean("keepAwake");
+        if (show != null) power.setShowOverLockScreen(show);
+        if (keep != null) {
+            power.setKeepAwake(keep);
+            for (DeckSession s : registry.sessions()) s.setHeartbeat(power.heartbeat());
+            updateWakeLock();
+        }
+        call.resolve(powerOptionsJson());
+    }
+
+    private JSObject powerOptionsJson() {
+        JSObject r = new JSObject();
+        r.put("showOverLockScreen", power.showOverLockScreen());
+        r.put("keepAwake", power.keepAwake());
+        return r;
+    }
+
+    /**
      * keyPressHook from DeckSession. Fires on every accepted key down
      * (release events are filtered upstream). Cheap fast-path: bail
      * unless both the user opted in and the activity is currently
@@ -599,9 +642,14 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             // Bring MainActivity back to the front so the press lands
             // on a live UI. SINGLE_TOP avoids a duplicate instance,
             // REORDER_TO_FRONT covers the case where the activity is
-            // still in the back stack but not on top.
+            // still in the back stack but not on top. EXTRA_DECK_WAKE
+            // marks the launch as the deck's: MainActivity shows over the
+            // keyguard only for such a launch, and only with the
+            // showOverLockScreen option; otherwise the screen lights on
+            // the lock screen.
             Intent i = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
             if (i != null) {
+                i.putExtra(DeckPowerOptions.EXTRA_DECK_WAKE, true);
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                          | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                          | Intent.FLAG_ACTIVITY_SINGLE_TOP);
