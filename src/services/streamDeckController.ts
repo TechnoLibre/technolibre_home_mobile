@@ -4,6 +4,7 @@ import {
     DeckInfo,
 } from "../plugins/streamDeckPlugin";
 import { Events } from "../constants/events";
+import { planSickRestart, shouldCheckHealth } from "./streamDeckHealth";
 
 interface EventBusLike {
     trigger(name: string, payload: Record<string, unknown>): void;
@@ -25,11 +26,48 @@ const NOTE_PAGE_TILES: Record<number, { icon: string; label: string; bg: string;
 };
 const NOTE_PAGE_KEYS = Object.keys(NOTE_PAGE_TILES).map(Number);
 
-/** Persistent Gallery shortcut — sits below the Note key (key 0) on a
- *  3-row × 5-col Stream Deck layout. Pressing it routes the mobile to
- *  /applications/gallery so the deck doubles as a remote thumbnail picker. */
-const GALLERY_KEY = 5;
+/** Key index of the persistent Gallery shortcut on `deck`, or null when
+ *  the deck has none. Keys are numbered row by row, so the key directly
+ *  below the Note key (key 0) is index `cols`: 5 on a 5×3 deck, 8 on the
+ *  8×4 XL. When that key is one of the note-page keys (the 3×2 Mini puts
+ *  key 3 there), the shortcut moves to the last key instead. A deck with
+ *  a single row has no key below key 0, hence no shortcut. Pressing it
+ *  routes the mobile to /applications/gallery so the deck doubles as a
+ *  remote thumbnail picker. */
+export function galleryKeyFor(
+    deck: Pick<DeckInfo, "rows" | "cols" | "keyCount">,
+): number | null {
+    if (!(deck.rows >= 2) || !(deck.cols >= 1)) return null;
+    if (!NOTE_PAGE_KEYS.includes(deck.cols)) return deck.cols;
+    const last = deck.keyCount - 1;
+    return last > 0 && !NOTE_PAGE_KEYS.includes(last) ? last : null;
+}
 const GALLERY_TILE = { icon: "🖼️", label: "Galerie", bg: "#0e7490" };
+
+type TileFormat = "jpeg" | "png";
+
+/** What setKeyImage takes for a deck: JPEG on the JPEG models, PNG on the
+ *  BMP ones (Original v1, Mini), which the plugin converts to BMP and
+ *  refuses in any other format. */
+function tileFormat(keyImage: DeckInfo["keyImage"]): TileFormat {
+    return keyImage.format === "jpeg" ? "jpeg" : "png";
+}
+
+/** Base64 encoding of a tile's canvas, as setKeyImage takes it;
+ *  `quality` only applies to JPEG. The encode is synchronous on purpose:
+ *  a mobile WebView can run toBlob() as an idle task, which a page that
+ *  is not redrawing only forces after a 4 s timeout; a paint that
+ *  awaits its keys one by one pays that wait on every key. */
+function encodeCanvas(
+    canvas: HTMLCanvasElement, format: TileFormat, quality: number,
+): string {
+    const dataUrl = canvas.toDataURL(
+        format === "jpeg" ? "image/jpeg" : "image/png", quality,
+    );
+    const comma = dataUrl.indexOf(",");
+    if (comma < 0) throw new Error("toDataURL returned no data");
+    return dataUrl.substring(comma + 1);
+}
 
 /** While the gallery page is mounted on the mobile, the deck switches
  *  to a remote-control layout: thumbnail tiles fill the top of the
@@ -64,14 +102,12 @@ export class StreamDeckController {
      *  brightness on visibility:visible after we dim to 0 on hidden. */
     private lastBrightness = new Map<string, number>();
     private static readonly DEFAULT_BRIGHTNESS = 50;
-    /** When the page became hidden — used to decide whether to do a
-     *  full session restart on visible. Brief hides (<5 s, e.g. a
-     *  notification briefly waking the screen) don't need it; a real
-     *  sleep cycle does, because the reader's interrupt-IN endpoint
-     *  consistently goes silent for ~10 s post-wake even though the
-     *  USB bus stayed alive via the heartbeat. */
+    /** When the page became hidden. A hide longer than
+     *  HEALTH_CHECK_AFTER_HIDDEN_MS makes the return to visible ask the
+     *  plugin for each deck's health and restart only the sick ones, a
+     *  deck silent over the whole hide included (see
+     *  _resumeAfterLongHide); a brief hide only restores. */
     private hiddenAt = 0;
-    private static readonly RESTART_AFTER_HIDDEN_MS = 5000;
     /** Per-key timestamp of the last accepted press. The debounce
      *  budget is per-key, not shared, because the original 150 ms
      *  rule was put in place to protect against the IME-storm
@@ -100,8 +136,12 @@ export class StreamDeckController {
      *  visibilitychange:hidden does not dim the deck, the LCDs keep
      *  their last image, and the wake-on-keypress native path (armed
      *  via StreamDeckPlugin.setWakeOnKeyPress) brings the phone back
-     *  on. The flag is rehydrated from localStorage at boot so it
-     *  survives an app restart without relying on the toggle's mount. */
+     *  on — only with the showOverLockScreen power option, and reliably
+     *  only with the keepAwake power option, which keeps
+     *  the USB bus up and which deckSleepCoupling turns on with this
+     *  flag, and turns this flag off with. The flag is rehydrated from localStorage at boot
+     *  so it survives an app restart without relying on the toggle's
+     *  mount. */
     private keepDeckAwake = false;
     private keepAwakeListener?: (e: any) => void;
 
@@ -284,10 +324,10 @@ export class StreamDeckController {
         // the LCD before USB suspends again.
         const repaintIfVisible = async (info: DeckInfo) => {
             if (this._isHidden()) return;
-            // Re-applied unconditionally on every (re)connect so
-            // restartSessions on visibility:visible picks up the
-            // user's pre-sleep brightness — the firmware resets to
-            // its default on session reopen.
+            // Re-applied unconditionally on every (re)connect so a deck
+            // reopened by restartSessions picks up the user's pre-sleep
+            // brightness — the firmware resets to its default on session
+            // reopen.
             StreamDeckPlugin.setBrightness({
                 deckId: info.deckId,
                 percent: this.getBrightness(info.deckId),
@@ -312,12 +352,15 @@ export class StreamDeckController {
             );
         };
 
-        // Pick up decks already connected at boot time.
+        // Pick up decks already connected at boot time. They are painted
+        // once the key handler listens (below): the plugin drops a held
+        // press after 10 s, and painting takes USB writes per key.
+        const bootDecks: DeckInfo[] = [];
         try {
             const r = await StreamDeckPlugin.listDecks();
             for (const d of r.decks) {
                 this.decks.set(d.deckId, d);
-                await repaintIfVisible(d);
+                bootDecks.push(d);
             }
         } catch (e) {
             console.warn("[streamdeck] listDecks at boot failed:", e);
@@ -364,7 +407,8 @@ export class StreamDeckController {
                     });
                     return;
                 }
-                if (ev.key === GALLERY_KEY) {
+                const deck = this.decks.get(ev.deckId);
+                if (deck && ev.key === galleryKeyFor(deck)) {
                     this.lastPressAt.set(ev.key, now);
                     this.eventBus.trigger(Events.ROUTER_NAVIGATION, {
                         url: "/applications/gallery",
@@ -380,28 +424,42 @@ export class StreamDeckController {
             }),
         );
 
+        // The handler above is subscribed: the plugin delivers the
+        // presses it held since launch (a launch by USB attach can see
+        // one before this point), through that handler, then every
+        // later one directly.
+        StreamDeckPlugin.keyListenerReady().then((r) => {
+            if (r.delivered > 0 || r.dropped > 0) {
+                console.info(
+                    `[streamdeck] held key events: delivered ${r.delivered}, dropped ${r.dropped}`,
+                );
+            }
+        }).catch((e) => console.warn("[streamdeck] keyListenerReady:", e));
+
+        for (const d of bootDecks) await repaintIfVisible(d);
+
         // The PAGE_ACTIVE bus listener is registered eagerly in the
         // constructor — see the comment there.
 
         // Dim every deck to 0 while the page is hidden (phone locked /
-        // app backgrounded). setBrightness(0) hides the LCDs without
-        // touching the HID interface — earlier we used reset() here
-        // and the reader thread's interrupt-IN pipe was left in a
-        // state where post-wake key presses didn't surface, requiring
-        // a manual session restart. Brightness is a feature-report
-        // write that's safe to issue concurrently with the reader.
-        // On the way back, restore the user's brightness and repaint
-        // the home tile.
+        // app backgrounded). setBrightness(0) is a feature-report write
+        // on EP0, safe beside the reader, and leaves the key images and
+        // the interrupt-IN pipe alone; reset() would not: after it,
+        // post-wake presses can stop reaching the reader. On the way
+        // back a brief hide restores brightness and repaints, a long one
+        // checks the decks' health first (_resumeAfterLongHide).
         document.addEventListener("visibilitychange", () => {
             if (this._isHidden()) {
                 this.hiddenAt = Date.now();
                 if (this.keepDeckAwake) {
                     // User opted in to "keep the deck lit during phone
                     // sleep" — skip the dim so the LCDs keep their
-                    // last frame. The plugin's partial wake lock keeps
-                    // USB enumerated; the wake-on-keypress native path
-                    // (armed separately) takes care of bringing the
-                    // phone back on a press.
+                    // last frame. USB stays enumerated only with the
+                    // plugin's keepAwake power option (wake lock and
+                    // heartbeat), which turning this flag on also turns
+                    // on (deckSleepCoupling); without it the deck may
+                    // flicker or go dark, and a press reaches neither
+                    // the reader nor the wake-on-keypress path.
                     return;
                 }
                 for (const info of this.decks.values()) {
@@ -415,47 +473,75 @@ export class StreamDeckController {
             }
             const hiddenFor = this.hiddenAt > 0 ? Date.now() - this.hiddenAt : 0;
             this.hiddenAt = 0;
-            // After a real sleep cycle (>5 s), the deck's reader pipe
-            // can sit silent for ~10 s post-wake even with the
-            // heartbeat keeping the bus active. A full session
-            // restart re-creates the reader/writer threads from
-            // scratch and the next press lands instantly. The
-            // deckConnected listener above will repaint Note for each
-            // re-attached deck, so we don't repaint here. Brightness
-            // is reset to the firmware default on restart, so the
-            // restore call on the post-restart attach path picks up
-            // the user's value via the cache.
-            if (hiddenFor > StreamDeckController.RESTART_AFTER_HIDDEN_MS) {
-                StreamDeckPlugin.restartSessions().catch((e) =>
-                    console.warn("[streamdeck] restartSessions on visible:", e),
+            if (shouldCheckHealth(hiddenFor)) {
+                this._resumeAfterLongHide(hiddenFor).catch((e) =>
+                    console.warn("[streamdeck] resume after long hide:", e),
                 );
                 return;
             }
-            for (const info of this.decks.values()) {
-                StreamDeckPlugin.setBrightness({
-                    deckId: info.deckId,
-                    percent: this.getBrightness(info.deckId),
-                }).catch((e) =>
-                    console.warn("[streamdeck] restore brightness:", e),
-                );
-                if (this.cameraStreaming) continue;
-                if (this.galleryActive) {
-                    this._paintGallery(info).catch((e) =>
-                        console.warn("[streamdeck] gallery repaint on visible:", e),
-                    );
-                    continue;
-                }
-                this._renderHome(info).catch((e) =>
-                    console.warn("[streamdeck] repaint on visible:", e),
-                );
-                this._paintGalleryKey(info).catch((e) =>
-                    console.warn("[streamdeck] gallery key repaint on visible:", e),
-                );
-                this._paintNotePageKeys(info).catch((e) =>
-                    console.warn("[streamdeck] note-page repaint on visible:", e),
-                );
-            }
+            for (const info of this.decks.values()) this._restoreOnVisible(info);
         });
+    }
+
+    /**
+     * Return to visible after a hide of {@code hiddenForMs}. The plugin
+     * reports each deck's health (getSessionHealth, no USB transfer) and
+     * only the decks it finds sick are restarted, through
+     * restartSessions({deviceNames}). The hide's length goes as
+     * quietForMs: an interrupt-IN pipe can go quiet over a sleep and look
+     * like an idle deck, so a deck that sent no input report over the
+     * whole hide is sick (quiet), while one that did, as the press that
+     * woke the phone, has proved its pipe and keeps its session.
+     * deckConnected restores and repaints a restarted deck; every other
+     * deck is restored here. A failed health query restarts nothing.
+     */
+    private async _resumeAfterLongHide(hiddenForMs: number): Promise<void> {
+        let plan = planSickRestart(undefined);
+        try {
+            const r = await StreamDeckPlugin.getSessionHealth({ quietForMs: hiddenForMs });
+            plan = planSickRestart(r?.decks);
+        } catch (e) {
+            console.warn("[streamdeck] getSessionHealth on visible:", e);
+        }
+        if (plan.deviceNames.length > 0) {
+            console.info(`[streamdeck] restarting sick deck(s): ${plan.reasons.join(", ")}`);
+            StreamDeckPlugin.restartSessions({ deviceNames: plan.deviceNames }).catch((e) =>
+                console.warn("[streamdeck] restartSessions on visible:", e),
+            );
+        }
+        // Hidden again while the query ran: the next visible restores.
+        if (this._isHidden()) return;
+        for (const info of this.decks.values()) {
+            if (plan.deckIds.includes(info.deckId)) continue;
+            this._restoreOnVisible(info);
+        }
+    }
+
+    /** Back to visible: the deck's cached brightness, then the surface
+     *  the current page owns, unless the camera streamer holds it. */
+    private _restoreOnVisible(info: DeckInfo): void {
+        StreamDeckPlugin.setBrightness({
+            deckId: info.deckId,
+            percent: this.getBrightness(info.deckId),
+        }).catch((e) =>
+            console.warn("[streamdeck] restore brightness:", e),
+        );
+        if (this.cameraStreaming) return;
+        if (this.galleryActive) {
+            this._paintGallery(info).catch((e) =>
+                console.warn("[streamdeck] gallery repaint on visible:", e),
+            );
+            return;
+        }
+        this._renderHome(info).catch((e) =>
+            console.warn("[streamdeck] repaint on visible:", e),
+        );
+        this._paintGalleryKey(info).catch((e) =>
+            console.warn("[streamdeck] gallery key repaint on visible:", e),
+        );
+        this._paintNotePageKeys(info).catch((e) =>
+            console.warn("[streamdeck] note-page repaint on visible:", e),
+        );
     }
 
     private _isHidden(): boolean {
@@ -494,14 +580,14 @@ export class StreamDeckController {
     }
 
     private async _renderHome(deck: DeckInfo): Promise<void> {
-        const { w, h, format, rotation } = deck.keyImage;
-        const blob = await this._renderTile(w, h, rotation ?? 0, "📝", "Note", "#1e3a8a");
-        const bytes = await this._blobToBase64(blob);
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
+        const bytes = this._renderTile(fmt, w, h, rotation ?? 0, "📝", "Note", "#1e3a8a");
         await StreamDeckPlugin.setKeyImage({
             deckId: deck.deckId,
             key: 0,
             bytes,
-            format: format === "jpeg" ? "jpeg" : "png",
+            format: fmt,
         });
     }
 
@@ -509,14 +595,13 @@ export class StreamDeckController {
      *  setNoteActive, on (re)connect, on visibility:visible, and from
      *  repaintAll after the camera streamer stops. */
     private async _paintNotePageKeys(deck: DeckInfo): Promise<void> {
-        const { w, h, format, rotation } = deck.keyImage;
-        const fmt = format === "jpeg" ? "jpeg" : "png";
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
         for (const keyStr of Object.keys(NOTE_PAGE_TILES)) {
             const key = Number(keyStr);
             if (this.noteActive) {
                 const t = NOTE_PAGE_TILES[key];
-                const blob = await this._renderTile(w, h, rotation ?? 0, t.icon, t.label, t.bg);
-                const bytes = await this._blobToBase64(blob);
+                const bytes = this._renderTile(fmt, w, h, rotation ?? 0, t.icon, t.label, t.bg);
                 await StreamDeckPlugin.setKeyImage({
                     deckId: deck.deckId, key, bytes, format: fmt,
                 });
@@ -527,25 +612,26 @@ export class StreamDeckController {
     }
 
     private async _blankKey(deck: DeckInfo, key: number): Promise<void> {
-        const { w, h, format, rotation } = deck.keyImage;
-        const blob = await this._renderTile(w, h, rotation ?? 0, "", "", "#000000");
-        const bytes = await this._blobToBase64(blob);
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
+        const bytes = this._renderTile(fmt, w, h, rotation ?? 0, "", "", "#000000");
         await StreamDeckPlugin.setKeyImage({
             deckId: deck.deckId,
             key,
             bytes,
-            format: format === "jpeg" ? "jpeg" : "png",
+            format: fmt,
         });
     }
 
-    private async _renderTile(
+    private _renderTile(
+        format: TileFormat,
         w: number,
         h: number,
         rotationDeg: number,
         icon: string,
         label: string,
         bg: string,
-    ): Promise<Blob> {
+    ): string {
         const canvas = document.createElement("canvas");
         canvas.width = w;
         canvas.height = h;
@@ -554,7 +640,7 @@ export class StreamDeckController {
 
         // Some Stream Deck models (XL, MK.2, Original v2…) have their LCD
         // mounted upside-down. Rotate the entire context BEFORE drawing so
-        // the JPEG bytes we ship out come pre-flipped — the user sees it
+        // the bytes we ship out come pre-flipped — the user sees it
         // upright when looking at the deck normally.
         if (rotationDeg !== 0) {
             ctx.translate(w / 2, h / 2);
@@ -577,39 +663,28 @@ export class StreamDeckController {
         ctx.font = `bold ${Math.floor(h * 0.18)}px sans-serif`;
         ctx.fillText(label, w / 2, h * 0.78);
 
-        return await new Promise<Blob>((resolve, reject) => {
-            canvas.toBlob(
-                (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
-                "image/jpeg",
-                0.9,
-            );
-        });
+        return encodeCanvas(canvas, format, 0.9);
     }
 
-    private async _blobToBase64(blob: Blob): Promise<string> {
-        const buf = await blob.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        let bin = "";
-        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-        return btoa(bin);
-    }
-
-    /** Paint the persistent Gallery shortcut on key 5. Called whenever
-     *  the home surface is repainted (deck attach, visibility:visible,
+    /** Paint the persistent Gallery shortcut on the key `galleryKeyFor`
+     *  picks; no-op on a deck without one. Called whenever the home
+     *  surface is repainted (deck attach, visibility:visible,
      *  exit-from-gallery). Skipped while a gallery remote is active —
-     *  in that mode key 5 is owned by `_paintGallery`. */
+     *  in that mode the key is owned by `_paintGallery`. */
     private async _paintGalleryKey(deck: DeckInfo): Promise<void> {
-        const { w, h, format, rotation } = deck.keyImage;
-        const blob = await this._renderTile(
-            w, h, rotation ?? 0,
+        const key = galleryKeyFor(deck);
+        if (key === null) return;
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
+        const bytes = this._renderTile(
+            fmt, w, h, rotation ?? 0,
             GALLERY_TILE.icon, GALLERY_TILE.label, GALLERY_TILE.bg,
         );
-        const bytes = await this._blobToBase64(blob);
         await StreamDeckPlugin.setKeyImage({
             deckId: deck.deckId,
-            key: GALLERY_KEY,
+            key,
             bytes,
-            format: format === "jpeg" ? "jpeg" : "png",
+            format: fmt,
         });
     }
 
@@ -664,45 +739,45 @@ export class StreamDeckController {
         label: string,
         bg: string,
     ): Promise<void> {
-        const { w, h, format, rotation } = deck.keyImage;
-        const blob = await this._renderTile(w, h, rotation ?? 0, icon, label, bg);
-        const bytes = await this._blobToBase64(blob);
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
+        const bytes = this._renderTile(fmt, w, h, rotation ?? 0, icon, label, bg);
         await StreamDeckPlugin.setKeyImage({
             deckId: deck.deckId, key, bytes,
-            format: format === "jpeg" ? "jpeg" : "png",
+            format: fmt,
         });
     }
 
     /** Paint a single thumbnail key. Loads the image via <img>, draws
-     *  a "cover" crop onto a deck-sized canvas, and ships JPEG bytes
-     *  to the deck. Fallback on load failure: a placeholder tile with
-     *  the image's gallery index. Errors during paint never bubble —
-     *  one bad path should not freeze the whole grid. */
+     *  a "cover" crop onto a deck-sized canvas, and ships it to the
+     *  deck in its tile format. Fallback on load failure: a placeholder
+     *  tile with the image's gallery index. Errors during paint never
+     *  bubble — one bad path should not freeze the whole grid. */
     private async _renderThumbnailKey(
         deck: DeckInfo,
         key: number,
         url: string,
         index: number,
     ): Promise<void> {
-        const { w, h, format, rotation } = deck.keyImage;
-        let blob: Blob;
+        const { w, h, rotation } = deck.keyImage;
+        const fmt = tileFormat(deck.keyImage);
+        let bytes: string;
         try {
-            blob = await this._renderThumbnailTile(w, h, rotation ?? 0, url);
+            bytes = await this._renderThumbnailTile(fmt, w, h, rotation ?? 0, url);
         } catch {
-            blob = await this._renderTile(
-                w, h, rotation ?? 0, "🖼️", `#${index + 1}`, "#1f2937",
+            bytes = this._renderTile(
+                fmt, w, h, rotation ?? 0, "🖼️", `#${index + 1}`, "#1f2937",
             );
         }
-        const bytes = await this._blobToBase64(blob);
         await StreamDeckPlugin.setKeyImage({
             deckId: deck.deckId, key, bytes,
-            format: format === "jpeg" ? "jpeg" : "png",
+            format: fmt,
         });
     }
 
     private async _renderThumbnailTile(
-        w: number, h: number, rotationDeg: number, url: string,
-    ): Promise<Blob> {
+        format: TileFormat, w: number, h: number, rotationDeg: number, url: string,
+    ): Promise<string> {
         const img = await this._loadImage(url);
         const canvas = document.createElement("canvas");
         canvas.width = w;
@@ -728,20 +803,14 @@ export class StreamDeckController {
             sy = (img.naturalHeight - sh) / 2;
         }
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
-        return await new Promise<Blob>((resolve, reject) => {
-            canvas.toBlob(
-                (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
-                "image/jpeg",
-                0.85,
-            );
-        });
+        return encodeCanvas(canvas, format, 0.85);
     }
 
     private _loadImage(url: string): Promise<HTMLImageElement> {
         return new Promise((resolve, reject) => {
             const img = new Image();
             // Capacitor file:// URLs are same-origin to the WebView via
-            // its custom scheme — no CORS attribute needed and toBlob()
+            // its custom scheme — no CORS attribute needed and toDataURL()
             // does not taint the canvas. http(s) thumbs would need this
             // but the gallery only ships local note images today.
             img.onload = () => resolve(img);

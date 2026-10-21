@@ -339,8 +339,8 @@ still work without the native library.
 **Library:** the native Android USB Host API (`UsbManager`, `UsbDeviceConnection`, `bulkTransfer`, `controlTransfer`).
 
 **Supported models:** Elgato Stream Deck Original v1 (`0x0060`), Mini
-(`0x0063`), XL (`0x006c`), Original v2 (`0x006d`), MK.2 (`0x0080`),
-Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
+(`0x0063`), XL (`0x006c`), XL v2 (`0x008f`), Original v2 (`0x006d`),
+MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 
 ### API
 
@@ -348,35 +348,137 @@ Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 |--------|-------------|
 | `listDecks()` | Returns every known deck, each with its capabilities (keys/dials/lcd/infobars/touchpoints). |
 | `getDeckInfo({deckId})` | Detail of one deck (model, rows/cols, keyImage, dials, lcd…). |
-| `requestPermission({deckId})` | Forces the USB permission request when it is missing. |
-| `reset({deckId})` | Clears every key image. |
-| `setBrightness({deckId, percent})` | Brightness 0..100. |
+| `requestPermission({deckId?})` | Asks the OS for USB permission on one deck or, without `deckId`, on every attached Stream Deck (the only way to reach a deck whose serial Android still hides). Resolves `{granted, results}` once every device has an outcome: `granted` is true only when all are; each result gives `deviceName`, `deckId`, `granted` and `outcome` (`already_granted` without a dialog, `granted`, `denied`, `timeout` after 30 s, `error`). A granted deck that is not open is opened and announced by `deckConnected`. Rejects `no_stream_deck` / `no_such_deck:<id>`. |
+| `reset({deckId})` | Clears every key image. Rejected at once with `control_pipe_down` when `controlPipeOk` is false, but for one short try every 5 s. |
+| `setBrightness({deckId, percent})` | Brightness 0..100. Rejected at once with `control_pipe_down` when `controlPipeOk` is false, but for one short try every 5 s. |
 | `setKeyImage({deckId, key, bytes, format})` | Pushes an image. `bytes` is base64. `format = "jpeg"` for v2+/MK.2/XL/Plus/Neo, `"png"` for v1/Mini (Java produces the rotated BMP). Resolves `{dropped: true}` when a newer image was pushed for the same key in the meantime. |
-| `clearKey({deckId, key})` | A black 1×1 image → the key goes dark. |
+| `setKeyImagesBatch({deckId, format, entries})` | Queues every `{key, bytes}` of `entries` with no Promise per key, for camera streaming. Resolves `{queued, dropped}` once they are decoded and queued, not when USB completes. An entry that fails later is sent as `writeFailed`. |
+| `clearKey({deckId, key})` | Paints the key black at its native size → the key goes dark. |
 | `clearAllKeys({deckId})` | Same as `reset`. |
 | `setLcdImage({deckId, bytes})` | Plus only — a full 800×100 JPEG. |
 | `setLcdRegion({deckId, x, y, w, h, bytes})` | Plus only — a JPEG for a partial region. |
-| `setInfoBar({deckId, index, bytes})` | Neo only — a 248×58 JPEG on the info screen. The Neo has a single screen; `index` must be 0 (forward compatibility with future models). |
+| `setInfoBar({deckId, index, bytes})` | Neo only — a 248×58 JPEG on the info screen. The Neo has a single screen; `index` must be 0 (forward compatibility with future models). The screen is mounted like the keys: send the image rotated 180°. |
+| `getPowerOptions()` | Resolves `{showOverLockScreen, keepAwake}`, both `false` until the user turns them on. |
+| `setPowerOptions({showOverLockScreen?, keepAwake?})` | Stores the fields given and leaves the others; resolves with both. `keepAwake` — a partial wake lock and a 700 ms USB heartbeat while a deck is open, the lock also while a self-closed deck waits to be reopened — applies at once to the open decks. `showOverLockScreen` lets a launch caused by the deck show the app over the lock screen, and is the only way a deck key press turns the screen on. The app couples `keepAwake` with the Sleep section's "keep the deck lit" option, which arms `setWakeOnKeyPress` and needs it: turning that option on turns `keepAwake` on first, and leaves the option off when `keepAwake` stays off; turning `keepAwake` off turns that option off first. App boot arms `setWakeOnKeyPress` as stored, except that option stored on with `keepAwake` off: boot turns that option off, never `keepAwake` on, and writes one Stream Deck journal line saying so (`src/services/deckSleepCoupling.ts`). |
+| `setWakeOnKeyPress({enabled})` | Arms or disarms the key-press wake; resolves `{enabled}`, not stored by the plugin. When it is armed, a key press while the app is paused brings the app forward if the screen is already lit, or if `showOverLockScreen` is on, which alone lets the press turn the screen on (`DeckPowerOptions.bringAppForwardOnKeyPress`, `wakeScreenOnKeyPress`). Otherwise the screen stays off and the press arrives as `keyChanged` only. |
+| `restartSessions({deviceNames?})` | Closes every open session, then opens every permitted deck that has none, including one whose session closed itself while it stayed plugged in. Cancels the pending automatic reopens and gives every deck its three attempts back. With `deviceNames` (USB paths, as `getSessionHealth` gives them), only those devices are closed, reopened and get their attempts back; the other decks are not touched. Resolves `{restarted}`, the number of decks re-attached; a deck whose close outlasts the 3 s wait is reopened as soon as that close ends, and counts in it. |
+| `getSessionHealth({quietForMs?})` | Per attached Stream Deck, without any USB transfer: `{deviceName, deckId, hasPermission, open, reopening, readerAlive, writerAlive, writeFailuresInARow, controlFailuresInARow, controlPipeOk, msSinceReport, lastCloseReason, sick, sickReason}`. `sick` is the plugin's verdict (`SessionHealth`): `no_session` (permitted, no session, no automatic reopen pending), `reader_ended` / `writer_ended` (that thread ended while the session stays open), `writes_failing` / `control_failing` (two bulk writes or EP0 transfers failed in a row; a failed heartbeat is not counted, one that answers resets the count; EP0 failures count only on a session whose `controlPipeOk` is true, since a restart does not clear a pipe down since open). A deck without permission, being opened or closed, or waiting for its automatic reopen is never sick. An idle deck sends no input report, so silence alone is no sickness; with `quietForMs` above 0, an open session that heard nothing for that long is `quiet`. The app passes the length of a hide over 5 s: an interrupt-IN pipe gone quiet over a sleep looks like an idle deck, and only a restart tells them apart, while a report during the hide, as the press that woke the phone, proves the pipe. |
+| `keyListenerReady()` | Call once the app's `keyChanged` handler is subscribed. Until then, and again from each page load, the plugin holds `keyChanged` (`KeyEventGate`): a launch by USB attach can read a press before the page listens. This call delivers the held events through `keyChanged` in arrival order, the last 16 at most and none older than 10 s, so a press is never delivered without its release; later events pass straight through. Resolves `{delivered, dropped}`. |
+| `retryAttach()` | Opens every permitted deck that has no session, without closing any. Cancels the pending automatic reopens and gives every deck its three attempts back. Resolves `{retried}`. |
 
 ### Events
 
 | Event | Payload |
 |-------|---------|
 | `deckConnected` | `{deckId, info, reason?}` |
-| `deckDisconnected` | `{deckId, reason}` (`usb_lost`, `app_destroyed`) |
-| `permissionDenied` | `{deckId, reason}` |
-| `keyChanged` | `{deckId, key, pressed}` |
+| `deckDisconnected` | `{deckId, reason}`. `reason` is `usb_lost` (unplugged), `usb_lost:<transfer detail>` (writes kept failing), `restart_requested`, `app_destroyed`, or a reader failure (`polled_reset`, `usb_request_…`, `bulk_read_threw:…`, `polled_threw:…`): match on the prefix. Sent once per deck, when its last session closes. |
+| `permissionDenied` | `{deckId, reason}`. `reason` is `permission_missing` (no grant reached a hotplug attach within 30 s), `permission_timeout` (the plugin's dialog got no answer), `permission_denied`, or an open failure. The journal writes the first three as how to grant the permission. |
+| `keyChanged` | `{deckId, key, pressed}`. Held until `keyListenerReady`. |
 | `dialRotated` | `{deckId, dial, delta}` (Plus) |
 | `dialPressed` | `{deckId, dial, pressed}` (Plus) |
 | `lcdTouched` | `{deckId, type, x, y, xEnd?, yEnd?}` (Plus) |
 | `neoTouched` | `{deckId, index, pressed}` (Neo) |
+| `writeFailed` | `{deckId, key, reason}` — a `setKeyImagesBatch` entry that failed (rejected image, failed transfer). Sent once per key and reason, until a write to that key succeeds. |
+| `reattachGaveUp` | `{deckId, deviceName, attempts, reason}` — the automatic reopen failed three times, or found the USB permission missing (`permission_missing`, sent at that first finding); nothing retries it afterwards. `deckId` is `""` when no serial was read; `reason` is the last close or attach failure. The app writes it as one line in the Stream Deck journal. |
+
+### Automatic reopen
+
+A session that closes itself — a reader failure (`polled_reset` after
+10 s without data, `usb_request_…`, `bulk_read_threw:…`,
+`polled_threw:…`) or three write failures in a row (`usb_lost:<detail>`)
+— leaves its deck plugged in with no session. The plugin reopens it after
+2 s, then 4 s, then 8 s: three attempts at most, each through the same
+path as a hotplug attach (reservation, permission already granted, open,
+registration), so it never opens a second session nor shows a dialog. The
+count resets once a session has stayed registered for 60 s. After the third
+failed attempt `reattachGaveUp` is sent once and nothing more is tried. A
+retry that finds the deck without USB permission gives up at once: no later
+retry could raise the dialog that grants it, so `reattachGaveUp` goes out
+with `permission_missing` and its journal line points at the request
+permission button. With `keepAwake` on, the partial wake lock stays held
+while a reopen waits: the retry timer does not advance while the CPU
+sleeps.
+
+Nothing is reopened after an unplug (`usb_lost`: hotplug handles the
+return), `restartSessions`, `retryAttach` or the destruction of the app;
+those cancel the pending reopens. `restartSessions` and `retryAttach` give
+every deck its three attempts back, a deck given up for its permission
+too; `restartSessions` with `deviceNames` does so for those decks only.
+After more than 5 s hidden the app calls `getSessionHealth` and restarts
+only the decks reported `sick`, through `restartSessions({deviceNames})`:
+a healthy session is never closed, and a deck waiting for its automatic
+reopen is left to it. A deck given up that opens again by another path — the request
+permission button, a hotplug attach — gets its three attempts back too.
+
+### USB permission
+
+Android drops a deck's USB permission when it is unplugged. A permission
+request completes as soon as the permission is held, whichever path
+granted it: the plugin's dialog, or the confirmation Android raises for a
+device the manifest's `USB_DEVICE_ATTACHED` filter matches
+(`streamdeck_devices.xml`). The plugin checks every 500 ms while a request
+waits, on the attach intent and on each resume (`PermissionWaits`), so a
+grant never waits for the 30 s timeout.
+
+A hotplug attach shows no dialog of its own: Android already raises its
+confirmation for every known deck (`UsbDeviceFilterTest` keeps the filter
+equal to `DeckRegistry`), and of two dialogs at once the one left
+unanswered never replies. The attach waits for that grant 30 s at most,
+then sends `permissionDenied` with `permission_missing`; the attach intent,
+the next resume or the request permission button opens the deck
+afterwards. A deck unplugged during that wait ends it at once, without
+`permissionDenied`: a deck plugged back in starts a wait of its own. The plugin's
+dialog serves `requestPermission`, `requestPermissionForUsb` and the decks
+found plugged in when the app starts. The attach intent reaches the
+running activity (`singleTask`) and opens the deck it names, so ticking
+"always open" in that confirmation brings the deck back on every later
+replug without a dialog.
+
+A confirmation cancelled or dismissed ends that wait sooner. The
+confirmation takes the screen from the app; once the app holds it again,
+resumed with its window focused for 1 s (`FocusSpan`), a wait started
+before then fails `permission_missing` at once
+(`PermissionWaits.confirmGone`), and the journal names the request
+permission button. No dialog follows, on that resume or a later one: the
+next comes from a new plug or that button. With the phone locked, the app
+does not hold the screen while the confirmation is up, so unlocking leaves
+it answerable. Nor does it while it shares the screen (split screen,
+freeform windows): the confirmation can stay up in another window while the
+app is focused, so the wait runs its 30 s there. Nor does the screen the
+app takes by itself on a deck key press (`setWakeOnKeyPress`) count, until
+its next pause: that launch can cover the confirmation of another deck,
+unanswered.
+
+Each resume opens every permitted deck that nothing holds: one whose
+permission came after its attach gave up, or whose automatic reopen was
+given up for its permission. A deck given up after its reopens failed
+stays closed: opening it would give it three attempts again on every
+resume. So does a deck whose last attach failed to open it: the grant
+that completes a waiting attach also brings the attach intent and a
+resume, which would repeat that failure at once. The attach intent applies the same rule to the deck it names. A
+deck still without permission stays closed: its `permissionDenied` line in
+the journal says how to grant it.
 
 ### Persistent identity
 
-Decks are identified by their **USB serial number** (read through a
-feature report on connection). A deck that is plugged back in therefore
+Decks are identified by their **USB serial number**: the string the
+system read at enumeration, else the serial feature report read at
+connection. It takes no control transfer, so a deck keeps its `deckId`
+from one session to the next even when its control pipe fails. A deck that is plugged back in therefore
 keeps its `deckId` — preferences, layouts and snapshots can safely be
 indexed by that serial.
+
+Opening a session reads the firmware report first, as a probe: 250 ms,
+then one retry after 100 ms. A deck that answers neither has a control
+pipe that fails every feature report until it is replugged, reopened or
+not. The session opens anyway — keys and images use the other endpoints —
+with `controlPipeOk: false` in its info and its usual `deckId`.
+`setBrightness` and `reset` are then refused at once
+rather than each costing its 1 s control timeout, except one try every
+5 s with the probe's 250 ms timeout (`ControlPipe`): a deck slow to
+answer right after open is not down for the whole session. The first
+control request that goes through, a heartbeat included, sets
+`controlPipeOk` back to true.
 
 ### Architecture
 
@@ -385,7 +487,10 @@ A strategy pattern. `DeckRegistry` maps `productId → DeckSpec`. One
 writer thread (HID OUT consuming a `WriterQueue`), and a
 `DeckTransport` + `ImageEncoder` chosen from the spec. Images pushed in
 quick succession for the same key are coalesced: the last one wins, the
-older ones resolve their Promise with `{dropped: true}`.
+older ones resolve their Promise with `{dropped: true}`. A session that
+opens first writes one blank image page (report ID `0x02`, the rest zero),
+as the Elgato reference library does: the deck drops an image the previous
+session left unfinished.
 
 ### Manual tests
 

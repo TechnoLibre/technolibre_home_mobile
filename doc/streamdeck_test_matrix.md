@@ -12,12 +12,14 @@ There is no CI runner with hardware, so this is the safety net.
 
 ## Checklist (per physical deck)
 
-For each of: Original v1, Mini, Original v2, MK.2, XL, Plus, Neo.
+For each of: Original v1, Mini, Original v2, MK.2, XL, XL v2 (PID 0x008f),
+Plus, Neo.
 
 - [ ] Plug deck in with app **closed**. App should launch via the USB
       ATTACHED intent-filter and show the deck in `listDecks()`.
-- [ ] Plug deck in with app **open**. Permission dialog should appear,
-      grant; deck appears in `listDecks()` within 1s.
+- [ ] Plug deck in with app **open**. One dialog only, the system's "Open
+      ERPLibre to handle …?"; accept it: the deck lights with its
+      keys within 1 s, and the journal shows no `permission_timeout`.
 - [ ] `setBrightness` 0, 50, 100 — visible difference at each level.
 - [ ] `setKeyImage` with the chequerboard test pattern (red/blue, key
       index drawn on top) for every key. Visual check: every key shows
@@ -34,3 +36,22 @@ For each of: Original v1, Mini, Original v2, MK.2, XL, Plus, Neo.
 - [ ] `reset` clears all images.
 - [ ] Unplug deck — `deckDisconnected` fires within ~500ms.
 - [ ] Replug — `deckConnected` fires; `deckId` (serial) is the same as before.
+- [ ] Replug with the phone **locked**, wait, unlock, accept the dialog: the
+      deck lights within 1 s. Leave the dialog more than 30 s first: the
+      journal names the request permission button, and accepting afterwards
+      still lights the deck.
+- [ ] Replug with the app in the **background**, accept the dialog: the app
+      comes forward and the deck lights.
+- [ ] Replug, tick "always open" in the dialog, accept; replug again: no
+      dialog, the deck lights by itself.
+- [ ] Replug with the app in the foreground, cancel the dialog: no second
+      dialog, on that return or a later one; within about 1 s the journal
+      names the request permission button, which shows one dialog and
+      lights the deck once granted.
+- [ ] Split screen, the app in one pane: replug, then tap the app's pane
+      while the dialog shows in the other: no journal line before 30 s;
+      accept the dialog: the deck lights.
+- [ ] Two decks, "Keep the Stream Deck lit during sleep" and "Let the deck
+      turn the screen on…" on: one open, lock the phone, plug the other,
+      press a key on the first: the app shows over the lock screen; no
+      journal line for the second before 30 s.

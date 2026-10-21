@@ -10,19 +10,34 @@ import ca.erplibre.home.streamdeck.transport.DeckTransport;
 
 /** Writes one key image: encode → paginate → write pages. Resolves the PluginCall.
  *  When call is null, the job is fire-and-forget (used by setKeyImagesBatch
- *  during camera streaming where 32 per-key resolves would just be JNI noise). */
+ *  during camera streaming where 32 per-key resolves would just be JNI noise):
+ *  its failures go out as writeFailed events instead of rejections. */
 final class ImageWriteJob extends WriteJob {
 
     private final DeckSession session;
     private final int keyIndex;
     private final byte[] inputBytes;
+    /** True when inputBytes are already in the wire format (a blank key). */
+    private final boolean encoded;
     private final PluginCall call;
 
     ImageWriteJob(DeckSession session, int keyIndex, byte[] inputBytes, PluginCall call) {
+        this(session, keyIndex, inputBytes, false, call);
+    }
+
+    private ImageWriteJob(DeckSession session, int keyIndex, byte[] inputBytes,
+                          boolean encoded, PluginCall call) {
         this.session = session;
         this.keyIndex = keyIndex;
         this.inputBytes = inputBytes;
+        this.encoded = encoded;
         this.call = call;
+    }
+
+    /** Writes {@code wireBytes} as they are, skipping the encoder. */
+    static ImageWriteJob preEncoded(DeckSession session, int keyIndex, byte[] wireBytes,
+                                    PluginCall call) {
+        return new ImageWriteJob(session, keyIndex, wireBytes, true, call);
     }
 
     @Override public String slotKey() { return "key:" + keyIndex; }
@@ -35,24 +50,36 @@ final class ImageWriteJob extends WriteJob {
     }
 
     @Override
-    public void runTransport() {
+    public void runTransport() throws DeckSession.DeckIoException {
         try {
             ImageEncoder enc = session.encoder();
-            byte[] encoded = enc.encode(inputBytes, session.spec().keyImageW, session.spec().keyImageH);
+            byte[] wire = encoded ? inputBytes
+                : enc.encode(inputBytes, session.spec().keyImageW, session.spec().keyImageH);
             DeckTransport tx = session.transport();
-            List<byte[]> pages = tx.paginateKeyImage(keyIndex, encoded);
+            List<byte[]> pages = tx.paginateKeyImage(keyIndex, wire);
             session.writePages(pages);
             if (call != null) {
                 JSObject r = new JSObject();
                 r.put("dropped", false);
                 call.resolve(r);
+            } else {
+                session.writeSucceeded(keyIndex);
             }
         } catch (ImageEncoder.ImageEncodeException e) {
-            if (call != null) call.reject(e.getMessage());
+            fail(e.getMessage());
         } catch (DeckSession.DeckIoException e) {
-            if (call != null) call.reject(e.getMessage());
+            // Counted by the writer, which closes the session once
+            // transfers keep failing (see WriterStep).
+            fail(e.getMessage());
+            throw e;
         } catch (Throwable t) {
-            if (call != null) call.reject("image_write_failed:" + t.getMessage());
+            fail("image_write_failed:" + t.getMessage());
         }
+    }
+
+    /** Rejects the caller, or reports to JS when there is none. */
+    private void fail(String reason) {
+        if (call != null) call.reject(reason);
+        else session.reportWriteFailure(keyIndex, reason);
     }
 }

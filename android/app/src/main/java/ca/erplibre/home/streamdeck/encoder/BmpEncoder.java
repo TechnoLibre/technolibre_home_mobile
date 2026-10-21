@@ -7,15 +7,19 @@ import ca.erplibre.home.streamdeck.encoder.ImageEncoder.ImageEncodeException;
 
 /**
  * BMP encoder for v1 / Mini Stream Decks. Accepts PNG bytes from TS,
- * decodes to ARGB via Android's BitmapFactory, then delegates rotation
- * + BGR conversion to RgbaRotator (pure Java, unit-tested).
+ * decodes to ARGB via Android's BitmapFactory, then delegates rotation,
+ * flip and BGR conversion to RgbaRotator (pure Java, unit-tested).
  *
- * The deck firmware actually expects a fully-formed BMP file, including
- * the 54-byte BITMAPV3 header. The output of this method is that file.
+ * The deck firmware expects a fully-formed BMP file, 54-byte header
+ * included. The output is byte for byte what python-elgato-streamdeck
+ * sends for the same pixels: its KEY_ROTATION and KEY_FLIP, then a
+ * Pillow BMP, whose rows are stored bottom-up.
  */
 public final class BmpEncoder implements ImageEncoder {
 
-    private final int rotationDegrees; // 180 for v1, 270 for Mini
+    /** 180: Original v1, KEY_FLIP (True, True). 270: Mini, KEY_ROTATION 90
+     *  (counterclockwise) then KEY_FLIP (False, True). */
+    private final int rotationDegrees;
 
     public BmpEncoder(int rotationDegrees) {
         if (rotationDegrees != 180 && rotationDegrees != 270) {
@@ -49,17 +53,32 @@ public final class BmpEncoder implements ImageEncoder {
         int[] argb = new int[targetW * targetH];
         bmp.getPixels(argb, 0, targetW, 0, 0, targetW, targetH);
         bmp.recycle();
+        return encodeArgb(argb, targetW, targetH);
+    }
 
-        byte[] bgr = RgbaRotator.toBgrRotated(argb, targetW, targetH, rotationDegrees);
+    /** encode() after the PNG decode: ARGB pixels, row-major, to the BMP file. */
+    byte[] encodeArgb(int[] argb, int targetW, int targetH) {
+        byte[] bgr = (rotationDegrees == 270)
+            ? RgbaRotator.toBgr(argb, targetW, targetH, 270, false, true)
+            : RgbaRotator.toBgr(argb, targetW, targetH, 0, true, true);
         int outW = (rotationDegrees == 270) ? targetH : targetW;
         int outH = (rotationDegrees == 270) ? targetW : targetH;
         return wrapAsBmpFile(bgr, outW, outH);
     }
 
+    /** Black needs no rotation: only the BMP header carries the size. */
+    @Override
+    public byte[] blank(int targetW, int targetH) {
+        int outW = (rotationDegrees == 270) ? targetH : targetW;
+        int outH = (rotationDegrees == 270) ? targetW : targetH;
+        return wrapAsBmpFile(new byte[outW * outH * 3], outW, outH);
+    }
+
     /**
-     * Wraps raw BGR pixels in a 54-byte BITMAPINFOHEADER BMP file. The deck
-     * firmware reads this exact layout. Rows are NOT padded because BGR width
-     * is always a multiple of 4 for the supported sizes (72, 80).
+     * Wraps top-down BGR pixels in a 54-byte BITMAPINFOHEADER BMP file laid
+     * out as Pillow writes it: positive height, rows stored bottom-up, 96 dpi.
+     * Rows are NOT padded because BGR width is always a multiple of 4 for
+     * the supported sizes (72, 80).
      */
     static byte[] wrapAsBmpFile(byte[] bgr, int w, int h) {
         final int header = 54;
@@ -79,16 +98,18 @@ public final class BmpEncoder implements ImageEncoder {
         // BITMAPINFOHEADER (40 bytes)
         writeLE32(out, 14, 40);                  // header size
         writeLE32(out, 18, w);
-        writeLE32(out, 22, -h);                  // negative h = top-down rows (no flip)
+        writeLE32(out, 22, h);                   // positive h = rows bottom-up
         writeLE16(out, 26, 1);                   // planes
         writeLE16(out, 28, 24);                  // bpp
         writeLE32(out, 30, 0);                   // compression = BI_RGB
         writeLE32(out, 34, bgr.length);          // image size
-        writeLE32(out, 38, 2835);                // x ppm
-        writeLE32(out, 42, 2835);                // y ppm
+        writeLE32(out, 38, 3780);                // x ppm (96 dpi)
+        writeLE32(out, 42, 3780);                // y ppm
         // 46-49 colors used = 0; 50-53 important colors = 0
 
-        System.arraycopy(bgr, 0, out, header, bgr.length);
+        for (int row = 0; row < h; row++) {
+            System.arraycopy(bgr, row * rowBytes, out, header + (h - 1 - row) * rowBytes, rowBytes);
+        }
         return out;
     }
 

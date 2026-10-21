@@ -287,3 +287,13 @@ describe("i18n — dictionary symmetry", () => {
     }
   });
 });
+
+describe("i18n — Sleep section, deck kept lit", () => {
+  // The deck stays lit through a phone sleep, and a key press wakes the
+  // phone, only with the Stream Deck keepAwake power option on: the hint
+  // must send the user to it by the label the Stream Deck section shows.
+  it.each([["en", en], ["fr", fr]])("%s hint names the keepAwake option", (_, dict) => {
+    expect(dict["sleep.deck_awake"]).toBeTruthy();
+    expect(dict["sleep.deck_awake_hint"]).toContain(dict["streamdeck.power_keep_awake"]);
+  });
+});

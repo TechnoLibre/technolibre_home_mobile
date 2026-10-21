@@ -1,5 +1,22 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { streamDeckEventLog } from "../services/streamDeckEventLog";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+    streamDeckEventLog,
+    reattachGaveUpText,
+    permissionDeniedText,
+} from "../services/streamDeckEventLog";
+import { translations as en } from "../i18n/en";
+import { translations as fr } from "../i18n/fr";
+
+/** localStorage does not exist in the node environment; i18n reads it. */
+function stubLocale(locale: "fr" | "en") {
+    const store: Record<string, string> = { app_lang: locale };
+    vi.stubGlobal("localStorage", {
+        getItem: (k: string) => store[k] ?? null,
+        setItem: (k: string, v: string) => { store[k] = v; },
+        removeItem: (k: string) => { delete store[k]; },
+        clear: () => { for (const k of Object.keys(store)) delete store[k]; },
+    });
+}
 
 describe("streamDeckEventLog", () => {
     beforeEach(() => {
@@ -77,6 +94,117 @@ describe("streamDeckEventLog", () => {
             streamDeckEventLog.subscribe(good);
             expect(() => streamDeckEventLog.add("x")).not.toThrow();
             expect(good).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("reattachGaveUpText", () => {
+        afterEach(() => vi.unstubAllGlobals());
+
+        const ev = {
+            deckId: "CL00A0000000",
+            deviceName: "/dev/bus/usb/001/002",
+            attempts: 3,
+            reason: "polled_reset",
+        };
+
+        it("names the deck, the attempts and the last reason, in English", () => {
+            stubLocale("en");
+            const text = reattachGaveUpText(ev);
+            expect(text).toContain("CL00A0000000");
+            expect(text).toContain("3");
+            expect(text).toContain("polled_reset");
+            expect(text).not.toContain("streamdeck.");
+            expect(text).not.toContain("{");
+        });
+
+        it("is translated in French", () => {
+            stubLocale("en");
+            const en = reattachGaveUpText(ev);
+            stubLocale("fr");
+            const fr = reattachGaveUpText(ev);
+            expect(fr).toContain("CL00A0000000");
+            expect(fr).not.toBe(en);
+        });
+
+        it("falls back to the USB device name when the serial is unknown", () => {
+            stubLocale("en");
+            expect(reattachGaveUpText({ ...ev, deckId: "" })).toContain("/dev/bus/usb/001/002");
+        });
+
+        it.each([["en", en], ["fr", fr]] as const)(
+            "%s: a missing permission names the permission button, not a replug",
+            (locale, dict) => {
+                stubLocale(locale);
+                const text = reattachGaveUpText({ ...ev, reason: "permission_missing" });
+                expect(text).toContain("CL00A0000000");
+                expect(text).toContain(dict["streamdeck.request_permission"]);
+                expect(text).not.toBe(reattachGaveUpText(ev));
+                expect(text).not.toContain("{");
+            },
+        );
+
+        it.each(["en", "fr"] as const)(
+            "%s: a missing permission gives no attempt count, given up at the first",
+            (locale) => {
+                stubLocale(locale);
+                const text = reattachGaveUpText({
+                    ...ev,
+                    attempts: 1,
+                    reason: "permission_missing",
+                });
+                expect(text).toContain("CL00A0000000");
+                expect(text).not.toMatch(/\b1\b/);
+            },
+        );
+    });
+
+    describe("permissionDeniedText", () => {
+        afterEach(() => vi.unstubAllGlobals());
+
+        it.each([
+            ["en", en, "permission_missing"],
+            ["fr", fr, "permission_missing"],
+            ["en", en, "permission_timeout"],
+            ["fr", fr, "permission_timeout"],
+            ["en", en, "permission_denied"],
+            ["fr", fr, "permission_denied"],
+        ] as const)("%s: %s says how to grant the permission", (locale, dict, reason) => {
+            stubLocale(locale);
+            const text = permissionDeniedText({ deckId: "", reason });
+            expect(text).toContain(dict["streamdeck.request_permission"]);
+            expect(text).not.toContain("streamdeck.");
+            expect(text).not.toContain("{");
+        });
+
+        it("tells a missing grant from an unanswered and a refused dialog", () => {
+            stubLocale("en");
+            const texts = new Set(
+                ["permission_missing", "permission_timeout", "permission_denied"].map(
+                    (reason) => permissionDeniedText({ deckId: "", reason }),
+                ),
+            );
+            expect(texts.size).toBe(3);
+        });
+
+        it.each([
+            ["en", en, "dialog"],
+            ["fr", fr, "dialogue"],
+        ] as const)("%s: a missing grant names the button before any dialog", (locale, dict, word) => {
+            // The line also follows a system confirmation cancelled, which
+            // does not come back: the button is the remedy to read first.
+            stubLocale(locale);
+            const text = permissionDeniedText({ deckId: "", reason: "permission_missing" });
+            const button = text.indexOf(dict["streamdeck.request_permission"]);
+            const dialog = text.indexOf(word);
+            expect(button).toBeGreaterThanOrEqual(0);
+            if (dialog >= 0) expect(button).toBeLessThan(dialog);
+        });
+
+        it("keeps any other reason as it came", () => {
+            stubLocale("en");
+            expect(permissionDeniedText({ deckId: "", reason: "open_failed:x" }))
+                .toBe("permissionDenied: open_failed:x");
+            expect(permissionDeniedText({ deckId: "" })).toBe("permissionDenied: no reason");
         });
     });
 });

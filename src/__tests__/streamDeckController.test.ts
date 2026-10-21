@@ -9,6 +9,8 @@ const { mockPlugin, listeners } = vi.hoisted(() => {
             setBrightness: vi.fn().mockResolvedValue(undefined),
             setKeyImage: vi.fn().mockResolvedValue(undefined),
             restartSessions: vi.fn().mockResolvedValue(undefined),
+            getSessionHealth: vi.fn().mockResolvedValue({ decks: [] }),
+            keyListenerReady: vi.fn().mockResolvedValue({ delivered: 0, dropped: 0 }),
             addListener: vi.fn(async (name: string, fn: any) => {
                 ls[name] = fn;
                 return { remove: vi.fn() };
@@ -23,12 +25,14 @@ vi.mock("../plugins/streamDeckPlugin", () => ({
     DeckInfo: {} as any,
 }));
 
-import { StreamDeckController } from "../services/streamDeckController";
+import { StreamDeckController, galleryKeyFor } from "../services/streamDeckController";
 import { Events } from "../constants/events";
 
 const DECK = {
     deckId: "AL01",
     model: "mk2",
+    rows: 3,
+    cols: 5,
     keyCount: 15,
     keyImage: { w: 72, h: 72, format: "jpeg", rotation: 0 },
 };
@@ -82,6 +86,8 @@ describe("StreamDeckController", () => {
         mockPlugin.setBrightness.mockResolvedValue(undefined);
         mockPlugin.setKeyImage.mockResolvedValue(undefined);
         mockPlugin.restartSessions.mockResolvedValue(undefined);
+        mockPlugin.getSessionHealth.mockResolvedValue({ decks: [] });
+        mockPlugin.keyListenerReady.mockResolvedValue({ delivered: 0, dropped: 0 });
         mockPlugin.addListener.mockImplementation(async (name: string, fn: any) => {
             listeners[name] = fn;
             return { remove: vi.fn() };
@@ -144,6 +150,110 @@ describe("StreamDeckController", () => {
             // we use brightness restore (next test) elsewhere; here we
             // confirm listDecks was called once.
             expect(mockPlugin.listDecks).toHaveBeenCalledTimes(1);
+        });
+
+        // deckConnected carries the deck's info: the controller caches the
+        // deck from it, probed through the gallery shortcut (key `cols`),
+        // which only answers for a cached deck.
+        it("caches a deck from the deckConnected info without getDeckInfo", async () => {
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            await listeners["deckConnected"]({ deckId: "AL01", info: DECK });
+            expect(mockPlugin.getDeckInfo).not.toHaveBeenCalled();
+            listeners["keyChanged"]({ deckId: "AL01", key: 5, pressed: true });
+            expect(trigger).toHaveBeenCalledWith(
+                Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
+            );
+        });
+
+        it("falls back to getDeckInfo when deckConnected has no info", async () => {
+            mockPlugin.getDeckInfo.mockResolvedValue(DECK);
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            await listeners["deckConnected"]({ deckId: "AL01" });
+            expect(mockPlugin.getDeckInfo).toHaveBeenCalledWith({ deckId: "AL01" });
+            listeners["keyChanged"]({ deckId: "AL01", key: 5, pressed: true });
+            expect(trigger).toHaveBeenCalledWith(
+                Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
+            );
+        });
+
+        // The plugin holds presses until keyListenerReady and delivers
+        // them through keyChanged: the handler must exist by then.
+        it("calls keyListenerReady once keyChanged is subscribed", async () => {
+            let subscribedAtReady = false;
+            mockPlugin.keyListenerReady.mockImplementation(async () => {
+                subscribedAtReady = typeof listeners["keyChanged"] === "function";
+                return { delivered: 0, dropped: 0 };
+            });
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            expect(mockPlugin.keyListenerReady).toHaveBeenCalledTimes(1);
+            expect(subscribedAtReady).toBe(true);
+        });
+
+        // Held presses age out after 10 s: painting the boot decks first
+        // would spend that budget on USB writes.
+        it("calls keyListenerReady before painting the boot decks", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
+            let readyBeforePaint: boolean | undefined;
+            mockPlugin.setBrightness.mockImplementation(async () => {
+                readyBeforePaint ??= mockPlugin.keyListenerReady.mock.calls.length > 0;
+            });
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            ctrl.setCameraStreaming(true);
+            await ctrl.start();
+            expect(readyBeforePaint).toBe(true);
+        });
+
+        it("knows the boot decks when a held gallery key press arrives", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
+            mockPlugin.keyListenerReady.mockImplementation(async () => {
+                listeners["keyChanged"]({
+                    deckId: "AL01", key: galleryKeyFor(DECK as any), pressed: true,
+                });
+                return { delivered: 1, dropped: 0 };
+            });
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            expect(trigger).toHaveBeenCalledWith(
+                Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
+            );
+        });
+
+        it("acts on a press the plugin delivers at keyListenerReady", async () => {
+            mockPlugin.keyListenerReady.mockImplementation(async () => {
+                listeners["keyChanged"]({ deckId: "AL01", key: 0, pressed: true });
+                listeners["keyChanged"]({ deckId: "AL01", key: 0, pressed: false });
+                return { delivered: 2, dropped: 0 };
+            });
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService("held-1"));
+            visibilityState = "hidden";
+            await ctrl.start();
+            expect(trigger).toHaveBeenCalledWith(
+                Events.ROUTER_NAVIGATION, { url: "/note/held-1" },
+            );
+        });
+
+        it("survives a keyListenerReady rejection", async () => {
+            mockPlugin.keyListenerReady.mockRejectedValue(new Error("not implemented"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            visibilityState = "hidden";
+            await expect(ctrl.start()).resolves.toBeUndefined();
+            await Promise.resolve();
+            expect(warn).toHaveBeenCalledWith(
+                "[streamdeck] keyListenerReady:", expect.any(Error),
+            );
+            warn.mockRestore();
         });
 
         it("survives listDecks rejection without throwing", async () => {
@@ -255,7 +365,102 @@ describe("StreamDeckController", () => {
             );
         });
 
-        it("restartSessions on visible after >5 s sleep", async () => {
+        /** Start with DECK (and `extra`) known, hide at 2000, show at
+         *  10 000: a hide longer than the health-check threshold. */
+        async function longHide(extra: any[] = []) {
+            vi.useFakeTimers();
+            vi.setSystemTime(1000);
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK, ...extra] });
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            ctrl.setCameraStreaming(true);
+            visibilityState = "hidden";
+            await ctrl.start();
+            mockPlugin.restartSessions.mockClear();
+            mockPlugin.setBrightness.mockClear();
+
+            visibilityState = "hidden";
+            vi.setSystemTime(2000);
+            visibilityCb!();
+            mockPlugin.setBrightness.mockClear();
+
+            visibilityState = "visible";
+            vi.setSystemTime(10_000);
+            visibilityCb!();
+            await vi.runAllTimersAsync();
+            return ctrl;
+        }
+
+        function health(deviceName: string, deckId: string, sickReason = "") {
+            return {
+                deviceName, deckId, hasPermission: true, open: true,
+                reopening: false, readerAlive: sickReason !== "reader_ended",
+                writerAlive: true, writeFailuresInARow: 0,
+                controlFailuresInARow: 0, controlPipeOk: true,
+                msSinceReport: 0, lastCloseReason: "",
+                sick: sickReason !== "", sickReason,
+            };
+        }
+
+        it("after a long hide, healthy decks are restored, not restarted", async () => {
+            mockPlugin.getSessionHealth.mockResolvedValue({
+                decks: [health("/dev/bus/usb/001/002", "AL01")],
+            });
+            await longHide();
+            expect(mockPlugin.getSessionHealth).toHaveBeenCalledTimes(1);
+            expect(mockPlugin.restartSessions).not.toHaveBeenCalled();
+            expect(mockPlugin.setBrightness).toHaveBeenCalledWith(
+                { deckId: "AL01", percent: 50 },
+            );
+        });
+
+        it("after a long hide, only the sick deck is restarted", async () => {
+            const other = { ...DECK, deckId: "AL02" };
+            mockPlugin.getSessionHealth.mockResolvedValue({
+                decks: [
+                    health("/dev/bus/usb/001/002", "AL01"),
+                    health("/dev/bus/usb/001/003", "AL02", "reader_ended"),
+                ],
+            });
+            await longHide([other]);
+            expect(mockPlugin.restartSessions).toHaveBeenCalledTimes(1);
+            expect(mockPlugin.restartSessions).toHaveBeenCalledWith(
+                { deviceNames: ["/dev/bus/usb/001/003"] },
+            );
+            // The healthy deck is restored here; the restarted one by
+            // deckConnected once it reopens.
+            expect(mockPlugin.setBrightness).toHaveBeenCalledWith(
+                { deckId: "AL01", percent: 50 },
+            );
+            expect(mockPlugin.setBrightness).not.toHaveBeenCalledWith(
+                { deckId: "AL02", percent: 50 },
+            );
+        });
+
+        // An interrupt-IN pipe can go quiet over a sleep and look idle:
+        // the plugin calls a deck that heard nothing over the hide quiet.
+        it("asks for the decks quiet over the whole hide", async () => {
+            mockPlugin.getSessionHealth.mockResolvedValue({
+                decks: [health("/dev/bus/usb/001/002", "AL01", "quiet")],
+            });
+            await longHide();
+            expect(mockPlugin.getSessionHealth).toHaveBeenCalledWith({ quietForMs: 8000 });
+            expect(mockPlugin.restartSessions).toHaveBeenCalledWith(
+                { deviceNames: ["/dev/bus/usb/001/002"] },
+            );
+        });
+
+        it("a failed health query restarts nothing and still restores", async () => {
+            mockPlugin.getSessionHealth.mockRejectedValue(new Error("not_implemented"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+            await longHide();
+            warn.mockRestore();
+            expect(mockPlugin.restartSessions).not.toHaveBeenCalled();
+            expect(mockPlugin.setBrightness).toHaveBeenCalledWith(
+                { deckId: "AL01", percent: 50 },
+            );
+        });
+
+        it("a brief hide does not query health", async () => {
             vi.useFakeTimers();
             vi.setSystemTime(1000);
             mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
@@ -263,17 +468,11 @@ describe("StreamDeckController", () => {
             ctrl.setCameraStreaming(true);
             visibilityState = "hidden";
             await ctrl.start();
-            mockPlugin.restartSessions.mockClear();
-
-            visibilityState = "hidden";
-            vi.setSystemTime(2000);
             visibilityCb!();
-
             visibilityState = "visible";
-            vi.setSystemTime(10_000);
+            vi.setSystemTime(3000);
             visibilityCb!();
-
-            expect(mockPlugin.restartSessions).toHaveBeenCalledTimes(1);
+            expect(mockPlugin.getSessionHealth).not.toHaveBeenCalled();
         });
     });
 
@@ -315,7 +514,7 @@ describe("StreamDeckController", () => {
             // Mount-time visible (will paint key 0 once via _renderHome
             // — let it run, we filter by key below).
             visibilityState = "visible";
-            // Stub canvas just enough for _renderTile to resolve a Blob.
+            // Stub canvas just enough for _renderTile to encode a tile.
             vi.stubGlobal("document", {
                 get visibilityState() { return visibilityState; },
                 addEventListener: vi.fn(),
@@ -329,7 +528,7 @@ describe("StreamDeckController", () => {
                         set textAlign(_: string) {},
                         set textBaseline(_: string) {},
                     }),
-                    toBlob: (cb: any) => cb(new Blob([new Uint8Array([1, 2])])),
+                    toDataURL: () => "data:image/jpeg;base64,AQI=",
                 }),
             });
             await ctrl.start();
@@ -358,7 +557,7 @@ describe("StreamDeckController", () => {
                         set textAlign(_: string) {},
                         set textBaseline(_: string) {},
                     }),
-                    toBlob: (cb: any) => cb(new Blob([new Uint8Array([1])])),
+                    toDataURL: () => "data:image/jpeg;base64,AQ==",
                 }),
             });
             await ctrl.start();
@@ -489,13 +688,30 @@ describe("StreamDeckController", () => {
             expect(fired).toContain("streamdeck_add_audio");
         });
 
-        it("press on key 5 navigates to /applications/gallery (gallery shortcut)", async () => {
+        it("press on key 5 navigates to /applications/gallery on a 5x3 deck", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
             const { bus, trigger } = makeBus();
             const ctrl = new StreamDeckController(bus, makeNoteService());
             visibilityState = "hidden";
             await ctrl.start();
             trigger.mockClear();
             listeners["keyChanged"]({ deckId: "AL01", key: 5, pressed: true });
+            expect(trigger).toHaveBeenCalledWith(
+                Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
+            );
+        });
+
+        it("on an 8x4 deck the shortcut is key 8, and key 5 stays inert", async () => {
+            const xl = { ...DECK, deckId: "XL01", model: "xl", rows: 4, cols: 8, keyCount: 32 };
+            mockPlugin.listDecks.mockResolvedValue({ decks: [xl] });
+            const { bus, trigger } = makeBus();
+            const ctrl = new StreamDeckController(bus, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            trigger.mockClear();
+            listeners["keyChanged"]({ deckId: "XL01", key: 5, pressed: true });
+            expect(trigger).not.toHaveBeenCalled();
+            listeners["keyChanged"]({ deckId: "XL01", key: 8, pressed: true });
             expect(trigger).toHaveBeenCalledWith(
                 Events.ROUTER_NAVIGATION, { url: "/applications/gallery" },
             );
@@ -524,6 +740,100 @@ describe("StreamDeckController", () => {
             vi.setSystemTime(Date.now() + 1000);
             listeners["keyChanged"]({ deckId: "AL01", key: 1, pressed: true });
             expect(trigger).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("tile encoding", () => {
+        /** Canvas stub that records the MIME type each tile is encoded to
+         *  and answers with bytes carrying that type's signature. */
+        function stubCanvas(mimes: string[]) {
+            vi.stubGlobal("document", {
+                get visibilityState() { return visibilityState; },
+                addEventListener: vi.fn(),
+                createElement: () => ({
+                    width: 0, height: 0,
+                    getContext: () => ({
+                        translate: vi.fn(), rotate: vi.fn(),
+                        fillRect: vi.fn(), fillText: vi.fn(),
+                        set fillStyle(_: string) {},
+                        set font(_: string) {},
+                        set textAlign(_: string) {},
+                        set textBaseline(_: string) {},
+                    }),
+                    toDataURL: (mime: string) => {
+                        mimes.push(mime);
+                        const sig = mime === "image/png"
+                            ? [0x89, 0x50, 0x4e, 0x47] : [0xff, 0xd8, 0xff];
+                        return `data:${mime};base64,`
+                            + btoa(String.fromCharCode(...sig));
+                    },
+                }),
+            });
+        }
+
+        const MINI = {
+            deckId: "MINI1",
+            model: "mini",
+            rows: 2,
+            cols: 3,
+            keyCount: 6,
+            keyImage: { w: 80, h: 80, format: "bmp_bgr_rot270", rotation: 0 },
+        };
+
+        it("sends PNG to a BMP deck, whose encoder refuses anything else", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [MINI] });
+            const mimes: string[] = [];
+            visibilityState = "visible";
+            stubCanvas(mimes);
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            await ctrl.start();
+            await ctrl.setNoteActive(true);
+
+            const calls = mockPlugin.setKeyImage.mock.calls.map((c: any) => c[0]);
+            // Note on key 0, the gallery shortcut on key 5, keys 1-3.
+            expect(calls.map((c: any) => c.key).sort()).toEqual(
+                expect.arrayContaining([0, 1, 2, 3, 5]),
+            );
+            expect(mimes.length).toBeGreaterThan(0);
+            expect(new Set(mimes)).toEqual(new Set(["image/png"]));
+            for (const c of calls) {
+                expect(c.format).toBe("png");
+                // PNG signature, as the plugin's BMP encoder checks it.
+                expect(atob(c.bytes).charCodeAt(0)).toBe(0x89);
+            }
+        });
+
+        it("sends JPEG to a JPEG deck", async () => {
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
+            const mimes: string[] = [];
+            visibilityState = "visible";
+            stubCanvas(mimes);
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            await ctrl.start();
+
+            expect(mimes.length).toBeGreaterThan(0);
+            expect(new Set(mimes)).toEqual(new Set(["image/jpeg"]));
+            for (const c of mockPlugin.setKeyImage.mock.calls) {
+                expect(c[0].format).toBe("jpeg");
+            }
+        });
+    });
+
+    describe("galleryKeyFor", () => {
+        it("puts the shortcut directly below key 0", () => {
+            expect(galleryKeyFor({ rows: 3, cols: 5, keyCount: 15 })).toBe(5);
+            expect(galleryKeyFor({ rows: 4, cols: 8, keyCount: 32 })).toBe(8);
+            expect(galleryKeyFor({ rows: 2, cols: 4, keyCount: 8 })).toBe(4);
+        });
+
+        it("falls back to the last key when below key 0 is a note-page key", () => {
+            // Mini 3x2: key 3 is the Location tile on a note page.
+            expect(galleryKeyFor({ rows: 2, cols: 3, keyCount: 6 })).toBe(5);
+        });
+
+        it("has no shortcut on a single row or a keyless deck", () => {
+            expect(galleryKeyFor({ rows: 1, cols: 3, keyCount: 3 })).toBeNull();
+            expect(galleryKeyFor({ rows: 0, cols: 0, keyCount: 0 })).toBeNull();
         });
     });
 
@@ -644,6 +954,55 @@ describe("StreamDeckController", () => {
             const events = trigger.mock.calls.map((c: any) => c[0]);
             expect(events).not.toContain("routernav");
             expect(events).toContain("streamdeck_gallery_open");
+        });
+
+        it("paints all 15 keys without waiting on an async canvas encoder", async () => {
+            // A mobile WebView can defer toBlob() to an idle period and
+            // force it only after 4 s on a static page; this stub never
+            // calls back at all, so a paint that relies on it hangs.
+            mockPlugin.listDecks.mockResolvedValue({ decks: [DECK] });
+            const ctrl = new StreamDeckController({ trigger: vi.fn() }, makeNoteService());
+            visibilityState = "hidden";
+            await ctrl.start();
+            const mimes: string[] = [];
+            vi.stubGlobal("document", {
+                get visibilityState() { return visibilityState; },
+                addEventListener: vi.fn(),
+                createElement: () => ({
+                    width: 0, height: 0,
+                    getContext: () => ({
+                        translate: vi.fn(), rotate: vi.fn(),
+                        fillRect: vi.fn(), fillText: vi.fn(),
+                        set fillStyle(_: string) {},
+                        set font(_: string) {},
+                        set textAlign(_: string) {},
+                        set textBaseline(_: string) {},
+                    }),
+                    toBlob: () => { /* never completes */ },
+                    toDataURL: (mime: string) => {
+                        mimes.push(mime);
+                        return `data:${mime};base64,/9j/AA==`;
+                    },
+                }),
+            });
+            visibilityState = "visible";
+            mockPlugin.setKeyImage.mockClear();
+
+            const outcome = await Promise.race([
+                ctrl.setGalleryActive(true, []).then(() => "done"),
+                new Promise((r) => setTimeout(() => r("hung"), 200)),
+            ]);
+
+            expect(outcome).toBe("done");
+            const calls = mockPlugin.setKeyImage.mock.calls.map((c: any) => c[0]);
+            expect(calls.map((c: any) => c.key)).toEqual(
+                Array.from({ length: 15 }, (_, i) => i),
+            );
+            for (const c of calls) {
+                expect(c.format).toBe("jpeg");
+                expect(c.bytes).toBe("/9j/AA==");
+            }
+            expect(new Set(mimes)).toEqual(new Set(["image/jpeg"]));
         });
 
         it("deactivation clears images and resets page", async () => {

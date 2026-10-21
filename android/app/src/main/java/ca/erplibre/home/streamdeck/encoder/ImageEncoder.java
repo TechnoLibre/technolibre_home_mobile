@@ -13,6 +13,10 @@ public interface ImageEncoder {
     /** Produces the bytes the deck wants on the wire (pre-pagination). */
     byte[] encode(byte[] inputBytes, int targetW, int targetH) throws ImageEncodeException;
 
+    /** An all-black key at {@code targetW}×{@code targetH}, already in the
+     *  wire format: it goes straight to pagination, not through encode(). */
+    byte[] blank(int targetW, int targetH) throws ImageEncodeException;
+
     final class ImageEncodeException extends Exception {
         public ImageEncodeException(String msg) { super(msg); }
         public ImageEncodeException(String msg, Throwable cause) { super(msg, cause); }

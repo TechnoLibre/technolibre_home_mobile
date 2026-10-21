@@ -67,4 +67,25 @@ public class TransportV2Test {
             assertEquals("padding at " + i, 0, p[i]);
         }
     }
+
+    @Test
+    public void key_stream_reset_is_one_blank_page_with_the_report_id() {
+        // python-elgato-streamdeck _reset_key_stream: a full image report,
+        // report ID 0x02 and nothing else, so the deck drops an image
+        // whose pages stopped before the last one.
+        byte[] r = new TransportV2().keyStreamReset();
+        assertEquals(1024, r.length);
+        assertEquals(0x02, r[0] & 0xFF);
+        for (int i = 1; i < r.length; i++) {
+            assertEquals("byte " + i, 0, r[i]);
+        }
+    }
+
+    @Test
+    public void key_stream_reset_is_a_fresh_buffer_each_time() {
+        TransportV2 t = new TransportV2();
+        byte[] first = t.keyStreamReset();
+        first[1] = 0x55;
+        assertEquals(0, t.keyStreamReset()[1]);
+    }
 }

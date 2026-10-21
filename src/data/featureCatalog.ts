@@ -527,19 +527,56 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "keeps one DeckSession per attached device; DeckSpec carries product "
                         + "id → key count, image size, transport version. The bridge surface is "
                         + "JSON over the Capacitor JS↔Java pipe; binary frames travel as base64 "
-                        + "batched on a single JNI call per deck.",
+                        + "batched on a single JNI call per deck. KeyEventGate holds "
+                        + "keyChanged until the page's key handler calls "
+                        + "keyListenerReady (at launch and after each page load): "
+                        + "the last 16 events at most, those older than 10 s "
+                        + "dropped, the rest delivered in arrival order. "
+                        + "FeatureReads probes the control pipe at open with "
+                        + "the firmware report (250 ms, one retry): a deck "
+                        + "that answers neither opens with controlPipeOk "
+                        + "false and its usual deckId (the USB serial "
+                        + "string, read without EP0), and "
+                        + "brightness and reset refused at once but for one "
+                        + "250 ms try every 5 s (ControlPipe); the first "
+                        + "control request that goes through sets it back "
+                        + "to true.",
                     fr: "Plugin Capacitor (Java) qui enveloppe le stack USB host. DeckRegistry "
                         + "garde une DeckSession par appareil branché; DeckSpec porte product id "
                         + "→ nb touches, taille image, version transport. La surface bridge est "
                         + "JSON sur le pipe Capacitor JS↔Java; les frames binaires passent en "
-                        + "base64 batchées en un seul appel JNI par deck.",
+                        + "base64 batchées en un seul appel JNI par deck. KeyEventGate "
+                        + "retient keyChanged jusqu'à ce que le gestionnaire de "
+                        + "touches de la page appelle keyListenerReady (au lancement "
+                        + "et après chaque chargement de page) : 16 événements au "
+                        + "plus, ceux de plus de 10 s écartés, les autres livrés "
+                        + "dans leur ordre d'arrivée. FeatureReads sonde le "
+                        + "canal de contrôle à l'ouverture avec le rapport "
+                        + "firmware (250 ms, un nouvel essai) : un deck qui "
+                        + "ne répond à aucun s'ouvre avec controlPipeOk faux, "
+                        + "son deckId habituel (la chaîne de série USB, lue "
+                        + "sans EP0), et luminosité "
+                        + "et reset refusés aussitôt sauf un essai de 250 ms "
+                        + "toutes les 5 s (ControlPipe) ; la première requête "
+                        + "de contrôle qui passe le remet à vrai.",
                 },
                 demo: NONE_PLUMBING,
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/WorkerShutdown.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/UsbCallGate.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/CloseOnce.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ParallelClose.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSpec.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckRegistry.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/KeyEventGate.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/FeatureReads.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ControlPipe.java",
+                ],
+                tests: [
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/FeatureReadsTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ControlPipeTest.java",
                 ],
             },
             {
@@ -582,9 +619,27 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "bus event) and fire STREAMDECK_ADD_VIDEO/AUDIO/"
                         + "LOCATION events that the note re-uses to add an "
                         + "entry. On visibilitychange:hidden each deck dims to "
-                        + "0 %; brief hides only restore brightness, hides over "
-                        + "5 s trigger a full restartSessions to wake the "
-                        + "post-sleep-silent reader.",
+                        + "0 %; a brief hide only restores brightness and "
+                        + "repaints. After a hide over 5 s the controller asks "
+                        + "getSessionHealth and restarts only the decks the "
+                        + "plugin reports sick (no session and no automatic "
+                        + "reopen pending, reader or writer thread ended, two "
+                        + "failed writes or EP0 transfers in a row, heartbeat "
+                        + "failures not counted, the latter "
+                        + "only on a deck whose control pipe answered at "
+                        + "open) through "
+                        + "restartSessions({deviceNames}); a healthy deck is "
+                        + "restored, never closed. The hide's length goes as "
+                        + "quietForMs: an interrupt-IN pipe gone quiet over a "
+                        + "sleep looks like an idle deck, so a deck that sent "
+                        + "no report over the whole hide is sick (quiet), "
+                        + "while one that did, as the press that woke the "
+                        + "phone, keeps its session. Once its "
+                        + "keyChanged handler is subscribed it calls "
+                        + "keyListenerReady, so a press the plugin held since "
+                        + "launch reaches that handler; the decks found at "
+                        + "boot are painted only after that call, so their "
+                        + "USB writes do not age the held presses.",
                     fr: "S'abonne à keyChanged sur chaque deck, throttlé à 150 "
                         + "ms pour éviter le crash IME du WebView. La touche 0 "
                         + "navigue toujours vers /note/<id>; les touches 1-3 ne "
@@ -593,9 +648,30 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "et émettent STREAMDECK_ADD_VIDEO/AUDIO/LOCATION que "
                         + "la note ré-utilise pour ajouter une entrée. Sur "
                         + "visibilitychange:hidden chaque deck dimme à 0 %; "
-                        + "hides courtes restaurent juste la luminosité, hides "
-                        + ">5 s déclenchent un restartSessions complet pour "
-                        + "réveiller le reader silencieux après wake.",
+                        + "un masquage bref restaure la luminosité et repeint. "
+                        + "Après plus de 5 s masqué, le contrôleur interroge "
+                        + "getSessionHealth et ne redémarre que les decks que "
+                        + "le plugin déclare malades (pas de session et aucune "
+                        + "réouverture automatique en attente, fil lecteur ou "
+                        + "écrivain terminé, deux écritures ou transferts EP0 "
+                        + "ratés de suite, sans compter les battements ratés, "
+                        + "ces derniers seulement sur un deck "
+                        + "dont le canal de contrôle a répondu à l'ouverture) "
+                        + "via restartSessions({deviceNames}) ; "
+                        + "un deck sain est restauré, jamais fermé. La durée du "
+                        + "masquage passe en quietForMs : un canal interrupt-IN "
+                        + "devenu muet pendant une veille ressemble à un deck "
+                        + "inactif, donc un deck qui n'a envoyé aucun rapport "
+                        + "de tout le masquage est malade (quiet), tandis qu'un "
+                        + "deck qui en a envoyé, comme la touche qui a réveillé "
+                        + "le téléphone, garde sa session. Une fois son "
+                        + "gestionnaire keyChanged "
+                        + "abonné, il appelle keyListenerReady : une touche que "
+                        + "le plugin a retenue depuis le lancement atteint ce "
+                        + "gestionnaire ; les decks trouvés au démarrage ne "
+                        + "sont peints qu'après cet appel, pour que leurs "
+                        + "écritures USB ne vieillissent pas les touches "
+                        + "retenues.",
                 },
                 status: "stable",
                 dependsOn: [
@@ -603,8 +679,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "streamdeck.lifecycle-service",
                 ],
                 demo: NONE_BG,
-                files: ["src/services/streamDeckController.ts"],
-                tests: ["src/__tests__/streamDeckController.test.ts"],
+                files: [
+                    "src/services/streamDeckController.ts",
+                    "src/services/streamDeckHealth.ts",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/SessionHealth.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ControlPipe.java",
+                ],
+                tests: [
+                    "src/__tests__/streamDeckController.test.ts",
+                    "src/__tests__/streamDeckHealth.test.ts",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/SessionHealthTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ControlPipeTest.java",
+                ],
             },
             {
                 id: "streamdeck.usb",
@@ -617,19 +703,103 @@ export const FEATURE_TREE: FeatureNode[] = [
                 howItWorks: {
                     en: "UsbHotplugReceiver listens for ACTION_USB_DEVICE_ATTACHED / DETACHED "
                         + "intents from the OS. UsbPermissionRequester wraps the per-device "
-                        + "PendingIntent flow: first attach prompts the user; the grant is "
-                        + "sticky per Android session. Detach immediately tears down the "
-                        + "DeckSession to release the FileDescriptor.",
+                        + "PendingIntent flow; Android drops the grant on unplug. A request "
+                        + "completes as soon as UsbManager reports the permission held, "
+                        + "whatever granted it (PermissionWaits: a 500 ms poll, the attach "
+                        + "intent, each resume), and the USB_DEVICE_ATTACHED intent sent "
+                        + "to the running activity opens the deck it names. A hotplug "
+                        + "attach shows no dialog of its own: it waits up to 30 s for the "
+                        + "confirmation Android raises through the manifest filter "
+                        + "(UsbDeviceFilterTest keeps it equal to DeckRegistry), then "
+                        + "fails permission_missing; a confirmation cancelled fails it "
+                        + "once the app holds the screen again, alone, for 1 s (FocusSpan, "
+                        + "PermissionWaits.confirmGone), with no second dialog. Each "
+                        + "resume opens every permitted deck nothing holds, except one given up after its reopens failed "
+                        + "or whose last attach failed to open it; "
+                        + "the journal writes permission_missing, "
+                        + "permission_timeout and permission_denied as how to grant it. "
+                        + "Detach closes the DeckSession after "
+                        + "a 250 ms debounce. requestPermission (the Options "
+                        + "\"Demander permission\" button) asks again for one deck or "
+                        + "every attached one; PermissionRequestPlan picks the devices and "
+                        + "names each outcome: already_granted, granted, denied, timeout "
+                        + "after 30 s, error. A session that closes itself while the deck "
+                        + "stays plugged in (reader failure, polled_reset, failed writes) "
+                        + "is reopened after 2, 4 then 8 s (ReattachPolicy); the count "
+                        + "resets after 60 s of healthy session, and after a third failed "
+                        + "attempt one line goes to the journal and nothing more is tried; "
+                        + "a retry that finds the USB permission missing gives up at once. "
+                        + "Unplug, restartSessions, retryAttach and app destroy cancel it; "
+                        + "restartSessions and retryAttach give every deck its three "
+                        + "attempts back (restartSessions with deviceNames: those decks "
+                        + "only), as does any other reopen of a deck given up, "
+                        + "the permission button included. A deck whose restart close "
+                        + "outlasts the 3 s wait is reopened once that close ends "
+                        + "(RestartReopen).",
                     fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
                         + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
-                        + "appareil : premier attach prompt l'utilisateur; l'autorisation est "
-                        + "sticky pour la session Android. Détach démantèle immédiatement la "
-                        + "DeckSession pour libérer le FileDescriptor.",
+                        + "appareil ; Android retire l'autorisation au débranchement. Une "
+                        + "demande se termine dès qu'UsbManager rapporte la permission "
+                        + "acquise, quel que soit le chemin (PermissionWaits : sondage aux "
+                        + "500 ms, intent de branchement, chaque retour au premier plan), et "
+                        + "l'intent USB_DEVICE_ATTACHED remis à l'activité en cours ouvre le "
+                        + "deck qu'il nomme. Un branchement n'affiche aucun dialogue du "
+                        + "plugin : il attend jusqu'à 30 s la confirmation qu'Android lève "
+                        + "par le filtre du manifeste (UsbDeviceFilterTest le garde égal à "
+                        + "DeckRegistry), puis échoue permission_missing ; une confirmation "
+                        + "annulée le fait échouer dès que l'app tient l'écran, seule, depuis 1 s "
+                        + "(FocusSpan, PermissionWaits.confirmGone), sans second dialogue. "
+                        + "Chaque retour au "
+                        + "premier plan ouvre tout deck permis que rien ne tient, sauf "
+                        + "celui abandonné après l'échec de ses réouvertures ou dont le "
+                        + "dernier branchement a échoué à l'ouvrir ; le journal "
+                        + "écrit permission_missing, permission_timeout et permission_denied "
+                        + "comme la façon de l'accorder. "
+                        + "Détach ferme la DeckSession après "
+                        + "un anti-rebond de 250 ms. requestPermission "
+                        + "(le bouton « Demander permission ») redemande pour un deck ou pour "
+                        + "chaque deck branché ; PermissionRequestPlan choisit les appareils et "
+                        + "nomme chaque issue : already_granted, granted, denied, timeout "
+                        + "après 30 s, error. Une session qui se ferme d'elle-même, deck "
+                        + "toujours branché (échec du lecteur, polled_reset, écritures en "
+                        + "échec), est rouverte après 2, 4 puis 8 s (ReattachPolicy) ; le "
+                        + "compte revient à zéro après 60 s de session saine, et après un "
+                        + "troisième essai raté une ligne part au journal et plus rien "
+                        + "n'est tenté ; un essai qui trouve la permission USB absente "
+                        + "abandonne aussitôt. Débranchement, restartSessions, retryAttach "
+                        + "et destruction de l'app l'annulent ; restartSessions et "
+                        + "retryAttach rendent à chaque deck ses trois essais "
+                        + "(restartSessions avec deviceNames : à ces decks seulement), "
+                        + "comme toute autre réouverture d'un deck abandonné, bouton de "
+                        + "permission compris. Un deck dont la fermeture au redémarrage "
+                        + "dépasse l'attente de 3 s est rouvert dès qu'elle se termine "
+                        + "(RestartReopen).",
                 },
-                demo: NONE_BG,
+                demo: { kind: "options", sectionId: "streamdeck" },
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbHotplugReceiver.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbPermissionRequester.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionTimeoutException.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionWaits.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/FocusSpan.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/PermissionRequestPlan.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachPolicy.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachTimers.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/RestartReopen.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
+                    "src/plugins/streamDeckPlugin.ts",
+                    "src/services/streamDeckEventLog.ts",
+                ],
+                tests: [
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/PermissionRequestPlanTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/usb/PermissionWaitsTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/FocusSpanTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/UsbDeviceFilterTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachPolicyTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachTimersTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/RestartReopenTest.java",
+                    "src/__tests__/streamDeckPlugin.test.ts",
+                    "src/__tests__/streamDeckEventLog.test.ts",
                 ],
             },
             {
@@ -645,13 +815,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "so bulkTransfer is offered as a sync fallback, and "
                         + "polled GET_REPORT on EP0 as last resort. Buffer "
                         + "size matches epIn.maxPacketSize (key fix: 64 B "
-                        + "returned EOVERFLOW on Pixel 6 / ThinkPhone XL).",
+                        + "returned EOVERFLOW on Pixel 6 / ThinkPhone XL). "
+                        + "UsbRequest mode keeps one request in flight on a "
+                        + "direct buffer, queued again only once reaped, and "
+                        + "reaps it before closing it (RequestReader).",
                     fr: "Par défaut UsbRequest async sur interrupt-IN. Certains "
                         + "kernels Android cachent cet endpoint, on offre "
                         + "bulkTransfer en repli sync, et polled GET_REPORT "
                         + "sur EP0 en dernier recours. Buffer = "
                         + "epIn.maxPacketSize (fix clé: 64 B retournait "
-                        + "EOVERFLOW sur Pixel 6 / ThinkPhone XL).",
+                        + "EOVERFLOW sur Pixel 6 / ThinkPhone XL). Le mode "
+                        + "UsbRequest garde une seule requête en vol sur un "
+                        + "buffer direct, remise en file seulement une fois "
+                        + "récoltée, et la récolte avant de la fermer "
+                        + "(RequestReader).",
                 },
                 status: "stable",
                 dependsOn: [
@@ -659,33 +836,112 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "streamdeck.usb",
                 ],
                 demo: { kind: "options", sectionId: "streamdeck" },
-                files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/RequestReader.java",
+                ],
             },
             {
                 id: "streamdeck.heartbeat",
                 label: { en: "USB heartbeat", fr: "Heartbeat USB" },
                 description: {
-                    en: "700 ms control transfer keeping the bus active.",
-                    fr: "Control transfer 700 ms pour garder le bus actif.",
+                    en: "700 ms control transfer keeping the bus active, with keep-awake on.",
+                    fr: "Control transfer 700 ms pour garder le bus actif, si éveil activé.",
                 },
                 howItWorks: {
                     en: "Per-session daemon thread issuing GET_REPORT (firmware "
-                        + "version) every 700 ms. Without it, Android USB "
+                        + "version) every 700 ms, started and stopped by "
+                        + "DeckSession.setHeartbeat from the keepAwake power "
+                        + "option (off by default). Without it, Android USB "
                         + "selective suspend stops driving SOFs once the "
                         + "screen goes off and the deck firmware reacts by "
                         + "pulsing LCD brightness at ~1 Hz. Cheap (separate "
                         + "endpoint from reader/writer, no contention).",
                     fr: "Thread daemon par session qui envoie un GET_REPORT "
-                        + "(version firmware) toutes les 700 ms. Sans ça, "
+                        + "(version firmware) toutes les 700 ms, démarré et "
+                        + "arrêté par DeckSession.setHeartbeat selon l'option "
+                        + "keepAwake (désactivée par défaut). Sans ça, "
                         + "l'autosuspend USB Android arrête les SOFs dès "
                         + "l'écran off et le firmware réagit en pulsant la "
                         + "LCD à ~1 Hz. Coût faible (endpoint séparé, pas "
                         + "de contention).",
                 },
                 status: "stable",
-                dependsOn: ["streamdeck.plugin-native"],
+                dependsOn: ["streamdeck.plugin-native", "streamdeck.power-options"],
                 demo: NONE_BG,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java"],
+            },
+            {
+                id: "streamdeck.power-options",
+                label: { en: "Power options", fr: "Options d'énergie" },
+                description: {
+                    en: "Let the deck wake the screen and show over the lock screen; keep the phone awake. Both off by default.",
+                    fr: "Laisser le deck allumer l'écran et afficher sur l'écran verrouillé ; garder le téléphone éveillé. Désactivées par défaut.",
+                },
+                status: "stable",
+                howItWorks: {
+                    en: "DeckPowerOptions stores two booleans in SharedPreferences, "
+                        + "both false until the user checks them in Options › Stream "
+                        + "Deck; the plugin's getPowerOptions / setPowerOptions read "
+                        + "and write them. showOverLockScreen: MainActivity calls "
+                        + "setShowWhenLocked / setTurnScreenOn only for a launch "
+                        + "by the deck — USB_DEVICE_ATTACHED, or the wake-on-key-"
+                        + "press relaunch, marked with EXTRA_DECK_WAKE — and "
+                        + "clears them in onStop; any other launch stays behind "
+                        + "the lock screen. A deck key press lights the screen "
+                        + "only with this option (wakeScreenOnKeyPress). keepAwake: the partial wake lock is "
+                        + "held and each session sends its 700 ms heartbeat while "
+                        + "a deck is open; the lock stays held while a self-closed "
+                        + "deck waits to be reopened. Off, the phone may suspend the USB bus "
+                        + "with the screen off: the deck may flicker or go dark "
+                        + "and its keys may not reach the app, nor wake the phone. "
+                        + "deckSleepCoupling ties keepAwake to the Sleep "
+                        + "section's deck-lit option, which needs it: turning "
+                        + "that option on turns keepAwake on first, and leaves "
+                        + "the option off when keepAwake stays off; turning "
+                        + "keepAwake off turns that option off, and the section "
+                        + "that moved the other one shows a line saying so.",
+                    fr: "DeckPowerOptions range deux booléens dans les "
+                        + "SharedPreferences, faux tant que l'utilisateur ne les "
+                        + "coche pas dans Options › Stream Deck ; getPowerOptions / "
+                        + "setPowerOptions du plugin les lisent et les écrivent. "
+                        + "showOverLockScreen : MainActivity n'appelle "
+                        + "setShowWhenLocked / setTurnScreenOn que pour un lancement "
+                        + "par le deck — USB_DEVICE_ATTACHED, ou la relance du "
+                        + "réveil sur touche, marquée par EXTRA_DECK_WAKE — et les "
+                        + "retire dans onStop ; tout autre lancement reste derrière "
+                        + "l'écran verrouillé. Une touche du deck n'allume l'écran "
+                        + "qu'avec cette option (wakeScreenOnKeyPress). keepAwake : le verrou de veille "
+                        + "partiel est tenu et chaque session envoie son battement "
+                        + "de 700 ms tant qu'un deck est ouvert ; le verrou reste "
+                        + "tenu tant qu'un deck fermé de lui-même attend sa "
+                        + "réouverture. Désactivé, le "
+                        + "téléphone peut suspendre le bus USB écran éteint : le "
+                        + "deck peut clignoter ou s'éteindre et ses touches ne plus "
+                        + "atteindre l'application, ni réveiller le téléphone. "
+                        + "deckSleepCoupling lie keepAwake à l'option « deck "
+                        + "allumé en veille » de la section Mise en veille, qui "
+                        + "en a besoin : cocher celle-ci coche d'abord keepAwake, "
+                        + "et la laisse décochée si keepAwake reste désactivé ; "
+                        + "décocher keepAwake la décoche, et la section qui a "
+                        + "changé l'autre affiche une ligne qui le dit.",
+                },
+                dependsOn: ["streamdeck.plugin-native"],
+                demo: { kind: "options", sectionId: "streamdeck" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckPowerOptions.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/MainActivity.java",
+                    "src/services/streamDeckPowerOptions.ts",
+                    "src/services/deckSleepCoupling.ts",
+                    "src/components/options/streamdeck/options_streamdeck_component.ts",
+                ],
+                tests: [
+                    "src/__tests__/streamDeckPowerOptions.test.ts",
+                    "src/__tests__/deckSleepCoupling.test.ts",
+                    "src/__tests__/deckSleepPanels.test.ts",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/DeckPowerOptionsTest.java",
+                ],
             },
             {
                 id: "streamdeck.writer-queue",
@@ -700,12 +956,22 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "resolves as `dropped`). Single consumer thread "
                         + "drains via bulk-OUT. clearPendingWrites() empties "
                         + "the queue without closing it — used by the camera "
-                        + "streamer on stop to avoid the firmware-busy lag.",
+                        + "streamer on stop to avoid the firmware-busy lag. "
+                        + "Three failed USB transfers in a row close the "
+                        + "session (deckDisconnected, reason usb_lost:…); a "
+                        + "single one is a firmware stall and leaves it "
+                        + "open. A fire-and-forget batch write that fails "
+                        + "is reported as writeFailed in the journal.",
                     fr: "Chaque (deck, key) est un slot ; offrir un nouveau job "
                         + "pour un slot existant remplace l'ancien (résolu "
                         + "comme `dropped`). Thread consommateur unique drain "
                         + "via bulk-OUT. clearPendingWrites() vide la queue "
-                        + "sans la fermer — utilisé par le streamer sur stop.",
+                        + "sans la fermer — utilisé par le streamer sur stop. "
+                        + "Trois transferts USB en échec de suite ferment "
+                        + "la session (deckDisconnected, raison usb_lost:…) ; "
+                        + "un seul est un blocage du firmware et la laisse "
+                        + "ouverte. Une écriture de lot sans retour qui "
+                        + "échoue est signalée par writeFailed au journal.",
                 },
                 status: "stable",
                 dependsOn: [
@@ -719,6 +985,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ImageWriteJob.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/LcdWriteJob.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/NeoInfoBarWriteJob.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/WriterStep.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/WriteFailureReporter.java",
                 ],
             },
             {
@@ -733,14 +1001,23 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Per-model image encoder picked by DeckSpec: V1 decks accept BMP raw, "
                         + "V2 decks accept JPEG (better compression, faster USB transfer). "
                         + "Encoders run on a worker thread so the main thread isn't blocked "
-                        + "during a full-deck refresh.",
+                        + "during a full-deck refresh. KeyImages rejects a key index outside "
+                        + "the deck and an image whose header is larger than the key "
+                        + "(image_oversized); clearKey sends each encoder's black image at "
+                        + "the key's native size.",
                     fr: "Encoder image par modèle choisi par DeckSpec : decks V1 acceptent du "
                         + "BMP brut, decks V2 du JPEG (meilleure compression, transfert USB plus "
                         + "rapide). Les encoders tournent sur un thread worker pour ne pas "
-                        + "bloquer le main thread lors d'un refresh complet.",
+                        + "bloquer le main thread lors d'un refresh complet. KeyImages refuse "
+                        + "un index de touche hors du deck et une image dont l'en-tête dépasse "
+                        + "la touche (image_oversized) ; clearKey envoie l'image noire de "
+                        + "chaque encoder à la taille native de la touche.",
                 },
                 demo: NONE_PLUMBING,
-                files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/encoder"],
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/encoder",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/KeyImages.java",
+                ],
             },
             {
                 id: "streamdeck.transports",
@@ -751,19 +1028,28 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 status: "stable",
                 howItWorks: {
-                    en: "V1 transport (Original Stream Deck) writes 16 KiB pages with a "
+                    en: "V1 transport (Original Stream Deck) writes 8191-byte pages with a "
                         + "prepended report id and page index; V2 transport (Mk.2, XL, Plus, "
                         + "Neo, Pedal) writes 1024-byte pages with the new framing. Choice is "
-                        + "driven by DeckSpec.transportVersion — encoders never see the wire "
-                        + "format directly.",
-                    fr: "Transport V1 (Stream Deck Original) écrit des pages de 16 KiB avec "
+                        + "driven by DeckSpec.transport — encoders never see the wire "
+                        + "format directly. keyStreamReset is one page holding only the "
+                        + "report id 0x02: DeckSession.open writes it first, so the deck "
+                        + "drops an image the previous session left unfinished.",
+                    fr: "Transport V1 (Stream Deck Original) écrit des pages de 8191 octets avec "
                         + "report id + index de page en préfixe; transport V2 (Mk.2, XL, Plus, "
                         + "Neo, Pedal) écrit des pages 1024 bytes avec le nouveau framing. Le "
-                        + "choix est piloté par DeckSpec.transportVersion — les encoders ne "
-                        + "voient pas le format wire directement.",
+                        + "choix est piloté par DeckSpec.transport — les encoders ne "
+                        + "voient pas le format wire directement. keyStreamReset est une "
+                        + "page qui ne porte que le report id 0x02 : DeckSession.open l'écrit "
+                        + "d'abord, et le deck abandonne une image que la session précédente "
+                        + "a laissée inachevée.",
                 },
                 demo: NONE_PLUMBING,
                 files: ["android/app/src/main/java/ca/erplibre/home/streamdeck/transport"],
+                tests: [
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/transport/TransportV1Test.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/transport/TransportV2Test.java",
+                ],
             },
             {
                 id: "streamdeck.lifecycle-service",
@@ -820,6 +1106,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/streamDeckCameraStreamer.ts",
                     "src/components/options/camera_stream/options_camera_stream_component.ts",
                     "src/components/options/camera_stream/options_camera_stream_component.scss",
+                ],
+                tests: [
+                    "src/__tests__/sleepCameraPanelsI18n.test.ts",
                 ],
             },
             {
@@ -917,12 +1206,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(persisted localStorage), reader-mode dropdown (request/bulk/polled), "
                         + "bezel-gap sliders for the camera-stream cover-fit, and a manual "
                         + "restart button that triggers restartSessions to recover from the "
-                        + "post-sleep silent-reader state.",
+                        + "post-sleep silent-reader state. A deck whose info carries "
+                        + "controlPipeOk false shows a line saying brightness and key "
+                        + "clearing are off until it answers again, and that a "
+                        + "replug restores them.",
                     fr: "Panel Owl listant chaque deck connecté avec : slider brightness "
                         + "(persisté localStorage), dropdown reader-mode (request/bulk/polled), "
                         + "sliders gap de bezels pour le cover-fit camera-stream, et un bouton "
                         + "restart manuel qui déclenche restartSessions pour récupérer du state "
-                        + "reader-silencieux post-sleep.",
+                        + "reader-silencieux post-sleep. Un deck dont les infos portent "
+                        + "controlPipeOk faux affiche une ligne disant que luminosité et "
+                        + "effacement des touches sont coupés jusqu'à ce qu'il réponde "
+                        + "de nouveau, et qu'un rebranchement les rétablit.",
                 },
                 dependsOn: [
                     "streamdeck.controller",
@@ -933,6 +1228,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/options/streamdeck/options_streamdeck_component.ts",
                     "src/components/options/streamdeck/options_streamdeck_component.scss",
                 ],
+                tests: ["src/__tests__/streamDeckPanelI18n.test.ts"],
             },
         ],
     },
@@ -1114,7 +1410,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "component fires STREAMDECK_GALLERY_PAGE_ACTIVE "
                         + "with the current image list (URLs + indices). "
                         + "The controller flips into remote mode: keys "
-                        + "0..N-4 paint a JPEG thumbnail per slot (loaded "
+                        + "0..N-4 paint a thumbnail per slot (JPEG, PNG on "
+                        + "the BMP decks; loaded "
                         + "via <img> + canvas cover-crop), and the last "
                         + "three keys become prev / next / back. Pressing "
                         + "a thumb fires STREAMDECK_GALLERY_OPEN with the "
@@ -1123,14 +1420,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "navigates to /applications on a second press. When "
                         + "the page unmounts, the deck repaints its "
                         + "default Note + Galerie surface. Outside the "
-                        + "gallery page, key 5 sits below the Note key "
-                        + "as a permanent shortcut to /options/gallery.",
+                        + "gallery page, the key directly below the Note "
+                        + "key (5 on a 5x3 deck, 8 on the XL; the last key "
+                        + "on the Mini) is a permanent shortcut to "
+                        + "/applications/gallery.",
                     fr: "Quand la page galerie est montée, le composant "
                         + "Owl émet STREAMDECK_GALLERY_PAGE_ACTIVE avec "
                         + "la liste d'images (URLs + index). Le "
                         + "contrôleur bascule en mode télécommande : "
-                        + "touches 0..N-4 affichent une miniature JPEG "
-                        + "par tuile (chargée via <img> + canvas crop "
+                        + "touches 0..N-4 affichent une miniature (JPEG, "
+                        + "PNG sur les decks BMP) par tuile (chargée via "
+                        + "<img> + canvas crop "
                         + "cover), les 3 dernières touches deviennent "
                         + "préc / suiv / retour. Une miniature pressée "
                         + "émet STREAMDECK_GALLERY_OPEN avec l'index "
@@ -1139,8 +1439,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "navigue à /applications à la 2e pression. Au "
                         + "démontage, le deck repeint sa surface "
                         + "Note + Galerie par défaut. Hors page "
-                        + "galerie, la touche 5 reste un raccourci "
-                        + "permanent vers /options/gallery.",
+                        + "galerie, la touche juste sous Note (5 sur un "
+                        + "deck 5x3, 8 sur le XL ; la dernière sur le "
+                        + "Mini) reste un raccourci permanent vers "
+                        + "/applications/gallery.",
                 },
                 dependsOn: ["gallery.page", "streamdeck.controller"],
                 demo: { kind: "route", url: "/applications/gallery" },
@@ -1903,7 +2205,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                       fr: "Batterie : draine proportionnel au temps écran allumé." },
                 ],
                 howItWorks: {
-                    en: "Two independent toggles, each persisted in "
+                    en: "Two toggles, each persisted in "
                         + "localStorage and re-applied on boot. "
                         + "(1) Empêcher la mise en veille — KeepAwakePlugin "
                         + "sets FLAG_KEEP_SCREEN_ON on the activity window, "
@@ -1914,14 +2216,27 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "calls StreamDeckPlugin.setWakeOnKeyPress(true) "
                         + "which arms a native keyPressHook in DeckSession. "
                         + "When a key is pressed while MainActivity is "
-                        + "paused, the plugin acquires SCREEN_BRIGHT_WAKE_LOCK | "
-                        + "ACQUIRE_CAUSES_WAKEUP and starts the launch intent "
-                        + "with REORDER_TO_FRONT. MainActivity's "
-                        + "setShowWhenLocked / setTurnScreenOn (or the "
-                        + "FLAG_SHOW_WHEN_LOCKED window flag on pre-27) lets "
-                        + "it cover the lockscreen so the user lands on the "
-                        + "live UI.",
-                    fr: "Deux toggles indépendants, persistés en "
+                        + "paused, the plugin starts the launch intent with "
+                        + "REORDER_TO_FRONT if the screen is lit already or "
+                        + "the Stream Deck showOverLockScreen power option is "
+                        + "on; only that option makes it acquire "
+                        + "SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP "
+                        + "and show the app over the lock screen. Without "
+                        + "it a screen that is off stays off and the press "
+                        + "arrives as keyChanged only "
+                        + "(DeckPowerOptions.bringAppForwardOnKeyPress, "
+                        + "wakeScreenOnKeyPress). A "
+                        + "press reaches the reader with the screen off "
+                        + "reliably only with keepAwake (see "
+                        + "streamdeck.power-options). Hence toggle (2) is "
+                        + "coupled to keepAwake by deckSleepCoupling: turning "
+                        + "(2) on turns keepAwake on, turning keepAwake off "
+                        + "turns (2) off. App boot (restoreDeckSleepAtBoot) "
+                        + "arms the plugin from storage, except (2) stored "
+                        + "on with keepAwake off: boot turns (2) off, never "
+                        + "keepAwake on, and writes one Stream Deck journal "
+                        + "line saying so.",
+                    fr: "Deux toggles, persistés en "
                         + "localStorage et réappliqués au boot. "
                         + "(1) Empêcher la mise en veille — KeepAwakePlugin "
                         + "pose FLAG_KEEP_SCREEN_ON sur la window de "
@@ -1933,26 +2248,47 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "appelle StreamDeckPlugin.setWakeOnKeyPress(true) "
                         + "qui arme un keyPressHook natif dans "
                         + "DeckSession. Sur pression touche pendant que "
-                        + "MainActivity est en pause, le plugin acquiert "
-                        + "SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP "
-                        + "et lance l'intent avec REORDER_TO_FRONT. Le "
-                        + "setShowWhenLocked / setTurnScreenOn de "
-                        + "MainActivity (ou FLAG_SHOW_WHEN_LOCKED window "
-                        + "flag sur pre-27) lui permet de couvrir l'écran "
-                        + "verrouillé pour que l'utilisateur retrouve l'UI "
-                        + "vivante.",
+                        + "MainActivity est en pause, le plugin lance "
+                        + "l'intent avec REORDER_TO_FRONT si l'écran est déjà "
+                        + "allumé ou si l'option showOverLockScreen du Stream "
+                        + "Deck est activée ; seule cette option lui fait "
+                        + "acquérir SCREEN_BRIGHT_WAKE_LOCK | "
+                        + "ACQUIRE_CAUSES_WAKEUP et montrer l'application "
+                        + "par-dessus l'écran verrouillé. Sans elle, un écran "
+                        + "éteint le reste et la touche n'arrive qu'en "
+                        + "keyChanged (DeckPowerOptions.bringAppForwardOnKeyPress, "
+                        + "wakeScreenOnKeyPress). "
+                        + "Une pression n'atteint le lecteur "
+                        + "écran éteint de façon fiable qu'avec keepAwake (voir "
+                        + "streamdeck.power-options). Le toggle (2) est donc lié "
+                        + "à keepAwake par deckSleepCoupling : cocher (2) coche "
+                        + "keepAwake, décocher keepAwake décoche (2). Le "
+                        + "démarrage (restoreDeckSleepAtBoot) arme le plugin "
+                        + "depuis le stockage, sauf (2) enregistré coché avec "
+                        + "keepAwake désactivé : le démarrage décoche (2), "
+                        + "sans jamais cocher keepAwake, et l'écrit sur une "
+                        + "ligne du journal du Stream Deck.",
                 },
                 demo: { kind: "options", sectionId: "keep-awake" },
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/KeepAwakePlugin.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/StreamDeckPlugin.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckSession.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/DeckPowerOptions.java",
                     "android/app/src/main/java/ca/erplibre/home/MainActivity.java",
                     "src/plugins/keepAwakePlugin.ts",
                     "src/services/streamDeckController.ts",
+                    "src/services/deckSleepCoupling.ts",
                     "src/components/options/keep_awake/options_keep_awake_component.ts",
+                    "src/js/app.ts",
                 ],
-                tests: ["src/__tests__/keepAwakePlugin.test.ts"],
+                tests: [
+                    "src/__tests__/keepAwakePlugin.test.ts",
+                    "src/__tests__/deckSleepCoupling.test.ts",
+                    "src/__tests__/deckSleepPanels.test.ts",
+                    "src/__tests__/sleepCameraPanelsI18n.test.ts",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/DeckPowerOptionsTest.java",
+                ],
             },
             {
                 id: "system.device-info",

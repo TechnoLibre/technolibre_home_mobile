@@ -76,8 +76,17 @@ export class IntentService {
     return ["text", "image", "video"].includes(broadType);
   }
 
+  /** Route a pending share to /intent/<type>. The plugin rejects every
+   *  launch that is not a share ("No processing needed"), so a rejection
+   *  means no pending intent; the constructor does not await this call,
+   *  so nothing else would catch it. */
   private async listenForIntents(): Promise<void> {
-    const value: Intent = await SendIntent.checkSendIntentReceived();
+    let value: Intent;
+    try {
+      value = await SendIntent.checkSendIntentReceived();
+    } catch {
+      return;
+    }
 
     if (!value || !value.type) {
       return;
