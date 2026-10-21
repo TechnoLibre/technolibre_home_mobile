@@ -452,7 +452,10 @@ verrouillé, l'app ne tient pas l'écran tant que la confirmation est
 affichée : déverrouiller la laisse donc en état de répondre. Elle ne le
 tient pas non plus quand elle le partage (écran partagé, fenêtres libres) :
 la confirmation peut rester affichée dans une autre fenêtre pendant que
-l'app a le focus, si bien que l'attente y court ses 30 s.
+l'app a le focus, si bien que l'attente y court ses 30 s. L'écran que
+l'app prend d'elle-même sur un appui de touche (`setWakeOnKeyPress`) ne
+compte pas non plus, jusqu'à sa prochaine pause : ce lancement peut couvrir
+la confirmation d'un autre deck, sans réponse.
 
 Chaque retour au premier plan ouvre tout deck permis que rien ne tient :
 celui dont la permission est arrivée après l'abandon de son branchement,

@@ -101,4 +101,26 @@ public class FocusSpanTest {
         assertEquals(-1, span.settledSince(100 + SETTLE));
         assertEquals(3_000, span.settledSince(3_000 + SETTLE));
     }
+
+    @Test
+    public void a_raise_by_the_app_starts_no_span_until_the_next_pause() {
+        // The wake on key press brings the app over a confirmation still
+        // unanswered: holding the screen then says nothing about it.
+        span.resumed(false, 50);
+        span.raisedByApp();
+        assertFalse(span.resumed(true, 100));
+        assertFalse(span.focused(true, 100));
+        assertEquals(-1, span.settledSince(100 + SETTLE));
+        span.resumed(false, 2_000);
+        assertTrue(span.resumed(true, 3_000));
+        assertEquals(3_000, span.settledSince(3_000 + SETTLE));
+    }
+
+    @Test
+    public void a_raise_by_the_app_ends_a_running_span() {
+        span.resumed(true, 100);
+        span.focused(true, 100);
+        span.raisedByApp();
+        assertEquals(-1, span.settledSince(100 + SETTLE));
+    }
 }

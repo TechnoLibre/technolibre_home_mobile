@@ -14,7 +14,9 @@ package ca.erplibre.home.streamdeck;
  * covers the instants between an unlock, or a plug, and the confirmation
  * taking the focus. In multi-window mode the confirmation can sit in
  * another window, still answerable, while the app is resumed and focused:
- * a shared screen holds no span.
+ * a shared screen holds no span. Nor does a screen the app took by itself
+ * ({@link #raisedByApp}): brought over a confirmation, it hides that
+ * confirmation unanswered.
  */
 final class FocusSpan {
 
@@ -24,6 +26,8 @@ final class FocusSpan {
     private boolean resumed;
     private boolean focused;
     private boolean shared;
+    /** The app brought itself forward since its last pause. */
+    private boolean raised;
     /** When resumed and focused both became true; -1 while either is not. */
     private long since = -1;
 
@@ -31,6 +35,7 @@ final class FocusSpan {
      *  when this starts a span, which the caller checks SETTLE_MS later. */
     synchronized boolean resumed(boolean value, long now) {
         resumed = value;
+        if (!value) raised = false;
         return update(now);
     }
 
@@ -49,6 +54,13 @@ final class FocusSpan {
         return update(now);
     }
 
+    /** The app starts its own activity, over whatever holds the screen:
+     *  no span until its next pause, which a return by the user follows. */
+    synchronized void raisedByApp() {
+        raised = true;
+        since = -1;
+    }
+
     /** The instant the current span began once it lasted SETTLE_MS by
      *  {@code now}; -1 with no span or a younger one. */
     synchronized long settledSince(long now) {
@@ -56,7 +68,7 @@ final class FocusSpan {
     }
 
     private boolean update(long now) {
-        if (!(resumed && focused) || shared) {
+        if (!(resumed && focused) || shared || raised) {
             since = -1;
             return false;
         }

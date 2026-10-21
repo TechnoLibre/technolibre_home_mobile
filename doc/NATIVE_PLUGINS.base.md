@@ -784,7 +784,10 @@ next comes from a new plug or that button. With the phone locked, the app
 does not hold the screen while the confirmation is up, so unlocking leaves
 it answerable. Nor does it while it shares the screen (split screen,
 freeform windows): the confirmation can stay up in another window while the
-app is focused, so the wait runs its 30 s there.
+app is focused, so the wait runs its 30 s there. Nor does the screen the
+app takes by itself on a deck key press (`setWakeOnKeyPress`) count, until
+its next pause: that launch can cover the confirmation of another deck,
+unanswered.
 
 Each resume opens every permitted deck that nothing holds: one whose
 permission came after its attach gave up, or whose automatic reopen was
@@ -956,7 +959,10 @@ verrouillé, l'app ne tient pas l'écran tant que la confirmation est
 affichée : déverrouiller la laisse donc en état de répondre. Elle ne le
 tient pas non plus quand elle le partage (écran partagé, fenêtres libres) :
 la confirmation peut rester affichée dans une autre fenêtre pendant que
-l'app a le focus, si bien que l'attente y court ses 30 s.
+l'app a le focus, si bien que l'attente y court ses 30 s. L'écran que
+l'app prend d'elle-même sur un appui de touche (`setWakeOnKeyPress`) ne
+compte pas non plus, jusqu'à sa prochaine pause : ce lancement peut couvrir
+la confirmation d'un autre deck, sans réponse.
 
 Chaque retour au premier plan ouvre tout deck permis que rien ne tient :
 celui dont la permission est arrivée après l'abandon de son branchement,

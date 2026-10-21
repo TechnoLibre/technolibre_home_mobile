@@ -51,3 +51,7 @@ Plus, Neo.
 - [ ] Split screen, the app in one pane: replug, then tap the app's pane
       while the dialog shows in the other: no journal line before 30 s;
       accept the dialog: the deck lights.
+- [ ] Two decks, "Keep the Stream Deck lit during sleep" and "Let the deck
+      turn the screen on…" on: one open, lock the phone, plug the other,
+      press a key on the first: the app shows over the lock screen; no
+      journal line for the second before 30 s.

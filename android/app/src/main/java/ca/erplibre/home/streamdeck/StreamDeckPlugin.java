@@ -1261,7 +1261,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             // marks the launch as the deck's: MainActivity shows over the
             // keyguard only for such a launch, and only with the
             // showOverLockScreen option; without it, a launch over a lit
-            // lock screen stays behind the keyguard.
+            // lock screen stays behind the keyguard. The launch may cover
+            // the USB confirmation of another deck, unanswered: focusSpan
+            // ignores the screen it takes until the next pause.
             Intent i = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
             if (i != null) {
                 i.putExtra(DeckPowerOptions.EXTRA_DECK_WAKE, true);
@@ -1269,6 +1271,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                          | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                          | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                 ctx.startActivity(i);
+                focusSpan.raisedByApp();
             }
         } catch (Throwable t) {
             Log.w(TAG, "wake-on-press failed: " + t.getMessage());

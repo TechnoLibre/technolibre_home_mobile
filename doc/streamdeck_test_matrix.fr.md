@@ -57,3 +57,8 @@ Plus, Neo.
       le volet de l'application pendant que le dialogue s'affiche dans
       l'autre : aucune ligne au journal avant 30 s ; accepter le dialogue :
       le deck s'allume.
+- [ ] Deux decks, « Garder le Stream Deck allumé en veille » et « Laisser le
+      deck allumer l'écran… » activés : l'un ouvert, verrouiller le
+      téléphone, brancher l'autre, appuyer sur une touche du premier :
+      l'application s'affiche sur l'écran verrouillé ; aucune ligne au
+      journal pour le second avant 30 s.

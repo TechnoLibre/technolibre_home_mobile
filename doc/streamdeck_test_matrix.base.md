@@ -56,6 +56,10 @@ Plus, Neo.
 - [ ] Split screen, the app in one pane: replug, then tap the app's pane
       while the dialog shows in the other: no journal line before 30 s;
       accept the dialog: the deck lights.
+- [ ] Two decks, "Keep the Stream Deck lit during sleep" and "Let the deck
+      turn the screen on…" on: one open, lock the phone, plug the other,
+      press a key on the first: the app shows over the lock screen; no
+      journal line for the second before 30 s.
 
 <!-- [fr] -->
 # Stream Deck Mobile — Matrice de tests matériels
@@ -116,3 +120,8 @@ Plus, Neo.
       le volet de l'application pendant que le dialogue s'affiche dans
       l'autre : aucune ligne au journal avant 30 s ; accepter le dialogue :
       le deck s'allume.
+- [ ] Deux decks, « Garder le Stream Deck allumé en veille » et « Laisser le
+      deck allumer l'écran… » activés : l'un ouvert, verrouiller le
+      téléphone, brancher l'autre, appuyer sur une touche du premier :
+      l'application s'affiche sur l'écran verrouillé ; aucune ligne au
+      journal pour le second avant 30 s.
