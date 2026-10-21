@@ -53,3 +53,7 @@ Plus, Neo.
       second dialogue, à ce retour ni aux suivants ; en 1 s environ le journal
       nomme le bouton de demande de permission, qui affiche un dialogue et
       allume le deck une fois la permission accordée.
+- [ ] Écran partagé, l'application dans un volet : rebrancher, puis toucher
+      le volet de l'application pendant que le dialogue s'affiche dans
+      l'autre : aucune ligne au journal avant 30 s ; accepter le dialogue :
+      le deck s'allume.

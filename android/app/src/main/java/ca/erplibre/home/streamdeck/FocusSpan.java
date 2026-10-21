@@ -1,16 +1,20 @@
 package ca.erplibre.home.streamdeck;
 
 /**
- * How long the app has held the screen: resumed and its window focused,
- * both at once. Free of Android types, every method holds the instance
- * monitor, and times are the caller's monotonic milliseconds.
+ * How long the app has held the screen: resumed, its window focused, and
+ * alone on the screen, all at once. Free of Android types, every method
+ * holds the instance monitor, and times are the caller's monotonic
+ * milliseconds.
  *
- * Android's USB confirmation is an activity of its own: while it is up,
- * the app is paused or its window has lost focus, on a locked phone as
- * after an unlock. A span that lasted {@link #SETTLE_MS} therefore means
- * that confirmation is gone, answered or dismissed, for every wait started
- * before the span began. The delay covers the instants between an unlock,
- * or a plug, and the confirmation taking the focus.
+ * Android's USB confirmation is an activity of its own: while it is up
+ * and the app fills the screen, the app is paused or its window has lost
+ * focus, on a locked phone as after an unlock. A span that lasted
+ * {@link #SETTLE_MS} therefore means that confirmation is gone, answered
+ * or dismissed, for every wait started before the span began. The delay
+ * covers the instants between an unlock, or a plug, and the confirmation
+ * taking the focus. In multi-window mode the confirmation can sit in
+ * another window, still answerable, while the app is resumed and focused:
+ * a shared screen holds no span.
  */
 final class FocusSpan {
 
@@ -19,6 +23,7 @@ final class FocusSpan {
 
     private boolean resumed;
     private boolean focused;
+    private boolean shared;
     /** When resumed and focused both became true; -1 while either is not. */
     private long since = -1;
 
@@ -36,6 +41,14 @@ final class FocusSpan {
         return update(now);
     }
 
+    /** The app's window shares the screen with others (true, multi-window
+     *  mode) or fills it (false) at {@code now}; true when this starts a
+     *  span. */
+    synchronized boolean shared(boolean value, long now) {
+        shared = value;
+        return update(now);
+    }
+
     /** The instant the current span began once it lasted SETTLE_MS by
      *  {@code now}; -1 with no span or a younger one. */
     synchronized long settledSince(long now) {
@@ -43,7 +56,7 @@ final class FocusSpan {
     }
 
     private boolean update(long now) {
-        if (!(resumed && focused)) {
+        if (!(resumed && focused) || shared) {
             since = -1;
             return false;
         }

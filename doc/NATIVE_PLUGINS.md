@@ -442,7 +442,9 @@ before then fails `permission_missing` at once
 permission button. No dialog follows, on that resume or a later one: the
 next comes from a new plug or that button. With the phone locked, the app
 does not hold the screen while the confirmation is up, so unlocking leaves
-it answerable.
+it answerable. Nor does it while it shares the screen (split screen,
+freeform windows): the confirmation can stay up in another window while the
+app is focused, so the wait runs its 30 s there.
 
 Each resume opens every permitted deck that nothing holds: one whose
 permission came after its attach gave up, or whose automatic reopen was

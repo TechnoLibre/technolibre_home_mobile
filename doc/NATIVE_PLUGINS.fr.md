@@ -449,7 +449,10 @@ commencée avant échoue aussitôt `permission_missing`
 de permission. Aucun dialogue ne suit, à ce retour ni aux suivants : le
 prochain vient d'un nouveau branchement ou de ce bouton. Téléphone
 verrouillé, l'app ne tient pas l'écran tant que la confirmation est
-affichée : déverrouiller la laisse donc en état de répondre.
+affichée : déverrouiller la laisse donc en état de répondre. Elle ne le
+tient pas non plus quand elle le partage (écran partagé, fenêtres libres) :
+la confirmation peut rester affichée dans une autre fenêtre pendant que
+l'app a le focus, si bien que l'attente y court ses 30 s.
 
 Chaque retour au premier plan ouvre tout deck permis que rien ne tient :
 celui dont la permission est arrivée après l'abandon de son branchement,

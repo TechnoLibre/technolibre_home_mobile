@@ -48,3 +48,6 @@ Plus, Neo.
       dialog, on that return or a later one; within about 1 s the journal
       names the request permission button, which shows one dialog and
       lights the deck once granted.
+- [ ] Split screen, the app in one pane: replug, then tap the app's pane
+      while the dialog shows in the other: no journal line before 30 s;
+      accept the dialog: the deck lights.

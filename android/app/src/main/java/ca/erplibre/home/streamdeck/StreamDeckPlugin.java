@@ -135,15 +135,18 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      *  while the user is already looking at the app. */
     private static volatile boolean activityPaused = false;
 
-    /** How long the app has held the screen, resumed and focused; fed on
-     *  the main thread by handleOnResume, handleOnPause and focusWatch. */
+    /** How long the app has held the screen, resumed, focused and alone
+     *  on it; fed on the main thread by handleOnResume, handleOnPause,
+     *  focusWatch and endWaitsOfGoneConfirm. */
     private final FocusSpan focusSpan = new FocusSpan();
     /** Ends the hotplug waits whose system confirmation is gone. */
     private final Runnable confirmCheck = this::endWaitsOfGoneConfirm;
     /** Window focus changes of the activity, into focusSpan; registered
      *  in load(). */
-    private final ViewTreeObserver.OnWindowFocusChangeListener focusWatch =
-        hasFocus -> onFocusSpan(focusSpan.focused(hasFocus, SystemClock.elapsedRealtime()));
+    private final ViewTreeObserver.OnWindowFocusChangeListener focusWatch = hasFocus -> {
+        long now = SystemClock.elapsedRealtime();
+        onFocusSpan(focusSpan.shared(inMultiWindow(), now) | focusSpan.focused(hasFocus, now));
+    };
 
     /** keyChanged goes through here: held while no JS key handler has
      *  said it listens (keyListenerReady), delivered once one has. A
@@ -250,6 +253,14 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         else vto.removeOnWindowFocusChangeListener(focusWatch);
     }
 
+    /** True while the activity shares the screen (split screen, freeform
+     *  windows): there the system's confirmation can stay up in another
+     *  window while the app is resumed and focused. */
+    private boolean inMultiWindow() {
+        android.app.Activity activity = getActivity();
+        return activity != null && activity.isInMultiWindowMode();
+    }
+
     /** A span of focusSpan {@code started}: endWaitsOfGoneConfirm runs once
      *  it may have lasted FocusSpan.SETTLE_MS. */
     private void onFocusSpan(boolean started) {
@@ -268,11 +279,16 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * button. No dialog follows: the next comes from a new plug or that
      * button. A wait started during the span keeps waiting, its
      * confirmation possibly not up yet; with a locked phone, the app does
-     * not hold the screen while the confirmation is still up.
+     * not hold the screen while the confirmation is still up. Nor does it
+     * in multi-window mode (inMultiWindow), read on each resume and focus
+     * change and again here: a span that began on a full screen ends once
+     * the app shares it.
      */
     private void endWaitsOfGoneConfirm() {
         if (permissions == null) return;
-        long since = focusSpan.settledSince(SystemClock.elapsedRealtime());
+        long now = SystemClock.elapsedRealtime();
+        onFocusSpan(focusSpan.shared(inMultiWindow(), now));
+        long since = focusSpan.settledSince(now);
         if (since < 0) return;
         permissions.confirmGone(since);
     }
@@ -293,7 +309,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     @Override
     protected void handleOnResume() {
         activityPaused = false;
-        onFocusSpan(focusSpan.resumed(true, SystemClock.elapsedRealtime()));
+        long now = SystemClock.elapsedRealtime();
+        onFocusSpan(focusSpan.shared(inMultiWindow(), now) | focusSpan.resumed(true, now));
         super.handleOnResume();
         runOffMain("deck-resume", () -> {
             if (permissions == null || usb == null) return;

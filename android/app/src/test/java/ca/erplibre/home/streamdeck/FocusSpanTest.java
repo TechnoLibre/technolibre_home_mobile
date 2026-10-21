@@ -73,4 +73,32 @@ public class FocusSpanTest {
         assertFalse(span.focused(true, 100));
         assertEquals(-1, span.settledSince(100 + SETTLE));
     }
+
+    @Test
+    public void a_shared_screen_starts_no_span() {
+        // In multi-window mode the confirmation can sit in another window,
+        // answerable, while the app is resumed and focused.
+        assertFalse(span.shared(true, 90));
+        assertFalse(span.resumed(true, 100));
+        assertFalse(span.focused(true, 100));
+        assertEquals(-1, span.settledSince(100 + SETTLE));
+    }
+
+    @Test
+    public void sharing_the_screen_ends_the_span() {
+        span.resumed(true, 100);
+        span.focused(true, 100);
+        assertFalse(span.shared(true, 150));
+        assertEquals(-1, span.settledSince(100 + SETTLE));
+    }
+
+    @Test
+    public void the_full_screen_back_starts_a_span_from_its_own_instant() {
+        span.shared(true, 50);
+        span.resumed(true, 100);
+        span.focused(true, 100);
+        assertTrue(span.shared(false, 3_000));
+        assertEquals(-1, span.settledSince(100 + SETTLE));
+        assertEquals(3_000, span.settledSince(3_000 + SETTLE));
+    }
 }

@@ -53,6 +53,9 @@ Plus, Neo.
       dialog, on that return or a later one; within about 1 s the journal
       names the request permission button, which shows one dialog and
       lights the deck once granted.
+- [ ] Split screen, the app in one pane: replug, then tap the app's pane
+      while the dialog shows in the other: no journal line before 30 s;
+      accept the dialog: the deck lights.
 
 <!-- [fr] -->
 # Stream Deck Mobile — Matrice de tests matériels
@@ -109,3 +112,7 @@ Plus, Neo.
       second dialogue, à ce retour ni aux suivants ; en 1 s environ le journal
       nomme le bouton de demande de permission, qui affiche un dialogue et
       allume le deck une fois la permission accordée.
+- [ ] Écran partagé, l'application dans un volet : rebrancher, puis toucher
+      le volet de l'application pendant que le dialogue s'affiche dans
+      l'autre : aucune ligne au journal avant 30 s ; accepter le dialogue :
+      le deck s'allume.

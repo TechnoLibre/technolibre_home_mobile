@@ -782,7 +782,9 @@ before then fails `permission_missing` at once
 permission button. No dialog follows, on that resume or a later one: the
 next comes from a new plug or that button. With the phone locked, the app
 does not hold the screen while the confirmation is up, so unlocking leaves
-it answerable.
+it answerable. Nor does it while it shares the screen (split screen,
+freeform windows): the confirmation can stay up in another window while the
+app is focused, so the wait runs its 30 s there.
 
 Each resume opens every permitted deck that nothing holds: one whose
 permission came after its attach gave up, or whose automatic reopen was
@@ -951,7 +953,10 @@ commencée avant échoue aussitôt `permission_missing`
 de permission. Aucun dialogue ne suit, à ce retour ni aux suivants : le
 prochain vient d'un nouveau branchement ou de ce bouton. Téléphone
 verrouillé, l'app ne tient pas l'écran tant que la confirmation est
-affichée : déverrouiller la laisse donc en état de répondre.
+affichée : déverrouiller la laisse donc en état de répondre. Elle ne le
+tient pas non plus quand elle le partage (écran partagé, fenêtres libres) :
+la confirmation peut rester affichée dans une autre fenêtre pendant que
+l'app a le focus, si bien que l'attente y court ses 30 s.
 
 Chaque retour au premier plan ouvre tout deck permis que rien ne tient :
 celui dont la permission est arrivée après l'abandon de son branchement,
