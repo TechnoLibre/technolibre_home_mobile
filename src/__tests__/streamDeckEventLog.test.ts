@@ -186,6 +186,20 @@ describe("streamDeckEventLog", () => {
             expect(texts.size).toBe(3);
         });
 
+        it.each([
+            ["en", en, "dialog"],
+            ["fr", fr, "dialogue"],
+        ] as const)("%s: a missing grant names the button before any dialog", (locale, dict, word) => {
+            // The line also follows a system confirmation cancelled, which
+            // does not come back: the button is the remedy to read first.
+            stubLocale(locale);
+            const text = permissionDeniedText({ deckId: "", reason: "permission_missing" });
+            const button = text.indexOf(dict["streamdeck.request_permission"]);
+            const dialog = text.indexOf(word);
+            expect(button).toBeGreaterThanOrEqual(0);
+            if (dialog >= 0) expect(button).toBeLessThan(dialog);
+        });
+
         it("keeps any other reason as it came", () => {
             stubLocale("en");
             expect(permissionDeniedText({ deckId: "", reason: "open_failed:x" }))
