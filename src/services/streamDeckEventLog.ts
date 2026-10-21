@@ -6,7 +6,7 @@
  */
 
 import { t } from "../i18n";
-import type { ReattachGaveUpEvent } from "../plugins/streamDeckPlugin";
+import type { DeckLifecycleEvent, ReattachGaveUpEvent } from "../plugins/streamDeckPlugin";
 
 export interface StreamDeckEventLogEntry {
     ts: string;
@@ -70,4 +70,21 @@ export function reattachGaveUpText(ev: ReattachGaveUpEvent): string {
         attempts: ev.attempts,
         reason: ev.reason,
     });
+}
+
+/** i18n key of the journal line for each permissionDenied reason that the
+ *  request permission button remedies: no grant reached a hotplug attach
+ *  in time, the plugin's dialog got no answer, the user refused it. */
+const PERMISSION_DENIED_KEYS: Record<string, string> = {
+    [PERMISSION_MISSING]: "streamdeck.event_permission_missing",
+    permission_timeout: "streamdeck.event_permission_timeout",
+    permission_denied: "streamdeck.event_permission_denied",
+};
+
+/** Journal line of permissionDenied: for a permission reason, how to grant
+ *  it, in the user's language; any other reason as the plugin sent it. */
+export function permissionDeniedText(ev: DeckLifecycleEvent): string {
+    const key = ev.reason ? PERMISSION_DENIED_KEYS[ev.reason] : undefined;
+    if (key) return t(key, { button: t("streamdeck.request_permission") });
+    return `permissionDenied: ${ev.reason ?? "no reason"}`;
 }

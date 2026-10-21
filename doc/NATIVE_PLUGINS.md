@@ -372,7 +372,7 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 |-------|---------|
 | `deckConnected` | `{deckId, info, reason?}` |
 | `deckDisconnected` | `{deckId, reason}`. `reason` is `usb_lost` (unplugged), `usb_lost:<transfer detail>` (writes kept failing), `restart_requested`, `app_destroyed`, or a reader failure (`polled_reset`, `usb_request_…`, `bulk_read_threw:…`, `polled_threw:…`): match on the prefix. Sent once per deck, when its last session closes. |
-| `permissionDenied` | `{deckId, reason}` |
+| `permissionDenied` | `{deckId, reason}`. `reason` is `permission_missing` (no grant reached a hotplug attach within 30 s), `permission_timeout` (the plugin's dialog got no answer), `permission_denied`, or an open failure. The journal writes the first three as how to grant the permission. |
 | `keyChanged` | `{deckId, key, pressed}`. Held until `keyListenerReady`. |
 | `dialRotated` | `{deckId, dial, delta}` (Plus) |
 | `dialPressed` | `{deckId, dial, pressed}` (Plus) |
@@ -409,6 +409,55 @@ only the decks reported `sick`, through `restartSessions({deviceNames})`:
 a healthy session is never closed, and a deck waiting for its automatic
 reopen is left to it. A deck given up that opens again by another path — the request
 permission button, a hotplug attach — gets its three attempts back too.
+
+### USB permission
+
+Android drops a deck's USB permission when it is unplugged. A permission
+request completes as soon as the permission is held, whichever path
+granted it: the plugin's dialog, or the confirmation Android raises for a
+device the manifest's `USB_DEVICE_ATTACHED` filter matches
+(`streamdeck_devices.xml`). The plugin checks every 500 ms while a request
+waits, on the attach intent and on each resume (`PermissionWaits`), so a
+grant never waits for the 30 s timeout.
+
+A hotplug attach shows no dialog of its own: Android already raises its
+confirmation for every known deck (`UsbDeviceFilterTest` keeps the filter
+equal to `DeckRegistry`), and of two dialogs at once the one left
+unanswered never replies. The attach waits for that grant 30 s at most,
+then sends `permissionDenied` with `permission_missing`; the attach intent,
+the next resume or the request permission button opens the deck
+afterwards. A deck unplugged during that wait ends it at once, without
+`permissionDenied`: a deck plugged back in starts a wait of its own. The plugin's
+dialog serves `requestPermission`, `requestPermissionForUsb` and the decks
+found plugged in when the app starts. The attach intent reaches the
+running activity (`singleTask`) and opens the deck it names, so ticking
+"always open" in that confirmation brings the deck back on every later
+replug without a dialog.
+
+A confirmation cancelled or dismissed ends that wait sooner. The
+confirmation takes the screen from the app; once the app holds it again,
+resumed with its window focused for 1 s (`FocusSpan`), a wait started
+before then fails `permission_missing` at once
+(`PermissionWaits.confirmGone`), and the journal names the request
+permission button. No dialog follows, on that resume or a later one: the
+next comes from a new plug or that button. With the phone locked, the app
+does not hold the screen while the confirmation is up, so unlocking leaves
+it answerable. Nor does it while it shares the screen (split screen,
+freeform windows): the confirmation can stay up in another window while the
+app is focused, so the wait runs its 30 s there. Nor does the screen the
+app takes by itself on a deck key press (`setWakeOnKeyPress`) count, until
+its next pause: that launch can cover the confirmation of another deck,
+unanswered.
+
+Each resume opens every permitted deck that nothing holds: one whose
+permission came after its attach gave up, or whose automatic reopen was
+given up for its permission. A deck given up after its reopens failed
+stays closed: opening it would give it three attempts again on every
+resume. So does a deck whose last attach failed to open it: the grant
+that completes a waiting attach also brings the attach intent and a
+resume, which would repeat that failure at once. The attach intent applies the same rule to the deck it names. A
+deck still without permission stays closed: its `permissionDenied` line in
+the journal says how to grant it.
 
 ### Persistent identity
 

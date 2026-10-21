@@ -375,7 +375,7 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 |-------|---------|
 | `deckConnected` | `{deckId, info, reason?}` |
 | `deckDisconnected` | `{deckId, reason}`. `reason` vaut `usb_lost` (débranché), `usb_lost:<détail du transfert>` (les écritures échouaient de suite), `restart_requested`, `app_destroyed`, ou un échec du lecteur (`polled_reset`, `usb_request_…`, `bulk_read_threw:…`, `polled_threw:…`) : comparer le préfixe. Envoyé une fois par deck, quand sa dernière session se ferme. |
-| `permissionDenied` | `{deckId, reason}` |
+| `permissionDenied` | `{deckId, reason}`. `reason` vaut `permission_missing` (aucun accord n'a atteint un branchement en 30 s), `permission_timeout` (le dialogue du plugin est resté sans réponse), `permission_denied`, ou un échec d'ouverture. Le journal écrit les trois premiers comme la façon d'accorder la permission. |
 | `keyChanged` | `{deckId, key, pressed}`. Retenu jusqu'à `keyListenerReady`. |
 | `dialRotated` | `{deckId, dial, delta}` (Plus) |
 | `dialPressed` | `{deckId, dial, pressed}` (Plus) |
@@ -414,6 +414,60 @@ le fait que pour ces decks. Après plus de 5 s masquée, l'app appelle
 fermée, et un deck qui attend sa réouverture automatique lui est laissé. Un deck abandonné qui s'ouvre de nouveau
 par un autre chemin — le bouton de demande de permission, un branchement —
 retrouve lui aussi ses trois essais.
+
+### Permission USB
+
+Android retire la permission USB d'un deck quand on le débranche. Une
+demande de permission se termine dès que la permission est acquise, quel
+que soit le chemin qui l'a accordée : le dialogue du plugin, ou la
+confirmation qu'Android affiche pour un appareil que le filtre
+`USB_DEVICE_ATTACHED` du manifeste reconnaît (`streamdeck_devices.xml`).
+Le plugin vérifie toutes les 500 ms tant qu'une demande attend, à
+l'intent de branchement et à chaque retour au premier plan
+(`PermissionWaits`) : un accord n'attend jamais le délai de 30 s.
+
+Un branchement n'affiche aucun dialogue du plugin : Android affiche déjà
+sa confirmation pour chaque deck connu (`UsbDeviceFilterTest` garde le
+filtre égal à `DeckRegistry`), et de deux dialogues simultanés celui qui
+reste sans réponse ne répond jamais. Le branchement attend cet accord
+30 s au plus, puis envoie `permissionDenied` avec `permission_missing` ;
+l'intent de branchement, le retour suivant au premier plan ou le bouton de
+demande de permission ouvre ensuite le deck. Un deck débranché pendant
+cette attente y met fin aussitôt, sans `permissionDenied` : un deck
+rebranché commence une attente à lui. Le dialogue du plugin sert `requestPermission`,
+`requestPermissionForUsb` et les decks trouvés branchés au démarrage de
+l'app. L'intent
+de branchement atteint l'activité en cours (`singleTask`) et ouvre le deck
+qu'il nomme : cocher « toujours ouvrir » dans cette confirmation ramène le
+deck à chaque rebranchement, sans dialogue.
+
+Une confirmation annulée ou écartée termine cette attente plus tôt. La
+confirmation prend l'écran à l'app ; dès que l'app le reprend, au premier
+plan avec le focus de sa fenêtre pendant 1 s (`FocusSpan`), une attente
+commencée avant échoue aussitôt `permission_missing`
+(`PermissionWaits.confirmGone`), et le journal nomme le bouton de demande
+de permission. Aucun dialogue ne suit, à ce retour ni aux suivants : le
+prochain vient d'un nouveau branchement ou de ce bouton. Téléphone
+verrouillé, l'app ne tient pas l'écran tant que la confirmation est
+affichée : déverrouiller la laisse donc en état de répondre. Elle ne le
+tient pas non plus quand elle le partage (écran partagé, fenêtres libres) :
+la confirmation peut rester affichée dans une autre fenêtre pendant que
+l'app a le focus, si bien que l'attente y court ses 30 s. L'écran que
+l'app prend d'elle-même sur un appui de touche (`setWakeOnKeyPress`) ne
+compte pas non plus, jusqu'à sa prochaine pause : ce lancement peut couvrir
+la confirmation d'un autre deck, sans réponse.
+
+Chaque retour au premier plan ouvre tout deck permis que rien ne tient :
+celui dont la permission est arrivée après l'abandon de son branchement,
+ou dont la réouverture automatique a été abandonnée faute de permission.
+Un deck abandonné après l'échec de ses réouvertures reste fermé : l'ouvrir
+lui rendrait trois essais à chaque retour. De même pour un deck dont le
+dernier branchement a échoué à l'ouvrir : l'accord qui termine un
+branchement en attente amène aussi l'intent de branchement et un retour,
+qui répéteraient aussitôt cet échec. L'intent de branchement suit la
+même règle pour le deck qu'il nomme. Un deck toujours sans permission
+reste fermé : sa ligne `permissionDenied` au journal dit comment
+l'accorder.
 
 ### Identité persistante
 

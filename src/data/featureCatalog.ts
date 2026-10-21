@@ -703,8 +703,22 @@ export const FEATURE_TREE: FeatureNode[] = [
                 howItWorks: {
                     en: "UsbHotplugReceiver listens for ACTION_USB_DEVICE_ATTACHED / DETACHED "
                         + "intents from the OS. UsbPermissionRequester wraps the per-device "
-                        + "PendingIntent flow: first attach prompts the user; the grant is "
-                        + "sticky per Android session. Detach closes the DeckSession after "
+                        + "PendingIntent flow; Android drops the grant on unplug. A request "
+                        + "completes as soon as UsbManager reports the permission held, "
+                        + "whatever granted it (PermissionWaits: a 500 ms poll, the attach "
+                        + "intent, each resume), and the USB_DEVICE_ATTACHED intent sent "
+                        + "to the running activity opens the deck it names. A hotplug "
+                        + "attach shows no dialog of its own: it waits up to 30 s for the "
+                        + "confirmation Android raises through the manifest filter "
+                        + "(UsbDeviceFilterTest keeps it equal to DeckRegistry), then "
+                        + "fails permission_missing; a confirmation cancelled fails it "
+                        + "once the app holds the screen again, alone, for 1 s (FocusSpan, "
+                        + "PermissionWaits.confirmGone), with no second dialog. Each "
+                        + "resume opens every permitted deck nothing holds, except one given up after its reopens failed "
+                        + "or whose last attach failed to open it; "
+                        + "the journal writes permission_missing, "
+                        + "permission_timeout and permission_denied as how to grant it. "
+                        + "Detach closes the DeckSession after "
                         + "a 250 ms debounce. requestPermission (the Options "
                         + "\"Demander permission\" button) asks again for one deck or "
                         + "every attached one; PermissionRequestPlan picks the devices and "
@@ -724,8 +738,24 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(RestartReopen).",
                     fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
                         + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
-                        + "appareil : premier attach prompt l'utilisateur; l'autorisation est "
-                        + "sticky pour la session Android. Détach ferme la DeckSession après "
+                        + "appareil ; Android retire l'autorisation au débranchement. Une "
+                        + "demande se termine dès qu'UsbManager rapporte la permission "
+                        + "acquise, quel que soit le chemin (PermissionWaits : sondage aux "
+                        + "500 ms, intent de branchement, chaque retour au premier plan), et "
+                        + "l'intent USB_DEVICE_ATTACHED remis à l'activité en cours ouvre le "
+                        + "deck qu'il nomme. Un branchement n'affiche aucun dialogue du "
+                        + "plugin : il attend jusqu'à 30 s la confirmation qu'Android lève "
+                        + "par le filtre du manifeste (UsbDeviceFilterTest le garde égal à "
+                        + "DeckRegistry), puis échoue permission_missing ; une confirmation "
+                        + "annulée le fait échouer dès que l'app tient l'écran, seule, depuis 1 s "
+                        + "(FocusSpan, PermissionWaits.confirmGone), sans second dialogue. "
+                        + "Chaque retour au "
+                        + "premier plan ouvre tout deck permis que rien ne tient, sauf "
+                        + "celui abandonné après l'échec de ses réouvertures ou dont le "
+                        + "dernier branchement a échoué à l'ouvrir ; le journal "
+                        + "écrit permission_missing, permission_timeout et permission_denied "
+                        + "comme la façon de l'accorder. "
+                        + "Détach ferme la DeckSession après "
                         + "un anti-rebond de 250 ms. requestPermission "
                         + "(le bouton « Demander permission ») redemande pour un deck ou pour "
                         + "chaque deck branché ; PermissionRequestPlan choisit les appareils et "
@@ -750,6 +780,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbHotplugReceiver.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbPermissionRequester.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionTimeoutException.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionWaits.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/FocusSpan.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/PermissionRequestPlan.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachPolicy.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachTimers.java",
@@ -760,6 +792,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
                 tests: [
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/PermissionRequestPlanTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/usb/PermissionWaitsTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/FocusSpanTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/UsbDeviceFilterTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachPolicyTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachTimersTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/RestartReopenTest.java",

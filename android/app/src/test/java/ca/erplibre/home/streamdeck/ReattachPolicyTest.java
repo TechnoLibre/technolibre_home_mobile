@@ -361,4 +361,43 @@ public class ReattachPolicyTest {
         policy.registered(DEV);
         assertFalse(policy.reopening(DEV));
     }
+
+    // ── gaveUpReason: what a resume reads ───────────────────────────────
+
+    @Test
+    public void no_give_up_reason_before_the_attempts_are_spent() {
+        assertNull(policy.gaveUpReason(DEV));
+        Decision d = policy.closed(DEV, READER);
+        failAgain(d, READER);
+        assertNull(policy.gaveUpReason(DEV));
+    }
+
+    @Test
+    public void a_deck_given_up_after_its_failures_keeps_the_last_reason() {
+        Decision d = policy.closed(DEV, READER);
+        d = failAgain(d, READER);
+        d = failAgain(d, READER);
+        d = failAgain(d, WRITE);
+        assertEquals(Decision.Kind.GIVE_UP, d.kind);
+        assertEquals(WRITE, policy.gaveUpReason(DEV));
+    }
+
+    @Test
+    public void a_deck_given_up_for_its_permission_says_so() {
+        Decision d = policy.closed(DEV, READER);
+        clock.advance(d.delayMs);
+        assertTrue(policy.due(DEV, d.token));
+        policy.attachFailed(DEV, ReattachPolicy.PERMISSION_MISSING);
+        assertEquals(ReattachPolicy.PERMISSION_MISSING, policy.gaveUpReason(DEV));
+    }
+
+    @Test
+    public void a_deck_registered_again_is_no_longer_given_up() {
+        Decision d = policy.closed(DEV, READER);
+        d = failAgain(d, READER);
+        d = failAgain(d, READER);
+        failAgain(d, READER);
+        policy.registered(DEV);
+        assertNull(policy.gaveUpReason(DEV));
+    }
 }
