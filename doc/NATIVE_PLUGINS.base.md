@@ -766,7 +766,8 @@ equal to `DeckRegistry`), and of two dialogs at once the one left
 unanswered never replies. The attach waits for that grant 30 s at most,
 then sends `permissionDenied` with `permission_missing`; the attach intent,
 the next resume or the request permission button opens the deck
-afterwards. The plugin's
+afterwards. A deck unplugged during that wait ends it at once, without
+`permissionDenied`: a deck plugged back in starts a wait of its own. The plugin's
 dialog serves `requestPermission`, `requestPermissionForUsb` and the decks
 found plugged in when the app starts. The attach intent reaches the
 running activity (`singleTask`) and opens the deck it names, so ticking
@@ -918,7 +919,9 @@ filtre égal à `DeckRegistry`), et de deux dialogues simultanés celui qui
 reste sans réponse ne répond jamais. Le branchement attend cet accord
 30 s au plus, puis envoie `permissionDenied` avec `permission_missing` ;
 l'intent de branchement, le retour suivant au premier plan ou le bouton de
-demande de permission ouvre ensuite le deck. Le dialogue du plugin sert `requestPermission`,
+demande de permission ouvre ensuite le deck. Un deck débranché pendant
+cette attente y met fin aussitôt, sans `permissionDenied` : un deck
+rebranché commence une attente à lui. Le dialogue du plugin sert `requestPermission`,
 `requestPermissionForUsb` et les decks trouvés branchés au démarrage de
 l'app. L'intent
 de branchement atteint l'activité en cours (`singleTask`) et ouvre le deck

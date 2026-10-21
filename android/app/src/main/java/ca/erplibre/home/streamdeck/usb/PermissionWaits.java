@@ -28,7 +28,8 @@ import java.util.concurrent.CompletableFuture;
  * asked entry false unless the device holds the permission anyway, and
  * leaves an awaited one waiting. {@link #expire} fails an entry past its
  * deadline with a PermissionTimeoutException, TIMEOUT for an asked entry,
- * MISSING for an awaited one.
+ * MISSING for an awaited one. {@link #forget} ends the entry of a device
+ * unplugged meanwhile.
  *
  * Every method holds the instance monitor; futures complete after it is
  * released, since a completion runs its synchronous dependents on the
@@ -143,6 +144,20 @@ public final class PermissionWaits<D> {
         Entry<D> e;
         synchronized (this) { e = pending.remove(key); }
         if (e != null) e.future.complete(false);
+    }
+
+    /**
+     * The device of {@code key} was unplugged: its entry ends with a
+     * DeviceDetachedException, so it neither expires later nor shares its
+     * future with a device that comes back under the same name. False when
+     * no entry waits on it.
+     */
+    public boolean forget(String key) {
+        Entry<D> e;
+        synchronized (this) { e = pending.remove(key); }
+        if (e == null) return false;
+        e.future.completeExceptionally(new DeviceDetachedException());
+        return true;
     }
 
     /** Completes true every entry whose device now holds the permission;

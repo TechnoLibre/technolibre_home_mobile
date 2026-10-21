@@ -201,6 +201,45 @@ public class PermissionWaitsTest {
         assertTrue(waits.ask(KEY, DEV).showDialog);
     }
 
+    // ── the device leaves ───────────────────────────────────────────────
+
+    @Test
+    public void forgetting_a_device_ends_its_wait_as_detached() {
+        CompletableFuture<Boolean> f = waits.await(KEY, DEV);
+        assertTrue(waits.forget(KEY));
+        Throwable cause = failureOf(f);
+        assertTrue(cause instanceof DeviceDetachedException);
+        assertEquals(DeviceDetachedException.REASON, cause.getMessage());
+        assertTrue(waits.isEmpty());
+    }
+
+    @Test
+    public void a_forgotten_wait_never_expires_as_permission_missing() {
+        // Unplugged during the wait: the deadline must not report later on
+        // a deck that is gone.
+        CompletableFuture<Boolean> f = waits.await(KEY, DEV);
+        waits.forget(KEY);
+        now += TIMEOUT;
+        assertEquals(0, waits.expire());
+        assertTrue(failureOf(f) instanceof DeviceDetachedException);
+    }
+
+    @Test
+    public void a_device_back_under_the_same_name_gets_a_future_of_its_own() {
+        // Two attaches sharing one future would both open the device on
+        // the grant, and one would steal the interface from the other.
+        CompletableFuture<Boolean> before = waits.await(KEY, DEV);
+        waits.forget(KEY);
+        CompletableFuture<Boolean> after = waits.await(KEY, DEV);
+        assertNotSame(before, after);
+        assertFalse(after.isDone());
+    }
+
+    @Test
+    public void forgetting_a_device_with_no_wait_does_nothing() {
+        assertFalse(waits.forget(KEY));
+    }
+
     // ── shutdown ────────────────────────────────────────────────────────
 
     @Test

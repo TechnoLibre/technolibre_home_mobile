@@ -426,7 +426,8 @@ equal to `DeckRegistry`), and of two dialogs at once the one left
 unanswered never replies. The attach waits for that grant 30 s at most,
 then sends `permissionDenied` with `permission_missing`; the attach intent,
 the next resume or the request permission button opens the deck
-afterwards. The plugin's
+afterwards. A deck unplugged during that wait ends it at once, without
+`permissionDenied`: a deck plugged back in starts a wait of its own. The plugin's
 dialog serves `requestPermission`, `requestPermissionForUsb` and the decks
 found plugged in when the app starts. The attach intent reaches the
 running activity (`singleTask`) and opens the deck it names, so ticking

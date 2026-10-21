@@ -36,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 
 import ca.erplibre.home.streamdeck.encoder.ImageEncoder;
 import ca.erplibre.home.streamdeck.events.EventEmitter;
+import ca.erplibre.home.streamdeck.usb.DeviceDetachedException;
 import ca.erplibre.home.streamdeck.usb.UsbHotplugReceiver;
 import ca.erplibre.home.streamdeck.usb.UsbPermissionRequester;
 
@@ -404,9 +405,15 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         Executor opener = DeckOpenThread.choose(permitted.isDone(),
             Looper.myLooper() == Looper.getMainLooper());
         permitted.whenCompleteAsync((granted, err) -> {
+            if (causeOf(err) instanceof DeviceDetachedException) {
+                // The detach close job released the reservation already,
+                // and a device back under this name may hold a new one.
+                Log.i(TAG, "attach: " + name + " unplugged while waiting for its permission");
+                return;
+            }
             if (err != null || granted == null || !granted) {
                 registry.release(name);
-                String reason = err != null ? err.getMessage() : "permission_denied";
+                String reason = err != null ? causeOf(err).getMessage() : "permission_denied";
                 recordAttachError(name, reason);
                 applyReattach(name, "", reattach.attachFailed(name, reason));
                 JSObject ev = new JSObject();
@@ -455,6 +462,13 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         }, opener);
     }
 
+    /** {@code err} without the CompletionException a dependent stage
+     *  wraps it in; null stays null. */
+    private static Throwable causeOf(Throwable err) {
+        return err instanceof CompletionException && err.getCause() != null
+            ? err.getCause() : err;
+    }
+
     private void recordAttachError(String deviceName, String reason) {
         synchronized (lastAttachError) {
             lastAttachError.put(deviceName, reason);
@@ -483,9 +497,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             synchronized (pendingCloseJobs) { pendingCloseJobs.remove(name); }
             forgetReattach(name);
             restartReopen.forget(name);
-            // An attach still waiting on permission or open() for this
-            // device will fail to register and close what it opened.
+            // An attach still in open() for this device will fail to
+            // register and close what it opened; one still waiting for
+            // its permission ends quietly (DeviceDetachedException).
             registry.release(name);
+            if (permissions != null) permissions.forget(device);
             DeckSession session = registry.byDevice(name);
             if (session != null) {
                 Log.i(TAG, "onDeckDetached: closing session for " + name + " (debounce expired)");

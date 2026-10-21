@@ -144,6 +144,13 @@ public final class UsbPermissionRequester {
         return n;
     }
 
+    /** {@code device} was unplugged: a request still waiting on it ends
+     *  with DeviceDetachedException instead of expiring later. */
+    public void forget(UsbDevice device) {
+        String key = keyOf(device);
+        if (waits.forget(key)) Log.i(TAG, "forget: " + key + " detached while waiting");
+    }
+
     private void tick() {
         recheck();
         if (waits.expire() > 0) Log.w(TAG, "request: timeout");

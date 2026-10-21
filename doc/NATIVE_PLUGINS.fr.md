@@ -432,7 +432,9 @@ filtre égal à `DeckRegistry`), et de deux dialogues simultanés celui qui
 reste sans réponse ne répond jamais. Le branchement attend cet accord
 30 s au plus, puis envoie `permissionDenied` avec `permission_missing` ;
 l'intent de branchement, le retour suivant au premier plan ou le bouton de
-demande de permission ouvre ensuite le deck. Le dialogue du plugin sert `requestPermission`,
+demande de permission ouvre ensuite le deck. Un deck débranché pendant
+cette attente y met fin aussitôt, sans `permissionDenied` : un deck
+rebranché commence une attente à lui. Le dialogue du plugin sert `requestPermission`,
 `requestPermissionForUsb` et les decks trouvés branchés au démarrage de
 l'app. L'intent
 de branchement atteint l'activité en cours (`singleTask`) et ouvre le deck
