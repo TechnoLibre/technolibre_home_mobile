@@ -230,10 +230,13 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * permission, or whose retries were given up for its permission.
      * A deck given up after its reopens failed stays closed, since
      * reopening it would start its retries over on each resume, and so
-     * does a deck whose last attach failed to open it. A deck still without
-     * permission is left alone, since opening it would raise the dialog;
-     * its permissionDenied line says how to grant it. Off the main thread:
-     * opening a deck makes EP0 transfers.
+     * does a deck whose last attach failed to open it. A deck still
+     * without permission gets the plugin's dialog once if its hotplug
+     * attach only waited for the system's confirmation
+     * (ReattachPlan.askDecks): that confirmation was dismissed, and
+     * nothing else would ask. Any other deck without permission is left
+     * alone; its permissionDenied line says how to grant it. Off the main
+     * thread: opening a deck makes EP0 transfers.
      */
     @Override
     protected void handleOnResume() {
@@ -244,6 +247,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             permissions.recheck();
             List<String> opened = attachReturnDeckNames(null);
             if (!opened.isEmpty()) Log.i(TAG, "resume: opening idle deck(s) " + opened);
+            List<String> asked = askOwedDialogs();
+            if (!asked.isEmpty()) Log.i(TAG, "resume: asking the permission of " + asked);
         });
     }
 
@@ -345,7 +350,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * left unanswered never reports back. The attach waits for that grant
      * instead, 30 s at most; past that it fails permission_missing, and
      * the attach intent, the next resume or the request permission button
-     * opens the deck.
+     * opens the deck. A confirmation dismissed leaves the deck owing the
+     * plugin's dialog, which the next resume shows (handleOnResume).
      */
     @Override
     public void onDeckAttached(UsbDevice device) {
@@ -913,6 +919,25 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         Map<String, UsbDevice> attached = usb.getDeviceList();
         return attachEach(attached, ReattachPlan.returnDecks(seenOf(attached),
             registry::isBusy, reattach::gaveUpReason, this::lastAttachErrorOf, only));
+    }
+
+    /**
+     * The plugin's dialog for each of ReattachPlan.askDecks; returns their
+     * device names. The dialog comes first: a hotplug attach still waiting
+     * on the device shares its request and opens the deck on a grant.
+     * With no attach holding the device, one starts and joins that request.
+     */
+    private List<String> askOwedDialogs() {
+        Map<String, UsbDevice> attached = usb.getDeviceList();
+        List<String> names = new ArrayList<>();
+        for (PermissionRequestPlan.Device t : ReattachPlan.askDecks(seenOf(attached),
+                n -> permissions.owesDialog(attached.get(n)))) {
+            UsbDevice dev = attached.get(t.deviceName);
+            permissions.request(dev);
+            if (!registry.isBusy(t.deviceName)) attach(dev, true);
+            names.add(t.deviceName);
+        }
+        return names;
     }
 
     private List<PermissionRequestPlan.Device> seenOf(Map<String, UsbDevice> attached) {

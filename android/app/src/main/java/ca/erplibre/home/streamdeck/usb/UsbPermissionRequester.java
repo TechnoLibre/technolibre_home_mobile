@@ -144,6 +144,12 @@ public final class UsbPermissionRequester {
         return n;
     }
 
+    /** True while {@code device} was waited on without a dialog, and has
+     *  had neither a dialog nor a grant since; see PermissionWaits. */
+    public boolean owesDialog(UsbDevice device) {
+        return device != null && waits.owesDialog(keyOf(device));
+    }
+
     /** {@code device} was unplugged: a request still waiting on it ends
      *  with DeviceDetachedException instead of expiring later. */
     public void forget(UsbDevice device) {

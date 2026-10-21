@@ -240,6 +240,58 @@ public class PermissionWaitsTest {
         assertFalse(waits.forget(KEY));
     }
 
+    // ── the dialog a wait owes ──────────────────────────────────────────
+
+    @Test
+    public void a_wait_owes_the_dialog_until_one_is_shown() {
+        // The system's confirmation can be dismissed, and then nothing
+        // grants the permission: the plugin's dialog is the second chance.
+        waits.await(KEY, DEV);
+        assertTrue(waits.owesDialog(KEY));
+        assertTrue(waits.ask(KEY, DEV).showDialog);
+        assertFalse(waits.owesDialog(KEY));
+    }
+
+    @Test
+    public void the_dialog_stays_owed_once_the_wait_expired() {
+        waits.await(KEY, DEV);
+        now += TIMEOUT;
+        waits.expire();
+        assertTrue(waits.owesDialog(KEY));
+    }
+
+    @Test
+    public void a_grant_settles_the_owed_dialog() {
+        waits.await(KEY, DEV);
+        permitted.add(DEV);
+        waits.recheck();
+        assertFalse(waits.owesDialog(KEY));
+    }
+
+    @Test
+    public void unplugging_drops_the_owed_dialog_even_after_the_wait_expired() {
+        waits.await(KEY, DEV);
+        now += TIMEOUT;
+        waits.expire();
+        waits.forget(KEY);
+        assertFalse(waits.owesDialog(KEY));
+    }
+
+    @Test
+    public void a_dialog_refused_is_not_owed_again() {
+        waits.await(KEY, DEV);
+        waits.ask(KEY, DEV);
+        waits.answered(KEY, false);
+        assertFalse(waits.owesDialog(KEY));
+    }
+
+    @Test
+    public void a_request_that_showed_its_dialog_owes_none() {
+        waits.ask(KEY, DEV);
+        waits.await(KEY, DEV);
+        assertFalse(waits.owesDialog(KEY));
+    }
+
     // ── shutdown ────────────────────────────────────────────────────────
 
     @Test

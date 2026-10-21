@@ -440,9 +440,15 @@ given up for its permission. A deck given up after its reopens failed
 stays closed: opening it would give it three attempts again on every
 resume. So does a deck whose last attach failed to open it: the grant
 that completes a waiting attach also brings the attach intent and a
-resume, which would repeat that failure at once. The attach intent applies the same rule to the deck it names. A
-deck still without permission stays closed: its `permissionDenied` line in
-the journal says how to grant it.
+resume, which would repeat that failure at once. The attach intent applies the same rule to the deck it names.
+
+A deck whose hotplug attach only waited for the system's confirmation,
+and that still has no permission, gets the plugin's dialog on the next
+resume, once: the confirmation was dismissed, or another app took the
+device, and nothing else would ask. With the app in the foreground,
+dismissing the confirmation resumes the app, so the plugin's dialog
+follows at once. Any other deck still without permission stays closed:
+its `permissionDenied` line in the journal says how to grant it.
 
 ### Persistent identity
 

@@ -170,4 +170,29 @@ public class ReattachPlanTest {
         assertEquals(1, afterAttachFailed(d, "permission_timeout").size());
         assertEquals(1, afterAttachFailed(d, "permission_denied").size());
     }
+
+    // ── askDecks: the dialog a resume shows ─────────────────────────────
+
+    @Test
+    public void a_deck_whose_confirmation_was_dismissed_is_asked_on_return() {
+        // Its hotplug attach waited for the system's confirmation, which
+        // the user dismissed: the deck may still hold that attach.
+        Device d = deck("/dev/bus/usb/001/002", false);
+        assertEquals(Collections.singletonList(d),
+            ReattachPlan.askDecks(Arrays.asList(d), n -> true));
+    }
+
+    @Test
+    public void a_deck_that_owes_no_dialog_is_not_asked() {
+        // Its dialog was shown already, refused or left unanswered.
+        Device d = deck("/dev/bus/usb/001/002", false);
+        assertTrue(ReattachPlan.askDecks(Arrays.asList(d), n -> false).isEmpty());
+    }
+
+    @Test
+    public void a_permitted_deck_or_another_device_is_never_asked() {
+        Device permitted = deck("/dev/bus/usb/001/002", true);
+        Device keyboard = new Device("/dev/bus/usb/001/004", 0x1234, 0x0001, "", false);
+        assertTrue(ReattachPlan.askDecks(Arrays.asList(permitted, keyboard), n -> true).isEmpty());
+    }
 }

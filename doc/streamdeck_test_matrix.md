@@ -44,6 +44,7 @@ Plus, Neo.
       comes forward and the deck lights.
 - [ ] Replug, tick "always open" in the dialog, accept; replug again: no
       dialog, the deck lights by itself.
-- [ ] Replug, cancel the dialog: no second dialog; after 30 s the journal
-      names the request permission button, which lights the deck once
-      granted.
+- [ ] Replug, cancel the dialog: the plugin's own dialog follows once;
+      accept it: the deck lights. Replug, cancel both: no third dialog; the
+      journal names the request permission button, which lights the deck
+      once granted.

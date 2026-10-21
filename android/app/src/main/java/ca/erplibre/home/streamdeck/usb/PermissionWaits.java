@@ -2,9 +2,11 @@ package ca.erplibre.home.streamdeck.usb;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -30,6 +32,12 @@ import java.util.concurrent.CompletableFuture;
  * deadline with a PermissionTimeoutException, TIMEOUT for an asked entry,
  * MISSING for an awaited one. {@link #forget} ends the entry of a device
  * unplugged meanwhile.
+ *
+ * A wait that shows nothing relies on the system's confirmation, which the
+ * user can dismiss; nothing then grants the permission. Such a device
+ * {@link #owesDialog} from its await until a dialog is shown for it, a
+ * grant, or {@link #forget}: its deadline passing does not settle it. The
+ * owner shows that dialog once, when the app comes back to the foreground.
  *
  * Every method holds the instance monitor; futures complete after it is
  * released, since a completion runs its synchronous dependents on the
@@ -71,6 +79,8 @@ public final class PermissionWaits<D> {
     private final Clock clock;
     private final long timeoutMs;
     private final Map<String, Entry<D>> pending = new HashMap<>();
+    /** Keys awaited with no dialog shown since; see {@link #owesDialog}. */
+    private final Set<String> owed = new HashSet<>();
 
     public PermissionWaits(Facts<D> facts, Clock clock, long timeoutMs) {
         this.facts = facts;
@@ -86,11 +96,13 @@ public final class PermissionWaits<D> {
      */
     public Ticket ask(String key, D device) {
         if (facts.hasPermission(device)) {
+            synchronized (this) { owed.remove(key); }
             return new Ticket(CompletableFuture.completedFuture(true), false);
         }
         synchronized (this) {
             long deadline = clock.nowMs() + timeoutMs;
             Entry<D> e = pending.get(key);
+            owed.remove(key);
             if (e == null) {
                 e = new Entry<>(device, true, deadline);
                 pending.put(key, e);
@@ -115,6 +127,7 @@ public final class PermissionWaits<D> {
             if (e == null) {
                 e = new Entry<>(device, false, clock.nowMs() + timeoutMs);
                 pending.put(key, e);
+                owed.add(key);
             }
             return e.future;
         }
@@ -133,6 +146,7 @@ public final class PermissionWaits<D> {
             result = granted || facts.hasPermission(e.device);
             if (!result && !e.asked) return true;
             pending.remove(key);
+            if (result) owed.remove(key);
             done = e;
         }
         done.future.complete(result);
@@ -149,12 +163,15 @@ public final class PermissionWaits<D> {
     /**
      * The device of {@code key} was unplugged: its entry ends with a
      * DeviceDetachedException, so it neither expires later nor shares its
-     * future with a device that comes back under the same name. False when
-     * no entry waits on it.
+     * future with a device that comes back under the same name, and the
+     * dialog it owed is dropped. False when no entry waits on it.
      */
     public boolean forget(String key) {
         Entry<D> e;
-        synchronized (this) { e = pending.remove(key); }
+        synchronized (this) {
+            owed.remove(key);
+            e = pending.remove(key);
+        }
         if (e == null) return false;
         e.future.completeExceptionally(new DeviceDetachedException());
         return true;
@@ -165,12 +182,13 @@ public final class PermissionWaits<D> {
     public int recheck() {
         List<Entry<D>> done = new ArrayList<>();
         synchronized (this) {
-            Iterator<Entry<D>> it = pending.values().iterator();
+            Iterator<Map.Entry<String, Entry<D>>> it = pending.entrySet().iterator();
             while (it.hasNext()) {
-                Entry<D> e = it.next();
-                if (facts.hasPermission(e.device)) {
+                Map.Entry<String, Entry<D>> e = it.next();
+                if (facts.hasPermission(e.getValue().device)) {
                     it.remove();
-                    done.add(e);
+                    owed.remove(e.getKey());
+                    done.add(e.getValue());
                 }
             }
         }
@@ -201,12 +219,17 @@ public final class PermissionWaits<D> {
 
     public synchronized boolean isEmpty() { return pending.isEmpty(); }
 
+    /** True while {@code key} was awaited with no dialog shown since, nor
+     *  granted, nor forgotten; the wait may have expired meanwhile. */
+    public synchronized boolean owesDialog(String key) { return owed.contains(key); }
+
     /** Completes every entry false: the owner is going away. */
     public void cancelAll() {
         List<Entry<D>> done;
         synchronized (this) {
             done = new ArrayList<>(pending.values());
             pending.clear();
+            owed.clear();
         }
         for (Entry<D> e : done) e.future.complete(false);
     }

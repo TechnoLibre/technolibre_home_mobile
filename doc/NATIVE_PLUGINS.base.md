@@ -780,9 +780,15 @@ given up for its permission. A deck given up after its reopens failed
 stays closed: opening it would give it three attempts again on every
 resume. So does a deck whose last attach failed to open it: the grant
 that completes a waiting attach also brings the attach intent and a
-resume, which would repeat that failure at once. The attach intent applies the same rule to the deck it names. A
-deck still without permission stays closed: its `permissionDenied` line in
-the journal says how to grant it.
+resume, which would repeat that failure at once. The attach intent applies the same rule to the deck it names.
+
+A deck whose hotplug attach only waited for the system's confirmation,
+and that still has no permission, gets the plugin's dialog on the next
+resume, once: the confirmation was dismissed, or another app took the
+device, and nothing else would ask. With the app in the foreground,
+dismissing the confirmation resumes the app, so the plugin's dialog
+follows at once. Any other deck still without permission stays closed:
+its `permissionDenied` line in the journal says how to grant it.
 
 ### Persistent identity
 
@@ -941,9 +947,16 @@ lui rendrait trois essais à chaque retour. De même pour un deck dont le
 dernier branchement a échoué à l'ouvrir : l'accord qui termine un
 branchement en attente amène aussi l'intent de branchement et un retour,
 qui répéteraient aussitôt cet échec. L'intent de branchement suit la
-même règle pour le deck qu'il nomme. Un deck toujours sans permission
-reste fermé : sa ligne `permissionDenied` au journal dit comment
-l'accorder.
+même règle pour le deck qu'il nomme.
+
+Un deck dont le branchement n'a fait qu'attendre la confirmation du
+système, et toujours sans permission, reçoit le dialogue du plugin au
+retour suivant au premier plan, une fois : la confirmation a été écartée,
+ou une autre app a pris l'appareil, et rien d'autre ne la demanderait.
+Application au premier plan, écarter la confirmation fait revenir l'app :
+le dialogue du plugin suit aussitôt. Tout autre deck toujours sans
+permission reste fermé : sa ligne `permissionDenied` au journal dit
+comment l'accorder.
 
 ### Identité persistante
 
