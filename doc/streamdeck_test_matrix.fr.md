@@ -19,9 +19,10 @@ Plus, Neo.
 - [ ] Brancher le deck avec l'application **fermée**. L'application doit se
       lancer via le filtre d'intention USB ATTACHED et afficher le deck dans
       `listDecks()`.
-- [ ] Brancher le deck avec l'application **ouverte**. Le dialogue de permission
-      doit apparaître ; l'accorder, le deck apparaît dans `listDecks()` en moins
-      d'une seconde.
+- [ ] Brancher le deck avec l'application **ouverte**. Un seul dialogue, celui
+      du système « Ouvrir ERPLibre pour gérer … ? » ; l'accepter : le
+      deck s'allume avec ses touches en moins d'une seconde, et le journal ne
+      montre aucun `permission_timeout`.
 - [ ] `setBrightness` 0, 50, 100 — différence visible à chaque niveau.
 - [ ] `setKeyImage` avec la mire en damier (rouge/bleu, index de touche dessiné
       par-dessus) sur chaque touche. Vérification visuelle : chaque touche
@@ -40,3 +41,14 @@ Plus, Neo.
 - [ ] Débrancher le deck — `deckDisconnected` se déclenche en ~500 ms.
 - [ ] Rebrancher — `deckConnected` se déclenche ; le `deckId` (numéro de série)
       est le même qu'avant.
+- [ ] Rebrancher le téléphone **verrouillé**, attendre, déverrouiller, accepter
+      le dialogue : le deck s'allume en moins d'une seconde. Laisser d'abord le
+      dialogue plus de 30 s : le journal nomme le bouton de demande de
+      permission, et accepter ensuite allume quand même le deck.
+- [ ] Rebrancher l'application en **arrière-plan**, accepter le dialogue :
+      l'application revient au premier plan et le deck s'allume.
+- [ ] Rebrancher, cocher « toujours ouvrir » dans le dialogue, accepter ;
+      rebrancher encore : aucun dialogue, le deck s'allume seul.
+- [ ] Rebrancher, annuler le dialogue : aucun second dialogue ; après 30 s le
+      journal nomme le bouton de demande de permission, qui allume le deck une
+      fois la permission accordée.

@@ -17,8 +17,9 @@ Plus, Neo.
 
 - [ ] Plug deck in with app **closed**. App should launch via the USB
       ATTACHED intent-filter and show the deck in `listDecks()`.
-- [ ] Plug deck in with app **open**. Permission dialog should appear,
-      grant; deck appears in `listDecks()` within 1s.
+- [ ] Plug deck in with app **open**. One dialog only, the system's "Open
+      ERPLibre to handle …?"; accept it: the deck lights with its
+      keys within 1 s, and the journal shows no `permission_timeout`.
 - [ ] `setBrightness` 0, 50, 100 — visible difference at each level.
 - [ ] `setKeyImage` with the chequerboard test pattern (red/blue, key
       index drawn on top) for every key. Visual check: every key shows
@@ -35,3 +36,14 @@ Plus, Neo.
 - [ ] `reset` clears all images.
 - [ ] Unplug deck — `deckDisconnected` fires within ~500ms.
 - [ ] Replug — `deckConnected` fires; `deckId` (serial) is the same as before.
+- [ ] Replug with the phone **locked**, wait, unlock, accept the dialog: the
+      deck lights within 1 s. Leave the dialog more than 30 s first: the
+      journal names the request permission button, and accepting afterwards
+      still lights the deck.
+- [ ] Replug with the app in the **background**, accept the dialog: the app
+      comes forward and the deck lights.
+- [ ] Replug, tick "always open" in the dialog, accept; replug again: no
+      dialog, the deck lights by itself.
+- [ ] Replug, cancel the dialog: no second dialog; after 30 s the journal
+      names the request permission button, which lights the deck once
+      granted.
