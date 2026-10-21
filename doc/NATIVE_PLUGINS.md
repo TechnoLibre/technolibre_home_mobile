@@ -372,7 +372,7 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 |-------|---------|
 | `deckConnected` | `{deckId, info, reason?}` |
 | `deckDisconnected` | `{deckId, reason}`. `reason` is `usb_lost` (unplugged), `usb_lost:<transfer detail>` (writes kept failing), `restart_requested`, `app_destroyed`, or a reader failure (`polled_reset`, `usb_request_…`, `bulk_read_threw:…`, `polled_threw:…`): match on the prefix. Sent once per deck, when its last session closes. |
-| `permissionDenied` | `{deckId, reason}` |
+| `permissionDenied` | `{deckId, reason}`. `reason` is `permission_missing` (no grant reached a hotplug attach within 30 s), `permission_timeout` (the plugin's dialog got no answer), `permission_denied`, or an open failure. The journal writes the first three as how to grant the permission. |
 | `keyChanged` | `{deckId, key, pressed}`. Held until `keyListenerReady`. |
 | `dialRotated` | `{deckId, dial, delta}` (Plus) |
 | `dialPressed` | `{deckId, dial, pressed}` (Plus) |
@@ -424,13 +424,19 @@ A hotplug attach shows no dialog of its own: Android already raises its
 confirmation for every known deck (`UsbDeviceFilterTest` keeps the filter
 equal to `DeckRegistry`), and of two dialogs at once the one left
 unanswered never replies. The attach waits for that grant 30 s at most,
-then sends `permissionDenied` with `permission_missing`; the attach intent
-or the request permission button opens the deck afterwards. The plugin's
+then sends `permissionDenied` with `permission_missing`; the attach intent,
+the next resume or the request permission button opens the deck
+afterwards. The plugin's
 dialog serves `requestPermission`, `requestPermissionForUsb` and the decks
 found plugged in when the app starts. The attach intent reaches the
 running activity (`singleTask`) and opens the deck it names, so ticking
 "always open" in that confirmation brings the deck back on every later
 replug without a dialog.
+
+Each resume opens every permitted deck that nothing holds: one whose
+permission came after its attach gave up, or whose session closed and was
+given up. A deck still without permission stays closed: its
+`permissionDenied` line in the journal says how to grant it.
 
 ### Persistent identity
 

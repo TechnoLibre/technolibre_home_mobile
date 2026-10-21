@@ -375,7 +375,7 @@ MK.2 (`0x0080`), Plus (`0x0084`), Neo (`0x009a`). Vendor `0x0fd9`.
 |-------|---------|
 | `deckConnected` | `{deckId, info, reason?}` |
 | `deckDisconnected` | `{deckId, reason}`. `reason` vaut `usb_lost` (débranché), `usb_lost:<détail du transfert>` (les écritures échouaient de suite), `restart_requested`, `app_destroyed`, ou un échec du lecteur (`polled_reset`, `usb_request_…`, `bulk_read_threw:…`, `polled_threw:…`) : comparer le préfixe. Envoyé une fois par deck, quand sa dernière session se ferme. |
-| `permissionDenied` | `{deckId, reason}` |
+| `permissionDenied` | `{deckId, reason}`. `reason` vaut `permission_missing` (aucun accord n'a atteint un branchement en 30 s), `permission_timeout` (le dialogue du plugin est resté sans réponse), `permission_denied`, ou un échec d'ouverture. Le journal écrit les trois premiers comme la façon d'accorder la permission. |
 | `keyChanged` | `{deckId, key, pressed}`. Retenu jusqu'à `keyListenerReady`. |
 | `dialRotated` | `{deckId, dial, delta}` (Plus) |
 | `dialPressed` | `{deckId, dial, pressed}` (Plus) |
@@ -431,13 +431,19 @@ sa confirmation pour chaque deck connu (`UsbDeviceFilterTest` garde le
 filtre égal à `DeckRegistry`), et de deux dialogues simultanés celui qui
 reste sans réponse ne répond jamais. Le branchement attend cet accord
 30 s au plus, puis envoie `permissionDenied` avec `permission_missing` ;
-l'intent de branchement ou le bouton de demande de permission ouvre
-ensuite le deck. Le dialogue du plugin sert `requestPermission`,
+l'intent de branchement, le retour suivant au premier plan ou le bouton de
+demande de permission ouvre ensuite le deck. Le dialogue du plugin sert `requestPermission`,
 `requestPermissionForUsb` et les decks trouvés branchés au démarrage de
 l'app. L'intent
 de branchement atteint l'activité en cours (`singleTask`) et ouvre le deck
 qu'il nomme : cocher « toujours ouvrir » dans cette confirmation ramène le
 deck à chaque rebranchement, sans dialogue.
+
+Chaque retour au premier plan ouvre tout deck permis que rien ne tient :
+celui dont la permission est arrivée après l'abandon de son branchement,
+ou dont la session s'est fermée et a été abandonnée. Un deck toujours sans
+permission reste fermé : sa ligne `permissionDenied` au journal dit
+comment l'accorder.
 
 ### Identité persistante
 

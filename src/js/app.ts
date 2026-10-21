@@ -35,7 +35,11 @@ import { CodeStyleService } from "../services/codeStyleService";
 import { StreamDeckController } from "../services/streamDeckController";
 import { StreamDeckCameraStreamer } from "../services/streamDeckCameraStreamer";
 import { StreamDeckLcdTextRenderer } from "../services/streamDeckLcdTextRenderer";
-import { streamDeckEventLog, reattachGaveUpText } from "../services/streamDeckEventLog";
+import {
+	streamDeckEventLog,
+	reattachGaveUpText,
+	permissionDeniedText,
+} from "../services/streamDeckEventLog";
 import { StreamDeckPlugin } from "../plugins/streamDeckPlugin";
 import { restoreDeckSleepAtBoot } from "../services/deckSleepCoupling";
 import { TagService } from "../services/tagService";
@@ -309,7 +313,7 @@ async function startApp() {
 		streamDeckEventLog.add(`deckDisconnected: ${ev.deckId} (${ev.reason ?? "no reason"})`),
 	).catch(() => {});
 	StreamDeckPlugin.addListener("permissionDenied", (ev) =>
-		streamDeckEventLog.add(`permissionDenied: ${ev.reason ?? "no reason"}`),
+		streamDeckEventLog.add(permissionDeniedText(ev)),
 	).catch(() => {});
 	StreamDeckPlugin.addListener("keyChanged", (ev) => {
 		if (!ev.pressed) return;

@@ -223,14 +223,22 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     /**
      * A permission granted while the app was away, by the system's
      * confirmation or the settings, completes the request still waiting on
-     * it. Off the main thread: the completion opens the deck.
+     * it. Then every permitted deck that nothing holds is opened
+     * (ReattachPlan.idleDecks): one whose attach failed or timed out before
+     * the grant, or whose session closed and was given up. A deck still
+     * without permission is left alone, since opening it would raise the
+     * dialog; its permissionDenied line says how to grant it. Off the main
+     * thread: opening a deck makes EP0 transfers.
      */
     @Override
     protected void handleOnResume() {
         activityPaused = false;
         super.handleOnResume();
         runOffMain("deck-resume", () -> {
-            if (permissions != null) permissions.recheck();
+            if (permissions == null || usb == null) return;
+            permissions.recheck();
+            List<String> opened = attachIdleDeckNames(null);
+            if (!opened.isEmpty()) Log.i(TAG, "resume: opening idle deck(s) " + opened);
         });
     }
 

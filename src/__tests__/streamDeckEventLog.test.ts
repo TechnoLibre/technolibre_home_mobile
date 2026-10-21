@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { streamDeckEventLog, reattachGaveUpText } from "../services/streamDeckEventLog";
+import {
+    streamDeckEventLog,
+    reattachGaveUpText,
+    permissionDeniedText,
+} from "../services/streamDeckEventLog";
 import { translations as en } from "../i18n/en";
 import { translations as fr } from "../i18n/fr";
 
@@ -152,5 +156,41 @@ describe("streamDeckEventLog", () => {
                 expect(text).not.toMatch(/\b1\b/);
             },
         );
+    });
+
+    describe("permissionDeniedText", () => {
+        afterEach(() => vi.unstubAllGlobals());
+
+        it.each([
+            ["en", en, "permission_missing"],
+            ["fr", fr, "permission_missing"],
+            ["en", en, "permission_timeout"],
+            ["fr", fr, "permission_timeout"],
+            ["en", en, "permission_denied"],
+            ["fr", fr, "permission_denied"],
+        ] as const)("%s: %s says how to grant the permission", (locale, dict, reason) => {
+            stubLocale(locale);
+            const text = permissionDeniedText({ deckId: "", reason });
+            expect(text).toContain(dict["streamdeck.request_permission"]);
+            expect(text).not.toContain("streamdeck.");
+            expect(text).not.toContain("{");
+        });
+
+        it("tells a missing grant from an unanswered and a refused dialog", () => {
+            stubLocale("en");
+            const texts = new Set(
+                ["permission_missing", "permission_timeout", "permission_denied"].map(
+                    (reason) => permissionDeniedText({ deckId: "", reason }),
+                ),
+            );
+            expect(texts.size).toBe(3);
+        });
+
+        it("keeps any other reason as it came", () => {
+            stubLocale("en");
+            expect(permissionDeniedText({ deckId: "", reason: "open_failed:x" }))
+                .toBe("permissionDenied: open_failed:x");
+            expect(permissionDeniedText({ deckId: "" })).toBe("permissionDenied: no reason");
+        });
     });
 });

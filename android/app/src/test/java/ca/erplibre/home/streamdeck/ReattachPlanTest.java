@@ -80,4 +80,22 @@ public class ReattachPlanTest {
         assertTrue(ReattachPlan.idleDecks(Arrays.asList(busy, denied),
             busy.deviceName::equals, only).isEmpty());
     }
+
+    @Test
+    public void a_deck_granted_after_its_attach_timed_out_is_opened_on_resume() {
+        // The attach released its reservation when the permission wait
+        // expired; the grant comes later, and the resume picks the deck up
+        // once the system reports it permitted, not before.
+        SessionRegistry<Object> registry = new SessionRegistry<>(new SessionRegistry.Hooks<Object>() {
+            @Override public boolean isOpen(Object s) { return true; }
+            @Override public void connected(Object s) { }
+            @Override public void disconnected(Object s, String reason) { }
+        });
+        String name = "/dev/bus/usb/001/002";
+        assertTrue(registry.reserve(name));
+        assertTrue(ReattachPlan.idleDecks(Arrays.asList(deck(name, true)), registry::isBusy).isEmpty());
+        registry.release(name);  // permission_missing
+        assertTrue(ReattachPlan.idleDecks(Arrays.asList(deck(name, false)), registry::isBusy).isEmpty());
+        assertEquals(1, ReattachPlan.idleDecks(Arrays.asList(deck(name, true)), registry::isBusy).size());
+    }
 }
