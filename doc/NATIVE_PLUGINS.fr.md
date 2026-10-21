@@ -443,9 +443,12 @@ deck à chaque rebranchement, sans dialogue.
 
 Chaque retour au premier plan ouvre tout deck permis que rien ne tient :
 celui dont la permission est arrivée après l'abandon de son branchement,
-ou dont la session s'est fermée et a été abandonnée. Un deck toujours sans
-permission reste fermé : sa ligne `permissionDenied` au journal dit
-comment l'accorder.
+ou dont la réouverture automatique a été abandonnée faute de permission.
+Un deck abandonné après l'échec de ses réouvertures reste fermé : l'ouvrir
+lui rendrait trois essais à chaque retour. L'intent de branchement suit la
+même règle pour le deck qu'il nomme. Un deck toujours sans permission
+reste fermé : sa ligne `permissionDenied` au journal dit comment
+l'accorder.
 
 ### Identité persistante
 

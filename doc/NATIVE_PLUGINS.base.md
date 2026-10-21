@@ -775,9 +775,12 @@ running activity (`singleTask`) and opens the deck it names, so ticking
 replug without a dialog.
 
 Each resume opens every permitted deck that nothing holds: one whose
-permission came after its attach gave up, or whose session closed and was
-given up. A deck still without permission stays closed: its
-`permissionDenied` line in the journal says how to grant it.
+permission came after its attach gave up, or whose automatic reopen was
+given up for its permission. A deck given up after its reopens failed
+stays closed: opening it would give it three attempts again on every
+resume. The attach intent applies the same rule to the deck it names. A
+deck still without permission stays closed: its `permissionDenied` line in
+the journal says how to grant it.
 
 ### Persistent identity
 
@@ -930,9 +933,12 @@ deck à chaque rebranchement, sans dialogue.
 
 Chaque retour au premier plan ouvre tout deck permis que rien ne tient :
 celui dont la permission est arrivée après l'abandon de son branchement,
-ou dont la session s'est fermée et a été abandonnée. Un deck toujours sans
-permission reste fermé : sa ligne `permissionDenied` au journal dit
-comment l'accorder.
+ou dont la réouverture automatique a été abandonnée faute de permission.
+Un deck abandonné après l'échec de ses réouvertures reste fermé : l'ouvrir
+lui rendrait trois essais à chaque retour. L'intent de branchement suit la
+même règle pour le deck qu'il nomme. Un deck toujours sans permission
+reste fermé : sa ligne `permissionDenied` au journal dit comment
+l'accorder.
 
 ### Identité persistante
 

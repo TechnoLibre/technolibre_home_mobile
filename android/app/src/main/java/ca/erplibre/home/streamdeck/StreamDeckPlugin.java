@@ -226,11 +226,13 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * A permission granted while the app was away, by the system's
      * confirmation or the settings, completes the request still waiting on
      * it. Then every permitted deck that nothing holds is opened
-     * (ReattachPlan.idleDecks): one whose attach failed or timed out before
-     * the grant, or whose session closed and was given up. A deck still
-     * without permission is left alone, since opening it would raise the
-     * dialog; its permissionDenied line says how to grant it. Off the main
-     * thread: opening a deck makes EP0 transfers.
+     * (ReattachPlan.returnDecks): one whose attach failed or timed out
+     * before the grant, or whose retries were given up for its permission.
+     * A deck given up after its reopens failed stays closed: reopening it
+     * would start its retries over on each resume. A deck still without
+     * permission is left alone, since opening it would raise the dialog;
+     * its permissionDenied line says how to grant it. Off the main thread:
+     * opening a deck makes EP0 transfers.
      */
     @Override
     protected void handleOnResume() {
@@ -239,7 +241,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         runOffMain("deck-resume", () -> {
             if (permissions == null || usb == null) return;
             permissions.recheck();
-            List<String> opened = attachIdleDeckNames(null);
+            List<String> opened = attachReturnDeckNames(null);
             if (!opened.isEmpty()) Log.i(TAG, "resume: opening idle deck(s) " + opened);
         });
     }
@@ -250,8 +252,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * at a cold start too. Android sends it once the user accepted its
      * confirmation for the device, or at once when "always open" was ticked
      * for it: either way the permission is held. A request waiting on that
-     * permission completes and opens the deck; with none waiting, a deck
-     * that has neither a session nor an attach in flight is opened here.
+     * permission completes and opens the deck; with none waiting, the
+     * deck is opened here if ReattachPlan.returnDecks picks it, as on
+     * resume.
      */
     @Override
     protected void handleOnNewIntent(Intent intent) {
@@ -264,11 +267,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         runOffMain("deck-attach-intent", () -> {
             if (permissions == null || usb == null) return;
             permissions.recheck();
-            String name = device.getDeviceName();
-            if (usb.hasPermission(device) && !registry.isBusy(name)) {
-                Log.i(TAG, "attach intent: opening " + name);
-                attach(device, true);
-            }
+            List<String> opened =
+                attachReturnDeckNames(Collections.singleton(device.getDeviceName()));
+            if (!opened.isEmpty()) Log.i(TAG, "attach intent: opening " + opened);
         });
     }
 
@@ -895,14 +896,31 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     /** attachIdleDecks(only), returning the device names it attached. */
     private List<String> attachIdleDeckNames(Set<String> only) {
         Map<String, UsbDevice> attached = usb.getDeviceList();
+        return attachEach(attached,
+            ReattachPlan.idleDecks(seenOf(attached), registry::isBusy, only));
+    }
+
+    /** attach on each of ReattachPlan.returnDecks, limited to the device
+     *  names in {@code only}, null for every device; returns their names. */
+    private List<String> attachReturnDeckNames(Set<String> only) {
+        Map<String, UsbDevice> attached = usb.getDeviceList();
+        return attachEach(attached, ReattachPlan.returnDecks(seenOf(attached),
+            registry::isBusy, reattach::gaveUpReason, only));
+    }
+
+    private List<PermissionRequestPlan.Device> seenOf(Map<String, UsbDevice> attached) {
         List<PermissionRequestPlan.Device> seen = new ArrayList<>();
         for (UsbDevice d : attached.values()) {
             seen.add(new PermissionRequestPlan.Device(d.getDeviceName(), d.getVendorId(),
                 d.getProductId(), "", usb.hasPermission(d)));
         }
-        List<PermissionRequestPlan.Device> idle = ReattachPlan.idleDecks(seen, registry::isBusy, only);
+        return seen;
+    }
+
+    private List<String> attachEach(Map<String, UsbDevice> attached,
+                                    List<PermissionRequestPlan.Device> picked) {
         List<String> names = new ArrayList<>();
-        for (PermissionRequestPlan.Device t : idle) {
+        for (PermissionRequestPlan.Device t : picked) {
             attach(attached.get(t.deviceName), true);
             names.add(t.deviceName);
         }

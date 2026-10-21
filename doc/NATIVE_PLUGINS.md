@@ -435,9 +435,12 @@ running activity (`singleTask`) and opens the deck it names, so ticking
 replug without a dialog.
 
 Each resume opens every permitted deck that nothing holds: one whose
-permission came after its attach gave up, or whose session closed and was
-given up. A deck still without permission stays closed: its
-`permissionDenied` line in the journal says how to grant it.
+permission came after its attach gave up, or whose automatic reopen was
+given up for its permission. A deck given up after its reopens failed
+stays closed: opening it would give it three attempts again on every
+resume. The attach intent applies the same rule to the deck it names. A
+deck still without permission stays closed: its `permissionDenied` line in
+the journal says how to grant it.
 
 ### Persistent identity
 

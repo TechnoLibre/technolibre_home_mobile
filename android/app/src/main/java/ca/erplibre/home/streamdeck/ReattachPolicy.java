@@ -95,6 +95,8 @@ final class ReattachPolicy {
     private static final class State {
         int attempts = 0;
         boolean gaveUp = false;
+        /** The failure that spent the budget, null while not given up. */
+        String gaveUpReason = null;
         /** Clock time of the last registration, -1 while no session is. */
         long registeredAt = -1L;
         /** Token of the retry waiting for its timer, 0 when none. */
@@ -135,6 +137,7 @@ final class ReattachPolicy {
         if (s.gaveUp) {
             s.attempts = 0;
             s.gaveUp = false;
+            s.gaveUpReason = null;
         }
         s.registeredAt = clock.nowMs();
         s.pending = 0L;
@@ -156,6 +159,7 @@ final class ReattachPolicy {
         if (s.registeredAt >= 0 && clock.nowMs() - s.registeredAt >= HEALTHY_MS) {
             s.attempts = 0;
             s.gaveUp = false;
+            s.gaveUpReason = null;
         }
         s.registeredAt = -1L;
         return next(s, reason);
@@ -190,6 +194,7 @@ final class ReattachPolicy {
         s.pending = 0L;
         if (s.gaveUp) return Decision.NONE;
         s.gaveUp = true;
+        s.gaveUpReason = reason;
         int made = s.attempts;
         s.attempts = DELAYS_MS.length;
         return new Decision(Decision.Kind.GIVE_UP, 0L, made, 0L, reason);
@@ -221,6 +226,16 @@ final class ReattachPolicy {
     synchronized boolean reopening(String deviceName) {
         State s = states.get(deviceName);
         return s != null && s.attempts > 0 && !s.gaveUp && s.registeredAt < 0;
+    }
+
+    /** The failure on which {@code deviceName} was given up, null while it
+     *  is not: never given up, or registered again since. A resume reads
+     *  it to leave closed a deck whose reopens kept failing (ReattachPlan
+     *  .returnDecks): reopening it would restore its budget on registration
+     *  and start the retries over. */
+    synchronized String gaveUpReason(String deviceName) {
+        State s = states.get(deviceName);
+        return s != null && s.gaveUp ? s.gaveUpReason : null;
     }
 
     /** Drop the state and pending retry of {@code deviceName}: detached,

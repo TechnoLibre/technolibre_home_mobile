@@ -98,4 +98,52 @@ public class ReattachPlanTest {
         assertTrue(ReattachPlan.idleDecks(Arrays.asList(deck(name, false)), registry::isBusy).isEmpty());
         assertEquals(1, ReattachPlan.idleDecks(Arrays.asList(deck(name, true)), registry::isBusy).size());
     }
+
+    // ── returnDecks: what a resume or the attach intent opens ────────────
+
+    private static List<Device> onReturn(List<Device> attached, String gaveUpName,
+                                         String gaveUpReason) {
+        return ReattachPlan.returnDecks(attached, n -> false,
+            n -> n.equals(gaveUpName) ? gaveUpReason : null, null);
+    }
+
+    @Test
+    public void a_permitted_idle_deck_is_opened_on_return() {
+        Device d = deck("/dev/bus/usb/001/002", true);
+        assertEquals(Collections.singletonList(d), onReturn(Arrays.asList(d), null, null));
+    }
+
+    @Test
+    public void a_deck_given_up_after_its_failures_stays_closed_on_return() {
+        // Its reader died after each of three reopens. Opening it on every
+        // resume would give it three more retries each time, since a
+        // registration restores the budget: a retry loop driven by resume.
+        Device d = deck("/dev/bus/usb/001/002", true);
+        assertTrue(onReturn(Arrays.asList(d), d.deviceName, "polled_reset").isEmpty());
+    }
+
+    @Test
+    public void a_deck_given_up_for_its_permission_is_opened_once_granted() {
+        Device d = deck("/dev/bus/usb/001/002", true);
+        assertEquals(Collections.singletonList(d),
+            onReturn(Arrays.asList(d), d.deviceName, ReattachPolicy.PERMISSION_MISSING));
+    }
+
+    @Test
+    public void return_skips_what_idle_decks_skips() {
+        Device busy = deck("/dev/bus/usb/001/002", true);
+        Device denied = deck("/dev/bus/usb/001/003", false);
+        Device keyboard = new Device("/dev/bus/usb/001/004", 0x1234, 0x0001, "", true);
+        assertTrue(ReattachPlan.returnDecks(Arrays.asList(busy, denied, keyboard),
+            busy.deviceName::equals, n -> null, null).isEmpty());
+    }
+
+    @Test
+    public void the_attach_intent_opens_only_the_deck_it_names() {
+        Device named = deck("/dev/bus/usb/001/002", true);
+        Device other = deck("/dev/bus/usb/001/003", true);
+        assertEquals(Collections.singletonList(named),
+            ReattachPlan.returnDecks(Arrays.asList(named, other), n -> false, n -> null,
+                Collections.singleton(named.deviceName)));
+    }
 }
