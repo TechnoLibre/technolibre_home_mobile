@@ -55,17 +55,31 @@ final class ReattachPlan {
      * registration restores its three retries, so opening it on each
      * resume would start them over each time. A deck given up for its
      * permission is opened once permitted: the grant is what it lacked.
+     *
+     * Likewise a deck whose last attach failed to open it
+     * ({@code lastAttachError}, null when the last attach succeeded or none
+     * failed): the grant that completes a waiting attach also brings the
+     * attach intent and a resume, and opening the deck again from either
+     * would repeat that failure at once. The caller records the failure
+     * before releasing the device, so a deck seen free is never seen
+     * without it. A deck whose attach lacked the permission is opened.
      */
     static List<Device> returnDecks(List<Device> attached, Predicate<String> busy,
                                     Function<String, String> gaveUpReason,
+                                    Function<String, String> lastAttachError,
                                     Set<String> only) {
         List<Device> out = new ArrayList<>();
         for (Device d : idleDecks(attached, busy, only)) {
-            String gaveUp = gaveUpReason.apply(d.deviceName);
-            if (gaveUp != null && !isPermissionFailure(gaveUp)) continue;
+            if (!grantResolves(gaveUpReason.apply(d.deviceName))) continue;
+            if (!grantResolves(lastAttachError.apply(d.deviceName))) continue;
             out.add(d);
         }
         return out;
+    }
+
+    /** True for no failure, or one a grant of the permission resolves. */
+    private static boolean grantResolves(String failure) {
+        return failure == null || isPermissionFailure(failure);
     }
 
     /** A failure a grant of the USB permission resolves. */

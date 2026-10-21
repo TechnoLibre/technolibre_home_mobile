@@ -226,10 +226,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * A permission granted while the app was away, by the system's
      * confirmation or the settings, completes the request still waiting on
      * it. Then every permitted deck that nothing holds is opened
-     * (ReattachPlan.returnDecks): one whose attach failed or timed out
-     * before the grant, or whose retries were given up for its permission.
-     * A deck given up after its reopens failed stays closed: reopening it
-     * would start its retries over on each resume. A deck still without
+     * (ReattachPlan.returnDecks): one whose attach ended for lack of the
+     * permission, or whose retries were given up for its permission.
+     * A deck given up after its reopens failed stays closed, since
+     * reopening it would start its retries over on each resume, and so
+     * does a deck whose last attach failed to open it. A deck still without
      * permission is left alone, since opening it would raise the dialog;
      * its permissionDenied line says how to grant it. Off the main thread:
      * opening a deck makes EP0 transfers.
@@ -413,9 +414,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 return;
             }
             if (err != null || granted == null || !granted) {
-                registry.release(name);
+                // Recorded before the release: ReattachPlan.returnDecks
+                // reads the failure of a deck it finds free.
                 String reason = err != null ? causeOf(err).getMessage() : "permission_denied";
                 recordAttachError(name, reason);
+                registry.release(name);
                 applyReattach(name, "", reattach.attachFailed(name, reason));
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
@@ -440,20 +443,20 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 session.setHeartbeat(power.heartbeat());
                 updateWakeLock();
             } catch (DeckSession.DeckOpenException e) {
-                registry.release(name);
                 String reason = e.getMessage();
                 recordAttachError(name, reason);
+                registry.release(name);
                 applyReattach(name, readableSerial(device), reattach.attachFailed(name, reason));
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
                 ev.put("reason", reason);
                 emitter.emit("permissionDenied", ev);
             } catch (Throwable t) {
-                registry.release(name);
-                closeSessions(Collections.singletonList(session), "open_failed", 0);
                 String reason = "open_unexpected:" + t.getClass().getSimpleName()
                     + ":" + t.getMessage();
                 recordAttachError(name, reason);
+                registry.release(name);
+                closeSessions(Collections.singletonList(session), "open_failed", 0);
                 applyReattach(name, readableSerial(device), reattach.attachFailed(name, reason));
                 JSObject ev = new JSObject();
                 ev.put("deckId", "");
@@ -468,6 +471,10 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     private static Throwable causeOf(Throwable err) {
         return err instanceof CompletionException && err.getCause() != null
             ? err.getCause() : err;
+    }
+
+    private String lastAttachErrorOf(String deviceName) {
+        synchronized (lastAttachError) { return lastAttachError.get(deviceName); }
     }
 
     private void recordAttachError(String deviceName, String reason) {
@@ -905,7 +912,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     private List<String> attachReturnDeckNames(Set<String> only) {
         Map<String, UsbDevice> attached = usb.getDeviceList();
         return attachEach(attached, ReattachPlan.returnDecks(seenOf(attached),
-            registry::isBusy, reattach::gaveUpReason, only));
+            registry::isBusy, reattach::gaveUpReason, this::lastAttachErrorOf, only));
     }
 
     private List<PermissionRequestPlan.Device> seenOf(Map<String, UsbDevice> attached) {

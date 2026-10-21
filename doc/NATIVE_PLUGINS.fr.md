@@ -445,7 +445,10 @@ Chaque retour au premier plan ouvre tout deck permis que rien ne tient :
 celui dont la permission est arrivée après l'abandon de son branchement,
 ou dont la réouverture automatique a été abandonnée faute de permission.
 Un deck abandonné après l'échec de ses réouvertures reste fermé : l'ouvrir
-lui rendrait trois essais à chaque retour. L'intent de branchement suit la
+lui rendrait trois essais à chaque retour. De même pour un deck dont le
+dernier branchement a échoué à l'ouvrir : l'accord qui termine un
+branchement en attente amène aussi l'intent de branchement et un retour,
+qui répéteraient aussitôt cet échec. L'intent de branchement suit la
 même règle pour le deck qu'il nomme. Un deck toujours sans permission
 reste fermé : sa ligne `permissionDenied` au journal dit comment
 l'accorder.

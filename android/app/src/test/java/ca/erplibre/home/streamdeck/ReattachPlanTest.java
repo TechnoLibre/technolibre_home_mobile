@@ -104,7 +104,7 @@ public class ReattachPlanTest {
     private static List<Device> onReturn(List<Device> attached, String gaveUpName,
                                          String gaveUpReason) {
         return ReattachPlan.returnDecks(attached, n -> false,
-            n -> n.equals(gaveUpName) ? gaveUpReason : null, null);
+            n -> n.equals(gaveUpName) ? gaveUpReason : null, n -> null, null);
     }
 
     @Test
@@ -135,7 +135,7 @@ public class ReattachPlanTest {
         Device denied = deck("/dev/bus/usb/001/003", false);
         Device keyboard = new Device("/dev/bus/usb/001/004", 0x1234, 0x0001, "", true);
         assertTrue(ReattachPlan.returnDecks(Arrays.asList(busy, denied, keyboard),
-            busy.deviceName::equals, n -> null, null).isEmpty());
+            busy.deviceName::equals, n -> null, n -> null, null).isEmpty());
     }
 
     @Test
@@ -144,6 +144,30 @@ public class ReattachPlanTest {
         Device other = deck("/dev/bus/usb/001/003", true);
         assertEquals(Collections.singletonList(named),
             ReattachPlan.returnDecks(Arrays.asList(named, other), n -> false, n -> null,
-                Collections.singleton(named.deviceName)));
+                n -> null, Collections.singleton(named.deviceName)));
+    }
+
+    private static List<Device> afterAttachFailed(Device d, String lastAttachError) {
+        return ReattachPlan.returnDecks(Arrays.asList(d), n -> false, n -> null,
+            n -> n.equals(d.deviceName) ? lastAttachError : null, null);
+    }
+
+    @Test
+    public void a_deck_whose_open_just_failed_is_not_opened_again_on_return() {
+        // The grant that completes a waiting attach also brings the attach
+        // intent and a resume: the attach's open failed and released the
+        // device, and opening it again from either would repeat the failure
+        // at once.
+        Device d = deck("/dev/bus/usb/001/002", true);
+        assertTrue(afterAttachFailed(d, "interface_busy").isEmpty());
+        assertTrue(afterAttachFailed(d, "open_unexpected:IllegalStateException:x").isEmpty());
+    }
+
+    @Test
+    public void a_deck_whose_attach_lacked_the_permission_is_opened_once_granted() {
+        Device d = deck("/dev/bus/usb/001/002", true);
+        assertEquals(1, afterAttachFailed(d, "permission_missing").size());
+        assertEquals(1, afterAttachFailed(d, "permission_timeout").size());
+        assertEquals(1, afterAttachFailed(d, "permission_denied").size());
     }
 }
