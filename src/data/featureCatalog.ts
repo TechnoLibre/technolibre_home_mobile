@@ -711,11 +711,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "attach shows no dialog of its own: it waits up to 30 s for the "
                         + "confirmation Android raises through the manifest filter "
                         + "(UsbDeviceFilterTest keeps it equal to DeckRegistry), then "
-                        + "fails permission_missing. Each resume opens every permitted deck "
-                        + "nothing holds, except one given up after its reopens failed "
-                        + "or whose last attach failed to open it; a deck whose "
-                        + "confirmation was dismissed gets the plugin's dialog there, "
-                        + "once (PermissionWaits.owesDialog); "
+                        + "fails permission_missing; a confirmation cancelled fails it "
+                        + "once the app holds the screen again for 1 s (FocusSpan, "
+                        + "PermissionWaits.confirmGone), with no second dialog. Each "
+                        + "resume opens every permitted deck nothing holds, except one given up after its reopens failed "
+                        + "or whose last attach failed to open it; "
                         + "the journal writes permission_missing, "
                         + "permission_timeout and permission_denied as how to grant it. "
                         + "Detach closes the DeckSession after "
@@ -746,12 +746,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "deck qu'il nomme. Un branchement n'affiche aucun dialogue du "
                         + "plugin : il attend jusqu'à 30 s la confirmation qu'Android lève "
                         + "par le filtre du manifeste (UsbDeviceFilterTest le garde égal à "
-                        + "DeckRegistry), puis échoue permission_missing. Chaque retour au "
+                        + "DeckRegistry), puis échoue permission_missing ; une confirmation "
+                        + "annulée le fait échouer dès que l'app tient l'écran depuis 1 s "
+                        + "(FocusSpan, PermissionWaits.confirmGone), sans second dialogue. "
+                        + "Chaque retour au "
                         + "premier plan ouvre tout deck permis que rien ne tient, sauf "
                         + "celui abandonné après l'échec de ses réouvertures ou dont le "
-                        + "dernier branchement a échoué à l'ouvrir ; un deck dont la "
-                        + "confirmation a été écartée y reçoit le dialogue du plugin, "
-                        + "une fois (PermissionWaits.owesDialog) ; le journal "
+                        + "dernier branchement a échoué à l'ouvrir ; le journal "
                         + "écrit permission_missing, permission_timeout et permission_denied "
                         + "comme la façon de l'accorder. "
                         + "Détach ferme la DeckSession après "
@@ -780,6 +781,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbPermissionRequester.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionTimeoutException.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionWaits.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/FocusSpan.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/PermissionRequestPlan.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachPolicy.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachTimers.java",
@@ -791,6 +793,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 tests: [
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/PermissionRequestPlanTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/usb/PermissionWaitsTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/FocusSpanTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/UsbDeviceFilterTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachPolicyTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachTimersTest.java",

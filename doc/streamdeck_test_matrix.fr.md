@@ -49,7 +49,7 @@ Plus, Neo.
       l'application revient au premier plan et le deck s'allume.
 - [ ] Rebrancher, cocher « toujours ouvrir » dans le dialogue, accepter ;
       rebrancher encore : aucun dialogue, le deck s'allume seul.
-- [ ] Rebrancher, annuler le dialogue : le dialogue du plugin suit, une
-      fois ; l'accepter : le deck s'allume. Rebrancher, annuler les deux :
-      aucun troisième dialogue ; le journal nomme le bouton de demande de
-      permission, qui allume le deck une fois la permission accordée.
+- [ ] Rebrancher l'application au premier plan, annuler le dialogue : aucun
+      second dialogue, à ce retour ni aux suivants ; en 1 s environ le journal
+      nomme le bouton de demande de permission, qui affiche un dialogue et
+      allume le deck une fois la permission accordée.

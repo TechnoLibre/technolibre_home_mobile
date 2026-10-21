@@ -144,10 +144,14 @@ public final class UsbPermissionRequester {
         return n;
     }
 
-    /** True while {@code device} was waited on without a dialog, and has
-     *  had neither a dialog nor a grant since; see PermissionWaits. */
-    public boolean owesDialog(UsbDevice device) {
-        return device != null && waits.owesDialog(keyOf(device));
+    /** The system's confirmation is off the screen for every wait without
+     *  a dialog started before {@code since} (SystemClock.elapsedRealtime):
+     *  those still without the permission fail MISSING now instead of
+     *  after TIMEOUT_MS. Returns how many failed. */
+    public int confirmGone(long since) {
+        int n = waits.confirmGone(since);
+        if (n > 0) Log.i(TAG, "confirmGone: " + n + " wait(s) ended without a grant");
+        return n;
     }
 
     /** {@code device} was unplugged: a request still waiting on it ends

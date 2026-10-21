@@ -49,10 +49,10 @@ Plus, Neo.
       comes forward and the deck lights.
 - [ ] Replug, tick "always open" in the dialog, accept; replug again: no
       dialog, the deck lights by itself.
-- [ ] Replug, cancel the dialog: the plugin's own dialog follows once;
-      accept it: the deck lights. Replug, cancel both: no third dialog; the
-      journal names the request permission button, which lights the deck
-      once granted.
+- [ ] Replug with the app in the foreground, cancel the dialog: no second
+      dialog, on that return or a later one; within about 1 s the journal
+      names the request permission button, which shows one dialog and
+      lights the deck once granted.
 
 <!-- [fr] -->
 # Stream Deck Mobile — Matrice de tests matériels
@@ -105,7 +105,7 @@ Plus, Neo.
       l'application revient au premier plan et le deck s'allume.
 - [ ] Rebrancher, cocher « toujours ouvrir » dans le dialogue, accepter ;
       rebrancher encore : aucun dialogue, le deck s'allume seul.
-- [ ] Rebrancher, annuler le dialogue : le dialogue du plugin suit, une
-      fois ; l'accepter : le deck s'allume. Rebrancher, annuler les deux :
-      aucun troisième dialogue ; le journal nomme le bouton de demande de
-      permission, qui allume le deck une fois la permission accordée.
+- [ ] Rebrancher l'application au premier plan, annuler le dialogue : aucun
+      second dialogue, à ce retour ni aux suivants ; en 1 s environ le journal
+      nomme le bouton de demande de permission, qui affiche un dialogue et
+      allume le deck une fois la permission accordée.

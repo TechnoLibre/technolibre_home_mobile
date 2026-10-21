@@ -434,21 +434,25 @@ running activity (`singleTask`) and opens the deck it names, so ticking
 "always open" in that confirmation brings the deck back on every later
 replug without a dialog.
 
+A confirmation cancelled or dismissed ends that wait sooner. The
+confirmation takes the screen from the app; once the app holds it again,
+resumed with its window focused for 1 s (`FocusSpan`), a wait started
+before then fails `permission_missing` at once
+(`PermissionWaits.confirmGone`), and the journal names the request
+permission button. No dialog follows, on that resume or a later one: the
+next comes from a new plug or that button. With the phone locked, the app
+does not hold the screen while the confirmation is up, so unlocking leaves
+it answerable.
+
 Each resume opens every permitted deck that nothing holds: one whose
 permission came after its attach gave up, or whose automatic reopen was
 given up for its permission. A deck given up after its reopens failed
 stays closed: opening it would give it three attempts again on every
 resume. So does a deck whose last attach failed to open it: the grant
 that completes a waiting attach also brings the attach intent and a
-resume, which would repeat that failure at once. The attach intent applies the same rule to the deck it names.
-
-A deck whose hotplug attach only waited for the system's confirmation,
-and that still has no permission, gets the plugin's dialog on the next
-resume, once: the confirmation was dismissed, or another app took the
-device, and nothing else would ask. With the app in the foreground,
-dismissing the confirmation resumes the app, so the plugin's dialog
-follows at once. Any other deck still without permission stays closed:
-its `permissionDenied` line in the journal says how to grant it.
+resume, which would repeat that failure at once. The attach intent applies the same rule to the deck it names. A
+deck still without permission stays closed: its `permissionDenied` line in
+the journal says how to grant it.
 
 ### Persistent identity
 

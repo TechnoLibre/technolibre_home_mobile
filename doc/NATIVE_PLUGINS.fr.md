@@ -441,6 +441,16 @@ de branchement atteint l'activité en cours (`singleTask`) et ouvre le deck
 qu'il nomme : cocher « toujours ouvrir » dans cette confirmation ramène le
 deck à chaque rebranchement, sans dialogue.
 
+Une confirmation annulée ou écartée termine cette attente plus tôt. La
+confirmation prend l'écran à l'app ; dès que l'app le reprend, au premier
+plan avec le focus de sa fenêtre pendant 1 s (`FocusSpan`), une attente
+commencée avant échoue aussitôt `permission_missing`
+(`PermissionWaits.confirmGone`), et le journal nomme le bouton de demande
+de permission. Aucun dialogue ne suit, à ce retour ni aux suivants : le
+prochain vient d'un nouveau branchement ou de ce bouton. Téléphone
+verrouillé, l'app ne tient pas l'écran tant que la confirmation est
+affichée : déverrouiller la laisse donc en état de répondre.
+
 Chaque retour au premier plan ouvre tout deck permis que rien ne tient :
 celui dont la permission est arrivée après l'abandon de son branchement,
 ou dont la réouverture automatique a été abandonnée faute de permission.
@@ -449,16 +459,9 @@ lui rendrait trois essais à chaque retour. De même pour un deck dont le
 dernier branchement a échoué à l'ouvrir : l'accord qui termine un
 branchement en attente amène aussi l'intent de branchement et un retour,
 qui répéteraient aussitôt cet échec. L'intent de branchement suit la
-même règle pour le deck qu'il nomme.
-
-Un deck dont le branchement n'a fait qu'attendre la confirmation du
-système, et toujours sans permission, reçoit le dialogue du plugin au
-retour suivant au premier plan, une fois : la confirmation a été écartée,
-ou une autre app a pris l'appareil, et rien d'autre ne la demanderait.
-Application au premier plan, écarter la confirmation fait revenir l'app :
-le dialogue du plugin suit aussitôt. Tout autre deck toujours sans
-permission reste fermé : sa ligne `permissionDenied` au journal dit
-comment l'accorder.
+même règle pour le deck qu'il nomme. Un deck toujours sans permission
+reste fermé : sa ligne `permissionDenied` au journal dit comment
+l'accorder.
 
 ### Identité persistante
 

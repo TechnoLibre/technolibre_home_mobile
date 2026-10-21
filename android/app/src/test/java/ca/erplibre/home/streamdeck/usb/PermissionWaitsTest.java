@@ -240,56 +240,59 @@ public class PermissionWaitsTest {
         assertFalse(waits.forget(KEY));
     }
 
-    // ── the dialog a wait owes ──────────────────────────────────────────
+    // ── the system's confirmation is gone ───────────────────────────────
 
     @Test
-    public void a_wait_owes_the_dialog_until_one_is_shown() {
-        // The system's confirmation can be dismissed, and then nothing
-        // grants the permission: the plugin's dialog is the second chance.
-        waits.await(KEY, DEV);
-        assertTrue(waits.owesDialog(KEY));
-        assertTrue(waits.ask(KEY, DEV).showDialog);
-        assertFalse(waits.owesDialog(KEY));
+    public void an_await_started_before_the_app_held_the_screen_ends_as_missing() {
+        // The confirmation was cancelled or dismissed: nothing grants the
+        // permission any more, and the deadline would only delay the line
+        // that names the request permission button.
+        CompletableFuture<Boolean> f = waits.await(KEY, DEV);
+        now += 2_000L;
+        assertEquals(1, waits.confirmGone(now));
+        Throwable cause = failureOf(f);
+        assertTrue(cause instanceof PermissionTimeoutException);
+        assertEquals(PermissionTimeoutException.MISSING, cause.getMessage());
+        assertTrue(waits.isEmpty());
     }
 
     @Test
-    public void the_dialog_stays_owed_once_the_wait_expired() {
-        waits.await(KEY, DEV);
-        now += TIMEOUT;
-        waits.expire();
-        assertTrue(waits.owesDialog(KEY));
+    public void an_await_started_since_the_app_held_the_screen_keeps_waiting() {
+        // Its confirmation may not be up yet.
+        long since = now;
+        CompletableFuture<Boolean> f = waits.await(KEY, DEV);
+        assertEquals(0, waits.confirmGone(since));
+        assertFalse(f.isDone());
     }
 
     @Test
-    public void a_grant_settles_the_owed_dialog() {
-        waits.await(KEY, DEV);
+    public void a_confirmation_accepted_completes_the_await_true() {
+        CompletableFuture<Boolean> f = waits.await(KEY, DEV);
         permitted.add(DEV);
-        waits.recheck();
-        assertFalse(waits.owesDialog(KEY));
+        now += 2_000L;
+        assertEquals(0, waits.confirmGone(now));
+        assertTrue(f.join());
+        assertTrue(waits.isEmpty());
     }
 
     @Test
-    public void unplugging_drops_the_owed_dialog_even_after_the_wait_expired() {
-        waits.await(KEY, DEV);
-        now += TIMEOUT;
-        waits.expire();
-        waits.forget(KEY);
-        assertFalse(waits.owesDialog(KEY));
-    }
-
-    @Test
-    public void a_dialog_refused_is_not_owed_again() {
-        waits.await(KEY, DEV);
+    public void an_entry_whose_dialog_was_shown_waits_for_its_answer() {
+        // The plugin's dialog answers by its broadcast, refused or not.
+        CompletableFuture<Boolean> f = waits.await(KEY, DEV);
         waits.ask(KEY, DEV);
-        waits.answered(KEY, false);
-        assertFalse(waits.owesDialog(KEY));
+        now += 2_000L;
+        assertEquals(0, waits.confirmGone(now));
+        assertFalse(f.isDone());
     }
 
     @Test
-    public void a_request_that_showed_its_dialog_owes_none() {
-        waits.ask(KEY, DEV);
+    public void the_gone_confirmation_shows_no_dialog_afterwards() {
+        // The next dialog comes from a new plug or an explicit request.
         waits.await(KEY, DEV);
-        assertFalse(waits.owesDialog(KEY));
+        now += 2_000L;
+        waits.confirmGone(now);
+        assertTrue(waits.isEmpty());
+        assertTrue(waits.ask(KEY, DEV).showDialog);
     }
 
     // ── shutdown ────────────────────────────────────────────────────────

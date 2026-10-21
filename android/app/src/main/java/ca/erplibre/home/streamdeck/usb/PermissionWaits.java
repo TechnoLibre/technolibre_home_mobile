@@ -2,11 +2,9 @@ package ca.erplibre.home.streamdeck.usb;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -33,11 +31,11 @@ import java.util.concurrent.CompletableFuture;
  * MISSING for an awaited one. {@link #forget} ends the entry of a device
  * unplugged meanwhile.
  *
- * A wait that shows nothing relies on the system's confirmation, which the
- * user can dismiss; nothing then grants the permission. Such a device
- * {@link #owesDialog} from its await until a dialog is shown for it, a
- * grant, or {@link #forget}: its deadline passing does not settle it. The
- * owner shows that dialog once, when the app comes back to the foreground.
+ * An await relies on the system's confirmation, which the user can cancel
+ * or dismiss; nothing then grants the permission. {@link #confirmGone}
+ * ends such an entry as MISSING before its deadline once the owner knows
+ * the confirmation is off the screen, and shows no dialog in its place:
+ * the next one comes from a new plug or an explicit {@link #ask}.
  *
  * Every method holds the instance monitor; futures complete after it is
  * released, since a completion runs its synchronous dependents on the
@@ -65,12 +63,15 @@ public final class PermissionWaits<D> {
     private static final class Entry<D> {
         final D device;
         final CompletableFuture<Boolean> future = new CompletableFuture<>();
+        /** When the entry was created, by the injected clock. */
+        final long started;
         boolean asked;
         long deadline;
 
-        Entry(D device, boolean asked, long deadline) {
+        Entry(D device, boolean asked, long started, long deadline) {
             this.device = device;
             this.asked = asked;
+            this.started = started;
             this.deadline = deadline;
         }
     }
@@ -79,8 +80,6 @@ public final class PermissionWaits<D> {
     private final Clock clock;
     private final long timeoutMs;
     private final Map<String, Entry<D>> pending = new HashMap<>();
-    /** Keys awaited with no dialog shown since; see {@link #owesDialog}. */
-    private final Set<String> owed = new HashSet<>();
 
     public PermissionWaits(Facts<D> facts, Clock clock, long timeoutMs) {
         this.facts = facts;
@@ -96,15 +95,14 @@ public final class PermissionWaits<D> {
      */
     public Ticket ask(String key, D device) {
         if (facts.hasPermission(device)) {
-            synchronized (this) { owed.remove(key); }
             return new Ticket(CompletableFuture.completedFuture(true), false);
         }
         synchronized (this) {
-            long deadline = clock.nowMs() + timeoutMs;
+            long now = clock.nowMs();
+            long deadline = now + timeoutMs;
             Entry<D> e = pending.get(key);
-            owed.remove(key);
             if (e == null) {
-                e = new Entry<>(device, true, deadline);
+                e = new Entry<>(device, true, now, deadline);
                 pending.put(key, e);
                 return new Ticket(e.future, true);
             }
@@ -125,9 +123,9 @@ public final class PermissionWaits<D> {
         synchronized (this) {
             Entry<D> e = pending.get(key);
             if (e == null) {
-                e = new Entry<>(device, false, clock.nowMs() + timeoutMs);
+                long now = clock.nowMs();
+                e = new Entry<>(device, false, now, now + timeoutMs);
                 pending.put(key, e);
-                owed.add(key);
             }
             return e.future;
         }
@@ -146,7 +144,6 @@ public final class PermissionWaits<D> {
             result = granted || facts.hasPermission(e.device);
             if (!result && !e.asked) return true;
             pending.remove(key);
-            if (result) owed.remove(key);
             done = e;
         }
         done.future.complete(result);
@@ -163,15 +160,12 @@ public final class PermissionWaits<D> {
     /**
      * The device of {@code key} was unplugged: its entry ends with a
      * DeviceDetachedException, so it neither expires later nor shares its
-     * future with a device that comes back under the same name, and the
-     * dialog it owed is dropped. False when no entry waits on it.
+     * future with a device that comes back under the same name. False when
+     * no entry waits on it.
      */
     public boolean forget(String key) {
         Entry<D> e;
-        synchronized (this) {
-            owed.remove(key);
-            e = pending.remove(key);
-        }
+        synchronized (this) { e = pending.remove(key); }
         if (e == null) return false;
         e.future.completeExceptionally(new DeviceDetachedException());
         return true;
@@ -182,18 +176,44 @@ public final class PermissionWaits<D> {
     public int recheck() {
         List<Entry<D>> done = new ArrayList<>();
         synchronized (this) {
-            Iterator<Map.Entry<String, Entry<D>>> it = pending.entrySet().iterator();
+            Iterator<Entry<D>> it = pending.values().iterator();
             while (it.hasNext()) {
-                Map.Entry<String, Entry<D>> e = it.next();
-                if (facts.hasPermission(e.getValue().device)) {
+                Entry<D> e = it.next();
+                if (facts.hasPermission(e.device)) {
                     it.remove();
-                    owed.remove(e.getKey());
-                    done.add(e.getValue());
+                    done.add(e);
                 }
             }
         }
         for (Entry<D> e : done) e.future.complete(true);
         return done.size();
+    }
+
+    /**
+     * The system's confirmation is off the screen for every await started
+     * before {@code since}: answered or dismissed. Each such entry with no
+     * dialog shown completes true when its device holds the permission,
+     * else fails MISSING at once. An entry asked meanwhile waits for its
+     * dialog's broadcast. Returns how many failed.
+     */
+    public int confirmGone(long since) {
+        List<Entry<D>> granted = new ArrayList<>();
+        List<Entry<D>> missing = new ArrayList<>();
+        synchronized (this) {
+            Iterator<Entry<D>> it = pending.values().iterator();
+            while (it.hasNext()) {
+                Entry<D> e = it.next();
+                if (e.asked || e.started >= since) continue;
+                it.remove();
+                (facts.hasPermission(e.device) ? granted : missing).add(e);
+            }
+        }
+        for (Entry<D> e : granted) e.future.complete(true);
+        for (Entry<D> e : missing) {
+            e.future.completeExceptionally(
+                new PermissionTimeoutException(PermissionTimeoutException.MISSING));
+        }
+        return missing.size();
     }
 
     /** Fails every entry past its deadline; returns how many. */
@@ -219,17 +239,12 @@ public final class PermissionWaits<D> {
 
     public synchronized boolean isEmpty() { return pending.isEmpty(); }
 
-    /** True while {@code key} was awaited with no dialog shown since, nor
-     *  granted, nor forgotten; the wait may have expired meanwhile. */
-    public synchronized boolean owesDialog(String key) { return owed.contains(key); }
-
     /** Completes every entry false: the owner is going away. */
     public void cancelAll() {
         List<Entry<D>> done;
         synchronized (this) {
             done = new ArrayList<>(pending.values());
             pending.clear();
-            owed.clear();
         }
         for (Entry<D> e : done) e.future.complete(false);
     }

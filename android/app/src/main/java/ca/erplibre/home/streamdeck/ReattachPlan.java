@@ -88,23 +88,4 @@ final class ReattachPlan {
             || PermissionTimeoutException.TIMEOUT.equals(reason)
             || "permission_denied".equals(reason);
     }
-
-    /**
-     * The decks a resume asks the permission for, with the plugin's
-     * dialog: Stream Decks still without it whose hotplug attach waited for
-     * the system's confirmation and got no grant, {@code owesDialog} by
-     * device name (PermissionWaits.owesDialog). The confirmation was
-     * dismissed, or another app took the device: without this dialog the
-     * deck would stay dark with no prompt. Asked once: a dialog shown
-     * settles the debt, refused or not. The deck may still be held by that
-     * waiting attach, which the dialog's answer completes.
-     */
-    static List<Device> askDecks(List<Device> attached, Predicate<String> owesDialog) {
-        List<Device> out = new ArrayList<>();
-        for (Device d : attached) {
-            if (!d.isStreamDeck() || d.permitted) continue;
-            if (owesDialog.test(d.deviceName)) out.add(d);
-        }
-        return out;
-    }
 }

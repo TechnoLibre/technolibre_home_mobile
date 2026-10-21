@@ -10,6 +10,7 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.Base64;
 import android.util.Log;
+import android.view.ViewTreeObserver;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -134,6 +135,16 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      *  while the user is already looking at the app. */
     private static volatile boolean activityPaused = false;
 
+    /** How long the app has held the screen, resumed and focused; fed on
+     *  the main thread by handleOnResume, handleOnPause and focusWatch. */
+    private final FocusSpan focusSpan = new FocusSpan();
+    /** Ends the hotplug waits whose system confirmation is gone. */
+    private final Runnable confirmCheck = this::endWaitsOfGoneConfirm;
+    /** Window focus changes of the activity, into focusSpan; registered
+     *  in load(). */
+    private final ViewTreeObserver.OnWindowFocusChangeListener focusWatch =
+        hasFocus -> onFocusSpan(focusSpan.focused(hasFocus, SystemClock.elapsedRealtime()));
+
     /** keyChanged goes through here: held while no JS key handler has
      *  said it listens (keyListenerReady), delivered once one has. A
      *  launch by USB attach lets the reader see a press before the page
@@ -216,11 +227,55 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         } catch (Throwable t) {
             Log.w(TAG, "startService(StreamDeckLifecycleService) failed: " + t.getMessage());
         }
+        watchWindowFocus(true);
         scanExistingDevices();
     }
 
     @Override
-    protected void handleOnPause() { activityPaused = true; super.handleOnPause(); }
+    protected void handleOnPause() {
+        activityPaused = true;
+        focusSpan.resumed(false, SystemClock.elapsedRealtime());
+        super.handleOnPause();
+    }
+
+    /** focusWatch on the activity's window, {@code on} or off. The decor
+     *  view's observer outlives its attachment: one taken before the
+     *  window is attached merges into the window's own. */
+    private void watchWindowFocus(boolean on) {
+        android.app.Activity activity = getActivity();
+        if (activity == null || activity.getWindow() == null) return;
+        ViewTreeObserver vto = activity.getWindow().getDecorView().getViewTreeObserver();
+        if (!vto.isAlive()) return;
+        if (on) vto.addOnWindowFocusChangeListener(focusWatch);
+        else vto.removeOnWindowFocusChangeListener(focusWatch);
+    }
+
+    /** A span of focusSpan {@code started}: endWaitsOfGoneConfirm runs once
+     *  it may have lasted FocusSpan.SETTLE_MS. */
+    private void onFocusSpan(boolean started) {
+        if (!started) return;
+        mainHandler.removeCallbacks(confirmCheck);
+        mainHandler.postDelayed(confirmCheck, FocusSpan.SETTLE_MS);
+    }
+
+    /**
+     * A hotplug attach waits for the system's confirmation, an activity
+     * that takes the screen from the app. The app holding the screen again
+     * for FocusSpan.SETTLE_MS means that confirmation is gone: accepted, its
+     * grant completes the wait; cancelled or dismissed, nothing grants the
+     * permission, so the wait fails permission_missing now rather than
+     * after 30 s, and its journal line names the request permission
+     * button. No dialog follows: the next comes from a new plug or that
+     * button. A wait started during the span keeps waiting, its
+     * confirmation possibly not up yet; with a locked phone, the app does
+     * not hold the screen while the confirmation is still up.
+     */
+    private void endWaitsOfGoneConfirm() {
+        if (permissions == null) return;
+        long since = focusSpan.settledSince(SystemClock.elapsedRealtime());
+        if (since < 0) return;
+        permissions.confirmGone(since);
+    }
 
     /**
      * A permission granted while the app was away, by the system's
@@ -230,25 +285,21 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * permission, or whose retries were given up for its permission.
      * A deck given up after its reopens failed stays closed, since
      * reopening it would start its retries over on each resume, and so
-     * does a deck whose last attach failed to open it. A deck still
-     * without permission gets the plugin's dialog once if its hotplug
-     * attach only waited for the system's confirmation
-     * (ReattachPlan.askDecks): that confirmation was dismissed, and
-     * nothing else would ask. Any other deck without permission is left
-     * alone; its permissionDenied line says how to grant it. Off the main
-     * thread: opening a deck makes EP0 transfers.
+     * does a deck whose last attach failed to open it. A deck still without
+     * permission is left alone, since opening it would raise the dialog;
+     * its permissionDenied line says how to grant it. Off the main thread:
+     * opening a deck makes EP0 transfers.
      */
     @Override
     protected void handleOnResume() {
         activityPaused = false;
+        onFocusSpan(focusSpan.resumed(true, SystemClock.elapsedRealtime()));
         super.handleOnResume();
         runOffMain("deck-resume", () -> {
             if (permissions == null || usb == null) return;
             permissions.recheck();
             List<String> opened = attachReturnDeckNames(null);
             if (!opened.isEmpty()) Log.i(TAG, "resume: opening idle deck(s) " + opened);
-            List<String> asked = askOwedDialogs();
-            if (!asked.isEmpty()) Log.i(TAG, "resume: asking the permission of " + asked);
         });
     }
 
@@ -287,6 +338,8 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     @Override
     protected void handleOnDestroy() {
+        mainHandler.removeCallbacks(confirmCheck);
+        watchWindowFocus(false);
         stopReattach();
         DeckSession.setKeyPressHook(null);
         if (hotplug != null) hotplug.detach(getContext());
@@ -350,8 +403,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * left unanswered never reports back. The attach waits for that grant
      * instead, 30 s at most; past that it fails permission_missing, and
      * the attach intent, the next resume or the request permission button
-     * opens the deck. A confirmation dismissed leaves the deck owing the
-     * plugin's dialog, which the next resume shows (handleOnResume).
+     * opens the deck. A confirmation cancelled or dismissed fails it
+     * permission_missing sooner, once the app holds the screen again
+     * (endWaitsOfGoneConfirm).
      */
     @Override
     public void onDeckAttached(UsbDevice device) {
@@ -919,25 +973,6 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         Map<String, UsbDevice> attached = usb.getDeviceList();
         return attachEach(attached, ReattachPlan.returnDecks(seenOf(attached),
             registry::isBusy, reattach::gaveUpReason, this::lastAttachErrorOf, only));
-    }
-
-    /**
-     * The plugin's dialog for each of ReattachPlan.askDecks; returns their
-     * device names. The dialog comes first: a hotplug attach still waiting
-     * on the device shares its request and opens the deck on a grant.
-     * With no attach holding the device, one starts and joins that request.
-     */
-    private List<String> askOwedDialogs() {
-        Map<String, UsbDevice> attached = usb.getDeviceList();
-        List<String> names = new ArrayList<>();
-        for (PermissionRequestPlan.Device t : ReattachPlan.askDecks(seenOf(attached),
-                n -> permissions.owesDialog(attached.get(n)))) {
-            UsbDevice dev = attached.get(t.deviceName);
-            permissions.request(dev);
-            if (!registry.isBusy(t.deviceName)) attach(dev, true);
-            names.add(t.deviceName);
-        }
-        return names;
     }
 
     private List<PermissionRequestPlan.Device> seenOf(Map<String, UsbDevice> attached) {
