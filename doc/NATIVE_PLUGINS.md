@@ -418,7 +418,16 @@ granted it: the plugin's dialog, or the confirmation Android raises for a
 device the manifest's `USB_DEVICE_ATTACHED` filter matches
 (`streamdeck_devices.xml`). The plugin checks every 500 ms while a request
 waits, on the attach intent and on each resume (`PermissionWaits`), so a
-grant never waits for the 30 s timeout. The attach intent reaches the
+grant never waits for the 30 s timeout.
+
+A hotplug attach shows no dialog of its own: Android already raises its
+confirmation for every known deck (`UsbDeviceFilterTest` keeps the filter
+equal to `DeckRegistry`), and of two dialogs at once the one left
+unanswered never replies. The attach waits for that grant 30 s at most,
+then sends `permissionDenied` with `permission_missing`; the attach intent
+or the request permission button opens the deck afterwards. The plugin's
+dialog serves `requestPermission`, `requestPermissionForUsb` and the decks
+found plugged in when the app starts. The attach intent reaches the
 running activity (`singleTask`) and opens the deck it names, so ticking
 "always open" in that confirmation brings the deck back on every later
 replug without a dialog.

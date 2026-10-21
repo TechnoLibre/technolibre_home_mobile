@@ -707,7 +707,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "completes as soon as UsbManager reports the permission held, "
                         + "whatever granted it (PermissionWaits: a 500 ms poll, the attach "
                         + "intent, each resume), and the USB_DEVICE_ATTACHED intent sent "
-                        + "to the running activity opens the deck it names. "
+                        + "to the running activity opens the deck it names. A hotplug "
+                        + "attach shows no dialog of its own: it waits up to 30 s for the "
+                        + "confirmation Android raises through the manifest filter "
+                        + "(UsbDeviceFilterTest keeps it equal to DeckRegistry), then "
+                        + "fails permission_missing. "
                         + "Detach closes the DeckSession after "
                         + "a 250 ms debounce. requestPermission (the Options "
                         + "\"Demander permission\" button) asks again for one deck or "
@@ -733,7 +737,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "acquise, quel que soit le chemin (PermissionWaits : sondage aux "
                         + "500 ms, intent de branchement, chaque retour au premier plan), et "
                         + "l'intent USB_DEVICE_ATTACHED remis à l'activité en cours ouvre le "
-                        + "deck qu'il nomme. Détach ferme la DeckSession après "
+                        + "deck qu'il nomme. Un branchement n'affiche aucun dialogue du "
+                        + "plugin : il attend jusqu'à 30 s la confirmation qu'Android lève "
+                        + "par le filtre du manifeste (UsbDeviceFilterTest le garde égal à "
+                        + "DeckRegistry), puis échoue permission_missing. "
+                        + "Détach ferme la DeckSession après "
                         + "un anti-rebond de 250 ms. requestPermission "
                         + "(le bouton « Demander permission ») redemande pour un deck ou pour "
                         + "chaque deck branché ; PermissionRequestPlan choisit les appareils et "
@@ -770,6 +778,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 tests: [
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/PermissionRequestPlanTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/usb/PermissionWaitsTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/UsbDeviceFilterTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachPolicyTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachTimersTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/RestartReopenTest.java",

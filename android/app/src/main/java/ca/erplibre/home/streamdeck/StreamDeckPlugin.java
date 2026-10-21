@@ -257,7 +257,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             String name = device.getDeviceName();
             if (usb.hasPermission(device) && !registry.isBusy(name)) {
                 Log.i(TAG, "attach intent: opening " + name);
-                onDeckAttached(device);
+                attach(device, true);
             }
         });
     }
@@ -322,12 +322,33 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     private void scanExistingDevices() {
         for (UsbDevice d : usb.getDeviceList().values()) {
             if (!DeckRegistry.isElgato(d.getVendorId())) continue;
-            onDeckAttached(d);
+            attach(d, true);
         }
     }
 
+    /**
+     * Hotplug attach. Shows no permission dialog: for every known deck the
+     * manifest's USB_DEVICE_ATTACHED filter makes Android raise its own
+     * confirmation (see UsbDeviceFilterTest), which grants the permission
+     * when accepted, or grants it silently once "always open" was ticked.
+     * A dialog of the plugin's beside it is a second one, and the dialog
+     * left unanswered never reports back. The attach waits for that grant
+     * instead, 30 s at most; past that it fails permission_missing, and
+     * the attach intent, the next resume or the request permission button
+     * opens the deck.
+     */
     @Override
     public void onDeckAttached(UsbDevice device) {
+        attach(device, false);
+    }
+
+    /**
+     * Reserve, obtain the permission, open, register: the one path that
+     * opens a deck. Without the permission, {@code showDialog} asks for it
+     * through the system dialog; false waits for a grant from another path
+     * (UsbPermissionRequester.awaitGrant).
+     */
+    private void attach(UsbDevice device, boolean showDialog) {
         final String name = device.getDeviceName();
 
         // Cancel any in-flight detach close — the device just bounced
@@ -337,7 +358,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         synchronized (pendingCloseJobs) { pending = pendingCloseJobs.remove(name); }
         if (pending != null) {
             mainHandler.removeCallbacks(pending);
-            Log.i(TAG, "onDeckAttached: cancelled pending close for " + name + " (transient detach)");
+            Log.i(TAG, "attach: cancelled pending close for " + name + " (transient detach)");
         }
 
         DeckSpec spec = DeckRegistry.lookup(device.getProductId());
@@ -363,10 +384,13 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // opening a parallel session that would steal the interface from
         // the first and orphan its threads. An open session is reused.
         if (!registry.reserve(name)) {
-            Log.i(TAG, "onDeckAttached: " + name + " already open or opening — skipping");
+            Log.i(TAG, "attach: " + name + " already open or opening — skipping");
             return;
         }
-        permissions.request(device).whenComplete((granted, err) -> {
+        CompletableFuture<Boolean> permitted = showDialog
+            ? permissions.request(device)
+            : permissions.awaitGrant(device);
+        permitted.whenComplete((granted, err) -> {
             if (err != null || granted == null || !granted) {
                 registry.release(name);
                 String reason = err != null ? err.getMessage() : "permission_denied";
@@ -385,7 +409,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                     // Detached while opening, or closed itself before
                     // registration: nothing stays registered, and an
                     // open session here would run without an owner.
-                    Log.w(TAG, "onDeckAttached: " + name + " left while opening — closing");
+                    Log.w(TAG, "attach: " + name + " left while opening — closing");
                     closeSessions(Collections.singletonList(session), "usb_lost", 0);
                     return;
                 }
@@ -440,7 +464,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         // detach + attach in tight succession after the first interrupt
         // event. Closing the session synchronously here would tear the
         // reader thread down and leave subsequent presses unobserved.
-        // Schedule the close, and let onDeckAttached cancel it if the
+        // Schedule the close, and let attach cancel it if the
         // device comes back within DETACH_DEBOUNCE_MS.
         Runnable closeJob = () -> {
             synchronized (pendingCloseJobs) { pendingCloseJobs.remove(name); }
@@ -468,7 +492,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * CloseListener of every session, on the thread that closed it — the
      * reader or the writer when the USB pipe failed, whose wake lock update
      * through applyReattach is then a binder call on that thread.
-     * Unregistering here, not only on detach, is what lets onDeckAttached,
+     * Unregistering here, not only on detach, is what lets attach,
      * restartSessions and retryAttach open the same device again. A session
      * that closed itself gets a retry scheduled by ReattachPolicy.
      */
@@ -494,7 +518,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         UsbDevice device = usb.getDeviceList().get(name);
         if (device == null || !usb.hasPermission(device)) return;
         Log.i(TAG, "restartSessions: " + name + " closed after the wait, reopening");
-        runOffMain("deck-reopen", () -> onDeckAttached(device));
+        runOffMain("deck-reopen", () -> attach(device, true));
     }
 
     /**
@@ -527,7 +551,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
 
     /**
      * A retry's timer fired. Runs only if the policy still holds this
-     * retry, then goes through onDeckAttached — reserve, permission
+     * retry, then goes through attach — reserve, permission
      * already granted, open, register — so it can never open a second
      * session. A device without permission is not reopened, since that
      * would raise the system dialog, and no later retry would find the
@@ -555,7 +579,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 reattach.attachFailed(name, ReattachPolicy.PERMISSION_MISSING));
             return;
         }
-        onDeckAttached(device);
+        attach(device, true);
     }
 
     /** No retry for {@code name} any more: detached. */
@@ -807,7 +831,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     }
 
     /**
-     * Run onDeckAttached for every known Stream Deck that already has
+     * Run attach for every known Stream Deck that already has
      * permission but is neither open nor opening. Useful when the
      * diagnostic UI subscribes after the boot-time attach already failed
      * silently, or after a session closed itself.
@@ -830,7 +854,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         updateWakeLock();
     }
 
-    /** onDeckAttached on each of ReattachPlan.idleDecks; returns how many. */
+    /** attach on each of ReattachPlan.idleDecks; returns how many. */
     private int attachIdleDecks() { return attachIdleDecks(null); }
 
     /** attachIdleDecks limited to the device names in {@code only}, null
@@ -850,7 +874,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         List<PermissionRequestPlan.Device> idle = ReattachPlan.idleDecks(seen, registry::isBusy, only);
         List<String> names = new ArrayList<>();
         for (PermissionRequestPlan.Device t : idle) {
-            onDeckAttached(attached.get(t.deviceName));
+            attach(attached.get(t.deviceName), true);
             names.add(t.deviceName);
         }
         return names;
@@ -878,12 +902,13 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * Ask the OS for USB permission on one deck ({deckId}) or, without it,
      * on every attached Stream Deck; PermissionRequestPlan picks the
      * targets. A device already permitted resolves already_granted without
-     * a dialog; the others go through UsbPermissionRequester, deduplicated
-     * against an attach waiting on the same dialog. Resolves once every
+     * a dialog; the others go through UsbPermissionRequester, which shows
+     * the dialog once per device and shares its outcome with an attach
+     * waiting on the same device, a hotplug one included. Resolves once every
      * target has its outcome, the 30 s timeout included, with
      * {granted, results[]}: granted is true only when every target is.
      * A granted device that is neither open nor opening goes through
-     * onDeckAttached, whose reservation refuses a second session.
+     * attach, whose reservation refuses a second session.
      * Rejects "no_stream_deck" / "no_such_deck:<id>".
      */
     @PluginMethod
@@ -913,7 +938,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                     PermissionRequestPlan.outcomeOf(t.permitted, granted, err);
                 outcomes.add(o);
                 if (o.granted() && !registry.isBusy(t.deviceName)) {
-                    try { onDeckAttached(dev); }
+                    try { attach(dev, true); }
                     catch (Throwable e) { Log.w(TAG, "attach after permission failed: " + e.getMessage()); }
                 }
                 return permissionResultOf(dev, o, err);
@@ -977,7 +1002,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
             // If granted, kick off the same flow the hotplug receiver uses
             // so the deck enters listDecks.
             if (granted != null && granted && DeckRegistry.isElgato(dev.getVendorId())) {
-                onDeckAttached(dev);
+                attach(dev, true);
             }
         });
     }

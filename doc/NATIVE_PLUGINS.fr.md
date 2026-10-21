@@ -424,7 +424,17 @@ confirmation qu'Android affiche pour un appareil que le filtre
 `USB_DEVICE_ATTACHED` du manifeste reconnaît (`streamdeck_devices.xml`).
 Le plugin vérifie toutes les 500 ms tant qu'une demande attend, à
 l'intent de branchement et à chaque retour au premier plan
-(`PermissionWaits`) : un accord n'attend jamais le délai de 30 s. L'intent
+(`PermissionWaits`) : un accord n'attend jamais le délai de 30 s.
+
+Un branchement n'affiche aucun dialogue du plugin : Android affiche déjà
+sa confirmation pour chaque deck connu (`UsbDeviceFilterTest` garde le
+filtre égal à `DeckRegistry`), et de deux dialogues simultanés celui qui
+reste sans réponse ne répond jamais. Le branchement attend cet accord
+30 s au plus, puis envoie `permissionDenied` avec `permission_missing` ;
+l'intent de branchement ou le bouton de demande de permission ouvre
+ensuite le deck. Le dialogue du plugin sert `requestPermission`,
+`requestPermissionForUsb` et les decks trouvés branchés au démarrage de
+l'app. L'intent
 de branchement atteint l'activité en cours (`singleTask`) et ouvre le deck
 qu'il nomme : cocher « toujours ouvrir » dans cette confirmation ramène le
 deck à chaque rebranchement, sans dialogue.

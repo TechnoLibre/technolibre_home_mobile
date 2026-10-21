@@ -3,6 +3,7 @@ package ca.erplibre.home.streamdeck;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 /** Maps Elgato USB product IDs to immutable DeckSpec. Built once at class load. */
 public final class DeckRegistry {
@@ -95,6 +96,12 @@ public final class DeckRegistry {
 
     public static DeckSpec lookup(int productId) {
         return SPECS.get(productId);
+    }
+
+    /** Every product id with a spec; res/xml/streamdeck_devices.xml lists
+     *  the same ids, which UsbDeviceFilterTest holds. */
+    public static Set<Integer> productIds() {
+        return SPECS.keySet();
     }
 
     public static boolean isElgato(int vendorId) {
