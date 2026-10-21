@@ -33,7 +33,7 @@ export class OptionsKeepAwakeComponent extends EnhancedComponent {
               t-att-aria-expanded="state.expanded ? 'true' : 'false'"
               t-on-click="toggle"
               t-on-keydown="onHeaderKey">
-            <span>🌙 <t t-esc="t('section.sleep')"/></span>
+            <span t-esc="t('section.sleep')"/>
             <span t-esc="state.expanded ? '▲' : '▼'"/>
           </div>
           <div t-if="state.expanded" class="options-camera-stream__body">
@@ -42,14 +42,10 @@ export class OptionsKeepAwakeComponent extends EnhancedComponent {
                 <input type="checkbox"
                        t-att-checked="state.enabled"
                        t-on-change="onToggle" />
-                Empêcher la mise en veille
+                <t t-esc="t('sleep.screen_on')"/>
               </label>
-              <p class="options-camera-stream__setting-hint">
-                L'écran du téléphone reste allumé tant que cette option
-                est cochée. Utile quand un Stream Deck est branché et
-                qu'on ne veut pas que la LCD se ternisse avec le timeout
-                d'écran. Pensez à désactiver pour économiser la batterie.
-              </p>
+              <p class="options-camera-stream__setting-hint"
+                 t-esc="t('sleep.screen_on_hint')"/>
             </div>
             <div class="options-camera-stream__setting">
               <label class="options-camera-stream__checkbox-label">

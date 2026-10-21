@@ -1072,6 +1072,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/options/camera_stream/options_camera_stream_component.ts",
                     "src/components/options/camera_stream/options_camera_stream_component.scss",
                 ],
+                tests: [
+                    "src/__tests__/sleepCameraPanelsI18n.test.ts",
+                ],
             },
             {
                 id: "streamdeck.face-detection",
@@ -2248,6 +2251,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/keepAwakePlugin.test.ts",
                     "src/__tests__/deckSleepCoupling.test.ts",
                     "src/__tests__/deckSleepPanels.test.ts",
+                    "src/__tests__/sleepCameraPanelsI18n.test.ts",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/DeckPowerOptionsTest.java",
                 ],
             },
