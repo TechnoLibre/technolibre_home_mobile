@@ -415,6 +415,20 @@ fermée, et un deck qui attend sa réouverture automatique lui est laissé. Un d
 par un autre chemin — le bouton de demande de permission, un branchement —
 retrouve lui aussi ses trois essais.
 
+### Permission USB
+
+Android retire la permission USB d'un deck quand on le débranche. Une
+demande de permission se termine dès que la permission est acquise, quel
+que soit le chemin qui l'a accordée : le dialogue du plugin, ou la
+confirmation qu'Android affiche pour un appareil que le filtre
+`USB_DEVICE_ATTACHED` du manifeste reconnaît (`streamdeck_devices.xml`).
+Le plugin vérifie toutes les 500 ms tant qu'une demande attend, à
+l'intent de branchement et à chaque retour au premier plan
+(`PermissionWaits`) : un accord n'attend jamais le délai de 30 s. L'intent
+de branchement atteint l'activité en cours (`singleTask`) et ouvre le deck
+qu'il nomme : cocher « toujours ouvrir » dans cette confirmation ramène le
+deck à chaque rebranchement, sans dialogue.
+
 ### Identité persistante
 
 Les decks sont identifiés par leur **numéro de série USB** : la chaîne

@@ -220,8 +220,55 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     @Override
     protected void handleOnPause() { activityPaused = true; super.handleOnPause(); }
 
+    /**
+     * A permission granted while the app was away, by the system's
+     * confirmation or the settings, completes the request still waiting on
+     * it. Off the main thread: the completion opens the deck.
+     */
     @Override
-    protected void handleOnResume() { activityPaused = false; super.handleOnResume(); }
+    protected void handleOnResume() {
+        activityPaused = false;
+        super.handleOnResume();
+        runOffMain("deck-resume", () -> {
+            if (permissions != null) permissions.recheck();
+        });
+    }
+
+    /**
+     * The USB_DEVICE_ATTACHED intent of the manifest filter, delivered to
+     * the running activity (singleTask) and, through BridgeActivity.load,
+     * at a cold start too. Android sends it once the user accepted its
+     * confirmation for the device, or at once when "always open" was ticked
+     * for it: either way the permission is held. A request waiting on that
+     * permission completes and opens the deck; with none waiting, a deck
+     * that has neither a session nor an attach in flight is opened here.
+     */
+    @Override
+    protected void handleOnNewIntent(Intent intent) {
+        super.handleOnNewIntent(intent);
+        if (intent == null || !UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())) {
+            return;
+        }
+        UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+        if (device == null || !DeckRegistry.isElgato(device.getVendorId())) return;
+        runOffMain("deck-attach-intent", () -> {
+            if (permissions == null || usb == null) return;
+            permissions.recheck();
+            String name = device.getDeviceName();
+            if (usb.hasPermission(device) && !registry.isBusy(name)) {
+                Log.i(TAG, "attach intent: opening " + name);
+                onDeckAttached(device);
+            }
+        });
+    }
+
+    /** {@code task} on a daemon thread of its own: opening a deck makes EP0
+     *  transfers, which the main thread cannot wait for. */
+    private static void runOffMain(String threadName, Runnable task) {
+        Thread t = new Thread(task, threadName);
+        t.setDaemon(true);
+        t.start();
+    }
 
     @Override
     protected void handleOnDestroy() {
@@ -447,9 +494,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         UsbDevice device = usb.getDeviceList().get(name);
         if (device == null || !usb.hasPermission(device)) return;
         Log.i(TAG, "restartSessions: " + name + " closed after the wait, reopening");
-        Thread t = new Thread(() -> onDeckAttached(device), "deck-reopen");
-        t.setDaemon(true);
-        t.start();
+        runOffMain("deck-reopen", () -> onDeckAttached(device));
     }
 
     /**

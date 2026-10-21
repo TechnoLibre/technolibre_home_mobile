@@ -703,8 +703,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                 howItWorks: {
                     en: "UsbHotplugReceiver listens for ACTION_USB_DEVICE_ATTACHED / DETACHED "
                         + "intents from the OS. UsbPermissionRequester wraps the per-device "
-                        + "PendingIntent flow: first attach prompts the user; the grant is "
-                        + "sticky per Android session. Detach closes the DeckSession after "
+                        + "PendingIntent flow; Android drops the grant on unplug. A request "
+                        + "completes as soon as UsbManager reports the permission held, "
+                        + "whatever granted it (PermissionWaits: a 500 ms poll, the attach "
+                        + "intent, each resume), and the USB_DEVICE_ATTACHED intent sent "
+                        + "to the running activity opens the deck it names. "
+                        + "Detach closes the DeckSession after "
                         + "a 250 ms debounce. requestPermission (the Options "
                         + "\"Demander permission\" button) asks again for one deck or "
                         + "every attached one; PermissionRequestPlan picks the devices and "
@@ -724,8 +728,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(RestartReopen).",
                     fr: "UsbHotplugReceiver écoute les intents OS ACTION_USB_DEVICE_ATTACHED / "
                         + "DETACHED. UsbPermissionRequester enveloppe le flow PendingIntent par "
-                        + "appareil : premier attach prompt l'utilisateur; l'autorisation est "
-                        + "sticky pour la session Android. Détach ferme la DeckSession après "
+                        + "appareil ; Android retire l'autorisation au débranchement. Une "
+                        + "demande se termine dès qu'UsbManager rapporte la permission "
+                        + "acquise, quel que soit le chemin (PermissionWaits : sondage aux "
+                        + "500 ms, intent de branchement, chaque retour au premier plan), et "
+                        + "l'intent USB_DEVICE_ATTACHED remis à l'activité en cours ouvre le "
+                        + "deck qu'il nomme. Détach ferme la DeckSession après "
                         + "un anti-rebond de 250 ms. requestPermission "
                         + "(le bouton « Demander permission ») redemande pour un deck ou pour "
                         + "chaque deck branché ; PermissionRequestPlan choisit les appareils et "
@@ -750,6 +758,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbHotplugReceiver.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/UsbPermissionRequester.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionTimeoutException.java",
+                    "android/app/src/main/java/ca/erplibre/home/streamdeck/usb/PermissionWaits.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/PermissionRequestPlan.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachPolicy.java",
                     "android/app/src/main/java/ca/erplibre/home/streamdeck/ReattachTimers.java",
@@ -760,6 +769,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
                 tests: [
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/PermissionRequestPlanTest.java",
+                    "android/app/src/test/java/ca/erplibre/home/streamdeck/usb/PermissionWaitsTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachPolicyTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/ReattachTimersTest.java",
                     "android/app/src/test/java/ca/erplibre/home/streamdeck/RestartReopenTest.java",

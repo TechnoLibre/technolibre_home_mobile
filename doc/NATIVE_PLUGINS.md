@@ -410,6 +410,19 @@ a healthy session is never closed, and a deck waiting for its automatic
 reopen is left to it. A deck given up that opens again by another path — the request
 permission button, a hotplug attach — gets its three attempts back too.
 
+### USB permission
+
+Android drops a deck's USB permission when it is unplugged. A permission
+request completes as soon as the permission is held, whichever path
+granted it: the plugin's dialog, or the confirmation Android raises for a
+device the manifest's `USB_DEVICE_ATTACHED` filter matches
+(`streamdeck_devices.xml`). The plugin checks every 500 ms while a request
+waits, on the attach intent and on each resume (`PermissionWaits`), so a
+grant never waits for the 30 s timeout. The attach intent reaches the
+running activity (`singleTask`) and opens the deck it names, so ticking
+"always open" in that confirmation brings the deck back on every later
+replug without a dialog.
+
 ### Persistent identity
 
 Decks are identified by their **USB serial number**: the string the
