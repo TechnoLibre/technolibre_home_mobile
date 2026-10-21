@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -273,9 +274,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
     /** {@code task} on a daemon thread of its own: opening a deck makes EP0
      *  transfers, which the main thread cannot wait for. */
     private static void runOffMain(String threadName, Runnable task) {
-        Thread t = new Thread(task, threadName);
-        t.setDaemon(true);
-        t.start();
+        DeckOpenThread.start(threadName, task);
     }
 
     @Override
@@ -354,7 +353,9 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
      * Reserve, obtain the permission, open, register: the one path that
      * opens a deck. Without the permission, {@code showDialog} asks for it
      * through the system dialog; false waits for a grant from another path
-     * (UsbPermissionRequester.awaitGrant).
+     * (UsbPermissionRequester.awaitGrant). The open runs on the thread
+     * DeckOpenThread picks: the caller when the permission is held already
+     * and the caller is not the main thread, a thread of its own otherwise.
      */
     private void attach(UsbDevice device, boolean showDialog) {
         final String name = device.getDeviceName();
@@ -398,7 +399,11 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
         CompletableFuture<Boolean> permitted = showDialog
             ? permissions.request(device)
             : permissions.awaitGrant(device);
-        permitted.whenComplete((granted, err) -> {
+        // Never on the thread that completes the permission: see
+        // DeckOpenThread.
+        Executor opener = DeckOpenThread.choose(permitted.isDone(),
+            Looper.myLooper() == Looper.getMainLooper());
+        permitted.whenCompleteAsync((granted, err) -> {
             if (err != null || granted == null || !granted) {
                 registry.release(name);
                 String reason = err != null ? err.getMessage() : "permission_denied";
@@ -447,7 +452,7 @@ public class StreamDeckPlugin extends Plugin implements UsbHotplugReceiver.Liste
                 ev.put("reason", reason);
                 emitter.emit("permissionDenied", ev);
             }
-        });
+        }, opener);
     }
 
     private void recordAttachError(String deviceName, String reason) {

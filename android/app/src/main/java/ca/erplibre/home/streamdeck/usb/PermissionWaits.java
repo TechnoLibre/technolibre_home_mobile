@@ -31,8 +31,8 @@ import java.util.concurrent.CompletableFuture;
  * MISSING for an awaited one.
  *
  * Every method holds the instance monitor; futures complete after it is
- * released, since a completion runs its dependents, opening the deck
- * included, on the calling thread.
+ * released, since a completion runs its synchronous dependents on the
+ * calling thread.
  */
 public final class PermissionWaits<D> {
 
