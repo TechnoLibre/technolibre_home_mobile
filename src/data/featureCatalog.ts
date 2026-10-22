@@ -1583,6 +1583,59 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "sync.task-project",
+                label: { en: "Task project", fr: "Projet de la tâche" },
+                description: {
+                    en: "Project of a note's new task, chosen per server, kept offline.",
+                    fr: "Projet de la nouvelle tâche d'une note, choisi par serveur, gardé hors ligne.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/projectService.test.ts",
+                    "src/__tests__/taskTargetPicker.test.ts",
+                    "src/__tests__/syncService.test.ts",
+                ],
+                howItWorks: {
+                    en: "A tap on sync with a server where the note has no task opens the "
+                        + "picker: per server, the project of the new task, or none (a "
+                        + "personal task), the server's last choice first. ProjectService "
+                        + "lists the active projects online and caches them in "
+                        + "remote_records_cache; when the projects cannot be read (offline, "
+                        + "server failing) the picker offers the cache, plus \"choose later\", "
+                        + "which leaves the creation incomplete until a project is chosen. A "
+                        + "server whose cached probe denies creating tasks is greyed. The "
+                        + "project is set only by create: a task moved on the server stays in "
+                        + "its project, and pull and poll read the linked tasks whatever their "
+                        + "project. A project gone, archived or hidden, or a create the server "
+                        + "refuses, blocks the creation until the next tap chooses again; a "
+                        + "task deleted on the server is recreated in the project the picker "
+                        + "then asks for.",
+                    fr: "Un appui sur sync vers un serveur où la note n'a pas de tâche ouvre "
+                        + "le sélecteur : par serveur, le projet de la nouvelle tâche, ou aucun "
+                        + "(tâche personnelle), le dernier choix du serveur d'abord. "
+                        + "ProjectService liste les projets actifs en ligne et les garde dans "
+                        + "remote_records_cache ; quand les projets sont illisibles (hors "
+                        + "ligne, serveur en échec), le sélecteur propose le cache, plus "
+                        + "« choisir plus tard », qui laisse la création incomplète jusqu'au "
+                        + "choix d'un projet. Un serveur dont la sonde en cache refuse la "
+                        + "création de tâches est grisé. Seul le create pose le projet : une "
+                        + "tâche déplacée sur le serveur reste dans son projet, et pull et poll "
+                        + "lisent les tâches liées quel que soit leur projet. Un projet "
+                        + "disparu, archivé ou caché, ou un create refusé, bloque la création "
+                        + "jusqu'au prochain appui, qui fait choisir de nouveau ; une tâche "
+                        + "supprimée sur le serveur est recréée dans le projet que le "
+                        + "sélecteur demande alors.",
+                },
+                dependsOn: ["sync.service", "sync.outbox", "sync.odoo-rpc"],
+                demo: NONE_BG,
+                files: [
+                    "src/services/odoo/projectService.ts",
+                    "src/services/taskTargetPicker.ts",
+                    "src/components/note/note_component.ts",
+                ],
+            },
+            {
                 id: "sync.outbox",
                 label: { en: "Sync outbox", fr: "File d'opérations de sync" },
                 description: {
@@ -1696,7 +1749,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(one remote record per note and url|username|database target, "
                         + "backfilled from odoo_id; older ids gain the database; legacy global "
                         + "pending turned per-server; pull cursors), addSyncOutboxTable "
-                        + "(sync_outbox, server_capabilities, note_links.client_uuid). "
+                        + "(sync_outbox, server_capabilities, note_links.client_uuid), "
+                        + "addSyncTargetTables (remote_records_cache, sync_target_prefs). "
                         + "Each migration is "
                         + "idempotent and re-runs safely on app start.",
                     fr: "Étapes de schéma versionnées qui ont fait grandir la sync : "
@@ -1706,7 +1760,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(un record distant par note et cible url|username|base, repris "
                         + "d'odoo_id ; les anciens ids reçoivent la base ; l'ancien pending "
                         + "global devient par serveur ; curseurs de pull), addSyncOutboxTable "
-                        + "(sync_outbox, server_capabilities, note_links.client_uuid). "
+                        + "(sync_outbox, server_capabilities, note_links.client_uuid), "
+                        + "addSyncTargetTables (remote_records_cache, sync_target_prefs). "
                         + "Chaque migration est "
                         + "idempotente et se ré-exécute sans risque au boot.",
                 },
@@ -1719,6 +1774,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addSelectedSyncConfigIds.ts",
                     "src/services/migrations/addNoteLinksTable.ts",
                     "src/services/migrations/addSyncOutboxTable.ts",
+                    "src/services/migrations/addSyncTargetTables.ts",
                 ],
                 tests: [
                     "src/__tests__/migrations.test.ts",

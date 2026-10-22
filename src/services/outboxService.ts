@@ -134,6 +134,24 @@ export class OutboxService {
     });
   }
 
+  /**
+   * Parks an operation as "incomplete": it waits for a choice the user
+   * has not made yet (complete() queues it again). params are merged into
+   * the stored ones; the last error is cleared, the row having no failure
+   * to report.
+   */
+  async markIncomplete(opId: string, params: Record<string, any> = {}): Promise<void> {
+    const op = await this.db.getOutboxOp(opId);
+    if (!op) return;
+    await this.db.updateOutboxOp(opId, {
+      status: "incomplete",
+      params: { ...op.params, ...params },
+      lastError: null,
+      nextAttemptAt: null,
+      updatedAt: this.now().toISOString(),
+    });
+  }
+
   /** Puts a "blocked" or "failed" operation back in the queue, due now. */
   async retry(opId: string): Promise<void> {
     await this.db.updateOutboxOp(opId, {
@@ -229,7 +247,6 @@ export class OutboxService {
     this.onRetryScheduled?.(nextAttemptAt);
   }
 
-  /** Whether drain would run this operation now. */
   /**
    * Whether drain would run this operation now. force skips the retry
    * delay but not params.notBefore. A time more than RETRY_MAX_MS ahead

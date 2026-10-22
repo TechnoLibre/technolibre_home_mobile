@@ -1,6 +1,7 @@
 import { DatabaseService, NoteLink, OutboxOp } from "./databaseService";
 import { OutboxBlockedError, OutboxRetryLaterError, OutboxService } from "./outboxService";
 import { CapabilityService } from "./odoo/capabilityService";
+import { PROJECT_MODEL, ProjectService } from "./odoo/projectService";
 import { Application } from "../models/application";
 import {
   Note,
@@ -53,6 +54,54 @@ const AMBIGUOUS_CANDIDATES_SHOWN = 5;
 export const TASK_CREATE = "task.create";
 
 /**
+ * Where a note's task is created on one server: in projectId, or, when
+ * null, as a personal task (no project). Chosen once, at creation; later
+ * writes leave the task's project alone.
+ */
+export interface TaskTarget {
+  projectId: number | null;
+  projectName?: string | null;
+}
+
+/**
+ * Why a task.create operation waits for the user to choose its project
+ * again: the project is gone or hidden from the user (project_missing), or
+ * the server refused the creation (refused: rights, a constraint).
+ */
+const CHOOSE_AGAIN_REASONS = new Set(["project_missing", "refused"]);
+
+/** Server exceptions a create retry cannot get past: the operation blocks. */
+const REFUSED_ERRORS = new Set([
+  "odoo.exceptions.AccessError",
+  "odoo.exceptions.ValidationError",
+  "odoo.exceptions.UserError",
+  "odoo.exceptions.MissingError",
+]);
+
+/**
+ * What a note needs before its task can reach one server:
+ * - linked: the task exists; a push writes it;
+ * - queued: its creation is in the outbox, due, retrying or blocked for a
+ *   reason the user settles on the next tap (ambiguous);
+ * - choose: the project must be chosen first. op is the creation waiting
+ *   for that choice (incomplete, or blocked for a reason in
+ *   CHOOSE_AGAIN_REASONS), or null when nothing was ever chosen; reason
+ *   "deleted" (with deletedResId) when the linked task was deleted on the
+ *   server and choosing recreates it; target is the choice to offer
+ *   first: the operation's, else the server's last.
+ */
+export type TaskTargetState =
+  | { state: "linked"; resId: number }
+  | { state: "queued"; op: OutboxOp }
+  | {
+      state: "choose";
+      op: OutboxOp | null;
+      reason: string | null;
+      target: TaskTarget | null;
+      deletedResId?: number;
+    };
+
+/**
  * Text the app writes in a record it creates, searched to find that record
  * again when the answer to create() was lost.
  */
@@ -80,6 +129,11 @@ const WITH_ARCHIVED = { active_test: false };
  */
 const FIRST_PULL_CLOCK_MARGIN_MS = 24 * 60 * 60 * 1000;
 
+/** task.create params of a target (none: a personal task). */
+function targetParams(target: TaskTarget | null): Record<string, any> {
+  return { projectId: target?.projectId ?? null, projectName: target?.projectName ?? null };
+}
+
 /** Fields of a note a push sends: a change here during a push re-queues it. */
 function pushedFingerprint(note: Note): string {
   return JSON.stringify([note.title, note.done, note.archived, note.pinned, note.tags, note.entries]);
@@ -100,6 +154,8 @@ export class SyncService {
   readonly outbox: OutboxService;
   /** Cached probes of what each server allows per model. */
   readonly capabilities: CapabilityService;
+  /** Projects a new task can go to, per server, cached for offline. */
+  readonly projects: ProjectService;
   /**
    * Whether project.task has geo_task_point, per "url|database". The field
    * comes from an optional server module; sending it where it is missing
@@ -133,6 +189,7 @@ export class SyncService {
     this.rpc = rpc;
     this.outbox = outbox;
     this.capabilities = new CapabilityService(db, rpc);
+    this.projects = new ProjectService(db, rpc);
     this.outbox.onRetryScheduled = (at) => this.onRetryScheduled?.(at);
     this.outbox.registerHandler(TASK_CREATE, (creds, op) => this.pushNote(creds, op.noteId));
   }
@@ -284,7 +341,10 @@ export class SyncService {
    * user: pushNote raises OutboxBlockedError without contacting the
    * server, unless options.userInitiated (a tap on sync) runs it again.
    * options.adoptTaskId settles an "ambiguous" creation with the task the
-   * user picked among the error's candidates.
+   * user picked among the error's candidates. An "incomplete" creation
+   * never runs, tap or not: its project is chosen first (setTaskTarget).
+   * A creation queued here, with no choice made, goes to the server's last
+   * chosen project (see setTaskTarget), else is a personal task.
    */
   async pushNote(
     creds: SyncCredentials,
@@ -322,14 +382,19 @@ export class SyncService {
         await this.db.refreshNoteSyncStatus(noteId);
         throw new RemoteRecordDeletedError(`La tâche #${known.resId} a été supprimée sur ${creds.odooUrl}.`);
       }
-      if (queued && (queued.status === "blocked" || queued.status === "incomplete") && !options.userInitiated) {
+      if (queued?.status === "incomplete") {
+        throw new OutboxBlockedError(`La tâche attend le choix de son projet sur ${creds.odooUrl}.`, "incomplete");
+      }
+      if (queued?.status === "blocked" && !options.userInitiated) {
         throw new OutboxBlockedError(
           queued.lastError ?? queued.status,
           queued.params.blockedReason ?? queued.status,
           queued.params.candidates ?? []
         );
       }
-      const op = queued ?? await this.outbox.enqueue({ noteId, configId, kind: TASK_CREATE });
+      const op = queued ?? await this.outbox.enqueue({
+        noteId, configId, kind: TASK_CREATE, params: targetParams(await this.lastTaskTarget(configId)),
+      });
       await this.outbox.attempt(op.id, (running) => this.createTask(creds, running, options.adoptTaskId ?? null));
       return;
     }
@@ -378,6 +443,15 @@ export class SyncService {
    * whatever triggered it (tap, reconnect, restart). A createSentAt later
    * than now (the clock was set back) is reset to now, so the window ends
    * three minutes after the correction, not after the clock's offset.
+   *
+   * The task goes to params.projectId (null: no project). Before a create,
+   * the project is looked up among the active ones, as the picker lists
+   * them: gone, archived or hidden from the user, the operation blocks as
+   * "project_missing", and the server stops offering it as its last
+   * choice. A create the server refuses (REFUSED_ERRORS) blocks as
+   * "refused", its createSentAt cleared since the server answered: a retry
+   * would fail the same way. Either waits for the user to choose the
+   * project again.
    */
   private async createTask(creds: SyncCredentials, op: OutboxOp, adoptTaskId: number | null): Promise<void> {
     const note = await this.db.getNoteById(op.noteId);
@@ -427,8 +501,21 @@ export class SyncService {
       if (taskId !== null) {
         await this.jsonRpc(creds.odooUrl, sessionId, TASK_MODEL, "write", [[taskId], payload]);
       } else {
+        const projectId: number | null = op.params.projectId ?? null;
+        if (projectId !== null) await this.checkProject(creds, op.configId, sessionId, projectId);
         await this.outbox.setParams(op.id, { createSentAt: new Date().toISOString() });
-        taskId = await this.jsonRpc(creds.odooUrl, sessionId, TASK_MODEL, "create", [payload]);
+        try {
+          taskId = await this.jsonRpc(creds.odooUrl, sessionId, TASK_MODEL, "create", [
+            { ...payload, project_id: projectId ?? false },
+          ]);
+        } catch (e: unknown) {
+          if (e instanceof OdooRpcError && e.odooName && REFUSED_ERRORS.has(e.odooName)) {
+            // The server answered and rolled back: no create is in flight
+            await this.outbox.setParams(op.id, { createSentAt: null });
+            throw new OutboxBlockedError(`Création refusée par ${creds.odooUrl} : ${e.message}`, "refused");
+          }
+          throw e;
+        }
       }
       const now = new Date().toISOString();
       await this.settlePush(op.noteId, op.configId, fingerprint, now, {
@@ -444,6 +531,113 @@ export class SyncService {
         clientUuid: op.clientUuid,
       });
     });
+  }
+
+  /**
+   * Raises OutboxBlockedError "project_missing" when projectId is not an
+   * active project the user can see on this server, and then drops it as
+   * the server's last choice so the picker no longer preselects it.
+   */
+  private async checkProject(
+    creds: SyncCredentials,
+    configId: string,
+    sessionId: string,
+    projectId: number
+  ): Promise<void> {
+    let found: Array<{ id: number }> = [];
+    try {
+      found = await this.jsonRpc(
+        creds.odooUrl, sessionId, PROJECT_MODEL, "search_read",
+        [],
+        { domain: [["id", "=", projectId]], fields: ["id"], limit: 1 }
+      );
+    } catch (e: unknown) {
+      // No right to read projects at all: the project is hidden as well
+      if (!(e instanceof OdooRpcError) || e.odooName !== "odoo.exceptions.AccessError") throw e;
+    }
+    if (found.length === 0) {
+      if ((await this.lastTaskTarget(configId))?.projectId === projectId) {
+        await this.db.setSyncTargetPref({
+          configId, kind: TASK_CREATE, params: targetParams(null), updatedAt: new Date().toISOString(),
+        });
+      }
+      throw new OutboxBlockedError(
+        `Le projet #${projectId} est introuvable, archivé ou inaccessible sur ${creds.odooUrl}.`,
+        "project_missing"
+      );
+    }
+  }
+
+  // ─── Task target ──────────────────────────────────────────────────────────
+
+  /** The project last chosen for new tasks on this server, if any. */
+  async lastTaskTarget(configId: string): Promise<TaskTarget | null> {
+    const pref = await this.db.getSyncTargetPref(configId, TASK_CREATE);
+    if (!pref) return null;
+    return { projectId: pref.params.projectId ?? null, projectName: pref.params.projectName ?? null };
+  }
+
+  /** See TaskTargetState. */
+  async taskTargetState(noteId: string, configId: string): Promise<TaskTargetState> {
+    const known = await this.db.findNoteLink(noteId, configId, TASK_MODEL, "create", true);
+    if (known?.remoteState === "ok") return { state: "linked", resId: known.resId };
+    const op = await this.outbox.find(noteId, configId, TASK_CREATE);
+    if (op) {
+      const reason = op.status === "incomplete" ? "incomplete" : op.params.blockedReason ?? null;
+      if (op.status === "incomplete"
+        || (op.status === "blocked" && reason !== null && CHOOSE_AGAIN_REASONS.has(reason))) {
+        const target = "projectId" in op.params
+          ? { projectId: op.params.projectId ?? null, projectName: op.params.projectName ?? null }
+          : await this.lastTaskTarget(configId);
+        return { state: "choose", op, reason, target };
+      }
+      return { state: "queued", op };
+    }
+    const target = await this.lastTaskTarget(configId);
+    if (known) return { state: "choose", op: null, reason: "deleted", target, deletedResId: known.resId };
+    return { state: "choose", op: null, reason: null, target };
+  }
+
+  /**
+   * Records where the note's task goes on this server, before it is
+   * pushed: queues its task.create operation with target, or puts the
+   * waiting one (state "choose") back in the queue with it, and remembers
+   * target as the server's last choice. For a task deleted on the
+   * server, queuing it is the user's confirmation to recreate it (see
+   * pushNote). "later" (projects unknown) queues the creation as
+   * "incomplete", or parks the waiting one so, its former block reason
+   * and error cleared (and its project, when that project was missing):
+   * nothing is sent until a project is chosen. Does nothing for a note
+   * already linked there or whose creation is queued for another reason.
+   * Returns the operation.
+   */
+  async setTaskTarget(noteId: string, configId: string, target: TaskTarget | "later"): Promise<OutboxOp | null> {
+    const current = await this.taskTargetState(noteId, configId);
+    if (current.state === "linked" || current.state === "queued") return null;
+    const now = new Date().toISOString();
+    if (target !== "later") {
+      await this.db.setSyncTargetPref({
+        configId, kind: TASK_CREATE, params: targetParams(target), updatedAt: now,
+      });
+    }
+    const op = current.state === "choose" ? current.op : null;
+    if (!op) {
+      return this.outbox.enqueue({
+        noteId, configId, kind: TASK_CREATE,
+        params: target === "later" ? {} : targetParams(target),
+        status: target === "later" ? "incomplete" : "queued",
+      });
+    }
+    if (target === "later") {
+      await this.outbox.markIncomplete(op.id, {
+        blockedReason: null,
+        candidates: [],
+        ...(current.reason === "project_missing" ? targetParams(null) : {}),
+      });
+    } else {
+      await this.outbox.complete(op.id, { ...targetParams(target), blockedReason: null, candidates: [] });
+    }
+    return this.db.getOutboxOp(op.id);
   }
 
   /** The project.task values of a note, tags resolved, geo probed. */
@@ -503,17 +697,20 @@ export class SyncService {
   // ─── Poll ────────────────────────────────────────────────────────────────
 
   /**
-   * Lightweight poll — fetches only IDs and write_date modified since lastSync.
-   * Returns Odoo IDs of changed tasks.
+   * Lightweight poll — fetches only the ids of the tasks linked on this
+   * server (any project) written since lastSync. Returns those ids; no
+   * linked task means no request.
    */
   async pollForChanges(creds: SyncCredentials, lastSync: Date): Promise<number[]> {
+    const linkedIds = [...(await this.linkedTaskIds(syncConfigIdOf(creds))).keys()];
+    if (linkedIds.length === 0) return [];
     return this.callWithAuth(creds, async (sessionId, _odooVersion) => {
       const results: { id: number; write_date: string }[] = await this.jsonRpc(
         creds.odooUrl, sessionId, "project.task", "search_read",
         [],
         {
           domain: [
-            ["project_id", "=", false],
+            ["id", "in", linkedIds],
             ["write_date", ">", lastSync.toISOString()],
           ],
           fields: ["id", "write_date"],
@@ -540,33 +737,30 @@ export class SyncService {
   }
 
   /**
-   * Reads, page by page, the project-less tasks with write_date >= since
-   * (archived ones included) and copies title, pinned, archived and — on
+   * Reads, page by page, the tasks linked on this target, whatever their
+   * project, with write_date >= since (archived ones included) and copies title, pinned, archived and — on
    * Odoo 17+ — done onto the notes linked to them on this target. A note
    * still "pending" or in "error" for this server is left
    * untouched: its local edits have not reached the server yet, and
    * overwriting them would lose them. A note the pull changes becomes
    * pending for its other servers. Returns the notes changed and the
-   * highest write_date read (null when no task came back).
+   * highest write_date read (null when no task came back, or none is
+   * linked: then nothing is requested).
    */
   private async pullTasks(
     creds: SyncCredentials,
     since: string
   ): Promise<{ updated: number; maxWriteDate: string | null }> {
+    const configId = syncConfigIdOf(creds);
+    const linkByResId = await this.linkedTaskIds(configId);
+    if (linkByResId.size === 0) return { updated: 0, maxWriteDate: null };
+    const linkedIds = [...linkByResId.keys()];
     return this.callWithAuth(creds, async (sessionId, odooVersion) => {
       const fields = [
         "id", "name", "priority", "active",
         "tag_ids", "date_deadline", "write_date",
         ...(odooVersion >= 17 ? ["state"] : []),
       ];
-
-      const configId = syncConfigIdOf(creds);
-      const links = await this.db.getNoteLinksForConfig(configId);
-      const linkByResId = new Map(
-        links
-          .filter((l) => l.model === TASK_MODEL && l.kind === "create" && l.remoteState === "ok")
-          .map((l) => [l.resId, l])
-      );
 
       let updated = 0;
       let maxWriteDate: string | null = null;
@@ -579,7 +773,7 @@ export class SyncService {
       let seenAtLast: number[] = [];
       for (let page = 0; page < PULL_MAX_PAGES; page++) {
         const domain: any[] = [
-          ["project_id", "=", false],
+          ["id", "in", linkedIds],
           ["write_date", ">=", lastWriteDate],
           ...(seenAtLast.length > 0 ? [["id", "not in", seenAtLast]] : []),
         ];
@@ -611,6 +805,15 @@ export class SyncService {
       }
       return { updated, maxWriteDate };
     });
+  }
+
+  /** Live task links of one config, by task id. */
+  private async linkedTaskIds(configId: string): Promise<Map<number, NoteLink>> {
+    return new Map(
+      (await this.db.getNoteLinksForConfig(configId))
+        .filter((l) => l.model === TASK_MODEL && l.kind === "create" && l.remoteState === "ok")
+        .map((l) => [l.resId, l])
+    );
   }
 
   /**
@@ -837,7 +1040,9 @@ export class SyncService {
 
   /**
    * Builds the project.task payload for create/write.
-   * Excludes fields not available in older Odoo versions. With clientUuid,
+   * Excludes fields not available in older Odoo versions, and project_id,
+   * which only a create sets (see createTask): a task moved to another
+   * project on the server stays there. With clientUuid,
    * the description ends with its marker (see clientMarker), kept on every
    * write so the task stays findable.
    */
@@ -854,7 +1059,6 @@ export class SyncService {
       description: clientUuid
         ? [html, `<p><small>${clientMarker(clientUuid)}</small></p>`].filter(Boolean).join("\n")
         : html,
-      project_id: false,
       priority: note.pinned ? "1" : "0",
       active: !note.archived,
       tag_ids: [[6, 0, tagIds]],

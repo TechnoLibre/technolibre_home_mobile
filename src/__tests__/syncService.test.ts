@@ -37,7 +37,7 @@ const CONFIG_ID = syncConfigIdOf(CREDS);
 /** The same url and user, on the database the application used before. */
 const OLD_DB_CONFIG_ID = syncConfigIdFor(CREDS.odooUrl, CREDS.username, "olddb");
 
-/** Schema a migrated install has for sync: columns, links, outbox, probes. */
+/** Schema a migrated install has for sync: columns, links, outbox, probes, targets. */
 async function prepareSyncDb(db: DatabaseService, apps: SyncCredentials[] = [CREDS]): Promise<void> {
   await db.addSyncColumnsToNotes();
   await db.addSyncConfigIdColumn();
@@ -49,6 +49,8 @@ async function prepareSyncDb(db: DatabaseService, apps: SyncCredentials[] = [CRE
   await db.createSyncPullCursorsTable();
   await db.createSyncOutboxTable();
   await db.createServerCapabilitiesTable();
+  await db.createRemoteRecordsCacheTable();
+  await db.createSyncTargetPrefsTable();
   for (const c of apps) await addApp(db, c);
 }
 
@@ -416,11 +418,13 @@ describe("SyncService.pushNote", () => {
 
 describe("SyncService.pollForChanges", () => {
   let svc: SyncService;
+  let db: DatabaseService;
 
   beforeEach(async () => {
     SecureStoragePlugin._store.clear();
-    const db = new DatabaseService();
+    db = new DatabaseService();
     await db.initialize();
+    await prepareSyncDb(db);
     svc = new SyncService(db);
     await SecureStoragePlugin.set({
       key: syncSessionKey(CREDS),
@@ -436,13 +440,24 @@ describe("SyncService.pollForChanges", () => {
     expect(ids).toEqual([]);
   });
 
-  it("returns Odoo IDs of changed tasks", async () => {
-    vi.stubGlobal(
-      "fetch",
-      mockFetch({ result: [{ id: 10, write_date: "2026-03-30" }, { id: 20, write_date: "2026-03-30" }] })
-    );
+  it("returns the ids of the changed linked tasks, whatever their project", async () => {
+    for (const [noteId, resId] of [["po-1", 10], ["po-2", 20]] as const) {
+      await db.addNote(makeNote({ id: noteId }));
+      await linkTask(db, noteId, resId);
+    }
+    const fetchMock = mockFetch({ result: [{ id: 10, write_date: "2026-03-30" }, { id: 20, write_date: "2026-03-30" }] });
+    vi.stubGlobal("fetch", fetchMock);
     const ids = await svc.pollForChanges(CREDS, new Date("2026-03-29"));
     expect(ids).toEqual([10, 20]);
+    const domain = JSON.parse(fetchMock.mock.calls[0][1].body).params.kwargs.domain;
+    expect(domain[0]).toEqual(["id", "in", [10, 20]]);
+  });
+
+  it("sends nothing when no task is linked on the server", async () => {
+    const fetchMock = mockFetch({ result: [{ id: 10, write_date: "2026-03-30" }] });
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await svc.pollForChanges(CREDS, new Date("2026-03-29"))).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -984,7 +999,7 @@ describe("SyncService — pull scope and cursor", () => {
     expect(await svc.pullNotes(CREDS, new Date(0))).toBe(1);
     const domains = rpcCalls(fetchMock).map((c) => (c.body.params as any).kwargs.domain);
     expect(domains[1]).toEqual([
-      ["project_id", "=", false],
+      ["id", "in", [150]],
       ["write_date", ">=", "2026-04-10 10:00:00"],
       ["id", "not in", Array.from({ length: 100 }, (_, i) => i + 1)],
     ]);
@@ -1875,5 +1890,255 @@ describe("SyncService — task creation through the outbox", () => {
 
     expect(rpcCalls(fetchMock).filter((c) => c.body.params.method === "create")).toHaveLength(1);
     expect(await db.getNoteLinks("ob-17")).toHaveLength(1);
+  });
+});
+
+// ─── Task project ─────────────────────────────────────────────────────────────
+
+describe("SyncService — task project", () => {
+  let svc: SyncService;
+  let db: DatabaseService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await prepareSyncDb(db);
+    svc = new SyncService(db);
+    await SecureStoragePlugin.set({
+      key: syncSessionKey(CREDS),
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 18 }),
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Server with projects 7 and 8; create answers 900. */
+  function server(options: { createError?: string; projectsError?: string } = {}) {
+    return routeFetch((_url, body) => {
+      const { model, method } = body.params as any;
+      if (model === "project.project" && method === "search_read") {
+        if (options.projectsError) {
+          return { error: { code: 200, message: "Odoo Server Error", data: { name: options.projectsError, message: "denied" } } };
+        }
+        const domain = (body.params as any).kwargs.domain;
+        const known = [7, 8];
+        return { result: known.filter((id) => domain[0][2] === id).map((id) => ({ id })) };
+      }
+      if (method === "create" && options.createError) {
+        return { error: { code: 200, message: "Odoo Server Error", data: { name: options.createError, message: "nope" } } };
+      }
+      if (method === "create") return { result: 900 };
+      return { result: [] };
+    });
+  }
+
+  const sent = (fetchMock: ReturnType<typeof routeFetch>, method: string) =>
+    rpcCalls(fetchMock).filter((c) => c.body.params.model === "project.task" && c.body.params.method === method);
+
+  it("creates the task in the chosen project and remembers it for the server", async () => {
+    await db.addNote(makeNote({ id: "tp-1" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.setTaskTarget("tp-1", CONFIG_ID, { projectId: 7, projectName: "Chantier" });
+    await svc.pushNote(CREDS, "tp-1", { userInitiated: true });
+
+    expect(sent(fetchMock, "create")[0].body.params.args![0].project_id).toBe(7);
+    expect((await db.findNoteLink("tp-1", CONFIG_ID, "project.task", "create"))!.resId).toBe(900);
+    expect(await svc.lastTaskTarget(CONFIG_ID)).toEqual({ projectId: 7, projectName: "Chantier" });
+  });
+
+  it("never sends project_id on a write: a task moved on the server stays in its project", async () => {
+    await db.addNote(makeNote({ id: "tp-2" }));
+    await linkTask(db, "tp-2", 55);
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.pushNote(CREDS, "tp-2");
+
+    const write = sent(fetchMock, "write")[0].body.params.args!;
+    expect(write[0]).toEqual([55]);
+    expect(write[1]).not.toHaveProperty("project_id");
+  });
+
+  it("creates a personal task when no project was chosen, else the server's last project", async () => {
+    await db.addNote(makeNote({ id: "tp-3" }));
+    await db.addNote(makeNote({ id: "tp-4" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.pushNote(CREDS, "tp-3");
+    expect(sent(fetchMock, "create")[0].body.params.args![0].project_id).toBe(false);
+
+    await db.setSyncTargetPref({ configId: CONFIG_ID, kind: TASK_CREATE, params: { projectId: 8, projectName: "B" }, updatedAt: "" });
+    await svc.pushNote(CREDS, "tp-4");
+    expect(sent(fetchMock, "create")[1].body.params.args![0].project_id).toBe(8);
+  });
+
+  it("blocks a creation whose project is gone, sends no create, and asks for a project again", async () => {
+    await db.addNote(makeNote({ id: "tp-5" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.setTaskTarget("tp-5", CONFIG_ID, { projectId: 99, projectName: "Gone" });
+    const err = await svc.pushNote(CREDS, "tp-5", { userInitiated: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(OutboxBlockedError);
+    expect(err.reason).toBe("project_missing");
+    expect(sent(fetchMock, "create")).toHaveLength(0);
+
+    const state = await svc.taskTargetState("tp-5", CONFIG_ID);
+    expect(state).toMatchObject({ state: "choose", reason: "project_missing", target: { projectId: 99 } });
+    // Not run again by a sync: it waits for the user
+    await svc.syncAll(CREDS);
+    expect(sent(fetchMock, "create")).toHaveLength(0);
+
+    await svc.setTaskTarget("tp-5", CONFIG_ID, { projectId: 7, projectName: "A" });
+    expect((await svc.taskTargetState("tp-5", CONFIG_ID)).state).toBe("queued");
+    await svc.pushNote(CREDS, "tp-5", { userInitiated: true });
+    expect(sent(fetchMock, "create")[0].body.params.args![0].project_id).toBe(7);
+  });
+
+  it("takes a project the user cannot read for a missing one", async () => {
+    await db.addNote(makeNote({ id: "tp-6" }));
+    const fetchMock = server({ projectsError: "odoo.exceptions.AccessError" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.setTaskTarget("tp-6", CONFIG_ID, { projectId: 7 });
+    const err = await svc.pushNote(CREDS, "tp-6", { userInitiated: true }).catch((e) => e);
+    expect(err.reason).toBe("project_missing");
+  });
+
+  it("blocks a create the server refuses instead of retrying it", async () => {
+    await db.addNote(makeNote({ id: "tp-7" }));
+    const fetchMock = server({ createError: "odoo.exceptions.AccessError" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.setTaskTarget("tp-7", CONFIG_ID, { projectId: 7 });
+    const err = await svc.pushNote(CREDS, "tp-7", { userInitiated: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(OutboxBlockedError);
+    expect(err.reason).toBe("refused");
+    expect(await svc.taskTargetState("tp-7", CONFIG_ID)).toMatchObject({ state: "choose", reason: "refused" });
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(false);
+  });
+
+  it("keeps a creation left to choose later off the server, even on a tap", async () => {
+    await db.addNote(makeNote({ id: "tp-8" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const op = await svc.setTaskTarget("tp-8", CONFIG_ID, "later");
+    expect(op!.status).toBe("incomplete");
+    expect(await svc.lastTaskTarget(CONFIG_ID)).toBeNull();
+    await db.markNotePendingForConfigs("tp-8", [CONFIG_ID]);
+
+    const err = await svc.pushNote(CREDS, "tp-8", { userInitiated: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(OutboxBlockedError);
+    expect(err.reason).toBe("incomplete");
+    await svc.syncAll(CREDS, undefined, { force: true });
+    expect(sent(fetchMock, "create")).toHaveLength(0);
+    expect(await svc.taskTargetState("tp-8", CONFIG_ID)).toMatchObject({ state: "choose", reason: "incomplete" });
+
+    await svc.setTaskTarget("tp-8", CONFIG_ID, { projectId: null });
+    await svc.syncAll(CREDS);
+    expect(sent(fetchMock, "create")).toHaveLength(1);
+  });
+
+  it("reports linked and queued notes, and leaves them alone", async () => {
+    await db.addNote(makeNote({ id: "tp-9" }));
+    await linkTask(db, "tp-9", 12);
+    expect(await svc.taskTargetState("tp-9", CONFIG_ID)).toEqual({ state: "linked", resId: 12 });
+    expect(await svc.setTaskTarget("tp-9", CONFIG_ID, { projectId: 7 })).toBeNull();
+
+    await db.addNote(makeNote({ id: "tp-10" }));
+    await svc.outbox.enqueue({ noteId: "tp-10", configId: CONFIG_ID, kind: TASK_CREATE, params: { projectId: 7 } });
+    expect((await svc.taskTargetState("tp-10", CONFIG_ID)).state).toBe("queued");
+    expect(await svc.setTaskTarget("tp-10", CONFIG_ID, { projectId: 8 })).toBeNull();
+  });
+
+  it("recreates a task deleted on the server in the project chosen for it", async () => {
+    await db.addNote(makeNote({ id: "tp-12" }));
+    await linkTask(db, "tp-12", 12);
+    const link = await db.findNoteLink("tp-12", CONFIG_ID, "project.task", "create");
+    await db.setNoteLinkRemoteDeleted(link!.id);
+    await db.setSyncTargetPref({ configId: CONFIG_ID, kind: TASK_CREATE, params: { projectId: 8, projectName: "B" }, updatedAt: "" });
+    expect(await svc.taskTargetState("tp-12", CONFIG_ID)).toMatchObject({
+      state: "choose", reason: "deleted", deletedResId: 12, target: { projectId: 8 },
+    });
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.setTaskTarget("tp-12", CONFIG_ID, { projectId: 7, projectName: "A" });
+    await svc.pushNote(CREDS, "tp-12", { userInitiated: true });
+
+    expect(sent(fetchMock, "create")[0].body.params.args![0].project_id).toBe(7);
+    expect((await db.findNoteLink("tp-12", CONFIG_ID, "project.task", "create"))!.resId).toBe(900);
+  });
+
+  it("names the task deleted last when a recreated task is deleted again", async () => {
+    await db.addNote(makeNote({ id: "tp-17" }));
+    for (const [id, resId, createdAt] of [["l-old", 10, "2026-01-01T00:00:00.000Z"], ["l-new", 11, "2026-02-01T00:00:00.000Z"]] as const) {
+      await db.addNoteLink({
+        id, noteId: "tp-17", configId: CONFIG_ID, model: "project.task", resId, kind: "create",
+        remoteState: "deleted", createdAt, lastSyncedAt: createdAt,
+      });
+    }
+    expect(await svc.taskTargetState("tp-17", CONFIG_ID)).toMatchObject({ reason: "deleted", deletedResId: 11 });
+  });
+
+  it("creates at once in the project chosen again after a refused create", async () => {
+    await db.addNote(makeNote({ id: "tp-13" }));
+    vi.stubGlobal("fetch", server({ createError: "odoo.exceptions.ValidationError" }));
+    await svc.setTaskTarget("tp-13", CONFIG_ID, { projectId: 7 });
+    await svc.pushNote(CREDS, "tp-13", { userInitiated: true }).catch(() => {});
+
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTaskTarget("tp-13", CONFIG_ID, { projectId: 8 });
+    await svc.pushNote(CREDS, "tp-13", { userInitiated: true });
+    expect(sent(fetchMock, "create")[0].body.params.args![0].project_id).toBe(8);
+  });
+
+  it("checks the project among the active ones and forgets it as the server's last choice when gone", async () => {
+    await db.addNote(makeNote({ id: "tp-14" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTaskTarget("tp-14", CONFIG_ID, { projectId: 99, projectName: "Gone" });
+    await svc.pushNote(CREDS, "tp-14", { userInitiated: true }).catch(() => {});
+
+    const check = rpcCalls(fetchMock).find((c) => c.body.params.model === "project.project")!;
+    expect((check.body.params as any).kwargs.context).toBeUndefined();
+    expect(await svc.lastTaskTarget(CONFIG_ID)).toEqual({ projectId: null, projectName: null });
+  });
+
+  it("parks a refused creation left for later without its old reason, then waits for a project", async () => {
+    await db.addNote(makeNote({ id: "tp-15" }));
+    vi.stubGlobal("fetch", server({ createError: "odoo.exceptions.AccessError" }));
+    await svc.setTaskTarget("tp-15", CONFIG_ID, { projectId: 7 });
+    await svc.pushNote(CREDS, "tp-15", { userInitiated: true }).catch(() => {});
+
+    const op = await svc.setTaskTarget("tp-15", CONFIG_ID, "later");
+    expect(op).toMatchObject({ status: "incomplete", lastError: null, params: { blockedReason: null, projectId: 7 } });
+    const err = await svc.pushNote(CREDS, "tp-15", { userInitiated: true }).catch((e) => e);
+    expect(err.reason).toBe("incomplete");
+  });
+
+  it("drops a missing project from a creation left for later", async () => {
+    await db.addNote(makeNote({ id: "tp-16" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setTaskTarget("tp-16", CONFIG_ID, { projectId: 99 });
+    await svc.pushNote(CREDS, "tp-16", { userInitiated: true }).catch(() => {});
+
+    await svc.setTaskTarget("tp-16", CONFIG_ID, "later");
+    expect(await svc.taskTargetState("tp-16", CONFIG_ID)).toMatchObject({
+      state: "choose", reason: "incomplete", target: { projectId: null },
+    });
+  });
+
+  it("offers the server's last project to a note never pushed there", async () => {
+    await db.addNote(makeNote({ id: "tp-11" }));
+    expect(await svc.taskTargetState("tp-11", CONFIG_ID)).toEqual({ state: "choose", op: null, reason: null, target: null });
+    await db.setSyncTargetPref({ configId: CONFIG_ID, kind: TASK_CREATE, params: { projectId: 8, projectName: "B" }, updatedAt: "" });
+    expect(await svc.taskTargetState("tp-11", CONFIG_ID)).toMatchObject({ state: "choose", target: { projectId: 8, projectName: "B" } });
   });
 });

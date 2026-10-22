@@ -31,6 +31,7 @@ import { encryptExistingCredentials } from "../services/migrations/encryptExisti
 import { addEditableReposTable } from "../services/migrations/addEditableReposTable";
 import { addNoteLinksTable } from "../services/migrations/addNoteLinksTable";
 import { addSyncOutboxTable } from "../services/migrations/addSyncOutboxTable";
+import { addSyncTargetTables } from "../services/migrations/addSyncTargetTables";
 import { RepoExtractorService } from "../services/repoExtractorService";
 import { RepoEditService } from "../services/repoEditService";
 import { CodeStyleService } from "../services/codeStyleService";
@@ -232,6 +233,11 @@ async function startApp() {
 			version: 2026102202,
 			description: "Tables sync_outbox et server_capabilities : file d'opérations et sondes par serveur",
 			run: addSyncOutboxTable,
+		},
+		{
+			version: 2026102203,
+			description: "Tables remote_records_cache et sync_target_prefs : records en cache et cibles retenues par serveur",
+			run: addSyncTargetTables,
 		},
 	], setBootNote);
 

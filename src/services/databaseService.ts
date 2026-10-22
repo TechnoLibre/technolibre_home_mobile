@@ -107,6 +107,31 @@ export interface ServerCapability {
   error: string | null;
 }
 
+/**
+ * A record of a server kept for offline choices (projects, later the
+ * records an activity or a message is attached to): its id and name as
+ * the server last returned them.
+ */
+export interface RemoteRecord {
+  configId: string;
+  model: string;
+  resId: number;
+  displayName: string;
+  extra: Record<string, any>;
+  fetchedAt: string;
+}
+
+/**
+ * The last choice made for one kind of target on one server (the project
+ * of a new task, …), offered first the next time.
+ */
+export interface SyncTargetPref {
+  configId: string;
+  kind: string;
+  params: Record<string, any>;
+  updatedAt: string;
+}
+
 export interface NoteSyncInfo {
   odooId: number | null;
   odooUrl: string | null;
@@ -1027,8 +1052,9 @@ export class DatabaseService {
   /**
    * Re-keys every sync record of one target after its application's url
    * was respelled: links, queued operations, pull cursor, last-used
-   * config, remembered selections and per-server statuses; its probes are
-   * dropped and redone. Without it the next push finds no
+   * config, remembered selections, per-server statuses and remembered
+   * targets (sync_target_prefs); its probes and cached records are dropped
+   * and fetched again. Without it the next push finds no
    * link under the new id and creates a duplicate remote record.
    */
   async renameSyncConfigId(oldId: string, newId: string): Promise<void> {
@@ -1036,6 +1062,15 @@ export class DatabaseService {
     await this.db.run("UPDATE note_links SET config_id = ? WHERE config_id = ?", [newId, oldId]);
     await this.db.run("UPDATE sync_outbox SET config_id = ? WHERE config_id = ?", [newId, oldId]);
     await this.deleteServerCapabilities(oldId);
+    await this.db.run("DELETE FROM remote_records_cache WHERE config_id = ?", [oldId]);
+    const pref = await this.db.query("SELECT * FROM sync_target_prefs WHERE config_id = ?", [oldId]);
+    for (const row of pref.values ?? []) {
+      await this.db.run("DELETE FROM sync_target_prefs WHERE id = ?", [row.id]);
+      await this.db.run(
+        "INSERT OR REPLACE INTO sync_target_prefs (id, config_id, kind, params_json, updated_at) VALUES (?, ?, ?, ?, ?)",
+        [`${newId}#${row.kind}`, newId, row.kind, row.params_json, row.updated_at]
+      );
+    }
     const cursor = await this.getSyncPullCursor(oldId);
     if (cursor) {
       await this.setSyncPullCursor(newId, cursor);
@@ -1132,7 +1167,9 @@ export class DatabaseService {
 
   /**
    * The note's link to (config, model, kind) whose remote record still
-   * exists; with includeDeleted, a deleted one when no live one exists.
+   * exists; with includeDeleted, the most recently created deleted one
+   * when no live one exists (a record recreated, then deleted again,
+   * leaves several).
    */
   async findNoteLink(
     noteId: string,
@@ -1143,8 +1180,9 @@ export class DatabaseService {
   ): Promise<NoteLink | null> {
     const matching = (await this.getNoteLinks(noteId))
       .filter((l) => l.configId === configId && l.model === model && l.kind === kind);
+    const latest = [...matching].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0];
     return matching.find((l) => l.remoteState === "ok")
-      ?? (includeDeleted ? matching[0] ?? null : null);
+      ?? (includeDeleted ? latest ?? null : null);
   }
 
   async setNoteLinkRemoteDeleted(linkId: string): Promise<void> {
@@ -1378,6 +1416,92 @@ export class DatabaseService {
   /** Primary key of a capability row: one per server and model. */
   private capabilityId(configId: string, model: string): string {
     return `${configId}#${model}`;
+  }
+
+  // Remote records cache
+
+  async createRemoteRecordsCacheTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS remote_records_cache (
+        id           TEXT PRIMARY KEY NOT NULL,
+        config_id    TEXT NOT NULL,
+        model        TEXT NOT NULL,
+        res_id       INTEGER NOT NULL,
+        display_name TEXT NOT NULL,
+        extra_json   TEXT NOT NULL,
+        fetched_at   TEXT NOT NULL
+      )
+    `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_remote_records_cache_config_model ON remote_records_cache(config_id, model)"
+    );
+  }
+
+  /**
+   * Replaces the cached records of one model on one server with records:
+   * a record the server no longer returned is dropped from the cache.
+   */
+  async replaceRemoteRecords(configId: string, model: string, records: RemoteRecord[]): Promise<void> {
+    await this.db.run("DELETE FROM remote_records_cache WHERE config_id = ? AND model = ?", [configId, model]);
+    for (const r of records) {
+      await this.db.run(
+        "INSERT OR REPLACE INTO remote_records_cache (id, config_id, model, res_id, display_name, extra_json, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [`${configId}#${model}#${r.resId}`, configId, model, r.resId, r.displayName,
+         JSON.stringify(r.extra ?? {}), r.fetchedAt]
+      );
+    }
+  }
+
+  /** Cached records of one model on one server, by display name. */
+  async getRemoteRecords(configId: string, model: string): Promise<RemoteRecord[]> {
+    const result = await this.db.query(
+      "SELECT * FROM remote_records_cache WHERE config_id = ? AND model = ?",
+      [configId, model]
+    );
+    return (result.values ?? [])
+      .map((row: any) => {
+        let extra: Record<string, any> = {};
+        try { extra = JSON.parse(row.extra_json ?? "{}") ?? {}; } catch { /* keep {} */ }
+        return {
+          configId: row.config_id,
+          model: row.model,
+          resId: Number(row.res_id),
+          displayName: row.display_name,
+          extra,
+          fetchedAt: row.fetched_at,
+        };
+      })
+      .sort((a: RemoteRecord, b: RemoteRecord) => a.displayName.localeCompare(b.displayName));
+  }
+
+  // Sync target preferences
+
+  async createSyncTargetPrefsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS sync_target_prefs (
+        id          TEXT PRIMARY KEY NOT NULL,
+        config_id   TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        params_json TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+      )
+    `);
+  }
+
+  async setSyncTargetPref(pref: SyncTargetPref): Promise<void> {
+    await this.db.run(
+      "INSERT OR REPLACE INTO sync_target_prefs (id, config_id, kind, params_json, updated_at) VALUES (?, ?, ?, ?, ?)",
+      [`${pref.configId}#${pref.kind}`, pref.configId, pref.kind, JSON.stringify(pref.params), pref.updatedAt]
+    );
+  }
+
+  async getSyncTargetPref(configId: string, kind: string): Promise<SyncTargetPref | null> {
+    const result = await this.db.query("SELECT * FROM sync_target_prefs WHERE id = ?", [`${configId}#${kind}`]);
+    const row = result.values?.[0];
+    if (!row) return null;
+    let params: Record<string, any> = {};
+    try { params = JSON.parse(row.params_json ?? "{}") ?? {}; } catch { /* keep {} */ }
+    return { configId: row.config_id, kind: row.kind, params, updatedAt: row.updated_at };
   }
 
   /**
