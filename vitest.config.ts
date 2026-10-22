@@ -48,6 +48,10 @@ export default defineConfig({
         replacement: resolve(__dirname, "src/__mocks__/@aparajita/capacitor-biometric-auth.ts"),
       },
       {
+        find: "@capacitor/network",
+        replacement: resolve(__dirname, "src/__mocks__/@capacitor/network.ts"),
+      },
+      {
         find: "@capacitor/local-notifications",
         replacement: resolve(__dirname, "src/__mocks__/@capacitor/local-notifications.ts"),
       },

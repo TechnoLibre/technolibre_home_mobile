@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
-import { SyncService, SyncCredentials, syncSessionKey, syncConfigIdOf, RemoteRecordDeletedError } from "../services/syncService";
+import {
+  SyncService, SyncCredentials, syncSessionKey, syncConfigIdOf, RemoteRecordDeletedError,
+  TASK_CREATE, clientMarker,
+} from "../services/syncService";
+import { OutboxBlockedError } from "../services/outboxService";
 import { Note, NoteEntry } from "../models/note";
 import { syncConfigIdFor } from "../models/syncConfig";
 import { addNoteLinksTable } from "../services/migrations/addNoteLinksTable";
@@ -33,7 +37,7 @@ const CONFIG_ID = syncConfigIdOf(CREDS);
 /** The same url and user, on the database the application used before. */
 const OLD_DB_CONFIG_ID = syncConfigIdFor(CREDS.odooUrl, CREDS.username, "olddb");
 
-/** Schema a migrated install has for sync: columns + note_links. */
+/** Schema a migrated install has for sync: columns, links, outbox, probes. */
 async function prepareSyncDb(db: DatabaseService, apps: SyncCredentials[] = [CREDS]): Promise<void> {
   await db.addSyncColumnsToNotes();
   await db.addSyncConfigIdColumn();
@@ -43,6 +47,8 @@ async function prepareSyncDb(db: DatabaseService, apps: SyncCredentials[] = [CRE
   await db.addNtfyTokenColumn();
   await db.createNoteLinksTable();
   await db.createSyncPullCursorsTable();
+  await db.createSyncOutboxTable();
+  await db.createServerCapabilitiesTable();
   for (const c of apps) await addApp(db, c);
 }
 
@@ -827,6 +833,12 @@ function routeFetch(handler: (url: string, body: RpcBody) => object) {
   });
 }
 
+
+/** Moves the clock past the quiet window a create retry waits (3 min). */
+function afterQuietWindow(): void {
+  vi.setSystemTime(Date.now() + 4 * 60 * 1000);
+}
+
 const rpcCalls = (fetchMock: ReturnType<typeof routeFetch>) =>
   fetchMock.mock.calls.map(([url, opts]) => ({ url, body: JSON.parse(opts.body) as RpcBody }));
 
@@ -1240,7 +1252,7 @@ describe("SyncService — pending notes", () => {
     expect((await db.getNoteSyncInfo("pd-4")).syncStatus).toBe("pending");
   });
 
-  it("retries a note whose push failed, on the next syncAll", async () => {
+  it("retries a note whose creation failed once its retry delay is over, or at once when forced", async () => {
     await db.addNote(makeNote({ id: "pd-5" }));
     await db.markNotePendingForConfigs("pd-5", [CONFIG_ID]);
 
@@ -1248,8 +1260,13 @@ describe("SyncService — pending notes", () => {
     await svc.syncAll(CREDS);
     expect(await db.getNotePerServerStatus("pd-5")).toEqual({ [CONFIG_ID]: "error" });
 
+    // Without force the failed creation waits out its retry delay
     vi.stubGlobal("fetch", createThenEmptyPull());
-    const result = await svc.syncAll(CREDS);
+    expect((await svc.syncAll(CREDS)).pushed).toBe(0);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    afterQuietWindow();
+    const result = await svc.syncAll(CREDS, undefined, { force: true });
+    vi.useRealTimers();
     expect(result.pushed).toBe(1);
     expect((await db.getNoteSyncInfo("pd-5")).syncStatus).toBe("synced");
   });
@@ -1544,5 +1561,319 @@ describe("DatabaseService — legacy binding backfill", () => {
     await linkTask(db, "bf-del", 1);
     await db.deleteNote("bf-del");
     expect(await db.getNoteLinks("bf-del")).toEqual([]);
+  });
+});
+
+// ─── Outbox: task creation, idempotence ───────────────────────────────────────
+
+describe("SyncService — task creation through the outbox", () => {
+  let svc: SyncService;
+  let db: DatabaseService;
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await prepareSyncDb(db, [CREDS, OTHER_CREDS]);
+    svc = new SyncService(db);
+    for (const creds of [CREDS, OTHER_CREDS]) {
+      await SecureStoragePlugin.set({
+        key: syncSessionKey(creds),
+        value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 18 }),
+      });
+    }
+  });
+
+  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  /** Answers create with 50, the marker search with searchResult, the rest with []. */
+  const serverWith = (searchResult: Array<{ id: number }>, failCreate = false) =>
+    routeFetch((_url, body: any) => {
+      const method = body.params.method;
+      if (method === "create") return failCreate ? { error: { code: 200, message: "boom" } } : { result: 50 };
+      if (method === "search_read" && body.params.model === "project.task"
+        && JSON.stringify(body.params.kwargs.domain).includes("erplibre-mobile:")) {
+        return { result: searchResult };
+      }
+      return { result: method === "write" ? true : [] };
+    });
+
+  it("writes the operation's marker in the new task and keeps it on the link", async () => {
+    await db.addNote(makeNote({ id: "ob-1", entries: [{ id: "e", type: "text", params: { text: "hello" } } as any] }));
+    const fetchMock = serverWith([]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.pushNote(CREDS, "ob-1");
+
+    const create = rpcCalls(fetchMock).find((c) => c.body.params.method === "create")!;
+    const [link] = await db.getNoteLinks("ob-1");
+    expect(link.clientUuid).toBeTruthy();
+    expect(create.body.params.args![0].description).toContain("<p>hello</p>");
+    expect(create.body.params.args![0].description).toContain(clientMarker(link.clientUuid!));
+    expect(await db.getOutboxOpsForNote("ob-1")).toEqual([]);
+  });
+
+  it("does not search the marker on a first attempt", async () => {
+    await db.addNote(makeNote({ id: "ob-2" }));
+    const fetchMock = serverWith([]);
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ob-2");
+    expect(rpcCalls(fetchMock).map((c) => c.body.params.method)).toEqual(["create"]);
+  });
+
+  it("keeps a failed creation queued with its attempt counted and a retry delay", async () => {
+    await db.addNote(makeNote({ id: "ob-3" }));
+    vi.stubGlobal("fetch", serverWith([], true));
+    await expect(svc.pushNote(CREDS, "ob-3")).rejects.toThrow("boom");
+
+    const [op] = await db.getOutboxOpsForNote("ob-3");
+    expect(op).toMatchObject({ kind: TASK_CREATE, configId: CONFIG_ID, status: "failed", attempts: 1 });
+    expect(op.nextAttemptAt! > new Date().toISOString()).toBe(true);
+    expect(await db.getNoteLinks("ob-3")).toEqual([]);
+  });
+
+  it("adopts the task an earlier attempt created instead of creating a second one", async () => {
+    await db.addNote(makeNote({ id: "ob-4" }));
+    vi.stubGlobal("fetch", serverWith([], true));
+    await expect(svc.pushNote(CREDS, "ob-4")).rejects.toThrow();
+    const [op] = await db.getOutboxOpsForNote("ob-4");
+    afterQuietWindow();
+
+    const fetchMock = serverWith([{ id: 77 }]);
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ob-4");
+
+    const calls = rpcCalls(fetchMock).map((c) => c.body.params as any);
+    expect(calls.map((c) => c.method)).toEqual(["search_read", "write"]);
+    expect(calls[0].kwargs.domain).toEqual([["description", "ilike", clientMarker(op.clientUuid)]]);
+    expect(calls[0].kwargs.context).toEqual({ active_test: false });
+    expect(calls[1].args[0]).toEqual([77]);
+    const [link] = await db.getNoteLinks("ob-4");
+    expect([link.resId, link.clientUuid]).toEqual([77, op.clientUuid]);
+    expect(await db.getOutboxOpsForNote("ob-4")).toEqual([]);
+    expect((await db.getNoteSyncInfo("ob-4")).syncStatus).toBe("synced");
+  });
+
+  it("creates on a retry when the marker is found nowhere", async () => {
+    await db.addNote(makeNote({ id: "ob-5" }));
+    vi.stubGlobal("fetch", serverWith([], true));
+    await expect(svc.pushNote(CREDS, "ob-5")).rejects.toThrow();
+    afterQuietWindow();
+
+    const fetchMock = serverWith([]);
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ob-5");
+    expect(rpcCalls(fetchMock).map((c) => c.body.params.method)).toEqual(["search_read", "create"]);
+    expect((await db.getNoteLinks("ob-5"))[0].resId).toBe(50);
+  });
+
+  it("blocks the creation when several tasks carry the marker, until the user retries", async () => {
+    await db.addNote(makeNote({ id: "ob-6" }));
+    await db.markNotePendingForConfigs("ob-6", [CONFIG_ID]);
+    vi.stubGlobal("fetch", serverWith([], true));
+    await svc.syncAll(CREDS);
+
+    afterQuietWindow();
+    vi.stubGlobal("fetch", serverWith([{ id: 1 }, { id: 2 }]));
+    await svc.syncAll(CREDS, undefined, { force: true });
+    const [op] = await db.getOutboxOpsForNote("ob-6");
+    expect(op.status).toBe("blocked");
+    expect(await db.getNotePerServerStatus("ob-6")).toEqual({ [CONFIG_ID]: "error" });
+
+    // Blocked: neither an automatic sync nor a background push reaches the server
+    const quiet = serverWith([{ id: 1 }, { id: 2 }]);
+    vi.stubGlobal("fetch", quiet);
+    await svc.syncAll(CREDS, undefined, { force: true });
+    await expect(svc.pushNote(CREDS, "ob-6")).rejects.toBeInstanceOf(OutboxBlockedError);
+    expect(rpcCalls(quiet).some((c) => c.body.params.method === "create" || c.body.params.method === "search_read"
+      && JSON.stringify((c.body.params as any).kwargs.domain).includes("erplibre-mobile:"))).toBe(false);
+
+    // The block carries the candidates; a tap on sync runs the search again
+    const blocked = await svc.pushNote(CREDS, "ob-6").catch((e) => e);
+    expect([blocked.reason, blocked.candidates]).toEqual(["ambiguous", [1, 2]]);
+    const fetchMock = serverWith([{ id: 9 }]);
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ob-6", { userInitiated: true });
+    expect((await db.getNoteLinks("ob-6"))[0].resId).toBe(9);
+    expect(await db.getOutboxOpsForNote("ob-6")).toEqual([]);
+  });
+
+  it("links the task the user picked among ambiguous matches, without searching again", async () => {
+    await db.addNote(makeNote({ id: "ob-6b" }));
+    vi.stubGlobal("fetch", serverWith([], true));
+    await expect(svc.pushNote(CREDS, "ob-6b")).rejects.toThrow();
+    afterQuietWindow();
+    vi.stubGlobal("fetch", serverWith([{ id: 1 }, { id: 2 }]));
+    await expect(svc.pushNote(CREDS, "ob-6b")).rejects.toBeInstanceOf(OutboxBlockedError);
+
+    const fetchMock = serverWith([{ id: 1 }, { id: 2 }]);
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ob-6b", { userInitiated: true, adoptTaskId: 2 });
+
+    const calls = rpcCalls(fetchMock).map((c) => c.body.params as any);
+    expect(calls.map((c) => c.method)).toEqual(["write"]);
+    expect(calls[0].args[0]).toEqual([2]);
+    expect((await db.getNoteLinks("ob-6b"))[0].resId).toBe(2);
+    expect(await db.getOutboxOpsForNote("ob-6b")).toEqual([]);
+  });
+
+  it("keeps the marker of a linked task on every write", async () => {
+    await db.addNote(makeNote({ id: "ob-7" }));
+    vi.stubGlobal("fetch", serverWith([]));
+    await svc.pushNote(CREDS, "ob-7");
+    const [link] = await db.getNoteLinks("ob-7");
+
+    const fetchMock = serverWith([]);
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ob-7");
+    const write = rpcCalls(fetchMock).find((c) => c.body.params.method === "write")!;
+    expect(write.body.params.args![1].description).toContain(clientMarker(link.clientUuid!));
+  });
+
+  it("writes no marker on a task linked before markers existed", async () => {
+    await db.addNote(makeNote({ id: "ob-8" }));
+    await linkTask(db, "ob-8", 42);
+    const fetchMock = serverWith([]);
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ob-8");
+    const write = rpcCalls(fetchMock).find((c) => c.body.params.method === "write")!;
+    expect(write.body.params.args![1].description).not.toContain("erplibre-mobile:");
+  });
+
+  it("drops a creation row left behind once its task is linked", async () => {
+    await db.addNote(makeNote({ id: "ob-9" }));
+    await linkTask(db, "ob-9", 42);
+    await svc.outbox.enqueue({ noteId: "ob-9", configId: CONFIG_ID, kind: TASK_CREATE });
+    const fetchMock = serverWith([]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.pushNote(CREDS, "ob-9");
+
+    expect(rpcCalls(fetchMock).map((c) => c.body.params.method)).toEqual(["write"]);
+    expect(await db.getOutboxOpsForNote("ob-9")).toEqual([]);
+  });
+
+  it("retries a confirmed recreation of a deleted task without asking again", async () => {
+    await db.addNote(makeNote({ id: "ob-10" }));
+    await linkTask(db, "ob-10", 42);
+    await db.setNoteLinkRemoteDeleted("link-ob-10-" + CONFIG_ID);
+    vi.stubGlobal("fetch", serverWith([], true));
+    await expect(svc.pushNote(CREDS, "ob-10", { recreateDeleted: true })).rejects.toThrow("boom");
+    afterQuietWindow();
+
+    vi.stubGlobal("fetch", serverWith([]));
+    await svc.pushNote(CREDS, "ob-10");
+    const links = await db.getNoteLinks("ob-10");
+    expect(links.find((l) => l.remoteState === "ok")!.resId).toBe(50);
+  });
+
+  it("still refuses to recreate a deleted task nobody asked for", async () => {
+    await db.addNote(makeNote({ id: "ob-11" }));
+    await linkTask(db, "ob-11", 42);
+    await db.setNoteLinkRemoteDeleted("link-ob-11-" + CONFIG_ID);
+    const fetchMock = serverWith([]);
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(svc.pushNote(CREDS, "ob-11")).rejects.toBeInstanceOf(RemoteRecordDeletedError);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await db.getOutboxOpsForNote("ob-11")).toEqual([]);
+  });
+
+  it("deletes a note's queued operations with the note", async () => {
+    await db.addNote(makeNote({ id: "ob-12" }));
+    await svc.outbox.enqueue({ noteId: "ob-12", configId: CONFIG_ID, kind: TASK_CREATE });
+    await db.deleteNote("ob-12");
+    expect(await db.getOutboxOpsForConfig(CONFIG_ID)).toEqual([]);
+  });
+
+  it("moves queued operations to the new id when an application url is respelled", async () => {
+    await db.addNote(makeNote({ id: "ob-13" }));
+    await svc.outbox.enqueue({ noteId: "ob-13", configId: CONFIG_ID, kind: TASK_CREATE });
+    await db.renameSyncConfigId(CONFIG_ID, OTHER_CONFIG_ID);
+    expect((await db.getOutboxOpsForNote("ob-13"))[0].configId).toBe(OTHER_CONFIG_ID);
+  });
+
+  it("runs the server's other due operations after the pending notes, once each", async () => {
+    await db.addNote(makeNote({ id: "ob-14" }));
+    await db.addNote(makeNote({ id: "ob-15" }));
+    await db.markNotePendingForConfigs("ob-14", [CONFIG_ID]);
+    const ran: string[] = [];
+    svc.outbox.registerHandler("test.kind", (_c, op) => svc.outbox.attempt(op.id, async () => { ran.push(op.noteId); }));
+    await svc.outbox.enqueue({ noteId: "ob-15", configId: CONFIG_ID, kind: "test.kind" });
+    await svc.outbox.enqueue({ noteId: "ob-15", configId: OTHER_CONFIG_ID, kind: "test.kind" });
+    const fetchMock = serverWith([]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await svc.syncAll(CREDS);
+
+    expect(ran).toEqual(["ob-15"]);
+    expect(rpcCalls(fetchMock).filter((c) => c.body.params.method === "create")).toHaveLength(1);
+    expect(result.pushed).toBe(2);
+    expect(await db.getOutboxOpsForConfig(CONFIG_ID)).toEqual([]);
+    expect(await db.getOutboxOpsForConfig(OTHER_CONFIG_ID)).toHaveLength(1);
+  });
+
+  it("tells whether a server has due work", async () => {
+    await db.addNote(makeNote({ id: "ob-16" }));
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(false);
+    await db.markNotePendingForConfigs("ob-16", [CONFIG_ID]);
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(true);
+
+    // The creation of that note waits out its retry delay: nothing due
+    vi.stubGlobal("fetch", serverWith([], true));
+    await svc.syncAll(CREDS);
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(false);
+    expect(await svc.hasDueWork(OTHER_CONFIG_ID)).toBe(false);
+  });
+
+  it("does not search nor create again within the quiet window after a failed create, even forced or tapped", async () => {
+    await db.addNote(makeNote({ id: "ob-18" }));
+    await db.markNotePendingForConfigs("ob-18", [CONFIG_ID]);
+    vi.stubGlobal("fetch", serverWith([], true));
+    await expect(svc.pushNote(CREDS, "ob-18")).rejects.toThrow("boom");
+
+    vi.setSystemTime(Date.now() + 60 * 1000);
+    const quiet = serverWith([]);
+    vi.stubGlobal("fetch", quiet);
+    await svc.syncAll(CREDS, undefined, { force: true });
+    await expect(svc.pushNote(CREDS, "ob-18", { userInitiated: true })).rejects.toThrow("peut encore être en cours");
+    expect(rpcCalls(quiet).filter((c) => c.body.params.method !== "search_read" || (c.body.params as any).model !== "project.task")
+      .map((c) => c.body.params.method)).not.toContain("create");
+    expect(rpcCalls(quiet).some((c) => JSON.stringify((c.body.params as any).kwargs?.domain ?? []).includes("erplibre-mobile:"))).toBe(false);
+    const [op] = await db.getOutboxOpsForNote("ob-18");
+    expect(op.attempts).toBe(1);
+
+    afterQuietWindow();
+    const later = serverWith([]);
+    vi.stubGlobal("fetch", later);
+    await svc.pushNote(CREDS, "ob-18", { userInitiated: true });
+    expect(rpcCalls(later).map((c) => c.body.params.method)).toEqual(["search_read", "create"]);
+  });
+
+  it("restarts the quiet window from now when the clock was set back after a create", async () => {
+    await db.addNote(makeNote({ id: "ob-19" }));
+    vi.setSystemTime(Date.now() + 2 * 3600 * 1000);
+    vi.stubGlobal("fetch", serverWith([], true));
+    await expect(svc.pushNote(CREDS, "ob-19")).rejects.toThrow("boom");
+
+    vi.setSystemTime(Date.now() - 2 * 3600 * 1000);
+    await expect(svc.pushNote(CREDS, "ob-19", { userInitiated: true })).rejects.toThrow("peut encore être en cours");
+    afterQuietWindow();
+    const fetchMock = serverWith([]);
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ob-19", { userInitiated: true });
+    expect(rpcCalls(fetchMock).map((c) => c.body.params.method)).toEqual(["search_read", "create"]);
+  });
+
+  it("creates once when a reconnect and a resume sync the same server together", async () => {
+    await db.addNote(makeNote({ id: "ob-17" }));
+    await db.markNotePendingForConfigs("ob-17", [CONFIG_ID]);
+    const fetchMock = serverWith([]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Promise.all([svc.syncAll(CREDS, undefined, { force: true }), svc.syncAll(CREDS)]);
+
+    expect(rpcCalls(fetchMock).filter((c) => c.body.params.method === "create")).toHaveLength(1);
+    expect(await db.getNoteLinks("ob-17")).toHaveLength(1);
   });
 });

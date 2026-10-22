@@ -46,10 +46,16 @@ function fakeApp(over: Partial<any> = {}) {
 
 let appStateCb: ((s: { isActive: boolean }) => void) | undefined;
 let onlineCb: (() => void) | undefined;
+/** Fake NetworkService: online, captures the reconnect callback in onlineCb. */
+let network: any;
 
 function makeServices(apps: any[]) {
     appStateCb = undefined;
     onlineCb = undefined;
+    network = {
+        isOnline: vi.fn().mockResolvedValue(true),
+        onReconnect: vi.fn(async (cb: () => void) => { onlineCb = cb; return () => {}; }),
+    };
     mockApp.addListener.mockImplementation((evt: string, cb: any) => {
         if (evt === "appStateChange") appStateCb = cb;
         return { remove: vi.fn() };
@@ -60,6 +66,8 @@ function makeServices(apps: any[]) {
         pollForChanges: vi.fn().mockResolvedValue([]),
         syncAll: vi.fn().mockResolvedValue(undefined),
         pendingNoteIds: vi.fn().mockResolvedValue([]),
+        hasDueWork: vi.fn().mockResolvedValue(false),
+        nextRetryAt: vi.fn().mockResolvedValue(null),
     } as any;
     const bus = new EventBus();
     return { appService, syncService, bus };
@@ -91,15 +99,13 @@ describe("NotificationService", () => {
                 fakeApp({ database: "", autoSync: true }),
                 fakeApp({ database: "zero", pollIntervalMinutes: 0 }),
             ]);
-            const svc = new NotificationService(syncService, appService, bus);
+            const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
             await Promise.resolve(); await Promise.resolve();
             expect(mockApp.addListener).toHaveBeenCalledWith(
                 "appStateChange", expect.any(Function),
             );
-            expect((window as any).addEventListener).toHaveBeenCalledWith(
-                "online", expect.any(Function),
-            );
+            expect(network.onReconnect).toHaveBeenCalledWith(expect.any(Function));
 
             await vi.advanceTimersByTimeAsync(60_001);
             const usedDbs = syncService.pollForChanges.mock.calls
@@ -117,7 +123,7 @@ describe("NotificationService", () => {
             const handler = vi.fn();
             bus.addEventListener(Events.SYNC_CHANGES_DETECTED, handler);
 
-            const svc = new NotificationService(syncService, appService, bus);
+            const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
             await Promise.resolve(); await Promise.resolve();
             await vi.advanceTimersByTimeAsync(60_001);
@@ -139,7 +145,7 @@ describe("NotificationService", () => {
                     ntfyToken: "tok",
                 }),
             ]);
-            const svc = new NotificationService(syncService, appService, bus);
+            const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
             await Promise.resolve(); await Promise.resolve();
             expect(ntfyHolder.last.connect).toHaveBeenCalledWith(
@@ -151,7 +157,7 @@ describe("NotificationService", () => {
             const { appService, syncService, bus } = makeServices([
                 fakeApp({ database: "x", ntfyUrl: "u", ntfyTopic: "t" }),
             ]);
-            const svc = new NotificationService(syncService, appService, bus);
+            const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
             await Promise.resolve(); await Promise.resolve();
             const callArgs = ntfyHolder.last.connect.mock.calls[0];
@@ -162,7 +168,7 @@ describe("NotificationService", () => {
             const { appService, syncService, bus } = makeServices([
                 fakeApp({ database: "x" }),
             ]);
-            const svc = new NotificationService(syncService, appService, bus);
+            const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
             await Promise.resolve(); await Promise.resolve();
             expect(ntfyHolder.last.connect).not.toHaveBeenCalled();
@@ -174,7 +180,7 @@ describe("NotificationService", () => {
             const { appService, syncService, bus } = makeServices([
                 fakeApp({ database: "a", pollIntervalMinutes: 1 }),
             ]);
-            const svc = new NotificationService(syncService, appService, bus);
+            const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
             await Promise.resolve(); await Promise.resolve();
 
@@ -193,7 +199,7 @@ describe("NotificationService", () => {
                     ntfyUrl: "u", ntfyTopic: "t",
                 }),
             ]);
-            const svc = new NotificationService(syncService, appService, bus);
+            const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
             await Promise.resolve(); await Promise.resolve();
             const initialConnects = ntfyHolder.last.connect.mock.calls.length;
@@ -218,7 +224,7 @@ describe("NotificationService", () => {
             const handler = vi.fn();
             bus.addEventListener(Events.RELOAD_NOTES, handler);
 
-            const svc = new NotificationService(syncService, appService, bus);
+            const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
             await Promise.resolve(); await Promise.resolve();
 
@@ -226,6 +232,7 @@ describe("NotificationService", () => {
             for (let i = 0; i < 20; i++) await Promise.resolve();
 
             expect(syncService.syncAll).toHaveBeenCalledTimes(2);
+            expect(syncService.syncAll.mock.calls.every((c: any[]) => c[2]?.force === true)).toBe(true);
             expect(handler).toHaveBeenCalledTimes(1);
         });
 
@@ -236,7 +243,7 @@ describe("NotificationService", () => {
             ]);
             syncService.pendingNoteIds.mockResolvedValueOnce(["n1"]).mockResolvedValueOnce([]);
 
-            const svc = new NotificationService(syncService, appService, bus);
+            const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
             await Promise.resolve(); await Promise.resolve();
 
@@ -244,6 +251,105 @@ describe("NotificationService", () => {
             for (let i = 0; i < 20; i++) await Promise.resolve();
 
             expect(syncService.syncAll).toHaveBeenCalledTimes(3);
+            // The second pass waits out retry delays
+            expect(syncService.syncAll.mock.calls[2][2]).toEqual({ force: false });
+        });
+    });
+
+    describe("due work", () => {
+        it("syncs at startup only the apps with due work, retry delays respected", async () => {
+            const { appService, syncService, bus } = makeServices([
+                fakeApp({ database: "a" }),
+                fakeApp({ database: "b" }),
+            ]);
+            syncService.hasDueWork.mockImplementation(async (id: string) => id.endsWith("|b"));
+            const handler = vi.fn();
+            bus.addEventListener(Events.RELOAD_NOTES, handler);
+
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+
+            expect(syncService.syncAll).toHaveBeenCalledTimes(1);
+            expect(syncService.syncAll.mock.calls[0][0].database).toBe("b");
+            expect(syncService.syncAll.mock.calls[0][2]).toEqual({ force: false });
+            expect(handler).toHaveBeenCalledTimes(1);
+        });
+
+        it("syncs due work again when the app returns to the foreground", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            expect(syncService.syncAll).not.toHaveBeenCalled();
+
+            syncService.hasDueWork.mockResolvedValue(true);
+            appStateCb!({ isActive: true });
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            expect(syncService.syncAll).toHaveBeenCalledTimes(1);
+        });
+
+        it("retries a failed creation at its retry time while the app stays open", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
+            syncService.nextRetryAt.mockResolvedValue(new Date(Date.now() + 30_000).toISOString());
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            expect(syncService.syncAll).not.toHaveBeenCalled();
+
+            syncService.hasDueWork.mockResolvedValue(true);
+            syncService.nextRetryAt.mockResolvedValue(null);
+            await vi.advanceTimersByTimeAsync(29_000);
+            expect(syncService.syncAll).not.toHaveBeenCalled();
+            await vi.advanceTimersByTimeAsync(2_500);
+            expect(syncService.syncAll).toHaveBeenCalledTimes(1);
+            expect(syncService.syncAll.mock.calls[0][2]).toEqual({ force: false });
+        });
+
+        it("re-arms the retry timer when a row fails elsewhere (a tap on sync)", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+
+            syncService.nextRetryAt.mockResolvedValue(new Date(Date.now() + 30_000).toISOString());
+            syncService.onRetryScheduled(new Date(Date.now() + 30_000).toISOString());
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            syncService.hasDueWork.mockResolvedValue(true);
+            syncService.nextRetryAt.mockResolvedValue(null);
+            await vi.advanceTimersByTimeAsync(31_500);
+            expect(syncService.syncAll).toHaveBeenCalledTimes(1);
+        });
+
+        it("arms no timer when the app went to the background while it was computed", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
+            let release!: (v: string) => void;
+            syncService.nextRetryAt.mockReturnValueOnce(new Promise<string>((r) => { release = r; }));
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            appStateCb!({ isActive: false });
+            release(new Date(Date.now() + 30_000).toISOString());
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            syncService.hasDueWork.mockResolvedValue(true);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(syncService.syncAll).not.toHaveBeenCalled();
+        });
+
+        it("drops the retry timer when the app goes to the background", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
+            syncService.nextRetryAt.mockResolvedValue(new Date(Date.now() + 30_000).toISOString());
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            syncService.hasDueWork.mockResolvedValue(true);
+            appStateCb!({ isActive: false });
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(syncService.syncAll).not.toHaveBeenCalled();
+        });
+
+        it("does nothing while offline", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
+            network.isOnline.mockResolvedValue(false);
+            syncService.hasDueWork.mockResolvedValue(true);
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            expect(syncService.hasDueWork).not.toHaveBeenCalled();
+            expect(syncService.syncAll).not.toHaveBeenCalled();
         });
     });
 
@@ -260,7 +366,7 @@ describe("NotificationService", () => {
             const handler = vi.fn();
             bus.addEventListener(Events.SYNC_CHANGES_DETECTED, handler);
 
-            const svc = new NotificationService(syncService, appService, bus);
+            const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
             await Promise.resolve(); await Promise.resolve();
 
@@ -279,7 +385,7 @@ describe("NotificationService", () => {
             const { appService, syncService, bus } = makeServices([
                 fakeApp({ database: "a", ntfyUrl: "", ntfyTopic: "" }),
             ]);
-            const svc = new NotificationService(syncService, appService, bus);
+            const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
             await Promise.resolve(); await Promise.resolve();
             expect(ntfyHolder.last.connect).not.toHaveBeenCalled();

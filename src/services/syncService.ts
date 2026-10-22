@@ -1,4 +1,6 @@
-import { DatabaseService } from "./databaseService";
+import { DatabaseService, NoteLink, OutboxOp } from "./databaseService";
+import { OutboxBlockedError, OutboxRetryLaterError, OutboxService } from "./outboxService";
+import { CapabilityService } from "./odoo/capabilityService";
 import { Application } from "../models/application";
 import {
   Note,
@@ -36,6 +38,28 @@ export interface SyncResult {
 /** Remote model a note is mirrored to by pushNote / pullNotes. */
 const TASK_MODEL = "project.task";
 
+/**
+ * Minimum time between sending a task create and a retry that searches
+ * its marker: longer than the HTTP read timeout plus Odoo's
+ * default limit_time_real (120 s), so a create still running on the server
+ * has committed — or been killed — before the search.
+ */
+const CREATE_QUIET_WINDOW_MS = 3 * 60 * 1000;
+
+/** Tasks an ambiguous marker search lists for the user to pick from. */
+const AMBIGUOUS_CANDIDATES_SHOWN = 5;
+
+/** Outbox kind of the creation of a note's task on one server. */
+export const TASK_CREATE = "task.create";
+
+/**
+ * Text the app writes in a record it creates, searched to find that record
+ * again when the answer to create() was lost.
+ */
+export function clientMarker(clientUuid: string): string {
+  return `erplibre-mobile:${clientUuid}`;
+}
+
 /** project.task.state of a closed task (Odoo 17+). */
 const TASK_STATE_DONE = "1_done";
 
@@ -72,6 +96,10 @@ export class SyncService {
   private db: DatabaseService;
   /** JSON-RPC transport and session store, shared with the other Odoo services. */
   readonly rpc: OdooRpcClient;
+  /** Pending creations and one-shot operations, per note and server. */
+  readonly outbox: OutboxService;
+  /** Cached probes of what each server allows per model. */
+  readonly capabilities: CapabilityService;
   /**
    * Whether project.task has geo_task_point, per "url|database". The field
    * comes from an optional server module; sending it where it is missing
@@ -86,14 +114,27 @@ export class SyncService {
    */
   private _pushInFlight = new Map<string, Promise<void>>();
   /**
+   * Tail of the syncAll runs per config id: a reconnect and a return to
+   * the foreground firing together run one after the other.
+   */
+  private _syncAllChain = new Map<string, Promise<unknown>>();
+  /**
    * Called with the id of each note a pull changed, so a screen showing
    * that note reloads it instead of saving its older copy over it.
    */
   onNotePulled: ((noteId: string) => void) | null = null;
 
-  constructor(db: DatabaseService, rpc: OdooRpcClient = new OdooRpcClient()) {
+  constructor(
+    db: DatabaseService,
+    rpc: OdooRpcClient = new OdooRpcClient(),
+    outbox: OutboxService = new OutboxService(db)
+  ) {
     this.db = db;
     this.rpc = rpc;
+    this.outbox = outbox;
+    this.capabilities = new CapabilityService(db, rpc);
+    this.outbox.onRetryScheduled = (at) => this.onRetryScheduled?.(at);
+    this.outbox.registerHandler(TASK_CREATE, (creds, op) => this.pushNote(creds, op.noteId));
   }
 
   // ─── Transport (OdooRpcClient) ────────────────────────────────────────────
@@ -226,21 +267,29 @@ export class SyncService {
 
   /**
    * Pushes a single note to one server as a project.task: write() on the
-   * task this note is linked to on that target, create() and
-   * link otherwise. The server is then "synced" — or "pending" again when
-   * the note changed while the push ran, since the server got the older
-   * content — and the global status is re-derived.
+   * task this note is linked to on that target; without one, the creation
+   * runs as the note's "task.create" outbox operation (see createTask).
+   * The server is then "synced" — or "pending" again when the note changed
+   * while the push ran, since the server got the older content — and the
+   * global status is re-derived.
    *
    * A link whose task was deleted on the server is never recreated
    * silently: write() answering MissingError marks the link deleted, drops
    * the server from the note's queue and raises RemoteRecordDeletedError;
    * so does a later push while only that deleted link exists, unless
-   * options.recreateDeleted asks for a new task.
+   * options.recreateDeleted asks for a new task or a task.create operation
+   * for it is already queued (a recreate the user confirmed).
+   *
+   * A creation the outbox holds "blocked" or "incomplete" waits for the
+   * user: pushNote raises OutboxBlockedError without contacting the
+   * server, unless options.userInitiated (a tap on sync) runs it again.
+   * options.adoptTaskId settles an "ambiguous" creation with the task the
+   * user picked among the error's candidates.
    */
   async pushNote(
     creds: SyncCredentials,
     noteId: string,
-    options: { recreateDeleted?: boolean } = {}
+    options: { recreateDeleted?: boolean; userInitiated?: boolean; adoptTaskId?: number } = {}
   ): Promise<void> {
     const key = `${noteId}|${syncConfigIdOf(creds)}`;
     const previous = this._pushInFlight.get(key) ?? Promise.resolve();
@@ -256,7 +305,7 @@ export class SyncService {
   private async pushNoteNow(
     creds: SyncCredentials,
     noteId: string,
-    options: { recreateDeleted?: boolean }
+    options: { recreateDeleted?: boolean; userInitiated?: boolean; adoptTaskId?: number }
   ): Promise<void> {
     const note = await this.db.getNoteById(noteId);
     if (!note) throw new Error(`Note ${noteId} not found`);
@@ -264,64 +313,176 @@ export class SyncService {
 
     const configId = syncConfigIdOf(creds);
     const known = await this.db.findNoteLink(noteId, configId, TASK_MODEL, "create", true);
-    if (known?.remoteState === "deleted" && !options.recreateDeleted) {
-      await this.db.clearNotePerServerStatus(noteId, configId);
-      await this.db.refreshNoteSyncStatus(noteId);
-      throw new RemoteRecordDeletedError(`La tâche #${known.resId} a été supprimée sur ${creds.odooUrl}.`);
-    }
     const link = known?.remoteState === "ok" ? known : null;
 
-    await this.callWithAuth(creds, async (sessionId, odooVersion) => {
-      const tagIds = await this.resolveTags(creds, sessionId, note.tags);
-      const geoPoint = this.buildGeoMultiPoint(note.entries);
-      const withGeo = geoPoint !== null && await this.hasTaskGeoField(creds, sessionId);
-      const payload = this.buildTaskPayload(note, tagIds, odooVersion, withGeo ? geoPoint : null);
-      const now = new Date().toISOString();
-
-      if (link) {
-        try {
-          await this.jsonRpc(creds.odooUrl, sessionId, TASK_MODEL, "write", [
-            [link.resId],
-            payload,
-          ]);
-        } catch (e: unknown) {
-          if (!(e instanceof OdooRpcError) || e.odooName !== "odoo.exceptions.MissingError") throw e;
-          await this.db.setNoteLinkRemoteDeleted(link.id);
-          await this.db.clearNotePerServerStatus(noteId, configId);
-          await this.db.refreshNoteSyncStatus(noteId);
-          throw new RemoteRecordDeletedError(`La tâche #${link.resId} a été supprimée sur ${creds.odooUrl}.`);
-        }
-        await this.db.setNoteLinkSyncedAt(link.id, now);
+    if (!link) {
+      const queued = await this.outbox.find(noteId, configId, TASK_CREATE);
+      if (known && !options.recreateDeleted && !queued) {
+        await this.db.clearNotePerServerStatus(noteId, configId);
+        await this.db.refreshNoteSyncStatus(noteId);
+        throw new RemoteRecordDeletedError(`La tâche #${known.resId} a été supprimée sur ${creds.odooUrl}.`);
       }
-      const createdId: number | null = link ? null : await this.jsonRpc(
-        creds.odooUrl, sessionId, TASK_MODEL, "create",
-        [payload]
-      );
+      if (queued && (queued.status === "blocked" || queued.status === "incomplete") && !options.userInitiated) {
+        throw new OutboxBlockedError(
+          queued.lastError ?? queued.status,
+          queued.params.blockedReason ?? queued.status,
+          queued.params.candidates ?? []
+        );
+      }
+      const op = queued ?? await this.outbox.enqueue({ noteId, configId, kind: TASK_CREATE });
+      await this.outbox.attempt(op.id, (running) => this.createTask(creds, running, options.adoptTaskId ?? null));
+      return;
+    }
+    // A creation that linked its task but was cut short before its row
+    // was deleted: the link is the outcome, the row is obsolete.
+    const stale = await this.outbox.find(noteId, configId, TASK_CREATE);
+    if (stale) await this.outbox.cancel(stale.id);
 
-      // Settled under the note's lock: a note deleted meanwhile gets no link
-      let noteGone = false;
-      await this.db.updateNotePerServerStatus(noteId, async (perServer) => {
-        const current = await this.db.getNoteById(noteId);
-        if (!current) { noteGone = true; return; }
-        if (createdId !== null) {
-          await this.db.addNoteLink({
-            id: uuidv4(),
-            noteId,
-            configId,
-            model: TASK_MODEL,
-            resId: createdId,
-            kind: "create",
-            remoteState: "ok",
-            createdAt: now,
-            lastSyncedAt: now,
-          });
-        }
-        perServer[configId] = pushedFingerprint(current) === fingerprint ? "synced" : "pending";
-      });
-      if (noteGone) return;
-      await this.db.setNoteSyncInfo(noteId, { lastSyncedAt: now });
-      await this.db.refreshNoteSyncStatus(noteId);
+    await this.callWithAuth(creds, async (sessionId, odooVersion) => {
+      const payload = await this.taskPayloadFor(creds, sessionId, note, odooVersion, link.clientUuid ?? null);
+      try {
+        await this.jsonRpc(creds.odooUrl, sessionId, TASK_MODEL, "write", [
+          [link.resId],
+          payload,
+        ]);
+      } catch (e: unknown) {
+        if (!(e instanceof OdooRpcError) || e.odooName !== "odoo.exceptions.MissingError") throw e;
+        await this.db.setNoteLinkRemoteDeleted(link.id);
+        await this.db.clearNotePerServerStatus(noteId, configId);
+        await this.db.refreshNoteSyncStatus(noteId);
+        throw new RemoteRecordDeletedError(`La tâche #${link.resId} a été supprimée sur ${creds.odooUrl}.`);
+      }
+      const now = new Date().toISOString();
+      await this.db.setNoteLinkSyncedAt(link.id, now);
+      await this.settlePush(noteId, configId, fingerprint, now, null);
     });
+  }
+
+  /**
+   * The "task.create" operation of a note on one server: creates the
+   * project.task carrying the operation's client_uuid marker and links it.
+   *
+   * On a retry (attempts > 1) an earlier run may have created the task and
+   * lost the answer, so the marker is searched first, archived tasks
+   * included: one match is adopted (written with the current content),
+   * none means create, and several block the operation as "ambiguous"
+   * with the matching ids as candidates — which task is the note's is the
+   * user's call, answered through adoptTaskId. A copy of the task made on
+   * the server (duplicate, project copy) carries the marker too, and
+   * archiving it does not end the ambiguity.
+   *
+   * The search cannot see a create the server is still running (its
+   * transaction is not committed). params.createSentAt, stored just before
+   * each create() is sent, dates the last one: a retry within
+   * CREATE_QUIET_WINDOW_MS of it raises OutboxRetryLaterError instead,
+   * whatever triggered it (tap, reconnect, restart). A createSentAt later
+   * than now (the clock was set back) is reset to now, so the window ends
+   * three minutes after the correction, not after the clock's offset.
+   */
+  private async createTask(creds: SyncCredentials, op: OutboxOp, adoptTaskId: number | null): Promise<void> {
+    const note = await this.db.getNoteById(op.noteId);
+    if (!note) return;
+    let createSentAt: string | undefined = op.params.createSentAt;
+    if (createSentAt && new Date(createSentAt).getTime() > Date.now()) {
+      // Stored under a clock that ran fast: the window restarts once, now
+      createSentAt = new Date().toISOString();
+      await this.outbox.setParams(op.id, { createSentAt });
+    }
+    if (adoptTaskId === null && createSentAt) {
+      const quietUntil = new Date(new Date(createSentAt).getTime() + CREATE_QUIET_WINDOW_MS);
+      if (quietUntil.getTime() > Date.now()) {
+        throw new OutboxRetryLaterError(
+          `La création précédente peut encore être en cours sur ${creds.odooUrl} ; `
+            + `nouvel essai après ${quietUntil.toLocaleTimeString()}.`,
+          quietUntil.toISOString()
+        );
+      }
+    }
+    const fingerprint = pushedFingerprint(note);
+    await this.callWithAuth(creds, async (sessionId, odooVersion) => {
+      const payload = await this.taskPayloadFor(creds, sessionId, note, odooVersion, op.clientUuid);
+      let taskId: number | null = adoptTaskId;
+      if (taskId === null && op.attempts > 1) {
+        const found: Array<{ id: number }> = await this.jsonRpc(
+          creds.odooUrl, sessionId, TASK_MODEL, "search_read",
+          [],
+          {
+            domain: [["description", "ilike", clientMarker(op.clientUuid)]],
+            fields: ["id"],
+            limit: AMBIGUOUS_CANDIDATES_SHOWN,
+            order: "id asc",
+            context: WITH_ARCHIVED,
+          }
+        );
+        if (found.length > 1) {
+          throw new OutboxBlockedError(
+            `Plusieurs tâches (${found.map((t) => `#${t.id}`).join(", ")}) portent la référence `
+              + `${clientMarker(op.clientUuid)} sur ${creds.odooUrl}.`,
+            "ambiguous",
+            found.map((t) => t.id)
+          );
+        }
+        if (found.length === 1) taskId = found[0].id;
+      }
+      if (taskId !== null) {
+        await this.jsonRpc(creds.odooUrl, sessionId, TASK_MODEL, "write", [[taskId], payload]);
+      } else {
+        await this.outbox.setParams(op.id, { createSentAt: new Date().toISOString() });
+        taskId = await this.jsonRpc(creds.odooUrl, sessionId, TASK_MODEL, "create", [payload]);
+      }
+      const now = new Date().toISOString();
+      await this.settlePush(op.noteId, op.configId, fingerprint, now, {
+        id: uuidv4(),
+        noteId: op.noteId,
+        configId: op.configId,
+        model: TASK_MODEL,
+        resId: taskId!,
+        kind: "create",
+        remoteState: "ok",
+        createdAt: now,
+        lastSyncedAt: now,
+        clientUuid: op.clientUuid,
+      });
+    });
+  }
+
+  /** The project.task values of a note, tags resolved, geo probed. */
+  private async taskPayloadFor(
+    creds: SyncCredentials,
+    sessionId: string,
+    note: Note,
+    odooVersion: number,
+    clientUuid: string | null
+  ): Promise<Record<string, any>> {
+    const tagIds = await this.resolveTags(creds, sessionId, note.tags);
+    const geoPoint = this.buildGeoMultiPoint(note.entries);
+    const withGeo = geoPoint !== null && await this.hasTaskGeoField(creds, sessionId);
+    return this.buildTaskPayload(note, tagIds, odooVersion, withGeo ? geoPoint : null, clientUuid);
+  }
+
+  /**
+   * Records a successful push under the note's lock: writes newLink when
+   * given, then marks the server "synced", or "pending" when the note
+   * changed since fingerprint was taken. A note deleted meanwhile gets no
+   * link.
+   */
+  private async settlePush(
+    noteId: string,
+    configId: string,
+    fingerprint: string,
+    now: string,
+    newLink: NoteLink | null
+  ): Promise<void> {
+    let noteGone = false;
+    await this.db.updateNotePerServerStatus(noteId, async (perServer) => {
+      const current = await this.db.getNoteById(noteId);
+      if (!current) { noteGone = true; return; }
+      if (newLink) await this.db.addNoteLink(newLink);
+      perServer[configId] = pushedFingerprint(current) === fingerprint ? "synced" : "pending";
+    });
+    if (noteGone) return;
+    await this.db.setNoteSyncInfo(noteId, { lastSyncedAt: now });
+    await this.db.refreshNoteSyncStatus(noteId);
   }
 
   /** Whether project.task has geo_task_point on this server (cached). */
@@ -505,19 +666,71 @@ export class SyncService {
     return this.db.getNoteIdsPendingForConfig(configId);
   }
 
+  /** Called with next_attempt_at each time an outbox row turns failed. */
+  onRetryScheduled: ((nextAttemptAt: string) => void) | null = null;
+
+  /** See OutboxService.nextRetryAt. */
+  async nextRetryAt(configId: string): Promise<string | null> {
+    return this.outbox.nextRetryAt(configId);
+  }
+
+  /**
+   * Whether a syncAll without force would send anything to this config: a
+   * note pending or in error whose creation is not waiting, or a due
+   * outbox operation.
+   */
+  async hasDueWork(configId: string): Promise<boolean> {
+    const ops = await this.db.getOutboxOpsForConfig(configId);
+    if (ops.some((op) => this.outbox.isDue(op))) return true;
+    const waiting = new Set(ops.filter((op) => op.kind === TASK_CREATE).map((op) => op.noteId));
+    return (await this.db.getNoteIdsPendingForConfig(configId)).some((id) => !waiting.has(id));
+  }
+
   /**
    * Full bidirectional sync for one server:
    * 1. Push every note pending (or in error) for this config — syncConfigId,
-   *    or the id derived from creds
+   *    or the id derived from creds — then run the server's other due
+   *    outbox operations
    * 2. Pull the tasks written since the pull cursor of this config (first
    *    pull: a day before the oldest link synced, else everything), then
    *    move the cursor to the highest write_date read
+   *
+   * Without options.force, a note whose task creation is waiting out its
+   * retry delay, or waits for the user (blocked, incomplete), is skipped;
+   * force (the network just came back) ignores the delay only.
    */
-  async syncAll(creds: SyncCredentials, syncConfigId?: string): Promise<SyncResult> {
-    const result: SyncResult = { pushed: 0, pulled: 0, errors: [] };
+  async syncAll(
+    creds: SyncCredentials,
+    syncConfigId?: string,
+    options: { force?: boolean } = {}
+  ): Promise<SyncResult> {
     const configId = syncConfigId ?? syncConfigIdOf(creds);
+    const previous = this._syncAllChain.get(configId) ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(() => this.syncAllNow(creds, configId, options));
+    this._syncAllChain.set(configId, current);
+    try {
+      return await current;
+    } finally {
+      if (this._syncAllChain.get(configId) === current) this._syncAllChain.delete(configId);
+    }
+  }
 
+  private async syncAllNow(
+    creds: SyncCredentials,
+    configId: string,
+    options: { force?: boolean }
+  ): Promise<SyncResult> {
+    const result: SyncResult = { pushed: 0, pulled: 0, errors: [] };
+    const notDue = new Set(
+      (await this.db.getOutboxOpsForConfig(configId))
+        .filter((op) => op.kind === TASK_CREATE && !this.outbox.isDue(op, options.force))
+        .map((op) => op.noteId)
+    );
+
+    const pushed = new Set<string>();
     for (const noteId of await this.db.getNoteIdsPendingForConfig(configId)) {
+      if (notDue.has(noteId)) continue;
+      pushed.add(noteId);
       try {
         await this.pushNote(creds, noteId);
         result.pushed++;
@@ -529,6 +742,10 @@ export class SyncService {
         await this.db.refreshNoteSyncStatus(noteId).catch(() => {});
       }
     }
+
+    const drained = await this.outbox.drain(creds, configId, { force: options.force, skipNoteIds: pushed });
+    result.pushed += drained.done;
+    result.errors.push(...drained.errors);
 
     const cursorScope = configId;
     const oldestLink = (await this.db.getNoteLinksForConfig(configId))
@@ -556,6 +773,11 @@ export class SyncService {
   /** Databases the server lists publicly; see OdooRpcClient.listDatabases. */
   listDatabases(url: string): Promise<string[]> {
     return this.rpc.listDatabases(url);
+  }
+
+  /** Public server version string; see OdooRpcClient.getServerVersion. */
+  getServerVersion(url: string): Promise<string | null> {
+    return this.rpc.getServerVersion(url);
   }
 
   // ─── Odoo explorer ───────────────────────────────────────────────────────
@@ -611,26 +833,27 @@ export class SyncService {
     });
   }
 
-  /** Public server version string; see OdooRpcClient.getServerVersion. */
-  getServerVersion(url: string): Promise<string | null> {
-    return this.rpc.getServerVersion(url);
-  }
-
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
   /**
    * Builds the project.task payload for create/write.
-   * Excludes fields not available in older Odoo versions.
+   * Excludes fields not available in older Odoo versions. With clientUuid,
+   * the description ends with its marker (see clientMarker), kept on every
+   * write so the task stays findable.
    */
   private buildTaskPayload(
     note: Note,
     tagIds: number[],
     odooVersion: number,
-    geoPoint: string | null
+    geoPoint: string | null,
+    clientUuid: string | null = null
   ): Record<string, any> {
+    const html = this.buildHtml(note.entries);
     const payload: Record<string, any> = {
       name: note.title,
-      description: this.buildHtml(note.entries),
+      description: clientUuid
+        ? [html, `<p><small>${clientMarker(clientUuid)}</small></p>`].filter(Boolean).join("\n")
+        : html,
       project_id: false,
       priority: note.pinned ? "1" : "0",
       active: !note.archived,
@@ -650,6 +873,8 @@ export class SyncService {
 
     return payload;
   }
+
+
 
   /** Minimal HTML escaping for user-generated text. */
   private escapeHtml(text: string): string {

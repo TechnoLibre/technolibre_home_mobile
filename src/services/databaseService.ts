@@ -44,6 +44,67 @@ export interface NoteLink {
   remoteState: "ok" | "deleted";
   createdAt: string;
   lastSyncedAt: string | null;
+  /**
+   * Key written in the remote record as "erplibre-mobile:<uuid>" when the
+   * app created it; null for records linked before the key existed.
+   */
+  clientUuid?: string | null;
+}
+
+/**
+ * State of an outbox operation:
+ * - queued: waits for its first run;
+ * - running: a run is in progress, or was cut short (app killed), in
+ *   which case the server may have applied it: attempts > 0 tells the
+ *   handler to look for its client_uuid before acting again;
+ * - failed: the last run failed, retried once next_attempt_at is past;
+ * - blocked: the server refused it for a reason a retry does not fix
+ *   (model gone, access, ambiguous match), waits for the user;
+ * - incomplete: saved before every choice was made (record not picked
+ *   offline), waits for the user.
+ */
+export type OutboxStatus = "queued" | "running" | "failed" | "blocked" | "incomplete";
+
+/**
+ * One operation of a note waiting to reach one server: a creation, or a
+ * one-shot action. client_uuid is generated once and kept across retries;
+ * the remote record carries it, so a run whose answer was lost can find
+ * what it already did.
+ */
+export interface OutboxOp {
+  id: string;
+  clientUuid: string;
+  noteId: string;
+  configId: string;
+  kind: string;
+  params: Record<string, any>;
+  status: OutboxStatus;
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  /** Id of an operation that must be gone (done) before this one runs. */
+  dependsOn: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * What one server allows on one model, as probed by CapabilityService.
+ * Access flags are null when the server answered none of the probes.
+ */
+export interface ServerCapability {
+  configId: string;
+  model: string;
+  exists: boolean;
+  canRead: boolean | null;
+  canCreate: boolean | null;
+  canWrite: boolean | null;
+  hasActivities: boolean;
+  hasChatter: boolean;
+  fields: Record<string, any>;
+  odooVersion: number;
+  probedAt: string;
+  error: string | null;
 }
 
 export interface NoteSyncInfo {
@@ -496,10 +557,12 @@ export class DatabaseService {
 
   async deleteNote(id: string): Promise<void> {
     // Under the note's sync lock: a push settling meanwhile then finds no
-    // note and writes no link. The remote records are left untouched.
+    // note and writes no link. Its queued operations go with it; the remote
+    // records are left untouched.
     await this.withPerServerLock(id, async () => {
       await this.db.run("DELETE FROM notes WHERE id = ?", [id]);
       await this.deleteNoteLinks(id);
+      await this.deleteOutboxOpsForNote(id);
     });
   }
 
@@ -963,13 +1026,16 @@ export class DatabaseService {
 
   /**
    * Re-keys every sync record of one target after its application's url
-   * was respelled: links, pull cursor, last-used config, remembered
-   * selections and per-server statuses. Without it the next push finds no
+   * was respelled: links, queued operations, pull cursor, last-used
+   * config, remembered selections and per-server statuses; its probes are
+   * dropped and redone. Without it the next push finds no
    * link under the new id and creates a duplicate remote record.
    */
   async renameSyncConfigId(oldId: string, newId: string): Promise<void> {
     if (oldId === newId) return;
     await this.db.run("UPDATE note_links SET config_id = ? WHERE config_id = ?", [newId, oldId]);
+    await this.db.run("UPDATE sync_outbox SET config_id = ? WHERE config_id = ?", [newId, oldId]);
+    await this.deleteServerCapabilities(oldId);
     const cursor = await this.getSyncPullCursor(oldId);
     if (cursor) {
       await this.setSyncPullCursor(newId, cursor);
@@ -1034,7 +1100,8 @@ export class DatabaseService {
         kind           TEXT NOT NULL,
         remote_state   TEXT NOT NULL,
         created_at     TEXT NOT NULL,
-        last_synced_at TEXT
+        last_synced_at TEXT,
+        client_uuid    TEXT
       )
     `);
     await this.db.execute(
@@ -1047,9 +1114,9 @@ export class DatabaseService {
 
   async addNoteLink(link: NoteLink): Promise<void> {
     await this.db.run(
-      "INSERT INTO note_links (id, note_id, config_id, model, res_id, kind, remote_state, created_at, last_synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO note_links (id, note_id, config_id, model, res_id, kind, remote_state, created_at, last_synced_at, client_uuid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [link.id, link.noteId, link.configId, link.model, link.resId, link.kind,
-       link.remoteState, link.createdAt, link.lastSyncedAt]
+       link.remoteState, link.createdAt, link.lastSyncedAt, link.clientUuid ?? null]
     );
   }
 
@@ -1103,7 +1170,214 @@ export class DatabaseService {
       remoteState: row.remote_state === "deleted" ? "deleted" : "ok",
       createdAt: row.created_at,
       lastSyncedAt: row.last_synced_at ?? null,
+      clientUuid: row.client_uuid ?? null,
     };
+  }
+
+  /** For a note_links table created before the column existed. */
+  async addClientUuidToNoteLinks(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(note_links)");
+    if (!(existing.values ?? []).some((r: any) => r.name === "client_uuid")) {
+      await this.db.execute("ALTER TABLE note_links ADD COLUMN client_uuid TEXT");
+    }
+  }
+
+  // Outbox
+
+  async createSyncOutboxTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS sync_outbox (
+        id              TEXT PRIMARY KEY NOT NULL,
+        client_uuid     TEXT NOT NULL,
+        note_id         TEXT NOT NULL,
+        config_id       TEXT NOT NULL,
+        kind            TEXT NOT NULL,
+        params_json     TEXT NOT NULL,
+        status          TEXT NOT NULL,
+        attempts        INTEGER NOT NULL,
+        next_attempt_at TEXT,
+        last_error      TEXT,
+        depends_on      TEXT,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+      )
+    `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_sync_outbox_config ON sync_outbox(config_id)"
+    );
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_sync_outbox_note ON sync_outbox(note_id)"
+    );
+  }
+
+  async addOutboxOp(op: OutboxOp): Promise<void> {
+    await this.db.run(
+      "INSERT INTO sync_outbox (id, client_uuid, note_id, config_id, kind, params_json, status, attempts, next_attempt_at, last_error, depends_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [op.id, op.clientUuid, op.noteId, op.configId, op.kind, JSON.stringify(op.params),
+       op.status, op.attempts, op.nextAttemptAt, op.lastError, op.dependsOn, op.createdAt, op.updatedAt]
+    );
+  }
+
+  async getOutboxOp(id: string): Promise<OutboxOp | null> {
+    const result = await this.db.query("SELECT * FROM sync_outbox WHERE id = ?", [id]);
+    const row = result.values?.[0];
+    return row ? this.rowToOutboxOp(row) : null;
+  }
+
+  /** Operations of one server, oldest first. */
+  async getOutboxOpsForConfig(configId: string): Promise<OutboxOp[]> {
+    const result = await this.db.query("SELECT * FROM sync_outbox WHERE config_id = ?", [configId]);
+    return this.sortOutboxOps(result.values ?? []);
+  }
+
+  /** Operations of one note, oldest first. */
+  async getOutboxOpsForNote(noteId: string): Promise<OutboxOp[]> {
+    const result = await this.db.query("SELECT * FROM sync_outbox WHERE note_id = ?", [noteId]);
+    return this.sortOutboxOps(result.values ?? []);
+  }
+
+  /** Writes the given fields of one operation; updatedAt is always set. */
+  async updateOutboxOp(
+    id: string,
+    update: Partial<Pick<OutboxOp, "params" | "status" | "attempts" | "nextAttemptAt" | "lastError" | "dependsOn">>
+      & { updatedAt: string }
+  ): Promise<void> {
+    const columns: Record<string, string> = {
+      params: "params_json", status: "status", attempts: "attempts",
+      nextAttemptAt: "next_attempt_at", lastError: "last_error",
+      dependsOn: "depends_on", updatedAt: "updated_at",
+    };
+    const sets: string[] = [];
+    const values: any[] = [];
+    for (const [key, column] of Object.entries(columns)) {
+      if (!(key in update)) continue;
+      const value = (update as any)[key];
+      sets.push(`${column} = ?`);
+      values.push(key === "params" ? JSON.stringify(value) : value);
+    }
+    await this.db.run(`UPDATE sync_outbox SET ${sets.join(", ")} WHERE id = ?`, [...values, id]);
+  }
+
+  async deleteOutboxOp(id: string): Promise<void> {
+    await this.db.run("DELETE FROM sync_outbox WHERE id = ?", [id]);
+  }
+
+  async deleteOutboxOpsForNote(noteId: string): Promise<void> {
+    await this.db.run("DELETE FROM sync_outbox WHERE note_id = ?", [noteId]);
+  }
+
+  /**
+   * Turns the operations left "running" by an interrupted app into
+   * "failed", due now. Their attempts count stays, so the next run looks
+   * for what the cut-short run may already have done. Returns how many.
+   */
+  async failInterruptedOutboxOps(now: string): Promise<number> {
+    const result = await this.db.query("SELECT id FROM sync_outbox WHERE status = ?", ["running"]);
+    const ids = (result.values ?? []).map((r: any) => r.id as string);
+    for (const id of ids) {
+      await this.updateOutboxOp(id, {
+        status: "failed", nextAttemptAt: now, lastError: "interrupted", updatedAt: now,
+      });
+    }
+    return ids.length;
+  }
+
+  private sortOutboxOps(rows: any[]): OutboxOp[] {
+    return rows
+      .map((row) => this.rowToOutboxOp(row))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  }
+
+  private rowToOutboxOp(row: any): OutboxOp {
+    let params: Record<string, any> = {};
+    try { params = JSON.parse(row.params_json ?? "{}") ?? {}; } catch { /* keep {} */ }
+    return {
+      id: row.id,
+      clientUuid: row.client_uuid,
+      noteId: row.note_id,
+      configId: row.config_id,
+      kind: row.kind,
+      params,
+      status: row.status as OutboxStatus,
+      attempts: Number(row.attempts ?? 0),
+      nextAttemptAt: row.next_attempt_at ?? null,
+      lastError: row.last_error ?? null,
+      dependsOn: row.depends_on ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  // Server capabilities
+
+  async createServerCapabilitiesTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS server_capabilities (
+        id             TEXT PRIMARY KEY NOT NULL,
+        config_id      TEXT NOT NULL,
+        model          TEXT NOT NULL,
+        exists_flag    INTEGER NOT NULL,
+        can_read       INTEGER,
+        can_create     INTEGER,
+        can_write      INTEGER,
+        has_activities INTEGER NOT NULL,
+        has_chatter    INTEGER NOT NULL,
+        fields_json    TEXT NOT NULL,
+        odoo_version   INTEGER NOT NULL,
+        probed_at      TEXT NOT NULL,
+        error          TEXT
+      )
+    `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_server_capabilities_config ON server_capabilities(config_id)"
+    );
+  }
+
+  async setServerCapability(cap: ServerCapability): Promise<void> {
+    const flag = (v: boolean | null) => (v === null ? null : v ? 1 : 0);
+    await this.db.run(
+      "INSERT OR REPLACE INTO server_capabilities (id, config_id, model, exists_flag, can_read, can_create, can_write, has_activities, has_chatter, fields_json, odoo_version, probed_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [this.capabilityId(cap.configId, cap.model), cap.configId, cap.model, cap.exists ? 1 : 0,
+       flag(cap.canRead), flag(cap.canCreate), flag(cap.canWrite),
+       cap.hasActivities ? 1 : 0, cap.hasChatter ? 1 : 0, JSON.stringify(cap.fields),
+       cap.odooVersion, cap.probedAt, cap.error]
+    );
+  }
+
+  async getServerCapability(configId: string, model: string): Promise<ServerCapability | null> {
+    const result = await this.db.query(
+      "SELECT * FROM server_capabilities WHERE id = ?",
+      [this.capabilityId(configId, model)]
+    );
+    const row = result.values?.[0];
+    if (!row) return null;
+    const flag = (v: any) => (v === null || v === undefined ? null : Number(v) === 1);
+    let fields: Record<string, any> = {};
+    try { fields = JSON.parse(row.fields_json ?? "{}") ?? {}; } catch { /* keep {} */ }
+    return {
+      configId: row.config_id,
+      model: row.model,
+      exists: Number(row.exists_flag) === 1,
+      canRead: flag(row.can_read),
+      canCreate: flag(row.can_create),
+      canWrite: flag(row.can_write),
+      hasActivities: Number(row.has_activities) === 1,
+      hasChatter: Number(row.has_chatter) === 1,
+      fields,
+      odooVersion: Number(row.odoo_version),
+      probedAt: row.probed_at,
+      error: row.error ?? null,
+    };
+  }
+
+  /** Forgets every probe of one server: they are redone on next use. */
+  async deleteServerCapabilities(configId: string): Promise<void> {
+    await this.db.run("DELETE FROM server_capabilities WHERE config_id = ?", [configId]);
+  }
+
+  /** Primary key of a capability row: one per server and model. */
+  private capabilityId(configId: string, model: string): string {
+    return `${configId}#${model}`;
   }
 
   /**

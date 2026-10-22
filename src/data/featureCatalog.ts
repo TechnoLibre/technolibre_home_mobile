@@ -1482,7 +1482,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "entries (error, then pending, then synced). "
                         + "syncAll(config) pushes the notes pending or in error "
                         + "for that server, so a note queued offline, or whose "
-                        + "push failed, leaves on the next sync. Pull pages "
+                        + "push failed, leaves on the next sync; a failed "
+                        + "creation first waits out its retry delay (30 s "
+                        + "doubling to one hour), which a reconnect ignores. "
+                        + "Pull pages "
                         + "through the tasks written since a per-server cursor, "
                         + "archived ones included, and copies title, pinned, "
                         + "archived and (Odoo 17+) done onto linked notes, except "
@@ -1490,7 +1493,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "it changes is queued for its other servers. A note "
                         + "edited during its push stays pending. A task deleted "
                         + "on the server marks its link deleted and is recreated "
-                        + "only when the user confirms.",
+                        + "only when the user confirms. Creating a note's task "
+                        + "runs as its task.create outbox operation: the task "
+                        + "carries the operation's erplibre-mobile:<uuid> marker, "
+                        + "and a retry searches it first so a create whose answer "
+                        + "was lost is adopted instead of duplicated; several "
+                        + "matches (a copy made on the server keeps the marker) "
+                        + "block it until the user picks the task to link. A "
+                        + "retry waits three minutes after the last create sent, "
+                        + "so a create the server is still running has committed "
+                        + "before the search looks for it.",
                     fr: "Une note est liée à une project.task par cible de sync "
                         + "(url|username|base) via note_links : le push écrit la tâche de CE "
                         + "serveur ou en crée une et la lie (un seul push à la "
@@ -1501,7 +1513,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "syncAll(config) pousse les notes en attente ou en "
                         + "erreur pour ce serveur : une note mise en attente hors "
                         + "ligne, ou dont le push a échoué, part à la sync "
-                        + "suivante. Le pull parcourt par pages les tâches écrites "
+                        + "suivante ; une création en échec attend d'abord son "
+                        + "délai (30 s doublées jusqu'à une heure), qu'un retour "
+                        + "du réseau ignore. Le pull parcourt par pages les tâches écrites "
                         + "depuis un curseur par serveur, archivées comprises, et "
                         + "recopie titre, épinglage, archivage et (Odoo 17+) fait "
                         + "sur les notes liées, sauf celles encore en attente ou "
@@ -1509,7 +1523,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "mise en attente pour ses autres serveurs. Une note "
                         + "modifiée pendant son push reste en attente. Une tâche "
                         + "supprimée sur le serveur marque son lien supprimé et "
-                        + "n'est recréée que si l'utilisateur confirme.",
+                        + "n'est recréée que si l'utilisateur confirme. La "
+                        + "création de la tâche d'une note passe par son opération "
+                        + "task.create de la file : la tâche porte le marqueur "
+                        + "erplibre-mobile:<uuid> de l'opération, et une reprise le "
+                        + "cherche d'abord, si bien qu'un create dont la réponse "
+                        + "s'est perdue est repris au lieu d'être dupliqué ; "
+                        + "plusieurs résultats (une copie faite sur le serveur "
+                        + "garde le marqueur) le bloquent jusqu'à ce que "
+                        + "l'utilisateur choisisse la tâche à lier. Une reprise "
+                        + "attend trois minutes après le dernier create envoyé, "
+                        + "pour qu'un create encore en cours sur le serveur soit "
+                        + "validé avant que la recherche ne le cherche.",
                 },
                 dependsOn: ["deployment.applications"],
                 demo: NONE_BG,
@@ -1520,31 +1545,116 @@ export const FEATURE_TREE: FeatureNode[] = [
             },
             {
                 id: "sync.odoo-rpc",
-                label: { en: "Odoo RPC client", fr: "Client RPC Odoo" },
+                label: { en: "Odoo RPC client and probes", fr: "Client RPC Odoo et sondes" },
                 description: {
-                    en: "JSON-RPC session and typed calls to an Odoo server.",
-                    fr: "Session JSON-RPC et appels typés vers un serveur Odoo.",
+                    en: "JSON-RPC session, typed calls, cached per-server model probes.",
+                    fr: "Session JSON-RPC, appels typés, sondes de modèles en cache par serveur.",
                 },
                 status: "experimental",
                 permissions: ["internet"],
-                tests: ["src/__tests__/odooRpcClient.test.ts"],
+                tests: ["src/__tests__/odooRpcClient.test.ts", "src/__tests__/capabilityService.test.ts"],
                 howItWorks: {
                     en: "OdooRpcClient talks to Odoo 16 to 18 through the standard routes "
                         + "only (session/authenticate, dataset/call_kw), keeps one session per "
                         + "url, user and database and re-authenticates once on code 100 or HTTP "
                         + "401. Helpers: searchRead, nameSearch, fieldsGet, defaultGet, "
                         + "checkAccess (has_access on 18, check_access_rights otherwise; null "
-                        + "when neither answers) and messagePost.",
+                        + "when neither answers) and messagePost. CapabilityService probes a "
+                        + "model with fields_get (an unknown model answers KeyError), the three rights "
+                        + "and activity_ids / message_ids, never ir.model, and caches the "
+                        + "answer in server_capabilities for offline checks; ensure() probes "
+                        + "again after a day when online.",
                     fr: "OdooRpcClient parle à Odoo 16 à 18 par les seules routes standard "
                         + "(session/authenticate, dataset/call_kw), garde une session par url, "
                         + "utilisateur et base, et se reconnecte une fois sur le code 100 ou un "
                         + "HTTP 401. Aides : searchRead, nameSearch, fieldsGet, defaultGet, "
                         + "checkAccess (has_access en 18, check_access_rights sinon ; null si "
-                        + "aucun ne répond) et messagePost.",
+                        + "aucun ne répond) et messagePost. CapabilityService sonde un modèle "
+                        + "par fields_get (un modèle inconnu répond KeyError), les trois droits et "
+                        + "activity_ids / message_ids, jamais ir.model, et garde la réponse "
+                        + "dans server_capabilities pour valider hors ligne ; ensure() sonde "
+                        + "de nouveau après un jour quand le réseau est là.",
                 },
                 dependsOn: ["deployment.applications"],
                 demo: NONE_BG,
-                files: ["src/services/odoo/odooRpcClient.ts"],
+                files: [
+                    "src/services/odoo/odooRpcClient.ts",
+                    "src/services/odoo/capabilityService.ts",
+                ],
+            },
+            {
+                id: "sync.outbox",
+                label: { en: "Sync outbox", fr: "File d'opérations de sync" },
+                description: {
+                    en: "Operations waiting to reach a server, kept offline and retried.",
+                    fr: "Opérations en attente d'un serveur, gardées hors ligne et retentées.",
+                },
+                status: "experimental",
+                tests: ["src/__tests__/outboxService.test.ts", "src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "sync_outbox holds one row per operation of a note on one server, "
+                        + "with a client_uuid kept across retries. attempt() stores the "
+                        + "attempt count and the running status before the handler talks to "
+                        + "the server, deletes the row on success, schedules a retry after "
+                        + "30 s doubled per failure (one hour at most), or parks the row as "
+                        + "blocked when the handler raises OutboxBlockedError; "
+                        + "OutboxRetryLaterError postpones the row without counting an attempt, "
+                        + "even past a forced sync. drain(config) "
+                        + "runs the due rows oldest first, after the row each depends on; "
+                        + "blocked and incomplete rows wait for the user. Rows left running "
+                        + "by a killed app turn failed at startup.",
+                    fr: "sync_outbox porte une ligne par opération d'une note sur un "
+                        + "serveur, avec un client_uuid gardé d'un essai à l'autre. attempt() "
+                        + "enregistre le nombre d'essais et l'état running avant que le "
+                        + "handler ne parle au serveur, supprime la ligne en cas de succès, "
+                        + "planifie un nouvel essai après 30 s doublées à chaque échec (une "
+                        + "heure au plus), ou gare la ligne en blocked quand le handler lève "
+                        + "OutboxBlockedError ; OutboxRetryLaterError reporte la ligne sans "
+                        + "compter d'essai, même lors d'une sync forcée. drain(config) "
+                        + "exécute les lignes dues, des plus "
+                        + "anciennes aux plus récentes, après celle dont chacune dépend ; les "
+                        + "lignes blocked et incomplete attendent l'utilisateur. Les lignes "
+                        + "laissées running par une app tuée passent en failed au démarrage.",
+                },
+                dependsOn: ["sync.service"],
+                demo: NONE_BG,
+                files: ["src/services/outboxService.ts"],
+            },
+            {
+                id: "sync.network",
+                label: { en: "Network detection", fr: "Détection du réseau" },
+                description: {
+                    en: "Online state and link type; flushes the queue when it comes back.",
+                    fr: "État en ligne et type de lien ; vide la file au retour du réseau.",
+                },
+                status: "experimental",
+                tests: ["src/__tests__/networkService.test.ts", "src/__tests__/notificationService.test.ts"],
+                howItWorks: {
+                    en: "NetworkService reads @capacitor/network (Android "
+                        + "ConnectivityManager), falling back to navigator.onLine and the "
+                        + "window online event on an APK built without the plugin. "
+                        + "NotificationService syncs every server on an offline → online "
+                        + "transition, retry delays ignored, and the servers with due work at "
+                        + "startup, on each return to the foreground and when a timer reaches "
+                        + "the earliest retry time. The plugin's own connected flag needs a "
+                        + "validated internet link, so any Wi-Fi or cellular link counts as "
+                        + "connected (Ethernet and tethering report \"unknown\"): a server on "
+                        + "a LAN without internet stays reachable.",
+                    fr: "NetworkService lit @capacitor/network (ConnectivityManager "
+                        + "d'Android), avec repli sur navigator.onLine et l'événement online "
+                        + "de la fenêtre pour un APK construit sans le plugin. "
+                        + "NotificationService synchronise chaque serveur au passage hors "
+                        + "ligne → en ligne, sans attendre les délais, et les serveurs qui ont "
+                        + "du travail dû au démarrage, à chaque retour au premier plan et "
+                        + "quand une minuterie atteint la prochaine heure de reprise. Le "
+                        + "« connected » du plugin exige un lien internet validé : tout lien "
+                        + "Wi-Fi ou cellulaire compte donc comme connecté (Ethernet et partage "
+                        + "de connexion donnent « unknown »), et un serveur sur un réseau "
+                        + "local sans internet reste joignable.",
+                },
+                dependsOn: ["sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/networkService.ts"],
             },
             {
                 id: "sync.options",
@@ -1585,7 +1695,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "target), addSelectedSyncConfigIds (multi-select), addNoteLinksTable "
                         + "(one remote record per note and url|username|database target, "
                         + "backfilled from odoo_id; older ids gain the database; legacy global "
-                        + "pending turned per-server; pull cursors). "
+                        + "pending turned per-server; pull cursors), addSyncOutboxTable "
+                        + "(sync_outbox, server_capabilities, note_links.client_uuid). "
                         + "Each migration is "
                         + "idempotent and re-runs safely on app start.",
                     fr: "Étapes de schéma versionnées qui ont fait grandir la sync : "
@@ -1594,7 +1705,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "cible), addSelectedSyncConfigIds (multi-select), addNoteLinksTable "
                         + "(un record distant par note et cible url|username|base, repris "
                         + "d'odoo_id ; les anciens ids reçoivent la base ; l'ancien pending "
-                        + "global devient par serveur ; curseurs de pull). "
+                        + "global devient par serveur ; curseurs de pull), addSyncOutboxTable "
+                        + "(sync_outbox, server_capabilities, note_links.client_uuid). "
                         + "Chaque migration est "
                         + "idempotente et se ré-exécute sans risque au boot.",
                 },
@@ -1606,8 +1718,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addSyncPerServerStatus.ts",
                     "src/services/migrations/addSelectedSyncConfigIds.ts",
                     "src/services/migrations/addNoteLinksTable.ts",
+                    "src/services/migrations/addSyncOutboxTable.ts",
                 ],
-                tests: ["src/__tests__/migrations.test.ts", "src/__tests__/syncService.test.ts"],
+                tests: [
+                    "src/__tests__/migrations.test.ts",
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/outboxService.test.ts",
+                ],
             },
             {
                 id: "sync.notifications",

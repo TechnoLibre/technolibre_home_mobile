@@ -13,7 +13,9 @@ import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { Events } from "../../constants/events";
 import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryTextParams, NoteEntryVideoParams } from "../../models/note";
-import { RemoteRecordDeletedError, SyncCredentials } from "../../services/syncService";
+import { RemoteRecordDeletedError, SyncCredentials, TASK_CREATE } from "../../services/syncService";
+import { OutboxBlockedError } from "../../services/outboxService";
+import { networkService } from "../../services/networkService";
 import type { SyncConfig } from "../../models/syncConfig";
 import { loadSyncConfigs, syncConfigIdFor } from "../../models/syncConfig";
 
@@ -442,13 +444,13 @@ export class NoteComponent extends EnhancedComponent {
 		else if (this.state.debugDialog.visible) { ev.preventDefault(); this.closeDebugDialog(); }
 	}
 
-	private announceSyncStatus(status: string) {
+	private announceSyncStatus(status: string, offline = false) {
 		const messages: Record<string, string> = {
 			synced:  "Note synchronisée.",
 			error:   "Erreur de synchronisation.",
-			pending: navigator.onLine
-				? "Synchronisation en attente."
-				: "Synchronisation en attente — hors ligne.",
+			pending: offline
+				? "Synchronisation en attente — hors ligne."
+				: "Synchronisation en attente.",
 		};
 		this.state.syncAnnouncement = messages[status] ?? "";
 		// Clear after screen reader has time to read it
@@ -509,7 +511,7 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	private async doPushSelected(configs: SyncConfig[]) {
-		if (!navigator.onLine) {
+		if (!(await networkService.isOnline())) {
 			await this.queueForReconnect(configs);
 			return;
 		}
@@ -522,13 +524,20 @@ export class NoteComponent extends EnhancedComponent {
 
 	/** Offline: the note waits, per server, for syncAll on reconnect. */
 	private async queueForReconnect(configs: SyncConfig[]) {
-		// A server whose task was deleted needs the online recreate prompt:
-		// queued, it would only be dropped again on reconnect
+		// A server whose task was deleted needs the online recreate prompt,
+		// and one whose creation is blocked needs the user's choice online:
+		// queued, either would only wait again on reconnect
 		const queued: SyncConfig[] = [];
 		const deleted: SyncConfig[] = [];
+		const blocked: SyncConfig[] = [];
 		for (const cfg of configs) {
 			const link = await this.databaseService.findNoteLink(this.state.noteId, cfg.id, "project.task", "create", true);
-			(link?.remoteState === "deleted" ? deleted : queued).push(cfg);
+			const op = link?.remoteState === "ok"
+				? null
+				: await this.syncService.outbox.find(this.state.noteId, cfg.id, TASK_CREATE);
+			if (op && (op.status === "blocked" || op.status === "incomplete")) blocked.push(cfg);
+			else if (link?.remoteState === "deleted" && !op) deleted.push(cfg);
+			else queued.push(cfg);
 		}
 		if (deleted.length > 0) {
 			await Dialog.alert({
@@ -538,10 +547,18 @@ export class NoteComponent extends EnhancedComponent {
 					+ ".\nSynchronisez en ligne pour la recréer.",
 			});
 		}
+		if (blocked.length > 0) {
+			await Dialog.alert({
+				title: "Création en attente d'un choix",
+				message: "La création de la tâche attend votre décision sur : "
+					+ blocked.map((c) => c.name || c.appUrl).join(", ")
+					+ ".\nSynchronisez en ligne pour la terminer.",
+			});
+		}
 		if (queued.length === 0) return;
 		await this.databaseService.markNotePendingForConfigs(this.state.noteId, queued.map((c) => c.id));
 		this.state.syncStatus = "pending";
-		this.announceSyncStatus("pending");
+		this.announceSyncStatus("pending", true);
 	}
 
 	/** Reflects the global status pushNote derived from every server. */
@@ -562,8 +579,12 @@ export class NoteComponent extends EnhancedComponent {
 			database: cfg.database,
 		};
 		try {
-			await this.syncService.pushNote(creds, this.state.noteId);
+			await this.syncService.pushNote(creds, this.state.noteId, { userInitiated: true });
 		} catch (e: unknown) {
+			if (e instanceof OutboxBlockedError && e.reason === "ambiguous" && e.candidates.length > 0) {
+				await this.resolveAmbiguousCreation(creds, e);
+				return;
+			}
 			if (!(e instanceof RemoteRecordDeletedError)) throw e;
 			// Deleted on the server: recreate only on the user's say-so
 			const { value } = await Dialog.confirm({
@@ -571,8 +592,26 @@ export class NoteComponent extends EnhancedComponent {
 				message: `${e.message}\nLa recréer à partir de cette note ?`,
 			});
 			if (!value) return;
-			await this.syncService.pushNote(creds, this.state.noteId, { recreateDeleted: true });
+			await this.syncService.pushNote(creds, this.state.noteId, { recreateDeleted: true, userInitiated: true });
 		}
+	}
+
+	/**
+	 * Several tasks carry this note's reference on the server: the user
+	 * picks the one to link, by number, or leaves the creation blocked.
+	 */
+	private async resolveAmbiguousCreation(creds: SyncCredentials, e: OutboxBlockedError): Promise<void> {
+		const ids = e.candidates;
+		const { value, cancelled } = await Dialog.prompt({
+			title: "Plusieurs tâches correspondent",
+			message: `${e.message}\nNuméro de la tâche à lier à cette note (${ids.map((id) => `#${id}`).join(", ")}) :`,
+			inputText: String(ids[0]),
+		});
+		const picked = Number(String(value ?? "").replace(/^#/, "").trim());
+		if (cancelled || !ids.includes(picked)) {
+			throw new Error(`Création bloquée : aucune tâche choisie parmi ${ids.map((id) => `#${id}`).join(", ")}.`);
+		}
+		await this.syncService.pushNote(creds, this.state.noteId, { userInitiated: true, adoptTaskId: picked });
 	}
 
 	private async doPush(cfg: SyncConfig) {

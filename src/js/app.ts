@@ -30,6 +30,7 @@ import { addNtfyTokenColumn } from "../services/migrations/addNtfyTokenColumn";
 import { encryptExistingCredentials } from "../services/migrations/encryptExistingCredentials";
 import { addEditableReposTable } from "../services/migrations/addEditableReposTable";
 import { addNoteLinksTable } from "../services/migrations/addNoteLinksTable";
+import { addSyncOutboxTable } from "../services/migrations/addSyncOutboxTable";
 import { RepoExtractorService } from "../services/repoExtractorService";
 import { RepoEditService } from "../services/repoEditService";
 import { CodeStyleService } from "../services/codeStyleService";
@@ -227,6 +228,11 @@ async function startApp() {
 			description: "Table note_links : un record distant par note et par serveur",
 			run: addNoteLinksTable,
 		},
+		{
+			version: 2026102202,
+			description: "Tables sync_outbox et server_capabilities : file d'opérations et sondes par serveur",
+			run: addSyncOutboxTable,
+		},
 	], setBootNote);
 
 	setBootStep(t("boot.loading_graphic_prefs"));
@@ -252,6 +258,10 @@ async function startApp() {
 	const intentService = new IntentService(eventBus);
 	const syncService = new SyncService(db);
 	syncService.onNotePulled = (noteId) => eventBus.trigger(Events.NOTE_PULLED, { noteId });
+	if (isNative) {
+		await syncService.outbox.recoverInterrupted().catch((e) =>
+			console.warn("[boot] outbox recovery failed:", e));
+	}
 	const reminderService = new ReminderService(db);
 	const notificationService = new NotificationService(syncService, appService, eventBus);
 	const serverService = new ServerService(db);
