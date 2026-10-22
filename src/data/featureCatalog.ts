@@ -1519,6 +1519,34 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "sync.odoo-rpc",
+                label: { en: "Odoo RPC client", fr: "Client RPC Odoo" },
+                description: {
+                    en: "JSON-RPC session and typed calls to an Odoo server.",
+                    fr: "Session JSON-RPC et appels typés vers un serveur Odoo.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/odooRpcClient.test.ts"],
+                howItWorks: {
+                    en: "OdooRpcClient talks to Odoo 16 to 18 through the standard routes "
+                        + "only (session/authenticate, dataset/call_kw), keeps one session per "
+                        + "url, user and database and re-authenticates once on code 100 or HTTP "
+                        + "401. Helpers: searchRead, nameSearch, fieldsGet, defaultGet, "
+                        + "checkAccess (has_access on 18, check_access_rights otherwise; null "
+                        + "when neither answers) and messagePost.",
+                    fr: "OdooRpcClient parle à Odoo 16 à 18 par les seules routes standard "
+                        + "(session/authenticate, dataset/call_kw), garde une session par url, "
+                        + "utilisateur et base, et se reconnecte une fois sur le code 100 ou un "
+                        + "HTTP 401. Aides : searchRead, nameSearch, fieldsGet, defaultGet, "
+                        + "checkAccess (has_access en 18, check_access_rights sinon ; null si "
+                        + "aucun ne répond) et messagePost.",
+                },
+                dependsOn: ["deployment.applications"],
+                demo: NONE_BG,
+                files: ["src/services/odoo/odooRpcClient.ts"],
+            },
+            {
                 id: "sync.options",
                 label: { en: "Sync options panel", fr: "Panel sync (options)" },
                 description: {
