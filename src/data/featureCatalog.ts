@@ -1473,16 +1473,43 @@ export const FEATURE_TREE: FeatureNode[] = [
                 permissions: ["internet"],
                 tests: ["src/__tests__/syncService.test.ts"],
                 howItWorks: {
-                    en: "Each note tracks (odoo_id, sync_status, "
-                        + "last_synced_at, sync_config_id) plus a multi-server "
-                        + "selection. Pull diffs are merged client-side using "
-                        + "last-modified-wins per field; conflicts surface in "
-                        + "the UI for explicit resolution.",
-                    fr: "Chaque note stocke (odoo_id, sync_status, "
-                        + "last_synced_at, sync_config_id) + sélection "
-                        + "multi-serveurs. Les diffs pull sont mergés client "
-                        + "en last-modified-wins par champ ; les conflits "
-                        + "remontent en UI pour résolution explicite.",
+                    en: "A note is bound to one project.task per sync target "
+                        + "(url|username|database) through note_links: push writes that "
+                        + "server's own task or creates and links one (one push "
+                        + "at a time per note and server). sync_per_server_status "
+                        + "holds synced / error / pending per server; the note's "
+                        + "sync_status is derived from the live applications' "
+                        + "entries (error, then pending, then synced). "
+                        + "syncAll(config) pushes the notes pending or in error "
+                        + "for that server, so a note queued offline, or whose "
+                        + "push failed, leaves on the next sync. Pull pages "
+                        + "through the tasks written since a per-server cursor, "
+                        + "archived ones included, and copies title, pinned, "
+                        + "archived and (Odoo 17+) done onto linked notes, except "
+                        + "notes still pending or in error for that server; a note "
+                        + "it changes is queued for its other servers. A note "
+                        + "edited during its push stays pending. A task deleted "
+                        + "on the server marks its link deleted and is recreated "
+                        + "only when the user confirms.",
+                    fr: "Une note est liée à une project.task par cible de sync "
+                        + "(url|username|base) via note_links : le push écrit la tâche de CE "
+                        + "serveur ou en crée une et la lie (un seul push à la "
+                        + "fois par note et serveur). sync_per_server_status porte "
+                        + "synced / error / pending par serveur ; le sync_status "
+                        + "de la note en est déduit sur les applications encore "
+                        + "présentes (error, puis pending, puis synced). "
+                        + "syncAll(config) pousse les notes en attente ou en "
+                        + "erreur pour ce serveur : une note mise en attente hors "
+                        + "ligne, ou dont le push a échoué, part à la sync "
+                        + "suivante. Le pull parcourt par pages les tâches écrites "
+                        + "depuis un curseur par serveur, archivées comprises, et "
+                        + "recopie titre, épinglage, archivage et (Odoo 17+) fait "
+                        + "sur les notes liées, sauf celles encore en attente ou "
+                        + "en erreur pour ce serveur ; une note qu'il modifie est "
+                        + "mise en attente pour ses autres serveurs. Une note "
+                        + "modifiée pendant son push reste en attente. Une tâche "
+                        + "supprimée sur le serveur marque son lien supprimé et "
+                        + "n'est recréée que si l'utilisateur confirme.",
                 },
                 dependsOn: ["deployment.applications"],
                 demo: NONE_BG,
@@ -1527,12 +1554,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Versioned schema steps that grew the sync feature: addSyncColumns "
                         + "(initial odoo_id + sync_status), addSyncConfigId (per-server "
                         + "binding), addSyncPerServerStatus (separate sync_status row per "
-                        + "target), addSelectedSyncConfigIds (multi-select). Each migration is "
+                        + "target), addSelectedSyncConfigIds (multi-select), addNoteLinksTable "
+                        + "(one remote record per note and url|username|database target, "
+                        + "backfilled from odoo_id; older ids gain the database; legacy global "
+                        + "pending turned per-server; pull cursors). "
+                        + "Each migration is "
                         + "idempotent and re-runs safely on app start.",
                     fr: "Étapes de schéma versionnées qui ont fait grandir la sync : "
                         + "addSyncColumns (odoo_id + sync_status initiaux), addSyncConfigId "
                         + "(binding par serveur), addSyncPerServerStatus (ligne sync_status par "
-                        + "cible), addSelectedSyncConfigIds (multi-select). Chaque migration est "
+                        + "cible), addSelectedSyncConfigIds (multi-select), addNoteLinksTable "
+                        + "(un record distant par note et cible url|username|base, repris "
+                        + "d'odoo_id ; les anciens ids reçoivent la base ; l'ancien pending "
+                        + "global devient par serveur ; curseurs de pull). "
+                        + "Chaque migration est "
                         + "idempotente et se ré-exécute sans risque au boot.",
                 },
                 dependsOn: ["data.migrations"],
@@ -1542,8 +1577,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addSyncConfigId.ts",
                     "src/services/migrations/addSyncPerServerStatus.ts",
                     "src/services/migrations/addSelectedSyncConfigIds.ts",
+                    "src/services/migrations/addNoteLinksTable.ts",
                 ],
-                tests: ["src/__tests__/migrations.test.ts"],
+                tests: ["src/__tests__/migrations.test.ts", "src/__tests__/syncService.test.ts"],
             },
             {
                 id: "sync.notifications",

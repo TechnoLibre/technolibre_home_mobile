@@ -59,6 +59,7 @@ function makeServices(apps: any[]) {
     const syncService = {
         pollForChanges: vi.fn().mockResolvedValue([]),
         syncAll: vi.fn().mockResolvedValue(undefined),
+        pendingNoteIds: vi.fn().mockResolvedValue([]),
     } as any;
     const bus = new EventBus();
     return { appService, syncService, bus };
@@ -222,10 +223,27 @@ describe("NotificationService", () => {
             await Promise.resolve(); await Promise.resolve();
 
             onlineCb!();
-            for (let i = 0; i < 5; i++) await Promise.resolve();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
 
             expect(syncService.syncAll).toHaveBeenCalledTimes(2);
             expect(handler).toHaveBeenCalledTimes(1);
+        });
+
+        it("syncs again an app a later pull queued notes for", async () => {
+            const { appService, syncService, bus } = makeServices([
+                fakeApp({ database: "a" }),
+                fakeApp({ database: "c" }),
+            ]);
+            syncService.pendingNoteIds.mockResolvedValueOnce(["n1"]).mockResolvedValueOnce([]);
+
+            const svc = new NotificationService(syncService, appService, bus);
+            svc.start();
+            await Promise.resolve(); await Promise.resolve();
+
+            onlineCb!();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+
+            expect(syncService.syncAll).toHaveBeenCalledTimes(3);
         });
     });
 

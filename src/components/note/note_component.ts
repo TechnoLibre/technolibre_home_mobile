@@ -13,15 +13,25 @@ import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { Events } from "../../constants/events";
 import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryTextParams, NoteEntryVideoParams } from "../../models/note";
-import { SyncCredentials } from "../../services/syncService";
+import { RemoteRecordDeletedError, SyncCredentials } from "../../services/syncService";
 import type { SyncConfig } from "../../models/syncConfig";
-import { loadSyncConfigs } from "../../models/syncConfig";
+import { loadSyncConfigs, syncConfigIdFor } from "../../models/syncConfig";
 
 import { DatePickerComponent } from "./date_picker/date_picker_component";
 import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_controls_component";
 import { NoteContentComponent } from "./content/note_content_component";
 import { NoteTopControlsComponent } from "./top_controls/note_top_controls_component";
 import { TagManagerComponent } from "./tag_manager/tag_manager_component";
+
+/** One remote record of the note, offered by "Ouvrir dans l'app". */
+interface OpenInAppItem {
+	label: string;
+	appUrl: string;
+	username: string;
+	password: string;
+	model: string;
+	resId: number;
+}
 
 export class NoteComponent extends EnhancedComponent {
 	static template = xml`
@@ -299,7 +309,7 @@ export class NoteComponent extends EnhancedComponent {
 			showOptionsMenu: false,
 			debugDialog: { visible: false, message: "" },
 			errorDialog: { visible: false, message: "" },
-			openInApp: { visible: false, apps: [] as Array<{ label: string; appUrl: string; username: string; password: string; odooId: number }> },
+			openInApp: { visible: false, apps: [] as OpenInAppItem[] },
 			priorityPicker: { visible: false },
 			syncAnnouncement: "",
 		});
@@ -436,7 +446,9 @@ export class NoteComponent extends EnhancedComponent {
 		const messages: Record<string, string> = {
 			synced:  "Note synchronisée.",
 			error:   "Erreur de synchronisation.",
-			pending: "Synchronisation en attente — hors ligne.",
+			pending: navigator.onLine
+				? "Synchronisation en attente."
+				: "Synchronisation en attente — hors ligne.",
 		};
 		this.state.syncAnnouncement = messages[status] ?? "";
 		// Clear after screen reader has time to read it
@@ -446,13 +458,7 @@ export class NoteComponent extends EnhancedComponent {
 	async pushToOdoo() {
 		if (this.state.isSyncing || this.state.newNote) return;
 
-		if (!navigator.onLine) {
-			await this.databaseService.setNoteSyncInfo(this.state.noteId, { syncStatus: "pending" });
-			this.state.syncStatus = "pending";
-			this.announceSyncStatus("pending");
-			return;
-		}
-
+		// Configs are local: the server choice is made, and kept, even offline
 		const configs = await loadSyncConfigs(this.appService);
 		this.state.syncConfigs = configs;
 
@@ -503,11 +509,46 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	private async doPushSelected(configs: SyncConfig[]) {
+		if (!navigator.onLine) {
+			await this.queueForReconnect(configs);
+			return;
+		}
 		if (configs.length === 1) {
 			await this.doPush(configs[0]);
 		} else {
 			await this.doPushAll(configs);
 		}
+	}
+
+	/** Offline: the note waits, per server, for syncAll on reconnect. */
+	private async queueForReconnect(configs: SyncConfig[]) {
+		// A server whose task was deleted needs the online recreate prompt:
+		// queued, it would only be dropped again on reconnect
+		const queued: SyncConfig[] = [];
+		const deleted: SyncConfig[] = [];
+		for (const cfg of configs) {
+			const link = await this.databaseService.findNoteLink(this.state.noteId, cfg.id, "project.task", "create", true);
+			(link?.remoteState === "deleted" ? deleted : queued).push(cfg);
+		}
+		if (deleted.length > 0) {
+			await Dialog.alert({
+				title: "Tâche supprimée sur le serveur",
+				message: "La tâche liée a été supprimée sur : "
+					+ deleted.map((c) => c.name || c.appUrl).join(", ")
+					+ ".\nSynchronisez en ligne pour la recréer.",
+			});
+		}
+		if (queued.length === 0) return;
+		await this.databaseService.markNotePendingForConfigs(this.state.noteId, queued.map((c) => c.id));
+		this.state.syncStatus = "pending";
+		this.announceSyncStatus("pending");
+	}
+
+	/** Reflects the global status pushNote derived from every server. */
+	private async refreshSyncStatusFromDb(): Promise<string> {
+		const { syncStatus } = await this.databaseService.getNoteSyncInfo(this.state.noteId);
+		this.state.syncStatus = syncStatus;
+		return syncStatus;
 	}
 
 	private async doPushCore(cfg: SyncConfig): Promise<void> {
@@ -520,7 +561,18 @@ export class NoteComponent extends EnhancedComponent {
 			password: app.password,
 			database: cfg.database,
 		};
-		await this.syncService.pushNote(creds, this.state.noteId);
+		try {
+			await this.syncService.pushNote(creds, this.state.noteId);
+		} catch (e: unknown) {
+			if (!(e instanceof RemoteRecordDeletedError)) throw e;
+			// Deleted on the server: recreate only on the user's say-so
+			const { value } = await Dialog.confirm({
+				title: "Tâche supprimée sur le serveur",
+				message: `${e.message}\nLa recréer à partir de cette note ?`,
+			});
+			if (!value) return;
+			await this.syncService.pushNote(creds, this.state.noteId, { recreateDeleted: true });
+		}
 	}
 
 	private async doPush(cfg: SyncConfig) {
@@ -529,12 +581,12 @@ export class NoteComponent extends EnhancedComponent {
 			await this.doPushCore(cfg);
 			await this.databaseService.setNoteSyncInfo(this.state.noteId, { syncConfigId: cfg.id });
 			this.state.syncConfigId = cfg.id;
-			this.state.syncStatus = "synced";
-			this.announceSyncStatus("synced");
+			this.announceSyncStatus(await this.refreshSyncStatusFromDb());
 		} catch (e: unknown) {
+			await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
+			await this.databaseService.refreshNoteSyncStatus(this.state.noteId).catch(() => {});
 			this.state.syncStatus = "error";
 			this.announceSyncStatus("error");
-			await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
 			const msg = e instanceof Error ? e.message : String(e);
 			this.showErrorDialog(`Erreur sync :\n${msg}`);
 		} finally {
@@ -550,6 +602,7 @@ export class NoteComponent extends EnhancedComponent {
 				await this.doPushCore(cfg);
 			} catch (e: unknown) {
 				await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
+				await this.databaseService.refreshNoteSyncStatus(this.state.noteId).catch(() => {});
 				errors.push(`${cfg.name || cfg.appUrl}: ${e instanceof Error ? e.message : String(e)}`);
 			}
 		}
@@ -560,8 +613,7 @@ export class NoteComponent extends EnhancedComponent {
 			const msg = errors.join("\n");
 			this.showErrorDialog(`Erreurs sync :\n${msg}`);
 		} else {
-			this.state.syncStatus = "synced";
-			this.announceSyncStatus("synced");
+			this.announceSyncStatus(await this.refreshSyncStatusFromDb());
 		}
 	}
 
@@ -657,6 +709,10 @@ export class NoteComponent extends EnhancedComponent {
 				`sync_config_id:          ${fmt(row.sync_config_id)}`,
 				`selected_sync_config_ids:${fmt(row.selected_sync_config_ids)}`,
 				`sync_per_server_status:  ${fmt(row.sync_per_server_status)}`,
+				"",
+				"── Liens distants (note_links) ──",
+				...(await this.databaseService.getNoteLinks(this.state.noteId).catch(() => []))
+					.map((l) => `${l.configId} → ${l.model} #${l.resId} (${l.kind}, ${l.lastSyncedAt ?? "jamais"})`),
 			];
 			const message = lines.join("\n");
 			try { await navigator.clipboard.writeText(message); } catch { /* clipboard unavailable */ }
@@ -689,37 +745,21 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	async onOpenInAppClick() {
-		const row = await this.databaseService.getNoteRawData(this.state.noteId);
-		if (!row || !row.odoo_id) {
+		const links = (await this.databaseService.getNoteLinks(this.state.noteId))
+			.filter((l) => l.kind === "create" && l.remoteState === "ok");
+		if (links.length === 0) {
 			await Dialog.alert({ message: "Cette note n'a pas encore été synchronisée avec une application." });
 			return;
 		}
 
-		let perServerStatus: Record<string, string> = {};
-		try {
-			if (row.sync_per_server_status) {
-				perServerStatus = JSON.parse(row.sync_per_server_status);
-			}
-		} catch { /* ignore */ }
-
-		const syncedConfigIds = Object.entries(perServerStatus)
-			.filter(([, status]) => status === "synced")
-			.map(([id]) => id);
-
-		if (syncedConfigIds.length === 0) {
-			await Dialog.alert({ message: "Aucune application n'a synchronisé cette note avec succès." });
-			return;
-		}
-
 		const apps = await this.appService.getApps();
-		const appItems = syncedConfigIds.flatMap((configId) => {
-			const sepIdx = configId.lastIndexOf("|");
-			if (sepIdx === -1) return [];
-			const url = configId.slice(0, sepIdx);
-			const username = configId.slice(sepIdx + 1);
-			const app = apps.find((a) => a.url === url && a.username === username);
+		const appItems = links.flatMap((link) => {
+			const app = apps.find((a) => syncConfigIdFor(a.url, a.username, a.database) === link.configId);
 			if (!app) return [];
-			return [{ label: app.url, appUrl: app.url, username: app.username, password: app.password, odooId: row.odoo_id as number }];
+			return [{
+				label: app.url, appUrl: app.url, username: app.username, password: app.password,
+				model: link.model, resId: link.resId,
+			}];
 		});
 
 		if (appItems.length === 0) {
@@ -736,10 +776,10 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.openInApp.visible = true;
 	}
 
-	async openInAppForConfig(app: { label: string; appUrl: string; username: string; password: string; odooId: number }) {
+	async openInAppForConfig(app: OpenInAppItem) {
 		this.state.openInApp.visible = false;
 		const baseUrl = /^https?:\/\//i.test(app.appUrl) ? app.appUrl : "https://" + app.appUrl;
-		const taskUrl = `${baseUrl}/web#id=${app.odooId}&model=project.task&view_type=form`;
+		const taskUrl = `${baseUrl}/web#id=${app.resId}&model=${encodeURIComponent(app.model)}&view_type=form`;
 
 		const username = app.username.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 		const password = app.password.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -1062,6 +1102,17 @@ export class NoteComponent extends EnhancedComponent {
 		}
 	}
 
+	/** Copies the fields a pull writes (see SyncService.pullTasks) into state. */
+	private async reloadPulledFields() {
+		const stored = await this.databaseService.getNoteById(this.state.noteId);
+		if (!stored) return;
+		this.state.note.title = stored.title;
+		this.state.note.pinned = stored.pinned;
+		this.state.note.archived = stored.archived;
+		this.state.note.done = stored.done;
+		await this.loadSyncStatus();
+	}
+
 	private listenForEvents() {
 		const onAudio          = this.setAudioRecording.bind(this);
 		const onVideo          = this.setVideoRecording.bind(this);
@@ -1077,6 +1128,11 @@ export class NoteComponent extends EnhancedComponent {
 		// Stream Deck remote-add: keys 1-3 fire while a note page is
 		// mounted. Reuse the same handlers the bottom-controls bar
 		// uses so the deck and the on-screen buttons stay equivalent.
+		// A pull changed this note: take the server's fields, so the next
+		// save does not write the older copy held here back over them
+		const onNotePulled      = (e: any) => {
+			if (e?.detail?.noteId === this.state.noteId) void this.reloadPulledFields();
+		};
 		const onDeckAddVideo    = () => { void this.addVideo(); };
 		const onDeckAddAudio    = () => { void this.addAudio(); };
 		const onDeckAddLocation = () => { void this.addLocation(); };
@@ -1088,6 +1144,7 @@ export class NoteComponent extends EnhancedComponent {
 		this.eventBus.addEventListener(Events.SET_ENTRY_TRANSCRIPTION, onSetTranscript);
 		this.eventBus.addEventListener(Events.SET_ENTRY_TRANSLATION,   onSetTranslation);
 		this.eventBus.addEventListener(Events.NOTE_TAGS_UPDATED,       onTagsUpdated);
+		this.eventBus.addEventListener(Events.NOTE_PULLED,             onNotePulled);
 		this.eventBus.addEventListener(Events.STREAMDECK_ADD_VIDEO,    onDeckAddVideo);
 		this.eventBus.addEventListener(Events.STREAMDECK_ADD_AUDIO,    onDeckAddAudio);
 		this.eventBus.addEventListener(Events.STREAMDECK_ADD_LOCATION, onDeckAddLocation);
@@ -1104,6 +1161,7 @@ export class NoteComponent extends EnhancedComponent {
 			this.eventBus.removeEventListener(Events.SET_ENTRY_TRANSCRIPTION, onSetTranscript);
 			this.eventBus.removeEventListener(Events.SET_ENTRY_TRANSLATION,   onSetTranslation);
 			this.eventBus.removeEventListener(Events.NOTE_TAGS_UPDATED,       onTagsUpdated);
+			this.eventBus.removeEventListener(Events.NOTE_PULLED,             onNotePulled);
 			this.eventBus.removeEventListener(Events.STREAMDECK_ADD_VIDEO,    onDeckAddVideo);
 			this.eventBus.removeEventListener(Events.STREAMDECK_ADD_AUDIO,    onDeckAddAudio);
 			this.eventBus.removeEventListener(Events.STREAMDECK_ADD_LOCATION, onDeckAddLocation);

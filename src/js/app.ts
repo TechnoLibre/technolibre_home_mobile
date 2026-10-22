@@ -29,6 +29,7 @@ import { addTagsTable } from "../services/migrations/addTagsTable";
 import { addNtfyTokenColumn } from "../services/migrations/addNtfyTokenColumn";
 import { encryptExistingCredentials } from "../services/migrations/encryptExistingCredentials";
 import { addEditableReposTable } from "../services/migrations/addEditableReposTable";
+import { addNoteLinksTable } from "../services/migrations/addNoteLinksTable";
 import { RepoExtractorService } from "../services/repoExtractorService";
 import { RepoEditService } from "../services/repoEditService";
 import { CodeStyleService } from "../services/codeStyleService";
@@ -221,6 +222,11 @@ async function startApp() {
 			description: "Table editable_repos pour les repos promus en mode édition",
 			run: addEditableReposTable,
 		},
+		{
+			version: 2026102201,
+			description: "Table note_links : un record distant par note et par serveur",
+			run: addNoteLinksTable,
+		},
 	], setBootNote);
 
 	setBootStep(t("boot.loading_graphic_prefs"));
@@ -245,6 +251,7 @@ async function startApp() {
 	const noteService = new NoteService(eventBus, db);
 	const intentService = new IntentService(eventBus);
 	const syncService = new SyncService(db);
+	syncService.onNotePulled = (noteId) => eventBus.trigger(Events.NOTE_PULLED, { noteId });
 	const reminderService = new ReminderService(db);
 	const notificationService = new NotificationService(syncService, appService, eventBus);
 	const serverService = new ServerService(db);

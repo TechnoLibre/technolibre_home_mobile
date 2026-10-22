@@ -4,6 +4,7 @@ import { EventBus } from "@odoo/owl";
 
 import { Events } from "../constants/events";
 import { SyncService, SyncCredentials } from "./syncService";
+import { syncConfigIdFor } from "../models/syncConfig";
 import { AppService } from "./appService";
 import { NtfyService } from "./ntfyService";
 import { Application } from "../models/application";
@@ -112,15 +113,24 @@ export class NotificationService {
     }
   }
 
+  /**
+   * Syncs every application, then once more each one a later pull queued
+   * notes for: a pull that changes a note queues its other servers, and
+   * those may already have been synced in the first pass.
+   */
   private async onNetworkRestore(): Promise<void> {
-    const apps = await this.appService.getApps();
-    for (const app of apps) {
-      if (!app.database) continue;
+    const apps = (await this.appService.getApps()).filter((a) => a.database);
+    const syncApp = async (app: Application) => {
       try {
         await this.syncService.syncAll(this.appToCreds(app));
       } catch (e) {
         console.warn("[NotificationService] reconnect sync failed:", e);
       }
+    };
+    for (const app of apps) await syncApp(app);
+    for (const app of apps) {
+      const configId = syncConfigIdFor(app.url, app.username, app.database);
+      if ((await this.syncService.pendingNoteIds(configId)).length > 0) await syncApp(app);
     }
     this.eventBus.trigger(Events.RELOAD_NOTES);
     this.startNtfy();

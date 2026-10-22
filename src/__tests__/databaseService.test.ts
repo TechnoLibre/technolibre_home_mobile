@@ -384,9 +384,9 @@ describe("DatabaseService", () => {
 
     it("setNoteSyncInfo persists syncConfigId", async () => {
       await db.addNote({ id: "nc1", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
-      await db.setNoteSyncInfo("nc1", { syncConfigId: "https://erp.example.com|admin" });
+      await db.setNoteSyncInfo("nc1", { syncConfigId: "https://erp.example.com|admin|db" });
       const info = await db.getNoteSyncInfo("nc1");
-      expect(info.syncConfigId).toBe("https://erp.example.com|admin");
+      expect(info.syncConfigId).toBe("https://erp.example.com|admin|db");
     });
 
     it("setNoteSyncInfo persists and retrieves selectedSyncConfigIds", async () => {
@@ -403,7 +403,7 @@ describe("DatabaseService", () => {
     });
 
     it("getNotesBySyncConfigId returns notes matching the config id", async () => {
-      const configId = "https://erp.example.com|admin";
+      const configId = "https://erp.example.com|admin|db";
       await db.addNote({ id: "ncc1", title: "Synced note", done: false, archived: false, pinned: false, tags: [], entries: [] });
       await db.addNote({ id: "ncc2", title: "Other note", done: false, archived: false, pinned: false, tags: [], entries: [] });
       await db.setNoteSyncInfo("ncc1", { syncConfigId: configId });
@@ -419,6 +419,12 @@ describe("DatabaseService", () => {
     beforeEach(async () => {
       await db.addSyncColumnsToNotes();
       await db.addSyncPerServerStatusColumn();
+      for (const url of ["https://erp.example.com", "https://erp1.example.com", "https://erp2.example.com"]) {
+        await db.addApplication({
+          url, username: "admin", password: "p", database: "db", odooVersion: "", autoSync: false,
+          pollIntervalMinutes: 5, ntfyUrl: "", ntfyTopic: "", ntfyToken: "",
+        });
+      }
     });
 
     it("addSyncPerServerStatusColumn is idempotent", async () => {
@@ -427,23 +433,23 @@ describe("DatabaseService", () => {
 
     it("setNotePerServerStatus stores status for a server", async () => {
       await db.addNote({ id: "ps1", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
-      await db.setNotePerServerStatus("ps1", "https://erp.example.com|admin", "synced");
+      await db.setNotePerServerStatus("ps1", "https://erp.example.com|admin|db", "synced");
       const counts = await db.getNoteSyncCounts();
       expect(counts["ps1"]).toEqual({ synced: 1, error: 0 });
     });
 
     it("setNotePerServerStatus merges multiple servers", async () => {
       await db.addNote({ id: "ps2", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
-      await db.setNotePerServerStatus("ps2", "https://erp1.example.com|admin", "synced");
-      await db.setNotePerServerStatus("ps2", "https://erp2.example.com|admin", "error");
+      await db.setNotePerServerStatus("ps2", "https://erp1.example.com|admin|db", "synced");
+      await db.setNotePerServerStatus("ps2", "https://erp2.example.com|admin|db", "error");
       const counts = await db.getNoteSyncCounts();
       expect(counts["ps2"]).toEqual({ synced: 1, error: 1 });
     });
 
     it("setNotePerServerStatus overwrites existing status for same server", async () => {
       await db.addNote({ id: "ps3", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
-      await db.setNotePerServerStatus("ps3", "https://erp.example.com|admin", "error");
-      await db.setNotePerServerStatus("ps3", "https://erp.example.com|admin", "synced");
+      await db.setNotePerServerStatus("ps3", "https://erp.example.com|admin|db", "error");
+      await db.setNotePerServerStatus("ps3", "https://erp.example.com|admin|db", "synced");
       const counts = await db.getNoteSyncCounts();
       expect(counts["ps3"]).toEqual({ synced: 1, error: 0 });
     });
@@ -454,11 +460,17 @@ describe("DatabaseService", () => {
       expect(counts["ps4"]).toBeUndefined();
     });
 
+    it("getNoteSyncCounts ignores servers no application has", async () => {
+      await db.addNote({ id: "ps7", title: "T", done: false, archived: false, pinned: false, tags: [], entries: [] });
+      await db.setNotePerServerStatus("ps7", "https://gone.example.com|admin|db", "error");
+      expect((await db.getNoteSyncCounts())["ps7"]).toBeUndefined();
+    });
+
     it("getNoteSyncCounts aggregates across multiple notes", async () => {
       await db.addNote({ id: "ps5", title: "A", done: false, archived: false, pinned: false, tags: [], entries: [] });
       await db.addNote({ id: "ps6", title: "B", done: false, archived: false, pinned: false, tags: [], entries: [] });
-      await db.setNotePerServerStatus("ps5", "https://erp.example.com|admin", "synced");
-      await db.setNotePerServerStatus("ps6", "https://erp.example.com|admin", "error");
+      await db.setNotePerServerStatus("ps5", "https://erp.example.com|admin|db", "synced");
+      await db.setNotePerServerStatus("ps6", "https://erp.example.com|admin|db", "error");
       const counts = await db.getNoteSyncCounts();
       expect(counts["ps5"]).toEqual({ synced: 1, error: 0 });
       expect(counts["ps6"]).toEqual({ synced: 0, error: 1 });

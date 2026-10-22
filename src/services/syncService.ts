@@ -4,12 +4,15 @@ import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "./databaseService";
 import { Application } from "../models/application";
 import {
+  Note,
   NoteEntry,
   NoteEntryGeolocationParams,
   NoteEntryTextParams,
   NoteEntryDateParams,
 } from "../models/note";
 import { StorageConstants } from "../constants/storage";
+import { syncConfigIdFor } from "../models/syncConfig";
+import { v4 as uuidv4 } from "uuid";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,12 +39,94 @@ interface StoredSession {
 /** Maximum session age in milliseconds (default: 24 hours). */
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+/** Remote model a note is mirrored to by pushNote / pullNotes. */
+const TASK_MODEL = "project.task";
+
+/** project.task.state of a closed task (Odoo 17+). */
+const TASK_STATE_DONE = "1_done";
+
+/** Tasks per pull page, and pages per pull (bounds one pull to 5000 tasks). */
+const PULL_PAGE_SIZE = 100;
+const PULL_MAX_PAGES = 50;
+
+/**
+ * search_read context of pull and poll: archived tasks are returned too,
+ * otherwise archiving a task on the server never reaches the note.
+ */
+const WITH_ARCHIVED = { active_test: false };
+
+/**
+ * Raised when Odoo reports the session as no longer valid: JSON-RPC error
+ * code 100, which Odoo sends only for SessionExpiredException. callWithAuth
+ * re-authenticates on this error and on HTTP 401, never on message text.
+ */
+export class SessionExpiredError extends Error {}
+
+/** A JSON-RPC error, with the Odoo exception class name when sent. */
+export class OdooRpcError extends Error {
+  constructor(message: string, readonly odooName: string | null) {
+    super(message);
+  }
+}
+
+/**
+ * The task a note is linked to on this server was deleted there. Raised by
+ * pushNote instead of creating a new task: a record deleted on the server
+ * is recreated only on explicit request (pushNote's recreateDeleted).
+ */
+export class RemoteRecordDeletedError extends Error {}
+
+/**
+ * First pull of a config (no cursor yet) starts this long before the
+ * oldest link's last sync: that time comes from the device clock, task
+ * write_dates from the server clock. Re-reading a task is harmless.
+ */
+const FIRST_PULL_CLOCK_MARGIN_MS = 24 * 60 * 60 * 1000;
+
+/** Fields of a note a push sends: a change here during a push re-queues it. */
+function pushedFingerprint(note: Note): string {
+  return JSON.stringify([note.title, note.done, note.archived, note.pinned, note.tags, note.entries]);
+}
+
+/** Sync config id of a set of credentials, as built by appToSyncConfig. */
+export function syncConfigIdOf(creds: SyncCredentials): string {
+  return syncConfigIdFor(creds.odooUrl, creds.username, creds.database);
+}
+
+/**
+ * SecureStorage key of the session for one url, user AND database: two
+ * databases on the same url never share a session. Base64 of the UTF-8
+ * bytes, since btoa() rejects characters above U+00FF.
+ */
+export function syncSessionKey(creds: SyncCredentials): string {
+  const bytes = new TextEncoder().encode(`${creds.odooUrl}|${creds.username}|${creds.database}`);
+  return StorageConstants.SYNC_SESSION_PREFIX + btoa(String.fromCharCode(...bytes));
+}
+
 // ─── SyncService ──────────────────────────────────────────────────────────────
 
 export class SyncService {
   private db: DatabaseService;
   /** Diagnostic trail of the last authenticate() call — shown in retry errors. */
   private _lastAuthDiag: string = "";
+  /**
+   * Whether project.task has geo_task_point, per "url|database". The field
+   * comes from an optional server module; sending it where it is missing
+   * makes create/write fail. Probed once per server for the app's lifetime.
+   */
+  private _taskGeoField = new Map<string, boolean>();
+  /**
+   * In-flight pushNote per "note|config id". A second push of the
+   * same note to the same server waits for the first, so a note never yet
+   * linked is created once, not once per concurrent caller (reconnect
+   * syncAll racing a tap on the sync button).
+   */
+  private _pushInFlight = new Map<string, Promise<void>>();
+  /**
+   * Called with the id of each note a pull changed, so a screen showing
+   * that note reloads it instead of saving its older copy over it.
+   */
+  onNotePulled: ((noteId: string) => void) | null = null;
 
   constructor(db: DatabaseService) {
     this.db = db;
@@ -170,7 +255,9 @@ export class SyncService {
     this._lastAuthDiag = diag.join("\n");
     const odooMajorVersion: number = json.result?.server_version_info?.[0] ?? 18;
     const stored: StoredSession = { sessionId, odooMajorVersion, createdAt: new Date().toISOString() };
-    await SecureStoragePlugin.set({ key: this.sessionKey(creds), value: JSON.stringify(stored) });
+    await SecureStoragePlugin.set({ key: syncSessionKey(creds), value: JSON.stringify(stored) });
+    const legacyKey = this.legacySessionKey(creds);
+    if (legacyKey) await SecureStoragePlugin.remove({ key: legacyKey }).catch(() => {});
     return stored;
   }
 
@@ -180,7 +267,7 @@ export class SyncService {
    */
   private async getSession(creds: SyncCredentials): Promise<StoredSession> {
     try {
-      const result = await SecureStoragePlugin.get({ key: this.sessionKey(creds) });
+      const result = await SecureStoragePlugin.get({ key: syncSessionKey(creds) });
       const parsed = JSON.parse(result.value);
       if (!parsed?.sessionId || !parsed?.odooMajorVersion) throw new Error("stale format");
 
@@ -188,7 +275,7 @@ export class SyncService {
       if (parsed.createdAt) {
         const age = Date.now() - new Date(parsed.createdAt).getTime();
         if (age > SESSION_MAX_AGE_MS) {
-          await SecureStoragePlugin.remove({ key: this.sessionKey(creds) }).catch(() => {});
+          await SecureStoragePlugin.remove({ key: syncSessionKey(creds) }).catch(() => {});
           throw new Error("session expired locally");
         }
       }
@@ -213,10 +300,11 @@ export class SyncService {
     try {
       return await fn(session.sessionId, session.odooMajorVersion);
     } catch (e: unknown) {
+      if (e instanceof RemoteRecordDeletedError) throw e;
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("session") || msg.includes("100") || msg.includes("401")) {
+      if (e instanceof SessionExpiredError || /^HTTP 401\b/.test(msg)) {
         // Invalidate stale cached session before re-authenticating
-        await SecureStoragePlugin.remove({ key: this.sessionKey(creds) }).catch(() => {});
+        await SecureStoragePlugin.remove({ key: syncSessionKey(creds) }).catch(() => {});
         let renewed: StoredSession;
         try {
           renewed = await this.authenticate(creds);
@@ -227,6 +315,7 @@ export class SyncService {
         try {
           return await fn(renewed.sessionId, renewed.odooMajorVersion);
         } catch (retryErr: unknown) {
+          if (retryErr instanceof RemoteRecordDeletedError) throw retryErr;
           const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
           throw new Error(
             `re-auth OK (${renewed.sessionId.slice(0, 8)}…) mais appel échoué:\n${retryMsg}\n\n` +
@@ -262,8 +351,11 @@ export class SyncService {
     if (json.error) {
       const errMsg = json.error.data?.message ?? json.error.message ?? "Unknown RPC error";
       const errCode = json.error.code ?? "?";
-      if (json.error.code === 100) throw new Error(`session_expired (code ${errCode}): ${errMsg}`);
-      throw new Error(`RPC ${model}.${method} (HTTP ${resp.status}, code ${errCode}): ${errMsg}`);
+      if (json.error.code === 100) throw new SessionExpiredError(`session_expired (code ${errCode}): ${errMsg}`);
+      throw new OdooRpcError(
+        `RPC ${model}.${method} (HTTP ${resp.status}, code ${errCode}): ${errMsg}`,
+        json.error.data?.name ?? null
+      );
     }
     return json.result;
   }
@@ -372,42 +464,118 @@ export class SyncService {
   // ─── Push ─────────────────────────────────────────────────────────────────
 
   /**
-   * Pushes a single note to Odoo (create or update).
-   * Stores the returned odoo_id on first push.
+   * Pushes a single note to one server as a project.task: write() on the
+   * task this note is linked to on that target, create() and
+   * link otherwise. The server is then "synced" — or "pending" again when
+   * the note changed while the push ran, since the server got the older
+   * content — and the global status is re-derived.
+   *
+   * A link whose task was deleted on the server is never recreated
+   * silently: write() answering MissingError marks the link deleted, drops
+   * the server from the note's queue and raises RemoteRecordDeletedError;
+   * so does a later push while only that deleted link exists, unless
+   * options.recreateDeleted asks for a new task.
    */
-  async pushNote(creds: SyncCredentials, noteId: string): Promise<void> {
+  async pushNote(
+    creds: SyncCredentials,
+    noteId: string,
+    options: { recreateDeleted?: boolean } = {}
+  ): Promise<void> {
+    const key = `${noteId}|${syncConfigIdOf(creds)}`;
+    const previous = this._pushInFlight.get(key) ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(() => this.pushNoteNow(creds, noteId, options));
+    this._pushInFlight.set(key, current);
+    try {
+      await current;
+    } finally {
+      if (this._pushInFlight.get(key) === current) this._pushInFlight.delete(key);
+    }
+  }
+
+  private async pushNoteNow(
+    creds: SyncCredentials,
+    noteId: string,
+    options: { recreateDeleted?: boolean }
+  ): Promise<void> {
     const note = await this.db.getNoteById(noteId);
     if (!note) throw new Error(`Note ${noteId} not found`);
+    const fingerprint = pushedFingerprint(note);
 
-    const syncInfo = await this.db.getNoteSyncInfo(noteId);
+    const configId = syncConfigIdOf(creds);
+    const known = await this.db.findNoteLink(noteId, configId, TASK_MODEL, "create", true);
+    if (known?.remoteState === "deleted" && !options.recreateDeleted) {
+      await this.db.clearNotePerServerStatus(noteId, configId);
+      await this.db.refreshNoteSyncStatus(noteId);
+      throw new RemoteRecordDeletedError(`La tâche #${known.resId} a été supprimée sur ${creds.odooUrl}.`);
+    }
+    const link = known?.remoteState === "ok" ? known : null;
 
     await this.callWithAuth(creds, async (sessionId, odooVersion) => {
       const tagIds = await this.resolveTags(creds, sessionId, note.tags);
-      const payload = this.buildTaskPayload(note, tagIds, odooVersion);
+      const geoPoint = this.buildGeoMultiPoint(note.entries);
+      const withGeo = geoPoint !== null && await this.hasTaskGeoField(creds, sessionId);
+      const payload = this.buildTaskPayload(note, tagIds, odooVersion, withGeo ? geoPoint : null);
+      const now = new Date().toISOString();
 
-      if (syncInfo.odooId) {
-        await this.jsonRpc(creds.odooUrl, sessionId, "project.task", "write", [
-          [syncInfo.odooId],
-          payload,
-        ]);
-      } else {
-        const newId: number = await this.jsonRpc(
-          creds.odooUrl, sessionId, "project.task", "create",
-          [payload]
-        );
-        await this.db.setNoteSyncInfo(noteId, {
-          odooId: newId,
-          odooUrl: creds.odooUrl,
-        });
+      if (link) {
+        try {
+          await this.jsonRpc(creds.odooUrl, sessionId, TASK_MODEL, "write", [
+            [link.resId],
+            payload,
+          ]);
+        } catch (e: unknown) {
+          if (!(e instanceof OdooRpcError) || e.odooName !== "odoo.exceptions.MissingError") throw e;
+          await this.db.setNoteLinkRemoteDeleted(link.id);
+          await this.db.clearNotePerServerStatus(noteId, configId);
+          await this.db.refreshNoteSyncStatus(noteId);
+          throw new RemoteRecordDeletedError(`La tâche #${link.resId} a été supprimée sur ${creds.odooUrl}.`);
+        }
+        await this.db.setNoteLinkSyncedAt(link.id, now);
       }
+      const createdId: number | null = link ? null : await this.jsonRpc(
+        creds.odooUrl, sessionId, TASK_MODEL, "create",
+        [payload]
+      );
 
-      await this.db.setNoteSyncInfo(noteId, {
-        syncStatus: "synced",
-        lastSyncedAt: new Date().toISOString(),
+      // Settled under the note's lock: a note deleted meanwhile gets no link
+      let noteGone = false;
+      await this.db.updateNotePerServerStatus(noteId, async (perServer) => {
+        const current = await this.db.getNoteById(noteId);
+        if (!current) { noteGone = true; return; }
+        if (createdId !== null) {
+          await this.db.addNoteLink({
+            id: uuidv4(),
+            noteId,
+            configId,
+            model: TASK_MODEL,
+            resId: createdId,
+            kind: "create",
+            remoteState: "ok",
+            createdAt: now,
+            lastSyncedAt: now,
+          });
+        }
+        perServer[configId] = pushedFingerprint(current) === fingerprint ? "synced" : "pending";
       });
-      const configId = creds.odooUrl + "|" + creds.username;
-      await this.db.setNotePerServerStatus(noteId, configId, "synced");
+      if (noteGone) return;
+      await this.db.setNoteSyncInfo(noteId, { lastSyncedAt: now });
+      await this.db.refreshNoteSyncStatus(noteId);
     });
+  }
+
+  /** Whether project.task has geo_task_point on this server (cached). */
+  private async hasTaskGeoField(creds: SyncCredentials, sessionId: string): Promise<boolean> {
+    const key = `${creds.odooUrl}|${creds.database}`;
+    const known = this._taskGeoField.get(key);
+    if (known !== undefined) return known;
+    const fields = await this.jsonRpc(
+      creds.odooUrl, sessionId, TASK_MODEL, "fields_get",
+      [["geo_task_point"]],
+      { attributes: ["type"] }
+    );
+    const present = !!fields && typeof fields === "object" && "geo_task_point" in fields;
+    this._taskGeoField.set(key, present);
+    return present;
   }
 
   // ─── Poll ────────────────────────────────────────────────────────────────
@@ -428,6 +596,7 @@ export class SyncService {
           ],
           fields: ["id", "write_date"],
           limit: 200,
+          context: WITH_ARCHIVED,
         }
       );
       return results.map((r) => r.id);
@@ -438,13 +607,30 @@ export class SyncService {
 
   /**
    * Pulls tasks modified since lastSync from Odoo.
-   * Updates metadata for notes already known locally (matched by odoo_id).
+   * Updates metadata for the notes linked to those tasks on this server.
    * Returns the count of updated notes.
    *
    * Note: text entries are not re-parsed from HTML in v1 —
    * mobile is the primary author of content.
    */
   async pullNotes(creds: SyncCredentials, lastSync: Date): Promise<number> {
+    return (await this.pullTasks(creds, lastSync.toISOString())).updated;
+  }
+
+  /**
+   * Reads, page by page, the project-less tasks with write_date >= since
+   * (archived ones included) and copies title, pinned, archived and — on
+   * Odoo 17+ — done onto the notes linked to them on this target. A note
+   * still "pending" or in "error" for this server is left
+   * untouched: its local edits have not reached the server yet, and
+   * overwriting them would lose them. A note the pull changes becomes
+   * pending for its other servers. Returns the notes changed and the
+   * highest write_date read (null when no task came back).
+   */
+  private async pullTasks(
+    creds: SyncCredentials,
+    since: string
+  ): Promise<{ updated: number; maxWriteDate: string | null }> {
     return this.callWithAuth(creds, async (sessionId, odooVersion) => {
       const fields = [
         "id", "name", "priority", "active",
@@ -452,88 +638,151 @@ export class SyncService {
         ...(odooVersion >= 17 ? ["state"] : []),
       ];
 
-      const tasks: any[] = await this.jsonRpc(
-        creds.odooUrl, sessionId, "project.task", "search_read",
-        [],
-        {
-          domain: [
-            ["project_id", "=", false],
-            ["write_date", ">", lastSync.toISOString()],
-          ],
-          fields,
-          limit: 100,
-          order: "write_date asc",
-        }
-      );
-
-      const localNotes = await this.db.getNotesByOdooUrl(creds.odooUrl);
-      const localByOdooId = new Map(
-        localNotes
-          .filter((n) => n.syncInfo.odooId !== null)
-          .map((n) => [n.syncInfo.odooId!, n])
+      const configId = syncConfigIdOf(creds);
+      const links = await this.db.getNoteLinksForConfig(configId);
+      const linkByResId = new Map(
+        links
+          .filter((l) => l.model === TASK_MODEL && l.kind === "create" && l.remoteState === "ok")
+          .map((l) => [l.resId, l])
       );
 
       let updated = 0;
-      for (const task of tasks) {
-        const local = localByOdooId.get(task.id);
-        if (!local) continue;
+      let maxWriteDate: string | null = null;
+      // Keyset paging. search_read returns write_date truncated to the
+      // second while the server compares the stored value with its
+      // microseconds, so "= T" matches nothing: the next page asks for
+      // ">= T" minus the ids already read at T. A task rewritten during the
+      // pull moves to the end without shifting the rows not read yet.
+      let lastWriteDate = since;
+      let seenAtLast: number[] = [];
+      for (let page = 0; page < PULL_MAX_PAGES; page++) {
+        const domain: any[] = [
+          ["project_id", "=", false],
+          ["write_date", ">=", lastWriteDate],
+          ...(seenAtLast.length > 0 ? [["id", "not in", seenAtLast]] : []),
+        ];
+        const tasks: any[] = await this.jsonRpc(
+          creds.odooUrl, sessionId, TASK_MODEL, "search_read",
+          [],
+          {
+            domain,
+            fields,
+            limit: PULL_PAGE_SIZE,
+            order: "write_date asc, id asc",
+            context: WITH_ARCHIVED,
+          }
+        );
 
-        const updatedNote = {
-          ...local,
-          title: task.name,
-          pinned: task.priority === "1",
-          archived: !task.active,
-          ...(odooVersion >= 17 ? { done: task.state === "done" } : {}),
-        };
-
-        await this.db.updateNote(local.id, updatedNote);
-        await this.db.setNoteSyncInfo(local.id, {
-          syncStatus: "synced",
-          lastSyncedAt: new Date().toISOString(),
-        });
-        const configId = creds.odooUrl + "|" + creds.username;
-        await this.db.setNotePerServerStatus(local.id, configId, "synced");
-        updated++;
+        for (const task of tasks) {
+          if (task.write_date && (!maxWriteDate || task.write_date > maxWriteDate)) {
+            maxWriteDate = task.write_date;
+          }
+          const link = linkByResId.get(task.id);
+          if (!link) continue;
+          if (await this.applyPulledTask(link.noteId, configId, task, odooVersion)) updated++;
+        }
+        if (tasks.length < PULL_PAGE_SIZE) break;
+        const pageLast = tasks[tasks.length - 1].write_date;
+        const atPageLast = tasks.filter((t) => t.write_date === pageLast).map((t) => t.id);
+        seenAtLast = pageLast === lastWriteDate ? [...seenAtLast, ...atPageLast] : atPageLast;
+        lastWriteDate = pageLast;
       }
-      return updated;
+      return { updated, maxWriteDate };
     });
+  }
+
+  /**
+   * Copies one pulled task onto its note, under the note's sync lock so a
+   * concurrent edit is either seen (the note is then pending and left
+   * alone) or applied after. Returns whether the note changed; a changed
+   * note becomes pending for its other servers.
+   */
+  private async applyPulledTask(
+    noteId: string,
+    configId: string,
+    task: any,
+    odooVersion: number
+  ): Promise<boolean> {
+    let changed = false;
+    let applied = false;
+    await this.db.updateNotePerServerStatus(noteId, async (perServer) => {
+      const status = perServer[configId];
+      if (status === "pending" || status === "error") return;
+      const local = await this.db.getNoteById(noteId);
+      if (!local) return;
+      const updatedNote = {
+        ...local,
+        title: task.name,
+        pinned: task.priority === "1",
+        archived: !task.active,
+        ...(odooVersion >= 17 ? { done: task.state === TASK_STATE_DONE } : {}),
+      };
+      changed = updatedNote.title !== local.title || updatedNote.pinned !== local.pinned
+        || updatedNote.archived !== local.archived || updatedNote.done !== local.done;
+      if (changed) await this.db.updateNote(noteId, updatedNote);
+      perServer[configId] = "synced";
+      applied = true;
+    });
+    if (!applied) return false;
+    const now = new Date().toISOString();
+    const link = await this.db.findNoteLink(noteId, configId, TASK_MODEL, "create");
+    if (link) await this.db.setNoteLinkSyncedAt(link.id, now);
+    if (changed) {
+      await this.db.setNoteSyncInfo(noteId, { lastSyncedAt: now });
+      // The note's other servers still hold the previous values
+      await this.db.markNotePendingForConfigs(noteId, await this.db.getLiveLinkConfigIds(noteId, configId));
+      this.onNotePulled?.(noteId);
+    }
+    await this.db.refreshNoteSyncStatus(noteId);
+    return changed;
   }
 
   // ─── Sync all ────────────────────────────────────────────────────────────
 
+  /** Notes syncAll would push to this config: pending or in error. */
+  async pendingNoteIds(configId: string): Promise<string[]> {
+    return this.db.getNoteIdsPendingForConfig(configId);
+  }
+
   /**
-   * Full bidirectional sync for a given config:
-   * 1. Push all notes marked as 'pending' for this syncConfigId (or odooUrl fallback)
-   * 2. Pull all tasks modified since the oldest local sync
+   * Full bidirectional sync for one server:
+   * 1. Push every note pending (or in error) for this config — syncConfigId,
+   *    or the id derived from creds
+   * 2. Pull the tasks written since the pull cursor of this config (first
+   *    pull: a day before the oldest link synced, else everything), then
+   *    move the cursor to the highest write_date read
    */
   async syncAll(creds: SyncCredentials, syncConfigId?: string): Promise<SyncResult> {
     const result: SyncResult = { pushed: 0, pulled: 0, errors: [] };
+    const configId = syncConfigId ?? syncConfigIdOf(creds);
 
-    const localNotes = syncConfigId
-      ? await this.db.getNotesBySyncConfigId(syncConfigId)
-      : await this.db.getNotesByOdooUrl(creds.odooUrl);
-    const pending = localNotes.filter((n) => n.syncInfo.syncStatus === "pending");
-
-    for (const note of pending) {
+    for (const noteId of await this.db.getNoteIdsPendingForConfig(configId)) {
       try {
-        await this.pushNote(creds, note.id);
+        await this.pushNote(creds, noteId);
         result.pushed++;
       } catch (e: unknown) {
-        result.errors.push(`Push ${note.id}: ${e instanceof Error ? e.message : String(e)}`);
-        const configId = syncConfigId ?? (creds.odooUrl + "|" + creds.username);
-        await this.db.setNotePerServerStatus(note.id, configId, "error").catch(() => {});
+        result.errors.push(`Push ${noteId}: ${e instanceof Error ? e.message : String(e)}`);
+        // Deleted remote task: already dropped from the queue by pushNote
+        if (e instanceof RemoteRecordDeletedError) continue;
+        await this.db.setNotePerServerStatus(noteId, configId, "error").catch(() => {});
+        await this.db.refreshNoteSyncStatus(noteId).catch(() => {});
       }
     }
 
-    const lastSynced = localNotes
-      .map((n) => n.syncInfo.lastSyncedAt)
+    const cursorScope = configId;
+    const oldestLink = (await this.db.getNoteLinksForConfig(configId))
+      .map((l) => l.lastSyncedAt)
       .filter(Boolean)
       .sort()
       .at(0);
-
-    const since = lastSynced ? new Date(lastSynced) : new Date(0);
+    const since = (await this.db.getSyncPullCursor(cursorScope))
+      ?? (oldestLink
+        ? new Date(new Date(oldestLink).getTime() - FIRST_PULL_CLOCK_MARGIN_MS).toISOString()
+        : new Date(0).toISOString());
     try {
-      result.pulled = await this.pullNotes(creds, since);
+      const pulled = await this.pullTasks(creds, since);
+      result.pulled = pulled.updated;
+      if (pulled.maxWriteDate) await this.db.setSyncPullCursor(cursorScope, pulled.maxWriteDate);
     } catch (e: unknown) {
       result.errors.push(`Pull: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -723,7 +972,8 @@ export class SyncService {
   private buildTaskPayload(
     note: Note,
     tagIds: number[],
-    odooVersion: number
+    odooVersion: number,
+    geoPoint: string | null
   ): Record<string, any> {
     const payload: Record<string, any> = {
       name: note.title,
@@ -737,11 +987,10 @@ export class SyncService {
 
     // state field introduced in Odoo 17
     if (odooVersion >= 17) {
-      payload.state = note.done ? "done" : "01_in_progress";
+      payload.state = note.done ? TASK_STATE_DONE : "01_in_progress";
     }
 
-    // geo_task_point is ERPLibre-specific; only send when there is data
-    const geoPoint = this.buildGeoMultiPoint(note.entries);
+    // geo_task_point: only when the note has positions AND the server has the field
     if (geoPoint !== null) {
       payload.geo_task_point = geoPoint;
     }
@@ -749,9 +998,13 @@ export class SyncService {
     return payload;
   }
 
-  /** Derives a stable SecureStorage key from the credentials. */
-  private sessionKey(creds: SyncCredentials): string {
-    return StorageConstants.SYNC_SESSION_PREFIX + btoa(`${creds.odooUrl}|${creds.username}`);
+  /** Session key of the older format, without the database; purged on login. */
+  private legacySessionKey(creds: SyncCredentials): string | null {
+    try {
+      return StorageConstants.SYNC_SESSION_PREFIX + btoa(`${creds.odooUrl}|${creds.username}`);
+    } catch {
+      return null;
+    }
   }
 
 

@@ -12,8 +12,39 @@ import { Workspace } from "../models/workspace";
 import type { ProcessRecord, ProcessType, ProcessStatus } from "../models/process";
 import { StorageConstants } from "../constants/storage";
 import { encryptCredential, decryptCredential } from "../utils/cryptoUtils";
+import { sameServerUrl, syncConfigIdFor } from "../models/syncConfig";
 
 export type SyncStatus = "local" | "pending" | "synced" | "conflict" | "error";
+
+/** Status of a note on ONE server, stored in notes.sync_per_server_status. */
+export type PerServerSyncStatus = "synced" | "error" | "pending";
+
+/**
+ * How a note is bound to a remote record. "create": the note created the
+ * record and is mirrored by it (push writes, pull reads back).
+ */
+export type NoteLinkKind = "create";
+
+/**
+ * One remote record a note is bound to. A remote id is only meaningful in
+ * the database it came from, so a link is scoped to a sync config id
+ * ("url|username|database", see syncConfigIdFor).
+ */
+export interface NoteLink {
+  id: string;
+  noteId: string;
+  configId: string;
+  model: string;
+  resId: number;
+  kind: NoteLinkKind;
+  /**
+   * "deleted": the remote record no longer exists. The link stays as a
+   * trace; push never writes it and never recreates the record unasked.
+   */
+  remoteState: "ok" | "deleted";
+  createdAt: string;
+  lastSyncedAt: string | null;
+}
 
 export interface NoteSyncInfo {
   odooId: number | null;
@@ -29,6 +60,12 @@ const DB_NAME = "erplibre_mobile";
 export class DatabaseService {
   private sqlite: SQLiteConnection;
   private db: any;
+  /**
+   * Tail of the read-modify-write chain on each note's
+   * sync_per_server_status JSON. Writers queue here, so two writers
+   * interleaving across awaits never drop each other's entry.
+   */
+  private _perServerChain = new Map<string, Promise<unknown>>();
 
   constructor() {
     this.sqlite = new SQLiteConnection(CapacitorSQLite);
@@ -458,7 +495,12 @@ export class DatabaseService {
   }
 
   async deleteNote(id: string): Promise<void> {
-    await this.db.run("DELETE FROM notes WHERE id = ?", [id]);
+    // Under the note's sync lock: a push settling meanwhile then finds no
+    // note and writes no link. The remote records are left untouched.
+    await this.withPerServerLock(id, async () => {
+      await this.db.run("DELETE FROM notes WHERE id = ?", [id]);
+      await this.deleteNoteLinks(id);
+    });
   }
 
   async updateNote(id: string, note: Note): Promise<void> {
@@ -661,45 +703,473 @@ export class DatabaseService {
     };
   }
 
+  /** Per note, how many live servers are "synced" and how many in "error". */
   async getNoteSyncCounts(): Promise<Record<string, { synced: number; error: number }>> {
+    const live = await this.getLiveSyncConfigIds();
     const result = await this.db.query(
       "SELECT id, sync_per_server_status FROM notes WHERE sync_per_server_status IS NOT NULL"
     );
     const counts: Record<string, { synced: number; error: number }> = {};
     for (const row of result.values ?? []) {
-      if (!row.sync_per_server_status) continue;
-      try {
-        const perServer: Record<string, string> = JSON.parse(row.sync_per_server_status);
-        let synced = 0, error = 0;
-        for (const status of Object.values(perServer)) {
-          if (status === "synced") synced++;
-          else if (status === "error") error++;
-        }
-        if (synced > 0 || error > 0) counts[row.id] = { synced, error };
-      } catch { /* ignore */ }
+      let synced = 0, error = 0;
+      for (const [configId, status] of Object.entries(this.parsePerServerStatus(row.sync_per_server_status))) {
+        if (!live.has(configId)) continue;
+        if (status === "synced") synced++;
+        else if (status === "error") error++;
+      }
+      if (synced > 0 || error > 0) counts[row.id] = { synced, error };
     }
     return counts;
+  }
+
+  /** Runs fn after every earlier per-server writer of this note. */
+  private withPerServerLock<T>(noteId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this._perServerChain.get(noteId) ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(fn);
+    this._perServerChain.set(noteId, current);
+    current.finally(() => {
+      if (this._perServerChain.get(noteId) === current) this._perServerChain.delete(noteId);
+    }).catch(() => {});
+    return current;
+  }
+
+  /**
+   * Rewrites the per-server statuses of a note under its lock: update
+   * receives the current map and edits it in place. Every writer of the
+   * note's sync state — edit, push settle, pull — runs its read-decide-
+   * write inside one such call, so none acts on a state another changed
+   * meanwhile. update must not call another method that takes this lock
+   * for the same note (setNotePerServerStatus, markNotePendingForConfigs…):
+   * it would wait on itself.
+   */
+  async updateNotePerServerStatus(
+    noteId: string,
+    update: (perServer: Record<string, PerServerSyncStatus>) => void | Promise<void>
+  ): Promise<void> {
+    await this.withPerServerLock(noteId, async () => {
+      const perServer = await this.getNotePerServerStatus(noteId);
+      await update(perServer);
+      await this.db.run(
+        "UPDATE notes SET sync_per_server_status = ? WHERE id = ?",
+        [JSON.stringify(perServer), noteId]
+      );
+    });
   }
 
   async setNotePerServerStatus(
     noteId: string,
     syncConfigId: string,
-    status: "synced" | "error"
+    status: PerServerSyncStatus
   ): Promise<void> {
+    await this.updateNotePerServerStatus(noteId, (perServer) => { perServer[syncConfigId] = status; });
+  }
+
+  /** Drops one server from the note's statuses: nothing is queued for it. */
+  async clearNotePerServerStatus(noteId: string, syncConfigId: string): Promise<void> {
+    await this.updateNotePerServerStatus(noteId, (perServer) => { delete perServer[syncConfigId]; });
+  }
+
+  async getNotePerServerStatus(noteId: string): Promise<Record<string, PerServerSyncStatus>> {
     const result = await this.db.query(
       "SELECT sync_per_server_status FROM notes WHERE id = ?",
       [noteId]
     );
-    const row = result.values?.[0];
-    let perServer: Record<string, string> = {};
-    if (row?.sync_per_server_status) {
-      try { perServer = JSON.parse(row.sync_per_server_status); } catch { /* ignore */ }
+    return this.parsePerServerStatus(result.values?.[0]?.sync_per_server_status);
+  }
+
+  private parsePerServerStatus(raw: string | null | undefined): Record<string, PerServerSyncStatus> {
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
     }
-    perServer[syncConfigId] = status;
-    await this.db.run(
-      "UPDATE notes SET sync_per_server_status = ? WHERE id = ?",
-      [JSON.stringify(perServer), noteId]
+  }
+
+  /**
+   * Marks the note as waiting to be pushed to each of the given servers,
+   * then re-derives its global status. syncAll(config) later pushes exactly
+   * the notes pending (or in error) for that config.
+   */
+  async markNotePendingForConfigs(noteId: string, configIds: string[]): Promise<void> {
+    if (configIds.length === 0) return;
+    await this.updateNotePerServerStatus(noteId, (perServer) => {
+      for (const id of configIds) perServer[id] = "pending";
+    });
+    await this.refreshNoteSyncStatus(noteId);
+  }
+
+  /**
+   * Ids of the applications that can sync — those with a database, the set
+   * loadSyncConfigs builds.
+   */
+  async getLiveSyncConfigIds(): Promise<Set<string>> {
+    const result = await this.db.query("SELECT url, username, database FROM applications");
+    return new Set(
+      (result.values ?? [])
+        .filter((a: any) => a.database)
+        .map((a: any) => syncConfigIdFor(a.url, a.username, a.database))
     );
+  }
+
+  /**
+   * Config ids of the note's live links: links whose remote record still
+   * exists and whose application can still sync, under that same id.
+   */
+  async getLiveLinkConfigIds(noteId: string, except?: string): Promise<string[]> {
+    const live = await this.getLiveSyncConfigIds();
+    const ids = (await this.getNoteLinks(noteId))
+      .filter((l) => l.remoteState === "ok" && live.has(l.configId) && l.configId !== except)
+      .map((l) => l.configId);
+    return [...new Set(ids)];
+  }
+
+  /**
+   * Derives the note's global sync_status from its per-server statuses:
+   * any "error" → error, else any "pending" → pending, else any "synced" →
+   * synced. Entries of ids no live application has (deleted, renamed, or
+   * switched to another database) are ignored: nothing would ever clear
+   * them. With no live entry left, the note is "synced" if it still has a
+   * live link, "local" otherwise.
+   */
+  async refreshNoteSyncStatus(noteId: string): Promise<SyncStatus> {
+    const live = await this.getLiveSyncConfigIds();
+    const statuses = Object.entries(await this.getNotePerServerStatus(noteId))
+      .filter(([configId]) => live.has(configId))
+      .map(([, status]) => status);
+    let status: SyncStatus;
+    if (statuses.includes("error")) status = "error";
+    else if (statuses.includes("pending")) status = "pending";
+    else if (statuses.includes("synced")) status = "synced";
+    else status = (await this.getLiveLinkConfigIds(noteId)).length > 0 ? "synced" : "local";
+    await this.setNoteSyncInfo(noteId, { syncStatus: status });
+    return status;
+  }
+
+  /** refreshNoteSyncStatus for every note: after an application changed. */
+  async refreshAllNoteSyncStatuses(): Promise<void> {
+    const result = await this.db.query("SELECT id FROM notes");
+    for (const row of result.values ?? []) await this.refreshNoteSyncStatus(row.id);
+  }
+
+  /**
+   * Returns the ids of the notes to push to one server: those whose
+   * per-server status for configId is "pending" or "error". An error stays
+   * queued, so a push that failed (server unreachable right after the
+   * network came back, 5xx…) is retried by the next syncAll.
+   */
+  async getNoteIdsPendingForConfig(configId: string): Promise<string[]> {
+    const result = await this.db.query("SELECT id, sync_per_server_status FROM notes");
+    return (result.values ?? [])
+      .filter((row: any) => {
+        const status = this.parsePerServerStatus(row.sync_per_server_status)[configId];
+        return status === "pending" || status === "error";
+      })
+      .map((row: any) => row.id as string);
+  }
+
+  /**
+   * Rewrites the "url|username" ids older versions stored (last-used
+   * config, remembered selection, per-server status keys) as the current
+   * id of the application with that user on the same server — url
+   * compared with sameServerUrl, since older versions kept the old
+   * spelling when an application's url was edited. An id no application
+   * matches is left as is, and stays non-live. Returns the notes rewritten.
+   */
+  async addDatabaseToLegacySyncConfigIds(): Promise<number> {
+    const apps = (await this.db.query("SELECT url, username, database FROM applications")).values ?? [];
+    const upgraded = new Map<string, string>();
+    const upgrade = (id: string): string | undefined => {
+      if (upgraded.has(id)) return upgraded.get(id);
+      const sep = id.lastIndexOf("|");
+      const [url, username] = [id.slice(0, sep), id.slice(sep + 1)];
+      const app = sep > 0 && id.split("|").length === 2
+        ? apps.find((a: any) => a.username === username && sameServerUrl(a.url, url))
+        : undefined;
+      const result = app ? syncConfigIdFor(app.url, app.username, app.database ?? "") : undefined;
+      if (result) upgraded.set(id, result);
+      return result;
+    };
+    const up = (id: string) => upgrade(id) ?? id;
+    const result = await this.db.query(
+      "SELECT id, sync_config_id, selected_sync_config_ids, sync_per_server_status FROM notes"
+    );
+    let rewritten = 0;
+    for (const row of result.values ?? []) {
+      const perServer = this.parsePerServerStatus(row.sync_per_server_status);
+      let selected: string[] | null = null;
+      try { selected = row.selected_sync_config_ids ? JSON.parse(row.selected_sync_config_ids) : null; } catch { /* ignore */ }
+      const touched = (row.sync_config_id && upgrade(row.sync_config_id))
+        || (selected ?? []).some((id) => upgrade(id))
+        || Object.keys(perServer).some((id) => upgrade(id));
+      if (!touched) continue;
+      const newPerServer: Record<string, PerServerSyncStatus> = {};
+      for (const [id, status] of Object.entries(perServer)) newPerServer[up(id)] = status;
+      await this.db.run(
+        "UPDATE notes SET sync_config_id = ?, selected_sync_config_ids = ?, sync_per_server_status = ? WHERE id = ?",
+        [row.sync_config_id ? up(row.sync_config_id) : null,
+         selected ? JSON.stringify([...new Set(selected.map(up))]) : null,
+         JSON.stringify(newPerServer), row.id]
+      );
+      rewritten++;
+    }
+    return rewritten;
+  }
+
+  /**
+   * Notes left "pending" by the global flag of older versions: sync_status
+   * "pending" with no per-server "pending" entry. Read before any step
+   * that writes per-server entries.
+   */
+  async getLegacyPendingNoteIds(): Promise<string[]> {
+    const result = await this.db.query("SELECT id, sync_status, sync_per_server_status FROM notes");
+    return (result.values ?? [])
+      .filter((row: any) => row.sync_status === "pending"
+        && !Object.values(this.parsePerServerStatus(row.sync_per_server_status)).includes("pending"))
+      .map((row: any) => row.id as string);
+  }
+
+  /**
+   * Turns the global "pending" flag of the given notes (see
+   * getLegacyPendingNoteIds) into a per-server "pending" for every server
+   * each targets: its per-server entries, live links, remembered selection
+   * and last-used config. Without it, the first server to sync would clear
+   * the global flag and the others would never receive the note. Returns
+   * the notes converted.
+   */
+  async convertLegacyPendingToPerServer(noteIds: string[]): Promise<number> {
+    const live = await this.getLiveSyncConfigIds();
+    const wanted = new Set(noteIds);
+    const result = await this.db.query(
+      "SELECT id, sync_status, sync_per_server_status, selected_sync_config_ids, sync_config_id FROM notes"
+    );
+    let converted = 0;
+    for (const row of result.values ?? []) {
+      if (!wanted.has(row.id)) continue;
+      const perServer = this.parsePerServerStatus(row.sync_per_server_status);
+      const targets = new Set([...Object.keys(perServer), ...await this.getLiveLinkConfigIds(row.id)]);
+      try {
+        for (const id of JSON.parse(row.selected_sync_config_ids ?? "[]")) targets.add(id);
+      } catch { /* ignore */ }
+      if (row.sync_config_id) targets.add(row.sync_config_id);
+      const liveTargets = [...targets].filter((id) => live.has(id));
+      if (liveTargets.length === 0) continue;
+      await this.markNotePendingForConfigs(row.id, liveTargets);
+      converted++;
+    }
+    return converted;
+  }
+
+  /**
+   * Re-keys every sync record of one target after its application's url
+   * was respelled: links, pull cursor, last-used config, remembered
+   * selections and per-server statuses. Without it the next push finds no
+   * link under the new id and creates a duplicate remote record.
+   */
+  async renameSyncConfigId(oldId: string, newId: string): Promise<void> {
+    if (oldId === newId) return;
+    await this.db.run("UPDATE note_links SET config_id = ? WHERE config_id = ?", [newId, oldId]);
+    const cursor = await this.getSyncPullCursor(oldId);
+    if (cursor) {
+      await this.setSyncPullCursor(newId, cursor);
+      await this.db.run("DELETE FROM sync_pull_cursors WHERE scope = ?", [oldId]);
+    }
+    const result = await this.db.query("SELECT id, sync_config_id, selected_sync_config_ids FROM notes");
+    for (const row of result.values ?? []) {
+      let selected: string[] | null = null;
+      try { selected = row.selected_sync_config_ids ? JSON.parse(row.selected_sync_config_ids) : null; } catch { /* ignore */ }
+      const info: Partial<NoteSyncInfo> = {};
+      if (row.sync_config_id === oldId) info.syncConfigId = newId;
+      if (selected?.includes(oldId)) {
+        info.selectedSyncConfigIds = [...new Set(selected.map((id) => (id === oldId ? newId : id)))];
+      }
+      if (Object.keys(info).length > 0) await this.setNoteSyncInfo(row.id, info);
+      await this.updateNotePerServerStatus(row.id, (perServer) => {
+        if (!(oldId in perServer)) return;
+        perServer[newId] = perServer[oldId];
+        delete perServer[oldId];
+      });
+    }
+  }
+
+  // Pull cursors
+
+  /**
+   * Highest task write_date already pulled, per sync config id: the next
+   * pull starts there instead of re-reading every task since the oldest
+   * link.
+   */
+  async createSyncPullCursorsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS sync_pull_cursors (
+        scope      TEXT PRIMARY KEY NOT NULL,
+        write_date TEXT NOT NULL
+      )
+    `);
+  }
+
+  async getSyncPullCursor(scope: string): Promise<string | null> {
+    const result = await this.db.query("SELECT write_date FROM sync_pull_cursors WHERE scope = ?", [scope]);
+    return result.values?.[0]?.write_date ?? null;
+  }
+
+  async setSyncPullCursor(scope: string, writeDate: string): Promise<void> {
+    await this.db.run(
+      "INSERT OR REPLACE INTO sync_pull_cursors (scope, write_date) VALUES (?, ?)",
+      [scope, writeDate]
+    );
+  }
+
+  // Note links
+
+  async createNoteLinksTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS note_links (
+        id             TEXT PRIMARY KEY NOT NULL,
+        note_id        TEXT NOT NULL,
+        config_id      TEXT NOT NULL,
+        model          TEXT NOT NULL,
+        res_id         INTEGER NOT NULL,
+        kind           TEXT NOT NULL,
+        remote_state   TEXT NOT NULL,
+        created_at     TEXT NOT NULL,
+        last_synced_at TEXT
+      )
+    `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_note_links_note ON note_links(note_id)"
+    );
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_note_links_config ON note_links(config_id)"
+    );
+  }
+
+  async addNoteLink(link: NoteLink): Promise<void> {
+    await this.db.run(
+      "INSERT INTO note_links (id, note_id, config_id, model, res_id, kind, remote_state, created_at, last_synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [link.id, link.noteId, link.configId, link.model, link.resId, link.kind,
+       link.remoteState, link.createdAt, link.lastSyncedAt]
+    );
+  }
+
+  async getNoteLinks(noteId: string): Promise<NoteLink[]> {
+    const result = await this.db.query("SELECT * FROM note_links WHERE note_id = ?", [noteId]);
+    return (result.values ?? []).map((row: any) => this.rowToNoteLink(row));
+  }
+
+  async getNoteLinksForConfig(configId: string): Promise<NoteLink[]> {
+    const result = await this.db.query("SELECT * FROM note_links WHERE config_id = ?", [configId]);
+    return (result.values ?? []).map((row: any) => this.rowToNoteLink(row));
+  }
+
+  /**
+   * The note's link to (config, model, kind) whose remote record still
+   * exists; with includeDeleted, a deleted one when no live one exists.
+   */
+  async findNoteLink(
+    noteId: string,
+    configId: string,
+    model: string,
+    kind: NoteLinkKind,
+    includeDeleted = false
+  ): Promise<NoteLink | null> {
+    const matching = (await this.getNoteLinks(noteId))
+      .filter((l) => l.configId === configId && l.model === model && l.kind === kind);
+    return matching.find((l) => l.remoteState === "ok")
+      ?? (includeDeleted ? matching[0] ?? null : null);
+  }
+
+  async setNoteLinkRemoteDeleted(linkId: string): Promise<void> {
+    await this.db.run("UPDATE note_links SET remote_state = ? WHERE id = ?", ["deleted", linkId]);
+  }
+
+  async setNoteLinkSyncedAt(linkId: string, lastSyncedAt: string): Promise<void> {
+    await this.db.run("UPDATE note_links SET last_synced_at = ? WHERE id = ?", [lastSyncedAt, linkId]);
+  }
+
+  async deleteNoteLinks(noteId: string): Promise<void> {
+    await this.db.run("DELETE FROM note_links WHERE note_id = ?", [noteId]);
+  }
+
+  private rowToNoteLink(row: any): NoteLink {
+    return {
+      id: row.id,
+      noteId: row.note_id,
+      configId: row.config_id,
+      model: row.model,
+      resId: Number(row.res_id),
+      kind: row.kind as NoteLinkKind,
+      remoteState: row.remote_state === "deleted" ? "deleted" : "ok",
+      createdAt: row.created_at,
+      lastSyncedAt: row.last_synced_at ?? null,
+    };
+  }
+
+  /**
+   * Copies the single binding of older versions (notes.odoo_id + odoo_url,
+   * a project.task) into note_links. Expects the ids already upgraded by
+   * addDatabaseToLegacySyncConfigIds.
+   *
+   * The id was issued by one database at odoo_url, and nothing recorded
+   * which one; older versions also write()-ed it to every server a note was
+   * pushed to. So a link is written only where the id is unambiguous: all
+   * applications at odoo_url point at one database. It goes to the configs
+   * the note recorded there (sync_config_id, "synced" per-server keys), or,
+   * when it recorded none, to the one application at that url. Every other
+   * live target of the note (selection, per-server keys) is queued
+   * "pending", so it gets a record of its own rather than a foreign one.
+   * Re-running writes no duplicate. Returns the links written.
+   */
+  async backfillNoteLinksFromLegacyColumns(newId: () => string): Promise<number> {
+    const notes = await this.db.query(
+      "SELECT id, odoo_id, odoo_url, sync_config_id, selected_sync_config_ids, sync_per_server_status, last_synced_at FROM notes"
+    );
+    const apps = (await this.db.query("SELECT url, username, database FROM applications")).values ?? [];
+    const live = await this.getLiveSyncConfigIds();
+    let written = 0;
+    for (const row of notes.values ?? []) {
+      if (row.odoo_id === null || row.odoo_id === undefined || !row.odoo_url) continue;
+      const perServer = this.parsePerServerStatus(row.sync_per_server_status);
+      // Applications without a database cannot sync and say nothing here
+      const atUrl = apps.filter((a: any) => a.database && sameServerUrl(a.url, row.odoo_url));
+      const idsAtUrl = new Set<string>(atUrl.map((a: any) => syncConfigIdFor(a.url, a.username, a.database ?? "")));
+      const unambiguous = new Set(atUrl.map((a: any) => a.database ?? "")).size === 1;
+
+      const linked = new Set<string>();
+      if (unambiguous) {
+        if (row.sync_config_id && idsAtUrl.has(row.sync_config_id)) linked.add(row.sync_config_id);
+        for (const [configId, status] of Object.entries(perServer)) {
+          if (status === "synced" && idsAtUrl.has(configId)) linked.add(configId);
+        }
+        if (linked.size === 0 && atUrl.length === 1) linked.add([...idsAtUrl][0]);
+      }
+      for (const configId of linked) {
+        if (await this.findNoteLink(row.id, configId, "project.task", "create")) continue;
+        await this.addNoteLink({
+          id: newId(),
+          noteId: row.id,
+          configId,
+          model: "project.task",
+          resId: Number(row.odoo_id),
+          kind: "create",
+          remoteState: "ok",
+          createdAt: row.last_synced_at ?? new Date().toISOString(),
+          lastSyncedAt: row.last_synced_at ?? null,
+        });
+        written++;
+      }
+
+      const targets = new Set<string>(Object.keys(perServer));
+      try {
+        for (const id of JSON.parse(row.selected_sync_config_ids ?? "[]")) targets.add(id);
+      } catch { /* ignore */ }
+      if (row.sync_config_id) targets.add(row.sync_config_id);
+      const unlinked = [...targets].filter((id) => live.has(id) && !linked.has(id)
+        && perServer[id] !== "pending");
+      if (unlinked.length > 0) await this.markNotePendingForConfigs(row.id, unlinked);
+    }
+    return written;
   }
 
   async getNoteRawData(noteId: string): Promise<Record<string, any> | null> {

@@ -76,16 +76,20 @@ export class NoteCrudSubservice {
 			throw new NoNoteMatchError();
 		}
 
-		await this._noteService.db.updateNote(noteId, Object.assign({}, newNote));
-
-		// If note was previously synced, mark it pending so it re-syncs on reconnect
+		// Saved under the note's sync lock, together with the pending mark for
+		// each server it is linked on: a push or pull settling at the same
+		// time either sees this edit or runs after it.
+		const db = this._noteService.db;
 		try {
-			const syncInfo = await this._noteService.db.getNoteSyncInfo(noteId);
-			if (syncInfo.odooId) {
-				await this._noteService.db.setNoteSyncInfo(noteId, { syncStatus: "pending" });
-			}
+			const configIds = await db.getLiveLinkConfigIds(noteId);
+			await db.updateNotePerServerStatus(noteId, async (perServer) => {
+				await db.updateNote(noteId, Object.assign({}, newNote));
+				for (const id of configIds) perServer[id] = "pending";
+			});
+			if (configIds.length > 0) await db.refreshNoteSyncStatus(noteId);
 		} catch {
-			// Sync columns not yet migrated — skip
+			// Sync tables not yet migrated: save the note alone
+			await db.updateNote(noteId, Object.assign({}, newNote));
 		}
 
 		return true;

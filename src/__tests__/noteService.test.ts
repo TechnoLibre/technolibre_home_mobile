@@ -154,6 +154,41 @@ describe("NoteService with SQLite", () => {
         expect(error).toBeInstanceOf(NoNoteMatchError);
       }
     });
+
+    it("marks a linked note pending for each server it is linked on", async () => {
+      await db.addSyncColumnsToNotes();
+      await db.addSyncPerServerStatusColumn();
+      await db.createNoteLinksTable();
+      await noteService.crud.add(makeNote());
+      for (const url of ["https://a.example.com", "https://b.example.com"]) {
+        await db.addApplication({
+          url, username: "u", password: "p", database: "db",
+          odooVersion: "", autoSync: false, pollIntervalMinutes: 5, ntfyUrl: "", ntfyTopic: "", ntfyToken: "",
+        } as any);
+      }
+      for (const configId of ["https://a.example.com|u|db", "https://b.example.com|u|db"]) {
+        await db.addNoteLink({
+          id: `l-${configId}`, noteId: "note-1", configId, model: "project.task", resId: 1,
+          kind: "create", remoteState: "ok", createdAt: "2026-01-01T00:00:00.000Z", lastSyncedAt: null,
+        });
+      }
+
+      await noteService.crud.edit("note-1", makeNote({ title: "Updated" }));
+
+      expect(await db.getNotePerServerStatus("note-1")).toEqual({
+        "https://a.example.com|u|db": "pending",
+        "https://b.example.com|u|db": "pending",
+      });
+      expect((await db.getNoteSyncInfo("note-1")).syncStatus).toBe("pending");
+    });
+
+    it("leaves a never-synced note local", async () => {
+      await db.addSyncColumnsToNotes();
+      await db.createNoteLinksTable();
+      await noteService.crud.add(makeNote());
+      await noteService.crud.edit("note-1", makeNote({ title: "Updated" }));
+      expect((await db.getNoteSyncInfo("note-1")).syncStatus).toBe("local");
+    });
   });
 
   describe("crud.clear", () => {
