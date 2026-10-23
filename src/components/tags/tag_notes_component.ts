@@ -54,7 +54,7 @@ export class TagNotesComponent extends EnhancedComponent {
                             class="breadcrumb__options-item"
                             role="menuitem"
                             t-on-click.stop.prevent="onDebugClick"
-                        >🐛 <t t-esc="t('button.debug')"/></button>
+                        ><t t-esc="t('button.debug')"/></button>
                     </div>
                 </div>
             </nav>

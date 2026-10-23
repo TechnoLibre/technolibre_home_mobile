@@ -72,6 +72,7 @@ export const translations: Record<string, string> = {
   "button.cancel": "Annuler",
   "button.recreate": "Recréer",
   "button.link_record": "Lier",
+  "button.sync_targets": "Cibles et activités…",
   "button.edit": "Modifier",
   "button.save": "Enregistrer",
   "button.confirm": "Confirmer",

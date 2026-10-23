@@ -571,6 +571,13 @@ export class NoteComponent extends EnhancedComponent {
 								type="button"
 								class="breadcrumb__options-item"
 								role="menuitem"
+								t-att-disabled="state.isSyncing"
+								t-on-click.stop.prevent="onSyncTargetsClick"
+							>☁ <t t-esc="t('button.sync_targets')"/></button>
+							<button
+								type="button"
+								class="breadcrumb__options-item"
+								role="menuitem"
 								t-on-click.stop.prevent="onMetadataClick"
 							><t t-esc="t('button.sql_metadata')"/></button>
 							<button
@@ -578,7 +585,7 @@ export class NoteComponent extends EnhancedComponent {
 								class="breadcrumb__options-item"
 								role="menuitem"
 								t-on-click.stop.prevent="onDebugClick"
-							>🐛 <t t-esc="t('button.debug')"/></button>
+							><t t-esc="t('button.debug')"/></button>
 						</div>
 					</div>
 				</div>
@@ -1864,6 +1871,12 @@ export class NoteComponent extends EnhancedComponent {
 
 	toggleOptionsMenu() {
 		this.state.showOptionsMenu = !this.state.showOptionsMenu;
+	}
+
+	/** Opens the sync picker from the menu, as a long press on the sync button does. */
+	onSyncTargetsClick() {
+		this.state.showOptionsMenu = false;
+		if (!this.state.isSyncing) void this.openSyncPicker();
 	}
 
 	onDebugClick() {
