@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import {
-  DEFAULT_REMINDERS, plannedReminders, reminderId, reminderSettings, REMINDER_LIMIT, scheduleReminders, setReminderSettings,
+  DEFAULT_REMINDERS, plannedReminders, reminderId, reminderSettings, REMINDER_LIMIT, replanFromCache, scheduleReminders,
+  setReminderSettings,
 } from "../services/calendarReminders";
 import type { CalendarActivity } from "../services/databaseService";
 
@@ -67,5 +68,20 @@ describe("calendar reminders", () => {
     await scheduleReminders([]);
     expect(LocalNotifications.cancel).toHaveBeenLastCalledWith({ notifications: [{ id: 1_000_000_001 }] });
     expect(LocalNotifications.schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("schedules again from the cache at start, once each server's user is known", async () => {
+    const now = new Date(2026, 9, 23, 7, 0);
+    const cache = {
+      cached: async (id: string) => [act({ configId: id, resId: id === "a" ? 1 : 2 }), act({ configId: id, resId: 9, userId: 7 })],
+      knownUid: async (id: string) => (id === "c" ? null : 2),
+    };
+    expect(await replanFromCache(cache, ["a", "b"], now)).toBeNull();
+    setReminderSettings({ enabled: true, hour: 8, daysBefore: 0 });
+    expect(await replanFromCache(cache, ["a", "b", "c"], now)).toBeNull();
+    expect(LocalNotifications.schedule).not.toHaveBeenCalled();
+    expect(await replanFromCache(cache, ["a", "b"], now)).toBe(2);
+    expect((LocalNotifications.schedule as any).mock.calls[0][0].notifications.map((n: any) => n.id))
+      .toEqual([reminderId("a", 1), reminderId("b", 2)]);
   });
 });

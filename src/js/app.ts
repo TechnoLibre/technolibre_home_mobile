@@ -62,6 +62,8 @@ import { ReminderService } from "../services/reminderService";
 import { BiometryUtils } from "../utils/biometryUtils";
 import { Events } from "../constants/events";
 import { t } from "../i18n";
+import { replanFromCache } from "../services/calendarReminders";
+import { loadSyncConfigs } from "../models/syncConfig";
 
 const eventBus = new EventBus();
 
@@ -279,6 +281,10 @@ async function startApp() {
 	if (isNative) {
 		await syncService.outbox.recoverInterrupted().catch((e) =>
 			console.warn("[boot] outbox recovery failed:", e));
+		// An update or a forced stop cancels the reminders' alarms: schedule them again from the cache
+		void loadSyncConfigs(appService)
+			.then((configs) => replanFromCache(syncService.calendar, configs.map((c) => c.id)))
+			.catch((e) => console.warn("[boot] reminders not replanned:", e));
 	}
 	const reminderService = new ReminderService(db);
 	const notificationService = new NotificationService(syncService, appService, eventBus);

@@ -123,3 +123,30 @@ export async function scheduleReminders(planned: PlannedReminder[]): Promise<num
   try { localStorage.setItem(IDS_KEY, JSON.stringify(scheduled)); } catch { /* cancelled next time by id anyway */ }
   return scheduled.length;
 }
+
+/** What replanFromCache reads of the activity calendar: its cache and the user it was read for. */
+export interface CachedCalendar {
+  cached(configId: string): Promise<CalendarActivity[]>;
+  knownUid(configId: string): Promise<number | null>;
+}
+
+/**
+ * Schedules again, offline, the reminders of the activities cached for
+ * configIds: an app update or a forced stop cancels the alarms, which only
+ * the calendar screen planned until then. Left as they are while the
+ * reminders are off or some server's user is still unknown (never read
+ * online), its activities could not be told apart. Returns how many were
+ * scheduled, null when left.
+ */
+export async function replanFromCache(calendar: CachedCalendar, configIds: string[], now: Date = new Date()): Promise<number | null> {
+  const settings = reminderSettings();
+  if (!settings.enabled) return null;
+  const uids: Record<string, number | null> = {};
+  const activities: CalendarActivity[] = [];
+  for (const configId of configIds) {
+    uids[configId] = await calendar.knownUid(configId);
+    if (uids[configId] === null) return null;
+    activities.push(...await calendar.cached(configId));
+  }
+  return scheduleReminders(plannedReminders(activities, uids, settings, now));
+}
