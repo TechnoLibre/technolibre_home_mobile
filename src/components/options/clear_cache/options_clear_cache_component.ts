@@ -22,6 +22,8 @@ export class OptionsClearCacheComponent extends EnhancedComponent {
 
 	async onClearCacheClick() {
 		const confirmResult: ConfirmResult = await Dialog.confirm({
+			okButtonTitle: this.t("button.confirm"),
+			cancelButtonTitle: this.t("button.cancel"),
 			message: this.t("dialog.confirm_reset_browser"),
 		});
 

@@ -422,6 +422,8 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 	 */
 	async onClearJournal(): Promise<void> {
 		const { value } = await Dialog.confirm({
+			okButtonTitle: this.t("button.confirm"),
+			cancelButtonTitle: this.t("button.cancel"),
 			title: this.t("sms_gateway.journal_clear"),
 			message: this.t("sms_gateway.journal_clear_confirm"),
 		});
@@ -678,6 +680,8 @@ export class OptionsSmsGatewayComponent extends EnhancedComponent {
 
 	async onStop(): Promise<void> {
 		const { value } = await Dialog.confirm({
+			okButtonTitle: this.t("button.confirm"),
+			cancelButtonTitle: this.t("button.cancel"),
 			title: this.t("sms_gateway.stop"),
 			message: this.t("sms_gateway.stop_confirm"),
 		});

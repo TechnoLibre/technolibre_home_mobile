@@ -82,6 +82,8 @@ export class OptionsPermissionsComponent extends EnhancedComponent {
 			// passerelle — introuvable pour qui cherche ses permissions ici.
 			if (sms && !(sms.hasSendPermission && sms.hasReceivePermission)) {
 				const { value } = await Dialog.confirm({
+					okButtonTitle: this.t("button.confirm"),
+					cancelButtonTitle: this.t("button.cancel"),
 					title: this.t("dialog.title.permissions"),
 					message: `${message}\n\n${this.t("dialog.sms_permission_ask")}`,
 				});
