@@ -1008,6 +1008,17 @@ export class DatabaseService {
     }
   }
 
+  /** How many notes have each sync status. */
+  async countNotesBySyncStatus(): Promise<Partial<Record<SyncStatus, number>>> {
+    const result = await this.db.query("SELECT sync_status FROM notes");
+    const counts: Partial<Record<SyncStatus, number>> = {};
+    for (const row of result.values ?? []) {
+      const status = (row.sync_status ?? "local") as SyncStatus;
+      counts[status] = (counts[status] ?? 0) + 1;
+    }
+    return counts;
+  }
+
   /** refreshNoteSyncStatus for every note: after an application changed. */
   async refreshAllNoteSyncStatuses(): Promise<void> {
     const result = await this.db.query("SELECT id FROM notes");

@@ -1898,6 +1898,43 @@ export const FEATURE_TREE: FeatureNode[] = [
                 files: ["src/services/noteMirror.ts"],
             },
             {
+                id: "sync.background-notice",
+                label: { en: "Pending sync notice", fr: "Avis de synchronisation en attente" },
+                description: {
+                    en: "App closed, a notification tells the notes still waiting for Odoo and opens the app.",
+                    fr: "App fermée, une notification signale les notes en attente pour Odoo et ouvre l'app.",
+                },
+                status: "experimental",
+                permissions: ["notifications"],
+                tests: ["src/__tests__/pendingSyncNotice.test.ts", "src/__tests__/notificationService.test.ts"],
+                howItWorks: {
+                    en: "The sync runs only in the app, its logic and encrypted data being in the "
+                        + "web view. Going to the background, the app publishes to the native "
+                        + "NoteSyncPlugin how many notes wait (pending or in error, plus the "
+                        + "calendar's changes) and how many are in conflict, with the texts in its "
+                        + "language. NoteSyncJob, a persisted periodic job (15 minutes, network "
+                        + "required, apart from the SMS gateway's), shows them while the app is "
+                        + "closed; a tap opens the app, whose resume syncs what is due. Coming back "
+                        + "to the foreground clears the notice.",
+                    fr: "La synchronisation ne tourne que dans l'app, sa logique et ses données "
+                        + "chiffrées étant dans la vue web. En passant en arrière-plan, l'app publie "
+                        + "au NoteSyncPlugin natif le nombre de notes en attente (à envoyer ou en "
+                        + "erreur, plus les changements du calendrier) et en conflit, avec les "
+                        + "textes dans sa langue. NoteSyncJob, un travail périodique persistant "
+                        + "(15 minutes, réseau requis, distinct de celui de la passerelle SMS), les "
+                        + "affiche app fermée ; un appui ouvre l'app, dont la reprise synchronise ce "
+                        + "qui est dû. Le retour au premier plan retire l'avis.",
+                },
+                dependsOn: ["sync.outbox"],
+                demo: NONE_BG,
+                files: [
+                    "src/services/pendingSyncNotice.ts",
+                    "src/plugins/noteSyncPlugin.ts",
+                    "android/app/src/main/java/ca/erplibre/home/NoteSyncJob.java",
+                    "android/app/src/main/java/ca/erplibre/home/NoteSyncPlugin.java",
+                ],
+            },
+            {
                 id: "sync.http-policy",
                 label: { en: "Unencrypted http", fr: "http non chiffré" },
                 description: {

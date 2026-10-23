@@ -729,7 +729,8 @@ export function syncConfigIdOf(creds: SyncCredentials): string {
 // ─── SyncService ──────────────────────────────────────────────────────────────
 
 export class SyncService {
-  private db: DatabaseService;
+  /** The app's database, shared with the services that read the sync's state. */
+  readonly db: DatabaseService;
   /** JSON-RPC transport and session store, shared with the other Odoo services. */
   readonly rpc: OdooRpcClient;
   /** Pending creations and one-shot operations, per note and server. */

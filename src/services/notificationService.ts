@@ -10,6 +10,7 @@ import { NtfyService } from "./ntfyService";
 import { Application } from "../models/application";
 import { NetworkService, networkService } from "./networkService";
 import { RETRY_MAX_MS } from "./outboxService";
+import { publishPending } from "./pendingSyncNotice";
 
 /** Margin past a row's retry time before the timer fires, so it is due. */
 const RETRY_TIMER_SLACK_MS = 1000;
@@ -28,6 +29,9 @@ const RETRY_TIMER_SLACK_MS = 1000;
  *   time the app returns to the foreground (retry delays respected).
  * - Subscribes to a NTFY topic (SSE) for real-time push from Odoo
  *   (uses the first app with ntfyUrl/ntfyTopic configured).
+ * - Publishes, going to the background, what still waits for the sync to
+ *   the native NoteSyncJob, which notifies it while the app is closed
+ *   (see pendingSyncNotice); coming back clears that notice.
  */
 export class NotificationService {
   private syncService: SyncService;
@@ -66,6 +70,8 @@ export class NotificationService {
     if (Capacitor.isNativePlatform()) {
       App.addListener("appStateChange", ({ isActive }) => {
         this.active = isActive;
+        // App closed, the native NoteSyncJob tells what still waits; open, it stays quiet
+        void publishPending(this.syncService.db, isActive);
         if (isActive) {
           this.startPolling();
           this.startNtfy();
@@ -76,6 +82,7 @@ export class NotificationService {
           this.clearRetryTimer();
         }
       });
+      void publishPending(this.syncService.db, true);
     }
 
     void this.network.onReconnect(() => this.onNetworkRestore());

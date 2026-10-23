@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { mockApp, ntfyHolder } = vi.hoisted(() => ({
+const { mockApp, ntfyHolder, publishPending } = vi.hoisted(() => ({
     mockApp: { addListener: vi.fn() },
     ntfyHolder: { last: undefined as any },
+    publishPending: vi.fn(async () => {}),
 }));
 
 vi.mock("@capacitor/app", () => ({ App: mockApp }));
@@ -12,6 +13,7 @@ vi.mock("@capacitor/app", () => ({ App: mockApp }));
 vi.mock("@capacitor/core", () => ({
     Capacitor: { isNativePlatform: () => true },
 }));
+vi.mock("../services/pendingSyncNotice", () => ({ publishPending }));
 vi.mock("../services/ntfyService", () => {
     class FakeNtfyService {
         connect = vi.fn();
@@ -184,9 +186,12 @@ describe("NotificationService", () => {
             svc.start();
             await Promise.resolve(); await Promise.resolve();
 
+            publishPending.mockClear();
             appStateCb!({ isActive: false });
             await Promise.resolve();
             expect(ntfyHolder.last.disconnect).toHaveBeenCalled();
+            // Going to the background tells the native job what still waits
+            expect(publishPending).toHaveBeenCalledWith(syncService.db, false);
 
             await vi.advanceTimersByTimeAsync(120_000);
             expect(syncService.pollForChanges).not.toHaveBeenCalled();
@@ -211,6 +216,7 @@ describe("NotificationService", () => {
 
             expect(ntfyHolder.last.connect.mock.calls.length)
                 .toBeGreaterThan(initialConnects);
+            expect(publishPending).toHaveBeenLastCalledWith(syncService.db, true);
         });
     });
 
