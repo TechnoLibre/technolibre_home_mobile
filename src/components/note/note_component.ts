@@ -218,7 +218,7 @@ export class NoteComponent extends EnhancedComponent {
 													</select>
 												</t>
 												<t t-else="">
-													<label class="breadcrumb__config-note" t-att-for="'sync-partner-search-' + row.kind + '-' + cfg_index"><t t-esc="t('label.sync_target_partner')"/></label>
+													<label class="breadcrumb__config-note" t-att-for="'sync-partner-search-' + row.kind + '-' + cfg_index"><t t-esc="t(partnerLabel(row))"/></label>
 													<input
 														type="search"
 														class="breadcrumb__config-filter"
@@ -229,7 +229,7 @@ export class NoteComponent extends EnhancedComponent {
 													/>
 													<select
 														class="breadcrumb__config-select"
-														t-att-aria-label="t('label.sync_target_partner')"
+														t-att-aria-label="t(partnerLabel(row))"
 														t-on-change="(ev) => this.setRowSelection(cfg.id, row.kind, ev.target.value)"
 													>
 														<option value="none" t-att-selected="row.selection === 'none'"><t t-esc="t('label.sync_target_no_partner')"/></option>
@@ -958,6 +958,11 @@ export class NoteComponent extends EnhancedComponent {
 		const section = this.state.activities[configId];
 		if (!rows || PICKER_KINDS.some((k) => rows[k].loading) || section?.loading) return true;
 		return serverUsable(rows, sectionHasWork(section) || canAddActivity(section));
+	}
+
+	/** The i18n key naming a row's partner: an opportunity's client, an invoice's customer or vendor. */
+	partnerLabel(row: TargetRow): string {
+		return row.kind === "invoice" ? "label.sync_invoice_partner" : "label.sync_target_partner";
 	}
 
 	projectOptions(row: TargetRow): ProjectOption[] {

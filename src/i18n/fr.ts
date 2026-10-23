@@ -418,6 +418,7 @@ export const translations: Record<string, string> = {
   "label.sync_target_no_partner": "Sans client",
   "label.sync_target_partner_search": "Chercher un client",
   "label.sync_target_partner": "Client de l'opportunité",
+  "label.sync_invoice_partner": "Client ou fournisseur",
   "label.sync_target_queued": "En attente d'envoi.",
   "label.sync_target_stuck": "Sa création échoue encore : décochez pour l'abandonner.",
   "label.sync_kind_lead": "Opportunité",
