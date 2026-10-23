@@ -1770,6 +1770,47 @@ export const FEATURE_TREE: FeatureNode[] = [
                 files: ["src/services/activityPicker.ts", "src/services/odoo/odooRpcClient.ts"],
             },
             {
+                id: "sync.invoice",
+                label: { en: "Draft invoice target", fr: "Cible brouillon de facture" },
+                description: {
+                    en: "Draft a customer invoice or vendor bill from a note, tied to its task or opportunity.",
+                    fr: "Rédiger une facture client ou fournisseur en brouillon depuis une note, liée à sa tâche ou à son opportunité.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/targetPicker.test.ts",
+                    "src/__tests__/invoiceForm.test.ts",
+                ],
+                howItWorks: {
+                    en: "A third box of the picker, beside Task and Opportunity: one account.move "
+                        + "per note and server, created as a draft with its type (out_invoice or "
+                        + "in_invoice), partner, date, reference and lines (label, quantity, "
+                        + "price, optional product), the note going to narration with the marker. "
+                        + "The form is dynamic: fields_get (with depends) and default_get name the "
+                        + "required fields the server neither computes nor defaults, asked by "
+                        + "type and kept for offline. The tie to the note's task or opportunity "
+                        + "writes a settable many2one of account.move to it when a module adds "
+                        + "one, else posts a message in each chatter. Later pushes write narration "
+                        + "only.",
+                    fr: "Une troisième case du sélecteur, à côté de Tâche et Opportunité : un "
+                        + "account.move par note et serveur, créé en brouillon avec son type "
+                        + "(out_invoice ou in_invoice), son partenaire, sa date, sa référence et "
+                        + "ses lignes (libellé, quantité, prix, produit facultatif), la note allant "
+                        + "dans narration avec le marqueur. Le formulaire est dynamique : fields_get "
+                        + "(avec depends) et default_get donnent les champs obligatoires que le "
+                        + "serveur ne calcule ni ne remplit par défaut, demandés par type et gardés "
+                        + "hors ligne. Le lien vers la tâche ou l'opportunité de la note écrit un "
+                        + "many2one modifiable d'account.move vers elle quand un module en ajoute "
+                        + "un, sinon poste un message dans chaque fil. Les envois suivants "
+                        + "n'écrivent que narration.",
+                },
+                dependsOn: ["sync.lead", "sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/odoo/invoiceForm.ts", "src/services/targetPicker.ts"],
+            },
+            {
                 id: "sync.http-policy",
                 label: { en: "Unencrypted http", fr: "http non chiffré" },
                 description: {

@@ -56,8 +56,14 @@ import {
 	ProjectOption,
 	serverUsable,
 	TargetRow,
+	InvoiceDraft,
+	newInvoiceLine,
 	withPartners,
 } from "../../services/targetPicker";
+import type { FormField } from "../../services/odoo/invoiceForm";
+
+/** Model of the products an invoice line can name. */
+const INVOICE_PRODUCT_MODEL = "product.product";
 import { OutboxBlockedError } from "../../services/outboxService";
 import { networkService } from "../../services/networkService";
 import { assertUrlAllowed } from "../../services/odoo/httpPolicy";
@@ -184,14 +190,14 @@ export class NoteComponent extends EnhancedComponent {
 													</select>
 												</t>
 												<t t-else="">
-													<label class="breadcrumb__config-note" t-att-for="'sync-partner-search-' + cfg_index"><t t-esc="t('label.sync_target_partner')"/></label>
+													<label class="breadcrumb__config-note" t-att-for="'sync-partner-search-' + row.kind + '-' + cfg_index"><t t-esc="t('label.sync_target_partner')"/></label>
 													<input
 														type="search"
 														class="breadcrumb__config-filter"
-														t-att-id="'sync-partner-search-' + cfg_index"
+														t-att-id="'sync-partner-search-' + row.kind + '-' + cfg_index"
 														t-att-placeholder="t('label.sync_target_partner_search')"
 														t-att-value="row.query"
-														t-on-input="(ev) => this.searchPartners(cfg, ev.target.value)"
+														t-on-input="(ev) => this.searchPartners(cfg, ev.target.value, row.kind)"
 													/>
 													<select
 														class="breadcrumb__config-select"
@@ -204,6 +210,7 @@ export class NoteComponent extends EnhancedComponent {
 															<option t-att-value="opt.value" t-att-selected="row.selection === opt.value" t-esc="opt.name"/>
 														</t>
 													</select>
+													<t t-if="row.kind === 'lead'">
 													<label class="breadcrumb__config-note" t-att-for="'sync-revenue-' + cfg_index"><t t-esc="t('label.sync_target_revenue')"/></label>
 													<input
 														type="text"
@@ -213,6 +220,159 @@ export class NoteComponent extends EnhancedComponent {
 														t-att-value="row.revenue"
 														t-on-input="(ev) => this.setRevenue(cfg.id, ev.target.value)"
 													/>
+													</t>
+													<t t-if="row.kind === 'invoice' and row.invoice">
+														<t t-set="inv" t-value="row.invoice"/>
+														<label class="breadcrumb__config-note" t-att-for="'sync-inv-type-' + cfg_index"><t t-esc="t('label.sync_invoice_type')"/></label>
+														<select
+															class="breadcrumb__config-select"
+															t-att-id="'sync-inv-type-' + cfg_index"
+															t-on-change="(ev) => this.setInvoiceMoveType(cfg, ev.target.value)"
+														>
+															<option value="out_invoice" t-att-selected="inv.moveType === 'out_invoice'"><t t-esc="t('label.sync_invoice_out')"/></option>
+															<option value="in_invoice" t-att-selected="inv.moveType === 'in_invoice'"><t t-esc="t('label.sync_invoice_in')"/></option>
+														</select>
+														<label class="breadcrumb__config-note" t-att-for="'sync-inv-date-' + cfg_index"><t t-esc="t('label.sync_invoice_date')"/></label>
+														<input
+															type="date"
+															class="breadcrumb__config-filter"
+															t-att-id="'sync-inv-date-' + cfg_index"
+															t-att-value="inv.invoiceDate"
+															t-on-change="(ev) => this.setInvoiceField(cfg.id, 'invoiceDate', ev.target.value)"
+														/>
+														<label class="breadcrumb__config-note" t-att-for="'sync-inv-ref-' + cfg_index"><t t-esc="t('label.sync_invoice_ref')"/></label>
+														<input
+															type="text"
+															class="breadcrumb__config-filter"
+															t-att-id="'sync-inv-ref-' + cfg_index"
+															t-att-value="inv.ref"
+															t-on-input="(ev) => this.setInvoiceField(cfg.id, 'ref', ev.target.value)"
+														/>
+														<p class="breadcrumb__config-note"><t t-esc="t('label.sync_invoice_lines')"/></p>
+														<t t-foreach="inv.lines" t-as="line" t-key="line.key">
+															<div class="breadcrumb__config-project">
+																<input
+																	type="text"
+																	class="breadcrumb__config-filter"
+																	t-att-placeholder="t('label.sync_invoice_line_name')"
+																	t-att-aria-label="t('label.sync_invoice_line_name')"
+																	t-att-value="line.name"
+																	t-on-input="(ev) => this.setInvoiceLine(cfg.id, line.key, 'name', ev.target.value)"
+																/>
+																<input
+																	type="text"
+																	inputmode="decimal"
+																	class="breadcrumb__config-filter"
+																	t-att-placeholder="t('label.sync_invoice_line_quantity')"
+																	t-att-aria-label="t('label.sync_invoice_line_quantity')"
+																	t-att-value="line.quantity"
+																	t-on-input="(ev) => this.setInvoiceLine(cfg.id, line.key, 'quantity', ev.target.value)"
+																/>
+																<input
+																	type="text"
+																	inputmode="decimal"
+																	class="breadcrumb__config-filter"
+																	t-att-placeholder="t('label.sync_invoice_line_price')"
+																	t-att-aria-label="t('label.sync_invoice_line_price')"
+																	t-att-value="line.price"
+																	t-on-input="(ev) => this.setInvoiceLine(cfg.id, line.key, 'price', ev.target.value)"
+																/>
+																<input
+																	type="search"
+																	class="breadcrumb__config-filter"
+																	t-att-placeholder="t('label.sync_invoice_product_search')"
+																	t-att-aria-label="t('label.sync_invoice_product_search')"
+																	t-att-value="line.productQuery"
+																	t-on-input="(ev) => this.searchInvoiceProducts(cfg, line.key, ev.target.value)"
+																/>
+																<select
+																	class="breadcrumb__config-select"
+																	t-att-aria-label="t('label.sync_invoice_product')"
+																	t-on-change="(ev) => this.setInvoiceLine(cfg.id, line.key, 'productSelection', ev.target.value)"
+																>
+																	<option value="" t-att-selected="line.productSelection === ''"><t t-esc="t('label.sync_invoice_no_product')"/></option>
+																	<t t-foreach="line.products" t-as="opt" t-key="opt.value">
+																		<option t-att-value="opt.value" t-att-selected="line.productSelection === opt.value" t-esc="opt.name"/>
+																	</t>
+																</select>
+																<button
+																	type="button"
+																	class="breadcrumb__config-cancel"
+																	t-on-click="() => this.removeInvoiceLine(cfg.id, line.key)"
+																><t t-esc="t('label.sync_invoice_line_remove')"/></button>
+															</div>
+														</t>
+														<button
+															type="button"
+															class="breadcrumb__config-cancel"
+															t-on-click="() => this.addInvoiceLine(cfg.id)"
+														><t t-esc="t('label.sync_invoice_line_add')"/></button>
+														<p t-if="!inv.form" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_loading')"/></p>
+														<t t-else="">
+															<t t-foreach="inv.form.fields" t-as="field" t-key="field.name">
+																<label class="breadcrumb__config-note" t-att-for="'sync-inv-x-' + cfg_index + '-' + field.name" t-esc="field.label"/>
+																<t t-if="field.type === 'many2one'">
+																	<input
+																		type="search"
+																		class="breadcrumb__config-filter"
+																		t-att-placeholder="t('label.sync_activity_record_search')"
+																		t-att-aria-label="field.label"
+																		t-att-value="inv.extraQueries[field.name] or ''"
+																		t-on-input="(ev) => this.searchInvoiceExtra(cfg, field, ev.target.value)"
+																	/>
+																	<select
+																		class="breadcrumb__config-select"
+																		t-att-id="'sync-inv-x-' + cfg_index + '-' + field.name"
+																		t-on-change="(ev) => this.setInvoiceExtra(cfg.id, field.name, ev.target.value)"
+																	>
+																		<option value="" t-att-selected="!inv.extraValues[field.name]"><t t-esc="t('label.sync_activity_record_choose')"/></option>
+																		<t t-foreach="inv.extraOptions[field.name] or []" t-as="opt" t-key="opt.value">
+																			<option t-att-value="opt.value" t-att-selected="inv.extraValues[field.name] === opt.value" t-esc="opt.name"/>
+																		</t>
+																	</select>
+																</t>
+																<select
+																	t-elif="field.type === 'selection'"
+																	class="breadcrumb__config-select"
+																	t-att-id="'sync-inv-x-' + cfg_index + '-' + field.name"
+																	t-on-change="(ev) => this.setInvoiceExtra(cfg.id, field.name, ev.target.value)"
+																>
+																	<option value="" t-att-selected="!inv.extraValues[field.name]"/>
+																	<t t-foreach="field.selection or []" t-as="choice" t-key="choice[0]">
+																		<option t-att-value="choice[0]" t-att-selected="inv.extraValues[field.name] === choice[0]" t-esc="choice[1]"/>
+																	</t>
+																</select>
+																<input
+																	t-elif="field.type === 'boolean'"
+																	type="checkbox"
+																	t-att-id="'sync-inv-x-' + cfg_index + '-' + field.name"
+																	t-att-checked="inv.extraValues[field.name] === '1'"
+																	t-on-change="(ev) => this.setInvoiceExtra(cfg.id, field.name, ev.target.checked ? '1' : '')"
+																/>
+																<input
+																	t-else=""
+																	t-att-type="field.type === 'date' ? 'date' : field.type === 'datetime' ? 'datetime-local' : 'text'"
+																	class="breadcrumb__config-filter"
+																	t-att-id="'sync-inv-x-' + cfg_index + '-' + field.name"
+																	t-att-value="inv.extraValues[field.name] or ''"
+																	t-on-input="(ev) => this.setInvoiceExtra(cfg.id, field.name, ev.target.value)"
+																/>
+															</t>
+															<p t-if="inv.form.unsupported.length > 0" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="t('label.sync_invoice_unsupported', { fields: inv.form.unsupported.join(', ') })"/>
+															<p t-if="inv.form.fromCache and !row.offline and inv.form.error" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="inv.form.error"/>
+														</t>
+														<label class="breadcrumb__config-note" t-att-for="'sync-inv-tie-' + cfg_index"><t t-esc="t('label.sync_invoice_tie')"/></label>
+														<select
+															class="breadcrumb__config-select"
+															t-att-id="'sync-inv-tie-' + cfg_index"
+															t-on-change="(ev) => this.setInvoiceField(cfg.id, 'tie', ev.target.value)"
+														>
+															<option value="none" t-att-selected="inv.tie === 'none'"><t t-esc="t('label.sync_invoice_tie_none')"/></option>
+															<t t-foreach="invoiceTies(cfg.id)" t-as="tieKind" t-key="tieKind">
+																<option t-att-value="tieKind" t-att-selected="inv.tie === tieKind" t-esc="t('label.sync_invoice_tie_' + tieKind)"/>
+															</t>
+														</select>
+													</t>
 												</t>
 												<p t-if="row.offline and row.options.length === 0" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_no_cache')"/></p>
 												<p t-elif="row.fromCache and !row.offline" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_from_cache')"/></p>
@@ -764,26 +924,141 @@ export class NoteComponent extends EnhancedComponent {
 	 * cache; a result arriving after a newer keystroke, or after the picker
 	 * was rebuilt, is dropped.
 	 */
-	searchPartners(cfg: SyncConfig, text: string) {
-		const row = this.state.targets[cfg.id]?.lead;
+	searchPartners(cfg: SyncConfig, text: string, kind: "lead" | "invoice" = "lead") {
+		const row = this.state.targets[cfg.id]?.[kind];
 		if (!row) return;
 		row.query = text;
-		const pending = this._partnerSearch.get(cfg.id);
+		const timerKey = `${cfg.id}|${kind}`;
+		const pending = this._partnerSearch.get(timerKey);
 		if (pending) clearTimeout(pending);
 		const load = this._targetsLoad;
-		this._partnerSearch.set(cfg.id, setTimeout(async () => {
-			this._partnerSearch.delete(cfg.id);
+		this._partnerSearch.set(timerKey, setTimeout(async () => {
+			this._partnerSearch.delete(timerKey);
 			try {
 				const online = await networkService.isOnline();
 				const found = await this.syncService.partners.search(await this.credsFor(cfg), text, { online });
-				const current = this.state.targets[cfg.id]?.lead;
+				const current = this.state.targets[cfg.id]?.[kind];
 				if (load !== this._targetsLoad || !current || current.query !== text) return;
-				this.state.targets[cfg.id].lead = withPartners(current, found);
+				this.state.targets[cfg.id][kind] = withPartners(current, found);
 			} catch (e: unknown) {
-				const current = this.state.targets[cfg.id]?.lead;
+				const current = this.state.targets[cfg.id]?.[kind];
 				if (current) current.error = e instanceof Error ? e.message : String(e);
 			}
 		}, 300));
+	}
+
+	// ── Draft invoice in the picker ─────────────────────────────────────────
+
+	private invoiceDraft(configId: string): InvoiceDraft | null {
+		return this.state.targets[configId]?.invoice?.invoice ?? null;
+	}
+
+	/** The note's records an invoice can be tied to here: its task and opportunity, linked or checked. */
+	invoiceTies(configId: string): Array<"task" | "lead"> {
+		const rows = this.state.targets[configId];
+		if (!rows) return [];
+		return (["task", "lead"] as const).filter((k) => rows[k] && (rows[k].linkedResId !== null || rows[k].checked));
+	}
+
+	/** Changes the invoice type, and loads the extra fields of that type (form null meanwhile). */
+	async setInvoiceMoveType(cfg: SyncConfig, value: string) {
+		const draft = this.invoiceDraft(cfg.id);
+		if (!draft || (value !== "out_invoice" && value !== "in_invoice")) return;
+		draft.moveType = value;
+		draft.form = null;
+		const load = this._targetsLoad;
+		try {
+			const online = await networkService.isOnline();
+			const form = await this.syncService.invoiceForms.load(await this.credsFor(cfg), value, { online });
+			const current = this.invoiceDraft(cfg.id);
+			if (load === this._targetsLoad && current && current.moveType === value) current.form = form;
+		} catch (e: unknown) {
+			const current = this.invoiceDraft(cfg.id);
+			if (load === this._targetsLoad && current && current.moveType === value) {
+				current.form = { fields: [], unsupported: [], fromCache: true, error: e instanceof Error ? e.message : String(e) };
+			}
+		}
+	}
+
+	setInvoiceField(configId: string, field: "invoiceDate" | "ref" | "tie", value: string) {
+		const draft = this.invoiceDraft(configId);
+		if (draft) draft[field] = value;
+	}
+
+	setInvoiceExtra(configId: string, name: string, value: string) {
+		const draft = this.invoiceDraft(configId);
+		if (draft) draft.extraValues[name] = value;
+	}
+
+	setInvoiceLine(configId: string, key: string, field: "name" | "quantity" | "price" | "productSelection", value: string) {
+		const line = this.invoiceDraft(configId)?.lines.find((l) => l.key === key);
+		if (line) line[field] = value;
+	}
+
+	addInvoiceLine(configId: string) {
+		this.invoiceDraft(configId)?.lines.push(newInvoiceLine());
+	}
+
+	removeInvoiceLine(configId: string, key: string) {
+		const draft = this.invoiceDraft(configId);
+		if (draft) draft.lines = draft.lines.filter((l) => l.key !== key);
+	}
+
+	/** Pending product or extra-field search per picker field, run 300 ms after the last keystroke. */
+	private _invoiceSearch = new Map<string, ReturnType<typeof setTimeout>>();
+
+	/**
+	 * Searches model's records (online or in the cache) after the last
+	 * keystroke and hands the options to apply; a result arriving after a
+	 * newer keystroke (still(): false) or a rebuild of the picker is dropped.
+	 */
+	private searchInvoice(
+		cfg: SyncConfig,
+		timerKey: string,
+		model: string,
+		text: string,
+		still: () => boolean,
+		apply: (options: ProjectOption[]) => void
+	) {
+		const pending = this._invoiceSearch.get(timerKey);
+		if (pending) clearTimeout(pending);
+		const load = this._targetsLoad;
+		this._invoiceSearch.set(timerKey, setTimeout(async () => {
+			this._invoiceSearch.delete(timerKey);
+			try {
+				const online = await networkService.isOnline();
+				const found = await this.syncService.recordSearch(model).search(await this.credsFor(cfg), text, { online });
+				if (load !== this._targetsLoad || !still()) return;
+				apply(found.records.map((r) => ({ value: String(r.id), name: r.name })));
+			} catch {
+				// The field keeps its options; the push validates on the server
+			}
+		}, 300));
+	}
+
+	searchInvoiceProducts(cfg: SyncConfig, key: string, text: string) {
+		const line = () => this.invoiceDraft(cfg.id)?.lines.find((l) => l.key === key);
+		const current = line();
+		if (!current) return;
+		current.productQuery = text;
+		this.searchInvoice(cfg, `${cfg.id}|${key}`, INVOICE_PRODUCT_MODEL, text, () => line()?.productQuery === text, (options) => {
+			const target = line()!;
+			const kept = target.products.find((o) => o.value === target.productSelection);
+			target.products = kept && !options.some((o) => o.value === kept.value) ? [kept, ...options] : options;
+		});
+	}
+
+	searchInvoiceExtra(cfg: SyncConfig, field: FormField, text: string) {
+		const draft = this.invoiceDraft(cfg.id);
+		if (!draft || !field.relation) return;
+		draft.extraQueries[field.name] = text;
+		this.searchInvoice(cfg, `${cfg.id}|x|${field.name}`, field.relation, text,
+			() => this.invoiceDraft(cfg.id)?.extraQueries[field.name] === text, (options) => {
+				const target = this.invoiceDraft(cfg.id)!;
+				const selected = target.extraValues[field.name];
+				const kept = (target.extraOptions[field.name] ?? []).find((o) => o.value === selected);
+				target.extraOptions[field.name] = kept && !options.some((o) => o.value === kept.value) ? [kept, ...options] : options;
+			});
 	}
 
 	/**

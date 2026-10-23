@@ -3,7 +3,7 @@ import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
 import {
   SyncService, SyncCredentials, syncSessionKey, syncConfigIdOf, RemoteRecordDeletedError,
-  TASK_CREATE, LEAD_CREATE, ACTIVITY_CREATE, MESSAGE_POST, clientMarker,
+  TASK_CREATE, LEAD_CREATE, ACTIVITY_CREATE, MESSAGE_POST, INVOICE_CREATE, clientMarker,
 } from "../services/syncService";
 import { OutboxBlockedError } from "../services/outboxService";
 import { Note, NoteEntry } from "../models/note";
@@ -3240,5 +3240,264 @@ describe("SyncService — messages in a record's chatter", () => {
     expect(sent(fetchMock, "crm.lead", "message_post")).toHaveLength(2);
     expect(rpcCalls(fetchMock).some((c) => (c.body.params as any).method === "action_feedback")).toBe(false);
     expect((await messageLinks("ms-8")).map((l) => [l.resId, l.remoteState]).sort()).toEqual([[600, "ok"], [601, "ok"]]);
+  });
+});
+
+describe("SyncService — draft invoice", () => {
+  let svc: SyncService;
+  let db: DatabaseService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await prepareSyncDb(db);
+    await db.addParamsToNoteLinks();
+    svc = new SyncService(db);
+    await SecureStoragePlugin.set({
+      key: syncSessionKey(CREDS),
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 17 }),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  const INVOICE = {
+    moveType: "out_invoice" as const, partnerId: 5, partnerName: "Acme", invoiceDate: "2026-11-01", ref: "PO-4",
+    lines: [{ name: "Work", quantity: 2, priceUnit: 50, productId: 3, productName: "Hour" }, { name: "Trip", quantity: 1, priceUnit: 20, productId: null }],
+    extra: { x_site: 9 }, linkKind: null,
+  };
+
+  /**
+   * Server with partner 5; invoice creates answer 800, task creates 900;
+   * tieField: account.move has a settable many2one of that name to
+   * project.task; postError makes message_post fail.
+   */
+  function server(options: { tieField?: string; postError?: boolean; createError?: string; markerHits?: number[]; posted?: number } = {}) {
+    const fail = (name: string) => ({ error: { code: 200, message: "Odoo Server Error", data: { name, message: "nope" } } });
+    return routeFetch((_url, body) => {
+      const { model, method } = body.params as any;
+      const kwargs = (body.params as any).kwargs ?? {};
+      if (model === "account.move" && method === "fields_get") {
+        return { result: {
+          name: { type: "char" },
+          ...(options.tieField ? { [options.tieField]: { type: "many2one", relation: "project.task", depends: [] } } : {}),
+          x_computed_task: { type: "many2one", relation: "project.task", depends: ["line_ids"] },
+        } };
+      }
+      if (model === "res.partner" && method === "search_read") return { result: kwargs.domain[0][2] === 5 ? [{ id: 5 }] : [] };
+      if (method === "message_post") return options.postError ? fail("odoo.exceptions.AccessError") : { result: 77 };
+      if (model === "mail.message" && method === "search_count") return { result: options.posted ?? 0 };
+      if (model === "account.move" && method === "search_read" && kwargs.domain?.[0]?.[0] === "narration") {
+        return { result: (options.markerHits ?? []).map((id) => ({ id })) };
+      }
+      if (model === "account.move" && method === "create") return options.createError ? fail(options.createError) : { result: 800 };
+      if (method === "create") return { result: 900 };
+      return { result: method === "search_read" ? [] : true };
+    });
+  }
+
+  const sent = (fetchMock: ReturnType<typeof routeFetch>, model: string, method: string) =>
+    rpcCalls(fetchMock).filter((c) => c.body.params.model === model && c.body.params.method === method);
+
+  it("creates the draft with its type, partner, date, reference, lines and extra fields, without a task", async () => {
+    await db.addNote(makeNote({ id: "iv-1", title: "Job", tags: ["urgent"], entries: [{ id: "e", type: "text", params: { text: "Done on site", readonly: false } } as any] }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTarget("iv-1", CONFIG_ID, "invoice", INVOICE);
+    expect(await svc.noteKinds("iv-1", CONFIG_ID)).toEqual(["invoice"]);
+    await svc.pushNote(CREDS, "iv-1", { userInitiated: true });
+
+    const [create] = sent(fetchMock, "account.move", "create");
+    const values = create.body.params.args![0];
+    expect(values).toMatchObject({
+      move_type: "out_invoice", partner_id: 5, invoice_date: "2026-11-01", ref: "PO-4", x_site: 9,
+      invoice_line_ids: [
+        [0, 0, { name: "Work", quantity: 2, price_unit: 50, product_id: 3 }],
+        [0, 0, { name: "Trip", quantity: 1, price_unit: 20 }],
+      ],
+    });
+    expect(values.narration).toContain("<p><b>Job</b></p>");
+    expect(values.narration).toContain("Done on site");
+    expect(values.narration).toContain("erplibre-mobile:");
+    expect(values).not.toHaveProperty("tag_ids");
+    expect((create.body.params as any).kwargs.context).toEqual({ default_move_type: "out_invoice" });
+    expect(sent(fetchMock, "project.task", "create")).toHaveLength(0);
+    expect((await db.findNoteLink("iv-1", CONFIG_ID, "account.move", "create"))!.resId).toBe(800);
+  });
+
+  it("writes only the narration of a linked invoice", async () => {
+    await db.addNote(makeNote({ id: "iv-2", title: "Renamed" }));
+    await db.addNoteLink({
+      id: "lk-iv-2", noteId: "iv-2", configId: CONFIG_ID, model: "account.move", resId: 80, kind: "create",
+      remoteState: "ok", createdAt: "2026-01-01T00:00:00.000Z", lastSyncedAt: null,
+    });
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "iv-2");
+    const [ids, values] = sent(fetchMock, "account.move", "write")[0].body.params.args!;
+    expect(ids).toEqual([80]);
+    expect(Object.keys(values)).toEqual(["narration"]);
+    expect(values.narration).toContain("Renamed");
+  });
+
+  it("ties the invoice to the note's task through a settable field when the server has one", async () => {
+    await db.addNote(makeNote({ id: "iv-3" }));
+    await linkTask(db, "iv-3", 10);
+    const fetchMock = server({ tieField: "x_task_id" });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTarget("iv-3", CONFIG_ID, "invoice", { ...INVOICE, linkKind: "task" });
+    await svc.pushNote(CREDS, "iv-3", { userInitiated: true });
+    const values = sent(fetchMock, "account.move", "create")[0].body.params.args![0];
+    expect(values.x_task_id).toBe(10);
+    expect(values).not.toHaveProperty("x_computed_task");
+    expect(rpcCalls(fetchMock).some((c) => (c.body.params as any).method === "message_post")).toBe(false);
+  });
+
+  it("ties it by a message in each chatter when there is no such field", async () => {
+    await db.addNote(makeNote({ id: "iv-4" }));
+    await linkTask(db, "iv-4", 10);
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTarget("iv-4", CONFIG_ID, "invoice", { ...INVOICE, linkKind: "task" });
+    await svc.pushNote(CREDS, "iv-4", { userInitiated: true });
+    const onInvoice = sent(fetchMock, "account.move", "message_post")[0];
+    const onTask = sent(fetchMock, "project.task", "message_post")[0];
+    expect(onInvoice.body.params.args).toEqual([[800]]);
+    expect((onInvoice.body.params as any).kwargs.body).toContain('data-oe-model="project.task" data-oe-id="10"');
+    expect(onTask.body.params.args).toEqual([[10]]);
+    expect((onTask.body.params as any).kwargs.body).toContain('data-oe-model="account.move" data-oe-id="800"');
+    expect((await db.findNoteLink("iv-4", CONFIG_ID, "account.move", "create"))!.params).toMatchObject({ crossLinked: true });
+  });
+
+  it("keeps the invoice when the cross messages fail, with the reason", async () => {
+    await db.addNote(makeNote({ id: "iv-5" }));
+    await linkTask(db, "iv-5", 10);
+    vi.stubGlobal("fetch", server({ postError: true }));
+    await svc.setTarget("iv-5", CONFIG_ID, "invoice", { ...INVOICE, linkKind: "task" });
+    await expect(svc.pushNote(CREDS, "iv-5", { userInitiated: true })).resolves.toBeUndefined();
+    const link = (await db.findNoteLink("iv-5", CONFIG_ID, "account.move", "create"))!;
+    expect(link.resId).toBe(800);
+    expect(link.params).toMatchObject({ crossLinked: false, crossError: expect.stringContaining("nope") });
+  });
+
+  it("waits for the task it is tied to when both are created together", async () => {
+    await db.addNote(makeNote({ id: "iv-6" }));
+    const task = (await svc.setTarget("iv-6", CONFIG_ID, "task", { projectId: null }))!;
+    const invoice = (await svc.setTarget("iv-6", CONFIG_ID, "invoice", { ...INVOICE, linkKind: "task" }))!;
+    expect(invoice.dependsOn).toBe(task.id);
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "iv-6", { userInitiated: true });
+    expect(sent(fetchMock, "project.task", "message_post")[0].body.params.args).toEqual([[900]]);
+  });
+
+  it("blocks an invoice whose partner is gone, and one the server refuses", async () => {
+    await db.addNote(makeNote({ id: "iv-7" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setTarget("iv-7", CONFIG_ID, "invoice", { ...INVOICE, partnerId: 99 });
+    const gone = await svc.pushNote(CREDS, "iv-7", { userInitiated: true }).catch((e) => e);
+    expect(gone).toMatchObject({ reason: "partner_missing", opKind: INVOICE_CREATE });
+
+    await db.addNote(makeNote({ id: "iv-8" }));
+    vi.stubGlobal("fetch", server({ createError: "odoo.exceptions.ValidationError" }));
+    await svc.setTarget("iv-8", CONFIG_ID, "invoice", INVOICE);
+    const refused = await svc.pushNote(CREDS, "iv-8", { userInitiated: true }).catch((e) => e);
+    expect(refused).toMatchObject({ reason: "refused" });
+    expect(await svc.targetState("iv-8", CONFIG_ID, "invoice")).toMatchObject({ state: "choose", reason: "refused", target: { ref: "PO-4" } });
+  });
+
+  it("does not create an invoice before the task it is tied to, which waits for its project", async () => {
+    await db.addNote(makeNote({ id: "iv-10" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTarget("iv-10", CONFIG_ID, "task", "later");
+    await svc.setTarget("iv-10", CONFIG_ID, "invoice", { ...INVOICE, linkKind: "task" });
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(false);
+    await svc.syncAll(CREDS, undefined, { force: true });
+    const err = await svc.pushNote(CREDS, "iv-10", { userInitiated: true }).catch((e) => e);
+    expect(err).toMatchObject({ reason: "incomplete" });
+    expect(sent(fetchMock, "account.move", "create")).toHaveLength(0);
+
+    await svc.setTarget("iv-10", CONFIG_ID, "task", { projectId: null });
+    await svc.pushNote(CREDS, "iv-10", { userInitiated: true });
+    expect(sent(fetchMock, "account.move", "create")).toHaveLength(1);
+    expect(sent(fetchMock, "project.task", "message_post")[0].body.params.args).toEqual([[900]]);
+  });
+
+  it("counts as not due an invoice queued before the task it is tied to", async () => {
+    await db.addNote(makeNote({ id: "iv-15" }));
+    const invoice = (await svc.setTarget("iv-15", CONFIG_ID, "invoice", { ...INVOICE, linkKind: "task" }))!;
+    expect(invoice.dependsOn).toBeNull();
+    await svc.setTarget("iv-15", CONFIG_ID, "task", "later");
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(false);
+  });
+
+  it("ties an invoice found again after a lost create, posting only the messages missing", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await db.addNote(makeNote({ id: "iv-11" }));
+    await linkTask(db, "iv-11", 10);
+    vi.stubGlobal("fetch", routeFetch((_url, body) => {
+      if ((body.params as any).method === "create") throw new TypeError("Failed to fetch");
+      return { result: (body.params as any).method === "fields_get" ? {} : [] };
+    }));
+    await svc.setTarget("iv-11", CONFIG_ID, "invoice", { ...INVOICE, partnerId: null, linkKind: "task" });
+    await svc.pushNote(CREDS, "iv-11", { userInitiated: true }).catch(() => {});
+    afterQuietWindow();
+    const fetchMock = server({ markerHits: [811] });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "iv-11", { userInitiated: true });
+    expect(sent(fetchMock, "account.move", "create")).toHaveLength(0);
+    expect(sent(fetchMock, "mail.message", "search_count")).toHaveLength(2);
+    expect(sent(fetchMock, "account.move", "message_post")[0].body.params.args).toEqual([[811]]);
+    expect((await db.findNoteLink("iv-11", CONFIG_ID, "account.move", "create"))!.params).toMatchObject({ crossLinked: true });
+
+    await db.addNote(makeNote({ id: "iv-12" }));
+    await linkTask(db, "iv-12", 10);
+    vi.stubGlobal("fetch", server({ markerHits: [812], posted: 1 }));
+    await svc.setTarget("iv-12", CONFIG_ID, "invoice", { ...INVOICE, partnerId: null, linkKind: "task" });
+    const already = server({ markerHits: [812], posted: 1 });
+    vi.stubGlobal("fetch", already);
+    const op = (await svc.targetState("iv-12", CONFIG_ID, "invoice")) as any;
+    await svc.pushNote(CREDS, "iv-12", { userInitiated: true, adopt: { kind: "invoice", resId: 812 } });
+    expect(op.state).toBe("queued");
+    expect(rpcCalls(already).some((c) => (c.body.params as any).method === "message_post")).toBe(false);
+  });
+
+  it("leaves the price of a line to the server when none was typed, and refuses a malformed value", async () => {
+    await db.addNote(makeNote({ id: "iv-13" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTarget("iv-13", CONFIG_ID, "invoice", { ...INVOICE, lines: [{ name: "Hour", quantity: 1, priceUnit: null, productId: 3 }] });
+    await svc.pushNote(CREDS, "iv-13", { userInitiated: true });
+    const line = sent(fetchMock, "account.move", "create")[0].body.params.args![0].invoice_line_ids[0][2];
+    expect(line).toEqual({ name: "Hour", quantity: 1, product_id: 3 });
+
+    await db.addNote(makeNote({ id: "iv-14" }));
+    vi.stubGlobal("fetch", server({ createError: "builtins.ValueError" }));
+    await svc.setTarget("iv-14", CONFIG_ID, "invoice", INVOICE);
+    const err = await svc.pushNote(CREDS, "iv-14", { userInitiated: true }).catch((e) => e);
+    expect(err).toMatchObject({ reason: "refused" });
+  });
+
+  it("searches its marker in the narration on a retry", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await db.addNote(makeNote({ id: "iv-9" }));
+    vi.stubGlobal("fetch", routeFetch((_url, body) => {
+      if ((body.params as any).method === "create") throw new TypeError("Failed to fetch");
+      const kwargs = (body.params as any).kwargs ?? {};
+      return { result: kwargs.domain?.[0]?.[0] === "id" ? [{ id: kwargs.domain[0][2] }] : [] };
+    }));
+    await svc.setTarget("iv-9", CONFIG_ID, "invoice", INVOICE);
+    await svc.pushNote(CREDS, "iv-9", { userInitiated: true }).catch(() => {});
+    afterQuietWindow();
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "iv-9", { userInitiated: true });
+    const search = rpcCalls(fetchMock).find((c) => c.body.params.model === "account.move" && c.body.params.method === "search_read")!;
+    expect((search.body.params as any).kwargs.domain[0][0]).toBe("narration");
   });
 });

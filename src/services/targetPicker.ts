@@ -3,7 +3,10 @@ import type { ProjectList } from "./odoo/projectService";
 import type { RecordSearch } from "./odoo/recordSearchService";
 import type { SyncCredentials } from "./odoo/odooRpcClient";
 import { unusableReason, UnusableReason } from "./odoo/capabilityService";
-import type { AttachedState, LeadTarget, Target, TargetKind, TargetState, TaskTarget } from "./syncService";
+import type {
+  AttachedState, InvoiceLine, InvoiceMoveType, InvoiceTarget, LeadTarget, Target, TargetKind, TargetState, TaskTarget,
+} from "./syncService";
+import { fieldValue, InvoiceForm, localDatetimeText } from "./odoo/invoiceForm";
 
 /** Select value of no project (a personal task) or no partner. */
 export const NO_PROJECT = "none";
@@ -12,10 +15,53 @@ export const NO_PARTNER = "none";
 export const CHOOSE_LATER = "later";
 
 /** Kinds the picker offers, in display order. */
-export const PICKER_KINDS: TargetKind[] = ["task", "lead"];
+export const PICKER_KINDS: TargetKind[] = ["task", "lead", "invoice"];
 
 /** Model each kind creates, probed for the create right. */
-const KIND_MODELS: Record<TargetKind, string> = { task: "project.task", lead: "crm.lead" };
+const KIND_MODELS: Record<TargetKind, string> = { task: "project.task", lead: "crm.lead", invoice: "account.move" };
+
+/** Link select value of an invoice tied to nothing. */
+export const NO_TIE = "none";
+
+/** One line of a draft invoice as typed: label, quantity, unit price, product. */
+export interface InvoiceLineDraft {
+  key: string;
+  name: string;
+  quantity: string;
+  price: string;
+  /** Product id as a select value; "" for none. */
+  productSelection: string;
+  products: ProjectOption[];
+  productQuery: string;
+}
+
+/**
+ * The invoice part of an invoice row: its type, date, reference, lines,
+ * the server's extra required fields (form, null while loading) with the
+ * values typed for them (a many2one: the chosen id, its choices in
+ * extraOptions), and the note's own record it is tied to (tie: NO_TIE,
+ * "task" or "lead"; ties: those offered).
+ */
+export interface InvoiceDraft {
+  moveType: InvoiceMoveType;
+  invoiceDate: string;
+  ref: string;
+  lines: InvoiceLineDraft[];
+  form: InvoiceForm | null;
+  extraValues: Record<string, string>;
+  extraOptions: Record<string, ProjectOption[]>;
+  extraQueries: Record<string, string>;
+  tie: string;
+  ties: Array<"task" | "lead">;
+}
+
+/** Bumped by each new invoice line, for its key. */
+let invoiceLines = 0;
+
+/** An empty invoice line, quantity 1. */
+export function newInvoiceLine(): InvoiceLineDraft {
+  return { key: `line-${++invoiceLines}`, name: "", quantity: "1", price: "", productSelection: "", products: [], productQuery: "" };
+}
 
 export interface ProjectOption {
   /** String form of the record id, as a <select> value. */
@@ -78,6 +124,8 @@ export interface TargetRow {
   error: string | null;
   /** Why the row could not be built at all; such a row offers nothing. */
   failed: string | null;
+  /** An invoice row's own choices; null for the other kinds. */
+  invoice: InvoiceDraft | null;
 }
 
 /** Back-compatible name of a task's row. */
@@ -89,6 +137,7 @@ export function loadingRow(kind: TargetKind = "task"): TargetRow {
     deletedResId: null, unusable: null, reason: null, options: [],
     selection: kind === "task" ? NO_PROJECT : NO_PARTNER, offline: false, canDefer: false,
     fromCache: false, truncated: false, filter: "", query: "", revenue: "", error: null, failed: null,
+    invoice: null,
   };
 }
 
@@ -187,6 +236,124 @@ export function leadTargetRow(
   };
 }
 
+/**
+ * The invoice row of one server. Its partner is chosen as a lead's (see
+ * leadTargetRow); a "choose" state brings back the type, date, reference,
+ * lines, extra values and tie of its target, else the row starts as a
+ * customer invoice with one empty line, tied to the first of ties (the
+ * note's task or opportunity on this server, linked or being created). A
+ * kept many2one extra value is offered under its kept name.
+ */
+export function invoiceTargetRow(
+  state: TargetState,
+  partners: RecordSearch | null,
+  form: InvoiceForm | null,
+  unusable: UnusableReason | null,
+  online: boolean,
+  ties: Array<"task" | "lead"> = []
+): TargetRow {
+  const done = stateRow("invoice", state, online);
+  if (done || state.state !== "choose") return done ?? { ...loadingRow("invoice"), loading: false, offline: !online };
+  const asLead = leadTargetRow({ ...state, target: state.target as LeadTarget | null }, partners, unusable, online);
+  const target = state.op && "moveType" in (state.op.params ?? {}) ? state.target as InvoiceTarget | null : null;
+  const lines: InvoiceLineDraft[] = (target?.lines ?? []).map((l: InvoiceLine) => ({
+    ...newInvoiceLine(),
+    name: l.name,
+    quantity: String(l.quantity),
+    price: l.priceUnit != null ? String(l.priceUnit) : "",
+    productSelection: l.productId != null ? String(l.productId) : "",
+    products: l.productId != null ? [{ value: String(l.productId), name: l.productName || `#${l.productId}` }] : [],
+  }));
+  const tie = target ? target.linkKind ?? NO_TIE : ties[0] ?? NO_TIE;
+  const fieldsByName = new Map((form?.fields ?? []).map((f) => [f.name, f]));
+  const extraValues: Record<string, string> = {};
+  const extraOptions: Record<string, ProjectOption[]> = {};
+  for (const [name, v] of Object.entries(target?.extra ?? {})) {
+    const field = fieldsByName.get(name);
+    extraValues[name] = typeof v === "boolean" ? (v ? "1" : "")
+      : field?.type === "datetime" ? localDatetimeText(String(v)) : String(v);
+    // A kept many2one is offered under its name, so its select shows it
+    if (field?.type === "many2one") extraOptions[name] = [{ value: String(v), name: target?.extraNames?.[name] || `#${v}` }];
+  }
+  return {
+    ...asLead,
+    kind: "invoice",
+    revenue: "",
+    invoice: {
+      moveType: target?.moveType ?? "out_invoice",
+      invoiceDate: target?.invoiceDate ?? "",
+      ref: target?.ref ?? "",
+      lines: lines.length > 0 ? lines : [newInvoiceLine()],
+      form,
+      extraValues,
+      extraOptions,
+      extraQueries: {},
+      tie: tie !== NO_TIE && !ties.includes(tie as "task" | "lead") ? NO_TIE : tie,
+      ties,
+    },
+  };
+}
+
+/**
+ * The invoice an invoice row stands for, or why it cannot be sent: a line
+ * needs a label once anything of it is typed (a line left empty is
+ * skipped), a quantity and a price that parse (see parseRevenue); every
+ * extra field must be filled (see fieldValue).
+ */
+export function invoiceTargetOf(row: TargetRow): InvoiceTarget | { error: string } {
+  const inv = row.invoice;
+  if (!inv || !inv.form) return { error: "Le formulaire de la facture est encore en chargement." };
+  const lines: InvoiceLine[] = [];
+  for (const [i, l] of inv.lines.entries()) {
+    if (!l.name.trim() && !l.price.trim() && !l.productSelection) continue;
+    if (!l.name.trim()) return { error: `Ligne ${i + 1} de la facture : libellé obligatoire.` };
+    const quantity = parseRevenue(l.quantity);
+    // No price typed: the server takes the product's (0 without a product)
+    const priceUnit = l.price.trim() ? parseRevenue(l.price) : null;
+    if (quantity === null || (l.price.trim() && priceUnit === null)) {
+      return { error: `Ligne ${i + 1} de la facture : quantité ou prix invalide.` };
+    }
+    const product = l.products.find((o) => o.value === l.productSelection);
+    lines.push({
+      name: l.name.trim(), quantity, priceUnit,
+      productId: l.productSelection ? Number(l.productSelection) : null,
+      productName: product?.name ?? null,
+    });
+  }
+  const extra: Record<string, any> = {};
+  const extraNames: Record<string, string> = {};
+  for (const field of inv.form?.fields ?? []) {
+    const value = fieldValue(field, inv.extraValues[field.name] ?? "");
+    if ("error" in value) return { error: value.error };
+    extra[field.name] = value.value;
+    const option = (inv.extraOptions[field.name] ?? []).find((o) => o.value === inv.extraValues[field.name]);
+    if (field.type === "many2one" && option) extraNames[field.name] = option.name;
+  }
+  const option = row.options.find((o) => o.value === row.selection);
+  return {
+    moveType: inv.moveType,
+    partnerId: row.selection === NO_PARTNER || row.selection === CHOOSE_LATER ? null : Number(row.selection),
+    partnerName: row.selection === NO_PARTNER ? null : option?.name ?? null,
+    invoiceDate: /^\d{4}-\d{2}-\d{2}$/.test(inv.invoiceDate) ? inv.invoiceDate : null,
+    ref: inv.ref.trim() || null,
+    lines,
+    extra,
+    extraNames,
+    linkKind: inv.tie === "task" || inv.tie === "lead" ? inv.tie : null,
+  };
+}
+
+/**
+ * What an invoice left for later keeps of its draft: all of it, partner
+ * excepted (the choice left for later), when it is valid; else its type
+ * only, so the form comes back for that type.
+ */
+function invoiceLaterParams(row: TargetRow): Record<string, any> {
+  const draft = invoiceTargetOf({ ...row, selection: NO_PARTNER });
+  if ("error" in draft) return { moveType: row.invoice?.moveType ?? "out_invoice" };
+  return { ...draft, partnerId: null, partnerName: null };
+}
+
 /** Replaces a lead row's partners with a new search, keeping the selected one. */
 export function withPartners(row: TargetRow, partners: RecordSearch): TargetRow {
   const options: ProjectOption[] = partners.records.map((p) => ({ value: String(p.id), name: p.name }));
@@ -225,9 +392,14 @@ export function parseRevenue(text: string): number | null {
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-/** The target a row's selection stands for. */
+/** The target a row's selection stands for (an invoice row's must be valid, see invoiceTargetOf). */
 export function targetOfSelection(row: TargetRow): Target | "later" {
   if (row.selection === CHOOSE_LATER) return "later";
+  if (row.kind === "invoice") {
+    const invoice = invoiceTargetOf(row);
+    if ("error" in invoice) throw new Error(invoice.error);
+    return invoice;
+  }
   const option = row.options.find((o) => o.value === row.selection);
   if (row.kind === "task") {
     if (row.selection === NO_PROJECT) return { projectId: null, projectName: null };
@@ -272,6 +444,9 @@ export interface TargetSource {
   };
   projects: { list(creds: SyncCredentials, options: { online: boolean }): Promise<ProjectList> };
   partners: { search(creds: SyncCredentials, text: string, options: { online: boolean }): Promise<RecordSearch> };
+  invoiceForms: {
+    load(creds: SyncCredentials, moveType: InvoiceMoveType, options: { online: boolean }): Promise<InvoiceForm>;
+  };
 }
 
 /** Back-compatible name of the picker's source. */
@@ -336,17 +511,29 @@ export async function buildTargetRows(
     const state = states[i];
     try {
       if (state.state !== "choose") {
-        rows[kind] = kind === "task"
-          ? taskTargetRow(state, null, null, online)
-          : leadTargetRow(state, null, null, online);
+        rows[kind] = kind === "task" ? taskTargetRow(state, null, null, online)
+          : kind === "lead" ? leadTargetRow(state, null, null, online)
+          : invoiceTargetRow(state, null, null, null, online);
         continue;
       }
       const c = await creds();
       const cap = await source.capabilities.ensure(c, KIND_MODELS[kind], { online }).catch(() => null);
       const unusable = unusableReason(cap, ["create"]);
-      const row = kind === "task"
-        ? taskTargetRow(state, await source.projects.list(c, { online }), unusable, online)
-        : leadTargetRow(state, await source.partners.search(c, "", { online }), unusable, online);
+      let row: TargetRow;
+      if (kind === "task") row = taskTargetRow(state, await source.projects.list(c, { online }), unusable, online);
+      else if (kind === "lead") row = leadTargetRow(state, await source.partners.search(c, "", { online }), unusable, online);
+      else {
+        const moveType = (state.target as InvoiceTarget | null)?.moveType ?? "out_invoice";
+        // A task or opportunity the note has, or is creating, on this server
+        const ties = (["task", "lead"] as const).filter((k) => {
+          const s = states[PICKER_KINDS.indexOf(k)];
+          return s.state === "linked" || s.state === "queued" || (s.state === "choose" && s.op !== null);
+        });
+        row = invoiceTargetRow(
+          state, await source.partners.search(c, "", { online }),
+          await source.invoiceForms.load(c, moveType, { online }), unusable, online, [...ties]
+        );
+      }
       const waiting = state.op !== null || state.reason === "deleted";
       row.checked = !row.unusable && (waiting || defaults.includes(kind));
       rows[kind] = row;
@@ -400,6 +587,11 @@ export async function applyTaskTargets(
     if (!PICKER_KINDS.some((k) => rows[k].checked) && !hasActivityWork(configId)) {
       throw new Error(`Aucune cible cochée pour ${configId}.`);
     }
+    const invoice = rows.invoice;
+    if (invoice.checked && invoice.needsChoice && !invoice.unusable && invoice.selection !== CHOOSE_LATER) {
+      const checked = invoiceTargetOf(invoice);
+      if ("error" in checked) throw new Error(checked.error);
+    }
   }
   for (const configId of configIds) {
     const rows = targets[configId];
@@ -414,7 +606,9 @@ export async function applyTaskTargets(
       if (!row.needsChoice) continue;
       if (row.checked && !row.unusable) {
         const target = targetOfSelection(row);
-        const laterParams = kind === "lead" ? { expectedRevenue: parseRevenue(row.revenue) } : {};
+        const laterParams = kind === "lead" ? { expectedRevenue: parseRevenue(row.revenue) }
+          : kind === "invoice" ? invoiceLaterParams(row)
+          : {};
         if (target === "later") await source.setTarget(noteId, configId, kind, target, laterParams);
         else await source.setTarget(noteId, configId, kind, target);
       } else if (row.reason !== null) {

@@ -5,6 +5,7 @@ import { PROJECT_MODEL, ProjectService } from "./odoo/projectService";
 import { PARTNER_MODEL, RecordSearchService } from "./odoo/recordSearchService";
 import { ACTIVITY_TYPE_MODEL, ActivityTypeService } from "./odoo/activityTypeService";
 import { unusableReason } from "./odoo/capabilityService";
+import { InvoiceFormService } from "./odoo/invoiceForm";
 import { Application } from "../models/application";
 import {
   Note,
@@ -60,8 +61,17 @@ export const TASK_CREATE = "task.create";
 export const LEAD_CREATE = "lead.create";
 
 /** Kinds of record a note can be sent as, in push order. */
-export type TargetKind = "task" | "lead";
-export const TARGET_KINDS: TargetKind[] = ["task", "lead"];
+export type TargetKind = "task" | "lead" | "invoice";
+export const TARGET_KINDS: TargetKind[] = ["task", "lead", "invoice"];
+
+/** Outbox kind of the creation of a note's draft invoice on one server. */
+export const INVOICE_CREATE = "invoice.create";
+
+/** Model of a note's draft invoice. */
+export const INVOICE_MODEL = "account.move";
+
+/** Invoice types a note can be drafted as: customer invoice, vendor bill. */
+export type InvoiceMoveType = "out_invoice" | "in_invoice";
 
 /** sync_target_prefs kind of the target kinds last checked per server. */
 const TARGET_KINDS_PREF = "targets";
@@ -108,13 +118,15 @@ const MESSAGE_GONE_ERRORS = new Set(["werkzeug.exceptions.NotFound", "odoo.excep
 
 /**
  * What a kind of target is on the server: its model, its creation's outbox
- * kind, its tag model, the params a choice sets (choiceKeys), and the
- * French texts naming one record and a creation waiting for a choice.
+ * kind, its tag model (null: tags not mapped), the field its marker is
+ * written in, the params a choice sets (choiceKeys), and the French texts
+ * naming one record and a creation waiting for a choice.
  */
 interface TargetKindDef {
   model: string;
   opKind: string;
-  tagModel: string;
+  tagModel: string | null;
+  markerField: string;
   choiceKeys: string[];
   describe: (resId: number) => string;
   waitingChoice: string;
@@ -125,6 +137,7 @@ export const KINDS: Record<TargetKind, TargetKindDef> = {
     model: "project.task",
     opKind: TASK_CREATE,
     tagModel: "project.tags",
+    markerField: "description",
     choiceKeys: ["projectId"],
     describe: (id) => `La tâche #${id}`,
     waitingChoice: "La tâche attend le choix de son projet",
@@ -133,9 +146,19 @@ export const KINDS: Record<TargetKind, TargetKindDef> = {
     model: LEAD_MODEL,
     opKind: LEAD_CREATE,
     tagModel: "crm.tag",
+    markerField: "description",
     choiceKeys: ["partnerId", "expectedRevenue"],
     describe: (id) => `L'opportunité #${id}`,
     waitingChoice: "L'opportunité attend le choix de son client",
+  },
+  invoice: {
+    model: INVOICE_MODEL,
+    opKind: INVOICE_CREATE,
+    tagModel: null,
+    markerField: "narration",
+    choiceKeys: ["moveType"],
+    describe: (id) => `La facture #${id}`,
+    waitingChoice: "La facture attend ses champs",
   },
 };
 
@@ -160,7 +183,37 @@ export interface LeadTarget {
   expectedRevenue?: number | null;
 }
 
-export type Target = TaskTarget | LeadTarget;
+/** One line of a draft invoice: its label, quantity, unit price (null: the product's) and optional product. */
+export interface InvoiceLine {
+  name: string;
+  quantity: number;
+  priceUnit: number | null;
+  productId: number | null;
+  productName?: string | null;
+}
+
+/**
+ * The values a note's draft invoice is created with on one server: its
+ * type, partner (null: none yet, allowed on a draft), date (null: the
+ * server's), reference, lines, the server's other required fields the
+ * user filled (extra, by field name, as sent), and the note's own record
+ * of kind linkKind it is tied to (null: none). Set at creation only;
+ * later writes send the note's text as the invoice's narration.
+ */
+export interface InvoiceTarget {
+  moveType: InvoiceMoveType;
+  partnerId: number | null;
+  partnerName?: string | null;
+  invoiceDate: string | null;
+  ref: string | null;
+  lines: InvoiceLine[];
+  extra: Record<string, any>;
+  /** Display names of the many2one values in extra, for the picker. */
+  extraNames?: Record<string, string>;
+  linkKind: "task" | "lead" | null;
+}
+
+export type Target = TaskTarget | LeadTarget | InvoiceTarget;
 
 /**
  * One activity a note schedules on one server: on record resId of
@@ -327,6 +380,15 @@ function targetParams(kind: TargetKind, target: Target | null): Record<string, a
     const t = target as TaskTarget | null;
     return { projectId: t?.projectId ?? null, projectName: t?.projectName ?? null };
   }
+  if (kind === "invoice") {
+    const t = target as InvoiceTarget | null;
+    if (!t) return {};
+    return {
+      moveType: t.moveType, partnerId: t.partnerId ?? null, partnerName: t.partnerName ?? null,
+      invoiceDate: t.invoiceDate ?? null, ref: t.ref ?? null, lines: t.lines ?? [], extra: t.extra ?? {},
+      extraNames: t.extraNames ?? {}, linkKind: t.linkKind ?? null,
+    };
+  }
   const t = target as LeadTarget | null;
   return {
     partnerId: t?.partnerId ?? null,
@@ -338,6 +400,15 @@ function targetParams(kind: TargetKind, target: Target | null): Record<string, a
 /** The target stored in a creation's params. */
 function targetOfParams(kind: TargetKind, params: Record<string, any>): Target {
   if (kind === "task") return { projectId: params.projectId ?? null, projectName: params.projectName ?? null };
+  if (kind === "invoice") {
+    return {
+      moveType: params.moveType === "in_invoice" ? "in_invoice" : "out_invoice",
+      partnerId: params.partnerId ?? null, partnerName: params.partnerName ?? null,
+      invoiceDate: params.invoiceDate ?? null, ref: params.ref ?? null,
+      lines: params.lines ?? [], extra: params.extra ?? {}, extraNames: params.extraNames ?? {},
+      linkKind: params.linkKind ?? null,
+    };
+  }
   return {
     partnerId: params.partnerId ?? null,
     partnerName: params.partnerName ?? null,
@@ -348,10 +419,29 @@ function targetOfParams(kind: TargetKind, params: Record<string, any>): Target {
 /**
  * Values only a create sends, from the operation's params: a task's
  * project (false: none); a lead's type, partner, expected revenue and
- * archive state.
+ * archive state; an invoice's type, partner, date, reference, lines
+ * (product, label, quantity, unit price) and the other fields the user
+ * filled.
  */
 function createValues(kind: TargetKind, params: Record<string, any>, note: Note): Record<string, any> {
   if (kind === "task") return { project_id: params.projectId ?? false };
+  if (kind === "invoice") {
+    const t = targetOfParams("invoice", params) as InvoiceTarget;
+    return {
+      ...t.extra,
+      move_type: t.moveType,
+      ...(t.partnerId != null ? { partner_id: t.partnerId } : {}),
+      ...(t.invoiceDate ? { invoice_date: t.invoiceDate } : {}),
+      ...(t.ref ? { ref: t.ref } : {}),
+      invoice_line_ids: t.lines.map((l) => [0, 0, {
+        name: l.name,
+        quantity: l.quantity,
+        // No price typed: the server computes the product's own
+        ...(l.priceUnit != null ? { price_unit: l.priceUnit } : {}),
+        ...(l.productId != null ? { product_id: l.productId } : {}),
+      }]),
+    };
+  }
   return {
     type: "opportunity",
     active: !note.archived,
@@ -415,6 +505,12 @@ interface CreateSpec {
   sentParams?: (values: Record<string, any>) => Record<string, any>;
   /** Server exceptions that also refuse this create, beside REFUSED_ERRORS. */
   refusedErrors?: string[];
+  /**
+   * Runs once the record is created, or found again by its marker or
+   * adopted (adopted: true, the first attempt may have run it already);
+   * its result joins the link's params.
+   */
+  afterCreate?: (sessionId: string, odooVersion: number, resId: number, adopted: boolean) => Promise<Record<string, any>>;
 }
 
 /**
@@ -474,6 +570,8 @@ export class SyncService {
   readonly projects: ProjectService;
   /** Partner search for a new opportunity, with the found ones cached. */
   readonly partners: RecordSearchService;
+  /** The extra required fields of a new invoice per server and type, kept for offline. */
+  readonly invoiceForms: InvoiceFormService;
   /** Activity types per server, cached for offline. */
   readonly activityTypes: ActivityTypeService;
   /** Record search per model (records an activity goes on, users), cached. */
@@ -512,6 +610,7 @@ export class SyncService {
     this.outbox = outbox;
     this.capabilities = new CapabilityService(db, rpc);
     this.projects = new ProjectService(db, rpc);
+    this.invoiceForms = new InvoiceFormService(db, rpc);
     this.partners = new RecordSearchService(db, rpc, PARTNER_MODEL);
     this._recordSearches.set(PARTNER_MODEL, this.partners);
     this.activityTypes = new ActivityTypeService(db, rpc);
@@ -800,6 +899,14 @@ export class SyncService {
       if (queued?.status === "incomplete") {
         throw new OutboxBlockedError(`${def.waitingChoice} sur ${creds.odooUrl}.`, "incomplete", [], def.opKind);
       }
+      // An invoice tied to the note's task or opportunity waits for its creation
+      if (queued && await this.tieWaiting(queued)) {
+        if (!options.userInitiated) return;
+        throw new OutboxBlockedError(
+          `La facture attend la création de ${queued.params.linkKind === "task" ? "sa tâche" : "son opportunité"} sur ${creds.odooUrl}.`,
+          "incomplete", [], def.opKind
+        );
+      }
       if (queued?.status === "blocked" && !options.userInitiated) {
         throw new OutboxBlockedError(
           queued.lastError ?? queued.status,
@@ -881,16 +988,103 @@ export class SyncService {
     fingerprint: string
   ): Promise<void> {
     const def = KINDS[kind];
+    const tie = kind === "invoice" ? await this.invoiceTie(creds, op) : null;
     await this.createWithMarker(creds, op, adoptId, fingerprint, {
       model: def.model,
       opKind: def.opKind,
-      markerField: "description",
+      markerField: def.markerField,
       values: (sessionId, odooVersion, note) =>
         this.payloadFor(kind, creds, sessionId, note, odooVersion, op.clientUuid),
-      createValues: (note) => createValues(kind, op.params, note),
+      createValues: (note) => ({
+        ...createValues(kind, op.params, note),
+        ...(tie?.field ? { [tie.field]: tie.resId } : {}),
+      }),
+      ...(kind === "invoice" ? { context: { default_move_type: op.params.moveType ?? "out_invoice" } } : {}),
       check: (sessionId) => this.checkChosenRecords(kind, creds, op, sessionId),
       link: { kind: "create" },
+      ...(tie && !tie.field
+        ? { afterCreate: (sessionId: string, odooVersion: number, resId: number, adopted: boolean) =>
+            this.crossLinkInvoice(creds, sessionId, odooVersion, resId, tie, adopted) }
+        : {}),
+      // A malformed extra value is refused by the ORM's conversion
+      ...(kind === "invoice" ? { refusedErrors: ["builtins.ValueError", "builtins.TypeError"] } : {}),
     });
+  }
+
+  /**
+   * Whether an invoice creation must wait: it is tied (params.linkKind) to
+   * the note's task or opportunity on this server, which is not linked yet
+   * but has its creation in the outbox. Created first, the invoice would
+   * lose its tie for good, the tie being set at creation only.
+   */
+  private async tieWaiting(op: OutboxOp): Promise<boolean> {
+    if (op.kind !== INVOICE_CREATE) return false;
+    const kind = op.params.linkKind === "task" || op.params.linkKind === "lead" ? op.params.linkKind as "task" | "lead" : null;
+    if (!kind) return false;
+    if (await this.db.findNoteLink(op.noteId, op.configId, KINDS[kind].model, "create")) return false;
+    return (await this.outbox.find(op.noteId, op.configId, KINDS[kind].opKind)) !== null;
+  }
+
+  /**
+   * The note's own record an invoice creation ties to (params.linkKind,
+   * linked on this server), and how: through a many2one of account.move
+   * to its model that the user can set (from the model's probe: not
+   * readonly, not computed), which a module may add; null field when
+   * there is none, the tie then being two cross messages (see
+   * crossLinkInvoice). null when no tie is asked for, or the record is
+   * not linked there (any more).
+   */
+  private async invoiceTie(
+    creds: SyncCredentials,
+    op: OutboxOp
+  ): Promise<{ kind: "task" | "lead"; model: string; resId: number; field: string | null } | null> {
+    const kind: "task" | "lead" | null = op.params.linkKind === "task" || op.params.linkKind === "lead"
+      ? op.params.linkKind : null;
+    if (!kind) return null;
+    const link = await this.db.findNoteLink(op.noteId, op.configId, KINDS[kind].model, "create");
+    if (!link) return null;
+    const cap = await this.capabilities.ensure(creds, INVOICE_MODEL, { online: true });
+    const field = Object.entries(cap?.fields ?? {}).find(([, f]) =>
+      f.type === "many2one" && f.relation === KINDS[kind].model && !f.readonly && !(f.depends?.length))?.[0] ?? null;
+    return { kind, model: KINDS[kind].model, resId: link.resId, field };
+  }
+
+  /**
+   * Ties a new invoice to the note's task or opportunity with no field for
+   * it: a logged note in each chatter linking to the other. An invoice
+   * found again by its marker (adopted) gets each one only when the chatter
+   * lacks it. Best effort, the invoice being created already: a failure is
+   * kept in the link's params (crossError), not raised.
+   */
+  private async crossLinkInvoice(
+    creds: SyncCredentials,
+    sessionId: string,
+    odooVersion: number,
+    invoiceId: number,
+    tie: { kind: "task" | "lead"; model: string; resId: number },
+    adopted: boolean
+  ): Promise<Record<string, any>> {
+    const anchor = (model: string, id: number, label: string) =>
+      `<a href="/web#model=${model}&amp;id=${id}" data-oe-model="${model}" data-oe-id="${id}">${label} #${id}</a>`;
+    const what = tie.kind === "task" ? "la tâche" : "l'opportunité";
+    // Each side is posted unless found already: an adopted invoice's first attempt may have posted it
+    const posted = async (model: string, resId: number, otherModel: string, otherId: number) => adopted
+      && (await this.jsonRpc(creds.odooUrl, sessionId, MESSAGE_MODEL, "search_count", [[
+        ["model", "=", model], ["res_id", "=", resId], ["body", "ilike", `data-oe-model="${otherModel}" data-oe-id="${otherId}"`],
+      ]])) > 0;
+    try {
+      if (!(await posted(INVOICE_MODEL, invoiceId, tie.model, tie.resId))) {
+        await this.jsonRpc(creds.odooUrl, sessionId, INVOICE_MODEL, "message_post", [[invoiceId]],
+          messagePostKwargs(`<p>Liée à ${anchor(tie.model, tie.resId, what)}.</p>`, odooVersion));
+      }
+      if (!(await posted(tie.model, tie.resId, INVOICE_MODEL, invoiceId))) {
+        await this.jsonRpc(creds.odooUrl, sessionId, tie.model, "message_post", [[tie.resId]],
+          messagePostKwargs(`<p>Facture brouillon ${anchor(INVOICE_MODEL, invoiceId, "facture")} créée depuis cette note.</p>`, odooVersion));
+      }
+      return { crossLinked: true };
+    } catch (e: unknown) {
+      return { crossLinked: false, crossError: e instanceof Error ? e.message : String(e) };
+    }
   }
 
   /**
@@ -950,7 +1144,9 @@ export class SyncService {
         }
         if (found.length === 1) resId = found[0].id;
       }
+      const adopted = resId !== null;
       const sent = spec.sentParams?.(payload) ?? {};
+      let after: Record<string, any> = {};
       const unchanged = !!spec.sentParams && Object.entries(sent).every(([k, v]) => op.params[k] === v);
       if (resId !== null) {
         if (unchanged) {
@@ -980,7 +1176,9 @@ export class SyncService {
           }
           throw e;
         }
+        if (spec.afterCreate) after = await spec.afterCreate(sessionId, odooVersion, resId!, false);
       }
+      if (adopted && spec.afterCreate) after = await spec.afterCreate(sessionId, odooVersion, resId!, true);
       const now = new Date().toISOString();
       await this.settlePush(op.noteId, op.configId, fingerprint, now, {
         id: uuidv4(),
@@ -993,7 +1191,7 @@ export class SyncService {
         createdAt: now,
         lastSyncedAt: now,
         clientUuid: op.clientUuid,
-        params: { ...(spec.link.params ?? {}), ...sent },
+        params: { ...(spec.link.params ?? {}), ...sent, ...after },
       });
     });
   }
@@ -1011,7 +1209,7 @@ export class SyncService {
   ): Promise<void> {
     const check: ChosenRecordCheck = kind === "task"
       ? { model: PROJECT_MODEL, id: op.params.projectId ?? null, reason: "project_missing", label: "Le projet" }
-      : { model: PARTNER_MODEL, id: op.params.partnerId ?? null, reason: "partner_missing", label: "Le client" };
+      : { model: PARTNER_MODEL, id: op.params.partnerId ?? null, reason: "partner_missing", label: "Le partenaire" };
     await this.checkChosen(creds, sessionId, [check], KINDS[kind].opKind, op.id, async (failed) => {
       if (kind === "task" && (await this.lastTaskTarget(op.configId))?.projectId === failed.id) {
         await this.db.setSyncTargetPref({
@@ -1159,10 +1357,14 @@ export class SyncService {
     }
     const op = current.op;
     if (!op) {
+      // An invoice tied to the note's task or opportunity being created waits for it
+      const tieKind = kind === "invoice" && target !== "later" ? (target as InvoiceTarget).linkKind : null;
+      const tieOp = tieKind ? await this.outbox.find(noteId, configId, KINDS[tieKind].opKind) : null;
       return this.outbox.enqueue({
         noteId, configId, kind: def.opKind,
         params: target === "later" ? laterParams : targetParams(kind, target),
         status: target === "later" ? "incomplete" : "queued",
+        dependsOn: tieOp?.id ?? null,
       });
     }
     if (target === "later") {
@@ -1218,7 +1420,8 @@ export class SyncService {
     clientUuid: string | null
   ): Promise<Record<string, any>> {
     if (kind === "task") return this.taskPayloadFor(creds, sessionId, note, odooVersion, clientUuid);
-    const tagIds = await this.resolveTags(creds, sessionId, note.tags, KINDS.lead.tagModel);
+    if (kind === "invoice") return this.buildInvoicePayload(note, clientUuid);
+    const tagIds = await this.resolveTags(creds, sessionId, note.tags, KINDS.lead.tagModel!);
     return this.buildLeadPayload(note, tagIds, clientUuid);
   }
 
@@ -1899,11 +2102,16 @@ export class SyncService {
   /**
    * Whether a syncAll without force would send anything to this config: a
    * note pending or in error whose creation is not waiting, or a due
-   * outbox operation.
+   * outbox operation not waiting for another (its dependency, or the
+   * creation of the record an invoice is tied to).
    */
   async hasDueWork(configId: string): Promise<boolean> {
     const ops = await this.db.getOutboxOpsForConfig(configId);
-    if (ops.some((op) => this.outbox.isDue(op))) return true;
+    for (const op of ops) {
+      // drain leaves an operation whose dependency is still queued
+      if (!this.outbox.isDue(op) || (op.dependsOn && ops.some((o) => o.id === op.dependsOn))) continue;
+      if (!(await this.tieWaiting(op))) return true;
+    }
     for (const noteId of await this.db.getNoteIdsPendingForConfig(configId)) {
       if (await this.hasDueKind(noteId, configId, false)) return true;
     }
@@ -1924,7 +2132,7 @@ export class SyncService {
       const known = await this.db.findNoteLink(noteId, configId, def.model, "create", true);
       if (known?.remoteState === "ok") return true;
       const op = await this.outbox.find(noteId, configId, def.opKind);
-      if (op ? this.outbox.isDue(op, force) : true) return true;
+      if (op ? this.outbox.isDue(op, force) && !(await this.tieWaiting(op)) : true) return true;
     }
     if ((await this.db.getNoteLinks(noteId)).some((l) =>
       l.configId === configId && isAttachedKind(l.kind) && l.remoteState === "ok")) return true;
@@ -2143,6 +2351,17 @@ export class SyncService {
       tag_ids: [[6, 0, tagIds]],
       ...(day ? { date_deadline: day } : {}),
     };
+  }
+
+  /**
+   * The account.move values a note writes: its title and HTML, with the
+   * marker, as the invoice's narration (terms and conditions, free text).
+   * Everything else is create-only: an invoice belongs to accounting once
+   * drafted.
+   */
+  private buildInvoicePayload(note: Note, clientUuid: string | null): Record<string, any> {
+    const title = note.title.trim() ? `<p><b>${this.escapeHtml(note.title)}</b></p>` : "";
+    return { narration: this.withMarker([title, this.buildHtml(note.entries)].filter(Boolean).join("\n"), clientUuid) };
   }
 
   /** Minimal HTML escaping for user-generated text. */

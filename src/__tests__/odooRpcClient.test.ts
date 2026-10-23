@@ -67,7 +67,7 @@ describe("OdooRpcClient helpers", () => {
     await rpc.fieldsGet(CREDS, "crm.lead");
     await rpc.fieldsGet(CREDS, "crm.lead", ["type"], ["name"]);
     expect(calls[0].params.args).toEqual([]);
-    expect(calls[0].params.kwargs.attributes).toEqual(["type", "string", "required", "readonly", "relation", "selection"]);
+    expect(calls[0].params.kwargs.attributes).toEqual(["type", "string", "required", "readonly", "relation", "selection", "depends"]);
     expect(calls[1].params.args).toEqual([["name"]]);
     expect(calls[1].params.kwargs.attributes).toEqual(["type"]);
   });

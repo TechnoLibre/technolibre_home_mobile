@@ -202,6 +202,7 @@ describe("target picker with activities", () => {
     const rows = {
       task: { ...loadingRow("task"), loading: false, needsChoice: true },
       lead: { ...loadingRow("lead"), loading: false, needsChoice: true },
+      invoice: { ...loadingRow("invoice"), loading: false, needsChoice: true },
     };
     const src = { setTarget: vi.fn(), dropTarget: vi.fn(), setLastKinds: vi.fn() } as any;
     await expect(applyTaskTargets(src, "n", ["c"], { c: rows })).rejects.toThrow(/Aucune cible/);
@@ -257,6 +258,7 @@ describe("activity picker after review", () => {
     const rows = {
       task: { ...loadingRow("task"), loading: false, needsChoice: true },
       lead: { ...loadingRow("lead"), loading: false, needsChoice: true },
+      invoice: { ...loadingRow("invoice"), loading: false, needsChoice: true },
     };
     const src = { setTarget: vi.fn(), dropTarget: vi.fn(), setLastKinds: vi.fn() } as any;
     await applyTaskTargets(src, "n", ["c"], { c: rows }, () => true);

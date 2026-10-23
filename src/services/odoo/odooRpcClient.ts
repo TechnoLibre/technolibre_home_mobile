@@ -26,13 +26,15 @@ export interface OdooFieldInfo {
   readonly?: boolean;
   relation?: string;
   selection?: Array<[string, string]>;
+  /** Fields a computed or related field is derived from; empty or absent for a plain one. */
+  depends?: string[];
 }
 
 /** Maximum session age in milliseconds (default: 24 hours). */
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /** Field attributes fieldsGet asks for when the caller names none. */
-const DEFAULT_FIELD_ATTRIBUTES = ["type", "string", "required", "readonly", "relation", "selection"];
+const DEFAULT_FIELD_ATTRIBUTES = ["type", "string", "required", "readonly", "relation", "selection", "depends"];
 
 /**
  * Raised when Odoo reports the session as no longer valid: JSON-RPC error

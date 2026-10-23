@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   applyTaskTargets, buildTargetRows, CHOOSE_LATER, filteredOptions, leadTargetRow, loadingRow,
   needsTaskTarget, NO_PARTNER, NO_PROJECT, parseRevenue, serverUsable, targetOfSelection,
-  taskTargetRow, withPartners,
+  taskTargetRow, withPartners, invoiceTargetRow, invoiceTargetOf, newInvoiceLine,
 } from "../services/targetPicker";
 import type { ProjectList } from "../services/odoo/projectService";
 import type { RecordSearch } from "../services/odoo/recordSearchService";
@@ -134,8 +134,11 @@ function fakeSource(states: Record<string, Record<string, any>>, options: { cap?
     capabilities: { ensure: vi.fn(async () => options.cap ?? null) },
     projects: { list: vi.fn(async () => list([{ id: 1, name: "A" }])) },
     partners: { search: vi.fn(async () => found([{ id: 7, name: "Acme" }])) },
+    invoiceForms: { load: vi.fn(async () => ({ fields: [], unsupported: [], fromCache: false, error: null })) },
   };
 }
+/** An invoice row the user left alone: unchecked, nothing to send. */
+const idleInvoice = { ...loadingRow("invoice"), loading: false, needsChoice: true };
 const CREDS = async () => ({ odooUrl: "https://odoo.example.com", username: "u", password: "p", database: "db" });
 
 describe("picker flow", () => {
@@ -186,7 +189,7 @@ describe("picker flow", () => {
     const lead = { ...leadTargetRow(choose(), found([{ id: 7, name: "Acme" }]), null, true), selection: "7", revenue: "10", checked: true };
     const linkedTask = taskTargetRow({ state: "linked", resId: 1 }, null, null, true);
     const uncheckedLead = { ...leadTargetRow(choose(), found([]), null, true), checked: false };
-    await applyTaskTargets(source, "n", ["a", "b"], { a: { task, lead }, b: { task: linkedTask, lead: uncheckedLead } });
+    await applyTaskTargets(source, "n", ["a", "b"], { a: { task, lead, invoice: idleInvoice }, b: { task: linkedTask, lead: uncheckedLead, invoice: idleInvoice } });
     expect(source.setTarget).toHaveBeenCalledTimes(2);
     expect(source.setTarget).toHaveBeenCalledWith("n", "a", "task", { projectId: 3, projectName: "C" });
     expect(source.setTarget).toHaveBeenCalledWith("n", "a", "lead", { partnerId: 7, partnerName: "Acme", expectedRevenue: 10 });
@@ -200,7 +203,7 @@ describe("picker flow", () => {
     const source = fakeSource({});
     const task = taskTargetRow({ state: "linked", resId: 1 }, null, null, true);
     const lead = { ...leadTargetRow(choose({ op: {}, reason: "refused" }), found([]), null, true), checked: false };
-    await applyTaskTargets(source, "n", ["a"], { a: { task, lead } });
+    await applyTaskTargets(source, "n", ["a"], { a: { task, lead, invoice: idleInvoice } });
     expect(source.dropTarget).toHaveBeenCalledWith("n", "a", "lead");
     expect(source.setTarget).not.toHaveBeenCalled();
   });
@@ -209,11 +212,11 @@ describe("picker flow", () => {
     const source = fakeSource({});
     const task = { ...taskTargetRow(choose(), list([]), null, true), checked: true, selection: CHOOSE_LATER };
     const blocked = { ...leadTargetRow(choose({ op: {}, reason: "refused" }), found([]), "no_access", true), checked: false };
-    await applyTaskTargets(source, "n", ["a"], { a: { task, lead: blocked } });
+    await applyTaskTargets(source, "n", ["a"], { a: { task, lead: blocked, invoice: idleInvoice } });
     expect(source.dropTarget).toHaveBeenCalledWith("n", "a", "lead");
 
     const later = { ...leadTargetRow(choose(), found([]), null, false), checked: true, selection: CHOOSE_LATER, revenue: "250" };
-    await applyTaskTargets(source, "n", ["b"], { b: { task: { ...task, checked: false }, lead: later } });
+    await applyTaskTargets(source, "n", ["b"], { b: { task: { ...task, checked: false }, lead: later, invoice: idleInvoice } });
     expect(source.setTarget).toHaveBeenCalledWith("n", "b", "lead", "later", { expectedRevenue: 250 });
   });
 
@@ -224,7 +227,7 @@ describe("picker flow", () => {
 
     const source = fakeSource({});
     const lead = { ...leadTargetRow(choose(), found([]), null, true), checked: true };
-    await applyTaskTargets(source, "n", ["a"], { a: { task: { ...stuck, checked: false }, lead } });
+    await applyTaskTargets(source, "n", ["a"], { a: { task: { ...stuck, checked: false }, lead, invoice: idleInvoice } });
     expect(source.dropTarget).toHaveBeenCalledWith("n", "a", "task");
   });
 
@@ -235,5 +238,112 @@ describe("picker flow", () => {
     await expect(applyTaskTargets(source, "n", ["a"], { a: { task: loadingRow("task"), lead: loadingRow("lead") } })).rejects.toThrow();
     await expect(applyTaskTargets(source, "n", ["a"], { a: unchecked })).rejects.toThrow();
     expect(source.setTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("invoice row", () => {
+  const form = { fields: [{ name: "x_site", label: "Site", type: "many2one", relation: "x.site" }], unsupported: [], fromCache: false, error: null };
+
+  it("starts as a customer invoice with one empty line, tied to the note's linked task", () => {
+    const row = invoiceTargetRow(choose(), found([{ id: 7, name: "Acme" }]), form, null, true, ["task"]);
+    expect(row).toMatchObject({ kind: "invoice", needsChoice: true, selection: NO_PARTNER });
+    expect(row.invoice).toMatchObject({ moveType: "out_invoice", tie: "task", lines: [{ name: "", quantity: "1" }] });
+  });
+
+  it("brings back the choices of a creation waiting for one", () => {
+    const target = {
+      moveType: "in_invoice", partnerId: 7, partnerName: "Acme", invoiceDate: "2026-11-01", ref: "PO-4",
+      lines: [{ name: "Work", quantity: 2, priceUnit: 50, productId: 3, productName: "Hour" }],
+      extra: { x_site: 9 }, linkKind: "lead",
+    };
+    const row = invoiceTargetRow(choose({ op: { params: { moveType: "in_invoice" } }, reason: "refused", target }),
+      found([]), form, null, true, ["lead"]);
+    expect(row.selection).toBe("7");
+    expect(row.invoice).toMatchObject({ moveType: "in_invoice", invoiceDate: "2026-11-01", ref: "PO-4", tie: "lead", extraValues: { x_site: "9" } });
+    expect(row.invoice!.lines[0]).toMatchObject({ name: "Work", quantity: "2", price: "50", productSelection: "3" });
+  });
+
+  it("stands for the invoice typed, skipping empty lines", () => {
+    const row = invoiceTargetRow(choose(), found([{ id: 7, name: "Acme" }]), form, null, true, ["task"]);
+    row.selection = "7";
+    row.invoice!.lines = [
+      { ...newInvoiceLine(), name: " Work ", quantity: "1,5", price: "1 200,50", productSelection: "3", products: [{ value: "3", name: "Hour" }] },
+      newInvoiceLine(),
+    ];
+    row.invoice!.extraValues = { x_site: "9" };
+    row.invoice!.ref = " PO ";
+    expect(invoiceTargetOf(row)).toEqual({
+      moveType: "out_invoice", partnerId: 7, partnerName: "Acme", invoiceDate: null, ref: "PO",
+      lines: [{ name: "Work", quantity: 1.5, priceUnit: 1200.5, productId: 3, productName: "Hour" }],
+      extra: { x_site: 9 }, extraNames: {}, linkKind: "task",
+    });
+  });
+
+  it("leaves the product's price to the server when none is typed", () => {
+    const row = invoiceTargetRow(choose(), found([]), { ...form, fields: [] }, null, true);
+    row.invoice!.lines = [{ ...newInvoiceLine(), name: "Hour", productSelection: "3", products: [{ value: "3", name: "Hour" }] }];
+    expect((invoiceTargetOf(row) as any).lines[0]).toMatchObject({ priceUnit: null, productId: 3 });
+    row.invoice!.lines[0].price = "abc";
+    expect(invoiceTargetOf(row)).toHaveProperty("error");
+  });
+
+  it("keeps the draft of an invoice left for later, its partner excepted", async () => {
+    const source = fakeSource({});
+    const task = { ...taskTargetRow(choose(), list([]), null, true), checked: false };
+    const lead = { ...leadTargetRow(choose(), found([]), null, true), checked: false };
+    const invoice = { ...invoiceTargetRow(choose(), found([{ id: 7, name: "Acme" }]), { ...form, fields: [] }, null, true), checked: true };
+    invoice.selection = CHOOSE_LATER;
+    invoice.invoice!.moveType = "in_invoice";
+    invoice.invoice!.ref = "PO-9";
+    invoice.invoice!.lines = [{ ...newInvoiceLine(), name: "Work", price: "10" }];
+    await applyTaskTargets(source, "n", ["a"], { a: { task, lead, invoice } });
+    expect(source.setTarget).toHaveBeenCalledWith("n", "a", "invoice", "later", expect.objectContaining({
+      moveType: "in_invoice", ref: "PO-9", partnerId: null, lines: [expect.objectContaining({ name: "Work", priceUnit: 10 })],
+    }));
+  });
+
+  it("offers the tie to a task being created, and shows a kept many2one under its name", async () => {
+    const kept = {
+      moveType: "out_invoice", partnerId: null, invoiceDate: null, ref: null, lines: [],
+      extra: { x_site: 9 }, extraNames: { x_site: "North site" }, linkKind: "task",
+    };
+    const source = fakeSource({ a: {
+      task: { state: "queued", op: { status: "queued", params: {} } },
+      invoice: choose({ op: { params: { moveType: "out_invoice" } }, reason: "refused", target: kept }),
+    } });
+    source.invoiceForms.load.mockResolvedValue(form as any);
+    const rows = await buildTargetRows(source, "n", "a", CREDS, true);
+    expect(rows.invoice.invoice).toMatchObject({ tie: "task", ties: ["task"], extraValues: { x_site: "9" } });
+    expect(rows.invoice.invoice!.extraOptions.x_site).toEqual([{ value: "9", name: "North site" }]);
+  });
+
+  it("refuses a line without a label, a missing extra field, or a form still loading", () => {
+    const row = invoiceTargetRow(choose(), found([]), form, null, true);
+    row.invoice!.extraValues = { x_site: "9" };
+    row.invoice!.lines = [{ ...newInvoiceLine(), price: "5" }];
+    expect(invoiceTargetOf(row)).toEqual({ error: expect.stringContaining("libellé") });
+    row.invoice!.lines = [];
+    row.invoice!.extraValues = {};
+    expect(invoiceTargetOf(row)).toEqual({ error: expect.stringContaining("Site") });
+    row.invoice!.form = null;
+    expect(invoiceTargetOf(row)).toEqual({ error: expect.stringContaining("chargement") });
+  });
+
+  it("blocks the confirm before anything is recorded when the checked invoice is not valid", async () => {
+    const source = fakeSource({});
+    const task = { ...taskTargetRow(choose(), list([]), null, true), checked: true };
+    const lead = { ...leadTargetRow(choose(), found([]), null, true), checked: false };
+    const invoice = { ...invoiceTargetRow(choose(), found([]), form, null, true), checked: true };
+    await expect(applyTaskTargets(source, "n", ["a"], { a: { task, lead, invoice } })).rejects.toThrow(/Site/);
+    expect(source.setTarget).not.toHaveBeenCalled();
+    invoice.invoice!.extraValues = { x_site: "9" };
+    await applyTaskTargets(source, "n", ["a"], { a: { task, lead, invoice } });
+    expect(source.setTarget).toHaveBeenCalledWith("n", "a", "invoice", expect.objectContaining({ extra: { x_site: 9 } }));
+  });
+
+  it("loads the form of the type of a creation waiting for its fields", async () => {
+    const source = fakeSource({ a: { invoice: choose({ op: { params: {} }, reason: "incomplete", target: { moveType: "in_invoice" } }) } });
+    await buildTargetRows(source, "n", "a", CREDS, true);
+    expect(source.invoiceForms.load).toHaveBeenCalledWith(expect.anything(), "in_invoice", { online: true });
   });
 });
