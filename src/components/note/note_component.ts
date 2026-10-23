@@ -22,6 +22,7 @@ import {
 	RemoteRecordDeletedError,
 	SyncConflictError,
 	type SkippedFile,
+	type DateProposal,
 	SyncCredentials,
 	TargetKind,
 	TARGET_KINDS,
@@ -600,6 +601,13 @@ export class NoteComponent extends EnhancedComponent {
 			onPriorityClick.bind="onPriorityClick"
 			/>
 			<p t-if="state.skippedFiles.length" class="note__sync-warning" role="status" t-esc="skippedFilesText"/>
+			<div t-foreach="state.dateProposals" t-as="proposal" t-key="proposal.linkId" class="note__sync-warning note__date-proposal" role="status">
+				<p t-esc="dateProposalText(proposal)"/>
+				<div class="note__date-proposal-actions">
+					<button type="button" class="note__date-proposal-btn" t-on-click="() => this.answerDateProposal(proposal, true)" t-esc="t('label.sync_date_take')"/>
+					<button type="button" class="note__date-proposal-btn" t-on-click="() => this.answerDateProposal(proposal, false)" t-esc="t('label.sync_date_keep')"/>
+				</div>
+			</div>
 			<NoteContentComponent
 				note="state.note"
 				editMode="state.editMode"
@@ -800,6 +808,8 @@ export class NoteComponent extends EnhancedComponent {
 			syncAnnouncement: "",
 			/** The note's files some servers did not get (too big, missing, refused). */
 			skippedFiles: [] as SkippedFile[],
+			/** The dates servers propose for the note, waiting for the user's answer. */
+			dateProposals: [] as DateProposal[],
 		});
 		this.setParams();
 		this.getNote();
@@ -1569,9 +1579,39 @@ export class NoteComponent extends EnhancedComponent {
 		this.announceSyncStatus("pending", true);
 	}
 
-	/** Reads which of the note's files some servers did not get. */
-	private async loadSkippedFiles() {
+	/** Reads which of the note's files some servers did not get, and the dates they propose. */
+	private async loadSyncNotices() {
 		this.state.skippedFiles = await this.syncService.skippedFiles(this.state.noteId).catch(() => []);
+		this.state.dateProposals = await this.syncService.dateProposals(this.state.noteId).catch(() => []);
+	}
+
+	/** A day ("YYYY-MM-DD" or an ISO date-time) as the user reads it. */
+	private dayText(value: string): string {
+		const date = new Date(value.length <= 10 ? `${value}T12:00:00` : value);
+		return date.toLocaleDateString(getCurrentLocale(), { day: "numeric", month: "long", year: "numeric" });
+	}
+
+	/** One line telling which record's date changed on which server, and the note's own. */
+	dateProposalText(proposal: DateProposal): string {
+		const cfg = (this.state.syncConfigs as SyncConfig[]).find((c) => c.id === proposal.configId);
+		const record = this.t(`label.sync_date_record_${proposal.model.replace(/\./g, "_")}`, { id: proposal.resId });
+		const server = cfg?.name || cfg?.appUrl || proposal.configId;
+		const changed = proposal.to
+			? this.t("label.sync_date_changed", { record, server, to: this.dayText(proposal.to) })
+			: this.t("label.sync_date_removed", { record, server });
+		const own = (this.state.note.entries as NoteEntry[]).find((e) => e.type === "date");
+		const note = own
+			? this.t("label.sync_date_note_is", { from: this.dayText((own.params as NoteEntryDateParams).date) })
+			: this.t("label.sync_date_note_none");
+		return `${changed} ${note}`;
+	}
+
+	/** Takes a server's date into the note, or keeps the note's; the note is read again when taken. */
+	async answerDateProposal(proposal: DateProposal, accept: boolean) {
+		await this.syncService.answerDateProposal(this.state.noteId, proposal.linkId, accept);
+		if (accept) await this.reloadPulledFields();
+		else await this.loadSyncNotices();
+		await this.refreshSyncStatusFromDb();
 	}
 
 	/** The note's files left out, each with why: one line for the note screen. */
@@ -1673,7 +1713,7 @@ export class NoteComponent extends EnhancedComponent {
 			await this.databaseService.setNoteSyncInfo(this.state.noteId, { syncConfigId: cfg.id });
 			this.state.syncConfigId = cfg.id;
 			this.announceSyncStatus(await this.refreshSyncStatusFromDb());
-			await this.loadSkippedFiles();
+			await this.loadSyncNotices();
 		} catch (e: unknown) {
 			await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
 			await this.databaseService.refreshNoteSyncStatus(this.state.noteId).catch(() => {});
@@ -1701,7 +1741,7 @@ export class NoteComponent extends EnhancedComponent {
 			}
 		});
 		this.state.isSyncing = false;
-		await this.loadSkippedFiles();
+		await this.loadSyncNotices();
 		if (errors.length > 0) {
 			this.state.syncStatus = "error";
 			this.announceSyncStatus("error");
@@ -2153,7 +2193,7 @@ export class NoteComponent extends EnhancedComponent {
 		const info = await this.databaseService.getNoteSyncInfo(this.state.noteId);
 		this.state.syncStatus = info.syncStatus;
 		this.state.syncConfigId = info.syncConfigId;
-		await this.loadSkippedFiles();
+		await this.loadSyncNotices();
 		this.state.syncConfigs = await loadSyncConfigs(this.appService);
 		if (info.selectedSyncConfigIds && info.selectedSyncConfigIds.length > 0) {
 			const validIds = info.selectedSyncConfigIds.filter((id) => this.state.syncConfigs.some((c) => c.id === id));

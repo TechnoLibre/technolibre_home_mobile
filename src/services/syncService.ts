@@ -502,6 +502,15 @@ export interface NoteConflict {
   fields: MergeResult["conflicts"];
 }
 
+/** A date a server proposes for a note: see SyncService.dateProposals; to null removes it. */
+export interface DateProposal {
+  linkId: string;
+  configId: string;
+  model: string;
+  resId: number;
+  to: string | null;
+}
+
 /** A file of a note some servers did not get: see SyncService.skippedFiles. */
 export interface SkippedFile {
   entryId: string;
@@ -2708,7 +2717,9 @@ export class SyncService {
    * Merges one pulled record into its note, field by field, under the
    * note's sync lock so a concurrent edit is either seen or applied after
    * (see mergeFields): a field changed on the server only is copied into
-   * the note; one changed in the app only waits for the next push; one
+   * the note, except the date, proposed to the user instead
+   * (params.dateProposal, see dateProposals); one changed in the app only
+   * waits for the next push; one
    * changed on both sides to different values is a conflict, kept on the
    * link (params.conflict) for the user, the server then "conflict" for
    * the note, and nothing more is written there until it is settled. The
@@ -2725,6 +2736,7 @@ export class SyncService {
     const fields = mirrorFields(kind, odooVersion);
     let changed = false;
     let applied = false;
+    let proposed = false;
     await this.db.updateNotePerServerStatus(link.noteId, async (perServer) => {
       const note = await this.db.getNoteById(link.noteId);
       const fresh = (await this.db.getNoteLinks(link.noteId)).find((l) => l.id === link.id);
@@ -2745,6 +2757,12 @@ export class SyncService {
       // A field the record did not give (an invoice without its title paragraph) stays as it was
       for (const f of fields) if (!(f in remote)) remote[f] = base.remote[f];
       const merge = mergeKind(kind, fields, base, local, remote);
+      // A date changed on the server only is proposed, not applied: its base
+      // stays, so it is not sent back, and each pull finds it again until the
+      // user answers (answerDateProposal)
+      const dateProposal = "date" in merge.apply ? { to: merge.apply.date ?? null } : null;
+      if (dateProposal) delete merge.apply.date;
+      proposed = JSON.stringify(dateProposal) !== JSON.stringify(fresh.params?.dateProposal ?? null);
       const next = applyValues(named, merge.apply, uuidv4);
       changed = Object.keys(merge.apply).length > 0;
       if (changed) {
@@ -2762,7 +2780,7 @@ export class SyncService {
         remote: { ...base.remote, ...pick(remote, [...settled, ...pushOnly]) },
       };
       const conflicts = Object.keys(merge.conflicts).length > 0 ? { fields: merge.conflicts } : null;
-      await this.db.setNoteLinkParams(fresh.id, { ...(fresh.params ?? {}), base: nextBase, conflict: conflicts });
+      await this.db.setNoteLinkParams(fresh.id, { ...(fresh.params ?? {}), base: nextBase, conflict: conflicts, dateProposal });
       if (conflicts) perServer[link.configId] = "conflict";
       else if (status === "conflict" || status === "error") perServer[link.configId] = status === "error" ? "error" : "pending";
       else if (status === "pending" || merge.push.length > 0
@@ -2779,9 +2797,50 @@ export class SyncService {
       // The note's other servers still hold the previous values
       await this.db.markNotePendingForConfigs(link.noteId, await this.db.getLiveLinkConfigIds(link.noteId, link.configId));
       this.onNotePulled?.(link.noteId);
-    }
+    } else if (proposed) this.onNotePulled?.(link.noteId);
     await this.db.refreshNoteSyncStatus(link.noteId);
     return changed;
+  }
+
+  /** The server dates waiting for the user's answer (see applyPulled), one per link. */
+  async dateProposals(noteId: string): Promise<DateProposal[]> {
+    return (await this.db.getNoteLinks(noteId))
+      .filter((l) => l.remoteState === "ok" && l.params?.dateProposal)
+      .map((l) => ({ linkId: l.id, configId: l.configId, model: l.model, resId: l.resId, to: l.params!.dateProposal.to ?? null }));
+  }
+
+  /**
+   * Answers a link's date proposal. accept puts the server's day in the
+   * note (none removes its date), to reach the note's other records at the
+   * next push; either way the link's base takes the server's day, so that
+   * day is not proposed again, and a later change of it is.
+   */
+  async answerDateProposal(noteId: string, linkId: string, accept: boolean): Promise<void> {
+    let taken = false;
+    let configId = "";
+    await this.db.updateNotePerServerStatus(noteId, async () => {
+      const note = await this.db.getNoteById(noteId);
+      const link = (await this.db.getNoteLinks(noteId)).find((l) => l.id === linkId);
+      const proposal = link?.params?.dateProposal;
+      if (!note || !link || !proposal) return;
+      configId = link.configId;
+      const base = baseOf(link);
+      const to = proposal.to ?? null;
+      if (accept) {
+        await this.db.updateNote(noteId, applyValues(note, { date: to }, uuidv4));
+        taken = true;
+      }
+      const next = base
+        ? { local: accept ? { ...base.local, date: to } : base.local, remote: { ...base.remote, date: to } }
+        : base;
+      await this.db.setNoteLinkParams(link.id, { ...link.params, base: next, dateProposal: null });
+    });
+    if (taken) {
+      const others = await this.db.getLiveLinkConfigIds(noteId, configId);
+      const here = await this.hasOtherLiveLink(noteId, configId, (l) => l.id === linkId) ? [configId] : [];
+      await this.db.markNotePendingForConfigs(noteId, [...others, ...here]);
+    }
+    await this.db.refreshNoteSyncStatus(noteId);
   }
 
   /**

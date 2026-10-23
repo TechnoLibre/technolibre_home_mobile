@@ -1875,7 +1875,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "them) at their last exchange. A pull of tasks, opportunities, invoices "
                         + "and activities (one cursor per model), and every push before writing, "
                         + "read the record and merge three ways: a field changed on the server "
-                        + "only goes into the note (the text replacing its text entries), one "
+                        + "only goes into the note (the text replacing its text entries), except "
+                        + "the date, which the note screen proposes (update the note, or keep its "
+                        + "date until the server's changes again), one "
                         + "changed in the app only is written alone, tags as added and removed "
                         + "(commands 4 and 3) and a task's state only when done changed. A field "
                         + "changed on both sides puts the server in conflict: nothing is written "
@@ -1887,7 +1889,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "et activités (un curseur par modèle), et chaque envoi avant d'écrire, "
                         + "lisent le record et fusionnent à trois voies : un champ changé sur le "
                         + "serveur seulement entre dans la note (le texte remplaçant ses entrées "
-                        + "texte), un champ changé dans l'app seulement est écrit seul, les "
+                        + "texte), sauf la date, que l'écran de la note propose (mettre la note à "
+                        + "jour, ou garder sa date jusqu'au prochain changement du serveur), un champ changé dans l'app seulement est écrit seul, les "
                         + "étiquettes en ajouts et retraits (commandes 4 et 3) et l'état d'une "
                         + "tâche seulement si fait change. Un champ changé des deux côtés met le "
                         + "serveur en conflit : rien n'est écrit avant que l'écran de conflit de "
@@ -1895,7 +1898,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 dependsOn: ["sync.task-project", "sync.lead", "sync.invoice", "sync.activity"],
                 demo: NONE_BG,
-                files: ["src/services/noteMirror.ts"],
+                files: ["src/services/noteMirror.ts", "src/components/note/note_component.ts"],
             },
             {
                 id: "sync.background-notice",

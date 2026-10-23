@@ -3652,7 +3652,7 @@ describe("SyncService — two-way sync and conflicts", () => {
     return (await db.findNoteLink(id, CONFIG_ID, "project.task", "create"))!;
   }
 
-  it("brings back into the note the title, text, tags and date changed on the server", async () => {
+  it("brings back into the note the title, text and tags changed on the server, and proposes its date", async () => {
     const server = odoo();
     const link = await sentTask(server, "tw-1");
     expect(link.params!.base).toBeTruthy();
@@ -3665,8 +3665,37 @@ describe("SyncService — two-way sync and conflicts", () => {
     expect(note.title).toBe("Plan v2");
     expect(await tagNames(note.tags)).toEqual(["a", "b"]);
     expect(note.entries.filter((e) => e.type === "text").map((e) => (e.params as any).text)).toEqual(["Second", "Third"]);
-    expect(note.entries.some((e) => e.type === "date")).toBe(true);
+    expect(note.entries.some((e) => e.type === "date")).toBe(false);
+    const [proposal] = await svc.dateProposals("tw-1");
+    expect(proposal).toMatchObject({ linkId: link.id, configId: CONFIG_ID, to: "2026-11-05" });
     expect((await db.getNotePerServerStatus("tw-1"))[CONFIG_ID]).toBe("synced");
+    // Proposed again at each pull until answered; accepted, it reaches the note and is not proposed again
+    await svc.syncAll(CREDS);
+    expect(await svc.dateProposals("tw-1")).toHaveLength(1);
+    await svc.answerDateProposal("tw-1", link.id, true);
+    const day = (await db.getNoteById("tw-1"))!.entries.find((e) => e.type === "date");
+    expect(new Date((day!.params as any).date).getDate()).toBe(5);
+    server.fetchMock.mockClear();
+    await svc.pushNote(CREDS, "tw-1", { userInitiated: true });
+    await svc.syncAll(CREDS);
+    expect(await svc.dateProposals("tw-1")).toEqual([]);
+    expect(writes(server.fetchMock, "project.task").some((v) => "date_deadline" in v)).toBe(false);
+  });
+
+  it("keeps the note's date when a proposed one is refused, until the server's changes again", async () => {
+    const server = odoo();
+    const link = await sentTask(server, "tw-1b");
+    server.edit("project.task", link.resId, { date_deadline: "2026-11-05" });
+    await svc.syncAll(CREDS);
+    await svc.answerDateProposal("tw-1b", link.id, false);
+    expect((await db.getNoteById("tw-1b"))!.entries.some((e) => e.type === "date")).toBe(false);
+    server.fetchMock.mockClear();
+    await svc.syncAll(CREDS);
+    expect(await svc.dateProposals("tw-1b")).toEqual([]);
+    expect(writes(server.fetchMock, "project.task")).toEqual([]);
+    server.edit("project.task", link.resId, { date_deadline: "2026-11-07" });
+    await svc.syncAll(CREDS);
+    expect((await svc.dateProposals("tw-1b")).map((p) => p.to)).toEqual(["2026-11-07"]);
   });
 
   it("merges a field changed on the server with another changed in the app, writing only the app's", async () => {
@@ -3734,6 +3763,22 @@ describe("SyncService — two-way sync and conflicts", () => {
       expect(a.records["project.task"].get(resA).name).toBe("Plan from B");
       expect(await db.getNotePerServerStatus("pe-1")).toEqual({ [CONFIG_ID]: "synced", [OTHER_CONFIG_ID]: "synced" });
       expect(pushed).toEqual([CONFIG_ID, OTHER_CONFIG_ID, CONFIG_ID, OTHER_CONFIG_ID]);
+    });
+
+    it("sends an accepted server date to the note's other servers, not back to its own", async () => {
+      const { a, b, resA, resB } = await sentToTwo("pe-4");
+      b.edit("project.task", resB, { date_deadline: "2026-11-05" });
+      await svc.pullNotes(OTHER_CREDS, new Date(0));
+      const [proposal] = await svc.dateProposals("pe-4");
+      await svc.answerDateProposal("pe-4", proposal.linkId, true);
+      expect(await db.getNotePerServerStatus("pe-4")).toMatchObject({ [CONFIG_ID]: "pending" });
+      b.fetchMock.mockClear();
+      await svc.pushEach("pe-4", [CONFIG_ID, OTHER_CONFIG_ID], async (configId) => {
+        await svc.pushNote(credsOf[configId], "pe-4", { userInitiated: true });
+        return true;
+      });
+      expect(String(a.records["project.task"].get(resA).date_deadline)).toContain("2026-11-05");
+      expect(writes(b.fetchMock, "project.task").some((v) => "date_deadline" in v)).toBe(false);
     });
 
     it("pushes each server once when the note does not change", async () => {
@@ -3866,8 +3911,9 @@ describe("SyncService — two-way sync and conflicts", () => {
     expect(link.params!.base.remote.date).toBe("2026-11-02");
     server.edit("mail.activity", link.resId, { summary: "Call back", date_deadline: "2026-11-09" });
     await svc.syncAll(CREDS);
+    expect((await db.getNoteById("tw-9"))!.title).toBe("Call back");
+    await svc.answerDateProposal("tw-9", link.id, true);
     const n = (await db.getNoteById("tw-9"))!;
-    expect(n.title).toBe("Call back");
     const date = n.entries.find((e) => e.type === "date");
     expect(new Date((date!.params as any).date).getDate()).toBe(9);
     server.edit("mail.activity", link.resId, { active: false });
@@ -3948,8 +3994,9 @@ describe("SyncService — two-way sync and conflicts", () => {
     ] });
     await db.setNotePerServerStatus("tw-16", CONFIG_ID, "pending");
     await svc.syncAll(CREDS);
-    // The deadline only comes back: the server's wins over the note's date
-    expect(new Date(((await db.getNoteById("tw-16"))!.entries[0].params as any).date).getDate()).toBe(20);
+    // The deadline only comes back, proposed: the note keeps its date until the user takes it
+    expect(new Date(((await db.getNoteById("tw-16"))!.entries[0].params as any).date).getDate()).toBe(12);
+    expect((await svc.dateProposals("tw-16")).map((p) => p.to)).toEqual(["2026-11-20"]);
     expect(await svc.conflictsOf("tw-16")).toEqual([]);
   });
 
