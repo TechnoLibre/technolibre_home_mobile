@@ -1669,7 +1669,7 @@ export class NoteComponent extends EnhancedComponent {
 					return false;
 				}
 				if (e instanceof OutboxBlockedError && e.reason === "ambiguous" && e.candidates.length > 0) {
-					options = { userInitiated: true, adopt: await this.pickAmbiguousRecord(e) };
+					options = { userInitiated: true, adopt: await this.pickAmbiguousRecord(e, cfg, creds) };
 					continue;
 				}
 				// Changed in the app and on the server: the user chooses before anything is sent
@@ -1684,6 +1684,8 @@ export class NoteComponent extends EnhancedComponent {
 				const { value } = await Dialog.confirm({
 					title: "Enregistrement supprimé sur le serveur",
 					message: `${e.message}\nLe recréer à partir de cette note ? Vous choisirez sa cible.`,
+					okButtonTitle: this.t("button.recreate"),
+					cancelButtonTitle: this.t("button.cancel"),
 				});
 				if (value) this._pickAfterSync = true;
 				return false;
@@ -1699,15 +1701,33 @@ export class NoteComponent extends EnhancedComponent {
 	 * task when unknown); for an activity or a message, its opId which
 	 * creation.
 	 */
-	private async pickAmbiguousRecord(e: OutboxBlockedError): Promise<NonNullable<PushOptions["adopt"]>> {
+	private async pickAmbiguousRecord(
+		e: OutboxBlockedError,
+		cfg: SyncConfig,
+		creds: SyncCredentials
+	): Promise<NonNullable<PushOptions["adopt"]>> {
 		const ids = e.candidates;
 		const kind = e.opKind === ACTIVITY_CREATE ? "activity"
 			: e.opKind === MESSAGE_POST ? "message"
 			: TARGET_KINDS.find((k) => KINDS[k].opKind === e.opKind) ?? "task";
+		const model = kind === "activity" ? "mail.activity" : kind === "message" ? "mail.message" : KINDS[kind].model;
+		// Each candidate by its name; unreadable, by its number alone
+		const names = new Map<number, string>();
+		try {
+			const rows = await this.syncService.rpc.searchRead<{ id: number; display_name: string }>(
+				creds, model, [["id", "in", ids]], ["display_name"]
+			);
+			for (const r of rows) names.set(r.id, r.display_name);
+		} catch { /* numbers only */ }
 		const { value, cancelled } = await Dialog.prompt({
-			title: "Plusieurs enregistrements correspondent",
-			message: `${e.message}\nNuméro de l'enregistrement à lier à cette note (${ids.map((id) => `#${id}`).join(", ")}) :`,
+			title: this.t("label.sync_ambiguous_title"),
+			message: this.t("label.sync_ambiguous_message", {
+				server: cfg.name || cfg.appUrl,
+				list: ids.map((id) => names.has(id) ? `#${id} — ${names.get(id)}` : `#${id}`).join("\n"),
+			}),
 			inputText: String(ids[0]),
+			okButtonTitle: this.t("button.link_record"),
+			cancelButtonTitle: this.t("button.cancel"),
 		});
 		const picked = Number(String(value ?? "").replace(/^#/, "").trim());
 		if (cancelled || !ids.includes(picked)) {

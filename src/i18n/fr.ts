@@ -70,6 +70,8 @@ export const translations: Record<string, string> = {
   // Common buttons
   "button.add": "+ Ajouter",
   "button.cancel": "Annuler",
+  "button.recreate": "Recréer",
+  "button.link_record": "Lier",
   "button.edit": "Modifier",
   "button.save": "Enregistrer",
   "button.confirm": "Confirmer",
@@ -423,6 +425,8 @@ export const translations: Record<string, string> = {
   "label.sync_file_too_big": "trop gros, {mb} Mo",
   "label.sync_file_missing": "introuvable sur l'appareil",
   "label.sync_file_refused": "refusé par le serveur",
+  "label.sync_ambiguous_title": "Plusieurs enregistrements correspondent",
+  "label.sync_ambiguous_message": "Ces enregistrements portent la référence de cette note sur {server} :\n{list}\nNuméro de celui à lier à la note :",
   "label.sync_files_wait_wifi": "En attente du Wi-Fi : {files}. Envoi à la prochaine synchro en Wi-Fi.",
   "label.sync_date_record_project_task": "la tâche #{id}",
   "label.sync_date_record_crm_lead": "l'opportunité #{id}",
