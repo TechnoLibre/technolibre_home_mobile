@@ -2329,6 +2329,8 @@ export class NoteComponent extends EnhancedComponent {
 		const onNotePulled      = (e: any) => {
 			if (e?.detail?.noteId === this.state.noteId) void this.reloadPulledFields();
 		};
+		// A background sync may have sent or left out files, or proposed a date
+		const onNotesReloaded   = () => { void this.loadSyncNotices(); void this.refreshSyncStatusFromDb(); };
 		const onDeckAddVideo    = () => { void this.addVideo(); };
 		const onDeckAddAudio    = () => { void this.addAudio(); };
 		const onDeckAddLocation = () => { void this.addLocation(); };
@@ -2341,6 +2343,7 @@ export class NoteComponent extends EnhancedComponent {
 		this.eventBus.addEventListener(Events.SET_ENTRY_TRANSLATION,   onSetTranslation);
 		this.eventBus.addEventListener(Events.NOTE_TAGS_UPDATED,       onTagsUpdated);
 		this.eventBus.addEventListener(Events.NOTE_PULLED,             onNotePulled);
+		this.eventBus.addEventListener(Events.RELOAD_NOTES,            onNotesReloaded);
 		this.eventBus.addEventListener(Events.STREAMDECK_ADD_VIDEO,    onDeckAddVideo);
 		this.eventBus.addEventListener(Events.STREAMDECK_ADD_AUDIO,    onDeckAddAudio);
 		this.eventBus.addEventListener(Events.STREAMDECK_ADD_LOCATION, onDeckAddLocation);
@@ -2358,6 +2361,7 @@ export class NoteComponent extends EnhancedComponent {
 			this.eventBus.removeEventListener(Events.SET_ENTRY_TRANSLATION,   onSetTranslation);
 			this.eventBus.removeEventListener(Events.NOTE_TAGS_UPDATED,       onTagsUpdated);
 			this.eventBus.removeEventListener(Events.NOTE_PULLED,             onNotePulled);
+			this.eventBus.removeEventListener(Events.RELOAD_NOTES,            onNotesReloaded);
 			this.eventBus.removeEventListener(Events.STREAMDECK_ADD_VIDEO,    onDeckAddVideo);
 			this.eventBus.removeEventListener(Events.STREAMDECK_ADD_AUDIO,    onDeckAddAudio);
 			this.eventBus.removeEventListener(Events.STREAMDECK_ADD_LOCATION, onDeckAddLocation);

@@ -148,7 +148,10 @@ export class NoteContentComponent extends EnhancedComponent {
 				startFocusLoop();
 			}
 		});
-		onWillUnmount(() => stopFocusLoop());
+		onWillUnmount(() => {
+			stopFocusLoop();
+			for (const [event, listener] of this._listeners) this.eventBus.removeEventListener(event, listener);
+		});
 	}
 
 	private onTitleKeydown(ev: KeyboardEvent) {
@@ -169,12 +172,18 @@ export class NoteContentComponent extends EnhancedComponent {
 			handle: ".note-entry-drag-component",
 			onSort: this.onSort.bind(this)
 		});
-		this.eventBus.addEventListener(Events.FOCUS_LAST_ENTRY, this.focusLastEntry.bind(this));
-		this.eventBus.addEventListener(Events.SCROLL_TO_LAST_ENTRY, this.scrollToLastEntry.bind(this));
-		this.eventBus.addEventListener(Events.TAGS_UPDATED, () => this.getTags());
-		// A pull may create the app's tags for the server's names
-		this.eventBus.addEventListener(Events.NOTE_PULLED, () => this.getTags());
+		this._listeners = [
+			[Events.FOCUS_LAST_ENTRY, this.focusLastEntry.bind(this)],
+			[Events.SCROLL_TO_LAST_ENTRY, this.scrollToLastEntry.bind(this)],
+			[Events.TAGS_UPDATED, () => this.getTags()],
+			// A pull may create the app's tags for the server's names
+			[Events.NOTE_PULLED, () => this.getTags()],
+		];
+		for (const [event, listener] of this._listeners) this.eventBus.addEventListener(event, listener);
 	}
+
+	/** The bus listeners added on mount, removed on unmount: each opened note adds its own. */
+	private _listeners: Array<[string, (e: any) => void]> = [];
 
 	private onSort() {
 		this.reorderEntries();
