@@ -2176,7 +2176,21 @@ export class NoteComponent extends EnhancedComponent {
 		this.saveNoteData();
 	}
 
-	async saveNoteData() {
+	/** Tail of the note's saves: see saveNoteData. */
+	private _saving: Promise<void> = Promise.resolve();
+
+	/**
+	 * Saves the note as it is when this save runs, after the previous one:
+	 * a keystroke arriving while a new note is still being added would
+	 * otherwise add it a second time, fail on its id, and its text would
+	 * stay unsaved until the next keystroke.
+	 */
+	saveNoteData(): Promise<void> {
+		this._saving = this._saving.then(() => this.saveNow());
+		return this._saving;
+	}
+
+	private async saveNow() {
 		try {
 			if (this.state.newNote) {
 				await this.noteService.crud.add(this.state.note);
