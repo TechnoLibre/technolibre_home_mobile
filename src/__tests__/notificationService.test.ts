@@ -48,15 +48,18 @@ function fakeApp(over: Partial<any> = {}) {
 
 let appStateCb: ((s: { isActive: boolean }) => void) | undefined;
 let onlineCb: (() => void) | undefined;
+let wifiCb: (() => void) | undefined;
 /** Fake NetworkService: online, captures the reconnect callback in onlineCb. */
 let network: any;
 
 function makeServices(apps: any[]) {
     appStateCb = undefined;
     onlineCb = undefined;
+    wifiCb = undefined;
     network = {
         isOnline: vi.fn().mockResolvedValue(true),
         onReconnect: vi.fn(async (cb: () => void) => { onlineCb = cb; return () => {}; }),
+        onWifi: vi.fn(async (cb: () => void) => { wifiCb = cb; return () => {}; }),
     };
     mockApp.addListener.mockImplementation((evt: string, cb: any) => {
         if (evt === "appStateChange") appStateCb = cb;
@@ -247,11 +250,10 @@ describe("NotificationService", () => {
                 fakeApp({ database: "a" }),
                 fakeApp({ database: "c" }),
             ]);
-            syncService.pendingNoteIds.mockResolvedValueOnce(["n1"]).mockResolvedValueOnce([]);
-
             const svc = new NotificationService(syncService, appService, bus, network);
             svc.start();
-            await Promise.resolve(); await Promise.resolve();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            syncService.pendingNoteIds.mockResolvedValueOnce(["n1"]).mockResolvedValueOnce([]);
 
             onlineCb!();
             for (let i = 0; i < 20; i++) await Promise.resolve();
@@ -299,6 +301,45 @@ describe("NotificationService", () => {
             for (let i = 0; i < 40; i++) await Promise.resolve();
 
             expect(syncService.syncAll.mock.calls.map((c: any[]) => c[0].database)).toEqual(["a", "b", "a"]);
+        });
+
+        it("syncs the servers with due work, retry delays respected, when the device moves onto Wi-Fi", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" }), fakeApp({ database: "b" })]);
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            expect(syncService.syncAll).not.toHaveBeenCalled();
+
+            syncService.hasDueWork.mockImplementation(async (id: string) => id.endsWith("|a"));
+            wifiCb!();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            expect(syncService.syncAll.mock.calls.map((c: any[]) => [c[0].database, c[2]])).toEqual([["a", { force: false }]]);
+        });
+
+        it("does not sync a server that was not due for notes it already waited for", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" }), fakeApp({ database: "b" })]);
+            syncService.hasDueWork.mockImplementation(async (id: string) => id.endsWith("|a"));
+            syncService.pendingNoteIds.mockImplementation(async (id: string) => (id.endsWith("|b") ? ["waiting"] : []));
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 40; i++) await Promise.resolve();
+            expect(syncService.syncAll.mock.calls.map((c: any[]) => c[0].database)).toEqual(["a"]);
+        });
+
+        it("runs a flush asked during another once after it, not beside it", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
+            syncService.hasDueWork.mockResolvedValue(true);
+            let release!: () => void;
+            syncService.syncAll.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            expect(syncService.syncAll).toHaveBeenCalledTimes(1);
+
+            wifiCb!();
+            wifiCb!();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            expect(syncService.syncAll).toHaveBeenCalledTimes(1);
+            release();
+            for (let i = 0; i < 40; i++) await Promise.resolve();
+            expect(syncService.syncAll).toHaveBeenCalledTimes(2);
         });
 
         it("syncs due work again when the app returns to the foreground", async () => {

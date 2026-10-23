@@ -28,13 +28,21 @@ describe("NetworkService", () => {
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
-  it("calls back when the device goes onto Wi-Fi from another link, not again on Wi-Fi", async () => {
+  it("calls onWifi back when the device, online, moves onto Wi-Fi, not on a return from offline", async () => {
     __setNetworkStatus({ connected: true, connectionType: "cellular" });
-    const cb = vi.fn();
-    await new NetworkService().onReconnect(cb);
+    const wifi = vi.fn();
+    const reconnect = vi.fn();
+    const svc = new NetworkService();
+    await svc.onWifi(wifi);
+    await svc.onReconnect(reconnect);
     __setNetworkStatus({ connected: true, connectionType: "wifi" });
     __setNetworkStatus({ connected: true, connectionType: "wifi" });
-    expect(cb).toHaveBeenCalledTimes(1);
+    expect(wifi).toHaveBeenCalledTimes(1);
+    expect(reconnect).not.toHaveBeenCalled();
+    __setNetworkStatus({ connected: false, connectionType: "none" });
+    __setNetworkStatus({ connected: true, connectionType: "wifi" });
+    expect(wifi).toHaveBeenCalledTimes(1);
+    expect(reconnect).toHaveBeenCalledTimes(1);
   });
 
   it("maps an unexpected connection type to unknown", async () => {

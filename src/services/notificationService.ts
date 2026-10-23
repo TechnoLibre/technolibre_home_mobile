@@ -86,6 +86,8 @@ export class NotificationService {
     }
 
     void this.network.onReconnect(() => this.onNetworkRestore());
+    // Onto Wi-Fi, files held back for it can go: only the servers with due work
+    void this.network.onWifi(() => { void this.flushDue(); });
     // A row that fails on a tap, or anywhere else, moves the next retry
     this.syncService.onRetryScheduled = () => { void this.scheduleRetry(); };
     // A sync ending in the background (one begun in front) changes what the closed app's notice says
@@ -109,7 +111,26 @@ export class NotificationService {
    * its own sync, at most one pass more than there are servers; one still
    * pending for its own reason (a file held for Wi-Fi) is not.
    */
-  private async flushDue(): Promise<void> {
+  private flushDue(): Promise<void> {
+    // One flush at a time: a call during one runs once more after it, not beside it
+    if (this._flushing) {
+      this._flushAgain = true;
+      return this._flushing;
+    }
+    this._flushing = (async () => {
+      do {
+        this._flushAgain = false;
+        await this.flushDueNow();
+      } while (this._flushAgain);
+    })().finally(() => { this._flushing = null; });
+    return this._flushing;
+  }
+
+  /** The flush in progress (see flushDue), and whether a call came during it. */
+  private _flushing: Promise<void> | null = null;
+  private _flushAgain = false;
+
+  private async flushDueNow(): Promise<void> {
     try {
       if (!(await this.network.isOnline())) return;
       const apps = (await this.appService.getApps()).filter((a) => a.database);
@@ -122,7 +143,11 @@ export class NotificationService {
           const due = pass === 0
             ? await this.syncService.hasDueWork(configId)
             : (await this.syncService.pendingNoteIds(configId)).some((id) => !pendingAfter.get(configId)?.has(id));
-          if (!due) continue;
+          if (!due) {
+            // Not due at first: what it already waits for is no news for the next passes
+            if (pass === 0) pendingAfter.set(configId, new Set(await this.syncService.pendingNoteIds(configId)));
+            continue;
+          }
           await this.syncService.syncAll(this.appToCreds(app), undefined, { force: false });
           pendingAfter.set(configId, new Set(await this.syncService.pendingNoteIds(configId)));
           synced = any = true;

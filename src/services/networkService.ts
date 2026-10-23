@@ -69,17 +69,16 @@ export class NetworkService {
   }
 
   /**
-   * Calls cb each time the device goes from offline to online, or onto
-   * Wi-Fi from another link (files held back for Wi-Fi can go then).
-   * Returns a function that stops listening.
+   * Calls cb each time the device goes from offline to online. Returns a
+   * function that stops listening.
    */
   async onReconnect(cb: () => void): Promise<() => void> {
-    let { connected, connectionType } = await this.status();
+    let connected = (await this.status()).connected;
     try {
       const handle = await this.adapter.addListener("networkStatusChange", (status) => {
-        const was = { connected, connectionType };
-        ({ connected, connectionType } = this.normalize(status));
-        if ((!was.connected && connected) || (was.connectionType !== "wifi" && connectionType === "wifi")) cb();
+        const was = connected;
+        connected = this.normalize(status).connected;
+        if (!was && connected) cb();
       });
       return () => { void handle.remove(); };
     } catch {
@@ -87,6 +86,26 @@ export class NetworkService {
       const listener = () => cb();
       window.addEventListener("online", listener);
       return () => window.removeEventListener("online", listener);
+    }
+  }
+
+  /**
+   * Calls cb each time the device, online, moves onto Wi-Fi from another
+   * link (files held back for Wi-Fi can go then); a return from offline is
+   * onReconnect's. Returns a function that stops listening; none where the
+   * plugin is missing.
+   */
+  async onWifi(cb: () => void): Promise<() => void> {
+    let { connected, connectionType } = await this.status();
+    try {
+      const handle = await this.adapter.addListener("networkStatusChange", (status) => {
+        const was = { connected, connectionType };
+        ({ connected, connectionType } = this.normalize(status));
+        if (was.connected && connected && was.connectionType !== "wifi" && connectionType === "wifi") cb();
+      });
+      return () => { void handle.remove(); };
+    } catch {
+      return () => {};
     }
   }
 }
