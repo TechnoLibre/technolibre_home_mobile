@@ -3682,6 +3682,36 @@ describe("SyncService — two-way sync and conflicts", () => {
     expect(writes(server.fetchMock, "project.task").some((v) => "date_deadline" in v)).toBe(false);
   });
 
+  it("takes the note's date as written when an accepted removal leaves another date entry, and sends it nowhere", async () => {
+    const server = odoo();
+    const day = (d: number) => ({ id: `d${d}`, type: "date", params: { date: new Date(2026, 10, d, 9).toISOString() } } as any);
+    const link = await sentTask(server, "tw-rm", { entries: [day(1), { id: "e", type: "text", params: { text: "First", readonly: false } } as any, day(3)] });
+    server.edit("project.task", link.resId, { date_deadline: false });
+    await svc.syncAll(CREDS);
+    expect((await svc.dateProposals("tw-rm")).map((p) => p.to)).toEqual([null]);
+    await svc.answerDateProposal("tw-rm", link.id, true);
+    server.fetchMock.mockClear();
+    await svc.pushNote(CREDS, "tw-rm", { userInitiated: true });
+    expect(writes(server.fetchMock, "project.task").some((v) => "date_deadline" in v)).toBe(false);
+    expect(server.records["project.task"].get(link.resId).date_deadline).toBe(false);
+  });
+
+  it("sends the record's text with the accepted date line at the next push", async () => {
+    const server = odoo();
+    const link = await sentTask(server, "tw-line", { entries: [
+      { id: "d", type: "date", params: { date: new Date(2026, 10, 1, 9).toISOString() } } as any,
+      { id: "e", type: "text", params: { text: "First", readonly: false } } as any,
+    ] });
+    server.edit("project.task", link.resId, { date_deadline: "2026-11-09" });
+    await svc.syncAll(CREDS);
+    await svc.answerDateProposal("tw-line", link.id, true);
+    expect((await db.getNotePerServerStatus("tw-line"))[CONFIG_ID]).toBe("pending");
+    await svc.syncAll(CREDS);
+    const record = server.records["project.task"].get(link.resId);
+    expect(record.description).toContain(new Date(2026, 10, 9, 9).toISOString().slice(0, 10));
+    expect(record.date_deadline).toBe("2026-11-09");
+  });
+
   it("leaves a note synced when a background sync pulls a change while pushing it", async () => {
     const server = odoo();
     const link = await sentTask(server, "tw-bg");

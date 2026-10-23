@@ -2811,9 +2811,11 @@ export class SyncService {
 
   /**
    * Answers a link's date proposal. accept puts the server's day in the
-   * note (none removes its date), to reach the note's other records at the
-   * next push; either way the link's base takes the server's day, so that
-   * day is not proposed again, and a later change of it is.
+   * note (none removes its first date entry), and every live server of the
+   * note gets it at the next push: the others the date, this one the date
+   * line of its text, its base taking the note's date as written. Either way
+   * the link's base takes the server's day, so that day is not proposed
+   * again, and a later change of it is.
    */
   async answerDateProposal(noteId: string, linkId: string, accept: boolean): Promise<void> {
     let taken = false;
@@ -2826,20 +2828,20 @@ export class SyncService {
       configId = link.configId;
       const base = baseOf(link);
       const to = proposal.to ?? null;
+      let localDate = base?.local.date ?? null;
       if (accept) {
-        await this.db.updateNote(noteId, applyValues(note, { date: to }, uuidv4));
+        const next = applyValues(note, { date: to }, uuidv4);
+        await this.db.updateNote(noteId, next);
+        // The note's date as written: removing one date entry leaves the next one as its date
+        const named = await this.named(next);
+        localDate = localValues(named, this.buildHtml(named.entries)).date ?? null;
         taken = true;
       }
-      const next = base
-        ? { local: accept ? { ...base.local, date: to } : base.local, remote: { ...base.remote, date: to } }
-        : base;
+      const next = base ? { local: { ...base.local, date: localDate }, remote: { ...base.remote, date: to } } : base;
       await this.db.setNoteLinkParams(link.id, { ...link.params, base: next, dateProposal: null });
     });
-    if (taken) {
-      const others = await this.db.getLiveLinkConfigIds(noteId, configId);
-      const here = await this.hasOtherLiveLink(noteId, configId, (l) => l.id === linkId) ? [configId] : [];
-      await this.db.markNotePendingForConfigs(noteId, [...others, ...here]);
-    }
+    // Taken, the note's date line goes to every record of it, this one's included
+    if (taken) await this.db.markNotePendingForConfigs(noteId, await this.db.getLiveLinkConfigIds(noteId));
     await this.db.refreshNoteSyncStatus(noteId);
   }
 
