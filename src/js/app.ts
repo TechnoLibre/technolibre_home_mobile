@@ -31,6 +31,7 @@ import { encryptExistingCredentials } from "../services/migrations/encryptExisti
 import { addEditableReposTable } from "../services/migrations/addEditableReposTable";
 import { addNoteLinksTable } from "../services/migrations/addNoteLinksTable";
 import { addSyncOutboxTable } from "../services/migrations/addSyncOutboxTable";
+import { addNoteLinkParams } from "../services/migrations/addNoteLinkParams";
 import { addSyncTargetTables } from "../services/migrations/addSyncTargetTables";
 import { RepoExtractorService } from "../services/repoExtractorService";
 import { RepoEditService } from "../services/repoEditService";
@@ -238,6 +239,11 @@ async function startApp() {
 			version: 2026102203,
 			description: "Tables remote_records_cache et sync_target_prefs : records en cache et cibles retenues par serveur",
 			run: addSyncTargetTables,
+		},
+		{
+			version: 2026102301,
+			description: "Colonne note_links.params_json : record visé, type, échéance et assigné d'une activité",
+			run: addNoteLinkParams,
 		},
 	], setBootNote);
 

@@ -13,7 +13,37 @@ import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { Events } from "../../constants/events";
 import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryTextParams, NoteEntryVideoParams } from "../../models/note";
-import { KINDS, PushOptions, RemoteRecordDeletedError, SyncCredentials, TargetKind, TARGET_KINDS } from "../../services/syncService";
+import {
+	ACTIVITY_CREATE,
+	KINDS,
+	localDay,
+	PushOptions,
+	RemoteRecordDeletedError,
+	SyncCredentials,
+	TargetKind,
+	TARGET_KINDS,
+	USER_MODEL,
+} from "../../services/syncService";
+import {
+	ActivityRow,
+	ActivitySection,
+	planActivities,
+	buildActivitySection,
+	canAddActivity,
+	canDeferRecord,
+	isEditable,
+	loadingSection,
+	ModelOption,
+	newDraftRow,
+	rowModel,
+	rowTypes,
+	sectionHasWork,
+	withModel,
+	withRecords,
+	withType,
+	withUsers,
+} from "../../services/activityPicker";
+import type { ActivityTypeChoice } from "../../services/odoo/activityTypeService";
 import {
 	applyTaskTargets,
 	buildTargetRows,
@@ -190,11 +220,124 @@ export class NoteComponent extends EnhancedComponent {
 										</div>
 									</t>
 								</t>
+								<t t-set="act" t-value="state.activities[cfg.id]"/>
+								<div t-if="act and state.selectedConfigIds.includes(cfg.id)" class="breadcrumb__config-kind breadcrumb__config-activities">
+									<p class="breadcrumb__config-kind-label"><t t-esc="t('label.sync_kind_activity')"/></p>
+									<p t-if="act.loading" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_loading')"/></p>
+									<p t-elif="act.failed" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="act.failed"/>
+									<t t-else="">
+										<t t-foreach="act.rows" t-as="arow" t-key="arow.key">
+											<div t-if="!(arow.removed and arow.status === 'draft')" t-att-class="'breadcrumb__config-activity' + (arow.removed ? ' breadcrumb__config-activity--removed' : '')">
+												<t t-if="isActivityEditable(arow)">
+													<p t-if="arow.reason and arow.reason !== 'incomplete'" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="t('label.sync_target_reason_' + arow.reason, { id: '' })"/>
+													<label class="breadcrumb__config-note" t-att-for="'sync-act-model-' + cfg_index + '-' + arow_index"><t t-esc="t('label.sync_activity_model')"/></label>
+													<select
+														class="breadcrumb__config-select"
+														t-att-id="'sync-act-model-' + cfg_index + '-' + arow_index"
+														t-on-change="(ev) => this.setActivityModel(cfg, arow.key, ev.target.value)"
+													>
+														<t t-foreach="act.models" t-as="m" t-key="m.model">
+															<option t-att-value="m.model" t-att-selected="arow.model === m.model" t-att-disabled="m.unusable" t-esc="activityModelLabel(m)"/>
+														</t>
+														<option value="__advanced" t-att-selected="arow.model === '__advanced'"><t t-esc="t('label.sync_activity_model_advanced')"/></option>
+													</select>
+													<input
+														t-if="arow.model === '__advanced'"
+														type="text"
+														class="breadcrumb__config-filter"
+														autocapitalize="off"
+														t-att-placeholder="t('label.sync_activity_model_technical')"
+														t-att-aria-label="t('label.sync_activity_model_technical')"
+														t-att-value="arow.advancedModel"
+														t-on-input="(ev) => this.setActivityAdvancedModel(cfg, arow.key, ev.target.value)"
+													/>
+													<label class="breadcrumb__config-note" t-att-for="'sync-act-record-' + cfg_index + '-' + arow_index"><t t-esc="t('label.sync_activity_record')"/></label>
+													<input
+														type="search"
+														class="breadcrumb__config-filter"
+														t-att-placeholder="t('label.sync_activity_record_search')"
+														t-att-aria-label="t('label.sync_activity_record_search')"
+														t-att-value="arow.recordQuery"
+														t-on-input="(ev) => this.searchActivityRecords(cfg, arow.key, ev.target.value)"
+													/>
+													<select
+														class="breadcrumb__config-select"
+														t-att-id="'sync-act-record-' + cfg_index + '-' + arow_index"
+														t-on-change="(ev) => this.setActivityField(cfg.id, arow.key, 'recordSelection', ev.target.value)"
+													>
+														<option value="" t-att-selected="arow.recordSelection === ''"><t t-esc="t('label.sync_activity_record_choose')"/></option>
+														<option t-if="canDeferActivityRecord(act, arow)" value="later" t-att-selected="arow.recordSelection === 'later'"><t t-esc="t('label.sync_target_later')"/></option>
+														<t t-foreach="arow.records" t-as="opt" t-key="opt.value">
+															<option t-att-value="opt.value" t-att-selected="arow.recordSelection === opt.value" t-esc="activityRecordLabel(act, arow, opt)"/>
+														</t>
+													</select>
+													<p t-if="arow.recordsError" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="arow.recordsError"/>
+													<p t-elif="arow.recordsFromCache and !act.offline" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_from_cache')"/></p>
+													<label class="breadcrumb__config-note" t-att-for="'sync-act-type-' + cfg_index + '-' + arow_index"><t t-esc="t('label.sync_activity_type')"/></label>
+													<select
+														class="breadcrumb__config-select"
+														t-att-id="'sync-act-type-' + cfg_index + '-' + arow_index"
+														t-on-change="(ev) => this.setActivityType(cfg.id, arow.key, ev.target.value)"
+													>
+														<option value="" t-att-selected="arow.typeSelection === ''"><t t-esc="t('label.sync_activity_type_default')"/></option>
+														<t t-foreach="activityTypeOptions(act, arow)" t-as="ty" t-key="ty.id">
+															<option t-att-value="'' + ty.id" t-att-selected="arow.typeSelection === '' + ty.id" t-esc="ty.name"/>
+														</t>
+													</select>
+													<label class="breadcrumb__config-note" t-att-for="'sync-act-deadline-' + cfg_index + '-' + arow_index"><t t-esc="t('label.sync_activity_deadline')"/></label>
+													<input
+														type="date"
+														class="breadcrumb__config-filter"
+														t-att-id="'sync-act-deadline-' + cfg_index + '-' + arow_index"
+														t-att-value="arow.deadline"
+														t-on-change="(ev) => this.setActivityDeadline(cfg.id, arow.key, ev.target.value)"
+													/>
+													<label class="breadcrumb__config-note" t-att-for="'sync-act-user-' + cfg_index + '-' + arow_index"><t t-esc="t('label.sync_activity_user')"/></label>
+													<input
+														type="search"
+														class="breadcrumb__config-filter"
+														t-att-placeholder="t('label.sync_activity_user_search')"
+														t-att-aria-label="t('label.sync_activity_user_search')"
+														t-att-value="arow.userQuery"
+														t-on-input="(ev) => this.searchActivityUsers(cfg, arow.key, ev.target.value)"
+													/>
+													<select
+														class="breadcrumb__config-select"
+														t-att-id="'sync-act-user-' + cfg_index + '-' + arow_index"
+														t-on-change="(ev) => this.setActivityField(cfg.id, arow.key, 'userSelection', ev.target.value)"
+													>
+														<option value="me" t-att-selected="arow.userSelection === 'me'"><t t-esc="t('label.sync_activity_user_me')"/></option>
+														<t t-foreach="arow.users" t-as="opt" t-key="opt.value">
+															<option t-att-value="opt.value" t-att-selected="arow.userSelection === opt.value" t-esc="opt.name"/>
+														</t>
+													</select>
+												</t>
+												<t t-else="">
+													<p class="breadcrumb__config-note" t-esc="activitySummary(act, arow)"/>
+													<p t-if="arow.removed" class="breadcrumb__config-note"><t t-esc="t('label.sync_activity_status_removed')"/></p>
+													<p t-elif="arow.status === 'stuck'" class="breadcrumb__config-note breadcrumb__config-note--warn"><t t-esc="t('label.sync_target_stuck')"/></p>
+													<p t-else="" class="breadcrumb__config-note" t-esc="t('label.sync_activity_status_' + arow.status)"/>
+												</t>
+												<button
+													t-if="arow.status === 'draft' or arow.status === 'choose' or arow.status === 'stuck'"
+													type="button"
+													class="breadcrumb__config-cancel"
+													t-on-click="() => this.toggleActivityRemoved(cfg.id, arow.key)"
+												><t t-esc="t(arow.removed ? 'label.sync_activity_keep' : 'label.sync_activity_remove')"/></button>
+											</div>
+										</t>
+										<button
+											type="button"
+											class="breadcrumb__config-cancel"
+											t-on-click="() => this.addActivity(cfg)"
+										><t t-esc="t('label.sync_activity_add')"/></button>
+									</t>
+								</div>
 							</t>
 							<button
 								type="button"
 								class="breadcrumb__config-confirm"
-								t-att-disabled="state.selectedConfigIds.length === 0 or pickerLoading"
+								t-att-disabled="state.selectedConfigIds.length === 0 or pickerLoading or state.confirming"
 								t-on-click="() => this.confirmConfigSelection()"
 							><t t-esc="t('button.synchronise')"/></button>
 							<button
@@ -404,8 +547,12 @@ export class NoteComponent extends EnhancedComponent {
 			syncConfigs: [] as SyncConfig[],
 			selectedConfigIds: [] as string[],
 			showConfigPicker: false,
+			/** The picker's choices are being recorded: Synchronise is off until done. */
+			confirming: false,
 			/** Per sync config id and kind: what the picker shows for the note's record there. */
 			targets: {} as Record<string, Record<TargetKind, TargetRow>>,
+			/** Per sync config id: the note's activities there, and those being added. */
+			activities: {} as Record<string, ActivitySection>,
 			showOptionsMenu: false,
 			debugDialog: { visible: false, message: "" },
 			errorDialog: { visible: false, message: "" },
@@ -534,15 +681,19 @@ export class NoteComponent extends EnhancedComponent {
 
 	/**
 	 * Opens the picker and fills, per server and kind, the note's state and
-	 * the choices. The rows are reset to "loading" before the picker shows,
-	 * so Synchronise stays disabled until every selected server is known.
+	 * the choices, and per server its activities. The rows are reset to
+	 * "loading" before the picker shows, so Synchronise stays disabled until
+	 * every selected server is known.
 	 */
 	private async showPicker(configs: SyncConfig[]) {
 		const targets: Record<string, Record<TargetKind, TargetRow>> = {};
+		const activities: Record<string, ActivitySection> = {};
 		for (const cfg of configs) {
 			targets[cfg.id] = Object.fromEntries(PICKER_KINDS.map((k) => [k, loadingRow(k)])) as Record<TargetKind, TargetRow>;
+			activities[cfg.id] = loadingSection();
 		}
 		this.state.targets = targets;
+		this.state.activities = activities;
 		this.state.showConfigPicker = true;
 		await this.loadTaskTargets(configs);
 	}
@@ -553,7 +704,7 @@ export class NoteComponent extends EnhancedComponent {
 	/** Whether the picker still waits for a selected server's states or choices. */
 	get pickerLoading(): boolean {
 		return this.state.selectedConfigIds.some((id: string) =>
-			PICKER_KINDS.some((k) => this.state.targets[id]?.[k]?.loading));
+			PICKER_KINDS.some((k) => this.state.targets[id]?.[k]?.loading) || this.state.activities[id]?.loading);
 	}
 
 	kindRows(configId: string): TargetRow[] {
@@ -561,11 +712,12 @@ export class NoteComponent extends EnhancedComponent {
 		return rows ? PICKER_KINDS.map((k) => rows[k]) : [];
 	}
 
-	/** Whether a server can be selected: still loading, or it can receive something. */
+	/** Whether a server can be selected: still loading, or it can receive something, an activity included. */
 	isServerUsable(configId: string): boolean {
 		const rows = this.state.targets[configId];
-		if (!rows || PICKER_KINDS.some((k) => rows[k].loading)) return true;
-		return serverUsable(rows);
+		const section = this.state.activities[configId];
+		if (!rows || PICKER_KINDS.some((k) => rows[k].loading) || section?.loading) return true;
+		return serverUsable(rows, sectionHasWork(section) || canAddActivity(section));
 	}
 
 	projectOptions(row: TargetRow): ProjectOption[] {
@@ -632,14 +784,174 @@ export class NoteComponent extends EnhancedComponent {
 		const load = ++this._targetsLoad;
 		const noteId = this.state.noteId;
 		const online = await networkService.isOnline();
+		const firstDate = this.state.note.entries.find((e: NoteEntry) => e.type === "date");
+		const noteDay = localDay(firstDate ? (firstDate.params as NoteEntryDateParams).date : null);
+		const today = localDay(new Date().toISOString())!;
 		await Promise.all(configs.map(async (cfg) => {
-			const rows = await buildTargetRows(this.syncService, noteId, cfg.id, () => this.credsFor(cfg), online);
+			const creds = () => this.credsFor(cfg);
+			const [rows, section] = await Promise.all([
+				buildTargetRows(this.syncService, noteId, cfg.id, creds, online),
+				buildActivitySection(this.syncService, noteId, cfg.id, creds, online, noteDay, today),
+			]);
 			if (load !== this._targetsLoad || this.state.noteId !== noteId) return;
 			this.state.targets[cfg.id] = rows;
-			if (!serverUsable(rows)) {
+			this.state.activities[cfg.id] = section;
+			for (const row of section.rows) {
+				if (row.status !== "choose") continue;
+				this.searchActivityRecords(cfg, row.key, "", 0);
+				this.searchActivityUsers(cfg, row.key, "", 0);
+			}
+			if (!serverUsable(rows, sectionHasWork(section) || canAddActivity(section))) {
 				this.state.selectedConfigIds = this.state.selectedConfigIds.filter((id: string) => id !== cfg.id);
 			}
 		}));
+	}
+
+	// ── Activities in the picker ────────────────────────────────────────────
+
+	isActivityEditable(row: ActivityRow): boolean {
+		return isEditable(row);
+	}
+
+	canDeferActivityRecord(section: ActivitySection, row: ActivityRow): boolean {
+		return canDeferRecord(section, row);
+	}
+
+	activityTypeOptions(section: ActivitySection, row: ActivityRow): ActivityTypeChoice[] {
+		return rowTypes(section, row);
+	}
+
+	/** A model's name, with why the server cannot take an activity on it. */
+	activityModelLabel(option: ModelOption): string {
+		const name = this.t(`label.sync_activity_model_${option.model.replace(/\./g, "_")}`);
+		return option.unusable ? `${name} — ${this.t("label.sync_target_unusable_" + option.unusable)}` : name;
+	}
+
+	/** A record option's name; the note's own task or opportunity is named as such. */
+	activityRecordLabel(section: ActivitySection, row: ActivityRow, option: ProjectOption): string {
+		const own = section.shortcuts.find((s) => s.model === rowModel(row) && String(s.resId) === option.value);
+		return own ? this.t(`label.sync_activity_this_${own.kind}`, { id: own.resId }) : option.name;
+	}
+
+	/** One line describing an activity the note has: its type, record, deadline and user. */
+	activitySummary(section: ActivitySection, row: ActivityRow): string {
+		const t = row.target;
+		const own = section.shortcuts.find((s) => s.model === t.resModel && s.resId === t.resId);
+		const record = own ? this.t(`label.sync_activity_this_${own.kind}`, { id: own.resId })
+			: t.resName || `${t.resModel} #${t.resId ?? "?"}`;
+		return [
+			t.typeName || this.t("label.sync_activity_type_default"),
+			record,
+			t.deadline,
+			t.userName || this.t("label.sync_activity_user_me"),
+		].filter(Boolean).join(" · ");
+	}
+
+	private activityRow(configId: string, key: string): { section: ActivitySection; index: number } | null {
+		const section = this.state.activities[configId];
+		const index = section?.rows.findIndex((r) => r.key === key) ?? -1;
+		return index >= 0 ? { section, index } : null;
+	}
+
+	/** Bumped by each new draft, for its key. */
+	private _activityDrafts = 0;
+
+	addActivity(cfg: SyncConfig) {
+		const section = this.state.activities[cfg.id];
+		if (!section || section.loading || section.failed) return;
+		const row = newDraftRow(section, `draft-${++this._activityDrafts}`);
+		section.rows.push(row);
+		this.searchActivityRecords(cfg, row.key, "", 0);
+		this.searchActivityUsers(cfg, row.key, "", 0);
+	}
+
+	toggleActivityRemoved(configId: string, key: string) {
+		const found = this.activityRow(configId, key);
+		if (found) found.section.rows[found.index].removed = !found.section.rows[found.index].removed;
+	}
+
+	setActivityModel(cfg: SyncConfig, key: string, value: string) {
+		const found = this.activityRow(cfg.id, key);
+		if (!found) return;
+		found.section.rows[found.index] = withModel(found.section, found.section.rows[found.index], value);
+		this.searchActivityRecords(cfg, key, "", 0);
+	}
+
+	setActivityAdvancedModel(cfg: SyncConfig, key: string, value: string) {
+		const found = this.activityRow(cfg.id, key);
+		if (!found) return;
+		const row = found.section.rows[found.index];
+		found.section.rows[found.index] = withModel(found.section, { ...row, advancedModel: value }, row.model);
+		this.searchActivityRecords(cfg, key, "");
+	}
+
+	setActivityType(configId: string, key: string, value: string) {
+		const found = this.activityRow(configId, key);
+		if (found) found.section.rows[found.index] = withType(found.section, found.section.rows[found.index], value);
+	}
+
+	setActivityDeadline(configId: string, key: string, value: string) {
+		const found = this.activityRow(configId, key);
+		if (!found) return;
+		const row = found.section.rows[found.index];
+		row.deadline = value;
+		row.deadlineEdited = true;
+	}
+
+	setActivityField(configId: string, key: string, field: "recordSelection" | "userSelection", value: string) {
+		const found = this.activityRow(configId, key);
+		if (found) found.section.rows[found.index][field] = value;
+	}
+
+	/** Pending record or user search per picker row, run after the last keystroke. */
+	private _activitySearch = new Map<string, ReturnType<typeof setTimeout>>();
+
+	/**
+	 * Searches, online or in the cache, the records of a row's model (what)
+	 * or the server's users, after delayMs; a result arriving after a newer
+	 * keystroke, a change of model, or a rebuild of the picker is dropped.
+	 */
+	private searchActivity(cfg: SyncConfig, key: string, what: "records" | "users", text: string, delayMs: number) {
+		const found = this.activityRow(cfg.id, key);
+		if (!found) return;
+		const row = found.section.rows[found.index];
+		if (what === "records") row.recordQuery = text;
+		else row.userQuery = text;
+		const model = what === "records" ? rowModel(row) : USER_MODEL;
+		if (!model) return;
+		const timerKey = `${cfg.id}|${key}|${what}`;
+		const pending = this._activitySearch.get(timerKey);
+		if (pending) clearTimeout(pending);
+		const load = this._targetsLoad;
+		this._activitySearch.set(timerKey, setTimeout(async () => {
+			this._activitySearch.delete(timerKey);
+			const current = () => {
+				const again = this.activityRow(cfg.id, key);
+				if (load !== this._targetsLoad || !again) return null;
+				const r = again.section.rows[again.index];
+				const sameQuery = what === "records" ? r.recordQuery === text && rowModel(r) === model : r.userQuery === text;
+				return sameQuery ? again : null;
+			};
+			try {
+				const online = await networkService.isOnline();
+				const result = await this.syncService.recordSearch(model).search(await this.credsFor(cfg), text, { online });
+				const again = current();
+				if (!again) return;
+				const r = again.section.rows[again.index];
+				again.section.rows[again.index] = what === "records" ? withRecords(again.section, r, result) : withUsers(r, result);
+			} catch (e: unknown) {
+				const again = current();
+				if (again && what === "records") again.section.rows[again.index].recordsError = e instanceof Error ? e.message : String(e);
+			}
+		}, delayMs));
+	}
+
+	searchActivityRecords(cfg: SyncConfig, key: string, text: string, delayMs = 300) {
+		this.searchActivity(cfg, key, "records", text, delayMs);
+	}
+
+	searchActivityUsers(cfg: SyncConfig, key: string, text: string, delayMs = 300) {
+		this.searchActivity(cfg, key, "users", text, delayMs);
 	}
 
 	/** Credentials of a sync target, from its application. */
@@ -721,15 +1033,27 @@ export class NoteComponent extends EnhancedComponent {
 		}
 	}
 
+	/**
+	 * Records the picker's choices, then pushes. A second tap while they are
+	 * being recorded does nothing: each draft activity would otherwise be
+	 * queued twice, as two activities on the server.
+	 */
 	async confirmConfigSelection() {
-		if (this.pickerLoading) return;
+		if (this.pickerLoading || this.state.confirming) return;
 		const selected = this.state.syncConfigs.filter((c) => this.state.selectedConfigIds.includes(c.id));
 		if (selected.length === 0) return;
+		const ids = selected.map((c) => c.id);
+		this.state.confirming = true;
 		try {
-			await applyTaskTargets(this.syncService, this.state.noteId, selected.map((c) => c.id), this.state.targets);
+			const work = (id: string) => sectionHasWork(this.state.activities[id]);
+			const activities = planActivities(this.syncService, this.state.noteId, ids, this.state.activities);
+			await applyTaskTargets(this.syncService, this.state.noteId, ids, this.state.targets, work);
+			for (const record of activities) await record();
 		} catch (e: unknown) {
 			this.showErrorDialog(e instanceof Error ? e.message : String(e));
 			return;
+		} finally {
+			this.state.confirming = false;
 		}
 		this.state.showConfigPicker = false;
 		await this.saveSyncSelection(this.state.selectedConfigIds);
@@ -785,6 +1109,14 @@ export class NoteComponent extends EnhancedComponent {
 				else if (link?.remoteState === "deleted" && !op) { if (!deleted.includes(cfg)) deleted.push(cfg); }
 				else pushable = true;
 			}
+			// An activity live or queued waits for the network; a blocked one for the user
+			for (const activity of await this.syncService.activityStates(this.state.noteId, cfg.id)) {
+				if (activity.state === "linked" || activity.state === "choose") pushable = true;
+				else if (activity.state === "queued") {
+					if (activity.op.status === "blocked") { if (!blocked.includes(cfg)) blocked.push(cfg); }
+					else pushable = true;
+				}
+			}
 			if (pushable) queued.push(cfg);
 		}
 		if (deleted.length > 0) {
@@ -821,13 +1153,14 @@ export class NoteComponent extends EnhancedComponent {
 	 * user: a kind left to choose later marks the server pending; an
 	 * ambiguous creation asks which record to link, then pushes again with
 	 * it, so the next failure is handled the same way (at most once per
-	 * kind); a record deleted on the server asks whether to recreate it,
+	 * kind and activity); a record deleted on the server asks whether to recreate it,
 	 * through the picker. Any other failure is raised.
 	 */
 	private async doPushCore(cfg: SyncConfig): Promise<void> {
 		const creds = await this.credsFor(cfg);
 		let options: PushOptions = { userInitiated: true };
-		for (let round = 0; round <= TARGET_KINDS.length; round++) {
+		const activityOps = await this.syncService.outbox.findAll(this.state.noteId, cfg.id, ACTIVITY_CREATE);
+		for (let round = 0; round <= TARGET_KINDS.length + activityOps.length; round++) {
 			try {
 				await this.syncService.pushNote(creds, this.state.noteId, options);
 				return;
@@ -860,11 +1193,12 @@ export class NoteComponent extends EnhancedComponent {
 	 * Several records carry this note's reference on the server: the user
 	 * picks the one to link, by number; cancelling leaves the creation
 	 * blocked and raises. The error's opKind says which kind of record (a
-	 * task when unknown).
+	 * task when unknown); for an activity, its opId which creation.
 	 */
-	private async pickAmbiguousRecord(e: OutboxBlockedError): Promise<{ kind: TargetKind; resId: number }> {
+	private async pickAmbiguousRecord(e: OutboxBlockedError): Promise<NonNullable<PushOptions["adopt"]>> {
 		const ids = e.candidates;
-		const kind = TARGET_KINDS.find((k) => KINDS[k].opKind === e.opKind) ?? "task";
+		const kind = e.opKind === ACTIVITY_CREATE ? "activity"
+			: TARGET_KINDS.find((k) => KINDS[k].opKind === e.opKind) ?? "task";
 		const { value, cancelled } = await Dialog.prompt({
 			title: "Plusieurs enregistrements correspondent",
 			message: `${e.message}\nNuméro de l'enregistrement à lier à cette note (${ids.map((id) => `#${id}`).join(", ")}) :`,
@@ -874,7 +1208,7 @@ export class NoteComponent extends EnhancedComponent {
 		if (cancelled || !ids.includes(picked)) {
 			throw new Error(`Création bloquée : aucun enregistrement choisi parmi ${ids.map((id) => `#${id}`).join(", ")}.`);
 		}
-		return { kind, resId: picked };
+		return { kind, resId: picked, ...(e.opId ? { opId: e.opId } : {}) };
 	}
 
 	private async doPush(cfg: SyncConfig) {

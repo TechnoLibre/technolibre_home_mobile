@@ -1691,6 +1691,51 @@ export const FEATURE_TREE: FeatureNode[] = [
                 files: ["src/services/odoo/recordSearchService.ts"],
             },
             {
+                id: "sync.activity",
+                label: { en: "Activity target", fr: "Cible activité" },
+                description: {
+                    en: "Schedule activities from a note on any record of a server.",
+                    fr: "Planifier des activités depuis une note sur n'importe quel record d'un serveur.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/activityPicker.test.ts",
+                    "src/__tests__/activityTypeService.test.ts",
+                ],
+                howItWorks: {
+                    en: "The picker lists, per server, the note's activities and adds new "
+                        + "ones: a model from a fixed list probed for activity_ids (or a "
+                        + "technical name), a record found by name_search (the note's own task "
+                        + "or opportunity first), a type from mail.activity.type, a due date "
+                        + "(the note's date, else today plus the type's delay) and a user "
+                        + "(the connected one by default). A note can have several per server, "
+                        + "each its own activity.create row in the outbox and its own "
+                        + "note_links row (kind activity, choices in params_json). The create "
+                        + "passes default_res_model in the context, so no ir.model read is "
+                        + "needed; the record, type and user are checked first. Later pushes "
+                        + "write summary and note; a done note calls action_feedback and the "
+                        + "link turns done. An activity gone on the server is kept as history.",
+                    fr: "Le sélecteur liste, par serveur, les activités de la note et en "
+                        + "ajoute : un modèle d'une liste fixe sondée sur activity_ids (ou un "
+                        + "nom technique), un record trouvé par name_search (la tâche ou "
+                        + "l'opportunité de la note d'abord), un type de mail.activity.type, "
+                        + "une échéance (la date de la note, sinon aujourd'hui plus le délai "
+                        + "du type) et un utilisateur (celui connecté par défaut). Une note peut "
+                        + "en avoir plusieurs par serveur, chacune avec sa ligne "
+                        + "activity.create dans la file et sa ligne note_links (type activity, "
+                        + "choix dans params_json). Le create passe default_res_model dans le "
+                        + "contexte : aucune lecture d'ir.model. Le record, le type et "
+                        + "l'utilisateur sont vérifiés avant. Les envois suivants écrivent "
+                        + "summary et note ; une note faite appelle action_feedback et le lien "
+                        + "passe à fait. Une activité disparue du serveur reste en historique.",
+                },
+                dependsOn: ["sync.lead", "sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/activityPicker.ts", "src/services/odoo/activityTypeService.ts"],
+            },
+            {
                 id: "sync.http-policy",
                 label: { en: "Unencrypted http", fr: "http non chiffré" },
                 description: {
@@ -1833,8 +1878,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "backfilled from odoo_id; older ids gain the database; legacy global "
                         + "pending turned per-server; pull cursors), addSyncOutboxTable "
                         + "(sync_outbox, server_capabilities, note_links.client_uuid), "
-                        + "addSyncTargetTables (remote_records_cache, sync_target_prefs). "
-                        + "Each migration is "
+                        + "addSyncTargetTables (remote_records_cache, sync_target_prefs), "
+                        + "addNoteLinkParams (note_links.params_json). Each migration is "
                         + "idempotent and re-runs safely on app start.",
                     fr: "Étapes de schéma versionnées qui ont fait grandir la sync : "
                         + "addSyncColumns (odoo_id + sync_status initiaux), addSyncConfigId "
@@ -1844,8 +1889,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "d'odoo_id ; les anciens ids reçoivent la base ; l'ancien pending "
                         + "global devient par serveur ; curseurs de pull), addSyncOutboxTable "
                         + "(sync_outbox, server_capabilities, note_links.client_uuid), "
-                        + "addSyncTargetTables (remote_records_cache, sync_target_prefs). "
-                        + "Chaque migration est "
+                        + "addSyncTargetTables (remote_records_cache, sync_target_prefs), "
+                        + "addNoteLinkParams (note_links.params_json). Chaque migration est "
                         + "idempotente et se ré-exécute sans risque au boot.",
                 },
                 dependsOn: ["data.migrations"],
@@ -1858,6 +1903,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addNoteLinksTable.ts",
                     "src/services/migrations/addSyncOutboxTable.ts",
                     "src/services/migrations/addSyncTargetTables.ts",
+                    "src/services/migrations/addNoteLinkParams.ts",
                 ],
                 tests: [
                     "src/__tests__/migrations.test.ts",

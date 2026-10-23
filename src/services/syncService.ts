@@ -1,8 +1,10 @@
-import { DatabaseService, NoteLink, OutboxOp } from "./databaseService";
+import { DatabaseService, NoteLink, NoteLinkKind, OutboxOp } from "./databaseService";
 import { OutboxBlockedError, OutboxRetryLaterError, OutboxService } from "./outboxService";
 import { CapabilityService } from "./odoo/capabilityService";
 import { PROJECT_MODEL, ProjectService } from "./odoo/projectService";
 import { PARTNER_MODEL, RecordSearchService } from "./odoo/recordSearchService";
+import { ACTIVITY_TYPE_MODEL, ActivityTypeService } from "./odoo/activityTypeService";
+import { unusableReason } from "./odoo/capabilityService";
 import { Application } from "../models/application";
 import {
   Note,
@@ -67,6 +69,13 @@ const TARGET_KINDS_PREF = "targets";
 /** Model of a note's opportunity. */
 const LEAD_MODEL = "crm.lead";
 
+/** Outbox kind of the creation of one of a note's activities on one server. */
+export const ACTIVITY_CREATE = "activity.create";
+
+/** Model of a note's activities, and of the users one is assigned to. */
+export const ACTIVITY_MODEL = "mail.activity";
+export const USER_MODEL = "res.users";
+
 /**
  * What a kind of target is on the server: its model, its creation's outbox
  * kind, its tag model, the params a choice sets (choiceKeys), and the
@@ -123,6 +132,41 @@ export interface LeadTarget {
 
 export type Target = TaskTarget | LeadTarget;
 
+/**
+ * One activity a note schedules on one server: on record resId of
+ * resModel (null: not chosen yet, the creation waits as "incomplete"), of
+ * type typeId, due on deadline ("YYYY-MM-DD"), assigned to userId; a null
+ * type, deadline or user leaves the server's default (its default type,
+ * today, the connected user). The names are kept for display offline.
+ * Set at creation only: later writes send the note's title and text.
+ */
+export interface ActivityTarget {
+  resModel: string;
+  resId: number | null;
+  resName?: string | null;
+  typeId: number | null;
+  typeName?: string | null;
+  deadline: string | null;
+  userId: number | null;
+  userName?: string | null;
+}
+
+/**
+ * Where one of a note's activities stands on one server:
+ * - linked: the activity exists; a push writes it, or marks it done when
+ *   the note is done;
+ * - done / deleted: marked done by the app, or gone on the server (done
+ *   or cancelled there); kept as history, never written;
+ * - queued: its creation is in the outbox, due, retrying or blocked for a
+ *   reason the next tap settles (ambiguous);
+ * - choose: its creation waits for a choice: incomplete (no record yet),
+ *   or blocked for a reason in CHOOSE_AGAIN_REASONS.
+ */
+export type ActivityState =
+  | { state: "linked" | "done" | "deleted"; link: NoteLink; target: ActivityTarget }
+  | { state: "queued"; op: OutboxOp; target: ActivityTarget }
+  | { state: "choose"; op: OutboxOp; reason: string; target: ActivityTarget };
+
 export interface PushOptions {
   recreateDeleted?: boolean;
   /**
@@ -136,18 +180,27 @@ export interface PushOptions {
   force?: boolean;
   /** Push this kind only (an outbox handler runs its own operation). */
   onlyKind?: TargetKind;
-  /** Settles an "ambiguous" creation of this kind with the record picked. */
-  adopt?: { kind: TargetKind; resId: number };
+  /** Run this activity creation only (its outbox handler). */
+  onlyActivityOp?: string;
+  /**
+   * Settles an "ambiguous" creation with the record picked: the creation
+   * of a kind, or the activity creation opId.
+   */
+  adopt?: { kind: TargetKind | "activity"; resId: number; opId?: string };
   /** adopt for the note's task. */
   adoptTaskId?: number;
 }
 
 /**
- * Why a creation waits for the user to choose again: the project or
- * partner is gone or hidden from the user, or the server refused the
- * creation (refused: rights, a constraint).
+ * Why a creation waits for the user to choose again: the project,
+ * partner, record, activity type or user it names is gone or hidden from
+ * the user, the model of an activity's record takes no activities
+ * (model_unusable), or the server refused the creation (refused: rights,
+ * a constraint).
  */
-const CHOOSE_AGAIN_REASONS = new Set(["project_missing", "partner_missing", "refused"]);
+const CHOOSE_AGAIN_REASONS = new Set([
+  "project_missing", "partner_missing", "record_missing", "type_missing", "user_missing", "model_unusable", "refused",
+]);
 
 /** Server exceptions a create retry cannot get past: the operation blocks. */
 const REFUSED_ERRORS = new Set([
@@ -225,7 +278,7 @@ function failureRank(e: unknown): number {
 }
 
 /** "YYYY-MM-DD" of an ISO date-time in the device's time zone, or null. */
-function localDay(iso: string | null): string | null {
+export function localDay(iso: string | null): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
@@ -272,6 +325,62 @@ function createValues(kind: TargetKind, params: Record<string, any>, note: Note)
   };
 }
 
+/** Creation params of an activity target. */
+function activityParams(target: ActivityTarget): Record<string, any> {
+  return {
+    resModel: target.resModel,
+    resId: target.resId ?? null,
+    resName: target.resName ?? null,
+    typeId: target.typeId ?? null,
+    typeName: target.typeName ?? null,
+    deadline: target.deadline ?? null,
+    userId: target.userId ?? null,
+    userName: target.userName ?? null,
+  };
+}
+
+/** The activity target stored in a creation's or a link's params. */
+function activityOfParams(params: Record<string, any>): ActivityTarget {
+  return {
+    resModel: params.resModel ?? "",
+    resId: params.resId ?? null,
+    resName: params.resName ?? null,
+    typeId: params.typeId ?? null,
+    typeName: params.typeName ?? null,
+    deadline: params.deadline ?? null,
+    userId: params.userId ?? null,
+    userName: params.userName ?? null,
+  };
+}
+
+/**
+ * How createWithMarker creates one record: its model and outbox kind, the
+ * field its marker is written in and searched by, the values every write
+ * sends (marker included) and those only create adds, the context of the
+ * create, the checks of the records it names, and the link it leaves.
+ */
+interface CreateSpec {
+  model: string;
+  opKind: string;
+  markerField: string;
+  values: (sessionId: string, odooVersion: number, note: Note) => Promise<Record<string, any>>;
+  createValues: (note: Note) => Record<string, any>;
+  context?: Record<string, any>;
+  check: (sessionId: string) => Promise<void>;
+  link: { kind: NoteLinkKind; params?: Record<string, any> };
+  /** Server exceptions that also refuse this create, beside REFUSED_ERRORS. */
+  refusedErrors?: string[];
+}
+
+/** A record a creation names, looked up before the create (see checkChosen). */
+interface ChosenRecordCheck {
+  model: string;
+  id: number | null;
+  reason: string;
+  label: string;
+  context?: Record<string, any>;
+}
+
 /** Fields of a note a push sends: a change here during a push re-queues it. */
 function pushedFingerprint(note: Note): string {
   return JSON.stringify([note.title, note.done, note.archived, note.pinned, note.tags, note.entries]);
@@ -296,6 +405,10 @@ export class SyncService {
   readonly projects: ProjectService;
   /** Partner search for a new opportunity, with the found ones cached. */
   readonly partners: RecordSearchService;
+  /** Activity types per server, cached for offline. */
+  readonly activityTypes: ActivityTypeService;
+  /** Record search per model (records an activity goes on, users), cached. */
+  private _recordSearches = new Map<string, RecordSearchService>();
   /**
    * Whether project.task has geo_task_point, per "url|database". The field
    * comes from an optional server module; sending it where it is missing
@@ -331,12 +444,26 @@ export class SyncService {
     this.capabilities = new CapabilityService(db, rpc);
     this.projects = new ProjectService(db, rpc);
     this.partners = new RecordSearchService(db, rpc, PARTNER_MODEL);
+    this._recordSearches.set(PARTNER_MODEL, this.partners);
+    this.activityTypes = new ActivityTypeService(db, rpc);
     this.outbox.onRetryScheduled = (at) => this.onRetryScheduled?.(at);
     for (const kind of TARGET_KINDS) {
       // drain already found the operation due: its retry delay is over or forced
       this.outbox.registerHandler(KINDS[kind].opKind, (creds, op) =>
         this.pushNote(creds, op.noteId, { onlyKind: kind, force: true }));
     }
+    this.outbox.registerHandler(ACTIVITY_CREATE, (creds, op) =>
+      this.pushNote(creds, op.noteId, { onlyActivityOp: op.id, force: true }));
+  }
+
+  /** Name search of model's records on a server, with the ones found cached. */
+  recordSearch(model: string): RecordSearchService {
+    let search = this._recordSearches.get(model);
+    if (!search) {
+      search = new RecordSearchService(this.db, this.rpc, model);
+      this._recordSearches.set(model, search);
+    }
+    return search;
   }
 
   // ─── Transport (OdooRpcClient) ────────────────────────────────────────────
@@ -514,15 +641,21 @@ export class SyncService {
     if (!note) throw new Error(`Note ${noteId} not found`);
     const fingerprint = pushedFingerprint(note);
     const configId = syncConfigIdOf(creds);
-    const kinds = options.onlyKind ? [options.onlyKind] : await this.noteKinds(noteId, configId);
+    const kinds = options.onlyKind ? [options.onlyKind]
+      : options.onlyActivityOp ? []
+      : await this.noteKinds(noteId, configId);
     let failure: unknown = null;
+    const keep = (e: unknown) => {
+      if (failure === null || failureRank(e) < failureRank(failure)) failure = e;
+    };
     for (const kind of kinds) {
       try {
         await this.pushKind(creds, noteId, kind, options, fingerprint);
       } catch (e: unknown) {
-        if (failure === null || failureRank(e) < failureRank(failure)) failure = e;
+        keep(e);
       }
     }
+    if (!options.onlyKind) await this.pushActivities(creds, noteId, options, fingerprint, keep);
     if (failure !== null) throw failure;
   }
 
@@ -530,26 +663,35 @@ export class SyncService {
    * The kinds of target a note has on one server: those with a link
    * (live or deleted, not dismissed) or a creation in the outbox, in
    * TARGET_KINDS order. A note with none there gets a task, as before
-   * targets had kinds.
+   * targets had kinds, unless it has activities there (any link or
+   * creation): then it has none.
    */
   async noteKinds(noteId: string, configId: string): Promise<TargetKind[]> {
     const links = (await this.db.getNoteLinks(noteId))
-      .filter((l) => l.configId === configId && l.kind === "create" && l.remoteState !== "dismissed");
+      .filter((l) => l.configId === configId && l.remoteState !== "dismissed");
     const ops = (await this.db.getOutboxOpsForNote(noteId)).filter((op) => op.configId === configId);
     const kinds = TARGET_KINDS.filter((kind) =>
-      links.some((l) => l.model === KINDS[kind].model) || ops.some((op) => op.kind === KINDS[kind].opKind)
+      links.some((l) => l.kind === "create" && l.model === KINDS[kind].model)
+        || ops.some((op) => op.kind === KINDS[kind].opKind)
     );
-    return kinds.length > 0 ? kinds : ["task"];
+    if (kinds.length > 0) return kinds;
+    const hasActivities = links.some((l) => l.kind === "activity") || ops.some((op) => op.kind === ACTIVITY_CREATE);
+    return hasActivities ? [] : ["task"];
   }
 
   /**
-   * Whether the note has a live link of another kind than kind on this
-   * server: then a deleted record of kind does not take the server out of
-   * the note's queue.
+   * Whether the note has a live link on this server other than those
+   * except matches: then a record of theirs deleted on the server does
+   * not take the server out of the note's queue.
    */
-  private async hasOtherLiveKind(noteId: string, configId: string, kind: TargetKind): Promise<boolean> {
+  private async hasOtherLiveLink(noteId: string, configId: string, except: (l: NoteLink) => boolean): Promise<boolean> {
     return (await this.db.getNoteLinks(noteId)).some((l) =>
-      l.configId === configId && l.kind === "create" && l.remoteState === "ok" && l.model !== KINDS[kind].model);
+      l.configId === configId && l.remoteState === "ok" && !except(l));
+  }
+
+  /** hasOtherLiveLink beside the note's record of kind: another kind, or an activity. */
+  private async hasOtherLiveKind(noteId: string, configId: string, kind: TargetKind): Promise<boolean> {
+    return this.hasOtherLiveLink(noteId, configId, (l) => l.kind === "create" && l.model === KINDS[kind].model);
   }
 
   /** One kind of pushNoteNow: write the linked record, or run its creation. */
@@ -665,6 +807,30 @@ export class SyncService {
     fingerprint: string
   ): Promise<void> {
     const def = KINDS[kind];
+    await this.createWithMarker(creds, op, adoptId, fingerprint, {
+      model: def.model,
+      opKind: def.opKind,
+      markerField: "description",
+      values: (sessionId, odooVersion, note) =>
+        this.payloadFor(kind, creds, sessionId, note, odooVersion, op.clientUuid),
+      createValues: (note) => createValues(kind, op.params, note),
+      check: (sessionId) => this.checkChosenRecords(kind, creds, op, sessionId),
+      link: { kind: "create" },
+    });
+  }
+
+  /**
+   * Creates the record of one outbox operation as spec says, with the
+   * operation's client_uuid marker in spec.markerField, and links it: the
+   * quiet window, marker search, adoption and refusal of createRecord.
+   */
+  private async createWithMarker(
+    creds: SyncCredentials,
+    op: OutboxOp,
+    adoptId: number | null,
+    fingerprint: string,
+    spec: CreateSpec
+  ): Promise<void> {
     const note = await this.db.getNoteById(op.noteId);
     if (!note) return;
     let createSentAt: string | undefined = op.params.createSentAt;
@@ -684,14 +850,14 @@ export class SyncService {
       }
     }
     await this.callWithAuth(creds, async (sessionId, odooVersion) => {
-      const payload = await this.payloadFor(kind, creds, sessionId, note, odooVersion, op.clientUuid);
+      const payload = await spec.values(sessionId, odooVersion, note);
       let resId: number | null = adoptId;
       if (resId === null && op.attempts > 1) {
         const found: Array<{ id: number }> = await this.jsonRpc(
-          creds.odooUrl, sessionId, def.model, "search_read",
+          creds.odooUrl, sessionId, spec.model, "search_read",
           [],
           {
-            domain: [["description", "ilike", clientMarker(op.clientUuid)]],
+            domain: [[spec.markerField, "ilike", clientMarker(op.clientUuid)]],
             fields: ["id"],
             limit: AMBIGUOUS_CANDIDATES_SHOWN,
             order: "id asc",
@@ -700,29 +866,36 @@ export class SyncService {
         );
         if (found.length > 1) {
           throw new OutboxBlockedError(
-            `Plusieurs enregistrements ${def.model} (${found.map((t) => `#${t.id}`).join(", ")}) portent la référence `
+            `Plusieurs enregistrements ${spec.model} (${found.map((t) => `#${t.id}`).join(", ")}) portent la référence `
               + `${clientMarker(op.clientUuid)} sur ${creds.odooUrl}.`,
             "ambiguous",
             found.map((t) => t.id),
-            def.opKind
+            spec.opKind,
+            op.id
           );
         }
         if (found.length === 1) resId = found[0].id;
       }
       if (resId !== null) {
-        await this.jsonRpc(creds.odooUrl, sessionId, def.model, "write", [[resId], payload]);
+        await this.jsonRpc(creds.odooUrl, sessionId, spec.model, "write", [[resId], payload]);
       } else {
-        await this.checkChosenRecords(kind, creds, op, sessionId);
+        await spec.check(sessionId);
         await this.outbox.setParams(op.id, { createSentAt: new Date().toISOString() });
         try {
-          resId = await this.jsonRpc(creds.odooUrl, sessionId, def.model, "create", [
-            { ...payload, ...createValues(kind, op.params, note) },
-          ]);
+          resId = await this.jsonRpc(
+            creds.odooUrl, sessionId, spec.model, "create",
+            [{ ...payload, ...spec.createValues(note) }],
+            spec.context ? { context: spec.context } : {}
+          );
         } catch (e: unknown) {
-          if (e instanceof OdooRpcError && e.odooName && REFUSED_ERRORS.has(e.odooName)) {
+          const refused = e instanceof OdooRpcError && !!e.odooName
+            && (REFUSED_ERRORS.has(e.odooName) || !!spec.refusedErrors?.includes(e.odooName));
+          if (refused) {
             // The server answered and rolled back: no create is in flight
             await this.outbox.setParams(op.id, { createSentAt: null });
-            throw new OutboxBlockedError(`Création refusée par ${creds.odooUrl} : ${e.message}`, "refused", [], def.opKind);
+            throw new OutboxBlockedError(
+              `Création refusée par ${creds.odooUrl} : ${(e as Error).message}`, "refused", [], spec.opKind, op.id
+            );
           }
           throw e;
         }
@@ -732,21 +905,22 @@ export class SyncService {
         id: uuidv4(),
         noteId: op.noteId,
         configId: op.configId,
-        model: def.model,
+        model: spec.model,
         resId: resId!,
-        kind: "create",
+        kind: spec.link.kind,
         remoteState: "ok",
         createdAt: now,
         lastSyncedAt: now,
         clientUuid: op.clientUuid,
+        params: spec.link.params ?? {},
       });
     });
   }
 
   /**
    * Looks up, before a create, the project (task) or partner (lead) the
-   * operation names: see createRecord. Not readable at all (AccessError)
-   * counts as hidden.
+   * operation names: see createRecord. A project found missing stops being
+   * the server's last choice.
    */
   private async checkChosenRecords(
     kind: TargetKind,
@@ -754,9 +928,35 @@ export class SyncService {
     op: OutboxOp,
     sessionId: string
   ): Promise<void> {
-    const checks: Array<{ model: string; id: number | null; reason: string; label: string }> = kind === "task"
-      ? [{ model: PROJECT_MODEL, id: op.params.projectId ?? null, reason: "project_missing", label: "Le projet" }]
-      : [{ model: PARTNER_MODEL, id: op.params.partnerId ?? null, reason: "partner_missing", label: "Le client" }];
+    const check: ChosenRecordCheck = kind === "task"
+      ? { model: PROJECT_MODEL, id: op.params.projectId ?? null, reason: "project_missing", label: "Le projet" }
+      : { model: PARTNER_MODEL, id: op.params.partnerId ?? null, reason: "partner_missing", label: "Le client" };
+    await this.checkChosen(creds, sessionId, [check], KINDS[kind].opKind, op.id, async (failed) => {
+      if (kind === "task" && (await this.lastTaskTarget(op.configId))?.projectId === failed.id) {
+        await this.db.setSyncTargetPref({
+          configId: op.configId, kind: TASK_CREATE, params: targetParams("task", null),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    });
+  }
+
+  /**
+   * Looks up each named record (id null: none named, skipped) by id with
+   * search_read, under its check's context (active ones only unless it
+   * says otherwise). The first one not found — gone, archived, hidden by a
+   * record rule, unreadable (AccessError) or of a model the server does not
+   * have (KeyError) — runs onMissing, then blocks the operation with its
+   * check's reason.
+   */
+  private async checkChosen(
+    creds: SyncCredentials,
+    sessionId: string,
+    checks: ChosenRecordCheck[],
+    opKind: string,
+    opId: string,
+    onMissing: (check: ChosenRecordCheck) => Promise<void> = async () => {}
+  ): Promise<void> {
     for (const check of checks) {
       if (check.id === null) continue;
       let found: Array<{ id: number }> = [];
@@ -764,24 +964,24 @@ export class SyncService {
         found = await this.jsonRpc(
           creds.odooUrl, sessionId, check.model, "search_read",
           [],
-          { domain: [["id", "=", check.id]], fields: ["id"], limit: 1 }
+          {
+            domain: [["id", "=", check.id]], fields: ["id"], limit: 1,
+            ...(check.context ? { context: check.context } : {}),
+          }
         );
       } catch (e: unknown) {
-        // No right to read the model at all: the record is hidden as well
-        if (!(e instanceof OdooRpcError) || e.odooName !== "odoo.exceptions.AccessError") throw e;
+        // No right to read the model at all, or no such model: the record is out of reach
+        if (!(e instanceof OdooRpcError)
+          || (e.odooName !== "odoo.exceptions.AccessError" && e.odooName !== "builtins.KeyError")) throw e;
       }
       if (found.length > 0) continue;
-      if (kind === "task" && (await this.lastTaskTarget(op.configId))?.projectId === check.id) {
-        await this.db.setSyncTargetPref({
-          configId: op.configId, kind: TASK_CREATE, params: targetParams("task", null),
-          updatedAt: new Date().toISOString(),
-        });
-      }
+      await onMissing(check);
       throw new OutboxBlockedError(
         `${check.label} #${check.id} est introuvable, archivé ou inaccessible sur ${creds.odooUrl}.`,
         check.reason,
         [],
-        KINDS[kind].opKind
+        opKind,
+        opId
       );
     }
   }
@@ -995,6 +1195,275 @@ export class SyncService {
     return present;
   }
 
+  // ─── Activities ───────────────────────────────────────────────────────────
+
+  /**
+   * The note's activities on one server (see ActivityState), dismissed
+   * links left out: its links, oldest first, then its creations.
+   */
+  async activityStates(noteId: string, configId: string): Promise<ActivityState[]> {
+    const links = (await this.db.getNoteLinks(noteId))
+      .filter((l) => l.configId === configId && l.kind === "activity" && l.remoteState !== "dismissed")
+      .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+    const states: ActivityState[] = links.map((link) => ({
+      state: link.remoteState === "ok" ? "linked" : link.remoteState === "done" ? "done" : "deleted",
+      link,
+      target: activityOfParams(link.params ?? {}),
+    }));
+    for (const op of await this.outbox.findAll(noteId, configId, ACTIVITY_CREATE)) {
+      // Linked already, its row not deleted yet: the link is the outcome
+      if (links.some((l) => l.clientUuid === op.clientUuid)) continue;
+      const target = activityOfParams(op.params);
+      const reason = op.status === "incomplete" ? "incomplete" : op.params.blockedReason ?? null;
+      if (op.status === "incomplete"
+        || (op.status === "blocked" && reason !== null && CHOOSE_AGAIN_REASONS.has(reason))) {
+        states.push({ state: "choose", op, reason: reason!, target });
+      } else {
+        states.push({ state: "queued", op, target });
+      }
+    }
+    return states;
+  }
+
+  /**
+   * Queues a new activity of the note on this server, or, with opId,
+   * gives a creation waiting for a choice (state "choose") its new target
+   * and puts it back in the queue, its block cleared. A target with no
+   * record yet (resId null, chosen offline with nothing in the cache) is
+   * stored "incomplete": nothing is sent until a record is chosen. opId of
+   * a creation not waiting for a choice changes nothing. Returns the
+   * operation.
+   */
+  async setActivity(
+    noteId: string,
+    configId: string,
+    target: ActivityTarget,
+    opId: string | null = null
+  ): Promise<OutboxOp | null> {
+    const params = activityParams(target);
+    const complete = target.resId !== null && !!target.resModel;
+    if (!opId) {
+      return this.outbox.enqueue({
+        noteId, configId, kind: ACTIVITY_CREATE, params, status: complete ? "queued" : "incomplete",
+      });
+    }
+    const waiting = (await this.activityStates(noteId, configId))
+      .find((a) => a.state === "choose" && a.op.id === opId);
+    if (!waiting) return null;
+    const cleared = { ...params, blockedReason: null, candidates: [] };
+    if (complete) await this.outbox.complete(opId, cleared);
+    else await this.outbox.markIncomplete(opId, cleared);
+    return this.db.getOutboxOp(opId);
+  }
+
+  /**
+   * Cancels one of the note's activity creations on this server (the
+   * user removed it from the picker before it reached the server). An
+   * activity already created stays: nothing here deletes on the server.
+   */
+  async dropActivity(noteId: string, opId: string): Promise<void> {
+    const op = await this.db.getOutboxOp(opId);
+    if (!op || op.noteId !== noteId || op.kind !== ACTIVITY_CREATE) return;
+    await this.outbox.cancel(opId);
+    await this.db.refreshNoteSyncStatus(noteId);
+  }
+
+  /**
+   * The activities part of pushNoteNow: runs the note's activity
+   * creations on this server (only options.onlyActivityOp when set), then
+   * writes each activity that was live before them (see writeActivity).
+   * An activity created here is written only when the note is done, to
+   * mark it done at once. A creation whose activity is already linked (cut
+   * short after the link, before its row was deleted) is cancelled, not
+   * run: its marker search would link the activity a second time. Each
+   * failure goes to keep.
+   */
+  private async pushActivities(
+    creds: SyncCredentials,
+    noteId: string,
+    options: PushOptions,
+    fingerprint: string,
+    keep: (e: unknown) => void
+  ): Promise<void> {
+    const configId = syncConfigIdOf(creds);
+    const liveLinks = async () => (await this.db.getNoteLinks(noteId))
+      .filter((l) => l.configId === configId && l.kind === "activity" && l.remoteState === "ok");
+    const before = await liveLinks();
+    const linkedUuids = new Set((await this.db.getNoteLinks(noteId))
+      .filter((l) => l.configId === configId && l.kind === "activity" && l.clientUuid)
+      .map((l) => l.clientUuid));
+    const ops = (await this.outbox.findAll(noteId, configId, ACTIVITY_CREATE))
+      .filter((op) => !options.onlyActivityOp || op.id === options.onlyActivityOp);
+    for (const op of ops) {
+      if (linkedUuids.has(op.clientUuid)) {
+        await this.outbox.cancel(op.id);
+        await this.db.refreshNoteSyncStatus(noteId);
+        continue;
+      }
+      try {
+        await this.runActivityCreate(creds, op, options, fingerprint);
+      } catch (e: unknown) {
+        keep(e);
+      }
+    }
+    const done = (await this.db.getNoteById(noteId))?.done ?? false;
+    const created = (await liveLinks()).filter((l) => !before.some((b) => b.id === l.id));
+    const toWrite = [...(options.onlyActivityOp ? [] : before), ...(done ? created : [])];
+    for (const link of toWrite) {
+      try {
+        await this.writeActivity(creds, noteId, link, fingerprint);
+      } catch (e: unknown) {
+        keep(e);
+      }
+    }
+  }
+
+  /**
+   * One activity creation of pushActivities, under the rules of a kind's
+   * creation (see pushNote): a background push skips it while it is not
+   * due; an incomplete one never runs; a tap runs a blocked or failed one
+   * again; options.adopt for its opId settles an ambiguous one.
+   */
+  private async runActivityCreate(
+    creds: SyncCredentials,
+    op: OutboxOp,
+    options: PushOptions,
+    fingerprint: string
+  ): Promise<void> {
+    if (!options.userInitiated && !this.outbox.isDue(op, options.force)) return;
+    if (op.status === "incomplete") {
+      throw new OutboxBlockedError(
+        `L'activité attend le choix de son enregistrement sur ${creds.odooUrl}.`, "incomplete", [], ACTIVITY_CREATE, op.id
+      );
+    }
+    const adopt = options.adopt?.kind === "activity" && options.adopt.opId === op.id ? options.adopt.resId : null;
+    await this.outbox.attempt(op.id, (running) => {
+      const target = activityOfParams(running.params);
+      return this.createWithMarker(creds, running, adopt, fingerprint, {
+        model: ACTIVITY_MODEL,
+        opKind: ACTIVITY_CREATE,
+        markerField: "note",
+        values: async (_sessionId, _odooVersion, note) => this.buildActivityPayload(note, running.clientUuid),
+        createValues: () => ({
+          res_id: target.resId,
+          ...(target.typeId != null ? { activity_type_id: target.typeId } : {}),
+          ...(target.deadline ? { date_deadline: target.deadline } : {}),
+          ...(target.userId != null ? { user_id: target.userId } : {}),
+        }),
+        // res_model_id is resolved from default_res_model by mail.activity's
+        // default_get, without reading ir.model (admin only on 17 and 18)
+        context: { default_res_model: target.resModel },
+        // A model without mail.activity.mixin fails inside the create (AttributeError)
+        refusedErrors: ["builtins.AttributeError"],
+        check: async (sessionId) => {
+          await this.checkActivityModel(creds, target.resModel, running.id);
+          await this.checkChosen(creds, sessionId, [
+          {
+            model: target.resModel, id: target.resId, reason: "record_missing", label: "L'enregistrement",
+            context: WITH_ARCHIVED,
+          },
+          { model: ACTIVITY_TYPE_MODEL, id: target.typeId, reason: "type_missing", label: "Le type d'activité" },
+          { model: USER_MODEL, id: target.userId, reason: "user_missing", label: "L'utilisateur" },
+          ], ACTIVITY_CREATE, running.id);
+        },
+        link: { kind: "activity", params: activityParams(target) },
+      });
+    });
+    // The row is deleted only once the attempt settled: derive the status without it
+    await this.db.refreshNoteSyncStatus(op.noteId);
+  }
+
+  /**
+   * Blocks an activity creation as "model_unusable" when the probe of its
+   * record's model (cached for a day, see CapabilityService.ensure) says
+   * the server lacks the model or its activities: a model typed by its
+   * technical name is probed only here. A probe that cannot reach the
+   * server does not block; the create then decides.
+   */
+  private async checkActivityModel(creds: SyncCredentials, model: string, opId: string): Promise<void> {
+    const cap = await this.capabilities.ensure(creds, model, { online: true });
+    const reason = unusableReason(cap, ["activities"]);
+    if (reason !== "missing_model" && reason !== "no_activities") return;
+    throw new OutboxBlockedError(
+      `Le modèle ${model} n'accepte pas d'activités sur ${creds.odooUrl}.`, "model_unusable", [], ACTIVITY_CREATE, opId
+    );
+  }
+
+  /**
+   * Writes one live activity: its summary and note from the note, or,
+   * when the note is done, action_feedback, which marks it done on the
+   * server (removed, or archived when its type keeps done activities); the
+   * link is then "done". An activity gone on the server (MissingError:
+   * done or cancelled there) marks the link deleted without raising, and
+   * takes the server out of the note's queue when nothing else of the
+   * note lives there. On Odoo 17+, where an activity done on the server
+   * is archived when its type keeps done activities, its active flag is
+   * read first: an archived one turns the link "done" untouched, since
+   * action_feedback would mark it done, and post that, a second time.
+   */
+  private async writeActivity(
+    creds: SyncCredentials,
+    noteId: string,
+    link: NoteLink,
+    fingerprint: string
+  ): Promise<void> {
+    const note = await this.db.getNoteById(noteId);
+    if (!note) return;
+    await this.callWithAuth(creds, async (sessionId, odooVersion) => {
+      let gone = false;
+      let archived = false;
+      try {
+        if (odooVersion >= 17) {
+          const rows: Array<{ id: number; active: boolean }> = await this.jsonRpc(
+            creds.odooUrl, sessionId, ACTIVITY_MODEL, "search_read", [],
+            { domain: [["id", "=", link.resId]], fields: ["active"], limit: 1, context: WITH_ARCHIVED }
+          );
+          gone = rows.length === 0;
+          archived = rows[0]?.active === false;
+        }
+        // Archived: done on the server already, nothing to write nor to mark
+        if (!gone && !archived && note.done) {
+          await this.jsonRpc(creds.odooUrl, sessionId, ACTIVITY_MODEL, "action_feedback", [[link.resId]], { feedback: false });
+        } else if (!gone && !archived) {
+          await this.jsonRpc(creds.odooUrl, sessionId, ACTIVITY_MODEL, "write", [
+            [link.resId], this.buildActivityPayload(note, link.clientUuid ?? null),
+          ]);
+        }
+      } catch (e: unknown) {
+        if (!(e instanceof OdooRpcError) || e.odooName !== "odoo.exceptions.MissingError") throw e;
+        gone = true;
+      }
+      if (gone) {
+        await this.db.setNoteLinkRemoteDeleted(link.id);
+        if (!(await this.hasOtherLiveLink(noteId, link.configId, (l) => l.id === link.id))
+          && (await this.outbox.findAll(noteId, link.configId, ACTIVITY_CREATE)).length === 0) {
+          await this.db.clearNotePerServerStatus(noteId, link.configId);
+        }
+        await this.db.refreshNoteSyncStatus(noteId);
+        return;
+      }
+      if (note.done || archived) await this.db.setNoteLinkDone(link.id);
+      const now = new Date().toISOString();
+      await this.db.setNoteLinkSyncedAt(link.id, now);
+      await this.settlePush(noteId, link.configId, fingerprint, now, null);
+    });
+  }
+
+  /**
+   * The mail.activity values a note writes: its title as summary and its
+   * HTML (with the marker, see buildTaskPayload) as note. The record, type,
+   * deadline and user are create-only.
+   */
+  private buildActivityPayload(note: Note, clientUuid: string | null): Record<string, any> {
+    const html = this.buildHtml(note.entries);
+    return {
+      summary: note.title,
+      note: clientUuid
+        ? [html, `<p><small>${clientMarker(clientUuid)}</small></p>`].filter(Boolean).join("\n")
+        : html,
+    };
+  }
+
   // ─── Poll ────────────────────────────────────────────────────────────────
 
   /**
@@ -1198,8 +1667,9 @@ export class SyncService {
    * Whether a background push of the note would send something to this
    * server: a kind with a live link, a creation that is due, a deleted
    * record (the push takes the server out of the queue), or nothing at all
-   * (a task is created). A note whose every kind is a creation waiting for
-   * the user or its delay has nothing due.
+   * (a task is created); or a live activity, or an activity creation that
+   * is due. A note whose every target is a creation waiting for the user
+   * or its delay has nothing due.
    */
   private async hasDueKind(noteId: string, configId: string, force: boolean): Promise<boolean> {
     for (const kind of await this.noteKinds(noteId, configId)) {
@@ -1209,7 +1679,9 @@ export class SyncService {
       const op = await this.outbox.find(noteId, configId, def.opKind);
       if (op ? this.outbox.isDue(op, force) : true) return true;
     }
-    return false;
+    if ((await this.db.getNoteLinks(noteId)).some((l) =>
+      l.configId === configId && l.kind === "activity" && l.remoteState === "ok")) return true;
+    return (await this.outbox.findAll(noteId, configId, ACTIVITY_CREATE)).some((op) => this.outbox.isDue(op, force));
   }
 
   /**

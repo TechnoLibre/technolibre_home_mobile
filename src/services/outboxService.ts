@@ -15,12 +15,16 @@ export const RETRY_MAX_MS = 60 * 60 * 1000;
  * candidates: remote ids the user can pick from ("ambiguous").
  */
 export class OutboxBlockedError extends Error {
-  /** opKind: the outbox kind of the blocked operation, when known. */
+  /**
+   * opKind: the outbox kind of the blocked operation, when known; opId:
+   * its id, for a kind a note can have several of on one server.
+   */
   constructor(
     message: string,
     readonly reason: string,
     readonly candidates: number[] = [],
-    readonly opKind: string | null = null
+    readonly opKind: string | null = null,
+    readonly opId: string | null = null
   ) {
     super(message);
   }
@@ -114,6 +118,12 @@ export class OutboxService {
   async find(noteId: string, configId: string, kind: string): Promise<OutboxOp | null> {
     return (await this.db.getOutboxOpsForNote(noteId))
       .find((op) => op.configId === configId && op.kind === kind) ?? null;
+  }
+
+  /** All the note's operations of this kind on this server, oldest first. */
+  async findAll(noteId: string, configId: string, kind: string): Promise<OutboxOp[]> {
+    return (await this.db.getOutboxOpsForNote(noteId))
+      .filter((op) => op.configId === configId && op.kind === kind);
   }
 
   /** find(), or a new queued operation when there is none. */

@@ -3,7 +3,7 @@ import type { ProjectList } from "./odoo/projectService";
 import type { RecordSearch } from "./odoo/recordSearchService";
 import type { SyncCredentials } from "./odoo/odooRpcClient";
 import { unusableReason, UnusableReason } from "./odoo/capabilityService";
-import type { LeadTarget, Target, TargetKind, TargetState, TaskTarget } from "./syncService";
+import type { ActivityState, LeadTarget, Target, TargetKind, TargetState, TaskTarget } from "./syncService";
 
 /** Select value of no project (a personal task) or no partner. */
 export const NO_PROJECT = "none";
@@ -263,6 +263,8 @@ export interface TargetSource {
     laterParams?: Record<string, any>
   ): Promise<unknown>;
   dropTarget(noteId: string, configId: string, kind: TargetKind): Promise<void>;
+  /** The note's activities there, when the source has them (see ActivityState). */
+  activityStates?(noteId: string, configId: string): Promise<ActivityState[]>;
   lastKinds(configId: string): Promise<TargetKind[]>;
   setLastKinds(configId: string, kinds: TargetKind[]): Promise<void>;
   capabilities: {
@@ -276,19 +278,27 @@ export interface TargetSource {
 export type TaskTargetSource = TargetSource;
 
 /** Whether a state is something the note already has on the server. */
-const isSettled = (s: TargetState) => s.state === "linked" || s.state === "queued";
+const isSettled = (s: TargetState | ActivityState) => s.state === "linked" || s.state === "queued";
+
+/** The note's activities on a server, none when the source has no activities. */
+async function activitiesOf(source: TargetSource, noteId: string, configId: string): Promise<ActivityState[]> {
+  return source.activityStates ? source.activityStates(noteId, configId) : [];
+}
 
 /**
  * Whether a short tap must open the picker for these servers: one where
- * the note has no record and no creation of any kind, or one where a
- * creation waits for a new choice (blocked for a reason to choose again,
- * left for later, or its record deleted on the server).
+ * the note has no record, no activity and no creation of any kind, or
+ * one where a creation waits for a new choice (blocked for a reason to
+ * choose again, left for later, or its record deleted on the server), an
+ * activity's included.
  */
 export async function needsTaskTarget(source: TargetSource, noteId: string, configIds: string[]): Promise<boolean> {
   for (const configId of configIds) {
     const states = await Promise.all(PICKER_KINDS.map((k) => source.targetState(noteId, configId, k)));
-    if (!states.some(isSettled)) return true;
+    const activities = await activitiesOf(source, noteId, configId);
+    if (!states.some(isSettled) && !activities.some(isSettled)) return true;
     if (states.some((s) => s.state === "choose" && (s.op !== null || s.reason === "deleted"))) return true;
+    if (activities.some((a) => a.state === "choose")) return true;
   }
   return false;
 }
@@ -299,8 +309,9 @@ export async function needsTaskTarget(source: TargetSource, noteId: string, conf
  * kind's model (cached probe; a failed probe does not block) and its
  * choices: projects (online, else cached) or recent partners. A kind
  * waiting for a new choice is checked; a kind never chosen is checked
- * only when the note has nothing on this server, as the server's last
- * checked kinds say. A failure becomes a row that offers nothing (failed).
+ * only when the note has nothing on this server (no record, activity or
+ * creation), as the server's last checked kinds say. A failure becomes a
+ * row that offers nothing (failed).
  */
 export async function buildTargetRows(
   source: TargetSource,
@@ -318,7 +329,8 @@ export async function buildTargetRows(
     for (const kind of PICKER_KINDS) rows[kind] = { ...loadingRow(kind), loading: false, offline: !online, failed: error };
     return rows;
   }
-  const bare = !states.some(isSettled);
+  const bare = !states.some(isSettled)
+    && !(await activitiesOf(source, noteId, configId).catch(() => [])).some(isSettled);
   const defaults = bare ? await source.lastKinds(configId) : [];
   for (const [i, kind] of PICKER_KINDS.entries()) {
     const state = states[i];
@@ -345,8 +357,12 @@ export async function buildTargetRows(
   return rows;
 }
 
-/** Whether a server's rows let it receive anything: a kind checked or settled, none failing. */
-export function serverUsable(rows: Record<TargetKind, TargetRow> | undefined): boolean {
+/**
+ * Whether a server's rows let it receive anything: a kind checked or
+ * settled, none failing, or activities to send (hasActivityWork).
+ */
+export function serverUsable(rows: Record<TargetKind, TargetRow> | undefined, hasActivityWork = false): boolean {
+  if (hasActivityWork) return true;
   if (!rows) return false;
   const all = PICKER_KINDS.map((k) => rows[k]);
   if (all.some((r) => r.linkedResId !== null || r.queued)) return true;
@@ -361,16 +377,18 @@ export function serverUsable(rows: Record<TargetKind, TargetRow> | undefined): b
  * server), unusable ones included — the server no longer lets it be
  * sent, and it would block every tap — or a queued creation unchecked
  * after it failed or blocked (droppable), and, for a server where the note had
- * nothing, the checked kinds as its default for the next note. A selected
+ * nothing, the checked kinds (when any) as its default for the next note. A selected
  * server whose rows are missing or still loading, or with no kind checked
- * (failed and unusable rows never are), makes it throw before anything is
- * recorded: the push would otherwise go ahead without a choice.
+ * (failed and unusable rows never are) and no activity to send
+ * (hasActivityWork), makes it throw before anything is recorded: the push
+ * would otherwise go ahead without a choice.
  */
 export async function applyTaskTargets(
   source: TargetSource,
   noteId: string,
   configIds: string[],
-  targets: Record<string, Record<TargetKind, TargetRow>>
+  targets: Record<string, Record<TargetKind, TargetRow>>,
+  hasActivityWork: (configId: string) => boolean = () => false
 ): Promise<void> {
   for (const configId of configIds) {
     const rows = targets[configId];
@@ -379,7 +397,7 @@ export async function applyTaskTargets(
       const row = rows[kind];
       if (!row || row.loading) throw new Error(`Choix de la cible pas encore prêt pour ${configId}.`);
     }
-    if (!PICKER_KINDS.some((k) => rows[k].checked)) {
+    if (!PICKER_KINDS.some((k) => rows[k].checked) && !hasActivityWork(configId)) {
       throw new Error(`Aucune cible cochée pour ${configId}.`);
     }
   }
@@ -403,6 +421,7 @@ export async function applyTaskTargets(
         await source.dropTarget(noteId, configId, kind);
       }
     }
-    if (bare) await source.setLastKinds(configId, kinds);
+    // Nothing checked (activities only): the server's default kinds stay
+    if (bare && kinds.length > 0) await source.setLastKinds(configId, kinds);
   }
 }

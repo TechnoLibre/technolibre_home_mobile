@@ -21,9 +21,11 @@ export type PerServerSyncStatus = "synced" | "error" | "pending";
 
 /**
  * How a note is bound to a remote record. "create": the note created the
- * record and is mirrored by it (push writes, pull reads back).
+ * record and is mirrored by it (push writes, pull reads back). "activity":
+ * a mail.activity the note scheduled on another record; a note can have
+ * several on one server, each with its own link.
  */
-export type NoteLinkKind = "create";
+export type NoteLinkKind = "create" | "activity";
 
 /**
  * One remote record a note is bound to. A remote id is only meaningful in
@@ -38,15 +40,13 @@ export interface NoteLink {
   resId: number;
   kind: NoteLinkKind;
   /**
-   * "deleted": the remote record no longer exists. The link stays as a
-   * trace; push never writes it and never recreates the record unasked.
-   */
-  /**
    * ok: the record exists; deleted: deleted on the server, the user not
    * asked yet or declined; dismissed: deleted, and the user stopped sending
-   * the note there as that kind (kept as history, never pushed).
+   * the note there as that kind (kept as history, never pushed); done: an
+   * activity the app marked done (the server removed or archived it).
+   * Only ok links are written; the others stay as a trace.
    */
-  remoteState: "ok" | "deleted" | "dismissed";
+  remoteState: NoteLinkRemoteState;
   createdAt: string;
   lastSyncedAt: string | null;
   /**
@@ -54,7 +54,17 @@ export interface NoteLink {
    * app created it; null for records linked before the key existed.
    */
   clientUuid?: string | null;
+  /**
+   * What the link stands for beyond its record, stored as JSON: for an
+   * activity, the record it is scheduled on and its type, deadline and
+   * user (see ActivityTarget). Empty for a "create" link.
+   */
+  params?: Record<string, any>;
 }
+
+export type NoteLinkRemoteState = "ok" | "deleted" | "dismissed" | "done";
+
+const NOTE_LINK_REMOTE_STATES: NoteLinkRemoteState[] = ["ok", "deleted", "dismissed", "done"];
 
 /**
  * State of an outbox operation:
@@ -1160,7 +1170,8 @@ export class DatabaseService {
         remote_state   TEXT NOT NULL,
         created_at     TEXT NOT NULL,
         last_synced_at TEXT,
-        client_uuid    TEXT
+        client_uuid    TEXT,
+        params_json    TEXT
       )
     `);
     await this.db.execute(
@@ -1173,9 +1184,10 @@ export class DatabaseService {
 
   async addNoteLink(link: NoteLink): Promise<void> {
     await this.db.run(
-      "INSERT INTO note_links (id, note_id, config_id, model, res_id, kind, remote_state, created_at, last_synced_at, client_uuid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO note_links (id, note_id, config_id, model, res_id, kind, remote_state, created_at, last_synced_at, client_uuid, params_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [link.id, link.noteId, link.configId, link.model, link.resId, link.kind,
-       link.remoteState, link.createdAt, link.lastSyncedAt, link.clientUuid ?? null]
+       link.remoteState, link.createdAt, link.lastSyncedAt, link.clientUuid ?? null,
+       JSON.stringify(link.params ?? {})]
     );
   }
 
@@ -1218,6 +1230,11 @@ export class DatabaseService {
     await this.db.run("UPDATE note_links SET remote_state = ? WHERE id = ?", ["deleted", linkId]);
   }
 
+  /** Marks an activity link done: see NoteLink.remoteState. */
+  async setNoteLinkDone(linkId: string): Promise<void> {
+    await this.db.run("UPDATE note_links SET remote_state = ? WHERE id = ?", ["done", linkId]);
+  }
+
   async setNoteLinkSyncedAt(linkId: string, lastSyncedAt: string): Promise<void> {
     await this.db.run("UPDATE note_links SET last_synced_at = ? WHERE id = ?", [lastSyncedAt, linkId]);
   }
@@ -1227,18 +1244,29 @@ export class DatabaseService {
   }
 
   private rowToNoteLink(row: any): NoteLink {
+    let params: Record<string, any> = {};
+    try { params = JSON.parse(row.params_json ?? "{}") ?? {}; } catch { /* keep {} */ }
     return {
       id: row.id,
       noteId: row.note_id,
       configId: row.config_id,
       model: row.model,
       resId: Number(row.res_id),
-      kind: row.kind as NoteLinkKind,
-      remoteState: row.remote_state === "deleted" || row.remote_state === "dismissed" ? row.remote_state : "ok",
+      kind: row.kind === "activity" ? "activity" : "create",
+      remoteState: NOTE_LINK_REMOTE_STATES.includes(row.remote_state) ? row.remote_state : "ok",
       createdAt: row.created_at,
       lastSyncedAt: row.last_synced_at ?? null,
       clientUuid: row.client_uuid ?? null,
+      params,
     };
+  }
+
+  /** For a note_links table created before the params_json column existed. */
+  async addParamsToNoteLinks(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(note_links)");
+    if (!(existing.values ?? []).some((r: any) => r.name === "params_json")) {
+      await this.db.execute("ALTER TABLE note_links ADD COLUMN params_json TEXT");
+    }
   }
 
   /** For a note_links table created before the column existed. */

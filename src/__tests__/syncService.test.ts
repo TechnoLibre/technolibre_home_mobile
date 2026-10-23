@@ -3,7 +3,7 @@ import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
 import {
   SyncService, SyncCredentials, syncSessionKey, syncConfigIdOf, RemoteRecordDeletedError,
-  TASK_CREATE, LEAD_CREATE, clientMarker,
+  TASK_CREATE, LEAD_CREATE, ACTIVITY_CREATE, clientMarker,
 } from "../services/syncService";
 import { OutboxBlockedError } from "../services/outboxService";
 import { Note, NoteEntry } from "../models/note";
@@ -2507,5 +2507,464 @@ describe("SyncService — opportunity", () => {
     expect(await svc.lastKinds(CONFIG_ID)).toEqual(["task"]);
     await svc.setLastKinds(CONFIG_ID, ["lead"]);
     expect(await svc.lastKinds(CONFIG_ID)).toEqual(["lead"]);
+  });
+});
+
+describe("SyncService — activities", () => {
+  let svc: SyncService;
+  let db: DatabaseService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await prepareSyncDb(db);
+    await db.addParamsToNoteLinks();
+    svc = new SyncService(db);
+    await SecureStoragePlugin.set({
+      key: syncSessionKey(CREDS),
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 17 }),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  const ON_PARTNER = {
+    resModel: "res.partner", resId: 5, resName: "Acme", typeId: 2, typeName: "Call",
+    deadline: "2026-11-02", userId: 8, userName: "Lee",
+  };
+
+  /**
+   * Server with partner 5, activity type 2 and user 8; activity creates
+   * answer 500, 501, …, every activity from 500 exists (archived: those
+   * archived); activityError makes writes and action_feedback answer that
+   * exception. fields_get gives every model activities, except noActivities.
+   */
+  function server(options: {
+    createError?: string; activityError?: string; markerHits?: number[]; archived?: number[]; noActivities?: string[];
+  } = {}) {
+    let next = 500;
+    const known: Record<string, number> = { "res.partner": 5, "mail.activity.type": 2, "res.users": 8 };
+    const fail = (name: string) => ({ error: { code: 200, message: "Odoo Server Error", data: { name, message: "nope" } } });
+    return routeFetch((_url, body) => {
+      const { model, method } = body.params as any;
+      const kwargs = (body.params as any).kwargs ?? {};
+      if (method === "fields_get") {
+        return { result: options.noActivities?.includes(model) ? { name: {} } : { name: {}, activity_ids: {} } };
+      }
+      if (model === "mail.activity" && method === "search_read" && kwargs.domain?.[0]?.[0] === "id") {
+        const id = kwargs.domain[0][2];
+        return { result: id >= 500 ? [{ id, active: !(options.archived ?? []).includes(id) }] : [] };
+      }
+      if (method === "search_read" && kwargs.domain?.[0]?.[0] === "note") {
+        return { result: (options.markerHits ?? []).map((id) => ({ id })) };
+      }
+      if (method === "search_read" && kwargs.domain?.[0]?.[0] === "id" && model in known) {
+        return { result: kwargs.domain[0][2] === known[model] ? [{ id: known[model] }] : [] };
+      }
+      if (model === "mail.activity" && method === "create") {
+        return options.createError ? fail(options.createError) : { result: next++ };
+      }
+      if (model === "mail.activity" && options.activityError) return fail(options.activityError);
+      if (method === "create") return { result: 900 };
+      return { result: method === "search_read" ? [] : true };
+    });
+  }
+
+  const sent = (fetchMock: ReturnType<typeof routeFetch>, model: string, method: string) =>
+    rpcCalls(fetchMock).filter((c) => c.body.params.model === model && c.body.params.method === method);
+
+  const activityLinks = async (noteId: string) =>
+    (await db.getNoteLinks(noteId)).filter((l) => l.kind === "activity");
+
+  it("creates an activity on the chosen record, its model passed as a default, without a task", async () => {
+    await db.addNote(makeNote({ id: "ac-1", title: "Call back", entries: [{ id: "e", type: "text", params: { text: "Ask for the quote", readonly: false } } as any] }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.setActivity("ac-1", CONFIG_ID, ON_PARTNER);
+    expect(await svc.noteKinds("ac-1", CONFIG_ID)).toEqual([]);
+    await svc.pushNote(CREDS, "ac-1", { userInitiated: true });
+
+    const [create] = sent(fetchMock, "mail.activity", "create");
+    const values = create.body.params.args![0];
+    expect(values).toMatchObject({
+      res_id: 5, activity_type_id: 2, date_deadline: "2026-11-02", user_id: 8, summary: "Call back",
+    });
+    expect(values.note).toContain("Ask for the quote");
+    expect(values.note).toContain("erplibre-mobile:");
+    expect(values).not.toHaveProperty("res_model");
+    expect((create.body.params as any).kwargs.context).toEqual({ default_res_model: "res.partner" });
+    expect(sent(fetchMock, "project.task", "create")).toHaveLength(0);
+    const [link] = await activityLinks("ac-1");
+    expect(link).toMatchObject({ model: "mail.activity", resId: 500, remoteState: "ok", params: ON_PARTNER });
+    expect((await db.getNoteSyncInfo("ac-1")).syncStatus).toBe("synced");
+  });
+
+  it("leaves the server's defaults when no type, deadline or user is chosen", async () => {
+    await db.addNote(makeNote({ id: "ac-2" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setActivity("ac-2", CONFIG_ID, { ...ON_PARTNER, typeId: null, deadline: null, userId: null });
+    await svc.pushNote(CREDS, "ac-2", { userInitiated: true });
+    const values = sent(fetchMock, "mail.activity", "create")[0].body.params.args![0];
+    for (const key of ["activity_type_id", "date_deadline", "user_id"]) expect(values).not.toHaveProperty(key);
+  });
+
+  it("keeps several activities of one note on one server apart", async () => {
+    await db.addNote(makeNote({ id: "ac-3" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setActivity("ac-3", CONFIG_ID, ON_PARTNER);
+    await svc.setActivity("ac-3", CONFIG_ID, { ...ON_PARTNER, typeId: null });
+    await svc.pushNote(CREDS, "ac-3", { userInitiated: true });
+    expect((await activityLinks("ac-3")).map((l) => l.resId).sort()).toEqual([500, 501]);
+    const states = await svc.activityStates("ac-3", CONFIG_ID);
+    expect(states.map((s) => s.state)).toEqual(["linked", "linked"]);
+  });
+
+  it("writes the summary and note of a live activity, never its record, type, deadline or user", async () => {
+    await db.addNote(makeNote({ id: "ac-4" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setActivity("ac-4", CONFIG_ID, ON_PARTNER);
+    await svc.pushNote(CREDS, "ac-4", { userInitiated: true });
+    await db.updateNote("ac-4", makeNote({ id: "ac-4", title: "Renamed" }));
+
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ac-4");
+    const [ids, values] = sent(fetchMock, "mail.activity", "write")[0].body.params.args!;
+    expect(ids).toEqual([500]);
+    expect(Object.keys(values).sort()).toEqual(["note", "summary"]);
+    expect(values.summary).toBe("Renamed");
+    expect(sent(fetchMock, "mail.activity", "create")).toHaveLength(0);
+  });
+
+  it("marks a live activity done once the note is done, then never writes it again", async () => {
+    await db.addNote(makeNote({ id: "ac-5" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setActivity("ac-5", CONFIG_ID, ON_PARTNER);
+    await svc.pushNote(CREDS, "ac-5", { userInitiated: true });
+    await db.updateNote("ac-5", makeNote({ id: "ac-5", done: true }));
+
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ac-5");
+    expect(sent(fetchMock, "mail.activity", "action_feedback")[0].body.params.args).toEqual([[500]]);
+    expect(sent(fetchMock, "mail.activity", "write")).toHaveLength(0);
+    expect((await activityLinks("ac-5"))[0].remoteState).toBe("done");
+    expect((await svc.activityStates("ac-5", CONFIG_ID))[0].state).toBe("done");
+
+    const later = server();
+    vi.stubGlobal("fetch", later);
+    await svc.pushNote(CREDS, "ac-5", { userInitiated: true });
+    expect(sent(later, "mail.activity", "action_feedback")).toHaveLength(0);
+    expect(sent(later, "project.task", "create")).toHaveLength(0);
+  });
+
+  it("marks done at once an activity created for a note already done", async () => {
+    await db.addNote(makeNote({ id: "ac-6", done: true }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setActivity("ac-6", CONFIG_ID, ON_PARTNER);
+    await svc.syncAll(CREDS);
+    expect(sent(fetchMock, "mail.activity", "create")).toHaveLength(1);
+    expect(sent(fetchMock, "mail.activity", "action_feedback")[0].body.params.args).toEqual([[500]]);
+    expect((await activityLinks("ac-6"))[0].remoteState).toBe("done");
+  });
+
+  it("keeps as history an activity gone on the server, and lets the note leave that server's queue", async () => {
+    await db.addNote(makeNote({ id: "ac-7" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setActivity("ac-7", CONFIG_ID, ON_PARTNER);
+    await svc.pushNote(CREDS, "ac-7", { userInitiated: true });
+    await db.setNotePerServerStatus("ac-7", CONFIG_ID, "pending");
+
+    vi.stubGlobal("fetch", server({ activityError: "odoo.exceptions.MissingError" }));
+    await expect(svc.pushNote(CREDS, "ac-7", { userInitiated: true })).resolves.toBeUndefined();
+    expect((await activityLinks("ac-7"))[0].remoteState).toBe("deleted");
+    expect(await db.getNotePerServerStatus("ac-7")).toEqual({});
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(false);
+  });
+
+  it("raises any other failure of a write", async () => {
+    await db.addNote(makeNote({ id: "ac-8" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setActivity("ac-8", CONFIG_ID, ON_PARTNER);
+    await svc.pushNote(CREDS, "ac-8", { userInitiated: true });
+    vi.stubGlobal("fetch", server({ activityError: "odoo.exceptions.AccessError" }));
+    await expect(svc.pushNote(CREDS, "ac-8")).rejects.toThrow("nope");
+    expect((await activityLinks("ac-8"))[0].remoteState).toBe("ok");
+  });
+
+  it("blocks, without creating it, an activity whose record, type or user is gone", async () => {
+    for (const [i, [over, reason]] of ([
+      [{ resId: 99 }, "record_missing"], [{ typeId: 99 }, "type_missing"], [{ userId: 99 }, "user_missing"],
+    ] as const).entries()) {
+      const noteId = `ac-9-${i}`;
+      await db.addNote(makeNote({ id: noteId }));
+      const fetchMock = server();
+      vi.stubGlobal("fetch", fetchMock);
+      const op = (await svc.setActivity(noteId, CONFIG_ID, { ...ON_PARTNER, ...over }))!;
+      const err = await svc.pushNote(CREDS, noteId, { userInitiated: true }).catch((e) => e);
+      expect(err).toBeInstanceOf(OutboxBlockedError);
+      expect(err).toMatchObject({ reason, opKind: ACTIVITY_CREATE, opId: op.id });
+      expect(sent(fetchMock, "mail.activity", "create")).toHaveLength(0);
+      expect((await svc.activityStates(noteId, CONFIG_ID))[0]).toMatchObject({ state: "choose", reason });
+    }
+  });
+
+  it("checks the record archived ones included, as a done task's note is archived", async () => {
+    await db.addNote(makeNote({ id: "ac-10" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setActivity("ac-10", CONFIG_ID, ON_PARTNER);
+    await svc.pushNote(CREDS, "ac-10", { userInitiated: true });
+    const check = sent(fetchMock, "res.partner", "search_read")[0];
+    expect((check.body.params as any).kwargs.context).toEqual({ active_test: false });
+    const typeCheck = sent(fetchMock, "mail.activity.type", "search_read")[0];
+    expect((typeCheck.body.params as any).kwargs).not.toHaveProperty("context");
+  });
+
+  it("blocks an activity on a model the server does not have", async () => {
+    await db.addNote(makeNote({ id: "ac-11" }));
+    vi.stubGlobal("fetch", routeFetch((_url, body) => {
+      const { model } = body.params as any;
+      if (model === "x.gone") return { error: { code: 200, message: "Odoo Server Error", data: { name: "builtins.KeyError", message: "x.gone" } } };
+      return { result: [] };
+    }));
+    await svc.setActivity("ac-11", CONFIG_ID, { ...ON_PARTNER, resModel: "x.gone", typeId: null, userId: null });
+    const err = await svc.pushNote(CREDS, "ac-11", { userInitiated: true }).catch((e) => e);
+    expect(err).toMatchObject({ reason: "model_unusable" });
+    expect((await svc.activityStates("ac-11", CONFIG_ID))[0]).toMatchObject({ state: "choose", reason: "model_unusable" });
+  });
+
+  it("blocks, without creating it, an activity on a model that takes none", async () => {
+    await db.addNote(makeNote({ id: "ac-23" }));
+    const fetchMock = server({ noActivities: ["res.country"] });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setActivity("ac-23", CONFIG_ID, { ...ON_PARTNER, resModel: "res.country" });
+    const err = await svc.pushNote(CREDS, "ac-23", { userInitiated: true }).catch((e) => e);
+    expect(err).toMatchObject({ reason: "model_unusable", opKind: ACTIVITY_CREATE });
+    expect(sent(fetchMock, "mail.activity", "create")).toHaveLength(0);
+  });
+
+  it("blocks as refused a create the model fails with AttributeError, when the probe let it through", async () => {
+    await db.addNote(makeNote({ id: "ac-24" }));
+    vi.stubGlobal("fetch", server({ createError: "builtins.AttributeError" }));
+    await svc.setActivity("ac-24", CONFIG_ID, ON_PARTNER);
+    const err = await svc.pushNote(CREDS, "ac-24", { userInitiated: true }).catch((e) => e);
+    expect(err).toMatchObject({ reason: "refused" });
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(false);
+  });
+
+  it("leaves untouched, as done, an activity archived on the server (Odoo 17+)", async () => {
+    await db.addNote(makeNote({ id: "ac-25" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setActivity("ac-25", CONFIG_ID, ON_PARTNER);
+    await svc.pushNote(CREDS, "ac-25", { userInitiated: true });
+    await db.updateNote("ac-25", makeNote({ id: "ac-25", done: true }));
+
+    const fetchMock = server({ archived: [500] });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ac-25");
+    const read = sent(fetchMock, "mail.activity", "search_read")[0];
+    expect((read.body.params as any).kwargs).toMatchObject({ fields: ["active"], context: { active_test: false } });
+    expect(sent(fetchMock, "mail.activity", "action_feedback")).toHaveLength(0);
+    expect(sent(fetchMock, "mail.activity", "write")).toHaveLength(0);
+    expect((await activityLinks("ac-25"))[0].remoteState).toBe("done");
+  });
+
+  it("does not read active on Odoo 16, whose activities have none", async () => {
+    await SecureStoragePlugin.set({
+      key: syncSessionKey(CREDS),
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 16 }),
+    });
+    await db.addNote(makeNote({ id: "ac-26" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setActivity("ac-26", CONFIG_ID, ON_PARTNER);
+    await svc.pushNote(CREDS, "ac-26", { userInitiated: true });
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ac-26");
+    expect(sent(fetchMock, "mail.activity", "search_read")).toHaveLength(0);
+    expect(sent(fetchMock, "mail.activity", "write")).toHaveLength(1);
+  });
+
+  it("cancels, without running it, a creation whose activity was linked before its row was deleted", async () => {
+    await db.addNote(makeNote({ id: "ac-27" }));
+    const op = (await svc.setActivity("ac-27", CONFIG_ID, ON_PARTNER))!;
+    await db.addNoteLink({
+      id: "lk-27", noteId: "ac-27", configId: CONFIG_ID, model: "mail.activity", resId: 505, kind: "activity",
+      remoteState: "ok", createdAt: "2026-01-01T00:00:00.000Z", lastSyncedAt: null, clientUuid: op.clientUuid,
+      params: ON_PARTNER,
+    });
+    expect((await svc.activityStates("ac-27", CONFIG_ID)).map((a) => a.state)).toEqual(["linked"]);
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ac-27", { userInitiated: true });
+    expect(await db.getOutboxOp(op.id)).toBeNull();
+    expect(sent(fetchMock, "mail.activity", "create")).toHaveLength(0);
+    expect(await activityLinks("ac-27")).toHaveLength(1);
+  });
+
+  it("blocks a create the server refuses until chosen again", async () => {
+    await db.addNote(makeNote({ id: "ac-12" }));
+    vi.stubGlobal("fetch", server({ createError: "odoo.exceptions.AccessError" }));
+    const op = (await svc.setActivity("ac-12", CONFIG_ID, ON_PARTNER))!;
+    const err = await svc.pushNote(CREDS, "ac-12", { userInitiated: true }).catch((e) => e);
+    expect(err).toMatchObject({ reason: "refused", opId: op.id });
+    expect((await db.getOutboxOp(op.id))!.params.createSentAt).toBeNull();
+    expect((await svc.activityStates("ac-12", CONFIG_ID))[0]).toMatchObject({ state: "choose", reason: "refused" });
+
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setActivity("ac-12", CONFIG_ID, { ...ON_PARTNER, userId: null }, op.id);
+    await svc.pushNote(CREDS, "ac-12", { userInitiated: true });
+    expect(sent(fetchMock, "mail.activity", "create")[0].body.params.args![0]).not.toHaveProperty("user_id");
+  });
+
+  it("waits, without a request, for the record of an activity chosen offline", async () => {
+    await db.addNote(makeNote({ id: "ac-13" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    const op = (await svc.setActivity("ac-13", CONFIG_ID, { ...ON_PARTNER, resId: null }))!;
+    expect(op.status).toBe("incomplete");
+    const err = await svc.pushNote(CREDS, "ac-13", { userInitiated: true }).catch((e) => e);
+    expect(err).toMatchObject({ reason: "incomplete", opKind: ACTIVITY_CREATE });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(false);
+    expect(await db.refreshNoteSyncStatus("ac-13")).toBe("pending");
+
+    await svc.setActivity("ac-13", CONFIG_ID, ON_PARTNER, op.id);
+    expect((await db.getOutboxOp(op.id))!.status).toBe("queued");
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(true);
+  });
+
+  it("changes nothing for an opId that does not wait for a choice", async () => {
+    await db.addNote(makeNote({ id: "ac-14" }));
+    const op = (await svc.setActivity("ac-14", CONFIG_ID, ON_PARTNER))!;
+    expect(await svc.setActivity("ac-14", CONFIG_ID, { ...ON_PARTNER, resId: 6 }, op.id)).toBeNull();
+    expect((await db.getOutboxOp(op.id))!.params.resId).toBe(5);
+  });
+
+  it("drops a creation removed in the picker, and only the note's own", async () => {
+    await db.addNote(makeNote({ id: "ac-15" }));
+    await db.addNote(makeNote({ id: "ac-16" }));
+    const op = (await svc.setActivity("ac-15", CONFIG_ID, ON_PARTNER))!;
+    await svc.dropActivity("ac-16", op.id);
+    expect(await db.getOutboxOp(op.id)).not.toBeNull();
+    await svc.dropActivity("ac-15", op.id);
+    expect(await db.getOutboxOp(op.id)).toBeNull();
+    expect(await db.refreshNoteSyncStatus("ac-15")).toBe("local");
+  });
+
+  it("adopts the activity a lost create made, found by its marker in note", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await db.addNote(makeNote({ id: "ac-17" }));
+    vi.stubGlobal("fetch", routeFetch((_url, body) => {
+      const { model, method } = body.params as any;
+      if (model === "mail.activity" && method === "create") throw new TypeError("Failed to fetch");
+      const kwargs = (body.params as any).kwargs ?? {};
+      return { result: kwargs.domain?.[0]?.[0] === "id" ? [{ id: kwargs.domain[0][2] }] : [] };
+    }));
+    await svc.setActivity("ac-17", CONFIG_ID, ON_PARTNER);
+    await svc.pushNote(CREDS, "ac-17", { userInitiated: true }).catch(() => {});
+
+    afterQuietWindow();
+    const fetchMock = server({ markerHits: [777] });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ac-17", { userInitiated: true });
+    const search = rpcCalls(fetchMock).find((c) => (c.body.params as any).kwargs?.domain?.[0]?.[0] === "note")!;
+    expect(search.body.params.model).toBe("mail.activity");
+    expect(sent(fetchMock, "mail.activity", "create")).toHaveLength(0);
+    expect(sent(fetchMock, "mail.activity", "write")[0].body.params.args![0]).toEqual([777]);
+    expect((await activityLinks("ac-17"))[0].resId).toBe(777);
+  });
+
+  it("asks which activity is the note's when several carry its marker, then adopts the one picked", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await db.addNote(makeNote({ id: "ac-18" }));
+    vi.stubGlobal("fetch", routeFetch((_url, body) => {
+      if ((body.params as any).method === "create") throw new TypeError("Failed to fetch");
+      const kwargs = (body.params as any).kwargs ?? {};
+      return { result: kwargs.domain?.[0]?.[0] === "id" ? [{ id: kwargs.domain[0][2] }] : [] };
+    }));
+    const op = (await svc.setActivity("ac-18", CONFIG_ID, ON_PARTNER))!;
+    await svc.pushNote(CREDS, "ac-18", { userInitiated: true }).catch(() => {});
+    afterQuietWindow();
+    vi.stubGlobal("fetch", server({ markerHits: [701, 702] }));
+    const err = await svc.pushNote(CREDS, "ac-18", { userInitiated: true }).catch((e) => e);
+    expect(err).toMatchObject({ reason: "ambiguous", candidates: [701, 702], opKind: ACTIVITY_CREATE, opId: op.id });
+
+    vi.stubGlobal("fetch", server({ markerHits: [701, 702] }));
+    await svc.pushNote(CREDS, "ac-18", { userInitiated: true, adopt: { kind: "activity", opId: op.id, resId: 702 } });
+    expect((await activityLinks("ac-18"))[0].resId).toBe(702);
+  });
+
+  it("runs a due activity creation from the outbox, and a task beside it as before", async () => {
+    await db.addNote(makeNote({ id: "ac-19" }));
+    await linkTask(db, "ac-19", 10);
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setActivity("ac-19", CONFIG_ID, ON_PARTNER);
+    const result = await svc.outbox.drain(CREDS, CONFIG_ID);
+    expect(result.done).toBe(1);
+    expect(sent(fetchMock, "mail.activity", "create")).toHaveLength(1);
+    expect(sent(fetchMock, "project.task", "write")).toHaveLength(0);
+    expect(await svc.noteKinds("ac-19", CONFIG_ID)).toEqual(["task"]);
+  });
+
+  it("pushes in the background a pending note whose only target is a live activity", async () => {
+    await db.addNote(makeNote({ id: "ac-21" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setActivity("ac-21", CONFIG_ID, ON_PARTNER);
+    await svc.pushNote(CREDS, "ac-21", { userInitiated: true });
+    await db.setNotePerServerStatus("ac-21", CONFIG_ID, "pending");
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(true);
+
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    expect((await svc.syncAll(CREDS)).pushed).toBe(1);
+    expect(sent(fetchMock, "mail.activity", "write")).toHaveLength(1);
+  });
+
+  it("skips silently in the background a deleted task beside a live activity", async () => {
+    await db.addNote(makeNote({ id: "ac-22" }));
+    await linkTask(db, "ac-22", 10);
+    await db.setNoteLinkRemoteDeleted(`link-ac-22-${CONFIG_ID}`);
+    vi.stubGlobal("fetch", server());
+    await svc.setActivity("ac-22", CONFIG_ID, ON_PARTNER);
+    await svc.pushNote(CREDS, "ac-22", { userInitiated: true }).catch(() => {});
+    await db.setNotePerServerStatus("ac-22", CONFIG_ID, "pending");
+
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(svc.pushNote(CREDS, "ac-22")).resolves.toBeUndefined();
+    expect(sent(fetchMock, "mail.activity", "write")).toHaveLength(1);
+    expect((await db.getNotePerServerStatus("ac-22"))[CONFIG_ID]).toBe("synced");
+  });
+
+  it("keeps the note queued on a server where its task is gone but an activity lives", async () => {
+    await db.addNote(makeNote({ id: "ac-20" }));
+    await linkTask(db, "ac-20", 10);
+    vi.stubGlobal("fetch", server());
+    await svc.setActivity("ac-20", CONFIG_ID, ON_PARTNER);
+    await svc.pushNote(CREDS, "ac-20", { userInitiated: true });
+    await db.setNotePerServerStatus("ac-20", CONFIG_ID, "pending");
+
+    vi.stubGlobal("fetch", routeFetch((_url, body) => {
+      const { model } = body.params as any;
+      if (model === "project.task") {
+        return { error: { code: 200, message: "Odoo Server Error", data: { name: "odoo.exceptions.MissingError", message: "gone" } } };
+      }
+      return { result: true };
+    }));
+    await expect(svc.pushNote(CREDS, "ac-20")).rejects.toBeInstanceOf(RemoteRecordDeletedError);
+    expect((await db.getNotePerServerStatus("ac-20"))[CONFIG_ID]).toBe("synced");
+    expect((await activityLinks("ac-20"))[0].remoteState).toBe("ok");
   });
 });
