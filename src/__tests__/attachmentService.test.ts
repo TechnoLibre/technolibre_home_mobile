@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
-  attachmentSettings, DEFAULT_ATTACHMENTS, fileVerdict, mediaFiles, setAttachmentSettings,
+  attachmentSettings, DEFAULT_ATTACHMENTS, fileVerdict, MAX_ATTACHMENT_BYTES, mediaFiles, resolveMediaPath, setAttachmentSettings,
 } from "../services/attachmentService";
 
 function memoryStorage() {
@@ -45,11 +45,20 @@ describe("attachment settings and files", () => {
     ]);
   });
 
-  it("sends, holds for Wi-Fi or a missing file, and leaves out a file over the limit", async () => {
+  it("sends, holds for Wi-Fi, and leaves out a missing file or one over the limits", async () => {
     const file = { entryId: "p", path: "x", name: "x.jpg", mimetype: "image/jpeg" };
     expect((await fileVerdict(file, { wifiOnly: false, maxMb: null }, io())).verdict).toBe("send");
     expect((await fileVerdict(file, { wifiOnly: true, maxMb: null }, io({ wifi: false }))).verdict).toBe("wait");
-    expect((await fileVerdict(file, { wifiOnly: false, maxMb: null }, io({ size: null }))).verdict).toBe("wait");
+    expect((await fileVerdict(file, { wifiOnly: false, maxMb: null }, io({ size: null }))).verdict).toBe("missing");
     expect(await fileVerdict(file, { wifiOnly: false, maxMb: 1 }, io({ size: 2 * 1024 * 1024 }))).toEqual({ verdict: "too_big", size: 2097152 });
+    // No limit set still has the app's ceiling
+    expect((await fileVerdict(file, { wifiOnly: false, maxMb: null }, io({ size: MAX_ATTACHMENT_BYTES + 1 }))).verdict).toBe("too_big");
+  });
+
+  it("finds a video recorder's web view URL, an absolute file and a recording", () => {
+    expect(resolveMediaPath("http://localhost/_capacitor_file_/storage/emulated/0/VID%201.mp4"))
+      .toEqual({ path: "file:///storage/emulated/0/VID 1.mp4" });
+    expect(resolveMediaPath("file:///data/p.jpg")).toEqual({ path: "file:///data/p.jpg" });
+    expect(resolveMediaPath("recording-1.m4a")).toEqual({ path: "recording-1.m4a", directory: "DATA" });
   });
 });

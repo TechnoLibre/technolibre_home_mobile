@@ -88,6 +88,10 @@ export class NotificationService {
     void this.network.onReconnect(() => this.onNetworkRestore());
     // A row that fails on a tap, or anywhere else, moves the next retry
     this.syncService.onRetryScheduled = () => { void this.scheduleRetry(); };
+    // A sync ending in the background (one begun in front) changes what the closed app's notice says
+    this.syncService.onAfterSync = () => {
+      if (!this.active) void publishPending(this.syncService.db, false);
+    };
 
     // Start immediately (app is active at boot)
     this.startPolling();

@@ -434,6 +434,26 @@ function advanceBase(base: MirrorBase | null, local: MirrorValues, changed: Mirr
   return { local: { ...base.local, ...pick(local, changed) }, remote: { ...base.remote, ...pick(local, changed) } };
 }
 
+/** The record a link's attachments go to: its own record, or a message's (its params). */
+function recordOfLink(link: NoteLink): { model: string | undefined; resId: number | undefined } {
+  return link.kind === "message"
+    ? { model: link.params?.resModel, resId: link.params?.resId }
+    : { model: link.model, resId: link.resId };
+}
+
+/**
+ * A link's sent files by entry id ({id, path}); an entry recorded with an
+ * id only (before paths were kept) counts as sent whatever its file.
+ */
+function sentAttachments(link: NoteLink): Record<string, { id: number; path: string | null }> {
+  const sent: Record<string, { id: number; path: string | null }> = {};
+  for (const [entryId, value] of Object.entries(link.params?.attachments ?? {})) {
+    if (typeof value === "number") sent[entryId] = { id: value, path: null };
+    else if (value && typeof (value as any).id === "number") sent[entryId] = { id: (value as any).id, path: (value as any).path ?? null };
+  }
+  return sent;
+}
+
 /** A note's tags by name, its own tags table resolving the ids note.tags holds. */
 async function tagNameMap(db: DatabaseService): Promise<Map<string, Tag>> {
   try {
@@ -832,9 +852,10 @@ export class SyncService {
     creds: SyncCredentials,
     fn: (sessionId: string, odooVersion: number) => Promise<T>
   ): Promise<T> {
-    const scope = await this.companyScope(syncConfigIdOf(creds));
+    const scope = await this.companyScope(creds);
     return this.rpc.callWithAuth(creds, (sessionId, odooVersion) => {
       if (scope.length > 0) this._sessionCompanies.set(sessionId, scope);
+      else this._sessionCompanies.delete(sessionId);
       return fn(sessionId, odooVersion);
     });
   }
@@ -882,6 +903,7 @@ export class SyncService {
         await this.db.setSyncTargetPref({
           configId, kind: COMPANIES_PREF, params: { companies }, updatedAt: new Date().toISOString(),
         });
+        this._companiesChecked.add(configId);
       } catch {
         companies = [];
       }
@@ -892,14 +914,32 @@ export class SyncService {
   }
 
   /**
-   * The companies a server's calls are made in: those kept for it when the
-   * user has several (the current one first), none otherwise.
+   * The companies a server's calls are made in, when the user has several
+   * (the current one first), none otherwise. The list kept for the server
+   * is read again from the session once per app run (sessionInfo), so a
+   * company the user lost since is no longer asked for: the server would
+   * refuse every call naming it.
    */
-  private async companyScope(configId: string): Promise<number[]> {
-    const companies: Array<{ id: number }> = (await this.db.getSyncTargetPref(configId, COMPANIES_PREF).catch(() => null))
+  private async companyScope(creds: SyncCredentials): Promise<number[]> {
+    const configId = syncConfigIdOf(creds);
+    let companies: Array<{ id: number; name: string }> = (await this.db.getSyncTargetPref(configId, COMPANIES_PREF).catch(() => null))
       ?.params.companies ?? [];
+    if (companies.length > 1 && !this._companiesChecked.has(configId)) {
+      this._companiesChecked.add(configId);
+      try {
+        companies = (await this.rpc.sessionInfo(creds)).companies;
+        await this.db.setSyncTargetPref({
+          configId, kind: COMPANIES_PREF, params: { companies }, updatedAt: new Date().toISOString(),
+        });
+      } catch {
+        // Unread (offline): the kept list stands until the next run
+      }
+    }
     return companies.length > 1 ? companies.map((c) => c.id) : [];
   }
+
+  /** Config ids whose kept companies were read again this run (see companyScope). */
+  private _companiesChecked = new Set<string>();
 
   /**
    * Records the company the note's new records on this server go to: every
@@ -1060,6 +1100,7 @@ export class SyncService {
       await current;
     } finally {
       if (this._pushInFlight.get(key) === current) this._pushInFlight.delete(key);
+      this.onAfterSync?.();
     }
   }
 
@@ -1180,8 +1221,9 @@ export class SyncService {
       await this.db.refreshNoteSyncStatus(noteId);
       const created = await this.db.findNoteLink(noteId, configId, def.model, "create");
       if (created) {
-        await this.callWithAuth(creds, async (sessionId) =>
+        const files = await this.callWithAuth(creds, async (sessionId) =>
           this.sendAttachments(creds, sessionId, created.id, def.model, created.resId, await this.named(note)));
+        await this.keepPendingFor(noteId, configId, files.held);
       }
       return;
     }
@@ -1236,11 +1278,12 @@ export class SyncService {
         }
       }
       await this.db.setNoteLinkParams(fresh.id, { ...(fresh.params ?? {}), base: advanceBase(base, local, sent, fields) });
-      await this.sendAttachments(creds, sessionId, link.id, def.model, link.resId, current);
+      const files = await this.sendAttachments(creds, sessionId, link.id, def.model, link.resId, current);
       const now = new Date().toISOString();
       await this.db.setNoteLinkSyncedAt(link.id, now);
       // The fingerprint of the push's start: a change since, the pull's included, stays to send
       await this.settlePush(noteId, configId, fingerprint, now, null);
+      await this.keepPendingFor(noteId, configId, files.held);
     });
   }
 
@@ -1487,10 +1530,13 @@ export class SyncService {
       }
     }
     await this.callWithAuth(creds, async (sessionId, odooVersion) => {
-      // The company chosen goes first: the record is created in it
-      const companyId: number | null = op.params.companyId ?? null;
+      // The company chosen goes first: the record is created in it; a creation
+      // queued before the choice was recorded takes the server's last choice
+      const scope = this._sessionCompanies.get(sessionId) ?? [];
+      const lastChosen = scope.length > 1
+        ? (await this.db.getSyncTargetPref(op.configId, COMPANY_PREF))?.params.companyId ?? null : null;
+      const companyId: number | null = op.params.companyId ?? (scope.includes(lastChosen) ? lastChosen : null);
       if (companyId !== null) {
-        const scope = this._sessionCompanies.get(sessionId) ?? [];
         spec = { ...spec, context: { ...(spec.context ?? {}), allowed_company_ids: [companyId, ...scope.filter((c) => c !== companyId)] } };
       }
       const payload = await spec.values(sessionId, odooVersion, note);
@@ -2284,13 +2330,16 @@ export class SyncService {
         await this.db.setNoteLinkParams(link.id, { ...(link.params ?? {}), bodyHash: hash });
       }
       // The files go to the message's record, then into the message, beside those it has
-      await this.sendAttachments(creds, sessionId, link.id, link.params?.resModel, link.params?.resId, note, async (ids) => {
+      const files = await this.sendAttachments(creds, sessionId, link.id, link.params?.resModel, link.params?.resId, note, async (ids) => {
         const current = await this.readMessage(creds, sessionId, link.resId);
-        if (current) await this.updateMessage(creds, sessionId, link.resId, body, [...current.attachmentIds, ...ids]);
+        if (!current) throw new Error(`Le message #${link.resId} est introuvable sur ${creds.odooUrl}.`);
+        const all = [...new Set([...current.attachmentIds, ...ids])];
+        if (all.length > current.attachmentIds.length) await this.updateMessage(creds, sessionId, link.resId, body, all);
       });
       const now = new Date().toISOString();
       await this.db.setNoteLinkSyncedAt(link.id, now);
       await this.settlePush(noteId, link.configId, fingerprint, now, null);
+      await this.keepPendingFor(noteId, link.configId, files.held);
     });
   }
 
@@ -2318,13 +2367,21 @@ export class SyncService {
   /**
    * Sends the note's photo, audio and video files not sent yet to this
    * link's record (resModel, resId) as ir.attachment, as the attachment
-   * settings allow (see fileVerdict): on Wi-Fi only, under a size; a file
-   * held back is tried again on the next push, one over the size is noted
-   * (params.attachmentsSkipped) and left out. Each file goes once per link
-   * (params.attachments: entry id → attachment id); a file removed from the
-   * note stays on the server. linked receives the new attachment ids (a
-   * message adds them to itself). Best effort: a failure stops the round,
-   * kept in params.attachmentError, and never fails the push.
+   * settings allow (see fileVerdict). params.attachments maps each entry
+   * to the attachment made of its file ({id, path}): a file goes once per
+   * record, a replaced one (another path) goes again, the old one staying
+   * on the server like a removed one; a file already sent to the same
+   * record through another of the note's links (its task, and a message
+   * posted on that task) is reused. Each sent file is recorded at once;
+   * one whose create may have reached the server without an answer
+   * (params.attachmentsInFlight) is looked for there first. A file over
+   * the size, missing, or refused by the server is noted
+   * (params.attachmentsSkipped) and left out; the round goes on with the
+   * next. linked receives the new attachment ids (a message adds them to
+   * itself); ids it could not add are kept (params.attachmentsUnlinked)
+   * and given again next time. Returns held: a file waits for Wi-Fi, or a
+   * failure (network, linking) stopped the round, so the server stays
+   * pending and the next sync tries again. Never raises.
    */
   private async sendAttachments(
     creds: SyncCredentials,
@@ -2334,48 +2391,100 @@ export class SyncService {
     resId: number | undefined,
     note: Note,
     linked: (ids: number[]) => Promise<void> = async () => {}
-  ): Promise<void> {
+  ): Promise<{ held: boolean }> {
     const files = mediaFiles(note);
-    if (files.length === 0 || !resModel || !resId) return;
-    const link = (await this.db.getNoteLinks(note.id)).find((l) => l.id === linkId);
-    if (!link) return;
-    const sent: Record<string, number> = { ...(link.params?.attachments ?? {}) };
-    const skipped: Record<string, number> = { ...(link.params?.attachmentsSkipped ?? {}) };
+    if (files.length === 0 || !resModel || !resId) return { held: false };
+    const links = await this.db.getNoteLinks(note.id);
+    const link = links.find((l) => l.id === linkId);
+    if (!link) return { held: false };
+    const sameRecord = links.filter((l) => l.id !== linkId && l.configId === link.configId && l.remoteState === "ok"
+      && recordOfLink(l).model === resModel && recordOfLink(l).resId === resId);
+    const sent = sentAttachments(link);
+    const skipped: Record<string, any> = { ...(link.params?.attachmentsSkipped ?? {}) };
+    const inFlight: Record<string, string> = { ...(link.params?.attachmentsInFlight ?? {}) };
+    const added: number[] = [...(link.params?.attachmentsUnlinked ?? [])];
     const settings = attachmentSettings();
-    const added: number[] = [];
+    let held = false;
     let error: string | null = null;
+    const save = async (patch: Record<string, any>) => {
+      const fresh = (await this.db.getNoteLinks(note.id)).find((l) => l.id === linkId);
+      await this.db.setNoteLinkParams(linkId, { ...(fresh?.params ?? {}), ...patch });
+    };
     for (const file of files) {
-      if (file.entryId in sent) continue;
+      const prev = sent[file.entryId];
+      if (prev && (prev.path === null || prev.path === file.path)) continue;
+      const elsewhere = sameRecord.map((l) => sentAttachments(l)[file.entryId]).find((r) => r && r.path === file.path);
+      if (elsewhere) {
+        sent[file.entryId] = elsewhere;
+        added.push(elsewhere.id);
+        await save({ attachments: sent });
+        continue;
+      }
       try {
         const { verdict, size } = await fileVerdict(file, settings, this.attachmentIO);
-        if (verdict === "too_big") {
-          skipped[file.entryId] = size!;
+        if (verdict === "too_big" || verdict === "missing") {
+          skipped[file.entryId] = verdict === "too_big" ? size : "missing";
           continue;
         }
-        if (verdict === "wait") continue;
+        if (verdict === "wait") {
+          held = true;
+          continue;
+        }
         delete skipped[file.entryId];
-        const datas = await this.attachmentIO.read(file.path);
-        const id: number = await this.jsonRpc(creds.odooUrl, sessionId, "ir.attachment", "create", [{
-          name: file.name, datas, res_model: resModel, res_id: resId, mimetype: file.mimetype,
-        }]);
-        sent[file.entryId] = id;
-        added.push(id);
+        let id: number | null = null;
+        if (inFlight[file.entryId] === file.path) {
+          const found: Array<{ id: number }> = await this.jsonRpc(creds.odooUrl, sessionId, "ir.attachment", "search_read", [], {
+            domain: [["res_model", "=", resModel], ["res_id", "=", resId], ["name", "=", file.name]],
+            fields: ["id"], limit: 1, order: "id desc",
+          });
+          id = Array.isArray(found) && found[0] ? found[0].id : null;
+        }
+        if (id === null) {
+          inFlight[file.entryId] = file.path;
+          await save({ attachmentsInFlight: inFlight });
+          const datas = await this.attachmentIO.read(file.path);
+          id = await this.jsonRpc(creds.odooUrl, sessionId, "ir.attachment", "create", [{
+            name: file.name, datas, res_model: resModel, res_id: resId, mimetype: file.mimetype,
+          }]);
+        }
+        sent[file.entryId] = { id: id!, path: file.path };
+        delete inFlight[file.entryId];
+        added.push(id!);
+        await save({ attachments: sent, attachmentsInFlight: inFlight, attachmentsSkipped: skipped });
       } catch (e: unknown) {
         error = e instanceof Error ? e.message : String(e);
+        if (e instanceof OdooRpcError && e.odooName) {
+          // The server refused this file: the others may still go
+          skipped[file.entryId] = "refused";
+          delete inFlight[file.entryId];
+          continue;
+        }
+        held = true;
         break;
       }
     }
+    let unlinked: number[] = [];
     if (added.length > 0) {
       try {
         await linked(added);
       } catch (e: unknown) {
         error = e instanceof Error ? e.message : String(e);
+        unlinked = added;
+        held = true;
       }
     }
-    const fresh = (await this.db.getNoteLinks(note.id)).find((l) => l.id === linkId);
-    await this.db.setNoteLinkParams(linkId, {
-      ...(fresh?.params ?? {}), attachments: sent, attachmentsSkipped: skipped, attachmentError: error,
+    await save({
+      attachments: sent, attachmentsSkipped: skipped, attachmentsInFlight: inFlight,
+      attachmentsUnlinked: unlinked, attachmentError: error,
     });
+    return { held };
+  }
+
+  /** After a push settled the server: files still to send keep it pending (see sendAttachments). */
+  private async keepPendingFor(noteId: string, configId: string, held: boolean): Promise<void> {
+    if (!held) return;
+    await this.db.setNotePerServerStatus(noteId, configId, "pending");
+    await this.db.refreshNoteSyncStatus(noteId);
   }
 
   /**
@@ -2700,6 +2809,9 @@ export class SyncService {
   /** Called with next_attempt_at each time an outbox row turns failed. */
   onRetryScheduled: ((nextAttemptAt: string) => void) | null = null;
 
+  /** Called after each pushNote and syncAll, whatever their outcome: statuses may have changed. */
+  onAfterSync: (() => void) | null = null;
+
   /** See OutboxService.nextRetryAt. */
   async nextRetryAt(configId: string): Promise<string | null> {
     return this.outbox.nextRetryAt(configId);
@@ -2777,6 +2889,7 @@ export class SyncService {
       return await current;
     } finally {
       if (this._syncAllChain.get(configId) === current) this._syncAllChain.delete(configId);
+      this.onAfterSync?.();
     }
   }
 

@@ -17,6 +17,17 @@ describe("pending sync notice", () => {
     await db.initialize();
     await db.addSyncColumnsToNotes();
     await db.createSyncOutboxTable();
+    await db.addSyncFieldsToApplications();
+    await db.addNtfyTokenColumn();
+    await db.addApplication({
+      url: "https://odoo.example.com", username: "u", password: "p", database: "db",
+      odooVersion: "", autoSync: false, pollIntervalMinutes: 5, ntfyUrl: "", ntfyTopic: "", ntfyToken: "",
+    } as any);
+  });
+
+  const op = (id: string, configId: string, status = "queued") => db.addOutboxOp({
+    id, clientUuid: id, noteId: CALENDAR_NOTE, configId, kind: "calendar.done", params: {},
+    status: status as any, attempts: 0, nextAttemptAt: null, lastError: null, dependsOn: null, createdAt: "t", updatedAt: "t",
   });
 
   const note = (id: string, syncStatus: string) => db.addNote({
@@ -28,10 +39,10 @@ describe("pending sync notice", () => {
     await note("b", "error");
     await note("c", "conflict");
     await note("d", "synced");
-    await db.addOutboxOp({
-      id: "op", clientUuid: "u", noteId: CALENDAR_NOTE, configId: "x", kind: "calendar.done", params: {},
-      status: "queued", attempts: 0, nextAttemptAt: null, lastError: null, dependsOn: null, createdAt: "t", updatedAt: "t",
-    });
+    await op("live", "https://odoo.example.com|u|db");
+    // A server removed since, and a blocked change, are no work a sync can do
+    await op("gone", "https://gone.example.com|u|db");
+    await op("blocked", "https://odoo.example.com|u|db", "blocked");
     expect(await pendingCounts(db)).toEqual({ pending: 3, conflicts: 1 });
   });
 

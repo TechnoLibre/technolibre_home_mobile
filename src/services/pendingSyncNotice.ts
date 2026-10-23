@@ -1,4 +1,5 @@
 import { Capacitor } from "@capacitor/core";
+import { LocalNotifications } from "@capacitor/local-notifications";
 import type { DatabaseService } from "./databaseService";
 import { CALENDAR_NOTE } from "./activityCalendarService";
 import { NoteSyncPlugin } from "../plugins/noteSyncPlugin";
@@ -12,12 +13,15 @@ export interface PendingCounts {
 
 /**
  * Counts what waits for the sync: the notes pending or in error, plus the
- * calendar's changes waiting in the outbox, and apart the notes in
- * conflict (they wait for the user, not for the network).
+ * calendar's changes waiting in the outbox for a live server (not those of
+ * a server removed since, nor blocked ones, which no sync sends), and apart
+ * the notes in conflict (they wait for the user, not for the network).
  */
 export async function pendingCounts(db: DatabaseService): Promise<PendingCounts> {
   const statuses = await db.countNotesBySyncStatus();
-  const calendar = (await db.getOutboxOpsForNote(CALENDAR_NOTE).catch(() => [])).length;
+  const live = await db.getLiveSyncConfigIds().catch(() => new Set<string>());
+  const calendar = (await db.getOutboxOpsForNote(CALENDAR_NOTE).catch(() => []))
+    .filter((op) => live.has(op.configId) && op.status !== "blocked" && op.status !== "incomplete").length;
   return {
     pending: (statuses.pending ?? 0) + (statuses.error ?? 0) + calendar,
     conflicts: statuses.conflict ?? 0,
@@ -52,8 +56,25 @@ export async function publishPending(
   try {
     const counts = await pendingCounts(db);
     const texts = noticeTexts(counts);
+    // Android 13+ shows nothing without the right: asked once, in front, when something waits
+    if (foreground && texts) await askNoticePermission();
     await plugin.publish({ ...counts, foreground, ...(texts ?? {}) });
   } catch (e) {
     console.warn("[pendingSyncNotice] publish failed:", e);
+  }
+}
+
+/** localStorage key: the notification right was asked once for the notice. */
+const PERMISSION_ASKED_KEY = "sync.notice.permissionAsked";
+
+/** Asks the notification right once, unless it is granted or refused already. */
+async function askNoticePermission(): Promise<void> {
+  try {
+    if (localStorage.getItem(PERMISSION_ASKED_KEY)) return;
+    const { display } = await LocalNotifications.checkPermissions();
+    if (display === "prompt" || display === "prompt-with-rationale") await LocalNotifications.requestPermissions();
+    localStorage.setItem(PERMISSION_ASKED_KEY, "1");
+  } catch {
+    // Not asked: the notice stays silent until the right is given
   }
 }

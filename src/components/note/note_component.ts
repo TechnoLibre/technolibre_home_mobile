@@ -1447,6 +1447,13 @@ export class NoteComponent extends EnhancedComponent {
 		try {
 			const work = (id: string) => sectionHasWork(this.state.activities[id]);
 			const activities = planActivities(this.syncService, this.state.noteId, ids, this.state.activities);
+			// The server's company choice first: a creation drained before the next step takes it
+			for (const id of ids) {
+				const company = this.state.companies[id];
+				if (company && company.list.length > 1 && company.selection !== null) {
+					await this.syncService.setCreationCompany(this.state.noteId, id, company.selection);
+				}
+			}
 			await applyTaskTargets(this.syncService, this.state.noteId, ids, this.state.targets, work);
 			for (const record of activities) await record();
 			// The company chosen, where the user has several, goes to every new record of the note there

@@ -20,6 +20,33 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "NoteSyncPlugin")
 public class NoteSyncPlugin extends Plugin {
 
+    /**
+     * Le premier plan est noté ici, sur le fil principal et sans attendre
+     * le JavaScript : une app balayée juste après sa mise en arrière-plan, ou
+     * tuée au premier plan, laisserait sinon l'indicateur à « premier plan »
+     * et le travail muet.
+     */
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        setForeground(true);
+        NoteSyncJob.clear(getContext());
+    }
+
+    @Override
+    protected void handleOnPause() {
+        super.handleOnPause();
+        setForeground(false);
+        NoteSyncJob.schedule(getContext());
+    }
+
+    private void setForeground(boolean foreground) {
+        getContext().getSharedPreferences(NoteSyncJob.PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(NoteSyncJob.KEY_FOREGROUND, foreground)
+                .commit();
+    }
+
     @PluginMethod
     public void publish(PluginCall call) {
         Context context = getContext();

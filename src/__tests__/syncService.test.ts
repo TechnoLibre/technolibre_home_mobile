@@ -3998,6 +3998,41 @@ describe("SyncService — companies", () => {
     expect((await svc.serverCompanies(CREDS, { online: false })).last).toBe(2);
   });
 
+  it("reads the kept companies again once per run, dropping one the user lost", async () => {
+    vi.stubGlobal("fetch", server([1, 2, 3]));
+    await svc.serverCompanies(CREDS, { online: true });
+    const fresh = new SyncService(db);
+    const fetchMock = server([1, 2]);
+    vi.stubGlobal("fetch", fetchMock);
+    await db.addNote(makeNote({ id: "co-3" }));
+    await linkTask(db, "co-3", 10);
+    await fresh.pushNote(CREDS, "co-3");
+    const write = rpcCalls(fetchMock).find((c) => (c.body.params as any).method === "write")!;
+    expect((write.body.params as any).kwargs.context.allowed_company_ids).toEqual([1, 2]);
+  });
+
+  it("creates in the server's last chosen company a record queued before the choice", async () => {
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.serverCompanies(CREDS, { online: true });
+    await db.addNote(makeNote({ id: "co-4" }));
+    await svc.setCreationCompany("co-4", CONFIG_ID, 2);
+    await svc.setTarget("co-4", CONFIG_ID, "task", { projectId: null });
+    await svc.pushNote(CREDS, "co-4", { userInitiated: true });
+    const create = rpcCalls(fetchMock).find((c) => (c.body.params as any).method === "create")!;
+    expect((create.body.params as any).kwargs.context.allowed_company_ids).toEqual([2, 1]);
+  });
+
+  it("tells after each push and sync that statuses may have changed", async () => {
+    vi.stubGlobal("fetch", server([1]));
+    const after = vi.fn();
+    svc.onAfterSync = after;
+    await db.addNote(makeNote({ id: "co-5" }));
+    await svc.pushNote(CREDS, "co-5", { userInitiated: true }).catch(() => {});
+    await svc.syncAll(CREDS);
+    expect(after).toHaveBeenCalledTimes(2);
+  });
+
   it("adds no company context for a user of one company", async () => {
     const fetchMock = server([1]);
     vi.stubGlobal("fetch", fetchMock);
@@ -4038,14 +4073,18 @@ describe("SyncService — attachments", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  function server(options: { attachmentError?: boolean } = {}) {
+  function server(options: { attachmentError?: boolean; refuse?: string; lost?: string; found?: number } = {}) {
     let next = 300;
     return routeFetch((url, body) => {
       if (url.endsWith("/mail/message/update_content")) return { result: {} };
-      const { model, method } = body.params as any;
+      const { model, method, args } = body.params as any;
       const kwargs = (body.params as any).kwargs ?? {};
+      if (model === "ir.attachment" && method === "search_read") return { result: options.found ? [{ id: options.found }] : [] };
       if (model === "ir.attachment" && method === "create") {
-        if (options.attachmentError) return { error: { code: 200, message: "x", data: { name: "odoo.exceptions.AccessError", message: "no" } } };
+        if (options.attachmentError || args[0].name === options.refuse) {
+          return { error: { code: 200, message: "x", data: { name: "odoo.exceptions.AccessError", message: "no" } } };
+        }
+        if (args[0].name === options.lost) throw new TypeError("Failed to fetch");
         return { result: next++ };
       }
       if (method === "fields_get") return { result: { message_ids: {} } };
@@ -4053,7 +4092,8 @@ describe("SyncService — attachments", () => {
         return { result: [{ id: kwargs.domain[0][2], body: "<p>x</p>", attachment_ids: [7] }] };
       }
       // The record checks find what they look for; the task is not read back, so a push writes it whole
-      if (method === "search_read" && kwargs.domain?.[0]?.[0] === "id" && model !== "project.task") {
+      const recordCheck = kwargs.fields?.length === 1 && kwargs.fields[0] === "id";
+      if (method === "search_read" && kwargs.domain?.[0]?.[0] === "id" && (model !== "project.task" || recordCheck)) {
         return { result: [{ id: kwargs.domain[0][2] }] };
       }
       if (method === "message_post") return { result: 600 };
@@ -4064,7 +4104,8 @@ describe("SyncService — attachments", () => {
 
   const photo = (id = "p1") => ({ id, type: "photo", params: { path: `file:///data/${id}.jpg` } } as any);
   const attachments = (fetchMock: ReturnType<typeof routeFetch>) =>
-    rpcCalls(fetchMock).filter((c) => c.body.params.model === "ir.attachment").map((c) => c.body.params.args![0]);
+    rpcCalls(fetchMock).filter((c) => c.body.params.model === "ir.attachment" && c.body.params.method === "create")
+      .map((c) => c.body.params.args![0]);
 
   it("sends a new task's photos to it once, then a photo added later", async () => {
     await db.addNote(makeNote({ id: "at-1", entries: [photo("p1")] }));
@@ -4074,7 +4115,7 @@ describe("SyncService — attachments", () => {
     await svc.pushNote(CREDS, "at-1", { userInitiated: true });
     expect(attachments(fetchMock)).toEqual([{ name: "p1.jpg", datas: "QUJD", res_model: "project.task", res_id: 900, mimetype: "image/jpeg" }]);
     const link = (await db.findNoteLink("at-1", CONFIG_ID, "project.task", "create"))!;
-    expect(link.params!.attachments).toEqual({ p1: 300 });
+    expect(link.params!.attachments).toEqual({ p1: { id: 300, path: "file:///data/p1.jpg" } });
 
     await db.updateNote("at-1", makeNote({ id: "at-1", entries: [photo("p1"), photo("p2")] }));
     fetchMock.mockClear();
@@ -4111,6 +4152,59 @@ describe("SyncService — attachments", () => {
     expect(edit.body.params).toMatchObject({ message_id: 600, attachment_ids: [7, 300] });
   });
 
+  it("sends a replaced photo again, and reuses a file sent to the same record by another link", async () => {
+    await db.addNote(makeNote({ id: "at-5", entries: [photo("p1")] }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTarget("at-5", CONFIG_ID, "task", { projectId: null });
+    await svc.pushNote(CREDS, "at-5", { userInitiated: true });
+    // A message posted on the note's own task: the photo is there already
+    await svc.setMessage("at-5", CONFIG_ID, { resModel: "project.task", resId: 900, typeId: null, deadline: null, userId: null });
+    fetchMock.mockClear();
+    await svc.pushNote(CREDS, "at-5", { userInitiated: true });
+    expect(attachments(fetchMock)).toEqual([]);
+    const edit = rpcCalls(fetchMock).find((c) => c.url.endsWith("/mail/message/update_content"))!;
+    expect(edit.body.params).toMatchObject({ attachment_ids: [7, 300] });
+
+    await db.updateNote("at-5", makeNote({ id: "at-5", entries: [{ id: "p1", type: "photo", params: { path: "file:///data/retake.jpg" } } as any] }));
+    fetchMock.mockClear();
+    await svc.pushNote(CREDS, "at-5");
+    expect(attachments(fetchMock).map((a) => [a.name, a.res_model])).toContainEqual(["retake.jpg", "project.task"]);
+  });
+
+  it("goes on past a file the server refuses, and keeps waiting for Wi-Fi as pending", async () => {
+    await db.addNote(makeNote({ id: "at-6", entries: [photo("bad"), photo("good")] }));
+    const fetchMock = server({ refuse: "bad.jpg" });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTarget("at-6", CONFIG_ID, "task", { projectId: null });
+    await svc.pushNote(CREDS, "at-6", { userInitiated: true });
+    const link = (await db.findNoteLink("at-6", CONFIG_ID, "project.task", "create"))!;
+    expect(Object.keys(link.params!.attachments)).toEqual(["good"]);
+    expect(link.params!.attachmentsSkipped).toEqual({ bad: "refused" });
+    expect((await db.getNotePerServerStatus("at-6"))[CONFIG_ID]).toBe("synced");
+
+    storage.set("options.sync.attachments", JSON.stringify({ wifiOnly: true, maxMb: null }));
+    svc.attachmentIO = { ...svc.attachmentIO, onWifi: async () => false };
+    await db.updateNote("at-6", makeNote({ id: "at-6", entries: [photo("bad"), photo("good"), photo("new")] }));
+    await db.setNotePerServerStatus("at-6", CONFIG_ID, "pending");
+    await svc.pushNote(CREDS, "at-6");
+    expect((await db.getNotePerServerStatus("at-6"))[CONFIG_ID]).toBe("pending");
+  });
+
+  it("looks for a file whose create got no answer before sending it again", async () => {
+    await db.addNote(makeNote({ id: "at-7", entries: [photo("p1")] }));
+    vi.stubGlobal("fetch", server({ lost: "p1.jpg" }));
+    await svc.setTarget("at-7", CONFIG_ID, "task", { projectId: null });
+    await svc.pushNote(CREDS, "at-7", { userInitiated: true });
+    expect((await db.getNotePerServerStatus("at-7"))[CONFIG_ID]).toBe("pending");
+    const fetchMock = server({ found: 444 });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "at-7");
+    expect(attachments(fetchMock)).toEqual([]);
+    const link = (await db.findNoteLink("at-7", CONFIG_ID, "project.task", "create"))!;
+    expect(link.params!.attachments.p1.id).toBe(444);
+  });
+
   it("never fails the push for a file the server refuses, keeping the reason", async () => {
     await db.addNote(makeNote({ id: "at-4", entries: [photo("p1")] }));
     vi.stubGlobal("fetch", server({ attachmentError: true }));
@@ -4119,5 +4213,6 @@ describe("SyncService — attachments", () => {
     const link = (await db.findNoteLink("at-4", CONFIG_ID, "project.task", "create"))!;
     expect(link.params!.attachmentError).toContain("no");
     expect(link.params!.attachments).toEqual({});
+    expect(link.params!.attachmentsSkipped).toEqual({ p1: "refused" });
   });
 });

@@ -1,4 +1,4 @@
-import { Filesystem } from "@capacitor/filesystem";
+import { Directory, Filesystem } from "@capacitor/filesystem";
 import type { Note } from "../models/note";
 import { networkService } from "./networkService";
 
@@ -16,6 +16,13 @@ export interface AttachmentSettings {
 }
 
 export const DEFAULT_ATTACHMENTS: AttachmentSettings = { wifiOnly: false, maxMb: null };
+
+/**
+ * Largest file ever sent, whatever the settings: read whole and sent as
+ * base64 (a third larger) in one request, a bigger one would exhaust the
+ * app's memory and exceed the server's request limit (128 MiB by default).
+ */
+export const MAX_ATTACHMENT_BYTES = 90 * 1024 * 1024;
 
 /** The settings stored, or the defaults; unreadable storage counts as the defaults. */
 export function attachmentSettings(): AttachmentSettings {
@@ -78,16 +85,29 @@ export interface AttachmentIO {
   onWifi(): Promise<boolean>;
 }
 
+/**
+ * Where Filesystem finds an entry's file: a web view URL of a native file
+ * (http://localhost/_capacitor_file_/…, as the video recorder gives) as
+ * that file; an absolute path or file:// URI as is; a relative path (a
+ * recording) under the app's data directory.
+ */
+export function resolveMediaPath(path: string): { path: string; directory?: Directory } {
+  const web = path.match(/^https?:\/\/[^/]+\/_capacitor_file_(\/.*)$/);
+  if (web) return { path: `file://${decodeURI(web[1])}` };
+  if (/^(file|content):/.test(path) || path.startsWith("/")) return { path };
+  return { path, directory: Directory.Data };
+}
+
 export const deviceAttachmentIO: AttachmentIO = {
   async size(path) {
     try {
-      return Number((await Filesystem.stat({ path })).size);
+      return Number((await Filesystem.stat(resolveMediaPath(path))).size);
     } catch {
       return null;
     }
   },
   async read(path) {
-    const { data } = await Filesystem.readFile({ path });
+    const { data } = await Filesystem.readFile(resolveMediaPath(path));
     return typeof data === "string" ? data : await blobToBase64(data);
   },
   async onWifi() {
@@ -103,18 +123,20 @@ async function blobToBase64(blob: Blob): Promise<string> {
 }
 
 /**
- * Whether a file goes now: "send"; "wait" (Wi-Fi only and not on Wi-Fi, or
- * the file not found: tried again on the next push); "too_big" (over the
- * size limit: left out until the limit changes).
+ * Whether a file goes now: "send"; "wait" (Wi-Fi only and not on Wi-Fi:
+ * the next push tries again); "missing" (the file cannot be found);
+ * "too_big" (over the size limit, or MAX_ATTACHMENT_BYTES: left out until
+ * the limit changes).
  */
 export async function fileVerdict(
   file: MediaFile,
   settings: AttachmentSettings,
   io: AttachmentIO
-): Promise<{ verdict: "send" | "wait" | "too_big"; size: number | null }> {
+): Promise<{ verdict: "send" | "wait" | "missing" | "too_big"; size: number | null }> {
   if (settings.wifiOnly && !(await io.onWifi())) return { verdict: "wait", size: null };
   const size = await io.size(file.path);
-  if (size === null) return { verdict: "wait", size: null };
-  if (settings.maxMb !== null && size > settings.maxMb * 1024 * 1024) return { verdict: "too_big", size };
+  if (size === null) return { verdict: "missing", size: null };
+  const limit = Math.min(MAX_ATTACHMENT_BYTES, settings.maxMb !== null ? settings.maxMb * 1024 * 1024 : Infinity);
+  if (size > limit) return { verdict: "too_big", size };
   return { verdict: "send", size };
 }
