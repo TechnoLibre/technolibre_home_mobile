@@ -3729,6 +3729,21 @@ describe("SyncService — two-way sync and conflicts", () => {
     ]);
   });
 
+  it("names the note's files not yet sent to a record or message that takes them", async () => {
+    const photo = { id: "p", type: "photo", params: { path: "file:///x/IMG_1.jpg" } } as any;
+    const audio = { id: "a", type: "audio", params: { path: "rec-2.aac" } } as any;
+    const video = { id: "v", type: "video", params: { path: "file:///x/VID_3.mp4" } } as any;
+    await db.addNote(makeNote({ id: "us-1", entries: [photo, audio, video] }));
+    const link = (id: string, kind: string, remoteState: string, params: Record<string, any>) => db.addNoteLink({
+      id, noteId: "us-1", configId: CONFIG_ID, model: "project.task", resId: 1, kind, remoteState,
+      createdAt: "2026-01-01T00:00:00.000Z", lastSyncedAt: null, params,
+    } as any);
+    await link("u1", "create", "ok", { attachments: { p: { id: 1, path: "file:///x/IMG_1.jpg" } }, attachmentsSkipped: { v: 99 } });
+    await link("u2", "activity", "ok", {});
+    await link("u3", "create", "deleted", {});
+    expect(await svc.unsentFiles("us-1")).toEqual(["rec-2.aac"]);
+  });
+
   describe("pushEach", () => {
     const credsOf: Record<string, SyncCredentials> = { [CONFIG_ID]: CREDS, [OTHER_CONFIG_ID]: OTHER_CREDS };
 

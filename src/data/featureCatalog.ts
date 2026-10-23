@@ -1986,7 +1986,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "push) and a largest size (a larger file is left out). Each file goes "
                         + "once per record; a removed one stays on the server; a refusal is kept "
                         + "and never fails the push. Activities take none. A file left out "
-                        + "(too big, missing, refused) is named on the note, with why, until sent.",
+                        + "(too big, missing, refused) is named on the note, with why, until sent; "
+                        + "so are those held for Wi-Fi while off it, and going onto Wi-Fi syncs.",
                     fr: "Après chaque création ou écriture de la tâche, de l'opportunité ou de la "
                         + "facture d'une note, et de chaque message qu'elle a posté, ses fichiers "
                         + "pas encore envoyés à ce record en deviennent des ir.attachment (un "
@@ -1996,7 +1997,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "fichier part une fois par record ; un fichier retiré reste sur le "
                         + "serveur ; un refus est noté sans faire échouer l'envoi. Les activités "
                         + "n'en prennent pas. Un fichier laissé de côté (trop gros, introuvable, "
-                        + "refusé) est nommé sur la note, avec la raison, jusqu'à son envoi.",
+                        + "refusé) est nommé sur la note, avec la raison, jusqu'à son envoi ; de "
+                        + "même ceux retenus pour le Wi-Fi hors Wi-Fi, et passer au Wi-Fi synchronise.",
                 },
                 dependsOn: ["sync.task-project", "sync.message"],
                 demo: { kind: "options", sectionId: "sync" },

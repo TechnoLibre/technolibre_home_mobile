@@ -423,6 +423,7 @@ export const translations: Record<string, string> = {
   "label.sync_file_too_big": "too big, {mb} MB",
   "label.sync_file_missing": "not found on the device",
   "label.sync_file_refused": "refused by the server",
+  "label.sync_files_wait_wifi": "Waiting for Wi-Fi: {files}. Sent at the next sync on Wi-Fi.",
   "label.sync_date_record_project_task": "task #{id}",
   "label.sync_date_record_crm_lead": "opportunity #{id}",
   "label.sync_date_record_mail_activity": "activity #{id}",

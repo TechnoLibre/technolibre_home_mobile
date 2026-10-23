@@ -69,6 +69,7 @@ import type { FormField } from "../../services/odoo/invoiceForm";
 const INVOICE_PRODUCT_MODEL = "product.product";
 import { OutboxBlockedError } from "../../services/outboxService";
 import { networkService } from "../../services/networkService";
+import { attachmentSettings } from "../../services/attachmentService";
 import { openRecordInApp } from "../../utils/openRecordInApp";
 import { CALENDAR_HANDOFF_KEY } from "../../services/calendarView";
 import type { SyncConfig } from "../../models/syncConfig";
@@ -601,6 +602,7 @@ export class NoteComponent extends EnhancedComponent {
 			onPriorityClick.bind="onPriorityClick"
 			/>
 			<p t-if="state.skippedFiles.length" class="note__sync-warning" role="status" t-esc="skippedFilesText"/>
+			<p t-if="state.waitingFiles.length" class="note__sync-warning" role="status" t-esc="waitingFilesText"/>
 			<div t-foreach="state.dateProposals" t-as="proposal" t-key="proposal.linkId" class="note__sync-warning note__date-proposal" role="status">
 				<p t-esc="dateProposalText(proposal)"/>
 				<div class="note__date-proposal-actions">
@@ -810,6 +812,8 @@ export class NoteComponent extends EnhancedComponent {
 			skippedFiles: [] as SkippedFile[],
 			/** The dates servers propose for the note, waiting for the user's answer. */
 			dateProposals: [] as DateProposal[],
+			/** The note's files a push holds back for Wi-Fi, while off Wi-Fi with Wi-Fi only set. */
+			waitingFiles: [] as string[],
 		});
 		this.setParams();
 		this.getNote();
@@ -1583,6 +1587,12 @@ export class NoteComponent extends EnhancedComponent {
 	private async loadSyncNotices() {
 		this.state.skippedFiles = await this.syncService.skippedFiles(this.state.noteId).catch(() => []);
 		this.state.dateProposals = await this.syncService.dateProposals(this.state.noteId).catch(() => []);
+		const offWifi = attachmentSettings().wifiOnly && (await networkService.status()).connectionType !== "wifi";
+		this.state.waitingFiles = offWifi ? await this.syncService.unsentFiles(this.state.noteId).catch(() => []) : [];
+	}
+
+	get waitingFilesText(): string {
+		return this.t("label.sync_files_wait_wifi", { files: (this.state.waitingFiles as string[]).join(", ") });
 	}
 
 	/** A day ("YYYY-MM-DD" or an ISO date-time) as the user reads it. */

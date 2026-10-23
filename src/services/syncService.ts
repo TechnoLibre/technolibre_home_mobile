@@ -2867,6 +2867,25 @@ export class SyncService {
     return [...byEntry.values()];
   }
 
+  /**
+   * The names of the note's files not yet sent to a live record or message
+   * of it that takes files (create and message links; activities take
+   * none), those left out aside: what a push holds back while Wi-Fi only is
+   * set and the device is off Wi-Fi.
+   */
+  async unsentFiles(noteId: string): Promise<string[]> {
+    const note = await this.db.getNoteById(noteId);
+    if (!note) return [];
+    const files = mediaFiles(note);
+    const names = new Set<string>();
+    for (const link of await this.db.getNoteLinks(noteId)) {
+      if (link.remoteState !== "ok" || (link.kind !== "create" && link.kind !== "message")) continue;
+      const settled = { ...(link.params?.attachments ?? {}), ...(link.params?.attachmentsSkipped ?? {}) };
+      for (const file of files) if (!(file.entryId in settled)) names.add(file.name);
+    }
+    return [...names];
+  }
+
   // ─── Conflicts ────────────────────────────────────────────────────────────
 
   /** The note's conflicts: per link, the fields changed in the app and on the server to different values. */

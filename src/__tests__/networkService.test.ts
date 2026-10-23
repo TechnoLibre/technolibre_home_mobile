@@ -28,6 +28,15 @@ describe("NetworkService", () => {
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
+  it("calls back when the device goes onto Wi-Fi from another link, not again on Wi-Fi", async () => {
+    __setNetworkStatus({ connected: true, connectionType: "cellular" });
+    const cb = vi.fn();
+    await new NetworkService().onReconnect(cb);
+    __setNetworkStatus({ connected: true, connectionType: "wifi" });
+    __setNetworkStatus({ connected: true, connectionType: "wifi" });
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
   it("maps an unexpected connection type to unknown", async () => {
     __setNetworkStatus({ connected: true, connectionType: "ethernet" });
     expect((await new NetworkService().status()).connectionType).toBe("unknown");
