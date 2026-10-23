@@ -370,7 +370,7 @@ export const translations: Record<string, string> = {
   "message.biometry_enabled": "Biometric authentication has been enabled successfully.",
   "message.biometry_disabled": "Biometric authentication has been disabled successfully.",
   "message.biometry_failed": "Biometric authentication failed.",
-  "message.sync_config_info": "Sync configuration is done directly in the **Applications** list. Tap the pencil icon on an application to configure the database and automatic sync options.",
+  "message.sync_config_info": "Sync configuration is done directly in the Applications list. Tap the pencil icon on an application to configure the database and automatic sync options.",
   "message.transcription_android_only": "Audio transcription is only available on the Android mobile app.",
   "message.model_ready": "✓ Model ready. The T button will appear on your recordings to transcribe them.",
   "message.no_tags": "No tags. Type a name to create one.",
