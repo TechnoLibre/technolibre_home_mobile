@@ -1,6 +1,7 @@
 import { NoNoteMatchError } from "../../js/errors";
 import { Note } from "../../models/note";
 import { NoteService } from "./noteService";
+import { mergeLocalEdit } from "./noteEditMerge";
 
 export class NoteCrudSubservice {
 	private _noteService: NoteService;
@@ -93,5 +94,42 @@ export class NoteCrudSubservice {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Saves an editor's note over the stored one, merged three ways under
+	 * the note's sync lock (see mergeLocalEdit): since is the note as the
+	 * editor last read or wrote it, so what a pull wrote meanwhile is kept
+	 * wherever the editor changed nothing. Marks the note pending on its
+	 * servers as edit does. Returns copies taken as it wrote: the editor's
+	 * note then (mine) and the note written (saved), which the editor may
+	 * have gone on changing since.
+	 *
+	 * @throws NoNoteMatchError
+	 * Thrown if the note is not stored.
+	 */
+	public async editSince(noteId: string, mine: Note, since: Note): Promise<{ mine: Note; saved: Note }> {
+		const db = this._noteService.db;
+		let result: { mine: Note; saved: Note } | null = null;
+		const write = async () => {
+			const stored = await db.getNoteById(noteId);
+			if (!stored) throw new NoNoteMatchError();
+			const saved = mergeLocalEdit(since, mine, stored);
+			result = { mine: JSON.parse(JSON.stringify(mine)), saved: JSON.parse(JSON.stringify(saved)) };
+			await db.updateNote(noteId, Object.assign({}, saved));
+		};
+		try {
+			const configIds = await db.getLiveLinkConfigIds(noteId);
+			await db.updateNotePerServerStatus(noteId, async (perServer) => {
+				await write();
+				for (const id of configIds) perServer[id] = "pending";
+			});
+			if (configIds.length > 0) await db.refreshNoteSyncStatus(noteId);
+		} catch (e: unknown) {
+			if (e instanceof NoNoteMatchError) throw e;
+			// Sync tables not yet migrated: save the note alone
+			await write();
+		}
+		return result!;
 	}
 }

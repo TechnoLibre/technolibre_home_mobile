@@ -11,7 +11,7 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { Events } from "../../constants/events";
-import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryTextParams, NoteEntryVideoParams } from "../../models/note";
+import { Note, NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryTextParams, NoteEntryVideoParams } from "../../models/note";
 import {
 	ACTIVITY_CREATE,
 	AttachedKind,
@@ -29,6 +29,12 @@ import {
 	USER_MODEL,
 } from "../../services/syncService";
 import { getCurrentLocale } from "../../i18n";
+import { mergeLocalEdit } from "../../services/note/noteEditMerge";
+
+/** A deep copy of a note, apart from the reactive state it may come from. */
+function snapshot(note: Note): Note {
+	return JSON.parse(JSON.stringify(note));
+}
 import {
 	ActivityRow,
 	ActivitySection,
@@ -2241,9 +2247,16 @@ export class NoteComponent extends EnhancedComponent {
 			if (this.state.newNote) {
 				await this.noteService.crud.add(this.state.note);
 				this.state.newNote = false;
+				this._since = snapshot(this.state.note);
 			} else {
+				// Merged with what a pull wrote since this screen last read or wrote the note
+				const { mine, saved } = await this.noteService.crud.editSince(
+					this.state.noteId, this.state.note, this._since ?? snapshot(this.state.note)
+				);
+				this._since = saved;
+				// What the save took from a pull, where nothing was typed since it wrote
+				this.takeMerged(mergeLocalEdit(mine, this.state.note, saved));
 				// An edit marks the note pending on its servers: the indicator reads it back
-				await this.noteService.crud.edit(this.state.noteId, this.state.note);
 				await this.refreshSyncStatusFromDb();
 			}
 		} catch (error: unknown) {
@@ -2281,9 +2294,26 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.noteId = decodeURIComponent(params?.get("id") || "");
 	}
 
+	/**
+	 * The note as this screen last read or wrote it: saves and pulled reloads
+	 * merge against it, so a pull's values survive a save of the older copy
+	 * held here, and keystrokes not saved yet survive a pulled reload.
+	 */
+	private _since: Note | null = null;
+
+	/** Puts into state the fields of merged that differ from it, an entry being typed in left as it is. */
+	private takeMerged(merged: Note) {
+		const note = this.state.note as Note;
+		for (const field of ["title", "done", "archived", "pinned", "priority", "tags"] as const) {
+			if (JSON.stringify(note[field] ?? null) !== JSON.stringify(merged[field] ?? null)) (note as any)[field] = merged[field];
+		}
+		if (JSON.stringify(note.entries) !== JSON.stringify(merged.entries)) note.entries = merged.entries;
+	}
+
 	private async getNote() {
 		try {
 			this.state.note = await this.noteService.getMatch(this.state.noteId);
+			this._since = snapshot(this.state.note);
 		} catch (error: unknown) {
 			if (error instanceof NoteKeyNotFoundError || error instanceof UndefinedNoteListError) {
 				Dialog.alert({ message: error.message });
@@ -2296,17 +2326,16 @@ export class NoteComponent extends EnhancedComponent {
 		}
 	}
 
-	/** Copies the fields a pull writes (see SyncService.pullTasks) into state. */
+	/**
+	 * Takes into state what a pull wrote (see SyncService.applyPulled):
+	 * merged against the note as this screen last knew it, so a keystroke
+	 * not saved yet stays, and the next save keeps it over the stored note.
+	 */
 	private async reloadPulledFields() {
 		const stored = await this.databaseService.getNoteById(this.state.noteId);
 		if (!stored) return;
-		this.state.note.title = stored.title;
-		this.state.note.pinned = stored.pinned;
-		this.state.note.archived = stored.archived;
-		this.state.note.done = stored.done;
-		// A pull merges text, tags and the date too
-		this.state.note.tags = stored.tags;
-		this.state.note.entries = stored.entries;
+		this.takeMerged(mergeLocalEdit(this._since ?? stored, this.state.note, stored));
+		this._since = snapshot(stored);
 		await this.loadSyncStatus();
 	}
 

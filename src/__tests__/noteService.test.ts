@@ -136,6 +136,31 @@ describe("NoteService with SQLite", () => {
     });
   });
 
+  describe("crud.editSince", () => {
+    it("keeps what a pull wrote since the editor read the note, and the editor's own changes", async () => {
+      const text = (value: string) => ({ id: "e", type: "text", params: { text: value, readonly: false } } as any);
+      const since = makeNote({ entries: [text("Typed")] });
+      await noteService.crud.add(since);
+      // A pull renames the note while the editor holds the copy it read
+      await db.updateNote("note-1", { ...since, title: "Pulled title" });
+      const mine = makeNote({ entries: [text("Typed more")] });
+      const { mine: asMerged, saved } = await noteService.crud.editSince("note-1", mine, since);
+      expect(saved.title).toBe("Pulled title");
+      expect((saved.entries[0].params as any).text).toBe("Typed more");
+      const stored = (await noteService.getNotes())[0];
+      expect(stored.title).toBe("Pulled title");
+      expect((stored.entries[0].params as any).text).toBe("Typed more");
+      // Copies taken as it wrote: later edits of mine do not reach them
+      (mine.entries[0].params as any).text = "Typed even more";
+      expect((asMerged.entries[0].params as any).text).toBe("Typed more");
+      expect((saved.entries[0].params as any).text).toBe("Typed more");
+    });
+
+    it("throws NoNoteMatchError for a note not stored", async () => {
+      await expect(noteService.crud.editSince("nonexistent", makeNote(), makeNote())).rejects.toBeInstanceOf(NoNoteMatchError);
+    });
+  });
+
   describe("crud.edit", () => {
     it("should edit an existing note", async () => {
       await noteService.crud.add(makeNote());

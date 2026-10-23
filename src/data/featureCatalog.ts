@@ -1889,7 +1889,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(commands 4 and 3) and a task's state only when done changed. A field "
                         + "changed on both sides puts the server in conflict: nothing is written "
                         + "until the note's conflict dialog keeps, per field, the app's or the "
-                        + "server's version.",
+                        + "server's version. The open note's saves and pulled reloads merge "
+                        + "against the note as the screen last knew it: what a pull wrote stays "
+                        + "where the user changed nothing, and keystrokes not saved yet stay.",
                     fr: "Chaque lien garde une base : les valeurs miroirs de la note et du "
                         + "record (titre, texte, étiquettes, date, fait, archivée, épinglée, selon "
                         + "le type) au dernier échange. Le pull des tâches, opportunités, factures "
@@ -1901,11 +1903,14 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "étiquettes en ajouts et retraits (commandes 4 et 3) et l'état d'une "
                         + "tâche seulement si fait change. Un champ changé des deux côtés met le "
                         + "serveur en conflit : rien n'est écrit avant que l'écran de conflit de "
-                        + "la note garde, champ par champ, la version de l'app ou du serveur.",
+                        + "la note garde, champ par champ, la version de l'app ou du serveur. Les "
+                        + "sauvegardes et rechargements de la note ouverte fusionnent avec la note "
+                        + "telle que l'écran l'a connue : ce qu'un pull a écrit reste là où "
+                        + "l'utilisateur n'a rien changé, et les frappes pas encore sauvées restent.",
                 },
                 dependsOn: ["sync.task-project", "sync.lead", "sync.invoice", "sync.activity"],
                 demo: NONE_BG,
-                files: ["src/services/noteMirror.ts", "src/components/note/note_component.ts"],
+                files: ["src/services/noteMirror.ts", "src/services/note/noteEditMerge.ts", "src/components/note/note_component.ts"],
             },
             {
                 id: "sync.background-notice",
