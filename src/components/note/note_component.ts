@@ -1624,11 +1624,16 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	/** Takes a server's date into the note, or keeps the note's; the note is read again when taken. */
-	async answerDateProposal(proposal: DateProposal, accept: boolean) {
-		await this.syncService.answerDateProposal(this.state.noteId, proposal.linkId, accept);
-		if (accept) await this.reloadPulledFields();
-		else await this.loadSyncNotices();
-		await this.refreshSyncStatusFromDb();
+	answerDateProposal(proposal: DateProposal, accept: boolean): Promise<void> {
+		// In the saves' queue: a save queued before writes first, and one queued
+		// after holds the note as answered, never the old date over the new
+		this._saving = this._saving.then(async () => {
+			await this.syncService.answerDateProposal(this.state.noteId, proposal.linkId, accept);
+			if (accept) await this.reloadPulledFields();
+			else await this.loadSyncNotices();
+			await this.refreshSyncStatusFromDb();
+		}).catch((e: unknown) => this.showErrorDialog(e instanceof Error ? e.message : String(e)));
+		return this._saving;
 	}
 
 	/** The note's files left out, each with why: one line for the note screen. */
@@ -1766,18 +1771,23 @@ export class NoteComponent extends EnhancedComponent {
 	private async doPushAll(configs: SyncConfig[]) {
 		this.state.isSyncing = true;
 		const errors: string[] = [];
-		await this.syncService.pushEach(this.state.noteId, configs.map((c) => c.id), async (configId) => {
-			const cfg = configs.find((c) => c.id === configId)!;
-			try {
-				return await this.doPushCore(cfg);
-			} catch (e: unknown) {
-				await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
-				await this.databaseService.refreshNoteSyncStatus(this.state.noteId).catch(() => {});
-				errors.push(`${cfg.name || cfg.appUrl}: ${e instanceof Error ? e.message : String(e)}`);
-				return false;
-			}
-		});
-		this.state.isSyncing = false;
+		try {
+			await this.syncService.pushEach(this.state.noteId, configs.map((c) => c.id), async (configId) => {
+				const cfg = configs.find((c) => c.id === configId)!;
+				try {
+					return await this.doPushCore(cfg);
+				} catch (e: unknown) {
+					await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
+					await this.databaseService.refreshNoteSyncStatus(this.state.noteId).catch(() => {});
+					errors.push(`${cfg.name || cfg.appUrl}: ${e instanceof Error ? e.message : String(e)}`);
+					return false;
+				}
+			});
+		} catch (e: unknown) {
+			errors.push(e instanceof Error ? e.message : String(e));
+		} finally {
+			this.state.isSyncing = false;
+		}
 		await this.loadSyncNotices();
 		if (errors.length > 0) {
 			this.state.syncStatus = "error";
