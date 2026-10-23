@@ -38,7 +38,7 @@ export class NoteContentComponent extends EnhancedComponent {
 					t-att-class="{ 'note__title--awaiting-input': !(props.note.title and props.note.title.trim()) }"
 					t-att-placeholder="t('placeholder.title')"
 					t-att-aria-label="t('aria.note_title')"
-					t-model="props.note.title"
+					t-on-input="onTitleInput"
 					t-on-keydown="onTitleKeydown"
 				/>
 				<div id="note__draggables" t-ref="note-entries">
@@ -136,11 +136,13 @@ export class NoteContentComponent extends EnhancedComponent {
 		};
 
 		onMounted(() => {
+			this.showTitle();
 			if (!this.props.note?.title || !this.props.note.title.trim()) {
 				startFocusLoop();
 			}
 		});
 		onPatched(() => {
+			this.showTitle();
 			if (focusInterval !== null) return;
 			if (!this.didAutoFocus
 				&& (!this.props.note?.title || !this.props.note.title.trim())) {
@@ -152,6 +154,30 @@ export class NoteContentComponent extends EnhancedComponent {
 			stopFocusLoop();
 			for (const [event, listener] of this._listeners) this.eventBus.removeEventListener(event, listener);
 		});
+	}
+
+	/**
+	 * The title field's value, put in place after a render only when the
+	 * title changed other than by typing (a pull, a merge), with the title as
+	 * it is then. Bound by t-model, a render computed before a keystroke and
+	 * applied after it would put the older title back; written at every
+	 * render, a word the keyboard is still composing, not yet an input
+	 * event, would be lost.
+	 */
+	private showTitle() {
+		const el = this.titleRef.el as HTMLTextAreaElement | null;
+		const title = this.props.note?.title ?? "";
+		if (!el || title === this.shownTitle) return;
+		this.shownTitle = title;
+		if (el.value !== title) el.value = title;
+	}
+
+	/** The title the field last showed or sent: see showTitle. */
+	private shownTitle: string | null = null;
+
+	private onTitleInput(ev: Event) {
+		this.shownTitle = (ev.target as HTMLTextAreaElement).value;
+		this.props.note.title = this.shownTitle;
 	}
 
 	private onTitleKeydown(ev: KeyboardEvent) {
