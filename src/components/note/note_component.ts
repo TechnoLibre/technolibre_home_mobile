@@ -1645,7 +1645,10 @@ export class NoteComponent extends EnhancedComponent {
 				: this.t(`label.sync_file_${f.reason}`);
 			return `${f.name} (${why})`;
 		});
-		return this.t("label.sync_files_skipped", { files: files.join(", ") });
+		const text = this.t("label.sync_files_skipped", { files: files.join(", ") });
+		// Only a file over the limit is the user's to change in the options
+		const tooBig = (this.state.skippedFiles as SkippedFile[]).some((f) => typeof f.reason === "number");
+		return tooBig ? `${text} ${this.t("label.sync_files_limit_hint")}` : text;
 	}
 
 	/** Reflects the global status pushNote derived from every server. */

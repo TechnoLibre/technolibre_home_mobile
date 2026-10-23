@@ -79,8 +79,8 @@
 }
 
 // Override breadcrumb size for the note page only
-// The sync picker hangs from the whole breadcrumb: hung from the sync
-// button, short of the screen's right edge, a wide one started off-screen
+// The sync picker hangs from the whole breadcrumb, so a wide one stays on
+// screen: hung from the sync button, short of the right edge, it would not
 #note-component .breadcrumb {
 	font-size: 1rem;
 	padding: 0.5rem 0.75rem 0;

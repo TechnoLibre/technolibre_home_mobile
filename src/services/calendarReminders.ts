@@ -132,8 +132,8 @@ export interface CachedCalendar {
 
 /**
  * Schedules again, offline, the reminders of the activities cached for
- * configIds: an app update or a forced stop cancels the alarms, which only
- * the calendar screen planned until then. Left as they are while the
+ * configIds: an app update or a forced stop cancels the alarms, and the
+ * calendar screen plans them only when opened. Left as they are while the
  * reminders are off or some server's user is still unknown (never read
  * online), its activities could not be told apart. Returns how many were
  * scheduled, null when left.
