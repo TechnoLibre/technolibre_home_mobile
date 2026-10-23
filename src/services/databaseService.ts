@@ -64,6 +64,33 @@ export interface NoteLink {
   params?: Record<string, any>;
 }
 
+/**
+ * One activity of a server shown by the activity calendar, as last read
+ * (see ActivityCalendarService): the record it is on, its type, summary,
+ * deadline ("YYYY-MM-DD") and user; done (archived on Odoo 17+, with
+ * dateDone) or open. pending: a change made in the app (done, new
+ * deadline) still waiting in the outbox for the server.
+ */
+export interface CalendarActivity {
+  configId: string;
+  resId: number;
+  resModel: string;
+  recordId: number;
+  recordName: string;
+  typeId: number | null;
+  typeName: string | null;
+  summary: string;
+  deadline: string;
+  userId: number | null;
+  userName: string | null;
+  done: boolean;
+  dateDone: string | null;
+  pending: boolean;
+  /** Why the server refused the last change made in the app, undone since. */
+  lastError?: string | null;
+  fetchedAt: string;
+}
+
 export type NoteLinkRemoteState = "ok" | "deleted" | "dismissed" | "done";
 
 const NOTE_LINK_REMOTE_STATES: NoteLinkRemoteState[] = ["ok", "deleted", "dismissed", "done"];
@@ -1088,9 +1115,9 @@ export class DatabaseService {
   /**
    * Re-keys every sync record of one target after its application's url
    * was respelled: links, queued operations, pull cursor, last-used
-   * config, remembered selections, per-server statuses and remembered
-   * targets (sync_target_prefs); its probes and cached records are dropped
-   * and fetched again. Without it the next push finds no
+   * config, remembered selections, per-server statuses, remembered
+   * targets (sync_target_prefs) and the calendar's activities; its probes
+   * and cached records are dropped and fetched again. Without it the next push finds no
    * link under the new id and creates a duplicate remote record.
    */
   async renameSyncConfigId(oldId: string, newId: string): Promise<void> {
@@ -1099,6 +1126,9 @@ export class DatabaseService {
     await this.db.run("UPDATE sync_outbox SET config_id = ? WHERE config_id = ?", [newId, oldId]);
     await this.deleteServerCapabilities(oldId);
     await this.db.run("DELETE FROM remote_records_cache WHERE config_id = ?", [oldId]);
+    // The calendar's activities move with their changes still waiting in the outbox
+    for (const a of await this.getCalendarActivities(oldId)) await this.putCalendarActivity({ ...a, configId: newId });
+    await this.db.run("DELETE FROM activities_cache WHERE config_id = ?", [oldId]).catch(() => {});
     const pref = await this.db.query("SELECT * FROM sync_target_prefs WHERE config_id = ?", [oldId]);
     for (const row of pref.values ?? []) {
       await this.db.run("DELETE FROM sync_target_prefs WHERE id = ?", [row.id]);
@@ -1281,6 +1311,56 @@ export class DatabaseService {
     const existing = await this.db.query("PRAGMA table_info(note_links)");
     if (!(existing.values ?? []).some((r: any) => r.name === "client_uuid")) {
       await this.db.execute("ALTER TABLE note_links ADD COLUMN client_uuid TEXT");
+    }
+  }
+
+  // Activity calendar
+
+  async createActivitiesCacheTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS activities_cache (
+        id         TEXT PRIMARY KEY NOT NULL,
+        config_id  TEXT NOT NULL,
+        res_id     INTEGER NOT NULL,
+        deadline   TEXT NOT NULL,
+        data_json  TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      )
+    `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_activities_cache_config ON activities_cache(config_id)"
+    );
+  }
+
+  /** Replaces the cached activities of one server with those just read. */
+  async replaceCalendarActivities(configId: string, activities: CalendarActivity[]): Promise<void> {
+    await this.db.run("DELETE FROM activities_cache WHERE config_id = ?", [configId]);
+    for (const a of activities) await this.putCalendarActivity(a);
+  }
+
+  /** Adds or replaces one cached activity. */
+  async putCalendarActivity(a: CalendarActivity): Promise<void> {
+    await this.db.run(
+      "INSERT OR REPLACE INTO activities_cache (id, config_id, res_id, deadline, data_json, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
+      [`${a.configId}#${a.resId}`, a.configId, a.resId, a.deadline, JSON.stringify(a), a.fetchedAt]
+    );
+  }
+
+  async deleteCalendarActivity(configId: string, resId: number): Promise<void> {
+    await this.db.run("DELETE FROM activities_cache WHERE id = ?", [`${configId}#${resId}`]);
+  }
+
+  /** The cached activities of one server; none for a table not created yet. */
+  async getCalendarActivities(configId: string): Promise<CalendarActivity[]> {
+    try {
+      const result = await this.db.query("SELECT * FROM activities_cache WHERE config_id = ?", [configId]);
+      const rows: CalendarActivity[] = [];
+      for (const row of result.values ?? []) {
+        try { rows.push(JSON.parse(row.data_json)); } catch { /* skip a damaged row */ }
+      }
+      return rows;
+    } catch {
+      return [];
     }
   }
 

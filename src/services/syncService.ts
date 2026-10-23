@@ -6,6 +6,7 @@ import { PARTNER_MODEL, RecordSearchService } from "./odoo/recordSearchService";
 import { ACTIVITY_TYPE_MODEL, ActivityTypeService } from "./odoo/activityTypeService";
 import { unusableReason } from "./odoo/capabilityService";
 import { InvoiceFormService } from "./odoo/invoiceForm";
+import { ActivityCalendarService } from "./activityCalendarService";
 import { Application } from "../models/application";
 import {
   Note,
@@ -572,6 +573,8 @@ export class SyncService {
   readonly partners: RecordSearchService;
   /** The extra required fields of a new invoice per server and type, kept for offline. */
   readonly invoiceForms: InvoiceFormService;
+  /** The activity calendar: activities per server, cached, and its offline actions. */
+  readonly calendar: ActivityCalendarService;
   /** Activity types per server, cached for offline. */
   readonly activityTypes: ActivityTypeService;
   /** Record search per model (records an activity goes on, users), cached. */
@@ -614,6 +617,7 @@ export class SyncService {
     this.partners = new RecordSearchService(db, rpc, PARTNER_MODEL);
     this._recordSearches.set(PARTNER_MODEL, this.partners);
     this.activityTypes = new ActivityTypeService(db, rpc);
+    this.calendar = new ActivityCalendarService(db, rpc, outbox);
     this.outbox.onRetryScheduled = (at) => this.onRetryScheduled?.(at);
     for (const kind of TARGET_KINDS) {
       // drain already found the operation due: its retry delay is over or forced

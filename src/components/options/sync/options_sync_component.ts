@@ -2,6 +2,7 @@ import { useState, xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { isHttpAllowed, setHttpAllowed } from "../../../services/odoo/httpPolicy";
+import { reminderSettings, scheduleReminders, setReminderSettings } from "../../../services/calendarReminders";
 
 export class OptionsSyncComponent extends EnhancedComponent {
   static template = xml`
@@ -25,13 +26,39 @@ export class OptionsSyncComponent extends EnhancedComponent {
           <t t-esc="t('sync.allow_http')"/>
         </label>
         <p class="options-sync__info" t-esc="t('sync.allow_http_hint')" />
+        <label class="options-sync__toggle">
+          <input type="checkbox" t-att-checked="state.reminders.enabled" t-on-change="(ev) => this.setReminder('enabled', ev.target.checked)" />
+          <t t-esc="t('sync.calendar_reminders')"/>
+        </label>
+        <t t-if="state.reminders.enabled">
+          <label class="options-sync__info">
+            <t t-esc="t('sync.calendar_reminders_hour')"/>
+            <input type="number" min="0" max="23" t-att-value="state.reminders.hour" t-on-change="(ev) => this.setReminder('hour', ev.target.value)" />
+          </label>
+          <label class="options-sync__info">
+            <t t-esc="t('sync.calendar_reminders_days')"/>
+            <input type="number" min="0" max="30" t-att-value="state.reminders.daysBefore" t-on-change="(ev) => this.setReminder('daysBefore', ev.target.value)" />
+          </label>
+        </t>
+        <p class="options-sync__info" t-esc="t('sync.calendar_reminders_hint')" />
         <button class="options-sync__btn options-sync__btn--add" t-on-click="goToApps" t-esc="t('button.go_to_applications')" />
       </div>
     </li>
   `;
 
   setup() {
-    this.state = useState({ expanded: false, allowHttp: isHttpAllowed() });
+    this.state = useState({ expanded: false, allowHttp: isHttpAllowed(), reminders: { ...reminderSettings() } });
+  }
+
+  /**
+   * Stores one reminder setting; turning the reminders off cancels those
+   * scheduled. The calendar's next refresh schedules them with the new
+   * settings.
+   */
+  async setReminder(key: "enabled" | "hour" | "daysBefore", value: boolean | string) {
+    setReminderSettings({ ...reminderSettings(), [key]: typeof value === "string" ? Number(value) : value });
+    this.state.reminders = { ...reminderSettings() };
+    if (!this.state.reminders.enabled) await scheduleReminders([]).catch(() => 0);
   }
 
   /** Allows or refuses http:// servers for every sync request. */

@@ -1811,6 +1811,55 @@ export const FEATURE_TREE: FeatureNode[] = [
                 files: ["src/services/odoo/invoiceForm.ts", "src/services/targetPicker.ts"],
             },
             {
+                id: "sync.calendar",
+                label: { en: "Activity calendar", fr: "Calendrier des activités" },
+                description: {
+                    en: "A month of the activities of every server, mine and my team's, with done, reschedule and reminders.",
+                    fr: "Un mois des activités de tous les serveurs, les miennes et celles de l'équipe, avec fait, report et rappels.",
+                },
+                status: "experimental",
+                permissions: ["internet", "notifications"],
+                tests: [
+                    "src/__tests__/activityCalendarService.test.ts",
+                    "src/__tests__/calendarView.test.ts",
+                    "src/__tests__/calendarReminders.test.ts",
+                ],
+                howItWorks: {
+                    en: "Per server, the open mail.activity of the connected user (uid from "
+                        + "get_session_info) and of the users chosen, due up to 90 days ahead, "
+                        + "overdue ones included, plus on Odoo 17+ those done (archived) in the "
+                        + "last 30 days, kept in activities_cache for offline. Team: users "
+                        + "chosen by search, plus the members of the user's crm.team. Mark done "
+                        + "(action_feedback, after an active check on 17+) and reschedule "
+                        + "(date_deadline) apply to the cache at once and wait in the outbox "
+                        + "(calendar.done, calendar.reschedule) when offline. A day's \"New "
+                        + "note\" creates a dated note and opens the sync picker on an activity "
+                        + "due that day. Each refresh reschedules local reminders of the "
+                        + "user's open activities (hour and days before, in the sync options).",
+                    fr: "Par serveur, les mail.activity ouvertes de l'utilisateur connecté (uid "
+                        + "de get_session_info) et des utilisateurs choisis, dues jusqu'à 90 jours, "
+                        + "celles en retard comprises, plus en Odoo 17+ celles faites (archivées) "
+                        + "depuis 30 jours, gardées dans activities_cache hors ligne. Équipe : des "
+                        + "utilisateurs cherchés, plus les membres des crm.team de l'utilisateur. "
+                        + "Marquer faite (action_feedback, après lecture d'active en 17+) et "
+                        + "reporter (date_deadline) s'appliquent au cache aussitôt et attendent "
+                        + "dans la file (calendar.done, calendar.reschedule) hors ligne. « Nouvelle "
+                        + "note » d'un jour crée une note datée et ouvre le sélecteur sur une "
+                        + "activité due ce jour. Chaque rafraîchissement replanifie les rappels "
+                        + "locaux des activités ouvertes (heure et jours avant, dans les options).",
+                },
+                dependsOn: ["sync.activity", "sync.outbox"],
+                demo: { kind: "route", url: "/activities" },
+                files: [
+                    "src/components/activities/activity_calendar_component.ts",
+                    "src/components/activities/activity_calendar_component.scss",
+                    "src/services/activityCalendarService.ts",
+                    "src/services/calendarView.ts",
+                    "src/services/calendarReminders.ts",
+                    "src/utils/openRecordInApp.ts",
+                ],
+            },
+            {
                 id: "sync.http-policy",
                 label: { en: "Unencrypted http", fr: "http non chiffré" },
                 description: {
@@ -1954,7 +2003,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "pending turned per-server; pull cursors), addSyncOutboxTable "
                         + "(sync_outbox, server_capabilities, note_links.client_uuid), "
                         + "addSyncTargetTables (remote_records_cache, sync_target_prefs), "
-                        + "addNoteLinkParams (note_links.params_json). Each migration is "
+                        + "addNoteLinkParams (note_links.params_json), addActivitiesCacheTable "
+                        + "(activities_cache). Each migration is "
                         + "idempotent and re-runs safely on app start.",
                     fr: "Étapes de schéma versionnées qui ont fait grandir la sync : "
                         + "addSyncColumns (odoo_id + sync_status initiaux), addSyncConfigId "
@@ -1965,7 +2015,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "global devient par serveur ; curseurs de pull), addSyncOutboxTable "
                         + "(sync_outbox, server_capabilities, note_links.client_uuid), "
                         + "addSyncTargetTables (remote_records_cache, sync_target_prefs), "
-                        + "addNoteLinkParams (note_links.params_json). Chaque migration est "
+                        + "addNoteLinkParams (note_links.params_json), addActivitiesCacheTable "
+                        + "(activities_cache). Chaque migration est "
                         + "idempotente et se ré-exécute sans risque au boot.",
                 },
                 dependsOn: ["data.migrations"],
@@ -1979,6 +2030,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addSyncOutboxTable.ts",
                     "src/services/migrations/addSyncTargetTables.ts",
                     "src/services/migrations/addNoteLinkParams.ts",
+                    "src/services/migrations/addActivitiesCacheTable.ts",
                 ],
                 tests: [
                     "src/__tests__/migrations.test.ts",

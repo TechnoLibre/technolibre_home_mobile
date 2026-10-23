@@ -6,7 +6,6 @@ import { Dialog } from "@capacitor/dialog";
 import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Geolocation, PermissionStatus, Position } from "@capacitor/geolocation";
 import { BiometryUtils } from "../../utils/biometryUtils";
-import { WebViewUtils } from "../../utils/webViewUtils";
 import { generateVideoThumbnail } from "../../utils/videoThumbnailUtils";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { ErrorMessages } from "../../constants/errorMessages";
@@ -66,7 +65,8 @@ import type { FormField } from "../../services/odoo/invoiceForm";
 const INVOICE_PRODUCT_MODEL = "product.product";
 import { OutboxBlockedError } from "../../services/outboxService";
 import { networkService } from "../../services/networkService";
-import { assertUrlAllowed } from "../../services/odoo/httpPolicy";
+import { openRecordInApp } from "../../utils/openRecordInApp";
+import { CALENDAR_HANDOFF_KEY } from "../../services/calendarView";
 import type { SyncConfig } from "../../models/syncConfig";
 import { loadSyncConfigs, syncConfigIdFor } from "../../models/syncConfig";
 
@@ -738,6 +738,7 @@ export class NoteComponent extends EnhancedComponent {
 		this.listenForEvents();
 		onMounted(() => {
 			this.loadSyncStatus();
+			this.consumeCalendarHandoff();
 			this._boundEscapeHandler = this._onKeydownEscape.bind(this);
 			document.addEventListener("keydown", this._boundEscapeHandler);
 		});
@@ -1148,6 +1149,32 @@ export class NoteComponent extends EnhancedComponent {
 
 	/** Bumped by each new draft, for its key. */
 	private _activityDrafts = 0;
+
+	/**
+	 * A note the calendar just created for a day (see
+	 * ActivityCalendarComponent.newNoteOn) opens the sync picker with an
+	 * activity due that day, on the first selected server.
+	 */
+	private async consumeCalendarHandoff() {
+		let handoff: { noteId?: string; day?: string } | null = null;
+		try {
+			handoff = JSON.parse(sessionStorage.getItem(CALENDAR_HANDOFF_KEY) ?? "null");
+		} catch {
+			return;
+		}
+		if (!handoff || handoff.noteId !== this.state.noteId || !handoff.day) return;
+		try { sessionStorage.removeItem(CALENDAR_HANDOFF_KEY); } catch { /* read once anyway */ }
+		await this.openSyncPicker();
+		const cfg = this.state.syncConfigs.find((c: SyncConfig) => this.state.selectedConfigIds.includes(c.id));
+		if (!cfg || !this.state.showConfigPicker) return;
+		this.addActivity(cfg, "activity");
+		const rows = this.state.activities[cfg.id]?.rows ?? [];
+		const draft = rows[rows.length - 1];
+		if (draft?.status === "draft") {
+			draft.deadline = handoff.day;
+			draft.deadlineEdited = true;
+		}
+	}
 
 	/** Adds a draft activity, or a draft message (kind), to a server's section. */
 	addActivity(cfg: SyncConfig, kind: AttachedKind = "activity") {
@@ -1713,82 +1740,7 @@ export class NoteComponent extends EnhancedComponent {
 
 	async openInAppForConfig(app: OpenInAppItem) {
 		this.state.openInApp.visible = false;
-		const baseUrl = /^https?:\/\//i.test(app.appUrl) ? app.appUrl : "https://" + app.appUrl;
-		// The login script types the password into the page: same rule as sync requests
-		try {
-			assertUrlAllowed(baseUrl);
-		} catch (e: unknown) {
-			await Dialog.alert({ message: e instanceof Error ? e.message : String(e) });
-			return;
-		}
-		const taskUrl = `${baseUrl}/web#id=${app.resId}&model=${encodeURIComponent(app.model)}&view_type=form`;
-
-		const username = app.username.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-		const password = app.password.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-
-		const loginScript = `(async () => {
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  function getElementByXPath(xpath) {
-    return document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue || null;
-  }
-  function waitForXPathWithObserver(xpath, timeout = 15000) {
-    return new Promise((resolve, reject) => {
-      const found = getElementByXPath(xpath);
-      if (found) return resolve(found);
-      let settled = false;
-      const obs = new MutationObserver(() => {
-        const el = getElementByXPath(xpath);
-        if (el) { settled = true; obs.disconnect(); resolve(el); }
-      });
-      obs.observe(document.documentElement, { childList: true, subtree: true });
-      setTimeout(() => { if (!settled) { obs.disconnect(); reject(new Error('Timeout: ' + xpath)); } }, timeout);
-    });
-  }
-  function setInputValue(el, value) {
-    try {
-      const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
-      if (d && d.set) d.set.call(el, value); else el.value = value;
-    } catch { el.value = value; }
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-  const ERR_SEL = '.alert.alert-danger';
-  async function hasErrAfter(ms) { await sleep(ms); return !!document.querySelector(ERR_SEL); }
-  if (window.__autoLoginSubmitted) return;
-  if (await hasErrAfter(400)) return;
-  try {
-    const SUBMIT = "//button[@type='submit' and (contains(normalize-space(.), 'Log in') or contains(normalize-space(.), 'Se connecter') or contains(normalize-space(.), 'Connexion'))]";
-    const [userEl, passEl] = await Promise.all([
-      waitForXPathWithObserver("//*[@id='login']"),
-      waitForXPathWithObserver("//*[@id='password']")
-    ]);
-    setInputValue(userEl, "${username}");
-    setInputValue(passEl, "${password}");
-    await sleep(250);
-    if (!!document.querySelector(ERR_SEL)) return;
-    const btn = await waitForXPathWithObserver(SUBMIT, 5000).catch(() => null);
-    if (!btn || !!document.querySelector(ERR_SEL)) return;
-    window.__autoLoginSubmitted = true;
-    btn.scrollIntoView({ block: 'center' });
-    await new Promise(r => requestAnimationFrame(r));
-    btn.click();
-  } catch(e) { console.error('[loginScript]', e); }
-})();`;
-
-		if (WebViewUtils.isMobile()) {
-			WebViewUtils.openWebViewMobile({
-				url: taskUrl,
-				title: app.label,
-				isPresentAfterPageLoad: true,
-				preShowScript: WebViewUtils.safeAreaScript() + "\n" + loginScript,
-				enabledSafeBottomMargin: true,
-				toolbarColor: "#1a1a1a",
-				toolbarTextColor: "#ffffff",
-				activeNativeNavigationForWebview: true,
-			});
-		} else {
-			WebViewUtils.openWebViewDesktop(taskUrl, loginScript);
-		}
+		await openRecordInApp(app);
 	}
 
 	get currentIndex(): number {

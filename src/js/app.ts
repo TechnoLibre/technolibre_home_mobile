@@ -32,6 +32,7 @@ import { addEditableReposTable } from "../services/migrations/addEditableReposTa
 import { addNoteLinksTable } from "../services/migrations/addNoteLinksTable";
 import { addSyncOutboxTable } from "../services/migrations/addSyncOutboxTable";
 import { addNoteLinkParams } from "../services/migrations/addNoteLinkParams";
+import { addActivitiesCacheTable } from "../services/migrations/addActivitiesCacheTable";
 import { addSyncTargetTables } from "../services/migrations/addSyncTargetTables";
 import { RepoExtractorService } from "../services/repoExtractorService";
 import { RepoEditService } from "../services/repoEditService";
@@ -244,6 +245,11 @@ async function startApp() {
 			version: 2026102301,
 			description: "Colonne note_links.params_json : record visé, type, échéance et assigné d'une activité",
 			run: addNoteLinkParams,
+		},
+		{
+			version: 2026102302,
+			description: "Table activities_cache : activités du calendrier, gardées hors ligne",
+			run: addActivitiesCacheTable,
 		},
 	], setBootNote);
 

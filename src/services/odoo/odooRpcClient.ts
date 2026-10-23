@@ -319,6 +319,26 @@ export class OdooRpcClient {
   }
 
   /**
+   * The id of the user the credentials log in as, from the session
+   * (/web/session/get_session_info, an authenticated route), read once per
+   * server and database for the app's lifetime.
+   */
+  async currentUid(creds: SyncCredentials): Promise<number> {
+    const key = `${creds.odooUrl}|${creds.username}|${creds.database}`;
+    const known = this._uids.get(key);
+    if (known !== undefined) return known;
+    const info = await this.callWithAuth(creds, (sessionId) =>
+      this.jsonRoute(creds.odooUrl, sessionId, "/web/session/get_session_info", {}));
+    const uid = Number(info?.uid);
+    if (!Number.isInteger(uid) || uid <= 0) throw new Error(`Utilisateur inconnu sur ${creds.odooUrl}.`);
+    this._uids.set(key, uid);
+    return uid;
+  }
+
+  /** currentUid's answers, per "url|username|database". */
+  private _uids = new Map<string, number>();
+
+  /**
    * Calls a JSON route of the web client (type="json"), such as
    * /mail/message/update_content, with the session cookie. Errors are
    * raised as jsonRpc raises them; a route answering NotFound (record gone,
