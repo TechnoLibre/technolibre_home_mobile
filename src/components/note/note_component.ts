@@ -1249,6 +1249,10 @@ export class NoteComponent extends EnhancedComponent {
 		await this.openSyncPicker();
 		const cfg = this.state.syncConfigs.find((c: SyncConfig) => this.state.selectedConfigIds.includes(c.id));
 		if (!cfg || !this.state.showConfigPicker) return;
+		// The note is for this activity: the kinds the picker checks by default
+		// (those of the last note) and the other servers are left to the user
+		for (const row of this.kindRows(cfg.id)) if (row.linkedResId === null) row.checked = false;
+		this.state.selectedConfigIds = [cfg.id];
 		this.addActivity(cfg, "activity");
 		const rows = this.state.activities[cfg.id]?.rows ?? [];
 		const draft = rows[rows.length - 1];

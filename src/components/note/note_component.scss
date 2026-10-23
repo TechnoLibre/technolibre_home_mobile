@@ -79,10 +79,13 @@
 }
 
 // Override breadcrumb size for the note page only
+// The sync picker hangs from the whole breadcrumb: hung from the sync
+// button, short of the screen's right edge, a wide one started off-screen
 #note-component .breadcrumb {
 	font-size: 1rem;
 	padding: 0.5rem 0.75rem 0;
 	align-items: center;
+	position: relative;
 }
 
 .breadcrumb__note-nav {
@@ -108,10 +111,6 @@
 	&:hover:not(:disabled) { background-color: var(--btn-back-hover-color); }
 }
 
-.breadcrumb__sync-wrap {
-	position: relative;
-}
-
 .breadcrumb__config-picker {
 	background: var(--card-hover-bg);
 	border: 1px solid var(--surface-subtle);
@@ -125,7 +124,7 @@
 	overflow-y: auto;
 	padding: 0.5rem;
 	position: absolute;
-	right: 0;
+	right: 0.75rem;
 	top: calc(100% + 0.25rem);
 	z-index: 200;
 }

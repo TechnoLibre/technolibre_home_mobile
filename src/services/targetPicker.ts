@@ -556,6 +556,12 @@ export function serverUsable(rows: Record<TargetKind, TargetRow> | undefined, ha
   return all.some((r) => r.needsChoice && !r.unusable && !r.failed);
 }
 
+/** A server as a message names it: its url, and its database ("url|user|database" config id). */
+function serverName(configId: string): string {
+  const [url, , database] = configId.split("|");
+  return database ? `${url} (${database})` : url;
+}
+
 /**
  * Records the choices of every selected server before the push:
  * setTarget for each checked kind that needs a choice (a lead left for
@@ -579,13 +585,13 @@ export async function applyTaskTargets(
 ): Promise<void> {
   for (const configId of configIds) {
     const rows = targets[configId];
-    if (!rows) throw new Error(`Choix de la cible pas encore prêt pour ${configId}.`);
+    if (!rows) throw new Error(`Choix de la cible pas encore prêt pour ${serverName(configId)}.`);
     for (const kind of PICKER_KINDS) {
       const row = rows[kind];
-      if (!row || row.loading) throw new Error(`Choix de la cible pas encore prêt pour ${configId}.`);
+      if (!row || row.loading) throw new Error(`Choix de la cible pas encore prêt pour ${serverName(configId)}.`);
     }
     if (!PICKER_KINDS.some((k) => rows[k].checked) && !hasActivityWork(configId)) {
-      throw new Error(`Aucune cible cochée pour ${configId}.`);
+      throw new Error(`Aucune cible cochée pour ${serverName(configId)}.`);
     }
     const invoice = rows.invoice;
     if (invoice.checked && invoice.needsChoice && !invoice.unusable && invoice.selection !== CHOOSE_LATER) {

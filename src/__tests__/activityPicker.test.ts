@@ -210,6 +210,14 @@ describe("target picker with activities", () => {
     expect(src.setTarget).not.toHaveBeenCalled();
     expect(serverUsable({ ...rows, task: { ...rows.task, failed: "x" }, lead: { ...rows.lead, failed: "x" } }, true)).toBe(true);
   });
+
+  it("names the server by its url and database, not its config id, when nothing is checked", async () => {
+    const row = (kind: "task" | "lead" | "invoice") => ({ ...loadingRow(kind), loading: false, needsChoice: true });
+    const id = "https://odoo.example.com|admin|mydb";
+    const src = { setTarget: vi.fn(), dropTarget: vi.fn(), setLastKinds: vi.fn() } as any;
+    await expect(applyTaskTargets(src, "n", [id], { [id]: { task: row("task"), lead: row("lead"), invoice: row("invoice") } }))
+      .rejects.toThrow("Aucune cible cochée pour https://odoo.example.com (mydb).");
+  });
 });
 
 describe("activity picker after review", () => {
