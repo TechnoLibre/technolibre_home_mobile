@@ -22,10 +22,11 @@ export type PerServerSyncStatus = "synced" | "error" | "pending";
 /**
  * How a note is bound to a remote record. "create": the note created the
  * record and is mirrored by it (push writes, pull reads back). "activity":
- * a mail.activity the note scheduled on another record; a note can have
- * several on one server, each with its own link.
+ * a mail.activity the note scheduled on another record; "message": a
+ * mail.message the note posted in another record's chatter. A note can
+ * have several of these two on one server, each with its own link.
  */
-export type NoteLinkKind = "create" | "activity";
+export type NoteLinkKind = "create" | "activity" | "message";
 
 /**
  * One remote record a note is bound to. A remote id is only meaningful in
@@ -57,7 +58,8 @@ export interface NoteLink {
   /**
    * What the link stands for beyond its record, stored as JSON: for an
    * activity, the record it is scheduled on and its type, deadline and
-   * user (see ActivityTarget). Empty for a "create" link.
+   * user (see ActivityTarget); for a message, its record and the hash of
+   * the body last sent (bodyHash). Empty for a "create" link.
    */
   params?: Record<string, any>;
 }
@@ -1230,6 +1232,11 @@ export class DatabaseService {
     await this.db.run("UPDATE note_links SET remote_state = ? WHERE id = ?", ["deleted", linkId]);
   }
 
+  /** Replaces a link's params (see NoteLink.params). */
+  async setNoteLinkParams(linkId: string, params: Record<string, any>): Promise<void> {
+    await this.db.run("UPDATE note_links SET params_json = ? WHERE id = ?", [JSON.stringify(params), linkId]);
+  }
+
   /** Marks an activity link done: see NoteLink.remoteState. */
   async setNoteLinkDone(linkId: string): Promise<void> {
     await this.db.run("UPDATE note_links SET remote_state = ? WHERE id = ?", ["done", linkId]);
@@ -1252,7 +1259,7 @@ export class DatabaseService {
       configId: row.config_id,
       model: row.model,
       resId: Number(row.res_id),
-      kind: row.kind === "activity" ? "activity" : "create",
+      kind: row.kind === "activity" || row.kind === "message" ? row.kind : "create",
       remoteState: NOTE_LINK_REMOTE_STATES.includes(row.remote_state) ? row.remote_state : "ok",
       createdAt: row.created_at,
       lastSyncedAt: row.last_synced_at ?? null,

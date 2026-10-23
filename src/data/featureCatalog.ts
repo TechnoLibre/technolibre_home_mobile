@@ -1736,6 +1736,40 @@ export const FEATURE_TREE: FeatureNode[] = [
                 files: ["src/services/activityPicker.ts", "src/services/odoo/activityTypeService.ts"],
             },
             {
+                id: "sync.message",
+                label: { en: "Message in a thread", fr: "Message dans un fil" },
+                description: {
+                    en: "Post a note as a logged note in any record's chatter, kept up to date.",
+                    fr: "Poster une note comme note interne dans le fil de n'importe quel record, tenue à jour.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/syncService.test.ts", "src/__tests__/activityPicker.test.ts"],
+                howItWorks: {
+                    en: "Beside activities, the picker's section posts the note in the chatter "
+                        + "of a record (same models, probed for message_ids, or a technical "
+                        + "name). Each message is its own message.post row in the outbox and "
+                        + "note_links row (kind message): message_post as a logged note "
+                        + "(mt_note), the title in bold, the text, the marker. A later change "
+                        + "of the text edits the message through /mail/message/update_content, "
+                        + "the web client's own edit route (Odoo 16 to 18); the hash of the "
+                        + "body last sent spares an edit when nothing changed. A message gone "
+                        + "on the server is kept as history.",
+                    fr: "À côté des activités, la section du sélecteur poste la note dans le "
+                        + "fil d'un record (mêmes modèles, sondés sur message_ids, ou un nom "
+                        + "technique). Chaque message a sa ligne message.post dans la file et "
+                        + "sa ligne note_links (type message) : message_post en note interne "
+                        + "(mt_note), le titre en gras, le texte, le marqueur. Un changement "
+                        + "du texte édite ensuite le message par /mail/message/update_content, "
+                        + "la route d'édition du client web (Odoo 16 à 18) ; l'empreinte du "
+                        + "dernier corps envoyé évite une édition quand rien n'a changé. Un "
+                        + "message disparu du serveur reste en historique.",
+                },
+                dependsOn: ["sync.activity", "sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/activityPicker.ts", "src/services/odoo/odooRpcClient.ts"],
+            },
+            {
                 id: "sync.http-policy",
                 label: { en: "Unencrypted http", fr: "http non chiffré" },
                 description: {

@@ -3,13 +3,14 @@ import type { RecordSearch } from "./odoo/recordSearchService";
 import type { SyncCredentials } from "./odoo/odooRpcClient";
 import { ActivityTypeChoice, ActivityTypeList, defaultDeadline, typesForModel } from "./odoo/activityTypeService";
 import { unusableReason, UnusableReason } from "./odoo/capabilityService";
-import type { ActivityState, ActivityTarget, TargetKind, TargetState } from "./syncService";
+import type { ActivityTarget, AttachedKind, AttachedState, TargetKind, TargetState } from "./syncService";
 import { CHOOSE_LATER, ProjectOption } from "./targetPicker";
 
 /**
- * Models offered for an activity, in display order; each is probed and
- * greyed where the server lacks it or its activities. Any other model is
- * reached through ADVANCED_MODEL, its technical name typed.
+ * Models offered for an activity or a message, in display order; each is
+ * probed and greyed where the server lacks it, or its activities (for an
+ * activity) or its chatter (for a message). Any other model is reached
+ * through ADVANCED_MODEL, its technical name typed.
  */
 export const ACTIVITY_MODELS = [
   "res.partner", "crm.lead", "project.task", "project.project", "sale.order", "account.move", "purchase.order",
@@ -32,8 +33,11 @@ const KIND_MODELS: Record<TargetKind, string> = { task: "project.task", lead: "c
 
 export interface ModelOption {
   model: string;
-  /** Why the server cannot take an activity on it; null when it can or was never probed. */
-  unusable: UnusableReason | null;
+  /**
+   * Why the server cannot take an activity, or a message, on it; null when
+   * it can or was never probed.
+   */
+  unusable: Record<AttachedKind, UnusableReason | null>;
 }
 
 /** A record of this note on the server (its task, its opportunity), offered first. */
@@ -44,15 +48,17 @@ export interface Shortcut {
 }
 
 /**
- * One activity in the picker of one server:
+ * One activity or message (kind) in the picker of one server:
  * - linked / done / deleted / queued: what the note already has, shown;
  * - stuck: a creation that failed or is blocked, which removed drops;
  * - choose: a creation waiting for a choice, edited like a draft;
- * - draft: a new activity the user is adding.
- * The editing fields hold the choices of choose and draft rows.
+ * - draft: a new one the user is adding.
+ * The editing fields hold the choices of choose and draft rows; a message
+ * has only its model and record.
  */
 export interface ActivityRow {
   key: string;
+  kind: AttachedKind;
   status: "linked" | "done" | "deleted" | "queued" | "stuck" | "choose" | "draft";
   opId: string | null;
   /** What the row stands for, as stored (choose, shown rows) or as last built. */
@@ -77,7 +83,7 @@ export interface ActivityRow {
   userQuery: string;
 }
 
-/** The activities part of the picker for one server. */
+/** The activities and messages part of the picker for one server. */
 export interface ActivitySection {
   loading: boolean;
   /** Why the section could not be built; it then offers nothing. */
@@ -103,9 +109,15 @@ export function loadingSection(): ActivitySection {
 
 /** The part of SyncService the activity picker reads and writes. */
 export interface ActivitySource {
-  activityStates(noteId: string, configId: string): Promise<ActivityState[]>;
-  setActivity(noteId: string, configId: string, target: ActivityTarget, opId?: string | null): Promise<{ id: string } | null>;
-  dropActivity(noteId: string, opId: string): Promise<void>;
+  attachedStates(noteId: string, configId: string): Promise<AttachedState[]>;
+  setAttached(
+    noteId: string,
+    configId: string,
+    kind: AttachedKind,
+    target: ActivityTarget,
+    opId?: string | null
+  ): Promise<{ id: string } | null>;
+  dropAttached(noteId: string, opId: string): Promise<void>;
   targetState(noteId: string, configId: string, kind: TargetKind): Promise<TargetState>;
   capabilities: {
     ensure(creds: SyncCredentials, model: string, options: { online: boolean }): Promise<ServerCapability | null>;
@@ -128,9 +140,9 @@ function deadlineFor(section: ActivitySection, type: ActivityTypeChoice | null):
   return section.noteDay ?? defaultDeadline(type, new Date(`${section.today}T12:00:00`));
 }
 
-function baseRow(key: string, status: ActivityRow["status"], target: ActivityTarget): ActivityRow {
+function baseRow(key: string, kind: AttachedKind, status: ActivityRow["status"], target: ActivityTarget): ActivityRow {
   return {
-    key, status, opId: null, target, reason: null, removed: false,
+    key, kind, status, opId: null, target, reason: null, removed: false,
     model: target.resModel, advancedModel: "", records: [], recordSelection: NO_RECORD, recordQuery: "",
     recordsFromCache: false, recordsError: null, typeSelection: DEFAULT_TYPE, deadline: target.deadline ?? "",
     deadlineEdited: false, users: [], userSelection: ME, userQuery: "",
@@ -166,27 +178,29 @@ function typeById(section: ActivitySection, value: string): ActivityTypeChoice |
   return value === DEFAULT_TYPE ? null : section.types.find((t) => String(t.id) === value) ?? null;
 }
 
-/** The row of one activity state. */
-function stateRow(section: ActivitySection, state: ActivityState): ActivityRow {
+/** The row of one activity or message state. */
+function stateRow(section: ActivitySection, state: AttachedState): ActivityRow {
   if (state.state === "linked" || state.state === "done" || state.state === "deleted") {
-    return baseRow(`link-${state.link.id}`, state.state, state.target);
+    return baseRow(`link-${state.link.id}`, state.kind, state.state, state.target);
   }
   if (state.state === "queued") {
     const stuck = state.op.status === "failed" || state.op.status === "blocked";
     return {
-      ...baseRow(`op-${state.op.id}`, stuck ? "stuck" : "queued", state.target),
+      ...baseRow(`op-${state.op.id}`, state.kind, stuck ? "stuck" : "queued", state.target),
       opId: state.op.id,
       reason: stuck ? state.op.params.blockedReason ?? "failed" : null,
     };
   }
-  const row: ActivityRow = { ...baseRow(`op-${state.op.id}`, "choose", state.target), opId: state.op.id, reason: state.reason };
+  const row: ActivityRow = {
+    ...baseRow(`op-${state.op.id}`, state.kind, "choose", state.target), opId: state.op.id, reason: state.reason,
+  };
   return withTargetChoices(section, row, state.target);
 }
 
 /**
- * Builds the activities section of one server: the note's activities
- * there, the offered models (cached probe, refreshed online; a failed
- * probe does not block), the server's activity types (online, else
+ * Builds the activities and messages section of one server: the note's
+ * activities and messages there, the offered models (cached probe,
+ * refreshed online; a failed probe does not block), the server's activity types (online, else
  * cached), and the note's task and opportunity there as shortcuts. A
  * failure becomes a section that offers nothing (failed).
  */
@@ -201,12 +215,18 @@ export async function buildActivitySection(
 ): Promise<ActivitySection> {
   const section: ActivitySection = { ...loadingSection(), loading: false, offline: !online, noteDay, today };
   try {
-    const states = await source.activityStates(noteId, configId);
+    const states = await source.attachedStates(noteId, configId);
     const c = await creds();
+    const known = (reason: UnusableReason | null) => (reason === "unknown" ? null : reason);
     section.models = await Promise.all(ACTIVITY_MODELS.map(async (model) => {
       const cap = await source.capabilities.ensure(c, model, { online }).catch(() => null);
-      const reason = unusableReason(cap, ["read", "activities"]);
-      return { model, unusable: reason === "unknown" ? null : reason };
+      return {
+        model,
+        unusable: {
+          activity: known(unusableReason(cap, ["read", "activities"])),
+          message: known(unusableReason(cap, ["read", "chatter"])),
+        },
+      };
     }));
     const types = await source.activityTypes.list(c, { online });
     section.types = types.types;
@@ -223,14 +243,15 @@ export async function buildActivitySection(
 }
 
 /**
- * A new draft row: on the note's first shortcut record when it has one
- * (its task, else its opportunity), else on the first model the server
- * can take; the first type of that model; the deadline of that type.
+ * A new draft row of kind: on the note's first shortcut record when it
+ * has one (its task, else its opportunity), else on the first model the
+ * server can take it on; the first type of that model; the deadline of
+ * that type.
  */
-export function newDraftRow(section: ActivitySection, key: string): ActivityRow {
+export function newDraftRow(section: ActivitySection, key: string, kind: AttachedKind = "activity"): ActivityRow {
   const shortcut = section.shortcuts[0] ?? null;
-  const model = shortcut?.model ?? section.models.find((m) => !m.unusable)?.model ?? ACTIVITY_MODELS[0];
-  const row = baseRow(key, "draft", {
+  const model = shortcut?.model ?? section.models.find((m) => !m.unusable[kind])?.model ?? ACTIVITY_MODELS[0];
+  const row = baseRow(key, kind, "draft", {
     resModel: model, resId: null, typeId: null, deadline: null, userId: null,
   });
   if (shortcut) {
@@ -304,18 +325,24 @@ export function isEditable(row: ActivityRow): boolean {
  */
 export function rowTarget(section: ActivitySection, row: ActivityRow): ActivityTarget | { error: string } {
   const model = rowModel(row);
-  if (!model) return { error: "Choisissez le modèle de l'activité." };
+  const what = row.kind === "message" ? "du message" : "de l'activité";
+  if (!model) return { error: `Choisissez le modèle ${what}.` };
   const later = row.recordSelection === CHOOSE_LATER;
   if (row.recordSelection === NO_RECORD || (later && !canDeferRecord(section, row))) {
-    return { error: "Choisissez l'enregistrement de l'activité." };
+    return { error: `Choisissez l'enregistrement ${what}.` };
   }
   const record = row.records.find((o) => o.value === row.recordSelection);
+  const resId = later ? null : Number(row.recordSelection);
+  const resName = later ? null : record?.name ?? null;
+  if (row.kind === "message") {
+    return { resModel: model, resId, resName, typeId: null, typeName: null, deadline: null, userId: null, userName: null };
+  }
   const type = typeById(section, row.typeSelection);
   const user = row.users.find((o) => o.value === row.userSelection);
   return {
     resModel: model,
-    resId: later ? null : Number(row.recordSelection),
-    resName: later ? null : record?.name ?? null,
+    resId,
+    resName,
     typeId: type?.id ?? null,
     typeName: type?.name ?? null,
     deadline: /^\d{4}-\d{2}-\d{2}$/.test(row.deadline) ? row.deadline : null,
@@ -348,8 +375,8 @@ export function sectionHasWork(section: ActivitySection | undefined): boolean {
 /**
  * Checks every edited row of the selected servers (see rowTarget), and
  * throws the first problem; returns, without recording anything, what
- * applying them records: setActivity for each draft and each creation
- * waiting for a choice, dropActivity for each creation the user removed.
+ * applying them records: setAttached for each draft and each creation
+ * waiting for a choice, dropAttached for each creation the user removed.
  * Checked first, the picker's other choices are recorded only when every
  * activity can be. Each recorded row becomes "queued" (with its
  * operation), and a dropped one is forgotten, so applying the same
@@ -371,7 +398,7 @@ export function planActivities(
       if (row.removed) {
         if (isDropped(row)) {
           planned.push(async () => {
-            await source.dropActivity(noteId, row.opId!);
+            await source.dropAttached(noteId, row.opId!);
             row.opId = null;
           });
         }
@@ -381,7 +408,7 @@ export function planActivities(
       const target = rowTarget(section, row);
       if ("error" in target) throw new Error(target.error);
       planned.push(async () => {
-        const op = await source.setActivity(noteId, configId, target, row.status === "choose" ? row.opId : null);
+        const op = await source.setAttached(noteId, configId, row.kind, target, row.status === "choose" ? row.opId : null);
         row.status = "queued";
         row.opId = op?.id ?? row.opId;
         row.target = target;
@@ -402,7 +429,11 @@ export async function applyActivities(
   for (const run of planActivities(source, noteId, configIds, sections)) await run();
 }
 
-/** Whether a new activity can be added on the section's server: some model offered is usable. */
-export function canAddActivity(section: ActivitySection | undefined): boolean {
-  return !!section && !section.loading && !section.failed && section.models.some((m) => !m.unusable);
+/**
+ * Whether a new activity (or message, kind) can be added on the section's
+ * server: some model offered takes it; with no kind, either.
+ */
+export function canAddActivity(section: ActivitySection | undefined, kind?: AttachedKind): boolean {
+  if (!section || section.loading || section.failed) return false;
+  return section.models.some((m) => (kind ? !m.unusable[kind] : !m.unusable.activity || !m.unusable.message));
 }

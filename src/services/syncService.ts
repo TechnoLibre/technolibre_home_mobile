@@ -76,6 +76,36 @@ export const ACTIVITY_CREATE = "activity.create";
 export const ACTIVITY_MODEL = "mail.activity";
 export const USER_MODEL = "res.users";
 
+/** Outbox kind of one of a note's messages posted in a record's chatter. */
+export const MESSAGE_POST = "message.post";
+
+/** Model of a posted message. */
+const MESSAGE_MODEL = "mail.message";
+
+/**
+ * What a note can attach to a record it did not create, several per
+ * server: an activity scheduled on it, or a message posted in its chatter.
+ * Each is a note_links row of that kind once on the server.
+ */
+export type AttachedKind = "activity" | "message";
+export const ATTACHED_KINDS: AttachedKind[] = ["activity", "message"];
+
+/** The outbox kind of each attached kind's creation, and the text of one waiting for its record. */
+const ATTACHED: Record<AttachedKind, { opKind: string; waitingChoice: string }> = {
+  activity: { opKind: ACTIVITY_CREATE, waitingChoice: "L'activité attend le choix de son enregistrement" },
+  message: { opKind: MESSAGE_POST, waitingChoice: "Le message attend le choix de son enregistrement" },
+};
+
+function isAttachedKind(kind: string): kind is AttachedKind {
+  return (ATTACHED_KINDS as string[]).includes(kind);
+}
+
+/**
+ * What the message edit route answers for a message that is gone, or no
+ * longer the user's to edit: the link turns deleted.
+ */
+const MESSAGE_GONE_ERRORS = new Set(["werkzeug.exceptions.NotFound", "odoo.exceptions.MissingError"]);
+
 /**
  * What a kind of target is on the server: its model, its creation's outbox
  * kind, its tag model, the params a choice sets (choiceKeys), and the
@@ -152,20 +182,25 @@ export interface ActivityTarget {
 }
 
 /**
- * Where one of a note's activities stands on one server:
- * - linked: the activity exists; a push writes it, or marks it done when
+ * Where one of a note's activities or messages (kind) stands on one
+ * server; a message's target has only its record:
+ * - linked: it exists; a push writes it, or marks an activity done when
  *   the note is done;
- * - done / deleted: marked done by the app, or gone on the server (done
- *   or cancelled there); kept as history, never written;
+ * - done / deleted: an activity marked done by the app, or gone on the
+ *   server (done, cancelled or deleted there); kept as history, never
+ *   written;
  * - queued: its creation is in the outbox, due, retrying or blocked for a
  *   reason the next tap settles (ambiguous);
  * - choose: its creation waits for a choice: incomplete (no record yet),
  *   or blocked for a reason in CHOOSE_AGAIN_REASONS.
  */
-export type ActivityState =
-  | { state: "linked" | "done" | "deleted"; link: NoteLink; target: ActivityTarget }
-  | { state: "queued"; op: OutboxOp; target: ActivityTarget }
-  | { state: "choose"; op: OutboxOp; reason: string; target: ActivityTarget };
+export type AttachedState =
+  | { kind: AttachedKind; state: "linked" | "done" | "deleted"; link: NoteLink; target: ActivityTarget }
+  | { kind: AttachedKind; state: "queued"; op: OutboxOp; target: ActivityTarget }
+  | { kind: AttachedKind; state: "choose"; op: OutboxOp; reason: string; target: ActivityTarget };
+
+/** An activity's AttachedState. */
+export type ActivityState = AttachedState;
 
 export interface PushOptions {
   recreateDeleted?: boolean;
@@ -180,13 +215,13 @@ export interface PushOptions {
   force?: boolean;
   /** Push this kind only (an outbox handler runs its own operation). */
   onlyKind?: TargetKind;
-  /** Run this activity creation only (its outbox handler). */
-  onlyActivityOp?: string;
+  /** Run this activity or message creation only (its outbox handler). */
+  onlyAttachedOp?: string;
   /**
    * Settles an "ambiguous" creation with the record picked: the creation
-   * of a kind, or the activity creation opId.
+   * of a kind, or the activity or message creation opId.
    */
-  adopt?: { kind: TargetKind | "activity"; resId: number; opId?: string };
+  adopt?: { kind: TargetKind | AttachedKind; resId: number; opId?: string };
   /** adopt for the note's task. */
   adoptTaskId?: number;
 }
@@ -355,21 +390,55 @@ function activityOfParams(params: Record<string, any>): ActivityTarget {
 
 /**
  * How createWithMarker creates one record: its model and outbox kind, the
- * field its marker is written in and searched by, the values every write
- * sends (marker included) and those only create adds, the context of the
- * create, the checks of the records it names, and the link it leaves.
+ * field its marker is written in and searched by (within markerScope, a
+ * domain, when given), the values every write sends (marker included) and
+ * those only create adds, the context of the create, the checks of the
+ * records it names, and the link it leaves. create and write replace the
+ * model's own create() and write() (a message is posted on its record and
+ * edited through a route); sentParams gives, from the values sent, params
+ * stored on the operation before the create and on the link after it: a
+ * record found again by its marker whose sentParams still match what the
+ * operation sent is linked without being written again.
  */
 interface CreateSpec {
   model: string;
   opKind: string;
   markerField: string;
+  markerScope?: any[];
   values: (sessionId: string, odooVersion: number, note: Note) => Promise<Record<string, any>>;
   createValues: (note: Note) => Record<string, any>;
   context?: Record<string, any>;
+  create?: (sessionId: string, odooVersion: number, values: Record<string, any>) => Promise<number>;
+  write?: (sessionId: string, resId: number, values: Record<string, any>) => Promise<void>;
   check: (sessionId: string) => Promise<void>;
   link: { kind: NoteLinkKind; params?: Record<string, any> };
+  sentParams?: (values: Record<string, any>) => Record<string, any>;
   /** Server exceptions that also refuse this create, beside REFUSED_ERRORS. */
   refusedErrors?: string[];
+}
+
+/**
+ * message_post kwargs of a note's message: a logged note (mt_note, the
+ * only kind the edit route accepts on 16), HTML kept on 17+ by
+ * body_is_html, which 16 does not know (it sanitizes the string as HTML).
+ */
+function messagePostKwargs(body: string, odooVersion: number): Record<string, any> {
+  return {
+    body,
+    ...(odooVersion >= 17 ? { body_is_html: true } : {}),
+    message_type: "comment",
+    subtype_xmlid: "mail.mt_note",
+  };
+}
+
+/** A short hash of a text (FNV-1a, 32 bits), to tell whether it changed. */
+function textHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16);
 }
 
 /** A record a creation names, looked up before the create (see checkChosen). */
@@ -452,8 +521,10 @@ export class SyncService {
       this.outbox.registerHandler(KINDS[kind].opKind, (creds, op) =>
         this.pushNote(creds, op.noteId, { onlyKind: kind, force: true }));
     }
-    this.outbox.registerHandler(ACTIVITY_CREATE, (creds, op) =>
-      this.pushNote(creds, op.noteId, { onlyActivityOp: op.id, force: true }));
+    for (const kind of ATTACHED_KINDS) {
+      this.outbox.registerHandler(ATTACHED[kind].opKind, (creds, op) =>
+        this.pushNote(creds, op.noteId, { onlyAttachedOp: op.id, force: true }));
+    }
   }
 
   /** Name search of model's records on a server, with the ones found cached. */
@@ -554,14 +625,16 @@ export class SyncService {
           parts.push(`<p>📍 Géolocalisation : ${p.latitude}, ${p.longitude} — ${this.escapeHtml(p.text)} — ${ts}</p>`);
           break;
         }
+        // No time: the entries store none, and the HTML of an unchanged
+        // note must stay the same from one push to the next
         case "audio":
-          parts.push(`<p>🎙️ Enregistrement audio — ${new Date().toISOString()}</p>`);
+          parts.push("<p>🎙️ Enregistrement audio</p>");
           break;
         case "photo":
-          parts.push(`<p>📷 Photo — ${new Date().toISOString()}</p>`);
+          parts.push("<p>📷 Photo</p>");
           break;
         case "video":
-          parts.push(`<p>🎥 Vidéo — ${new Date().toISOString()}</p>`);
+          parts.push("<p>🎥 Vidéo</p>");
           break;
       }
     }
@@ -642,7 +715,7 @@ export class SyncService {
     const fingerprint = pushedFingerprint(note);
     const configId = syncConfigIdOf(creds);
     const kinds = options.onlyKind ? [options.onlyKind]
-      : options.onlyActivityOp ? []
+      : options.onlyAttachedOp ? []
       : await this.noteKinds(noteId, configId);
     let failure: unknown = null;
     const keep = (e: unknown) => {
@@ -655,7 +728,7 @@ export class SyncService {
         keep(e);
       }
     }
-    if (!options.onlyKind) await this.pushActivities(creds, noteId, options, fingerprint, keep);
+    if (!options.onlyKind) await this.pushAttached(creds, noteId, options, fingerprint, keep);
     if (failure !== null) throw failure;
   }
 
@@ -663,8 +736,8 @@ export class SyncService {
    * The kinds of target a note has on one server: those with a link
    * (live or deleted, not dismissed) or a creation in the outbox, in
    * TARGET_KINDS order. A note with none there gets a task, as before
-   * targets had kinds, unless it has activities there (any link or
-   * creation): then it has none.
+   * targets had kinds, unless it has activities or messages there (any
+   * link or creation): then it has none.
    */
   async noteKinds(noteId: string, configId: string): Promise<TargetKind[]> {
     const links = (await this.db.getNoteLinks(noteId))
@@ -675,8 +748,9 @@ export class SyncService {
         || ops.some((op) => op.kind === KINDS[kind].opKind)
     );
     if (kinds.length > 0) return kinds;
-    const hasActivities = links.some((l) => l.kind === "activity") || ops.some((op) => op.kind === ACTIVITY_CREATE);
-    return hasActivities ? [] : ["task"];
+    const attached = links.some((l) => isAttachedKind(l.kind))
+      || ops.some((op) => ATTACHED_KINDS.some((k) => ATTACHED[k].opKind === op.kind));
+    return attached ? [] : ["task"];
   }
 
   /**
@@ -689,7 +763,7 @@ export class SyncService {
       l.configId === configId && l.remoteState === "ok" && !except(l));
   }
 
-  /** hasOtherLiveLink beside the note's record of kind: another kind, or an activity. */
+  /** hasOtherLiveLink beside the note's record of kind: another kind, an activity or a message. */
   private async hasOtherLiveKind(noteId: string, configId: string, kind: TargetKind): Promise<boolean> {
     return this.hasOtherLiveLink(noteId, configId, (l) => l.kind === "create" && l.model === KINDS[kind].model);
   }
@@ -857,7 +931,7 @@ export class SyncService {
           creds.odooUrl, sessionId, spec.model, "search_read",
           [],
           {
-            domain: [[spec.markerField, "ilike", clientMarker(op.clientUuid)]],
+            domain: [...(spec.markerScope ?? []), [spec.markerField, "ilike", clientMarker(op.clientUuid)]],
             fields: ["id"],
             limit: AMBIGUOUS_CANDIDATES_SHOWN,
             order: "id asc",
@@ -876,17 +950,24 @@ export class SyncService {
         }
         if (found.length === 1) resId = found[0].id;
       }
+      const sent = spec.sentParams?.(payload) ?? {};
+      const unchanged = !!spec.sentParams && Object.entries(sent).every(([k, v]) => op.params[k] === v);
       if (resId !== null) {
-        await this.jsonRpc(creds.odooUrl, sessionId, spec.model, "write", [[resId], payload]);
+        if (unchanged) {
+          // Found as it was sent: writing it would only mark it edited
+        } else if (spec.write) await spec.write(sessionId, resId, payload);
+        else await this.jsonRpc(creds.odooUrl, sessionId, spec.model, "write", [[resId], payload]);
       } else {
         await spec.check(sessionId);
-        await this.outbox.setParams(op.id, { createSentAt: new Date().toISOString() });
+        await this.outbox.setParams(op.id, { createSentAt: new Date().toISOString(), ...sent });
         try {
-          resId = await this.jsonRpc(
-            creds.odooUrl, sessionId, spec.model, "create",
-            [{ ...payload, ...spec.createValues(note) }],
-            spec.context ? { context: spec.context } : {}
-          );
+          const values = { ...payload, ...spec.createValues(note) };
+          resId = spec.create
+            ? await spec.create(sessionId, odooVersion, values)
+            : await this.jsonRpc(
+                creds.odooUrl, sessionId, spec.model, "create", [values],
+                spec.context ? { context: spec.context } : {}
+              );
         } catch (e: unknown) {
           const refused = e instanceof OdooRpcError && !!e.odooName
             && (REFUSED_ERRORS.has(e.odooName) || !!spec.refusedErrors?.includes(e.odooName));
@@ -912,7 +993,7 @@ export class SyncService {
         createdAt: now,
         lastSyncedAt: now,
         clientUuid: op.clientUuid,
-        params: spec.link.params ?? {},
+        params: { ...(spec.link.params ?? {}), ...sent },
       });
     });
   }
@@ -1195,60 +1276,73 @@ export class SyncService {
     return present;
   }
 
-  // ─── Activities ───────────────────────────────────────────────────────────
+  // ─── Activities and messages ──────────────────────────────────────────────
 
   /**
-   * The note's activities on one server (see ActivityState), dismissed
-   * links left out: its links, oldest first, then its creations.
+   * The note's activities and messages on one server (see AttachedState),
+   * dismissed links left out: its links, oldest first, then its
+   * creations. A creation whose record is linked already (its row not
+   * deleted yet) is left out: the link is its outcome.
    */
-  async activityStates(noteId: string, configId: string): Promise<ActivityState[]> {
+  async attachedStates(noteId: string, configId: string): Promise<AttachedState[]> {
     const links = (await this.db.getNoteLinks(noteId))
-      .filter((l) => l.configId === configId && l.kind === "activity" && l.remoteState !== "dismissed")
+      .filter((l) => l.configId === configId && isAttachedKind(l.kind) && l.remoteState !== "dismissed")
       .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
-    const states: ActivityState[] = links.map((link) => ({
+    const states: AttachedState[] = links.map((link) => ({
+      kind: link.kind as AttachedKind,
       state: link.remoteState === "ok" ? "linked" : link.remoteState === "done" ? "done" : "deleted",
       link,
       target: activityOfParams(link.params ?? {}),
     }));
-    for (const op of await this.outbox.findAll(noteId, configId, ACTIVITY_CREATE)) {
-      // Linked already, its row not deleted yet: the link is the outcome
-      if (links.some((l) => l.clientUuid === op.clientUuid)) continue;
-      const target = activityOfParams(op.params);
-      const reason = op.status === "incomplete" ? "incomplete" : op.params.blockedReason ?? null;
-      if (op.status === "incomplete"
-        || (op.status === "blocked" && reason !== null && CHOOSE_AGAIN_REASONS.has(reason))) {
-        states.push({ state: "choose", op, reason: reason!, target });
-      } else {
-        states.push({ state: "queued", op, target });
+    for (const kind of ATTACHED_KINDS) {
+      for (const op of await this.outbox.findAll(noteId, configId, ATTACHED[kind].opKind)) {
+        if (links.some((l) => l.clientUuid === op.clientUuid)) continue;
+        const target = activityOfParams(op.params);
+        const reason = op.status === "incomplete" ? "incomplete" : op.params.blockedReason ?? null;
+        if (op.status === "incomplete"
+          || (op.status === "blocked" && reason !== null && CHOOSE_AGAIN_REASONS.has(reason))) {
+          states.push({ kind, state: "choose", op, reason: reason!, target });
+        } else {
+          states.push({ kind, state: "queued", op, target });
+        }
       }
     }
     return states;
   }
 
+  /** attachedStates of the activities only. */
+  async activityStates(noteId: string, configId: string): Promise<AttachedState[]> {
+    return (await this.attachedStates(noteId, configId)).filter((a) => a.kind === "activity");
+  }
+
   /**
-   * Queues a new activity of the note on this server, or, with opId,
-   * gives a creation waiting for a choice (state "choose") its new target
-   * and puts it back in the queue, its block cleared. A target with no
-   * record yet (resId null, chosen offline with nothing in the cache) is
-   * stored "incomplete": nothing is sent until a record is chosen. opId of
-   * a creation not waiting for a choice changes nothing. Returns the
+   * Queues a new activity or message of the note on this server, or, with
+   * opId, gives a creation of that kind waiting for a choice (state
+   * "choose") its new target and puts it back in the queue, its block
+   * cleared. A target with no record yet (resId null, chosen offline with
+   * nothing in the cache) is stored "incomplete": nothing is sent until a
+   * record is chosen. A message keeps only the record of its target. opId
+   * of a creation not waiting for a choice changes nothing. Returns the
    * operation.
    */
-  async setActivity(
+  async setAttached(
     noteId: string,
     configId: string,
+    kind: AttachedKind,
     target: ActivityTarget,
     opId: string | null = null
   ): Promise<OutboxOp | null> {
-    const params = activityParams(target);
+    const params = activityParams(kind === "message"
+      ? { resModel: target.resModel, resId: target.resId, resName: target.resName, typeId: null, deadline: null, userId: null }
+      : target);
     const complete = target.resId !== null && !!target.resModel;
     if (!opId) {
       return this.outbox.enqueue({
-        noteId, configId, kind: ACTIVITY_CREATE, params, status: complete ? "queued" : "incomplete",
+        noteId, configId, kind: ATTACHED[kind].opKind, params, status: complete ? "queued" : "incomplete",
       });
     }
-    const waiting = (await this.activityStates(noteId, configId))
-      .find((a) => a.state === "choose" && a.op.id === opId);
+    const waiting = (await this.attachedStates(noteId, configId))
+      .find((a) => a.kind === kind && a.state === "choose" && a.op.id === opId);
     if (!waiting) return null;
     const cleared = { ...params, blockedReason: null, candidates: [] };
     if (complete) await this.outbox.complete(opId, cleared);
@@ -1256,29 +1350,49 @@ export class SyncService {
     return this.db.getOutboxOp(opId);
   }
 
+  /** setAttached for an activity. */
+  async setActivity(
+    noteId: string,
+    configId: string,
+    target: ActivityTarget,
+    opId: string | null = null
+  ): Promise<OutboxOp | null> {
+    return this.setAttached(noteId, configId, "activity", target, opId);
+  }
+
+  /** setAttached for a message posted in the record's chatter. */
+  async setMessage(
+    noteId: string,
+    configId: string,
+    target: ActivityTarget,
+    opId: string | null = null
+  ): Promise<OutboxOp | null> {
+    return this.setAttached(noteId, configId, "message", target, opId);
+  }
+
   /**
-   * Cancels one of the note's activity creations on this server (the
-   * user removed it from the picker before it reached the server). An
-   * activity already created stays: nothing here deletes on the server.
+   * Cancels one of the note's activity or message creations (the user
+   * removed it from the picker before it reached the server). One already
+   * created stays: nothing here deletes on the server.
    */
-  async dropActivity(noteId: string, opId: string): Promise<void> {
+  async dropAttached(noteId: string, opId: string): Promise<void> {
     const op = await this.db.getOutboxOp(opId);
-    if (!op || op.noteId !== noteId || op.kind !== ACTIVITY_CREATE) return;
+    if (!op || op.noteId !== noteId || !ATTACHED_KINDS.some((k) => ATTACHED[k].opKind === op.kind)) return;
     await this.outbox.cancel(opId);
     await this.db.refreshNoteSyncStatus(noteId);
   }
 
   /**
-   * The activities part of pushNoteNow: runs the note's activity
-   * creations on this server (only options.onlyActivityOp when set), then
-   * writes each activity that was live before them (see writeActivity).
-   * An activity created here is written only when the note is done, to
-   * mark it done at once. A creation whose activity is already linked (cut
-   * short after the link, before its row was deleted) is cancelled, not
-   * run: its marker search would link the activity a second time. Each
-   * failure goes to keep.
+   * The activities and messages part of pushNoteNow: runs the note's
+   * creations of both kinds on this server (only options.onlyAttachedOp
+   * when set), then writes each one that was live before them (see
+   * writeActivity, writeMessage). An activity created here is written only
+   * when the note is done, to mark it done at once. A creation whose
+   * record is already linked (cut short after the link, before its row
+   * was deleted) is cancelled, not run: its marker search would link the
+   * record a second time. Each failure goes to keep.
    */
-  private async pushActivities(
+  private async pushAttached(
     creds: SyncCredentials,
     noteId: string,
     options: PushOptions,
@@ -1286,32 +1400,34 @@ export class SyncService {
     keep: (e: unknown) => void
   ): Promise<void> {
     const configId = syncConfigIdOf(creds);
-    const liveLinks = async () => (await this.db.getNoteLinks(noteId))
-      .filter((l) => l.configId === configId && l.kind === "activity" && l.remoteState === "ok");
-    const before = await liveLinks();
-    const linkedUuids = new Set((await this.db.getNoteLinks(noteId))
-      .filter((l) => l.configId === configId && l.kind === "activity" && l.clientUuid)
-      .map((l) => l.clientUuid));
-    const ops = (await this.outbox.findAll(noteId, configId, ACTIVITY_CREATE))
-      .filter((op) => !options.onlyActivityOp || op.id === options.onlyActivityOp);
-    for (const op of ops) {
-      if (linkedUuids.has(op.clientUuid)) {
-        await this.outbox.cancel(op.id);
-        await this.db.refreshNoteSyncStatus(noteId);
-        continue;
-      }
-      try {
-        await this.runActivityCreate(creds, op, options, fingerprint);
-      } catch (e: unknown) {
-        keep(e);
+    const links = async () => (await this.db.getNoteLinks(noteId))
+      .filter((l) => l.configId === configId && isAttachedKind(l.kind));
+    const live = async () => (await links()).filter((l) => l.remoteState === "ok");
+    const before = await live();
+    const linkedUuids = new Set((await links()).filter((l) => l.clientUuid).map((l) => l.clientUuid));
+    for (const kind of ATTACHED_KINDS) {
+      const ops = (await this.outbox.findAll(noteId, configId, ATTACHED[kind].opKind))
+        .filter((op) => !options.onlyAttachedOp || op.id === options.onlyAttachedOp);
+      for (const op of ops) {
+        if (linkedUuids.has(op.clientUuid)) {
+          await this.outbox.cancel(op.id);
+          await this.db.refreshNoteSyncStatus(noteId);
+          continue;
+        }
+        try {
+          await this.runAttachedCreate(kind, creds, op, options, fingerprint);
+        } catch (e: unknown) {
+          keep(e);
+        }
       }
     }
     const done = (await this.db.getNoteById(noteId))?.done ?? false;
-    const created = (await liveLinks()).filter((l) => !before.some((b) => b.id === l.id));
-    const toWrite = [...(options.onlyActivityOp ? [] : before), ...(done ? created : [])];
+    const created = (await live()).filter((l) => l.kind === "activity" && !before.some((b) => b.id === l.id));
+    const toWrite = [...(options.onlyAttachedOp ? [] : before), ...(done ? created : [])];
     for (const link of toWrite) {
       try {
-        await this.writeActivity(creds, noteId, link, fingerprint);
+        if (link.kind === "message") await this.writeMessage(creds, noteId, link, fingerprint);
+        else await this.writeActivity(creds, noteId, link, fingerprint);
       } catch (e: unknown) {
         keep(e);
       }
@@ -1319,73 +1435,106 @@ export class SyncService {
   }
 
   /**
-   * One activity creation of pushActivities, under the rules of a kind's
-   * creation (see pushNote): a background push skips it while it is not
-   * due; an incomplete one never runs; a tap runs a blocked or failed one
-   * again; options.adopt for its opId settles an ambiguous one.
+   * One creation of pushAttached, under the rules of a kind's creation
+   * (see pushNote): a background push skips it while it is not due; an
+   * incomplete one never runs; a tap runs a blocked or failed one again;
+   * options.adopt for its opId settles an ambiguous one. Before the
+   * create, the record's model is checked (checkAttachedModel), then the
+   * record, and for an activity its type and user (checkChosen).
    */
-  private async runActivityCreate(
+  private async runAttachedCreate(
+    kind: AttachedKind,
     creds: SyncCredentials,
     op: OutboxOp,
     options: PushOptions,
     fingerprint: string
   ): Promise<void> {
+    const def = ATTACHED[kind];
     if (!options.userInitiated && !this.outbox.isDue(op, options.force)) return;
     if (op.status === "incomplete") {
       throw new OutboxBlockedError(
-        `L'activité attend le choix de son enregistrement sur ${creds.odooUrl}.`, "incomplete", [], ACTIVITY_CREATE, op.id
+        `${def.waitingChoice} sur ${creds.odooUrl}.`, "incomplete", [], def.opKind, op.id
       );
     }
-    const adopt = options.adopt?.kind === "activity" && options.adopt.opId === op.id ? options.adopt.resId : null;
+    const adopt = options.adopt?.kind === kind && options.adopt.opId === op.id ? options.adopt.resId : null;
     await this.outbox.attempt(op.id, (running) => {
       const target = activityOfParams(running.params);
-      return this.createWithMarker(creds, running, adopt, fingerprint, {
-        model: ACTIVITY_MODEL,
-        opKind: ACTIVITY_CREATE,
-        markerField: "note",
-        values: async (_sessionId, _odooVersion, note) => this.buildActivityPayload(note, running.clientUuid),
-        createValues: () => ({
-          res_id: target.resId,
-          ...(target.typeId != null ? { activity_type_id: target.typeId } : {}),
-          ...(target.deadline ? { date_deadline: target.deadline } : {}),
-          ...(target.userId != null ? { user_id: target.userId } : {}),
-        }),
-        // res_model_id is resolved from default_res_model by mail.activity's
-        // default_get, without reading ir.model (admin only on 17 and 18)
-        context: { default_res_model: target.resModel },
-        // A model without mail.activity.mixin fails inside the create (AttributeError)
-        refusedErrors: ["builtins.AttributeError"],
-        check: async (sessionId) => {
-          await this.checkActivityModel(creds, target.resModel, running.id);
-          await this.checkChosen(creds, sessionId, [
-          {
-            model: target.resModel, id: target.resId, reason: "record_missing", label: "L'enregistrement",
-            context: WITH_ARCHIVED,
-          },
+      const checks: ChosenRecordCheck[] = [{
+        model: target.resModel, id: target.resId, reason: "record_missing", label: "L'enregistrement",
+        context: WITH_ARCHIVED,
+      }];
+      if (kind === "activity") {
+        checks.push(
           { model: ACTIVITY_TYPE_MODEL, id: target.typeId, reason: "type_missing", label: "Le type d'activité" },
           { model: USER_MODEL, id: target.userId, reason: "user_missing", label: "L'utilisateur" },
-          ], ACTIVITY_CREATE, running.id);
-        },
-        link: { kind: "activity", params: activityParams(target) },
-      });
+        );
+      }
+      const check = async (sessionId: string) => {
+        await this.checkAttachedModel(kind, creds, target.resModel, running.id);
+        await this.checkChosen(creds, sessionId, checks, def.opKind, running.id);
+      };
+      const spec: CreateSpec = kind === "activity"
+        ? {
+            model: ACTIVITY_MODEL,
+            opKind: def.opKind,
+            markerField: "note",
+            values: async (_sessionId, _odooVersion, note) => this.buildActivityPayload(note, running.clientUuid),
+            createValues: () => ({
+              res_id: target.resId,
+              ...(target.typeId != null ? { activity_type_id: target.typeId } : {}),
+              ...(target.deadline ? { date_deadline: target.deadline } : {}),
+              ...(target.userId != null ? { user_id: target.userId } : {}),
+            }),
+            // res_model_id is resolved from default_res_model by mail.activity's
+            // default_get, without reading ir.model (admin only on 17 and 18)
+            context: { default_res_model: target.resModel },
+            check,
+            link: { kind: "activity", params: activityParams(target) },
+          }
+        : {
+            model: MESSAGE_MODEL,
+            opKind: def.opKind,
+            markerField: "body",
+            markerScope: [["model", "=", target.resModel], ["res_id", "=", target.resId]],
+            values: async (_sessionId, _odooVersion, note) => ({ body: this.messageBody(note, running.clientUuid) }),
+            createValues: () => ({}),
+            create: (sessionId, odooVersion, values) => this.jsonRpc(
+              creds.odooUrl, sessionId, target.resModel, "message_post", [[target.resId]],
+              messagePostKwargs(values.body, odooVersion)
+            ),
+            write: async (sessionId, resId, values) => {
+              const current = await this.readMessage(creds, sessionId, resId);
+              if (!current) {
+                throw new OdooRpcError(`${MESSAGE_MODEL} #${resId} introuvable sur ${creds.odooUrl}`, "odoo.exceptions.MissingError");
+              }
+              await this.updateMessage(creds, sessionId, resId, values.body, current.attachmentIds);
+            },
+            check,
+            link: { kind: "message", params: activityParams(target) },
+            sentParams: (values) => ({ bodyHash: textHash(values.body) }),
+          };
+      // A model without mail.thread or mail.activity.mixin fails inside the create
+      spec.refusedErrors = ["builtins.AttributeError"];
+      return this.createWithMarker(creds, running, adopt, fingerprint, spec);
     });
     // The row is deleted only once the attempt settled: derive the status without it
     await this.db.refreshNoteSyncStatus(op.noteId);
   }
 
   /**
-   * Blocks an activity creation as "model_unusable" when the probe of its
-   * record's model (cached for a day, see CapabilityService.ensure) says
-   * the server lacks the model or its activities: a model typed by its
-   * technical name is probed only here. A probe that cannot reach the
-   * server does not block; the create then decides.
+   * Blocks a creation as "model_unusable" when the probe of its record's
+   * model (cached for a day, see CapabilityService.ensure) says the server
+   * lacks the model, or its activities (activity) or chatter (message): a
+   * model typed by its technical name is probed only here. A probe that
+   * cannot reach the server does not block; the create then decides.
    */
-  private async checkActivityModel(creds: SyncCredentials, model: string, opId: string): Promise<void> {
+  private async checkAttachedModel(kind: AttachedKind, creds: SyncCredentials, model: string, opId: string): Promise<void> {
     const cap = await this.capabilities.ensure(creds, model, { online: true });
-    const reason = unusableReason(cap, ["activities"]);
-    if (reason !== "missing_model" && reason !== "no_activities") return;
+    const reason = unusableReason(cap, [kind === "activity" ? "activities" : "chatter"]);
+    if (reason !== "missing_model" && reason !== "no_activities" && reason !== "no_chatter") return;
     throw new OutboxBlockedError(
-      `Le modèle ${model} n'accepte pas d'activités sur ${creds.odooUrl}.`, "model_unusable", [], ACTIVITY_CREATE, opId
+      `Le modèle ${model} n'accepte pas ${kind === "activity" ? "d'activités" : "de messages"} sur ${creds.odooUrl}.`,
+      "model_unusable", [], ATTACHED[kind].opKind, opId
     );
   }
 
@@ -1394,9 +1543,8 @@ export class SyncService {
    * when the note is done, action_feedback, which marks it done on the
    * server (removed, or archived when its type keeps done activities); the
    * link is then "done". An activity gone on the server (MissingError:
-   * done or cancelled there) marks the link deleted without raising, and
-   * takes the server out of the note's queue when nothing else of the
-   * note lives there. On Odoo 17+, where an activity done on the server
+   * done or cancelled there) marks the link deleted without raising (see
+   * markAttachedGone). On Odoo 17+, where an activity done on the server
    * is archived when its type keeps done activities, its active flag is
    * read first: an archived one turns the link "done" untouched, since
    * action_feedback would mark it done, and post that, a second time.
@@ -1434,12 +1582,7 @@ export class SyncService {
         gone = true;
       }
       if (gone) {
-        await this.db.setNoteLinkRemoteDeleted(link.id);
-        if (!(await this.hasOtherLiveLink(noteId, link.configId, (l) => l.id === link.id))
-          && (await this.outbox.findAll(noteId, link.configId, ACTIVITY_CREATE)).length === 0) {
-          await this.db.clearNotePerServerStatus(noteId, link.configId);
-        }
-        await this.db.refreshNoteSyncStatus(noteId);
+        await this.markAttachedGone(noteId, link);
         return;
       }
       if (note.done || archived) await this.db.setNoteLinkDone(link.id);
@@ -1450,18 +1593,122 @@ export class SyncService {
   }
 
   /**
+   * Writes one live message: its body is replaced with the note's (see
+   * updateMessage), unless it is the body last sent (link params
+   * bodyHash): an edit shows as such in the chatter, and a push that
+   * changes nothing of the text must not add one. The message is read
+   * first through call_kw (see readMessage): the edit route accepts
+   * anonymous requests, so a session no longer valid would reach it as the
+   * public user and get NotFound, where call_kw answers "session expired"
+   * and the session is renewed. A message gone, deleted in the chatter
+   * (Odoo empties it), or no longer the user's to edit (NotFound) marks the
+   * link deleted without raising (see markAttachedGone).
+   */
+  private async writeMessage(
+    creds: SyncCredentials,
+    noteId: string,
+    link: NoteLink,
+    fingerprint: string
+  ): Promise<void> {
+    const note = await this.db.getNoteById(noteId);
+    if (!note) return;
+    const body = this.messageBody(note, link.clientUuid ?? null);
+    const hash = textHash(body);
+    await this.callWithAuth(creds, async (sessionId) => {
+      if (link.params?.bodyHash !== hash) {
+        const current = await this.readMessage(creds, sessionId, link.resId);
+        let gone = !current;
+        try {
+          if (current) await this.updateMessage(creds, sessionId, link.resId, body, current.attachmentIds);
+        } catch (e: unknown) {
+          if (!(e instanceof OdooRpcError) || !MESSAGE_GONE_ERRORS.has(e.odooName ?? "")) throw e;
+          gone = true;
+        }
+        if (gone) {
+          await this.markAttachedGone(noteId, link);
+          return;
+        }
+        await this.db.setNoteLinkParams(link.id, { ...(link.params ?? {}), bodyHash: hash });
+      }
+      const now = new Date().toISOString();
+      await this.db.setNoteLinkSyncedAt(link.id, now);
+      await this.settlePush(noteId, link.configId, fingerprint, now, null);
+    });
+  }
+
+  /**
+   * A posted message's attachments, read through call_kw (auth "user"), or
+   * null when it is gone: not found, or deleted in the chatter, which
+   * empties its body and drops its attachments rather than removing it.
+   */
+  private async readMessage(
+    creds: SyncCredentials,
+    sessionId: string,
+    messageId: number
+  ): Promise<{ attachmentIds: number[] } | null> {
+    const rows: Array<{ body: string | false; attachment_ids: number[] }> = await this.jsonRpc(
+      creds.odooUrl, sessionId, MESSAGE_MODEL, "search_read", [],
+      { domain: [["id", "=", messageId]], fields: ["body", "attachment_ids"], limit: 1 }
+    );
+    const row = rows[0];
+    if (!row) return null;
+    const text = String(row.body || "").replace(/<[^>]*>/g, "").trim();
+    const attachmentIds = row.attachment_ids ?? [];
+    return text || attachmentIds.length > 0 ? { attachmentIds } : null;
+  }
+
+  /**
+   * Replaces a posted message's body through the web client's own edit
+   * route, available from Odoo 16 to 18: only the author of a logged note
+   * may do so. attachment_ids is the message's whole list once edited, so
+   * its current attachments are passed back, as the web client does.
+   */
+  private async updateMessage(
+    creds: SyncCredentials,
+    sessionId: string,
+    messageId: number,
+    body: string,
+    attachmentIds: number[]
+  ): Promise<void> {
+    await this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/message/update_content", {
+      message_id: messageId, body, attachment_ids: attachmentIds,
+    });
+  }
+
+  /**
+   * An activity or message gone on the server: its link turns deleted, kept
+   * as history, and the server leaves the note's queue when nothing else of
+   * the note lives or waits there.
+   */
+  private async markAttachedGone(noteId: string, link: NoteLink): Promise<void> {
+    await this.db.setNoteLinkRemoteDeleted(link.id);
+    const waiting = (await this.db.getOutboxOpsForNote(noteId)).some((op) => op.configId === link.configId);
+    if (!(await this.hasOtherLiveLink(noteId, link.configId, (l) => l.id === link.id)) && !waiting) {
+      await this.db.clearNotePerServerStatus(noteId, link.configId);
+    }
+    await this.db.refreshNoteSyncStatus(noteId);
+  }
+
+  /**
    * The mail.activity values a note writes: its title as summary and its
    * HTML (with the marker, see buildTaskPayload) as note. The record, type,
    * deadline and user are create-only.
    */
   private buildActivityPayload(note: Note, clientUuid: string | null): Record<string, any> {
-    const html = this.buildHtml(note.entries);
-    return {
-      summary: note.title,
-      note: clientUuid
-        ? [html, `<p><small>${clientMarker(clientUuid)}</small></p>`].filter(Boolean).join("\n")
-        : html,
-    };
+    return { summary: note.title, note: this.withMarker(this.buildHtml(note.entries), clientUuid) };
+  }
+
+  /** The body of a note's message: its title in bold, then its HTML, then the marker. */
+  private messageBody(note: Note, clientUuid: string | null): string {
+    const title = note.title.trim() ? `<p><b>${this.escapeHtml(note.title)}</b></p>` : "";
+    return this.withMarker([title, this.buildHtml(note.entries)].filter(Boolean).join("\n"), clientUuid);
+  }
+
+  /** html followed by the marker of clientUuid (see clientMarker), when given. */
+  private withMarker(html: string, clientUuid: string | null): string {
+    return clientUuid
+      ? [html, `<p><small>${clientMarker(clientUuid)}</small></p>`].filter(Boolean).join("\n")
+      : html;
   }
 
   // ─── Poll ────────────────────────────────────────────────────────────────
@@ -1667,8 +1914,8 @@ export class SyncService {
    * Whether a background push of the note would send something to this
    * server: a kind with a live link, a creation that is due, a deleted
    * record (the push takes the server out of the queue), or nothing at all
-   * (a task is created); or a live activity, or an activity creation that
-   * is due. A note whose every target is a creation waiting for the user
+   * (a task is created); or a live activity or message, or a creation of
+   * one that is due. A note whose every target is a creation waiting for the user
    * or its delay has nothing due.
    */
   private async hasDueKind(noteId: string, configId: string, force: boolean): Promise<boolean> {
@@ -1680,8 +1927,13 @@ export class SyncService {
       if (op ? this.outbox.isDue(op, force) : true) return true;
     }
     if ((await this.db.getNoteLinks(noteId)).some((l) =>
-      l.configId === configId && l.kind === "activity" && l.remoteState === "ok")) return true;
-    return (await this.outbox.findAll(noteId, configId, ACTIVITY_CREATE)).some((op) => this.outbox.isDue(op, force));
+      l.configId === configId && isAttachedKind(l.kind) && l.remoteState === "ok")) return true;
+    for (const kind of ATTACHED_KINDS) {
+      if ((await this.outbox.findAll(noteId, configId, ATTACHED[kind].opKind)).some((op) => this.outbox.isDue(op, force))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

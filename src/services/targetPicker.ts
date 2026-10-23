@@ -3,7 +3,7 @@ import type { ProjectList } from "./odoo/projectService";
 import type { RecordSearch } from "./odoo/recordSearchService";
 import type { SyncCredentials } from "./odoo/odooRpcClient";
 import { unusableReason, UnusableReason } from "./odoo/capabilityService";
-import type { ActivityState, LeadTarget, Target, TargetKind, TargetState, TaskTarget } from "./syncService";
+import type { AttachedState, LeadTarget, Target, TargetKind, TargetState, TaskTarget } from "./syncService";
 
 /** Select value of no project (a personal task) or no partner. */
 export const NO_PROJECT = "none";
@@ -263,8 +263,8 @@ export interface TargetSource {
     laterParams?: Record<string, any>
   ): Promise<unknown>;
   dropTarget(noteId: string, configId: string, kind: TargetKind): Promise<void>;
-  /** The note's activities there, when the source has them (see ActivityState). */
-  activityStates?(noteId: string, configId: string): Promise<ActivityState[]>;
+  /** The note's activities and messages there, when the source has them (see AttachedState). */
+  attachedStates?(noteId: string, configId: string): Promise<AttachedState[]>;
   lastKinds(configId: string): Promise<TargetKind[]>;
   setLastKinds(configId: string, kinds: TargetKind[]): Promise<void>;
   capabilities: {
@@ -278,19 +278,19 @@ export interface TargetSource {
 export type TaskTargetSource = TargetSource;
 
 /** Whether a state is something the note already has on the server. */
-const isSettled = (s: TargetState | ActivityState) => s.state === "linked" || s.state === "queued";
+const isSettled = (s: TargetState | AttachedState) => s.state === "linked" || s.state === "queued";
 
-/** The note's activities on a server, none when the source has no activities. */
-async function activitiesOf(source: TargetSource, noteId: string, configId: string): Promise<ActivityState[]> {
-  return source.activityStates ? source.activityStates(noteId, configId) : [];
+/** The note's activities and messages on a server, none when the source has none. */
+async function activitiesOf(source: TargetSource, noteId: string, configId: string): Promise<AttachedState[]> {
+  return source.attachedStates ? source.attachedStates(noteId, configId) : [];
 }
 
 /**
  * Whether a short tap must open the picker for these servers: one where
- * the note has no record, no activity and no creation of any kind, or
- * one where a creation waits for a new choice (blocked for a reason to
- * choose again, left for later, or its record deleted on the server), an
- * activity's included.
+ * the note has no record, no activity, no message and no creation of any
+ * kind, or one where a creation waits for a new choice (blocked for a
+ * reason to choose again, left for later, or its record deleted on the
+ * server), an activity's or a message's included.
  */
 export async function needsTaskTarget(source: TargetSource, noteId: string, configIds: string[]): Promise<boolean> {
   for (const configId of configIds) {
@@ -309,8 +309,8 @@ export async function needsTaskTarget(source: TargetSource, noteId: string, conf
  * kind's model (cached probe; a failed probe does not block) and its
  * choices: projects (online, else cached) or recent partners. A kind
  * waiting for a new choice is checked; a kind never chosen is checked
- * only when the note has nothing on this server (no record, activity or
- * creation), as the server's last checked kinds say. A failure becomes a
+ * only when the note has nothing on this server (no record, activity,
+ * message or creation), as the server's last checked kinds say. A failure becomes a
  * row that offers nothing (failed).
  */
 export async function buildTargetRows(

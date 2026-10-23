@@ -31,11 +31,13 @@ function source(over: Partial<ActivitySource> = {}): ActivitySource & { set: any
   return {
     set,
     dropped,
-    activityStates: async () => [],
-    setActivity: async (...args: any[]) => { set.push(args); },
-    dropActivity: async (_n: string, opId: string) => { dropped.push(opId); },
-    targetState: async () => ({ state: "choose", op: null, reason: null, target: null }),
-    capabilities: { ensure: async (_c, model) => ({ exists: true, hasActivities: model !== "project.project" } as any) },
+    attachedStates: async () => [],
+    setAttached: async (...args: any[]) => { set.push(args); return { id: `op-${set.length}` }; },
+    dropAttached: async (_n: string, opId: string) => { dropped.push(opId); },
+    targetState: async () => ({ kind: "activity", state: "choose", op: null, reason: null, target: null }),
+    capabilities: {
+      ensure: async (_c, model) => ({ exists: true, hasActivities: model !== "project.project", hasChatter: model !== "res.partner" } as any),
+    },
     activityTypes: {
       list: async () => ({ types: [type(), type({ id: 2, name: "Quote", resModel: "sale.order", delayCount: 3 })], fromCache: false, error: null }),
     },
@@ -50,21 +52,22 @@ describe("buildActivitySection", () => {
   it("greys the models the server takes no activities on, and offers the note's task first", async () => {
     const section = await build(source({
       targetState: async (_n, _c, kind) => kind === "task"
-        ? { state: "linked", resId: 42 }
-        : { state: "choose", op: null, reason: null, target: null },
+        ? { kind: "activity", state: "linked", resId: 42 }
+        : { kind: "activity", state: "choose", op: null, reason: null, target: null },
     }));
     expect(section.models.map((m) => m.model)).toEqual(ACTIVITY_MODELS);
-    expect(section.models.find((m) => m.model === "project.project")!.unusable).toBe("no_activities");
+    expect(section.models.find((m) => m.model === "project.project")!.unusable).toEqual({ activity: "no_activities", message: null });
+    expect(section.models.find((m) => m.model === "res.partner")!.unusable).toEqual({ activity: null, message: "no_chatter" });
     expect(section.shortcuts).toEqual([{ kind: "task", model: "project.task", resId: 42 }]);
     expect(canAddActivity(section)).toBe(true);
   });
 
   it("shows the note's activities, and edits a creation waiting for its record", async () => {
     const section = await build(source({
-      activityStates: async () => [
-        { state: "linked", link: { id: "l1" } as any, target: target() },
-        { state: "queued", op: op("o1", { status: "blocked", params: { blockedReason: "ambiguous" } }), target: target() },
-        { state: "choose", op: op("o2"), reason: "record_missing", target: target({ userId: 8, userName: "Lee" }) },
+      attachedStates: async () => [
+        { kind: "activity", state: "linked", link: { id: "l1" } as any, target: target() },
+        { kind: "activity", state: "queued", op: op("o1", { status: "blocked", params: { blockedReason: "ambiguous" } }), target: target() },
+        { kind: "activity", state: "choose", op: op("o2"), reason: "record_missing", target: target({ userId: 8, userName: "Lee" }) },
       ],
     }));
     expect(section.rows.map((r) => r.status)).toEqual(["linked", "stuck", "choose"]);
@@ -76,13 +79,13 @@ describe("buildActivitySection", () => {
 
   it("puts a model the list lacks in the technical name field", async () => {
     const section = await build(source({
-      activityStates: async () => [{ state: "choose", op: op("o"), reason: "incomplete", target: target({ resModel: "hr.employee", resId: null }) }],
+      attachedStates: async () => [{ kind: "activity", state: "choose", op: op("o"), reason: "incomplete", target: target({ resModel: "hr.employee", resId: null }) }],
     }));
     expect(section.rows[0]).toMatchObject({ model: ADVANCED_MODEL, advancedModel: "hr.employee" });
   });
 
   it("becomes a failed section when the states cannot be read", async () => {
-    const section = await build(source({ activityStates: async () => { throw new Error("db locked"); } }));
+    const section = await build(source({ attachedStates: async () => { throw new Error("db locked"); } }));
     expect(section).toMatchObject({ failed: "db locked", loading: false });
     expect(canAddActivity(section)).toBe(false);
     expect(sectionHasWork(section)).toBe(false);
@@ -158,9 +161,9 @@ describe("activity drafts", () => {
 describe("planActivities", () => {
   it("queues drafts, completes waiting creations, drops removed ones, and checks all first", async () => {
     const src = source({
-      activityStates: async () => [
-        { state: "choose", op: op("o1"), reason: "incomplete", target: target({ resId: null }) },
-        { state: "queued", op: op("o2", { status: "failed" }), target: target() },
+      attachedStates: async () => [
+        { kind: "activity", state: "choose", op: op("o1"), reason: "incomplete", target: target({ resId: null }) },
+        { kind: "activity", state: "queued", op: op("o2", { status: "failed" }), target: target() },
       ],
     });
     const s: ActivitySection = await build(src);
@@ -172,7 +175,7 @@ describe("planActivities", () => {
     const planned = planActivities(src, "n", ["c"], { c: s });
     expect(src.set).toHaveLength(0);
     for (const run of planned) await run();
-    expect(src.set.map(([, , t, opId]) => [t.resId, opId])).toEqual([[9, "o1"], [5, null]]);
+    expect(src.set.map(([, , kind, t, opId]) => [kind, t.resId, opId])).toEqual([["activity", 9, "o1"], ["activity", 5, null]]);
     expect(src.dropped).toEqual(["o2"]);
 
     const bad = { ...s, rows: [...s.rows, newDraftRow(s, "empty")] };
@@ -186,13 +189,13 @@ describe("planActivities", () => {
 
 describe("target picker with activities", () => {
   it("opens the picker for a note with only a creation waiting for its record", async () => {
-    const choose = { state: "choose" as const, op: null, reason: null, target: null };
+    const choose = { kind: "activity", state: "choose" as const, op: null, reason: null, target: null };
     const base = { targetState: async () => choose } as any;
-    expect(await needsTaskTarget({ ...base, activityStates: async () => [] }, "n", ["c"])).toBe(true);
-    const live = { state: "linked", link: {} as any, target: target() };
-    expect(await needsTaskTarget({ ...base, activityStates: async () => [live] }, "n", ["c"])).toBe(false);
-    const waiting = { state: "choose", op: op("o"), reason: "incomplete", target: target() };
-    expect(await needsTaskTarget({ ...base, activityStates: async () => [live, waiting] }, "n", ["c"])).toBe(true);
+    expect(await needsTaskTarget({ ...base, attachedStates: async () => [] }, "n", ["c"])).toBe(true);
+    const live = { kind: "activity", state: "linked", link: {} as any, target: target() };
+    expect(await needsTaskTarget({ ...base, attachedStates: async () => [live] }, "n", ["c"])).toBe(false);
+    const waiting = { kind: "activity", state: "choose", op: op("o"), reason: "incomplete", target: target() };
+    expect(await needsTaskTarget({ ...base, attachedStates: async () => [live, waiting] }, "n", ["c"])).toBe(true);
   });
 
   it("sends a server with no kind checked when it has activities to send", async () => {
@@ -211,7 +214,7 @@ describe("target picker with activities", () => {
 describe("activity picker after review", () => {
   it("counts a removed creation as work, so confirming drops it", async () => {
     const src = source({
-      activityStates: async () => [{ state: "choose", op: op("o1"), reason: "record_missing", target: target() }],
+      attachedStates: async () => [{ kind: "activity", state: "choose", op: op("o1"), reason: "record_missing", target: target() }],
     });
     const s = await build(src);
     s.rows[0].removed = true;
@@ -222,18 +225,18 @@ describe("activity picker after review", () => {
   });
 
   it("keeps an activity left for later as later while still offline", async () => {
-    const states = async () => [{ state: "choose" as const, op: op("o1"), reason: "incomplete", target: target({ resId: null }) }];
-    const offline = await build(source({ activityStates: states }), false);
+    const states = async () => [{ kind: "activity", state: "choose" as const, op: op("o1"), reason: "incomplete", target: target({ resId: null }) }];
+    const offline = await build(source({ attachedStates: states }), false);
     expect(offline.rows[0].recordSelection).toBe(CHOOSE_LATER);
     expect(rowTarget(offline, offline.rows[0])).toMatchObject({ resId: null });
-    const online = await build(source({ activityStates: states }), true);
+    const online = await build(source({ attachedStates: states }), true);
     expect(online.rows[0].recordSelection).toBe(NO_RECORD);
   });
 
   it("records each row once, even when applying again after a failure part way", async () => {
     let calls = 0;
     const src = source({
-      setActivity: async () => {
+      setAttached: async () => {
         calls++;
         if (calls === 2) throw new Error("disk full");
         return { id: `op-${calls}` };
@@ -258,5 +261,30 @@ describe("activity picker after review", () => {
     const src = { setTarget: vi.fn(), dropTarget: vi.fn(), setLastKinds: vi.fn() } as any;
     await applyTaskTargets(src, "n", ["c"], { c: rows }, () => true);
     expect(src.setLastKinds).not.toHaveBeenCalled();
+  });
+});
+
+describe("message rows", () => {
+  it("start on the first model with a chatter, and stand for the record only", async () => {
+    const s = await build(source());
+    const row = newDraftRow(s, "m", "message");
+    expect(row).toMatchObject({ kind: "message", model: "crm.lead" });
+    const target = rowTarget(s, { ...row, records: [{ value: "7", name: "Deal" }], recordSelection: "7" });
+    expect(target).toEqual({
+      resModel: "crm.lead", resId: 7, resName: "Deal", typeId: null, typeName: null, deadline: null, userId: null, userName: null,
+    });
+    expect(rowTarget(s, row)).toEqual({ error: expect.stringContaining("du message") });
+  });
+
+  it("are recorded as messages, and offered only where a model has a chatter", async () => {
+    const src = source();
+    const s = await build(src);
+    s.rows.push({ ...newDraftRow(s, "m", "message"), records: [{ value: "7", name: "Deal" }], recordSelection: "7" });
+    for (const run of planActivities(src, "n", ["c"], { c: s })) await run();
+    expect(src.set[0][2]).toBe("message");
+    expect(canAddActivity(s, "message")).toBe(true);
+    const none = { ...s, models: s.models.map((m) => ({ ...m, unusable: { ...m.unusable, message: "no_chatter" as const } })) };
+    expect(canAddActivity(none, "message")).toBe(false);
+    expect(canAddActivity(none)).toBe(true);
   });
 });

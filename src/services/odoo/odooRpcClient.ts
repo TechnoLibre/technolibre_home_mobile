@@ -316,6 +316,35 @@ export class OdooRpcClient {
     return json.result;
   }
 
+  /**
+   * Calls a JSON route of the web client (type="json"), such as
+   * /mail/message/update_content, with the session cookie. Errors are
+   * raised as jsonRpc raises them; a route answering NotFound (record gone,
+   * or not the user's to change) gives odooName
+   * "werkzeug.exceptions.NotFound".
+   */
+  async jsonRoute(
+    odooUrl: string,
+    sessionId: string,
+    path: string,
+    params: Record<string, any>
+  ): Promise<any> {
+    const endpoint = `${this.normalizeUrl(odooUrl)}${path}`;
+    const resp = await this.rawPost(
+      endpoint,
+      { "Content-Type": "application/json", Cookie: `session_id=${sessionId}` },
+      { jsonrpc: "2.0", method: "call", id: Date.now(), params }
+    );
+    const json = this.parseNativeResponse(resp, endpoint);
+    if (json.error) {
+      const errMsg = json.error.data?.message ?? json.error.message ?? "Unknown RPC error";
+      const errCode = json.error.code ?? "?";
+      if (json.error.code === 100) throw new SessionExpiredError(`session_expired (code ${errCode}): ${errMsg}`);
+      throw new OdooRpcError(`RPC ${path} (HTTP ${resp.status}, code ${errCode}): ${errMsg}`, json.error.data?.name ?? null);
+    }
+    return json.result;
+  }
+
   // ─── Public routes ────────────────────────────────────────────────────────
 
   /**

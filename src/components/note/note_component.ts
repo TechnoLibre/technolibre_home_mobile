@@ -15,8 +15,10 @@ import { Events } from "../../constants/events";
 import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryTextParams, NoteEntryVideoParams } from "../../models/note";
 import {
 	ACTIVITY_CREATE,
+	AttachedKind,
 	KINDS,
 	localDay,
+	MESSAGE_POST,
 	PushOptions,
 	RemoteRecordDeletedError,
 	SyncCredentials,
@@ -222,14 +224,15 @@ export class NoteComponent extends EnhancedComponent {
 								</t>
 								<t t-set="act" t-value="state.activities[cfg.id]"/>
 								<div t-if="act and state.selectedConfigIds.includes(cfg.id)" class="breadcrumb__config-kind breadcrumb__config-activities">
-									<p class="breadcrumb__config-kind-label"><t t-esc="t('label.sync_kind_activity')"/></p>
+									<p class="breadcrumb__config-kind-label"><t t-esc="t('label.sync_kind_attached')"/></p>
 									<p t-if="act.loading" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_loading')"/></p>
 									<p t-elif="act.failed" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="act.failed"/>
 									<t t-else="">
 										<t t-foreach="act.rows" t-as="arow" t-key="arow.key">
 											<div t-if="!(arow.removed and arow.status === 'draft')" t-att-class="'breadcrumb__config-activity' + (arow.removed ? ' breadcrumb__config-activity--removed' : '')">
+												<p class="breadcrumb__config-note"><t t-esc="t('label.sync_attached_' + arow.kind)"/></p>
 												<t t-if="isActivityEditable(arow)">
-													<p t-if="arow.reason and arow.reason !== 'incomplete'" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="t('label.sync_target_reason_' + arow.reason, { id: '' })"/>
+													<p t-if="arow.reason and arow.reason !== 'incomplete'" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="t((arow.reason === 'model_unusable' ? 'label.sync_' + arow.kind + '_reason_' : 'label.sync_target_reason_') + arow.reason, { id: '' })"/>
 													<label class="breadcrumb__config-note" t-att-for="'sync-act-model-' + cfg_index + '-' + arow_index"><t t-esc="t('label.sync_activity_model')"/></label>
 													<select
 														class="breadcrumb__config-select"
@@ -237,7 +240,7 @@ export class NoteComponent extends EnhancedComponent {
 														t-on-change="(ev) => this.setActivityModel(cfg, arow.key, ev.target.value)"
 													>
 														<t t-foreach="act.models" t-as="m" t-key="m.model">
-															<option t-att-value="m.model" t-att-selected="arow.model === m.model" t-att-disabled="m.unusable" t-esc="activityModelLabel(m)"/>
+															<option t-att-value="m.model" t-att-selected="arow.model === m.model" t-att-disabled="m.unusable[arow.kind]" t-esc="activityModelLabel(m, arow.kind)"/>
 														</t>
 														<option value="__advanced" t-att-selected="arow.model === '__advanced'"><t t-esc="t('label.sync_activity_model_advanced')"/></option>
 													</select>
@@ -273,6 +276,7 @@ export class NoteComponent extends EnhancedComponent {
 													</select>
 													<p t-if="arow.recordsError" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="arow.recordsError"/>
 													<p t-elif="arow.recordsFromCache and !act.offline" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_from_cache')"/></p>
+													<t t-if="arow.kind === 'activity'">
 													<label class="breadcrumb__config-note" t-att-for="'sync-act-type-' + cfg_index + '-' + arow_index"><t t-esc="t('label.sync_activity_type')"/></label>
 													<select
 														class="breadcrumb__config-select"
@@ -311,12 +315,13 @@ export class NoteComponent extends EnhancedComponent {
 															<option t-att-value="opt.value" t-att-selected="arow.userSelection === opt.value" t-esc="opt.name"/>
 														</t>
 													</select>
+													</t>
 												</t>
 												<t t-else="">
 													<p class="breadcrumb__config-note" t-esc="activitySummary(act, arow)"/>
 													<p t-if="arow.removed" class="breadcrumb__config-note"><t t-esc="t('label.sync_activity_status_removed')"/></p>
 													<p t-elif="arow.status === 'stuck'" class="breadcrumb__config-note breadcrumb__config-note--warn"><t t-esc="t('label.sync_target_stuck')"/></p>
-													<p t-else="" class="breadcrumb__config-note" t-esc="t('label.sync_activity_status_' + arow.status)"/>
+													<p t-else="" class="breadcrumb__config-note" t-esc="t('label.sync_' + arow.kind + '_status_' + arow.status)"/>
 												</t>
 												<button
 													t-if="arow.status === 'draft' or arow.status === 'choose' or arow.status === 'stuck'"
@@ -327,10 +332,17 @@ export class NoteComponent extends EnhancedComponent {
 											</div>
 										</t>
 										<button
+											t-if="canAddAttached(act, 'activity')"
 											type="button"
 											class="breadcrumb__config-cancel"
-											t-on-click="() => this.addActivity(cfg)"
+											t-on-click="() => this.addActivity(cfg, 'activity')"
 										><t t-esc="t('label.sync_activity_add')"/></button>
+										<button
+											t-if="canAddAttached(act, 'message')"
+											type="button"
+											class="breadcrumb__config-cancel"
+											t-on-click="() => this.addActivity(cfg, 'message')"
+										><t t-esc="t('label.sync_message_add')"/></button>
 									</t>
 								</div>
 							</t>
@@ -799,7 +811,7 @@ export class NoteComponent extends EnhancedComponent {
 			for (const row of section.rows) {
 				if (row.status !== "choose") continue;
 				this.searchActivityRecords(cfg, row.key, "", 0);
-				this.searchActivityUsers(cfg, row.key, "", 0);
+				if (row.kind === "activity") this.searchActivityUsers(cfg, row.key, "", 0);
 			}
 			if (!serverUsable(rows, sectionHasWork(section) || canAddActivity(section))) {
 				this.state.selectedConfigIds = this.state.selectedConfigIds.filter((id: string) => id !== cfg.id);
@@ -821,10 +833,15 @@ export class NoteComponent extends EnhancedComponent {
 		return rowTypes(section, row);
 	}
 
-	/** A model's name, with why the server cannot take an activity on it. */
-	activityModelLabel(option: ModelOption): string {
+	canAddAttached(section: ActivitySection, kind: AttachedKind): boolean {
+		return canAddActivity(section, kind);
+	}
+
+	/** A model's name, with why the server cannot take an activity (or a message, kind) on it. */
+	activityModelLabel(option: ModelOption, kind: AttachedKind): string {
 		const name = this.t(`label.sync_activity_model_${option.model.replace(/\./g, "_")}`);
-		return option.unusable ? `${name} — ${this.t("label.sync_target_unusable_" + option.unusable)}` : name;
+		const unusable = option.unusable[kind];
+		return unusable ? `${name} — ${this.t("label.sync_target_unusable_" + unusable)}` : name;
 	}
 
 	/** A record option's name; the note's own task or opportunity is named as such. */
@@ -833,12 +850,13 @@ export class NoteComponent extends EnhancedComponent {
 		return own ? this.t(`label.sync_activity_this_${own.kind}`, { id: own.resId }) : option.name;
 	}
 
-	/** One line describing an activity the note has: its type, record, deadline and user. */
+	/** One line describing an activity the note has (type, record, deadline, user), or a message (record). */
 	activitySummary(section: ActivitySection, row: ActivityRow): string {
 		const t = row.target;
 		const own = section.shortcuts.find((s) => s.model === t.resModel && s.resId === t.resId);
 		const record = own ? this.t(`label.sync_activity_this_${own.kind}`, { id: own.resId })
 			: t.resName || `${t.resModel} #${t.resId ?? "?"}`;
+		if (row.kind === "message") return record;
 		return [
 			t.typeName || this.t("label.sync_activity_type_default"),
 			record,
@@ -856,13 +874,14 @@ export class NoteComponent extends EnhancedComponent {
 	/** Bumped by each new draft, for its key. */
 	private _activityDrafts = 0;
 
-	addActivity(cfg: SyncConfig) {
+	/** Adds a draft activity, or a draft message (kind), to a server's section. */
+	addActivity(cfg: SyncConfig, kind: AttachedKind = "activity") {
 		const section = this.state.activities[cfg.id];
 		if (!section || section.loading || section.failed) return;
-		const row = newDraftRow(section, `draft-${++this._activityDrafts}`);
+		const row = newDraftRow(section, `draft-${++this._activityDrafts}`, kind);
 		section.rows.push(row);
 		this.searchActivityRecords(cfg, row.key, "", 0);
-		this.searchActivityUsers(cfg, row.key, "", 0);
+		if (kind === "activity") this.searchActivityUsers(cfg, row.key, "", 0);
 	}
 
 	toggleActivityRemoved(configId: string, key: string) {
@@ -1109,8 +1128,8 @@ export class NoteComponent extends EnhancedComponent {
 				else if (link?.remoteState === "deleted" && !op) { if (!deleted.includes(cfg)) deleted.push(cfg); }
 				else pushable = true;
 			}
-			// An activity live or queued waits for the network; a blocked one for the user
-			for (const activity of await this.syncService.activityStates(this.state.noteId, cfg.id)) {
+			// An activity or message live or queued waits for the network; a blocked one for the user
+			for (const activity of await this.syncService.attachedStates(this.state.noteId, cfg.id)) {
 				if (activity.state === "linked" || activity.state === "choose") pushable = true;
 				else if (activity.state === "queued") {
 					if (activity.op.status === "blocked") { if (!blocked.includes(cfg)) blocked.push(cfg); }
@@ -1159,8 +1178,9 @@ export class NoteComponent extends EnhancedComponent {
 	private async doPushCore(cfg: SyncConfig): Promise<void> {
 		const creds = await this.credsFor(cfg);
 		let options: PushOptions = { userInitiated: true };
-		const activityOps = await this.syncService.outbox.findAll(this.state.noteId, cfg.id, ACTIVITY_CREATE);
-		for (let round = 0; round <= TARGET_KINDS.length + activityOps.length; round++) {
+		const attached = (await this.syncService.attachedStates(this.state.noteId, cfg.id))
+			.filter((a) => a.state === "queued" || a.state === "choose");
+		for (let round = 0; round <= TARGET_KINDS.length + attached.length; round++) {
 			try {
 				await this.syncService.pushNote(creds, this.state.noteId, options);
 				return;
@@ -1193,11 +1213,13 @@ export class NoteComponent extends EnhancedComponent {
 	 * Several records carry this note's reference on the server: the user
 	 * picks the one to link, by number; cancelling leaves the creation
 	 * blocked and raises. The error's opKind says which kind of record (a
-	 * task when unknown); for an activity, its opId which creation.
+	 * task when unknown); for an activity or a message, its opId which
+	 * creation.
 	 */
 	private async pickAmbiguousRecord(e: OutboxBlockedError): Promise<NonNullable<PushOptions["adopt"]>> {
 		const ids = e.candidates;
 		const kind = e.opKind === ACTIVITY_CREATE ? "activity"
+			: e.opKind === MESSAGE_POST ? "message"
 			: TARGET_KINDS.find((k) => KINDS[k].opKind === e.opKind) ?? "task";
 		const { value, cancelled } = await Dialog.prompt({
 			title: "Plusieurs enregistrements correspondent",

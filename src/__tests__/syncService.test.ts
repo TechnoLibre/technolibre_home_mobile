@@ -3,7 +3,7 @@ import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
 import {
   SyncService, SyncCredentials, syncSessionKey, syncConfigIdOf, RemoteRecordDeletedError,
-  TASK_CREATE, LEAD_CREATE, ACTIVITY_CREATE, clientMarker,
+  TASK_CREATE, LEAD_CREATE, ACTIVITY_CREATE, MESSAGE_POST, clientMarker,
 } from "../services/syncService";
 import { OutboxBlockedError } from "../services/outboxService";
 import { Note, NoteEntry } from "../models/note";
@@ -2855,9 +2855,9 @@ describe("SyncService — activities", () => {
     await db.addNote(makeNote({ id: "ac-15" }));
     await db.addNote(makeNote({ id: "ac-16" }));
     const op = (await svc.setActivity("ac-15", CONFIG_ID, ON_PARTNER))!;
-    await svc.dropActivity("ac-16", op.id);
+    await svc.dropAttached("ac-16", op.id);
     expect(await db.getOutboxOp(op.id)).not.toBeNull();
-    await svc.dropActivity("ac-15", op.id);
+    await svc.dropAttached("ac-15", op.id);
     expect(await db.getOutboxOp(op.id)).toBeNull();
     expect(await db.refreshNoteSyncStatus("ac-15")).toBe("local");
   });
@@ -2966,5 +2966,279 @@ describe("SyncService — activities", () => {
     await expect(svc.pushNote(CREDS, "ac-20")).rejects.toBeInstanceOf(RemoteRecordDeletedError);
     expect((await db.getNotePerServerStatus("ac-20"))[CONFIG_ID]).toBe("synced");
     expect((await activityLinks("ac-20"))[0].remoteState).toBe("ok");
+  });
+});
+
+describe("SyncService — messages in a record's chatter", () => {
+  let svc: SyncService;
+  let db: DatabaseService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await prepareSyncDb(db);
+    await db.addParamsToNoteLinks();
+    svc = new SyncService(db);
+    await session(17);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  const session = (version: number) => SecureStoragePlugin.set({
+    key: syncSessionKey(CREDS),
+    value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: version }),
+  });
+
+  const ON_LEAD = {
+    resModel: "crm.lead", resId: 7, resName: "Big deal", typeId: null, deadline: null, userId: null,
+  };
+
+  /**
+   * Server with lead 7; message_post answers 600, 601, …, each message
+   * read back with attachments (emptied: deleted in the chatter);
+   * updateError makes the edit route answer that exception; noChatter
+   * models have no message_ids.
+   */
+  function server(options: {
+    updateError?: string; markerHits?: number[]; noChatter?: string[]; attachments?: number[]; emptied?: boolean;
+  } = {}) {
+    let next = 600;
+    const fail = (name: string) => ({ error: { code: 200, message: "Odoo Server Error", data: { name, message: "nope" } } });
+    return routeFetch((url, body) => {
+      if (url.endsWith("/mail/message/update_content")) {
+        return options.updateError ? fail(options.updateError) : { result: { id: (body.params as any).message_id } };
+      }
+      const { model, method } = body.params as any;
+      const kwargs = (body.params as any).kwargs ?? {};
+      if (method === "fields_get") {
+        return { result: options.noChatter?.includes(model) ? { name: {} } : { name: {}, message_ids: {} } };
+      }
+      if (model === "mail.message" && method === "search_read" && kwargs.domain?.[0]?.[0] === "id") {
+        const id = kwargs.domain[0][2];
+        if (options.emptied) return { result: [{ id, body: "", attachment_ids: [] }] };
+        return { result: [{ id, body: "<p>posted</p>", attachment_ids: options.attachments ?? [] }] };
+      }
+      if (model === "mail.message" && method === "search_read") {
+        return { result: (options.markerHits ?? []).map((id) => ({ id })) };
+      }
+      if (method === "search_read" && kwargs.domain?.[0]?.[0] === "id") {
+        return { result: kwargs.domain[0][2] === 7 ? [{ id: 7 }] : [] };
+      }
+      if (method === "message_post") return { result: next++ };
+      return { result: method === "search_read" ? [] : true };
+    });
+  }
+
+  const sent = (fetchMock: ReturnType<typeof routeFetch>, model: string, method: string) =>
+    rpcCalls(fetchMock).filter((c) => c.body.params.model === model && c.body.params.method === method);
+  const edits = (fetchMock: ReturnType<typeof routeFetch>) =>
+    rpcCalls(fetchMock).filter((c) => c.url.endsWith("/mail/message/update_content"));
+  const messageLinks = async (noteId: string) => (await db.getNoteLinks(noteId)).filter((l) => l.kind === "message");
+
+  it("posts the note as a logged note on the chosen record, without a task", async () => {
+    await db.addNote(makeNote({ id: "ms-1", title: "Call <summary>", entries: [{ id: "e", type: "text", params: { text: "They agree", readonly: false } } as any] }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setMessage("ms-1", CONFIG_ID, { ...ON_LEAD, typeId: 3, deadline: "2026-11-02", userId: 8 });
+    expect(await svc.noteKinds("ms-1", CONFIG_ID)).toEqual([]);
+    await svc.pushNote(CREDS, "ms-1", { userInitiated: true });
+
+    const [post] = sent(fetchMock, "crm.lead", "message_post");
+    expect(post.body.params.args).toEqual([[7]]);
+    const kwargs = (post.body.params as any).kwargs;
+    expect(kwargs).toMatchObject({ body_is_html: true, message_type: "comment", subtype_xmlid: "mail.mt_note" });
+    expect(kwargs.body).toContain("<p><b>Call &lt;summary&gt;</b></p>");
+    expect(kwargs.body).toContain("They agree");
+    expect(kwargs.body).toContain("erplibre-mobile:");
+    expect(sent(fetchMock, "project.task", "create")).toHaveLength(0);
+    const [link] = await messageLinks("ms-1");
+    expect(link).toMatchObject({ model: "mail.message", resId: 600, remoteState: "ok" });
+    expect(link.params).toMatchObject({ resModel: "crm.lead", resId: 7, typeId: null, deadline: null, userId: null });
+    expect(link.params!.bodyHash).toMatch(/^[0-9a-f]+$/);
+    expect((await db.getNoteSyncInfo("ms-1")).syncStatus).toBe("synced");
+  });
+
+  it("sends no body_is_html to Odoo 16, which does not know it", async () => {
+    await session(16);
+    await db.addNote(makeNote({ id: "ms-2" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setMessage("ms-2", CONFIG_ID, ON_LEAD);
+    await svc.pushNote(CREDS, "ms-2", { userInitiated: true });
+    expect((sent(fetchMock, "crm.lead", "message_post")[0].body.params as any).kwargs).not.toHaveProperty("body_is_html");
+  });
+
+  it("edits the posted message when the note's text changes, and only then", async () => {
+    await db.addNote(makeNote({ id: "ms-3" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setMessage("ms-3", CONFIG_ID, ON_LEAD);
+    await svc.pushNote(CREDS, "ms-3", { userInitiated: true });
+
+    const unchanged = server();
+    vi.stubGlobal("fetch", unchanged);
+    await svc.pushNote(CREDS, "ms-3", { userInitiated: true });
+    expect(edits(unchanged)).toHaveLength(0);
+    expect(sent(unchanged, "crm.lead", "message_post")).toHaveLength(0);
+
+    await db.updateNote("ms-3", makeNote({ id: "ms-3", title: "Renamed" }));
+    const changed = server();
+    vi.stubGlobal("fetch", changed);
+    await svc.pushNote(CREDS, "ms-3");
+    const [edit] = edits(changed);
+    expect(edit.body.params).toMatchObject({ message_id: 600, attachment_ids: [] });
+    expect((edit.body.params as any).body).toContain("Renamed");
+
+    const again = server();
+    vi.stubGlobal("fetch", again);
+    await svc.pushNote(CREDS, "ms-3");
+    expect(edits(again)).toHaveLength(0);
+  });
+
+  it("keeps as history a message deleted on the server, without raising", async () => {
+    await db.addNote(makeNote({ id: "ms-4" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setMessage("ms-4", CONFIG_ID, ON_LEAD);
+    await svc.pushNote(CREDS, "ms-4", { userInitiated: true });
+    await db.updateNote("ms-4", makeNote({ id: "ms-4", title: "Changed" }));
+    await db.setNotePerServerStatus("ms-4", CONFIG_ID, "pending");
+
+    vi.stubGlobal("fetch", server({ updateError: "werkzeug.exceptions.NotFound" }));
+    await expect(svc.pushNote(CREDS, "ms-4")).resolves.toBeUndefined();
+    expect((await messageLinks("ms-4"))[0].remoteState).toBe("deleted");
+    expect(await db.getNotePerServerStatus("ms-4")).toEqual({});
+    expect((await svc.attachedStates("ms-4", CONFIG_ID))[0]).toMatchObject({ kind: "message", state: "deleted" });
+  });
+
+  it("raises an edit the server refuses for another reason", async () => {
+    await db.addNote(makeNote({ id: "ms-5" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setMessage("ms-5", CONFIG_ID, ON_LEAD);
+    await svc.pushNote(CREDS, "ms-5", { userInitiated: true });
+    await db.updateNote("ms-5", makeNote({ id: "ms-5", title: "Changed" }));
+    vi.stubGlobal("fetch", server({ updateError: "odoo.exceptions.UserError" }));
+    await expect(svc.pushNote(CREDS, "ms-5")).rejects.toThrow("nope");
+    expect((await messageLinks("ms-5"))[0].remoteState).toBe("ok");
+  });
+
+  it("adopts the message a lost post made, searched by its marker on its record only", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await db.addNote(makeNote({ id: "ms-6" }));
+    vi.stubGlobal("fetch", routeFetch((_url, body) => {
+      const { method } = body.params as any;
+      if (method === "message_post") throw new TypeError("Failed to fetch");
+      const kwargs = (body.params as any).kwargs ?? {};
+      if (method === "fields_get") return { result: { message_ids: {} } };
+      return { result: kwargs.domain?.[0]?.[0] === "id" ? [{ id: 7 }] : [] };
+    }));
+    await svc.setMessage("ms-6", CONFIG_ID, ON_LEAD);
+    await svc.pushNote(CREDS, "ms-6", { userInitiated: true }).catch(() => {});
+
+    afterQuietWindow();
+    const fetchMock = server({ markerHits: [650] });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ms-6", { userInitiated: true });
+    const search = sent(fetchMock, "mail.message", "search_read")[0];
+    const domain = (search.body.params as any).kwargs.domain;
+    expect(domain.slice(0, 2)).toEqual([["model", "=", "crm.lead"], ["res_id", "=", 7]]);
+    expect(domain[2][0]).toBe("body");
+    expect(sent(fetchMock, "crm.lead", "message_post")).toHaveLength(0);
+    // Found as it was posted: not edited, so not marked edited
+    expect(edits(fetchMock)).toHaveLength(0);
+    const [link] = await messageLinks("ms-6");
+    expect(link.resId).toBe(650);
+    expect(link.params!.bodyHash).toMatch(/^[0-9a-f]+$/);
+  });
+
+  it("edits a message found again by its marker when the note changed since it was posted", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await db.addNote(makeNote({ id: "ms-9" }));
+    vi.stubGlobal("fetch", routeFetch((_url, body) => {
+      const { method } = body.params as any;
+      if (method === "message_post") throw new TypeError("Failed to fetch");
+      const kwargs = (body.params as any).kwargs ?? {};
+      if (method === "fields_get") return { result: { message_ids: {} } };
+      return { result: kwargs.domain?.[0]?.[0] === "id" ? [{ id: 7 }] : [] };
+    }));
+    await svc.setMessage("ms-9", CONFIG_ID, ON_LEAD);
+    await svc.pushNote(CREDS, "ms-9", { userInitiated: true }).catch(() => {});
+    await db.updateNote("ms-9", makeNote({ id: "ms-9", title: "Edited offline" }));
+
+    afterQuietWindow();
+    const fetchMock = server({ markerHits: [650], attachments: [41] });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ms-9", { userInitiated: true });
+    const [edit] = edits(fetchMock);
+    expect(edit.body.params).toMatchObject({ message_id: 650, attachment_ids: [41] });
+    expect((edit.body.params as any).body).toContain("Edited offline");
+  });
+
+  it("reads the message through call_kw before editing it, and passes its attachments back", async () => {
+    await db.addNote(makeNote({ id: "ms-10" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setMessage("ms-10", CONFIG_ID, ON_LEAD);
+    await svc.pushNote(CREDS, "ms-10", { userInitiated: true });
+    await db.updateNote("ms-10", makeNote({ id: "ms-10", title: "Changed" }));
+
+    const fetchMock = server({ attachments: [41, 42] });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ms-10");
+    const calls = rpcCalls(fetchMock);
+    const read = calls.findIndex((c) => c.body.params.model === "mail.message" && c.body.params.method === "search_read");
+    const edit = calls.findIndex((c) => c.url.endsWith("/mail/message/update_content"));
+    expect(read).toBeGreaterThanOrEqual(0);
+    expect(read).toBeLessThan(edit);
+    expect(calls[edit].body.params).toMatchObject({ attachment_ids: [41, 42] });
+  });
+
+  it("keeps as history, without editing it, a message deleted in the chatter", async () => {
+    await db.addNote(makeNote({ id: "ms-11" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setMessage("ms-11", CONFIG_ID, ON_LEAD);
+    await svc.pushNote(CREDS, "ms-11", { userInitiated: true });
+    await db.updateNote("ms-11", makeNote({ id: "ms-11", title: "Changed" }));
+
+    const fetchMock = server({ emptied: true });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ms-11");
+    expect(edits(fetchMock)).toHaveLength(0);
+    expect((await messageLinks("ms-11"))[0].remoteState).toBe("deleted");
+  });
+
+  it("keeps the HTML of an unchanged note with media the same from one push to the next", async () => {
+    const entries = [
+      { id: "a", type: "audio", params: { path: "a.m4a" } },
+      { id: "p", type: "photo", params: { path: "p.jpg" } },
+      { id: "v", type: "video", params: { path: "v.mp4" } },
+    ] as any;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const first = svc.buildHtml(entries);
+    vi.setSystemTime(Date.now() + 60_000);
+    expect(svc.buildHtml(entries)).toBe(first);
+  });
+
+  it("blocks a message on a model without a chatter, without posting it", async () => {
+    await db.addNote(makeNote({ id: "ms-7" }));
+    const fetchMock = server({ noChatter: ["res.country"] });
+    vi.stubGlobal("fetch", fetchMock);
+    const op = (await svc.setMessage("ms-7", CONFIG_ID, { ...ON_LEAD, resModel: "res.country" }))!;
+    const err = await svc.pushNote(CREDS, "ms-7", { userInitiated: true }).catch((e) => e);
+    expect(err).toMatchObject({ reason: "model_unusable", opKind: MESSAGE_POST, opId: op.id });
+    expect(rpcCalls(fetchMock).some((c) => (c.body.params as any).method === "message_post")).toBe(false);
+  });
+
+  it("does not mark a message done with the note, and posts several apart", async () => {
+    await db.addNote(makeNote({ id: "ms-8", done: true }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setMessage("ms-8", CONFIG_ID, ON_LEAD);
+    await svc.setMessage("ms-8", CONFIG_ID, ON_LEAD);
+    await svc.syncAll(CREDS);
+    expect(sent(fetchMock, "crm.lead", "message_post")).toHaveLength(2);
+    expect(rpcCalls(fetchMock).some((c) => (c.body.params as any).method === "action_feedback")).toBe(false);
+    expect((await messageLinks("ms-8")).map((l) => [l.resId, l.remoteState]).sort()).toEqual([[600, "ok"], [601, "ok"]]);
   });
 });
