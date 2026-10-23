@@ -502,6 +502,14 @@ export interface NoteConflict {
   fields: MergeResult["conflicts"];
 }
 
+/** A file of a note some servers did not get: see SyncService.skippedFiles. */
+export interface SkippedFile {
+  entryId: string;
+  name: string;
+  reason: number | "missing" | "refused";
+  configIds: string[];
+}
+
 /**
  * Raised by a push that finds a field changed in the app and on the
  * server since their last exchange: nothing is written until the user
@@ -2774,6 +2782,30 @@ export class SyncService {
     }
     await this.db.refreshNoteSyncStatus(link.noteId);
     return changed;
+  }
+
+  /**
+   * The note's files a live link left out (params.attachmentsSkipped) and
+   * still in the note, one per file: its name, why — its size in bytes
+   * (over the limit), "missing" (not found on the device) or "refused" (by
+   * the server) — and the servers that did not get it.
+   */
+  async skippedFiles(noteId: string): Promise<SkippedFile[]> {
+    const note = await this.db.getNoteById(noteId);
+    if (!note) return [];
+    const files = new Map(mediaFiles(note).map((f) => [f.entryId, f]));
+    const byEntry = new Map<string, SkippedFile>();
+    for (const link of await this.db.getNoteLinks(noteId)) {
+      if (link.remoteState !== "ok") continue;
+      for (const [entryId, reason] of Object.entries(link.params?.attachmentsSkipped ?? {})) {
+        const file = files.get(entryId);
+        if (!file) continue;
+        const skipped = byEntry.get(entryId) ?? { entryId, name: file.name, reason: reason as SkippedFile["reason"], configIds: [] };
+        if (!skipped.configIds.includes(link.configId)) skipped.configIds.push(link.configId);
+        byEntry.set(entryId, skipped);
+      }
+    }
+    return [...byEntry.values()];
   }
 
   // ─── Conflicts ────────────────────────────────────────────────────────────

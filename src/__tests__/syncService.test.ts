@@ -3682,6 +3682,24 @@ describe("SyncService — two-way sync and conflicts", () => {
     expect((await db.getNoteById("tw-2"))!.title).toBe("Server title");
   });
 
+  it("reports the note's files a live link left out, once each, with the servers concerned", async () => {
+    const photo = { id: "p", type: "photo", params: { path: "file:///x/IMG_1.jpg" } } as any;
+    const audio = { id: "a", type: "audio", params: { path: "rec-2.aac" } } as any;
+    await db.addNote(makeNote({ id: "sk-1", entries: [photo, audio] }));
+    const link = (id: string, configId: string, remoteState: string, skipped: Record<string, any>) => db.addNoteLink({
+      id, noteId: "sk-1", configId, model: "project.task", resId: 1, kind: "create", remoteState,
+      createdAt: "2026-01-01T00:00:00.000Z", lastSyncedAt: null, params: { attachmentsSkipped: skipped },
+    } as any);
+    await link("l1", CONFIG_ID, "ok", { p: 3 * 1024 * 1024, gone: "missing" });
+    await link("l2", OTHER_CONFIG_ID, "ok", { p: 3 * 1024 * 1024, a: "refused" });
+    await link("l3", OLD_DB_CONFIG_ID, "deleted", { a: "missing" });
+    const files = await svc.skippedFiles("sk-1");
+    expect(files).toEqual([
+      { entryId: "p", name: "IMG_1.jpg", reason: 3 * 1024 * 1024, configIds: [CONFIG_ID, OTHER_CONFIG_ID] },
+      { entryId: "a", name: "rec-2.aac", reason: "refused", configIds: [OTHER_CONFIG_ID] },
+    ]);
+  });
+
   describe("pushEach", () => {
     const credsOf: Record<string, SyncCredentials> = { [CONFIG_ID]: CREDS, [OTHER_CONFIG_ID]: OTHER_CREDS };
 

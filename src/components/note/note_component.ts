@@ -21,11 +21,13 @@ import {
 	PushOptions,
 	RemoteRecordDeletedError,
 	SyncConflictError,
+	type SkippedFile,
 	SyncCredentials,
 	TargetKind,
 	TARGET_KINDS,
 	USER_MODEL,
 } from "../../services/syncService";
+import { getCurrentLocale } from "../../i18n";
 import {
 	ActivityRow,
 	ActivitySection,
@@ -597,6 +599,7 @@ export class NoteComponent extends EnhancedComponent {
 			onOpenInAppClick.bind="onOpenInAppClick"
 			onPriorityClick.bind="onPriorityClick"
 			/>
+			<p t-if="state.skippedFiles.length" class="note__sync-warning" role="status" t-esc="skippedFilesText"/>
 			<NoteContentComponent
 				note="state.note"
 				editMode="state.editMode"
@@ -795,6 +798,8 @@ export class NoteComponent extends EnhancedComponent {
 			openInApp: { visible: false, apps: [] as OpenInAppItem[] },
 			priorityPicker: { visible: false },
 			syncAnnouncement: "",
+			/** The note's files some servers did not get (too big, missing, refused). */
+			skippedFiles: [] as SkippedFile[],
 		});
 		this.setParams();
 		this.getNote();
@@ -1564,6 +1569,23 @@ export class NoteComponent extends EnhancedComponent {
 		this.announceSyncStatus("pending", true);
 	}
 
+	/** Reads which of the note's files some servers did not get. */
+	private async loadSkippedFiles() {
+		this.state.skippedFiles = await this.syncService.skippedFiles(this.state.noteId).catch(() => []);
+	}
+
+	/** The note's files left out, each with why: one line for the note screen. */
+	get skippedFilesText(): string {
+		const megabytes = new Intl.NumberFormat(getCurrentLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+		const files = (this.state.skippedFiles as SkippedFile[]).map((f) => {
+			const why = typeof f.reason === "number"
+				? this.t("label.sync_file_too_big", { mb: megabytes.format(f.reason / (1024 * 1024)) })
+				: this.t(`label.sync_file_${f.reason}`);
+			return `${f.name} (${why})`;
+		});
+		return this.t("label.sync_files_skipped", { files: files.join(", ") });
+	}
+
 	/** Reflects the global status pushNote derived from every server. */
 	private async refreshSyncStatusFromDb(): Promise<string> {
 		const { syncStatus } = await this.databaseService.getNoteSyncInfo(this.state.noteId);
@@ -1651,6 +1673,7 @@ export class NoteComponent extends EnhancedComponent {
 			await this.databaseService.setNoteSyncInfo(this.state.noteId, { syncConfigId: cfg.id });
 			this.state.syncConfigId = cfg.id;
 			this.announceSyncStatus(await this.refreshSyncStatusFromDb());
+			await this.loadSkippedFiles();
 		} catch (e: unknown) {
 			await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
 			await this.databaseService.refreshNoteSyncStatus(this.state.noteId).catch(() => {});
@@ -1678,6 +1701,7 @@ export class NoteComponent extends EnhancedComponent {
 			}
 		});
 		this.state.isSyncing = false;
+		await this.loadSkippedFiles();
 		if (errors.length > 0) {
 			this.state.syncStatus = "error";
 			this.announceSyncStatus("error");
@@ -2129,6 +2153,7 @@ export class NoteComponent extends EnhancedComponent {
 		const info = await this.databaseService.getNoteSyncInfo(this.state.noteId);
 		this.state.syncStatus = info.syncStatus;
 		this.state.syncConfigId = info.syncConfigId;
+		await this.loadSkippedFiles();
 		this.state.syncConfigs = await loadSyncConfigs(this.appService);
 		if (info.selectedSyncConfigIds && info.selectedSyncConfigIds.length > 0) {
 			const validIds = info.selectedSyncConfigIds.filter((id) => this.state.syncConfigs.some((c) => c.id === id));
