@@ -3712,6 +3712,26 @@ describe("SyncService — two-way sync and conflicts", () => {
     expect(record.date_deadline).toBe("2026-11-09");
   });
 
+  it("proposes nothing for a deadline the app's calendar just wrote, the note keeping its date", async () => {
+    const server = odoo();
+    vi.stubGlobal("fetch", server.fetchMock);
+    await db.createActivitiesCacheTable();
+    await db.addNote(makeNote({ id: "tw-cal", entries: [{ id: "d", type: "date", params: { date: new Date(2026, 10, 2, 9).toISOString() } } as any] }));
+    await svc.setActivity("tw-cal", CONFIG_ID, { resModel: "res.partner", resId: 5, typeId: null, deadline: "2026-11-02", userId: null });
+    await svc.pushNote(CREDS, "tw-cal", { userInitiated: true });
+    const link = (await db.getNoteLinks("tw-cal")).find((l) => l.kind === "activity")!;
+    const activity = {
+      configId: CONFIG_ID, resId: link.resId, resModel: "res.partner", recordId: 5, recordName: "x", typeId: null,
+      typeName: null, summary: "", deadline: "2026-11-02", userId: 2, userName: "me", done: false, dateDone: null,
+      pending: false, fetchedAt: "t",
+    } as any;
+    await svc.calendar.reschedule(CREDS, activity, "2026-11-20", { online: true });
+    expect(server.records["mail.activity"].get(link.resId).date_deadline).toBe("2026-11-20");
+    await svc.syncAll(CREDS);
+    expect(await svc.dateProposals("tw-cal")).toEqual([]);
+    expect(new Date(((await db.getNoteById("tw-cal"))!.entries[0].params as any).date).getDate()).toBe(2);
+  });
+
   it("leaves a note synced when a background sync pulls a change while pushing it", async () => {
     const server = odoo();
     const link = await sentTask(server, "tw-bg");

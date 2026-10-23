@@ -339,15 +339,33 @@ export class ActivityCalendarService {
         await this.db.putCalendarActivity({ ...cached, ...undone, pending: others, lastError: refused });
       });
       if (gone || refused !== null) return;
-      if (running.kind === CALENDAR_DONE) {
-        for (const link of await this.db.getNoteLinksForConfig(running.configId)) {
-          if (link.kind === "activity" && link.resId === activityId && link.remoteState === "ok") {
-            await this.db.setNoteLinkDone(link.id);
-          }
-        }
+      for (const link of await this.db.getNoteLinksForConfig(running.configId)) {
+        if (link.kind !== "activity" || link.resId !== activityId || link.remoteState !== "ok") continue;
+        if (running.kind === CALENDAR_DONE) await this.db.setNoteLinkDone(link.id);
+        else await this.rescheduledOnLink(link.noteId, link.id, running.params.deadline);
       }
     });
     if (refused !== null) throw new CalendarRefusedError(refused);
+  }
+
+  /**
+   * Records on a note's activity link the deadline the app just wrote: its
+   * base takes it as the server's, so the next pull sees no server change
+   * to propose, and the note keeps its own date. Under the note's lock, as
+   * a pull merges.
+   */
+  private async rescheduledOnLink(noteId: string, linkId: string, deadline: string): Promise<void> {
+    await this.db.updateNotePerServerStatus(noteId, async () => {
+      const link = (await this.db.getNoteLinks(noteId)).find((l) => l.id === linkId);
+      const base = link?.params?.base;
+      if (!link || !base) return;
+      const proposal = link.params!.dateProposal;
+      await this.db.setNoteLinkParams(link.id, {
+        ...link.params,
+        base: { ...base, remote: { ...base.remote, date: deadline } },
+        dateProposal: proposal && proposal.to === deadline ? null : proposal ?? null,
+      });
+    });
   }
 }
 
