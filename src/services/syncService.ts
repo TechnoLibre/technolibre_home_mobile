@@ -1104,6 +1104,32 @@ export class SyncService {
     }
   }
 
+  /**
+   * Pushes a note to each server in turn; push(configId) pushes to one and
+   * tells whether it ended normally. A server pushed normally is pushed
+   * again when the note changed since its push began: a change pulled
+   * during it, or from a server pushed after it, which already marked it
+   * pending. Stops when a pass leaves every such server current, or after
+   * one pass more than there are servers.
+   */
+  async pushEach(noteId: string, configIds: string[], push: (configId: string) => Promise<boolean>): Promise<void> {
+    const startedAt = new Map<string, string>();
+    let due = configIds;
+    for (let pass = 0; pass <= configIds.length && due.length > 0; pass++) {
+      for (const configId of due) {
+        const note = await this.db.getNoteById(noteId);
+        if (!note) return;
+        const fingerprint = pushedFingerprint(note);
+        if (await push(configId)) startedAt.set(configId, fingerprint);
+        else startedAt.delete(configId);
+      }
+      const note = await this.db.getNoteById(noteId);
+      if (!note) return;
+      const fingerprint = pushedFingerprint(note);
+      due = configIds.filter((id) => startedAt.has(id) && startedAt.get(id) !== fingerprint);
+    }
+  }
+
   private async pushNoteNow(creds: SyncCredentials, noteId: string, options: PushOptions): Promise<void> {
     const note = await this.db.getNoteById(noteId);
     if (!note) throw new Error(`Note ${noteId} not found`);

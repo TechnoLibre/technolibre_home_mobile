@@ -3682,6 +3682,66 @@ describe("SyncService — two-way sync and conflicts", () => {
     expect((await db.getNoteById("tw-2"))!.title).toBe("Server title");
   });
 
+  describe("pushEach", () => {
+    const credsOf: Record<string, SyncCredentials> = { [CONFIG_ID]: CREDS, [OTHER_CONFIG_ID]: OTHER_CREDS };
+
+    /** A note sent as a task to two servers, each a fake Odoo of its own. */
+    async function sentToTwo(id: string) {
+      await addApp(db, OTHER_CREDS);
+      await SecureStoragePlugin.set({
+        key: syncSessionKey(OTHER_CREDS),
+        value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 17 }),
+      });
+      const a = odoo();
+      const b = odoo();
+      vi.stubGlobal("fetch", vi.fn((url: string, opts: any) => (url.startsWith(OTHER_CREDS.odooUrl) ? b : a).fetchMock(url, opts)));
+      await db.addNote(makeNote({ id, title: "Plan", entries: [{ id: "e", type: "text", params: { text: "First", readonly: false } } as any] }));
+      for (const configId of [CONFIG_ID, OTHER_CONFIG_ID]) {
+        await svc.setTarget(id, configId, "task", { projectId: null });
+        await svc.pushNote(credsOf[configId], id, { userInitiated: true });
+      }
+      const resId = async (configId: string) => (await db.findNoteLink(id, configId, "project.task", "create"))!.resId;
+      return { a, b, resA: await resId(CONFIG_ID), resB: await resId(OTHER_CONFIG_ID) };
+    }
+
+    it("pushes again a server pushed before another whose pull changed the note", async () => {
+      const { a, b, resA, resB } = await sentToTwo("pe-1");
+      b.edit("project.task", resB, { name: "Plan from B" });
+      const pushed: string[] = [];
+      await svc.pushEach("pe-1", [CONFIG_ID, OTHER_CONFIG_ID], async (configId) => {
+        pushed.push(configId);
+        await svc.pushNote(credsOf[configId], "pe-1", { userInitiated: true });
+        return true;
+      });
+      expect(a.records["project.task"].get(resA).name).toBe("Plan from B");
+      expect(await db.getNotePerServerStatus("pe-1")).toEqual({ [CONFIG_ID]: "synced", [OTHER_CONFIG_ID]: "synced" });
+      expect(pushed).toEqual([CONFIG_ID, OTHER_CONFIG_ID, CONFIG_ID, OTHER_CONFIG_ID]);
+    });
+
+    it("pushes each server once when the note does not change", async () => {
+      await sentToTwo("pe-2");
+      const pushed: string[] = [];
+      await svc.pushEach("pe-2", [CONFIG_ID, OTHER_CONFIG_ID], async (configId) => {
+        pushed.push(configId);
+        await svc.pushNote(credsOf[configId], "pe-2", { userInitiated: true });
+        return true;
+      });
+      expect(pushed).toEqual([CONFIG_ID, OTHER_CONFIG_ID]);
+    });
+
+    it("does not push again a server whose push did not end normally", async () => {
+      const { b, resB } = await sentToTwo("pe-3");
+      b.edit("project.task", resB, { name: "Plan from B" });
+      const pushed: string[] = [];
+      await svc.pushEach("pe-3", [CONFIG_ID, OTHER_CONFIG_ID], async (configId) => {
+        pushed.push(configId);
+        await svc.pushNote(credsOf[configId], "pe-3", { userInitiated: true });
+        return configId !== CONFIG_ID;
+      });
+      expect(pushed).toEqual([CONFIG_ID, OTHER_CONFIG_ID, OTHER_CONFIG_ID]);
+    });
+  });
+
   it("stops on a field changed on both sides, then sends the version kept", async () => {
     const server = odoo();
     const link = await sentTask(server, "tw-3");

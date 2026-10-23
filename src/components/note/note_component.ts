@@ -1568,9 +1568,10 @@ export class NoteComponent extends EnhancedComponent {
 	 * ambiguous creation asks which record to link, then pushes again with
 	 * it, so the next failure is handled the same way (at most once per
 	 * kind and activity); a record deleted on the server asks whether to recreate it,
-	 * through the picker. Any other failure is raised.
+	 * through the picker. Any other failure is raised. Returns whether the
+	 * push ended normally (pushEach pushes only such a server again).
 	 */
-	private async doPushCore(cfg: SyncConfig): Promise<void> {
+	private async doPushCore(cfg: SyncConfig): Promise<boolean> {
 		const creds = await this.credsFor(cfg);
 		let options: PushOptions = { userInitiated: true };
 		const attached = (await this.syncService.attachedStates(this.state.noteId, cfg.id))
@@ -1578,13 +1579,13 @@ export class NoteComponent extends EnhancedComponent {
 		for (let round = 0; round <= TARGET_KINDS.length + attached.length; round++) {
 			try {
 				await this.syncService.pushNote(creds, this.state.noteId, options);
-				return;
+				return true;
 			} catch (e: unknown) {
 				// Left to choose later: the creation waits, it has not failed;
 				// pending, as the same choice made offline (queueForReconnect)
 				if (e instanceof OutboxBlockedError && e.reason === "incomplete") {
 					await this.databaseService.markNotePendingForConfigs(this.state.noteId, [cfg.id]);
-					return;
+					return false;
 				}
 				if (e instanceof OutboxBlockedError && e.reason === "ambiguous" && e.candidates.length > 0) {
 					options = { userInitiated: true, adopt: await this.pickAmbiguousRecord(e) };
@@ -1594,7 +1595,7 @@ export class NoteComponent extends EnhancedComponent {
 				if (e instanceof SyncConflictError) {
 					await this.databaseService.refreshNoteSyncStatus(this.state.noteId);
 					await this.openConflictDialog();
-					return;
+					return false;
 				}
 				if (!(e instanceof RemoteRecordDeletedError)) throw e;
 				// Deleted on the server: recreated only on the user's say-so, with
@@ -1604,7 +1605,7 @@ export class NoteComponent extends EnhancedComponent {
 					message: `${e.message}\nLe recréer à partir de cette note ? Vous choisirez sa cible.`,
 				});
 				if (value) this._pickAfterSync = true;
-				return;
+				return false;
 			}
 		}
 		throw new Error("Création toujours bloquée : plusieurs enregistrements correspondent encore.");
@@ -1637,7 +1638,7 @@ export class NoteComponent extends EnhancedComponent {
 	private async doPush(cfg: SyncConfig) {
 		this.state.isSyncing = true;
 		try {
-			await this.doPushCore(cfg);
+			await this.syncService.pushEach(this.state.noteId, [cfg.id], () => this.doPushCore(cfg));
 			await this.databaseService.setNoteSyncInfo(this.state.noteId, { syncConfigId: cfg.id });
 			this.state.syncConfigId = cfg.id;
 			this.announceSyncStatus(await this.refreshSyncStatusFromDb());
@@ -1656,15 +1657,17 @@ export class NoteComponent extends EnhancedComponent {
 	private async doPushAll(configs: SyncConfig[]) {
 		this.state.isSyncing = true;
 		const errors: string[] = [];
-		for (const cfg of configs) {
+		await this.syncService.pushEach(this.state.noteId, configs.map((c) => c.id), async (configId) => {
+			const cfg = configs.find((c) => c.id === configId)!;
 			try {
-				await this.doPushCore(cfg);
+				return await this.doPushCore(cfg);
 			} catch (e: unknown) {
 				await this.databaseService.setNotePerServerStatus(this.state.noteId, cfg.id, "error").catch(() => {});
 				await this.databaseService.refreshNoteSyncStatus(this.state.noteId).catch(() => {});
 				errors.push(`${cfg.name || cfg.appUrl}: ${e instanceof Error ? e.message : String(e)}`);
+				return false;
 			}
-		}
+		});
 		this.state.isSyncing = false;
 		if (errors.length > 0) {
 			this.state.syncStatus = "error";
