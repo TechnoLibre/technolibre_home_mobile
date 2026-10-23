@@ -103,18 +103,31 @@ export class NotificationService {
    * Syncs, when online, each server that has due work (see
    * SyncService.hasDueWork), then arms the timer of the next automatic
    * retry. Covers the queue left by a session that ended offline, which
-   * no reconnect event would ever flush.
+   * no reconnect event would ever flush. A pull that changes a note queues
+   * its other servers, those synced earlier in the pass included: a server
+   * is synced again when it has pending notes it did not have right after
+   * its own sync, at most one pass more than there are servers; one still
+   * pending for its own reason (a file held for Wi-Fi) is not.
    */
   private async flushDue(): Promise<void> {
     try {
       if (!(await this.network.isOnline())) return;
       const apps = (await this.appService.getApps()).filter((a) => a.database);
       let synced = false;
-      for (const app of apps) {
-        const configId = syncConfigIdFor(app.url, app.username, app.database);
-        if (!(await this.syncService.hasDueWork(configId))) continue;
-        await this.syncService.syncAll(this.appToCreds(app), undefined, { force: false });
-        synced = true;
+      const pendingAfter = new Map<string, Set<string>>();
+      for (let pass = 0; pass <= apps.length; pass++) {
+        let any = false;
+        for (const app of apps) {
+          const configId = syncConfigIdFor(app.url, app.username, app.database);
+          const due = pass === 0
+            ? await this.syncService.hasDueWork(configId)
+            : (await this.syncService.pendingNoteIds(configId)).some((id) => !pendingAfter.get(configId)?.has(id));
+          if (!due) continue;
+          await this.syncService.syncAll(this.appToCreds(app), undefined, { force: false });
+          pendingAfter.set(configId, new Set(await this.syncService.pendingNoteIds(configId)));
+          synced = any = true;
+        }
+        if (!any) break;
       }
       if (synced) this.eventBus.trigger(Events.RELOAD_NOTES);
       await this.scheduleRetry();

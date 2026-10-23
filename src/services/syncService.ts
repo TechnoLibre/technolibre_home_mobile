@@ -3041,7 +3041,11 @@ export class SyncService {
       if (!(await this.hasDueKind(noteId, configId, !!options.force))) continue;
       pushed.add(noteId);
       try {
-        await this.pushNote(creds, noteId, { force: options.force });
+        // A change pulled while it was pushed is sent at once, not at the next sync
+        await this.pushEach(noteId, [configId], async () => {
+          await this.pushNote(creds, noteId, { force: options.force });
+          return true;
+        });
         result.pushed++;
       } catch (e: unknown) {
         result.errors.push(`Push ${noteId}: ${e instanceof Error ? e.message : String(e)}`);

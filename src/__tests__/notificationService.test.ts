@@ -281,6 +281,26 @@ describe("NotificationService", () => {
             expect(handler).toHaveBeenCalledTimes(1);
         });
 
+        it("syncs again a server a later server's pull queued notes for, not one pending for its own reason", async () => {
+            const { appService, syncService, bus } = makeServices([
+                fakeApp({ database: "a" }),
+                fakeApp({ database: "b" }),
+            ]);
+            syncService.hasDueWork.mockResolvedValue(true);
+            // a keeps a held note (h); b's sync pulls a change that queues n1 on a
+            const pending: Record<string, string[]> = { a: ["h"], b: [] };
+            syncService.pendingNoteIds.mockImplementation(async (id: string) => pending[id.split("|").pop()!]);
+            syncService.syncAll.mockImplementation(async (creds: any) => {
+                if (creds.database === "b") pending.a = ["h", "n1"];
+                if (creds.database === "a" && pending.a.includes("n1")) pending.a = ["h"];
+            });
+
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 40; i++) await Promise.resolve();
+
+            expect(syncService.syncAll.mock.calls.map((c: any[]) => c[0].database)).toEqual(["a", "b", "a"]);
+        });
+
         it("syncs due work again when the app returns to the foreground", async () => {
             const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
             new NotificationService(syncService, appService, bus, network).start();

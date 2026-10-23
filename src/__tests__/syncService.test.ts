@@ -3682,6 +3682,18 @@ describe("SyncService — two-way sync and conflicts", () => {
     expect(writes(server.fetchMock, "project.task").some((v) => "date_deadline" in v)).toBe(false);
   });
 
+  it("leaves a note synced when a background sync pulls a change while pushing it", async () => {
+    const server = odoo();
+    const link = await sentTask(server, "tw-bg");
+    server.edit("project.task", link.resId, { name: "Server title" });
+    await db.updateNote("tw-bg", { ...(await db.getNoteById("tw-bg"))!, pinned: true });
+    await db.setNotePerServerStatus("tw-bg", CONFIG_ID, "pending");
+    await svc.syncAll(CREDS);
+    expect((await db.getNoteById("tw-bg"))!.title).toBe("Server title");
+    expect(server.records["project.task"].get(link.resId)).toMatchObject({ name: "Server title", priority: "1" });
+    expect((await db.getNotePerServerStatus("tw-bg"))[CONFIG_ID]).toBe("synced");
+  });
+
   it("keeps the note's date when a proposed one is refused, until the server's changes again", async () => {
     const server = odoo();
     const link = await sentTask(server, "tw-1b");
