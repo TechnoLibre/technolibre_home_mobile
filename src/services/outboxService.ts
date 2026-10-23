@@ -15,7 +15,13 @@ export const RETRY_MAX_MS = 60 * 60 * 1000;
  * candidates: remote ids the user can pick from ("ambiguous").
  */
 export class OutboxBlockedError extends Error {
-  constructor(message: string, readonly reason: string, readonly candidates: number[] = []) {
+  /** opKind: the outbox kind of the blocked operation, when known. */
+  constructor(
+    message: string,
+    readonly reason: string,
+    readonly candidates: number[] = [],
+    readonly opKind: string | null = null
+  ) {
     super(message);
   }
 }

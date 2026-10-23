@@ -1593,33 +1593,37 @@ export const FEATURE_TREE: FeatureNode[] = [
                 permissions: ["internet"],
                 tests: [
                     "src/__tests__/projectService.test.ts",
-                    "src/__tests__/taskTargetPicker.test.ts",
+                    "src/__tests__/targetPicker.test.ts",
                     "src/__tests__/syncService.test.ts",
                 ],
                 howItWorks: {
-                    en: "A tap on sync with a server where the note has no task opens the "
+                    en: "A tap on sync with a server where the note has neither task nor "
+                        + "opportunity, or where a creation waits for a choice, opens the "
                         + "picker: per server, the project of the new task, or none (a "
                         + "personal task), the server's last choice first. ProjectService "
                         + "lists the active projects online and caches them in "
                         + "remote_records_cache; when the projects cannot be read (offline, "
                         + "server failing) the picker offers the cache, plus \"choose later\", "
                         + "which leaves the creation incomplete until a project is chosen. A "
-                        + "server whose cached probe denies creating tasks is greyed. The "
+                        + "cached probe denying task creation greys the Task box; the server "
+                        + "is greyed only when nothing can be sent there. The "
                         + "project is set only by create: a task moved on the server stays in "
                         + "its project, and pull and poll read the linked tasks whatever their "
                         + "project. A project gone, archived or hidden, or a create the server "
                         + "refuses, blocks the creation until the next tap chooses again; a "
                         + "task deleted on the server is recreated in the project the picker "
                         + "then asks for.",
-                    fr: "Un appui sur sync vers un serveur où la note n'a pas de tâche ouvre "
-                        + "le sélecteur : par serveur, le projet de la nouvelle tâche, ou aucun "
+                    fr: "Un appui sur sync vers un serveur où la note n'a ni tâche ni "
+                        + "opportunité, ou où une création attend un choix, ouvre le "
+                        + "sélecteur : par serveur, le projet de la nouvelle tâche, ou aucun "
                         + "(tâche personnelle), le dernier choix du serveur d'abord. "
                         + "ProjectService liste les projets actifs en ligne et les garde dans "
                         + "remote_records_cache ; quand les projets sont illisibles (hors "
                         + "ligne, serveur en échec), le sélecteur propose le cache, plus "
                         + "« choisir plus tard », qui laisse la création incomplète jusqu'au "
-                        + "choix d'un projet. Un serveur dont la sonde en cache refuse la "
-                        + "création de tâches est grisé. Seul le create pose le projet : une "
+                        + "choix d'un projet. Une sonde en cache qui refuse la création de "
+                        + "tâches grise la case Tâche ; le serveur n'est grisé que si rien ne "
+                        + "peut y partir. Seul le create pose le projet : une "
                         + "tâche déplacée sur le serveur reste dans son projet, et pull et poll "
                         + "lisent les tâches liées quel que soit leur projet. Un projet "
                         + "disparu, archivé ou caché, ou un create refusé, bloque la création "
@@ -1631,9 +1635,88 @@ export const FEATURE_TREE: FeatureNode[] = [
                 demo: NONE_BG,
                 files: [
                     "src/services/odoo/projectService.ts",
-                    "src/services/taskTargetPicker.ts",
+                    "src/services/targetPicker.ts",
                     "src/components/note/note_component.ts",
                 ],
+            },
+            {
+                id: "sync.lead",
+                label: { en: "Opportunity target", fr: "Cible opportunité" },
+                description: {
+                    en: "Send a note as a CRM opportunity, beside or instead of a task.",
+                    fr: "Envoyer une note comme opportunité CRM, à côté ou à la place d'une tâche.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/targetPicker.test.ts",
+                    "src/__tests__/recordSearchService.test.ts",
+                ],
+                howItWorks: {
+                    en: "The picker shows, per server, a Task and an Opportunity box, "
+                        + "checkable together; the server's last checked kinds are the "
+                        + "default for a note with nothing there. An opportunity is a "
+                        + "crm.lead created with type opportunity, the note's title, "
+                        + "description (with the marker), crm.tag tags, archive state and "
+                        + "first date (day only), plus the client and expected revenue "
+                        + "chosen, which only create sends; done and pinned do not map. "
+                        + "Clients come from name_search, kept in remote_records_cache "
+                        + "(200 per server) for offline search. A client gone or hidden "
+                        + "blocks the creation until chosen again; the CRM missing or no "
+                        + "create right greys the box. Unchecking a kind that waited (blocked, "
+                        + "left for later, deleted on the server) drops it: its creation is "
+                        + "cancelled and its deleted link dismissed. Each kind is pushed on "
+                        + "its own: one waiting for a choice never holds back the other's "
+                        + "writes.",
+                    fr: "Le sélecteur montre, par serveur, une case Tâche et une case "
+                        + "Opportunité, cochables ensemble ; les derniers types cochés du "
+                        + "serveur sont le défaut d'une note qui n'y a rien. Une opportunité "
+                        + "est un crm.lead créé avec le type opportunity, le titre, la "
+                        + "description (avec le marqueur), les étiquettes crm.tag, "
+                        + "l'archivage et la première date (le jour) de la note, plus le "
+                        + "client et le revenu attendu choisis, que seul le create envoie ; "
+                        + "fait et épinglée ne se traduisent pas. Les clients viennent de "
+                        + "name_search, gardés dans remote_records_cache (200 par serveur) "
+                        + "pour chercher hors ligne. Un client disparu ou caché bloque la "
+                        + "création jusqu'à un nouveau choix ; un CRM absent ou sans droit de "
+                        + "création grise la case. Décocher un type qui attendait (bloqué, "
+                        + "laissé pour plus tard, supprimé sur le serveur) l'abandonne : sa "
+                        + "création est annulée et son lien supprimé écarté. Chaque type part "
+                        + "seul : celui qui attend un choix ne retient pas les écritures de "
+                        + "l'autre.",
+                },
+                dependsOn: ["sync.task-project", "sync.odoo-rpc"],
+                demo: NONE_BG,
+                files: ["src/services/odoo/recordSearchService.ts"],
+            },
+            {
+                id: "sync.http-policy",
+                label: { en: "Unencrypted http", fr: "http non chiffré" },
+                description: {
+                    en: "http:// servers refused unless allowed in the options.",
+                    fr: "Serveurs http:// refusés sauf autorisation dans les options.",
+                },
+                status: "experimental",
+                tests: ["src/__tests__/httpPolicy.test.ts"],
+                howItWorks: {
+                    en: "Every request to Odoo goes through OdooRpcClient.rawPost, which "
+                        + "refuses an http:// url with InsecureHttpError, before anything is "
+                        + "sent, while \"Allow http (unencrypted)\" is off in Options › Odoo "
+                        + "sync. Opening an application, or a note's record, in the web view "
+                        + "is refused the same way, since its login script types the "
+                        + "password. The option is stored in localStorage; unreadable storage "
+                        + "counts as off.",
+                    fr: "Toute requête vers Odoo passe par OdooRpcClient.rawPost, qui refuse "
+                        + "une url http:// par InsecureHttpError, avant tout envoi, tant que "
+                        + "« Autoriser http (non chiffré) » est désactivé dans Options › "
+                        + "Synchronisation Odoo. Ouvrir une application, ou l'enregistrement "
+                        + "d'une note, dans la vue web est refusé de même, son script de "
+                        + "connexion tapant le mot de passe. L'option est gardée dans "
+                        + "localStorage ; un stockage illisible vaut désactivé.",
+                },
+                demo: { kind: "options", sectionId: "sync" },
+                files: ["src/services/odoo/httpPolicy.ts"],
             },
             {
                 id: "sync.outbox",

@@ -2,6 +2,7 @@ import { Capacitor, CapacitorCookies } from "@capacitor/core";
 import { RawHttp } from "../../plugins/rawHttpPlugin";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { StorageConstants } from "../../constants/storage";
+import { assertUrlAllowed } from "./httpPolicy";
 
 export interface SyncCredentials {
   odooUrl: string;
@@ -490,12 +491,16 @@ export class OdooRpcClient {
    * WebView blocks cross-origin requests (CORS) to Odoo servers.
    *
    * On web (dev mode): uses fetch() directly.
+   *
+   * An http:// url is refused (InsecureHttpError) unless the user allowed
+   * unencrypted http in the options (see httpPolicy).
    */
   private async rawPost(
     url: string,
     headers: Record<string, string>,
     body: object
   ): Promise<{ status: number; headers: Record<string, string | string[]>; data: any }> {
+    assertUrlAllowed(url);
     if (Capacitor.isNativePlatform()) {
       try {
         const resp = await RawHttp.post({ url, headers, body: JSON.stringify(body) });

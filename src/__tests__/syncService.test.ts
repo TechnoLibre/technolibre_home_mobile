@@ -3,7 +3,7 @@ import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
 import {
   SyncService, SyncCredentials, syncSessionKey, syncConfigIdOf, RemoteRecordDeletedError,
-  TASK_CREATE, clientMarker,
+  TASK_CREATE, LEAD_CREATE, clientMarker,
 } from "../services/syncService";
 import { OutboxBlockedError } from "../services/outboxService";
 import { Note, NoteEntry } from "../models/note";
@@ -1700,13 +1700,13 @@ describe("SyncService — task creation through the outbox", () => {
     const quiet = serverWith([{ id: 1 }, { id: 2 }]);
     vi.stubGlobal("fetch", quiet);
     await svc.syncAll(CREDS, undefined, { force: true });
-    await expect(svc.pushNote(CREDS, "ob-6")).rejects.toBeInstanceOf(OutboxBlockedError);
+    await svc.pushNote(CREDS, "ob-6");
     expect(rpcCalls(quiet).some((c) => c.body.params.method === "create" || c.body.params.method === "search_read"
       && JSON.stringify((c.body.params as any).kwargs.domain).includes("erplibre-mobile:"))).toBe(false);
 
-    // The block carries the candidates; a tap on sync runs the search again
-    const blocked = await svc.pushNote(CREDS, "ob-6").catch((e) => e);
-    expect([blocked.reason, blocked.candidates]).toEqual(["ambiguous", [1, 2]]);
+    // The block keeps the candidates; a tap on sync runs the search again
+    const [waiting] = await db.getOutboxOpsForNote("ob-6");
+    expect([waiting.status, waiting.params.blockedReason, waiting.params.candidates]).toEqual(["blocked", "ambiguous", [1, 2]]);
     const fetchMock = serverWith([{ id: 9 }]);
     vi.stubGlobal("fetch", fetchMock);
     await svc.pushNote(CREDS, "ob-6", { userInitiated: true });
@@ -2140,5 +2140,372 @@ describe("SyncService — task project", () => {
     expect(await svc.taskTargetState("tp-11", CONFIG_ID)).toEqual({ state: "choose", op: null, reason: null, target: null });
     await db.setSyncTargetPref({ configId: CONFIG_ID, kind: TASK_CREATE, params: { projectId: 8, projectName: "B" }, updatedAt: "" });
     expect(await svc.taskTargetState("tp-11", CONFIG_ID)).toMatchObject({ state: "choose", target: { projectId: 8, projectName: "B" } });
+  });
+});
+
+// ─── Opportunity ──────────────────────────────────────────────────────────────
+
+describe("SyncService — opportunity", () => {
+  let svc: SyncService;
+  let db: DatabaseService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await prepareSyncDb(db);
+    svc = new SyncService(db);
+    await SecureStoragePlugin.set({
+      key: syncSessionKey(CREDS),
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 17 }),
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Server with partner 5; creates answer 700 (lead) and 900 (task); tags exist. */
+  function server(options: { leadCreateError?: string; markerHits?: number[] } = {}) {
+    return routeFetch((_url, body) => {
+      const { model, method } = body.params as any;
+      const kwargs = (body.params as any).kwargs ?? {};
+      if (model === "res.partner" && method === "search_read") {
+        return { result: kwargs.domain[0][2] === 5 ? [{ id: 5 }] : [] };
+      }
+      if (method === "search_read" && kwargs.domain?.[0]?.[0] === "description") {
+        return { result: (options.markerHits ?? []).map((id) => ({ id })) };
+      }
+      if ((model === "crm.tag" || model === "project.tags") && method === "search_read") {
+        return { result: [{ id: 31, name: "urgent" }] };
+      }
+      if (model === "crm.lead" && method === "create") {
+        if (options.leadCreateError) {
+          return { error: { code: 200, message: "Odoo Server Error", data: { name: options.leadCreateError, message: "nope" } } };
+        }
+        return { result: 700 };
+      }
+      if (method === "create") return { result: 900 };
+      return { result: method === "search_read" ? [] : true };
+    });
+  }
+
+  const sent = (fetchMock: ReturnType<typeof routeFetch>, model: string, method: string) =>
+    rpcCalls(fetchMock).filter((c) => c.body.params.model === model && c.body.params.method === method);
+
+  it("creates an opportunity with its client, revenue, crm tags and the day of its first date", async () => {
+    await db.addNote(makeNote({
+      id: "ld-1", title: "Lead", tags: ["urgent"],
+      entries: [{ id: "e1", type: "date", params: { date: "2026-11-05T14:30:00.000Z" } } as any],
+    }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.setTarget("ld-1", CONFIG_ID, "lead", { partnerId: 5, partnerName: "Acme", expectedRevenue: 1500 });
+    await svc.pushNote(CREDS, "ld-1", { userInitiated: true });
+
+    const values = sent(fetchMock, "crm.lead", "create")[0].body.params.args![0];
+    expect(values).toMatchObject({
+      name: "Lead", type: "opportunity", partner_id: 5, expected_revenue: 1500,
+      tag_ids: [[6, 0, [31]]], date_deadline: "2026-11-05", active: true,
+    });
+    expect(values.description).toContain("erplibre-mobile:");
+    expect(values).not.toHaveProperty("project_id");
+    expect(values).not.toHaveProperty("state");
+    expect(sent(fetchMock, "project.task", "create")).toHaveLength(0);
+    expect((await db.findNoteLink("ld-1", CONFIG_ID, "crm.lead", "create"))!.resId).toBe(700);
+  });
+
+  it("writes a linked opportunity without type, client or revenue", async () => {
+    await db.addNote(makeNote({ id: "ld-2", title: "B" }));
+    await db.addNoteLink({
+      id: "lk-2", noteId: "ld-2", configId: CONFIG_ID, model: "crm.lead", resId: 70, kind: "create",
+      remoteState: "ok", createdAt: "2026-01-01T00:00:00.000Z", lastSyncedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.pushNote(CREDS, "ld-2");
+
+    const [ids, values] = sent(fetchMock, "crm.lead", "write")[0].body.params.args!;
+    expect(ids).toEqual([70]);
+    expect(values).toMatchObject({ name: "B" });
+    for (const key of ["type", "partner_id", "expected_revenue", "project_id"]) expect(values).not.toHaveProperty(key);
+    expect(sent(fetchMock, "project.task", "create")).toHaveLength(0);
+  });
+
+  it("pushes a task and an opportunity of one note to the same server", async () => {
+    await db.addNote(makeNote({ id: "ld-3" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.setTarget("ld-3", CONFIG_ID, "task", { projectId: null });
+    await svc.setTarget("ld-3", CONFIG_ID, "lead", { partnerId: null });
+    expect(await svc.noteKinds("ld-3", CONFIG_ID)).toEqual(["task", "lead"]);
+    await svc.pushNote(CREDS, "ld-3", { userInitiated: true });
+
+    expect(sent(fetchMock, "project.task", "create")).toHaveLength(1);
+    expect(sent(fetchMock, "crm.lead", "create")[0].body.params.args![0]).not.toHaveProperty("partner_id");
+    expect((await db.getNoteSyncInfo("ld-3")).syncStatus).toBe("synced");
+  });
+
+  it("blocks an opportunity whose client is gone, without creating it", async () => {
+    await db.addNote(makeNote({ id: "ld-4" }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.setTarget("ld-4", CONFIG_ID, "lead", { partnerId: 99 });
+    const err = await svc.pushNote(CREDS, "ld-4", { userInitiated: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(OutboxBlockedError);
+    expect(err).toMatchObject({ reason: "partner_missing", opKind: LEAD_CREATE });
+    expect(sent(fetchMock, "crm.lead", "create")).toHaveLength(0);
+    expect(await svc.targetState("ld-4", CONFIG_ID, "lead")).toMatchObject({ state: "choose", reason: "partner_missing" });
+  });
+
+  it("adopts the opportunity a lost create made, found by its marker", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await db.addNote(makeNote({ id: "ld-5" }));
+    // The create is sent, its answer lost
+    vi.stubGlobal("fetch", routeFetch((_url, body) => {
+      if ((body.params as any).method === "create") throw new TypeError("Failed to fetch");
+      return { result: [] };
+    }));
+    await svc.setTarget("ld-5", CONFIG_ID, "lead", { partnerId: null });
+    await svc.pushNote(CREDS, "ld-5", { userInitiated: true }).catch(() => {});
+
+    afterQuietWindow();
+    const fetchMock = server({ markerHits: [701] });
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ld-5", { userInitiated: true });
+    vi.useRealTimers();
+
+    expect(sent(fetchMock, "crm.lead", "create")).toHaveLength(0);
+    expect(sent(fetchMock, "crm.lead", "write")[0].body.params.args![0]).toEqual([701]);
+    expect((await db.findNoteLink("ld-5", CONFIG_ID, "crm.lead", "create"))!.resId).toBe(701);
+  });
+
+  it("does not remember a client as the server's next choice", async () => {
+    await db.addNote(makeNote({ id: "ld-6" }));
+    await svc.setTarget("ld-6", CONFIG_ID, "lead", { partnerId: 5, partnerName: "Acme" });
+    expect(await svc.lastTarget(CONFIG_ID, "lead")).toBeNull();
+    await db.addNote(makeNote({ id: "ld-7" }));
+    expect(await svc.targetState("ld-7", CONFIG_ID, "lead")).toMatchObject({ state: "choose", target: null });
+  });
+
+  async function linkLead(noteId: string, resId: number, state: "ok" | "deleted" = "ok") {
+    await db.addNoteLink({
+      id: `lead-${noteId}`, noteId, configId: CONFIG_ID, model: "crm.lead", resId, kind: "create",
+      remoteState: state, createdAt: "2026-01-01T00:00:00.000Z", lastSyncedAt: "2026-01-01T00:00:00.000Z",
+    });
+  }
+
+  it("keeps writing a linked task while the note's opportunity waits for a choice", async () => {
+    await db.addNote(makeNote({ id: "ld-10" }));
+    await linkTask(db, "ld-10", 10);
+    await svc.setTarget("ld-10", CONFIG_ID, "lead", "later");
+    await db.markNotePendingForConfigs("ld-10", [CONFIG_ID]);
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(true);
+    const result = await svc.syncAll(CREDS);
+
+    expect(sent(fetchMock, "project.task", "write")[0].body.params.args![0]).toEqual([10]);
+    expect(sent(fetchMock, "crm.lead", "create")).toHaveLength(0);
+    expect(result.errors).toEqual([]);
+    expect(await db.getNotePerServerStatus("ld-10")).toEqual({ [CONFIG_ID]: "synced" });
+  });
+
+  it("has no due work for a note whose only kind waits for the user", async () => {
+    await db.addNote(makeNote({ id: "ld-11" }));
+    await svc.setTarget("ld-11", CONFIG_ID, "lead", "later");
+    await db.markNotePendingForConfigs("ld-11", [CONFIG_ID]);
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(false);
+  });
+
+  it("stays pending when the note changes while one of its kinds is written", async () => {
+    await db.addNote(makeNote({ id: "ld-12", title: "A" }));
+    await linkTask(db, "ld-12", 10);
+    await linkLead("ld-12", 70);
+    vi.stubGlobal("fetch", routeFetch((_url, body) => {
+      if ((body.params as any).model === "project.task" && (body.params as any).method === "write") {
+        void db.updateNote("ld-12", makeNote({ id: "ld-12", title: "B" }));
+      }
+      return { result: (body.params as any).method === "search_read" ? [] : true };
+    }));
+    await svc.pushNote(CREDS, "ld-12");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await db.getNotePerServerStatus("ld-12")).toEqual({ [CONFIG_ID]: "pending" });
+  });
+
+  it("leaves a deleted opportunity alone in background next to a live task, and keeps the status", async () => {
+    await db.addNote(makeNote({ id: "ld-13" }));
+    await linkTask(db, "ld-13", 10);
+    await linkLead("ld-13", 70, "deleted");
+    await db.markNotePendingForConfigs("ld-13", [CONFIG_ID]);
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await svc.syncAll(CREDS);
+    expect(result.errors).toEqual([]);
+    expect(sent(fetchMock, "project.task", "write")).toHaveLength(1);
+    expect(await db.getNotePerServerStatus("ld-13")).toEqual({ [CONFIG_ID]: "synced" });
+
+    // A tap still reports it, without taking the server out of the queue
+    await expect(svc.pushNote(CREDS, "ld-13", { userInitiated: true })).rejects.toBeInstanceOf(RemoteRecordDeletedError);
+    expect(await db.getNotePerServerStatus("ld-13")).toEqual({ [CONFIG_ID]: "synced" });
+  });
+
+  it("stops asking about a kind the user dropped", async () => {
+    await db.addNote(makeNote({ id: "ld-14" }));
+    await linkTask(db, "ld-14", 10);
+    await linkLead("ld-14", 70, "deleted");
+    expect(await svc.targetState("ld-14", CONFIG_ID, "lead")).toMatchObject({ reason: "deleted" });
+
+    await svc.dropTarget("ld-14", CONFIG_ID, "lead");
+
+    expect(await svc.noteKinds("ld-14", CONFIG_ID)).toEqual(["task"]);
+    expect(await svc.targetState("ld-14", CONFIG_ID, "lead")).toMatchObject({ state: "choose", op: null, reason: null });
+    expect((await db.getNoteLinks("ld-14")).find((l) => l.model === "crm.lead")!.remoteState).toBe("dismissed");
+  });
+
+  it("cancels a waiting creation the user dropped", async () => {
+    await db.addNote(makeNote({ id: "ld-16" }));
+    await svc.setTarget("ld-16", CONFIG_ID, "lead", "later");
+    await svc.dropTarget("ld-16", CONFIG_ID, "lead");
+    expect(await db.getOutboxOpsForNote("ld-16")).toEqual([]);
+  });
+
+  it("queues the opportunity when a pull changes a note that also has a task there", async () => {
+    await db.addNote(makeNote({ id: "ld-17", title: "Old" }));
+    await linkTask(db, "ld-17", 10);
+    await linkLead("ld-17", 70);
+    vi.stubGlobal("fetch", routeFetch(() => ({
+      result: [{ id: 10, name: "New", priority: "0", active: true, tag_ids: [], date_deadline: false,
+        write_date: "2026-05-01 08:00:00", state: "01_in_progress" }],
+    })));
+    await svc.pullNotes(CREDS, new Date(0));
+    expect((await db.getNoteById("ld-17"))!.title).toBe("New");
+    expect(await db.getNotePerServerStatus("ld-17")).toEqual({ [CONFIG_ID]: "pending" });
+  });
+
+  it("sends active on create only, and date_deadline only for a note with a date", async () => {
+    await db.addNote(makeNote({ id: "ld-18", archived: false }));
+    await linkLead("ld-18", 70);
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.pushNote(CREDS, "ld-18");
+    const values = sent(fetchMock, "crm.lead", "write")[0].body.params.args![1];
+    expect(values).not.toHaveProperty("active");
+    expect(values).not.toHaveProperty("date_deadline");
+  });
+
+  it("takes the device's local day for the opportunity's date", async () => {
+    const local = new Date(2026, 10, 5, 23, 30);
+    await db.addNote(makeNote({ id: "ld-19", entries: [{ id: "e", type: "date", params: { date: local.toISOString() } } as any] }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTarget("ld-19", CONFIG_ID, "lead", { partnerId: null });
+    await svc.pushNote(CREDS, "ld-19", { userInitiated: true });
+    expect(sent(fetchMock, "crm.lead", "create")[0].body.params.args![0].date_deadline).toBe("2026-11-05");
+  });
+
+  it("finds or creates the opportunity's tags in crm.tag", async () => {
+    await db.addNote(makeNote({ id: "ld-20", tags: ["urgent"] }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTarget("ld-20", CONFIG_ID, "lead", { partnerId: null });
+    await svc.pushNote(CREDS, "ld-20", { userInitiated: true });
+    expect(sent(fetchMock, "crm.tag", "search_read")).toHaveLength(1);
+    expect(sent(fetchMock, "project.tags", "search_read")).toHaveLength(0);
+  });
+
+  it("still writes the opportunity when the task write fails, then raises the failure", async () => {
+    await db.addNote(makeNote({ id: "ld-21" }));
+    await linkTask(db, "ld-21", 10);
+    await linkLead("ld-21", 70);
+    const fetchMock = routeFetch((_url, body) => {
+      if ((body.params as any).model === "project.task" && (body.params as any).method === "write") {
+        return { error: { code: 200, message: "Odoo Server Error", data: { name: "odoo.exceptions.UserError", message: "locked" } } };
+      }
+      return { result: (body.params as any).method === "search_read" ? [] : true };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(svc.pushNote(CREDS, "ld-21")).rejects.toThrow("locked");
+    expect(sent(fetchMock, "crm.lead", "write")).toHaveLength(1);
+  });
+
+  it("runs only the operation's kind from the outbox, leaving the other kind's delay alone", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // A tag: the first request (tag search) fails, before any create is sent
+    await db.addNote(makeNote({ id: "ld-22", tags: ["x"] }));
+    vi.stubGlobal("fetch", routeFetch(() => { throw new TypeError("Failed to fetch"); }));
+    await svc.setTarget("ld-22", CONFIG_ID, "task", { projectId: null });
+    await svc.pushNote(CREDS, "ld-22", { userInitiated: true }).catch(() => {});
+    const taskOp = (await db.getOutboxOpsForNote("ld-22"))[0];
+    expect(taskOp.status).toBe("failed");
+    expect(taskOp.params.createSentAt).toBeUndefined();
+
+    await svc.setTarget("ld-22", CONFIG_ID, "lead", { partnerId: null });
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.outbox.drain(CREDS, CONFIG_ID);
+    vi.useRealTimers();
+
+    expect(sent(fetchMock, "crm.lead", "create")).toHaveLength(1);
+    expect(sent(fetchMock, "project.task", "create")).toHaveLength(0);
+    expect((await db.getOutboxOp(taskOp.id))!.attempts).toBe(taskOp.attempts);
+  });
+
+  it("keeps the typed revenue when a missing client is left for later", async () => {
+    await db.addNote(makeNote({ id: "ld-23" }));
+    vi.stubGlobal("fetch", server());
+    await svc.setTarget("ld-23", CONFIG_ID, "lead", { partnerId: 99, expectedRevenue: 1500 });
+    await svc.pushNote(CREDS, "ld-23", { userInitiated: true }).catch(() => {});
+    await svc.setTarget("ld-23", CONFIG_ID, "lead", "later");
+    expect(await svc.targetState("ld-23", CONFIG_ID, "lead")).toMatchObject({
+      reason: "incomplete", target: { partnerId: null, expectedRevenue: 1500 },
+    });
+  });
+
+  it("dismisses every deleted link of a dropped kind", async () => {
+    await db.addNote(makeNote({ id: "ld-30" }));
+    await linkTask(db, "ld-30", 5);
+    for (const [id, resId, at] of [["d1", 70, "2026-01-01T00:00:00.000Z"], ["d2", 71, "2026-02-01T00:00:00.000Z"]] as const) {
+      await db.addNoteLink({ id, noteId: "ld-30", configId: CONFIG_ID, model: "crm.lead", resId, kind: "create",
+        remoteState: "deleted", createdAt: at, lastSyncedAt: at });
+    }
+    await svc.dropTarget("ld-30", CONFIG_ID, "lead");
+    expect(await svc.targetState("ld-30", CONFIG_ID, "lead")).toMatchObject({ reason: null });
+    expect(await svc.noteKinds("ld-30", CONFIG_ID)).toEqual(["task"]);
+  });
+
+  it("shows a note pending while one of its creations waits, even when its other kind is synced", async () => {
+    await db.addNote(makeNote({ id: "ld-31" }));
+    await linkTask(db, "ld-31", 10);
+    await db.setNotePerServerStatus("ld-31", CONFIG_ID, "synced");
+    await svc.setTarget("ld-31", CONFIG_ID, "lead", "later");
+    expect(await db.refreshNoteSyncStatus("ld-31")).toBe("pending");
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(false);
+  });
+
+  it("keeps the revenue typed with a first 'later' choice", async () => {
+    await db.addNote(makeNote({ id: "ld-32" }));
+    await svc.setTarget("ld-32", CONFIG_ID, "lead", "later", { expectedRevenue: 800 });
+    expect(await svc.targetState("ld-32", CONFIG_ID, "lead")).toMatchObject({
+      reason: "incomplete", target: { expectedRevenue: 800 },
+    });
+  });
+
+  it("derives statuses before the outbox table exists, as migration 2026102201 does", async () => {
+    await db.addNote(makeNote({ id: "ld-40" }));
+    vi.spyOn(db, "getOutboxOpsForNote").mockRejectedValue(new Error("no such table: sync_outbox"));
+    await expect(addNoteLinksTable(db)).resolves.toBeDefined();
+    expect(await db.refreshNoteSyncStatus("ld-40")).toBe("local");
+    vi.restoreAllMocks();
+  });
+
+  it("remembers the kinds last checked per server, a task by default", async () => {
+    expect(await svc.lastKinds(CONFIG_ID)).toEqual(["task"]);
+    await svc.setLastKinds(CONFIG_ID, ["lead"]);
+    expect(await svc.lastKinds(CONFIG_ID)).toEqual(["lead"]);
   });
 });

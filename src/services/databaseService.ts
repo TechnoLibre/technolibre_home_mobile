@@ -41,7 +41,12 @@ export interface NoteLink {
    * "deleted": the remote record no longer exists. The link stays as a
    * trace; push never writes it and never recreates the record unasked.
    */
-  remoteState: "ok" | "deleted";
+  /**
+   * ok: the record exists; deleted: deleted on the server, the user not
+   * asked yet or declined; dismissed: deleted, and the user stopped sending
+   * the note there as that kind (kept as history, never pushed).
+   */
+  remoteState: "ok" | "deleted" | "dismissed";
   createdAt: string;
   lastSyncedAt: string | null;
   /**
@@ -919,7 +924,8 @@ export class DatabaseService {
    * synced. Entries of ids no live application has (deleted, renamed, or
    * switched to another database) are ignored: nothing would ever clear
    * them. With no live entry left, the note is "synced" if it still has a
-   * live link, "local" otherwise.
+   * live link, "local" otherwise. A note "synced" or "local" with a
+   * creation still in the outbox for a live server is "pending".
    */
   async refreshNoteSyncStatus(noteId: string): Promise<SyncStatus> {
     const live = await this.getLiveSyncConfigIds();
@@ -931,8 +937,26 @@ export class DatabaseService {
     else if (statuses.includes("pending")) status = "pending";
     else if (statuses.includes("synced")) status = "synced";
     else status = (await this.getLiveLinkConfigIds(noteId)).length > 0 ? "synced" : "local";
+    // A creation still in the outbox for a live server (waiting for a choice,
+    // blocked, retrying) is not sent: the note is not synced there yet
+    if (status !== "error" && status !== "pending"
+      && (await this.outboxOpsOrNone(noteId)).some((op) => live.has(op.configId))) {
+      status = "pending";
+    }
     await this.setNoteSyncInfo(noteId, { syncStatus: status });
     return status;
+  }
+
+  /**
+   * The note's outbox operations, or none while sync_outbox does not exist
+   * yet: migration 2026102201 derives statuses before 2026102202 creates it.
+   */
+  private async outboxOpsOrNone(noteId: string): Promise<OutboxOp[]> {
+    try {
+      return await this.getOutboxOpsForNote(noteId);
+    } catch {
+      return [];
+    }
   }
 
   /** refreshNoteSyncStatus for every note: after an application changed. */
@@ -1169,7 +1193,7 @@ export class DatabaseService {
    * The note's link to (config, model, kind) whose remote record still
    * exists; with includeDeleted, the most recently created deleted one
    * when no live one exists (a record recreated, then deleted again,
-   * leaves several).
+   * leaves several). Dismissed links are never returned.
    */
   async findNoteLink(
     noteId: string,
@@ -1179,10 +1203,15 @@ export class DatabaseService {
     includeDeleted = false
   ): Promise<NoteLink | null> {
     const matching = (await this.getNoteLinks(noteId))
-      .filter((l) => l.configId === configId && l.model === model && l.kind === kind);
+      .filter((l) => l.configId === configId && l.model === model && l.kind === kind && l.remoteState !== "dismissed");
     const latest = [...matching].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0];
     return matching.find((l) => l.remoteState === "ok")
       ?? (includeDeleted ? latest ?? null : null);
+  }
+
+  /** Marks a deleted link dismissed: see NoteLink.remoteState. */
+  async setNoteLinkDismissed(linkId: string): Promise<void> {
+    await this.db.run("UPDATE note_links SET remote_state = ? WHERE id = ?", ["dismissed", linkId]);
   }
 
   async setNoteLinkRemoteDeleted(linkId: string): Promise<void> {
@@ -1205,7 +1234,7 @@ export class DatabaseService {
       model: row.model,
       resId: Number(row.res_id),
       kind: row.kind as NoteLinkKind,
-      remoteState: row.remote_state === "deleted" ? "deleted" : "ok",
+      remoteState: row.remote_state === "deleted" || row.remote_state === "dismissed" ? row.remote_state : "ok",
       createdAt: row.created_at,
       lastSyncedAt: row.last_synced_at ?? null,
       clientUuid: row.client_uuid ?? null,
@@ -1449,6 +1478,25 @@ export class DatabaseService {
         [`${configId}#${model}#${r.resId}`, configId, model, r.resId, r.displayName,
          JSON.stringify(r.extra ?? {}), r.fetchedAt]
       );
+    }
+  }
+
+  /**
+   * Adds or refreshes cached records of one model on one server, then
+   * keeps only the keep most recently fetched ones of that model there.
+   */
+  async upsertRemoteRecords(configId: string, model: string, records: RemoteRecord[], keep: number): Promise<void> {
+    for (const r of records) {
+      await this.db.run(
+        "INSERT OR REPLACE INTO remote_records_cache (id, config_id, model, res_id, display_name, extra_json, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [`${configId}#${model}#${r.resId}`, configId, model, r.resId, r.displayName,
+         JSON.stringify(r.extra ?? {}), r.fetchedAt]
+      );
+    }
+    const all = await this.getRemoteRecords(configId, model);
+    const stale = [...all].sort((a, b) => b.fetchedAt.localeCompare(a.fetchedAt)).slice(keep);
+    for (const r of stale) {
+      await this.db.run("DELETE FROM remote_records_cache WHERE id = ?", [`${configId}#${model}#${r.resId}`]);
     }
   }
 

@@ -13,18 +13,22 @@ import { ErrorMessages } from "../../constants/errorMessages";
 import { NoNoteEntryMatchError, NoNoteMatchError, NoteKeyNotFoundError, UndefinedNoteListError } from "../../js/errors";
 import { Events } from "../../constants/events";
 import { NoteEntry, NoteEntryAudioParams, NoteEntryDateParams, NoteEntryPhotoParams, NoteEntryTextParams, NoteEntryVideoParams } from "../../models/note";
-import { RemoteRecordDeletedError, SyncCredentials, TASK_CREATE } from "../../services/syncService";
+import { KINDS, PushOptions, RemoteRecordDeletedError, SyncCredentials, TargetKind, TARGET_KINDS } from "../../services/syncService";
 import {
 	applyTaskTargets,
-	buildTaskTargetRow,
+	buildTargetRows,
 	filteredOptions,
 	loadingRow,
 	needsTaskTarget,
+	PICKER_KINDS,
 	ProjectOption,
-	TaskTargetRow,
-} from "../../services/taskTargetPicker";
+	serverUsable,
+	TargetRow,
+	withPartners,
+} from "../../services/targetPicker";
 import { OutboxBlockedError } from "../../services/outboxService";
 import { networkService } from "../../services/networkService";
+import { assertUrlAllowed } from "../../services/odoo/httpPolicy";
 import type { SyncConfig } from "../../models/syncConfig";
 import { loadSyncConfigs, syncConfigIdFor } from "../../models/syncConfig";
 
@@ -95,47 +99,97 @@ export class NoteComponent extends EnhancedComponent {
 						>
 							<p id="config-picker-title" class="breadcrumb__config-picker-label"><t t-esc="t('label.sync_with')"/></p>
 							<t t-foreach="state.syncConfigs" t-as="cfg" t-key="cfg.id">
-								<t t-set="row" t-value="state.taskTargets[cfg.id]"/>
-								<label t-att-class="'breadcrumb__config-option' + (row and row.unusable ? ' breadcrumb__config-option--unusable' : '')">
+								<label t-att-class="'breadcrumb__config-option' + (isServerUsable(cfg.id) ? '' : ' breadcrumb__config-option--unusable')">
 									<input
 										type="checkbox"
 										t-att-checked="state.selectedConfigIds.includes(cfg.id)"
-										t-att-disabled="row and row.unusable"
+										t-att-disabled="!isServerUsable(cfg.id)"
 										t-on-change="(ev) => this.toggleConfigSelection(cfg.id, ev.target.checked)"
 									/>
 									<span t-esc="cfg.name or cfg.appUrl"/>
 								</label>
-								<p t-if="row and row.loading" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_loading')"/></p>
-								<p t-elif="row and row.error and !row.needsChoice" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="row.error"/>
-								<p t-elif="row and row.unusable" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="t('label.sync_target_unusable_' + row.unusable)"/>
-								<p t-elif="row and row.linkedResId" class="breadcrumb__config-note" t-esc="t('label.sync_target_linked', { id: row.linkedResId })"/>
-								<div t-elif="row and row.needsChoice and state.selectedConfigIds.includes(cfg.id)" class="breadcrumb__config-project">
-									<p t-if="row.reason and row.reason !== 'incomplete'" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="t('label.sync_target_reason_' + row.reason, { id: row.deletedResId or '' })"/>
-									<label class="breadcrumb__config-note" t-att-for="'sync-project-' + cfg_index"><t t-esc="t('label.sync_target_project')"/></label>
-									<input
-										t-if="row.options.length > 10"
-										type="search"
-										class="breadcrumb__config-filter"
-										t-att-placeholder="t('label.sync_target_filter')"
-										t-att-aria-label="t('label.sync_target_filter')"
-										t-att-value="row.filter"
-										t-on-input="(ev) => this.setProjectFilter(cfg.id, ev.target.value)"
-									/>
-									<select
-										class="breadcrumb__config-select"
-										t-att-id="'sync-project-' + cfg_index"
-										t-on-change="(ev) => this.setProjectSelection(cfg.id, ev.target.value)"
-									>
-										<option value="none" t-att-selected="row.selection === 'none'"><t t-esc="t('label.sync_target_no_project')"/></option>
-										<option t-if="row.canDefer" value="later" t-att-selected="row.selection === 'later'"><t t-esc="t('label.sync_target_later')"/></option>
-										<t t-foreach="projectOptions(row)" t-as="opt" t-key="opt.value">
-											<option t-att-value="opt.value" t-att-selected="row.selection === opt.value" t-esc="opt.name"/>
-										</t>
-									</select>
-									<p t-if="row.offline and row.options.length === 0" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_no_cache')"/></p>
-									<p t-elif="row.fromCache and !row.offline" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_from_cache')"/></p>
-									<p t-if="row.truncated" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_truncated')"/></p>
-								</div>
+								<t t-if="state.targets[cfg.id] and state.selectedConfigIds.includes(cfg.id)">
+									<t t-foreach="kindRows(cfg.id)" t-as="row" t-key="row.kind">
+										<div class="breadcrumb__config-kind">
+											<label class="breadcrumb__config-kind-label">
+												<input
+													type="checkbox"
+													t-att-checked="row.checked"
+													t-att-disabled="row.loading or row.linkedResId or (row.queued and !row.droppable) or row.unusable or row.failed"
+													t-on-change="(ev) => this.setKindChecked(cfg.id, row.kind, ev.target.checked)"
+												/>
+												<t t-esc="t('label.sync_kind_' + row.kind)"/>
+											</label>
+											<p t-if="row.loading" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_loading')"/></p>
+											<p t-elif="row.failed" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="row.failed"/>
+											<p t-elif="row.unusable" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="t('label.sync_target_unusable_' + row.unusable)"/>
+											<p t-elif="row.linkedResId" class="breadcrumb__config-note" t-esc="t('label.sync_target_linked', { id: row.linkedResId })"/>
+											<p t-elif="row.droppable" class="breadcrumb__config-note breadcrumb__config-note--warn"><t t-esc="t('label.sync_target_stuck')"/></p>
+											<p t-elif="row.queued" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_queued')"/></p>
+											<div t-elif="row.needsChoice and row.checked" class="breadcrumb__config-project">
+												<p t-if="row.reason and row.reason !== 'incomplete'" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="t('label.sync_target_reason_' + row.reason, { id: row.deletedResId or '' })"/>
+												<t t-if="row.kind === 'task'">
+													<label class="breadcrumb__config-note" t-att-for="'sync-project-' + cfg_index"><t t-esc="t('label.sync_target_project')"/></label>
+													<input
+														t-if="row.options.length > 10"
+														type="search"
+														class="breadcrumb__config-filter"
+														t-att-placeholder="t('label.sync_target_filter')"
+														t-att-aria-label="t('label.sync_target_filter')"
+														t-att-value="row.filter"
+														t-on-input="(ev) => this.setRowFilter(cfg.id, row.kind, ev.target.value)"
+													/>
+													<select
+														class="breadcrumb__config-select"
+														t-att-id="'sync-project-' + cfg_index"
+														t-on-change="(ev) => this.setRowSelection(cfg.id, row.kind, ev.target.value)"
+													>
+														<option value="none" t-att-selected="row.selection === 'none'"><t t-esc="t('label.sync_target_no_project')"/></option>
+														<option t-if="row.canDefer" value="later" t-att-selected="row.selection === 'later'"><t t-esc="t('label.sync_target_later')"/></option>
+														<t t-foreach="projectOptions(row)" t-as="opt" t-key="opt.value">
+															<option t-att-value="opt.value" t-att-selected="row.selection === opt.value" t-esc="opt.name"/>
+														</t>
+													</select>
+												</t>
+												<t t-else="">
+													<label class="breadcrumb__config-note" t-att-for="'sync-partner-search-' + cfg_index"><t t-esc="t('label.sync_target_partner')"/></label>
+													<input
+														type="search"
+														class="breadcrumb__config-filter"
+														t-att-id="'sync-partner-search-' + cfg_index"
+														t-att-placeholder="t('label.sync_target_partner_search')"
+														t-att-value="row.query"
+														t-on-input="(ev) => this.searchPartners(cfg, ev.target.value)"
+													/>
+													<select
+														class="breadcrumb__config-select"
+														t-att-aria-label="t('label.sync_target_partner')"
+														t-on-change="(ev) => this.setRowSelection(cfg.id, row.kind, ev.target.value)"
+													>
+														<option value="none" t-att-selected="row.selection === 'none'"><t t-esc="t('label.sync_target_no_partner')"/></option>
+														<option t-if="row.canDefer" value="later" t-att-selected="row.selection === 'later'"><t t-esc="t('label.sync_target_later')"/></option>
+														<t t-foreach="row.options" t-as="opt" t-key="opt.value">
+															<option t-att-value="opt.value" t-att-selected="row.selection === opt.value" t-esc="opt.name"/>
+														</t>
+													</select>
+													<label class="breadcrumb__config-note" t-att-for="'sync-revenue-' + cfg_index"><t t-esc="t('label.sync_target_revenue')"/></label>
+													<input
+														type="text"
+														inputmode="decimal"
+														class="breadcrumb__config-filter"
+														t-att-id="'sync-revenue-' + cfg_index"
+														t-att-value="row.revenue"
+														t-on-input="(ev) => this.setRevenue(cfg.id, ev.target.value)"
+													/>
+												</t>
+												<p t-if="row.offline and row.options.length === 0" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_no_cache')"/></p>
+												<p t-elif="row.fromCache and !row.offline" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_from_cache')"/></p>
+												<p t-elif="row.error" class="breadcrumb__config-note breadcrumb__config-note--warn" t-esc="row.error"/>
+												<p t-if="row.truncated" class="breadcrumb__config-note"><t t-esc="t('label.sync_target_truncated')"/></p>
+											</div>
+										</div>
+									</t>
+								</t>
 							</t>
 							<button
 								type="button"
@@ -237,7 +291,7 @@ export class NoteComponent extends EnhancedComponent {
 			>
 				<p id="open-in-app-title" class="open-in-app__title"><t t-esc="t('button.open_in_app')"/></p>
 				<div class="error-dialog__actions">
-					<t t-foreach="state.openInApp.apps" t-as="appItem" t-key="appItem.appUrl + '|' + appItem.username">
+					<t t-foreach="state.openInApp.apps" t-as="appItem" t-key="appItem.model + '#' + appItem.resId + '|' + appItem.appUrl + '|' + appItem.username">
 						<button type="button" class="error-dialog__btn error-dialog__btn--note" t-on-click.stop.prevent="() => this.openInAppForConfig(appItem)">
 							<t t-esc="appItem.label" />
 						</button>
@@ -350,8 +404,8 @@ export class NoteComponent extends EnhancedComponent {
 			syncConfigs: [] as SyncConfig[],
 			selectedConfigIds: [] as string[],
 			showConfigPicker: false,
-			/** Per sync config id: what the picker shows for the note's task there. */
-			taskTargets: {} as Record<string, TaskTargetRow>,
+			/** Per sync config id and kind: what the picker shows for the note's record there. */
+			targets: {} as Record<string, Record<TargetKind, TargetRow>>,
 			showOptionsMenu: false,
 			debugDialog: { visible: false, message: "" },
 			errorDialog: { visible: false, message: "" },
@@ -479,14 +533,16 @@ export class NoteComponent extends EnhancedComponent {
 	}
 
 	/**
-	 * Opens the picker and fills, per server, the task's state and
-	 * projects. The rows are reset to "loading" before the picker shows, so
-	 * Synchronise stays disabled until every selected server is known.
+	 * Opens the picker and fills, per server and kind, the note's state and
+	 * the choices. The rows are reset to "loading" before the picker shows,
+	 * so Synchronise stays disabled until every selected server is known.
 	 */
 	private async showPicker(configs: SyncConfig[]) {
-		const rows: Record<string, TaskTargetRow> = {};
-		for (const cfg of configs) rows[cfg.id] = loadingRow();
-		this.state.taskTargets = rows;
+		const targets: Record<string, Record<TargetKind, TargetRow>> = {};
+		for (const cfg of configs) {
+			targets[cfg.id] = Object.fromEntries(PICKER_KINDS.map((k) => [k, loadingRow(k)])) as Record<TargetKind, TargetRow>;
+		}
+		this.state.targets = targets;
 		this.state.showConfigPicker = true;
 		await this.loadTaskTargets(configs);
 	}
@@ -494,40 +550,93 @@ export class NoteComponent extends EnhancedComponent {
 	/** Bumped by each loadTaskTargets: an older load's rows are dropped. */
 	private _targetsLoad = 0;
 
-	/** Whether the picker still waits for a server's task state or projects. */
+	/** Whether the picker still waits for a selected server's states or choices. */
 	get pickerLoading(): boolean {
-		return this.state.selectedConfigIds.some((id: string) => this.state.taskTargets[id]?.loading);
+		return this.state.selectedConfigIds.some((id: string) =>
+			PICKER_KINDS.some((k) => this.state.targets[id]?.[k]?.loading));
 	}
 
-	projectOptions(row: TaskTargetRow): ProjectOption[] {
+	kindRows(configId: string): TargetRow[] {
+		const rows = this.state.targets[configId];
+		return rows ? PICKER_KINDS.map((k) => rows[k]) : [];
+	}
+
+	/** Whether a server can be selected: still loading, or it can receive something. */
+	isServerUsable(configId: string): boolean {
+		const rows = this.state.targets[configId];
+		if (!rows || PICKER_KINDS.some((k) => rows[k].loading)) return true;
+		return serverUsable(rows);
+	}
+
+	projectOptions(row: TargetRow): ProjectOption[] {
 		return filteredOptions(row);
 	}
 
-	setProjectSelection(configId: string, value: string) {
-		const row = this.state.taskTargets[configId];
+	setKindChecked(configId: string, kind: TargetKind, checked: boolean) {
+		const row = this.state.targets[configId]?.[kind];
+		if (row && ((row.needsChoice && !row.unusable) || row.droppable)) row.checked = checked;
+	}
+
+	setRowSelection(configId: string, kind: TargetKind, value: string) {
+		const row = this.state.targets[configId]?.[kind];
 		if (row) row.selection = value;
 	}
 
-	setProjectFilter(configId: string, value: string) {
-		const row = this.state.taskTargets[configId];
+	setRowFilter(configId: string, kind: TargetKind, value: string) {
+		const row = this.state.targets[configId]?.[kind];
 		if (row) row.filter = value;
 	}
 
+	setRevenue(configId: string, value: string) {
+		const row = this.state.targets[configId]?.lead;
+		if (row) row.revenue = value;
+	}
+
+	/** Pending partner search per config id, run 300 ms after the last keystroke. */
+	private _partnerSearch = new Map<string, ReturnType<typeof setTimeout>>();
+
 	/**
-	 * Fills state.taskTargets for configs (see buildTaskTargetRow). A
-	 * server that cannot receive a task, or whose state could not be read,
-	 * is unselected. Rows of a load superseded by a newer one, or of a note
-	 * left meanwhile, are dropped.
+	 * Searches the partners of a server for the lead row, online or in the
+	 * cache; a result arriving after a newer keystroke, or after the picker
+	 * was rebuilt, is dropped.
+	 */
+	searchPartners(cfg: SyncConfig, text: string) {
+		const row = this.state.targets[cfg.id]?.lead;
+		if (!row) return;
+		row.query = text;
+		const pending = this._partnerSearch.get(cfg.id);
+		if (pending) clearTimeout(pending);
+		const load = this._targetsLoad;
+		this._partnerSearch.set(cfg.id, setTimeout(async () => {
+			this._partnerSearch.delete(cfg.id);
+			try {
+				const online = await networkService.isOnline();
+				const found = await this.syncService.partners.search(await this.credsFor(cfg), text, { online });
+				const current = this.state.targets[cfg.id]?.lead;
+				if (load !== this._targetsLoad || !current || current.query !== text) return;
+				this.state.targets[cfg.id].lead = withPartners(current, found);
+			} catch (e: unknown) {
+				const current = this.state.targets[cfg.id]?.lead;
+				if (current) current.error = e instanceof Error ? e.message : String(e);
+			}
+		}, 300));
+	}
+
+	/**
+	 * Fills state.targets for configs (see buildTargetRows). A server that
+	 * can receive nothing (every kind unusable or failed) is unselected.
+	 * Rows of a load superseded by a newer one, or of a note left
+	 * meanwhile, are dropped.
 	 */
 	private async loadTaskTargets(configs: SyncConfig[]) {
 		const load = ++this._targetsLoad;
 		const noteId = this.state.noteId;
 		const online = await networkService.isOnline();
 		await Promise.all(configs.map(async (cfg) => {
-			const row = await buildTaskTargetRow(this.syncService, noteId, cfg.id, () => this.credsFor(cfg), online);
+			const rows = await buildTargetRows(this.syncService, noteId, cfg.id, () => this.credsFor(cfg), online);
 			if (load !== this._targetsLoad || this.state.noteId !== noteId) return;
-			this.state.taskTargets[cfg.id] = row;
-			if (row.unusable || (row.error && !row.needsChoice)) {
+			this.state.targets[cfg.id] = rows;
+			if (!serverUsable(rows)) {
 				this.state.selectedConfigIds = this.state.selectedConfigIds.filter((id: string) => id !== cfg.id);
 			}
 		}));
@@ -617,7 +726,7 @@ export class NoteComponent extends EnhancedComponent {
 		const selected = this.state.syncConfigs.filter((c) => this.state.selectedConfigIds.includes(c.id));
 		if (selected.length === 0) return;
 		try {
-			await applyTaskTargets(this.syncService, this.state.noteId, selected.map((c) => c.id), this.state.taskTargets);
+			await applyTaskTargets(this.syncService, this.state.noteId, selected.map((c) => c.id), this.state.targets);
 		} catch (e: unknown) {
 			this.showErrorDialog(e instanceof Error ? e.message : String(e));
 			return;
@@ -666,18 +775,22 @@ export class NoteComponent extends EnhancedComponent {
 		const deleted: SyncConfig[] = [];
 		const blocked: SyncConfig[] = [];
 		for (const cfg of configs) {
-			const link = await this.databaseService.findNoteLink(this.state.noteId, cfg.id, "project.task", "create", true);
-			const op = link?.remoteState === "ok"
-				? null
-				: await this.syncService.outbox.find(this.state.noteId, cfg.id, TASK_CREATE);
-			if (op?.status === "blocked") blocked.push(cfg);
-			else if (link?.remoteState === "deleted" && !op) deleted.push(cfg);
-			else queued.push(cfg);
+			let pushable = false;
+			for (const kind of await this.syncService.noteKinds(this.state.noteId, cfg.id)) {
+				const link = await this.databaseService.findNoteLink(this.state.noteId, cfg.id, KINDS[kind].model, "create", true);
+				const op = link?.remoteState === "ok"
+					? null
+					: await this.syncService.outbox.find(this.state.noteId, cfg.id, KINDS[kind].opKind);
+				if (op?.status === "blocked") { if (!blocked.includes(cfg)) blocked.push(cfg); }
+				else if (link?.remoteState === "deleted" && !op) { if (!deleted.includes(cfg)) deleted.push(cfg); }
+				else pushable = true;
+			}
+			if (pushable) queued.push(cfg);
 		}
 		if (deleted.length > 0) {
 			await Dialog.alert({
-				title: "Tâche supprimée sur le serveur",
-				message: "La tâche liée a été supprimée sur : "
+				title: "Enregistrement supprimé sur le serveur",
+				message: "Un enregistrement lié a été supprimé sur : "
 					+ deleted.map((c) => c.name || c.appUrl).join(", ")
 					+ ".\nSynchronisez en ligne pour la recréer.",
 			});
@@ -685,7 +798,7 @@ export class NoteComponent extends EnhancedComponent {
 		if (blocked.length > 0) {
 			await Dialog.alert({
 				title: "Création en attente d'un choix",
-				message: "La création de la tâche attend votre décision sur : "
+				message: "Une création attend votre décision sur : "
 					+ blocked.map((c) => c.name || c.appUrl).join(", ")
 					+ ".\nSynchronisez en ligne pour la terminer.",
 			});
@@ -703,48 +816,65 @@ export class NoteComponent extends EnhancedComponent {
 		return syncStatus;
 	}
 
+	/**
+	 * Pushes the note to one server on a tap and settles what needs the
+	 * user: a kind left to choose later marks the server pending; an
+	 * ambiguous creation asks which record to link, then pushes again with
+	 * it, so the next failure is handled the same way (at most once per
+	 * kind); a record deleted on the server asks whether to recreate it,
+	 * through the picker. Any other failure is raised.
+	 */
 	private async doPushCore(cfg: SyncConfig): Promise<void> {
 		const creds = await this.credsFor(cfg);
-		try {
-			await this.syncService.pushNote(creds, this.state.noteId, { userInitiated: true });
-		} catch (e: unknown) {
-			// Left to choose later: the creation waits, it has not failed;
-			// pending, as the same choice made offline (queueForReconnect)
-			if (e instanceof OutboxBlockedError && e.reason === "incomplete") {
-				await this.databaseService.markNotePendingForConfigs(this.state.noteId, [cfg.id]);
+		let options: PushOptions = { userInitiated: true };
+		for (let round = 0; round <= TARGET_KINDS.length; round++) {
+			try {
+				await this.syncService.pushNote(creds, this.state.noteId, options);
+				return;
+			} catch (e: unknown) {
+				// Left to choose later: the creation waits, it has not failed;
+				// pending, as the same choice made offline (queueForReconnect)
+				if (e instanceof OutboxBlockedError && e.reason === "incomplete") {
+					await this.databaseService.markNotePendingForConfigs(this.state.noteId, [cfg.id]);
+					return;
+				}
+				if (e instanceof OutboxBlockedError && e.reason === "ambiguous" && e.candidates.length > 0) {
+					options = { userInitiated: true, adopt: await this.pickAmbiguousRecord(e) };
+					continue;
+				}
+				if (!(e instanceof RemoteRecordDeletedError)) throw e;
+				// Deleted on the server: recreated only on the user's say-so, with
+				// the choices the picker then asks for
+				const { value } = await Dialog.confirm({
+					title: "Enregistrement supprimé sur le serveur",
+					message: `${e.message}\nLe recréer à partir de cette note ? Vous choisirez sa cible.`,
+				});
+				if (value) this._pickAfterSync = true;
 				return;
 			}
-			if (e instanceof OutboxBlockedError && e.reason === "ambiguous" && e.candidates.length > 0) {
-				await this.resolveAmbiguousCreation(creds, e);
-				return;
-			}
-			if (!(e instanceof RemoteRecordDeletedError)) throw e;
-			// Deleted on the server: recreated only on the user's say-so, in
-			// the project the picker then asks for
-			const { value } = await Dialog.confirm({
-				title: "Tâche supprimée sur le serveur",
-				message: `${e.message}\nLa recréer à partir de cette note ? Vous choisirez son projet.`,
-			});
-			if (value) this._pickAfterSync = true;
 		}
+		throw new Error("Création toujours bloquée : plusieurs enregistrements correspondent encore.");
 	}
 
 	/**
-	 * Several tasks carry this note's reference on the server: the user
-	 * picks the one to link, by number, or leaves the creation blocked.
+	 * Several records carry this note's reference on the server: the user
+	 * picks the one to link, by number; cancelling leaves the creation
+	 * blocked and raises. The error's opKind says which kind of record (a
+	 * task when unknown).
 	 */
-	private async resolveAmbiguousCreation(creds: SyncCredentials, e: OutboxBlockedError): Promise<void> {
+	private async pickAmbiguousRecord(e: OutboxBlockedError): Promise<{ kind: TargetKind; resId: number }> {
 		const ids = e.candidates;
+		const kind = TARGET_KINDS.find((k) => KINDS[k].opKind === e.opKind) ?? "task";
 		const { value, cancelled } = await Dialog.prompt({
-			title: "Plusieurs tâches correspondent",
-			message: `${e.message}\nNuméro de la tâche à lier à cette note (${ids.map((id) => `#${id}`).join(", ")}) :`,
+			title: "Plusieurs enregistrements correspondent",
+			message: `${e.message}\nNuméro de l'enregistrement à lier à cette note (${ids.map((id) => `#${id}`).join(", ")}) :`,
 			inputText: String(ids[0]),
 		});
 		const picked = Number(String(value ?? "").replace(/^#/, "").trim());
 		if (cancelled || !ids.includes(picked)) {
-			throw new Error(`Création bloquée : aucune tâche choisie parmi ${ids.map((id) => `#${id}`).join(", ")}.`);
+			throw new Error(`Création bloquée : aucun enregistrement choisi parmi ${ids.map((id) => `#${id}`).join(", ")}.`);
 		}
-		await this.syncService.pushNote(creds, this.state.noteId, { userInitiated: true, adoptTaskId: picked });
+		return { kind, resId: picked };
 	}
 
 	private async doPush(cfg: SyncConfig) {
@@ -928,8 +1058,10 @@ export class NoteComponent extends EnhancedComponent {
 		const appItems = links.flatMap((link) => {
 			const app = apps.find((a) => syncConfigIdFor(a.url, a.username, a.database) === link.configId);
 			if (!app) return [];
+			const kind = TARGET_KINDS.find((k) => KINDS[k].model === link.model);
 			return [{
-				label: app.url, appUrl: app.url, username: app.username, password: app.password,
+				label: `${kind ? this.t("label.sync_kind_" + kind) : link.model} #${link.resId} — ${app.url}`,
+				appUrl: app.url, username: app.username, password: app.password,
 				model: link.model, resId: link.resId,
 			}];
 		});
@@ -951,6 +1083,13 @@ export class NoteComponent extends EnhancedComponent {
 	async openInAppForConfig(app: OpenInAppItem) {
 		this.state.openInApp.visible = false;
 		const baseUrl = /^https?:\/\//i.test(app.appUrl) ? app.appUrl : "https://" + app.appUrl;
+		// The login script types the password into the page: same rule as sync requests
+		try {
+			assertUrlAllowed(baseUrl);
+		} catch (e: unknown) {
+			await Dialog.alert({ message: e instanceof Error ? e.message : String(e) });
+			return;
+		}
 		const taskUrl = `${baseUrl}/web#id=${app.resId}&model=${encodeURIComponent(app.model)}&view_type=form`;
 
 		const username = app.username.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
