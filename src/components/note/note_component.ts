@@ -20,6 +20,7 @@ import {
 	MESSAGE_POST,
 	PushOptions,
 	RemoteRecordDeletedError,
+	SyncConflictError,
 	SyncCredentials,
 	TargetKind,
 	TARGET_KINDS,
@@ -75,6 +76,21 @@ import { NoteBottomControlsComponent } from "./bottom_controls/note_bottom_contr
 import { NoteContentComponent } from "./content/note_content_component";
 import { NoteTopControlsComponent } from "./top_controls/note_top_controls_component";
 import { TagManagerComponent } from "./tag_manager/tag_manager_component";
+
+/** One conflicted link in the conflict dialog: its fields, each with both values and the choice. */
+interface ConflictItem {
+	linkId: string;
+	label: string;
+	rows: Array<{ field: string; mine: string; theirs: string; choice: "mine" | "theirs" }>;
+}
+
+/** A conflicting value as shown: tags joined, a yes or no, none as a dash. */
+function conflictText(value: any): string {
+	if (value === null || value === undefined || value === "") return "—";
+	if (Array.isArray(value)) return value.length > 0 ? value.join(", ") : "—";
+	if (typeof value === "boolean") return value ? "oui" : "non";
+	return String(value);
+}
 
 /** One remote record of the note, offered by "Ouvrir dans l'app". */
 interface OpenInAppItem {
@@ -652,6 +668,38 @@ export class NoteComponent extends EnhancedComponent {
 			</div>
 		</div>
 		<div
+			t-if="state.conflictDialog.visible"
+			class="error-dialog-overlay"
+			role="presentation"
+		>
+			<div class="error-dialog conflict-dialog" role="dialog" aria-modal="true" aria-labelledby="conflict-dialog-title">
+				<p id="conflict-dialog-title" class="conflict-dialog__title"><t t-esc="t('label.conflict_title')"/></p>
+				<p class="breadcrumb__config-note"><t t-esc="t('label.conflict_hint')"/></p>
+				<t t-foreach="state.conflictDialog.items" t-as="item" t-key="item.linkId">
+					<p class="conflict-dialog__record" t-esc="item.label"/>
+					<t t-foreach="item.rows" t-as="crow" t-key="crow.field">
+						<fieldset class="conflict-dialog__field">
+							<legend t-esc="t('label.conflict_field_' + crow.field)"/>
+							<label class="conflict-dialog__choice">
+								<input type="radio" t-att-name="item.linkId + crow.field" t-att-checked="crow.choice === 'mine'" t-on-change="() => this.setConflictChoice(item.linkId, crow.field, 'mine')"/>
+								<span><t t-esc="t('label.conflict_mine')"/></span>
+								<pre class="conflict-dialog__value" t-esc="crow.mine"/>
+							</label>
+							<label class="conflict-dialog__choice">
+								<input type="radio" t-att-name="item.linkId + crow.field" t-att-checked="crow.choice === 'theirs'" t-on-change="() => this.setConflictChoice(item.linkId, crow.field, 'theirs')"/>
+								<span><t t-esc="t('label.conflict_theirs')"/></span>
+								<pre class="conflict-dialog__value" t-esc="crow.theirs"/>
+							</label>
+						</fieldset>
+					</t>
+				</t>
+				<div class="error-dialog__actions">
+					<button type="button" class="error-dialog__btn error-dialog__btn--note" t-att-disabled="state.conflictDialog.saving" t-on-click.stop.prevent="confirmConflicts"><t t-esc="t('label.conflict_apply')"/></button>
+					<button type="button" class="error-dialog__btn error-dialog__btn--close" t-on-click.stop.prevent="closeConflictDialog"><t t-esc="t('button.cancel')"/></button>
+				</div>
+			</div>
+		</div>
+		<div
 			t-if="state.errorDialog.visible"
 			class="error-dialog-overlay"
 			role="presentation"
@@ -728,6 +776,8 @@ export class NoteComponent extends EnhancedComponent {
 			showOptionsMenu: false,
 			debugDialog: { visible: false, message: "" },
 			errorDialog: { visible: false, message: "" },
+			/** The note's conflicts, per link, with the user's choice per field. */
+			conflictDialog: { visible: false, saving: false, items: [] as ConflictItem[] },
 			openInApp: { visible: false, apps: [] as OpenInAppItem[] },
 			priorityPicker: { visible: false },
 			syncAnnouncement: "",
@@ -783,6 +833,7 @@ export class NoteComponent extends EnhancedComponent {
 			case "synced":  return "✓☁";
 			case "error":   return "✗☁";
 			case "pending": return "☁!";
+			case "conflict": return "⇄☁";
 			default:        return "☁";
 		}
 	}
@@ -795,6 +846,7 @@ export class NoteComponent extends EnhancedComponent {
 			case "synced":  return `Synchronisé${server}`;
 			case "error":   return `Erreur de sync${server}`;
 			case "pending": return "Modifications en attente";
+			case "conflict": return "Conflit : modifiée dans l'app et sur le serveur";
 			default:        return "Pousser vers Odoo";
 		}
 	}
@@ -806,6 +858,7 @@ export class NoteComponent extends EnhancedComponent {
 			case "synced":  return cfg?.name || cfg?.appUrl || "Synchronisé";
 			case "error":   return "Erreur";
 			case "pending": return "En attente";
+			case "conflict": return "Conflit";
 			default:        return "Synchroniser";
 		}
 	}
@@ -1314,6 +1367,8 @@ export class NoteComponent extends EnhancedComponent {
 
 	async pushToOdoo() {
 		if (this.state.isSyncing || this.state.newNote || this.state.showConfigPicker) return;
+		// A conflict is settled first: nothing is sent to its server before
+		if (this.state.syncStatus === "conflict" && await this.openConflictDialog()) return;
 
 		// Configs are local: the server choice is made, and kept, even offline
 		const configs = await loadSyncConfigs(this.appService);
@@ -1497,6 +1552,12 @@ export class NoteComponent extends EnhancedComponent {
 					options = { userInitiated: true, adopt: await this.pickAmbiguousRecord(e) };
 					continue;
 				}
+				// Changed in the app and on the server: the user chooses before anything is sent
+				if (e instanceof SyncConflictError) {
+					await this.databaseService.refreshNoteSyncStatus(this.state.noteId);
+					await this.openConflictDialog();
+					return;
+				}
 				if (!(e instanceof RemoteRecordDeletedError)) throw e;
 				// Deleted on the server: recreated only on the user's say-so, with
 				// the choices the picker then asks for
@@ -1575,6 +1636,59 @@ export class NoteComponent extends EnhancedComponent {
 		} else {
 			this.announceSyncStatus(await this.refreshSyncStatusFromDb());
 		}
+	}
+
+	// ── Conflict dialog ─────────────────────────────────────────────────────
+
+	/** Opens the conflict dialog when the note has conflicts; returns whether it did. */
+	async openConflictDialog(): Promise<boolean> {
+		const conflicts = await this.syncService.conflictsOf(this.state.noteId);
+		if (conflicts.length === 0) return false;
+		const configs = this.state.syncConfigs.length > 0 ? this.state.syncConfigs : await loadSyncConfigs(this.appService);
+		this.state.conflictDialog.items = conflicts.map((c) => ({
+			linkId: c.linkId,
+			label: `${configs.find((cfg: SyncConfig) => cfg.id === c.configId)?.name || c.configId} — ${c.model} #${c.resId}`,
+			rows: (Object.entries(c.fields) as Array<[string, { mine: any; theirs: any }]>).map(([field, v]) => ({
+				field, mine: conflictText(v.mine), theirs: conflictText(v.theirs), choice: "mine" as const,
+			})),
+		}));
+		this.state.conflictDialog.visible = true;
+		return true;
+	}
+
+	setConflictChoice(linkId: string, field: string, choice: "mine" | "theirs") {
+		const row = this.state.conflictDialog.items.find((i: ConflictItem) => i.linkId === linkId)
+			?.rows.find((r) => r.field === field);
+		if (row) row.choice = choice;
+	}
+
+	closeConflictDialog() {
+		this.state.conflictDialog.visible = false;
+	}
+
+	/**
+	 * Settles every conflict with the choices made, reloads the note (the
+	 * server's values chosen are in it now), then pushes it: the values kept
+	 * from the app reach the server.
+	 */
+	async confirmConflicts() {
+		if (this.state.conflictDialog.saving) return;
+		this.state.conflictDialog.saving = true;
+		try {
+			for (const item of this.state.conflictDialog.items as ConflictItem[]) {
+				const choices = Object.fromEntries(item.rows.map((r) => [r.field, r.choice]));
+				await this.syncService.resolveConflict(this.state.noteId, item.linkId, choices);
+			}
+			this.state.conflictDialog.visible = false;
+			await this.reloadPulledFields();
+			await this.refreshSyncStatusFromDb();
+		} catch (e: unknown) {
+			this.showErrorDialog(e instanceof Error ? e.message : String(e));
+			return;
+		} finally {
+			this.state.conflictDialog.saving = false;
+		}
+		await this.pushToOdoo();
 	}
 
 	// ── Error dialog ────────────────────────────────────────────────────────
@@ -2004,6 +2118,9 @@ export class NoteComponent extends EnhancedComponent {
 		this.state.note.pinned = stored.pinned;
 		this.state.note.archived = stored.archived;
 		this.state.note.done = stored.done;
+		// A pull merges text, tags and the date too
+		this.state.note.tags = stored.tags;
+		this.state.note.entries = stored.entries;
 		await this.loadSyncStatus();
 	}
 

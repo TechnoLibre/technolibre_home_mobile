@@ -1860,6 +1860,44 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "sync.two-way",
+                label: { en: "Two-way sync and conflicts", fr: "Sync dans les deux sens et conflits" },
+                description: {
+                    en: "Server changes come back into the note, field by field; a field changed on both sides is a conflict the user settles.",
+                    fr: "Les changements du serveur reviennent dans la note, champ par champ ; un champ changé des deux côtés est un conflit que l'utilisateur règle.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/noteMirror.test.ts", "src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "Each link keeps a base: the note's and the record's mirrored values "
+                        + "(title, text, tags, date, done, archived, pinned, as each kind has "
+                        + "them) at their last exchange. A pull of tasks, opportunities, invoices "
+                        + "and activities (one cursor per model), and every push before writing, "
+                        + "read the record and merge three ways: a field changed on the server "
+                        + "only goes into the note (the text replacing its text entries), one "
+                        + "changed in the app only is written alone, tags as added and removed "
+                        + "(commands 4 and 3) and a task's state only when done changed. A field "
+                        + "changed on both sides puts the server in conflict: nothing is written "
+                        + "until the note's conflict dialog keeps, per field, the app's or the "
+                        + "server's version.",
+                    fr: "Chaque lien garde une base : les valeurs miroirs de la note et du "
+                        + "record (titre, texte, étiquettes, date, fait, archivée, épinglée, selon "
+                        + "le type) au dernier échange. Le pull des tâches, opportunités, factures "
+                        + "et activités (un curseur par modèle), et chaque envoi avant d'écrire, "
+                        + "lisent le record et fusionnent à trois voies : un champ changé sur le "
+                        + "serveur seulement entre dans la note (le texte remplaçant ses entrées "
+                        + "texte), un champ changé dans l'app seulement est écrit seul, les "
+                        + "étiquettes en ajouts et retraits (commandes 4 et 3) et l'état d'une "
+                        + "tâche seulement si fait change. Un champ changé des deux côtés met le "
+                        + "serveur en conflit : rien n'est écrit avant que l'écran de conflit de "
+                        + "la note garde, champ par champ, la version de l'app ou du serveur.",
+                },
+                dependsOn: ["sync.task-project", "sync.lead", "sync.invoice", "sync.activity"],
+                demo: NONE_BG,
+                files: ["src/services/noteMirror.ts"],
+            },
+            {
                 id: "sync.http-policy",
                 label: { en: "Unencrypted http", fr: "http non chiffré" },
                 description: {

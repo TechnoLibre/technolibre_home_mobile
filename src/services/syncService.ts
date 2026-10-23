@@ -7,6 +7,11 @@ import { ACTIVITY_TYPE_MODEL, ActivityTypeService } from "./odoo/activityTypeSer
 import { unusableReason } from "./odoo/capabilityService";
 import { InvoiceFormService } from "./odoo/invoiceForm";
 import { ActivityCalendarService } from "./activityCalendarService";
+import {
+  applyValues, changedFields, htmlToParagraphs, localValues, mediaOf, MergeResult, mergeFields, MirrorBase,
+  MirrorField, mirrorFields, MirrorKind, MirrorValues, PULL_ONLY, PUSH_ONLY, remoteDay, textOf, titledValues, titleOf,
+} from "./noteMirror";
+import type { Tag } from "../models/tag";
 import { Application } from "../models/application";
 import {
   Note,
@@ -336,6 +341,149 @@ export function clientMarker(clientUuid: string): string {
 /** project.task.state of a closed task (Odoo 17+). */
 const TASK_STATE_DONE = "1_done";
 
+/** Kinds of record pulled back into notes, in pull order. */
+const MIRROR_KINDS: MirrorKind[] = ["task", "lead", "invoice", "activity"];
+
+/** A record's text and app lines, as noteMirror compares them (see MirrorField). */
+function remoteBody(html: string | false | null | undefined): { text: string; media: string } {
+  const paragraphs = htmlToParagraphs(html);
+  return { text: textOf(paragraphs), media: mediaOf(paragraphs) };
+}
+
+/** Tag names of a row's tag_ids, sorted. */
+function rowTags(row: any, names: Map<number, string>): string[] {
+  return (Array.isArray(row.tag_ids) ? row.tag_ids : []).map((id: number) => names.get(id)).filter(Boolean).sort();
+}
+
+/**
+ * How each kind of record is read back: its model, the link kind and tag
+ * model, the fields read, and the mirrored values of a row (see
+ * noteMirror). An invoice's title is the bold first paragraph of its
+ * narration, absent when the server removed it.
+ */
+const MIRROR_SPECS: Record<MirrorKind, {
+  model: string;
+  linkKind: NoteLinkKind;
+  tagModel: string | null;
+  fields: (odooVersion: number) => string[];
+  values: (row: any, tagNames: Map<number, string>, odooVersion: number) => MirrorValues;
+}> = {
+  task: {
+    model: "project.task", linkKind: "create", tagModel: "project.tags",
+    fields: (v) => ["name", "description", "priority", "active", "tag_ids", "date_deadline", ...(v >= 17 ? ["state"] : [])],
+    values: (row, names, v) => ({
+      title: titleOf(row.name), ...remoteBody(row.description), tags: rowTags(row, names),
+      date: remoteDay(row.date_deadline), archived: row.active === false, pinned: row.priority === "1",
+      ...(v >= 17 ? { done: row.state === TASK_STATE_DONE } : {}),
+    }),
+  },
+  lead: {
+    model: LEAD_MODEL, linkKind: "create", tagModel: "crm.tag",
+    fields: () => ["name", "description", "tag_ids", "date_deadline"],
+    values: (row, names) => ({
+      title: titleOf(row.name), ...remoteBody(row.description), tags: rowTags(row, names), date: remoteDay(row.date_deadline),
+    }),
+  },
+  invoice: {
+    model: INVOICE_MODEL, linkKind: "create", tagModel: null,
+    fields: () => ["narration"],
+    values: (row) => {
+      const { title, text, media } = titledValues(row.narration);
+      return { ...(title !== null ? { title } : {}), text, media };
+    },
+  },
+  activity: {
+    model: ACTIVITY_MODEL, linkKind: "activity", tagModel: null,
+    fields: (v) => ["summary", "note", "date_deadline", ...(v >= 17 ? ["active"] : [])],
+    values: (row) => ({ title: titleOf(row.summary), ...remoteBody(row.note), date: remoteDay(row.date_deadline) }),
+  },
+};
+
+/** The mirror kind of a link: its kind of target, or an activity; null for a message. */
+function mirrorKindOf(link: NoteLink): MirrorKind | null {
+  if (link.kind === "activity") return "activity";
+  if (link.kind !== "create") return null;
+  const kind = (Object.keys(MIRROR_SPECS) as MirrorKind[]).find((k) => k !== "activity" && MIRROR_SPECS[k].model === link.model);
+  return kind ?? null;
+}
+
+/** A link's base (see MirrorBase), null when it has none yet. */
+function baseOf(link: NoteLink): MirrorBase | null {
+  const base = link.params?.base;
+  return base && typeof base === "object" && base.local && base.remote ? base : null;
+}
+
+/** The values of fields only. */
+function pick(values: MirrorValues, fields: MirrorField[]): MirrorValues {
+  return Object.fromEntries(fields.filter((f) => f in values).map((f) => [f, values[f]]));
+}
+
+/**
+ * The base after a push of fields changed (all fields when there was no
+ * base): both sides now hold the note's values for them. changed holds
+ * only the fields the push actually sent (see sentFields): a field left
+ * out keeps its base, and the next merge finds it again.
+ */
+function advanceBase(base: MirrorBase | null, local: MirrorValues, changed: MirrorField[], fields: MirrorField[]): MirrorBase {
+  if (!base) return { local: pick(local, fields), remote: pick(local, fields) };
+  return { local: { ...base.local, ...pick(local, changed) }, remote: { ...base.remote, ...pick(local, changed) } };
+}
+
+/** A note's tags by name, its own tags table resolving the ids note.tags holds. */
+async function tagNameMap(db: DatabaseService): Promise<Map<string, Tag>> {
+  try {
+    return new Map((await db.getAllTags()).map((t) => [t.id, t]));
+  } catch {
+    return new Map();
+  }
+}
+
+/** The fields a push of kind sends: those it mirrors, less those it only reads back. */
+function pushFields(kind: MirrorKind, odooVersion: number): MirrorField[] {
+  const pullOnly = PULL_ONLY[kind] ?? [];
+  return mirrorFields(kind, odooVersion).filter((f) => !pullOnly.includes(f));
+}
+
+/** The payload keys each mirrored field is written through, per kind. */
+const PAYLOAD_KEYS: Record<MirrorKind, Partial<Record<MirrorField, string[]>>> = {
+  task: {
+    title: ["name"], text: ["description"], media: ["description", "geo_task_point"], tags: ["tag_ids"],
+    date: ["date_deadline", "description"], done: ["state"], archived: ["active"], pinned: ["priority"],
+  },
+  lead: { title: ["name"], text: ["description"], media: ["description"], tags: ["tag_ids"], date: ["date_deadline", "description"] },
+  invoice: { title: ["narration"], text: ["narration"], media: ["narration"] },
+  activity: { title: ["summary"], text: ["note"], media: ["note"] },
+};
+
+/** The fields of changed whose payload keys a payload holds: those it actually sends. */
+function sentFields(kind: MirrorKind, changed: MirrorField[], payload: Record<string, any>): MirrorField[] {
+  return changed.filter((f) => f === "tags" || (PAYLOAD_KEYS[kind][f] ?? []).some((key) => key in payload));
+}
+
+/**
+ * mergeFields for kind: its pull-only and push-only fields go one way
+ * only (see PULL_ONLY, PUSH_ONLY).
+ */
+function mergeKind(kind: MirrorKind, fields: MirrorField[], base: MirrorBase, local: MirrorValues, remote: MirrorValues): MergeResult {
+  return mergeFields(fields, base, local, remote, PULL_ONLY[kind] ?? [], PUSH_ONLY[kind] ?? []);
+}
+
+/** One of a note's conflicts: on link, the fields changed in the app and on the server. */
+export interface NoteConflict {
+  linkId: string;
+  configId: string;
+  model: string;
+  resId: number;
+  fields: MergeResult["conflicts"];
+}
+
+/**
+ * Raised by a push that finds a field changed in the app and on the
+ * server since their last exchange: nothing is written until the user
+ * chooses (see resolveConflict).
+ */
+export class SyncConflictError extends Error {}
+
 /** Tasks per pull page, and pages per pull (bounds one pull to 5000 tasks). */
 const PULL_PAGE_SIZE = 100;
 const PULL_MAX_PAGES = 50;
@@ -355,12 +503,13 @@ const FIRST_PULL_CLOCK_MARGIN_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Order in which a push raises the failures of a note's kinds, most
- * urgent for the user first: a creation to settle by hand (ambiguous),
- * then any other error, then a creation waiting for a choice, then a
+ * urgent for the user first: a creation to settle by hand (ambiguous), a
+ * conflict to settle, then any other error, then a creation waiting for a choice, then a
  * record deleted on the server.
  */
 function failureRank(e: unknown): number {
   if (e instanceof OutboxBlockedError && e.reason === "ambiguous") return 0;
+  if (e instanceof SyncConflictError) return 0.5;
   if (e instanceof RemoteRecordDeletedError) return 3;
   if (e instanceof OutboxBlockedError && e.reason === "incomplete") return 2;
   return 1;
@@ -373,6 +522,19 @@ export function localDay(iso: string | null): string | null {
   if (Number.isNaN(d.getTime())) return null;
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * A task's date_deadline from the note's first date (ISO, UTC): its local
+ * day on Odoo 16, where the field is a Date; the instant in Odoo's
+ * "YYYY-MM-DD HH:MM:SS" UTC form on 17+, a Datetime, so it reads back as
+ * the same local day; false for none.
+ */
+function taskDeadline(iso: string | null, odooVersion: number): string | false {
+  if (!iso) return false;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  return odooVersion >= 17 ? d.toISOString().slice(0, 19).replace("T", " ") : localDay(iso)!;
 }
 
 /** Creation params of a kind's target (null: no project, no partner). */
@@ -506,6 +668,13 @@ interface CreateSpec {
   sentParams?: (values: Record<string, any>) => Record<string, any>;
   /** Server exceptions that also refuse this create, beside REFUSED_ERRORS. */
   refusedErrors?: string[];
+  /**
+   * The mirror kind of the record (see noteMirror): its link starts with a
+   * base of the note's values as sent, the server's taken as equal except
+   * baseRemote (an activity's deadline, chosen apart from the note).
+   */
+  mirror?: MirrorKind;
+  baseRemote?: MirrorValues;
   /**
    * Runs once the record is created, or found again by its marker or
    * adopted (adopted: true, the first attempt may have run it already);
@@ -934,23 +1103,129 @@ export class SyncService {
     const stale = await this.outbox.find(noteId, configId, def.opKind);
     if (stale) await this.outbox.cancel(stale.id);
 
+    if (link.params?.conflict) {
+      // Waits for the user's choice: written by nothing, a tap reports it
+      if (!options.userInitiated) return;
+      throw new SyncConflictError(`${def.describe(link.resId)} a changé dans l'app et sur ${creds.odooUrl} : choisissez quoi garder.`);
+    }
+    const gone = async () => {
+      await this.db.setNoteLinkRemoteDeleted(link.id);
+      if (!(await this.hasOtherLiveKind(noteId, configId, kind))) {
+        await this.db.clearNotePerServerStatus(noteId, configId);
+      }
+      await this.db.refreshNoteSyncStatus(noteId);
+      return new RemoteRecordDeletedError(`${def.describe(link.resId)} a été supprimée sur ${creds.odooUrl}.`);
+    };
     await this.callWithAuth(creds, async (sessionId, odooVersion) => {
-      const payload = await this.payloadFor(kind, creds, sessionId, note, odooVersion, link.clientUuid ?? null);
+      let state: "ok" | "conflict" | "archived" | "unread";
       try {
-        await this.jsonRpc(creds.odooUrl, sessionId, def.model, "write", [[link.resId], payload]);
+        state = await this.reconcile(creds, sessionId, link, kind, odooVersion);
       } catch (e: unknown) {
         if (!(e instanceof OdooRpcError) || e.odooName !== "odoo.exceptions.MissingError") throw e;
-        await this.db.setNoteLinkRemoteDeleted(link.id);
-        if (!(await this.hasOtherLiveKind(noteId, configId, kind))) {
-          await this.db.clearNotePerServerStatus(noteId, configId);
-        }
-        await this.db.refreshNoteSyncStatus(noteId);
-        throw new RemoteRecordDeletedError(`${def.describe(link.resId)} a été supprimée sur ${creds.odooUrl}.`);
+        throw await gone();
       }
+      if (state === "conflict") {
+        // Recorded on the link and the server's status: a background push leaves it to the user
+        if (!options.userInitiated) return;
+        throw new SyncConflictError(`${def.describe(link.resId)} a changé dans l'app et sur ${creds.odooUrl} : choisissez quoi garder.`);
+      }
+      const current = await this.named((await this.db.getNoteById(noteId)) ?? note);
+      const fresh = (await this.db.getNoteLinks(noteId)).find((l) => l.id === link.id) ?? link;
+      const full = await this.payloadFor(kind, creds, sessionId, current, odooVersion, link.clientUuid ?? null);
+      const local = localValues(current, this.buildHtml(current.entries));
+      const fields = pushFields(kind, odooVersion);
+      const base = baseOf(fresh);
+      const changed = base && state !== "unread" ? changedFields(fields, base, local) : fields;
+      const payload = base && state !== "unread"
+        ? await this.changedPayload(kind, creds, sessionId, full, changed, base, local)
+        : full;
+      const sent = base ? sentFields(kind, changed, payload) : changed;
+      if (Object.keys(payload).length > 0) {
+        try {
+          await this.jsonRpc(creds.odooUrl, sessionId, def.model, "write", [[link.resId], payload]);
+        } catch (e: unknown) {
+          if (!(e instanceof OdooRpcError) || e.odooName !== "odoo.exceptions.MissingError") throw e;
+          throw await gone();
+        }
+      }
+      await this.db.setNoteLinkParams(fresh.id, { ...(fresh.params ?? {}), base: advanceBase(base, local, sent, fields) });
       const now = new Date().toISOString();
       await this.db.setNoteLinkSyncedAt(link.id, now);
+      // The fingerprint of the push's start: a change since, the pull's included, stays to send
       await this.settlePush(noteId, configId, fingerprint, now, null);
     });
+  }
+
+  /**
+   * Before a write: reads the linked record and merges it into the note
+   * (see applyPulled), so a change made on the server since the last
+   * exchange is taken, not overwritten. "conflict": a field changed on
+   * both sides, the push stops; "archived": an activity done on the
+   * server (Odoo 17+), not merged; "unread": not read back (deleted, or
+   * hidden by a record rule), the push then writes every field so the
+   * server says which (MissingError: deleted). A link with no base is not
+   * merged either.
+   */
+  private async reconcile(
+    creds: SyncCredentials,
+    sessionId: string,
+    link: NoteLink,
+    kind: MirrorKind,
+    odooVersion: number
+  ): Promise<"ok" | "conflict" | "archived" | "unread"> {
+    const spec = MIRROR_SPECS[kind];
+    const legacy = !baseOf(link);
+    // A link with no base has nothing to merge against: the push writes it all, as before bases;
+    // only an activity is still read, to tell one done on the server
+    if (legacy && !(kind === "activity" && odooVersion >= 17)) return "ok";
+    const rows: any[] = await this.jsonRpc(
+      creds.odooUrl, sessionId, spec.model, "search_read", [],
+      { domain: [["id", "=", link.resId]], fields: ["id", ...spec.fields(odooVersion)], limit: 1, context: WITH_ARCHIVED }
+    );
+    // Not read (deleted, or hidden by a record rule): a full write tells which
+    if (!Array.isArray(rows) || rows.length === 0) return legacy ? "ok" : "unread";
+    if (kind === "activity" && odooVersion >= 17 && rows[0].active === false) return "archived";
+    if (legacy) return "ok";
+    const tagNames = spec.tagModel ? await this.tagNames(creds, sessionId, spec.tagModel, rows) : new Map<number, string>();
+    await this.applyPulled(link, kind, spec.values(rows[0], tagNames, odooVersion), odooVersion);
+    const fresh = (await this.db.getNoteLinks(link.noteId)).find((l) => l.id === link.id);
+    return fresh?.params?.conflict ? "conflict" : "ok";
+  }
+
+  /**
+   * The part of a full payload a push sends for the changed fields (see
+   * PAYLOAD_KEYS). Tags are sent as the ones added (command 4, created
+   * when missing) and removed (command 3) in the app since the base, so
+   * tags others set on the record stay; a task's state goes only when done
+   * changed, so a state another user set (waiting, approved) stays.
+   */
+  private async changedPayload(
+    kind: MirrorKind,
+    creds: SyncCredentials,
+    sessionId: string,
+    full: Record<string, any>,
+    changed: MirrorField[],
+    base: MirrorBase,
+    local: MirrorValues
+  ): Promise<Record<string, any>> {
+    const payload: Record<string, any> = {};
+    for (const f of changed) {
+      for (const key of PAYLOAD_KEYS[kind][f] ?? []) if (key in full) payload[key] = full[key];
+    }
+    if (changed.includes("tags") && "tag_ids" in payload) {
+      const tagModel = MIRROR_SPECS[kind].tagModel!;
+      const before: string[] = base.local.tags ?? [];
+      const now: string[] = local.tags ?? [];
+      const added = now.filter((t) => !before.includes(t));
+      const removed = before.filter((t) => !now.includes(t));
+      const addedIds = await this.resolveTags(creds, sessionId, added, tagModel);
+      const removedIds: Array<{ id: number }> = removed.length === 0 ? [] : await this.jsonRpc(
+        creds.odooUrl, sessionId, tagModel, "search_read", [], { domain: [["name", "in", removed]], fields: ["id"] }
+      );
+      payload.tag_ids = [...addedIds.map((id) => [4, id]), ...removedIds.map((t) => [3, t.id])];
+      if (payload.tag_ids.length === 0) delete payload.tag_ids;
+    }
+    return payload;
   }
 
   /**
@@ -1006,6 +1281,7 @@ export class SyncService {
       ...(kind === "invoice" ? { context: { default_move_type: op.params.moveType ?? "out_invoice" } } : {}),
       check: (sessionId) => this.checkChosenRecords(kind, creds, op, sessionId),
       link: { kind: "create" },
+      mirror: kind,
       ...(tie && !tie.field
         ? { afterCreate: (sessionId: string, odooVersion: number, resId: number, adopted: boolean) =>
             this.crossLinkInvoice(creds, sessionId, odooVersion, resId, tie, adopted) }
@@ -1103,8 +1379,9 @@ export class SyncService {
     fingerprint: string,
     spec: CreateSpec
   ): Promise<void> {
-    const note = await this.db.getNoteById(op.noteId);
-    if (!note) return;
+    const stored = await this.db.getNoteById(op.noteId);
+    if (!stored) return;
+    const note = await this.named(stored);
     let createSentAt: string | undefined = op.params.createSentAt;
     if (createSentAt && new Date(createSentAt).getTime() > Date.now()) {
       // Stored under a clock that ran fast: the window restarts once, now
@@ -1195,9 +1472,48 @@ export class SyncService {
         createdAt: now,
         lastSyncedAt: now,
         clientUuid: op.clientUuid,
-        params: { ...(spec.link.params ?? {}), ...sent, ...after },
+        params: {
+          ...(spec.link.params ?? {}), ...sent, ...after,
+          ...(spec.mirror ? { base: this.createdBase(note, spec.mirror, odooVersion, spec.baseRemote) } : {}),
+        },
       });
     });
+  }
+
+  /**
+   * The note as Odoo sees it: the ids of its tags (note.tags holds the
+   * app's tag ids) turned into their names. A value no tag of the app has
+   * as id is a name already, kept as is.
+   */
+  private async named(note: Note): Promise<Note> {
+    const byId = await tagNameMap(this.db);
+    return { ...note, tags: note.tags.map((v) => byId.get(v)?.name ?? v) };
+  }
+
+  /**
+   * The app's tag ids for tag names read on a server: the tag of that name,
+   * else a new one (default colour), so a tag set on the server shows in
+   * the app like any other.
+   */
+  private async tagIdsFor(names: string[]): Promise<string[]> {
+    const tags = [...(await tagNameMap(this.db)).values()];
+    const ids: string[] = [];
+    for (const name of names) {
+      let tag = tags.find((t) => t.name === name);
+      if (!tag) {
+        tag = { id: uuidv4(), name, color: "#6b7280" };
+        await this.db.addTag(tag);
+        tags.push(tag);
+      }
+      ids.push(tag.id);
+    }
+    return ids;
+  }
+
+  /** The base of a record just created from note (see CreateSpec.mirror). */
+  private createdBase(note: Note, kind: MirrorKind, odooVersion: number, baseRemote: MirrorValues = {}): MirrorBase {
+    const values = pick(localValues(note, this.buildHtml(note.entries)), mirrorFields(kind, odooVersion));
+    return { local: values, remote: { ...values, ...baseRemote } };
   }
 
   /**
@@ -1634,7 +1950,7 @@ export class SyncService {
     for (const link of toWrite) {
       try {
         if (link.kind === "message") await this.writeMessage(creds, noteId, link, fingerprint);
-        else await this.writeActivity(creds, noteId, link, fingerprint);
+        else await this.writeActivity(creds, noteId, link, fingerprint, !!options.userInitiated);
       } catch (e: unknown) {
         keep(e);
       }
@@ -1664,8 +1980,13 @@ export class SyncService {
       );
     }
     const adopt = options.adopt?.kind === kind && options.adopt.opId === op.id ? options.adopt.resId : null;
+    // An activity with no deadline chosen is due today, the device's day, fixed once for every attempt
+    if (kind === "activity" && !op.params.deadline && !op.params.defaultDeadline) {
+      await this.outbox.setParams(op.id, { defaultDeadline: localDay(new Date().toISOString()) });
+    }
     await this.outbox.attempt(op.id, (running) => {
       const target = activityOfParams(running.params);
+      const deadline: string = target.deadline ?? running.params.defaultDeadline ?? localDay(new Date().toISOString());
       const checks: ChosenRecordCheck[] = [{
         model: target.resModel, id: target.resId, reason: "record_missing", label: "L'enregistrement",
         context: WITH_ARCHIVED,
@@ -1689,7 +2010,7 @@ export class SyncService {
             createValues: () => ({
               res_id: target.resId,
               ...(target.typeId != null ? { activity_type_id: target.typeId } : {}),
-              ...(target.deadline ? { date_deadline: target.deadline } : {}),
+              date_deadline: deadline,
               ...(target.userId != null ? { user_id: target.userId } : {}),
             }),
             // res_model_id is resolved from default_res_model by mail.activity's
@@ -1697,6 +2018,9 @@ export class SyncService {
             context: { default_res_model: target.resModel },
             check,
             link: { kind: "activity", params: activityParams(target) },
+            // Its deadline is the one chosen, not the note's date
+            mirror: "activity",
+            baseRemote: { date: deadline },
           }
         : {
             model: MESSAGE_MODEL,
@@ -1751,48 +2075,68 @@ export class SyncService {
    * server (removed, or archived when its type keeps done activities); the
    * link is then "done". An activity gone on the server (MissingError:
    * done or cancelled there) marks the link deleted without raising (see
-   * markAttachedGone). On Odoo 17+, where an activity done on the server
-   * is archived when its type keeps done activities, its active flag is
-   * read first: an archived one turns the link "done" untouched, since
-   * action_feedback would mark it done, and post that, a second time.
+   * markAttachedGone). The activity is read and merged into the note
+   * first (see reconcile): the fields changed in the app only are written,
+   * one changed on both sides stops the write as a conflict. On Odoo 17+,
+   * where an activity done on the server is archived when its type keeps
+   * done activities, an archived one turns the link "done" untouched,
+   * since action_feedback would mark it done, and post that, a second time.
    */
   private async writeActivity(
     creds: SyncCredentials,
     noteId: string,
     link: NoteLink,
-    fingerprint: string
+    fingerprint: string,
+    userInitiated = false
   ): Promise<void> {
-    const note = await this.db.getNoteById(noteId);
-    if (!note) return;
+    const conflict = () => new SyncConflictError(`L'activité #${link.resId} a changé dans l'app et sur ${creds.odooUrl} : choisissez quoi garder.`);
+    // Waits for the user's choice; a tap reports it
+    if (link.params?.conflict) {
+      if (userInitiated) throw conflict();
+      return;
+    }
     await this.callWithAuth(creds, async (sessionId, odooVersion) => {
-      let gone = false;
-      let archived = false;
+      let state: "ok" | "gone" | "conflict" | "archived" | "unread";
       try {
-        if (odooVersion >= 17) {
-          const rows: Array<{ id: number; active: boolean }> = await this.jsonRpc(
-            creds.odooUrl, sessionId, ACTIVITY_MODEL, "search_read", [],
-            { domain: [["id", "=", link.resId]], fields: ["active"], limit: 1, context: WITH_ARCHIVED }
-          );
-          gone = rows.length === 0;
-          archived = rows[0]?.active === false;
-        }
-        // Archived: done on the server already, nothing to write nor to mark
-        if (!gone && !archived && note.done) {
+        state = await this.reconcile(creds, sessionId, link, "activity", odooVersion);
+      } catch (e: unknown) {
+        if (!(e instanceof OdooRpcError) || e.odooName !== "odoo.exceptions.MissingError") throw e;
+        state = "gone";
+      }
+      if (state === "conflict") {
+        if (userInitiated) throw conflict();
+        return;
+      }
+      const note = await this.db.getNoteById(noteId);
+      if (!note) return;
+      const fresh = (await this.db.getNoteLinks(noteId)).find((l) => l.id === link.id) ?? link;
+      let done = state === "archived";
+      try {
+        if ((state === "ok" || state === "unread") && note.done) {
           await this.jsonRpc(creds.odooUrl, sessionId, ACTIVITY_MODEL, "action_feedback", [[link.resId]], { feedback: false });
-        } else if (!gone && !archived) {
-          await this.jsonRpc(creds.odooUrl, sessionId, ACTIVITY_MODEL, "write", [
-            [link.resId], this.buildActivityPayload(note, link.clientUuid ?? null),
-          ]);
+          done = true;
+        } else if (state === "ok" || state === "unread") {
+          const local = localValues(note, this.buildHtml(note.entries));
+          const fields = pushFields("activity", odooVersion);
+          const base = baseOf(fresh);
+          const changed = base && state === "ok" ? changedFields(fields, base, local) : fields;
+          const full = this.buildActivityPayload(note, link.clientUuid ?? null);
+          const payload = Object.fromEntries(Object.entries(full)
+            .filter(([key]) => changed.some((f) => (PAYLOAD_KEYS.activity[f] ?? []).includes(key))));
+          if (Object.keys(payload).length > 0) {
+            await this.jsonRpc(creds.odooUrl, sessionId, ACTIVITY_MODEL, "write", [[link.resId], payload]);
+          }
+          await this.db.setNoteLinkParams(fresh.id, { ...(fresh.params ?? {}), base: advanceBase(base, local, changed, fields) });
         }
       } catch (e: unknown) {
         if (!(e instanceof OdooRpcError) || e.odooName !== "odoo.exceptions.MissingError") throw e;
-        gone = true;
+        state = "gone";
       }
-      if (gone) {
+      if (state === "gone") {
         await this.markAttachedGone(noteId, link);
         return;
       }
-      if (note.done || archived) await this.db.setNoteLinkDone(link.id);
+      if (done) await this.db.setNoteLinkDone(link.id);
       const now = new Date().toISOString();
       await this.db.setNoteLinkSyncedAt(link.id, now);
       await this.settlePush(noteId, link.configId, fingerprint, now, null);
@@ -1949,51 +2293,42 @@ export class SyncService {
   // ─── Pull ────────────────────────────────────────────────────────────────
 
   /**
-   * Pulls tasks modified since lastSync from Odoo.
-   * Updates metadata for the notes linked to those tasks on this server.
-   * Returns the count of updated notes.
-   *
-   * Note: text entries are not re-parsed from HTML in v1 —
-   * mobile is the primary author of content.
+   * Pulls the records linked on this server modified since lastSync (see
+   * pullMirrored). Returns the count of updated notes.
    */
   async pullNotes(creds: SyncCredentials, lastSync: Date): Promise<number> {
-    return (await this.pullTasks(creds, lastSync.toISOString())).updated;
+    let updated = 0;
+    for (const kind of MIRROR_KINDS) updated += (await this.pullMirrored(creds, kind, lastSync.toISOString())).updated;
+    return updated;
   }
 
   /**
-   * Reads, page by page, the tasks linked on this target, whatever their
-   * project, with write_date >= since (archived ones included) and copies title, pinned, archived and — on
-   * Odoo 17+ — done onto the notes linked to them on this target. A note
-   * still "pending" or in "error" for this server is left
-   * untouched: its local edits have not reached the server yet, and
-   * overwriting them would lose them. A note the pull changes becomes
-   * pending for its other servers, and for this one when another kind of
-   * it (an opportunity) lives there too. Returns the notes changed and the
-   * highest write_date read (null when no task came back, or none is
-   * linked: then nothing is requested).
+   * Reads, page by page, the records of one kind linked on this target
+   * (tasks whatever their project, archived ones included) with
+   * write_date >= since, and merges each into its note (see
+   * applyPulled). Returns the notes changed and the highest write_date
+   * read (null when nothing came back, or nothing is linked: then nothing
+   * is requested).
    */
-  private async pullTasks(
+  private async pullMirrored(
     creds: SyncCredentials,
+    kind: MirrorKind,
     since: string
   ): Promise<{ updated: number; maxWriteDate: string | null }> {
     const configId = syncConfigIdOf(creds);
-    const linkByResId = await this.linkedTaskIds(configId);
+    const spec = MIRROR_SPECS[kind];
+    const linkByResId = await this.linkedIds(configId, kind);
     if (linkByResId.size === 0) return { updated: 0, maxWriteDate: null };
     const linkedIds = [...linkByResId.keys()];
     return this.callWithAuth(creds, async (sessionId, odooVersion) => {
-      const fields = [
-        "id", "name", "priority", "active",
-        "tag_ids", "date_deadline", "write_date",
-        ...(odooVersion >= 17 ? ["state"] : []),
-      ];
-
+      const fields = ["id", "write_date", ...spec.fields(odooVersion)];
       let updated = 0;
       let maxWriteDate: string | null = null;
       // Keyset paging. search_read returns write_date truncated to the
       // second while the server compares the stored value with its
       // microseconds, so "= T" matches nothing: the next page asks for
-      // ">= T" minus the ids already read at T. A task rewritten during the
-      // pull moves to the end without shifting the rows not read yet.
+      // ">= T" minus the ids already read at T. A record rewritten during
+      // the pull moves to the end without shifting the rows not read yet.
       let lastWriteDate = since;
       let seenAtLast: number[] = [];
       for (let page = 0; page < PULL_MAX_PAGES; page++) {
@@ -2002,29 +2337,28 @@ export class SyncService {
           ["write_date", ">=", lastWriteDate],
           ...(seenAtLast.length > 0 ? [["id", "not in", seenAtLast]] : []),
         ];
-        const tasks: any[] = await this.jsonRpc(
-          creds.odooUrl, sessionId, TASK_MODEL, "search_read",
+        const rows: any[] = await this.jsonRpc(
+          creds.odooUrl, sessionId, spec.model, "search_read",
           [],
-          {
-            domain,
-            fields,
-            limit: PULL_PAGE_SIZE,
-            order: "write_date asc, id asc",
-            context: WITH_ARCHIVED,
-          }
+          { domain, fields, limit: PULL_PAGE_SIZE, order: "write_date asc, id asc", context: WITH_ARCHIVED }
         );
-
-        for (const task of tasks) {
-          if (task.write_date && (!maxWriteDate || task.write_date > maxWriteDate)) {
-            maxWriteDate = task.write_date;
-          }
-          const link = linkByResId.get(task.id);
+        if (!Array.isArray(rows)) break;
+        const tagNames = spec.tagModel ? await this.tagNames(creds, sessionId, spec.tagModel, rows) : new Map<number, string>();
+        for (const row of rows) {
+          if (row.write_date && (!maxWriteDate || row.write_date > maxWriteDate)) maxWriteDate = row.write_date;
+          const link = linkByResId.get(row.id);
           if (!link) continue;
-          if (await this.applyPulledTask(link.noteId, configId, task, odooVersion)) updated++;
+          if (kind === "activity" && odooVersion >= 17 && row.active === false) {
+            // Done on the server: the activity is archived, not to be written again
+            await this.db.setNoteLinkDone(link.id);
+            continue;
+          }
+          const remote = spec.values(row, tagNames, odooVersion);
+          if (await this.applyPulled(link, kind, remote, odooVersion)) updated++;
         }
-        if (tasks.length < PULL_PAGE_SIZE) break;
-        const pageLast = tasks[tasks.length - 1].write_date;
-        const atPageLast = tasks.filter((t) => t.write_date === pageLast).map((t) => t.id);
+        if (rows.length < PULL_PAGE_SIZE) break;
+        const pageLast = rows[rows.length - 1].write_date;
+        const atPageLast = rows.filter((t) => t.write_date === pageLast).map((t) => t.id);
         seenAtLast = pageLast === lastWriteDate ? [...seenAtLast, ...atPageLast] : atPageLast;
         lastWriteDate = pageLast;
       }
@@ -2032,60 +2366,158 @@ export class SyncService {
     });
   }
 
+  /** The names of the tags the rows name (tag_ids), read on tagModel. */
+  private async tagNames(creds: SyncCredentials, sessionId: string, tagModel: string, rows: any[]): Promise<Map<number, string>> {
+    const ids = [...new Set(rows.flatMap((r) => (Array.isArray(r.tag_ids) ? r.tag_ids : [])))];
+    if (ids.length === 0) return new Map();
+    const tags: Array<{ id: number; name: string }> = await this.jsonRpc(
+      creds.odooUrl, sessionId, tagModel, "search_read", [], { domain: [["id", "in", ids]], fields: ["id", "name"] }
+    );
+    return new Map((Array.isArray(tags) ? tags : []).map((t) => [t.id, t.name]));
+  }
+
   /** Live task links of one config, by task id. */
   private async linkedTaskIds(configId: string): Promise<Map<number, NoteLink>> {
+    return this.linkedIds(configId, "task");
+  }
+
+  /** Live links of one kind on one config, by record id. */
+  private async linkedIds(configId: string, kind: MirrorKind): Promise<Map<number, NoteLink>> {
+    const spec = MIRROR_SPECS[kind];
     return new Map(
       (await this.db.getNoteLinksForConfig(configId))
-        .filter((l) => l.model === TASK_MODEL && l.kind === "create" && l.remoteState === "ok")
+        .filter((l) => l.model === spec.model && l.kind === spec.linkKind && l.remoteState === "ok")
         .map((l) => [l.resId, l])
     );
   }
 
   /**
-   * Copies one pulled task onto its note, under the note's sync lock so a
-   * concurrent edit is either seen (the note is then pending and left
-   * alone) or applied after. Returns whether the note changed; a changed
-   * note becomes pending for its other servers.
+   * Merges one pulled record into its note, field by field, under the
+   * note's sync lock so a concurrent edit is either seen or applied after
+   * (see mergeFields): a field changed on the server only is copied into
+   * the note; one changed in the app only waits for the next push; one
+   * changed on both sides to different values is a conflict, kept on the
+   * link (params.conflict) for the user, the server then "conflict" for
+   * the note, and nothing more is written there until it is settled. The
+   * link's base moves to the values now agreed.
+   *
+   * A link with no base yet (linked before bases were kept) takes the
+   * server's values as they are when the note has nothing waiting for
+   * this server, and treats the note's as changes to send otherwise.
+   * Returns whether the note changed; a changed note becomes pending for
+   * its other servers, and for this one when another of its records there
+   * holds the older values.
    */
-  private async applyPulledTask(
-    noteId: string,
-    configId: string,
-    task: any,
-    odooVersion: number
-  ): Promise<boolean> {
+  private async applyPulled(link: NoteLink, kind: MirrorKind, remote: MirrorValues, odooVersion: number): Promise<boolean> {
+    const fields = mirrorFields(kind, odooVersion);
     let changed = false;
     let applied = false;
-    await this.db.updateNotePerServerStatus(noteId, async (perServer) => {
-      const status = perServer[configId];
-      if (status === "pending" || status === "error") return;
-      const local = await this.db.getNoteById(noteId);
-      if (!local) return;
-      const updatedNote = {
-        ...local,
-        title: task.name,
-        pinned: task.priority === "1",
-        archived: !task.active,
-        ...(odooVersion >= 17 ? { done: task.state === TASK_STATE_DONE } : {}),
+    await this.db.updateNotePerServerStatus(link.noteId, async (perServer) => {
+      const note = await this.db.getNoteById(link.noteId);
+      const fresh = (await this.db.getNoteLinks(link.noteId)).find((l) => l.id === link.id);
+      if (!note || !fresh || fresh.remoteState !== "ok") return;
+      const status = perServer[link.configId];
+      const named = await this.named(note);
+      const local = localValues(named, this.buildHtml(named.entries));
+      const waiting = status === "pending" || status === "error" || status === "conflict";
+      const legacy = !baseOf(fresh);
+      const base: MirrorBase = baseOf(fresh) ?? (waiting
+        ? { local: { ...remote }, remote: { ...remote } }
+        : { local: { ...local }, remote: { ...local } });
+      if (legacy) {
+        // One-way fields of a link with no base start from each side's own value, not as a change
+        for (const f of PULL_ONLY[kind] ?? []) base.remote[f] = remote[f];
+        for (const f of [...(PULL_ONLY[kind] ?? []), ...(PUSH_ONLY[kind] ?? [])]) base.local[f] = local[f];
+      }
+      // A field the record did not give (an invoice without its title paragraph) stays as it was
+      for (const f of fields) if (!(f in remote)) remote[f] = base.remote[f];
+      const merge = mergeKind(kind, fields, base, local, remote);
+      const next = applyValues(named, merge.apply, uuidv4);
+      changed = Object.keys(merge.apply).length > 0;
+      if (changed) {
+        await this.db.updateNote(link.noteId, {
+          ...next, tags: "tags" in merge.apply ? await this.tagIdsFor(next.tags) : note.tags,
+        });
+      }
+      const nextLocal = localValues(next, this.buildHtml(next.entries));
+      const settled = [...Object.keys(merge.apply), ...merge.agreed] as MirrorField[];
+      // One-way fields: the app's side never counts as a change (pull-only), the server's neither (push-only)
+      const pullOnly = PULL_ONLY[kind] ?? [];
+      const pushOnly = PUSH_ONLY[kind] ?? [];
+      const nextBase: MirrorBase = {
+        local: { ...base.local, ...pick(nextLocal, [...settled, ...pullOnly]) },
+        remote: { ...base.remote, ...pick(remote, [...settled, ...pushOnly]) },
       };
-      changed = updatedNote.title !== local.title || updatedNote.pinned !== local.pinned
-        || updatedNote.archived !== local.archived || updatedNote.done !== local.done;
-      if (changed) await this.db.updateNote(noteId, updatedNote);
-      // Another kind of the note on this server (an opportunity) still has the old values
-      perServer[configId] = changed && await this.hasOtherLiveKind(noteId, configId, "task") ? "pending" : "synced";
+      const conflicts = Object.keys(merge.conflicts).length > 0 ? { fields: merge.conflicts } : null;
+      await this.db.setNoteLinkParams(fresh.id, { ...(fresh.params ?? {}), base: nextBase, conflict: conflicts });
+      if (conflicts) perServer[link.configId] = "conflict";
+      else if (status === "conflict" || status === "error") perServer[link.configId] = status === "error" ? "error" : "pending";
+      else if (status === "pending" || merge.push.length > 0
+        || (changed && await this.hasOtherLiveLink(link.noteId, link.configId, (l) => l.id === link.id))) {
+        perServer[link.configId] = "pending";
+      } else perServer[link.configId] = "synced";
       applied = true;
     });
     if (!applied) return false;
     const now = new Date().toISOString();
-    const link = await this.db.findNoteLink(noteId, configId, TASK_MODEL, "create");
-    if (link) await this.db.setNoteLinkSyncedAt(link.id, now);
+    await this.db.setNoteLinkSyncedAt(link.id, now);
     if (changed) {
-      await this.db.setNoteSyncInfo(noteId, { lastSyncedAt: now });
+      await this.db.setNoteSyncInfo(link.noteId, { lastSyncedAt: now });
       // The note's other servers still hold the previous values
-      await this.db.markNotePendingForConfigs(noteId, await this.db.getLiveLinkConfigIds(noteId, configId));
-      this.onNotePulled?.(noteId);
+      await this.db.markNotePendingForConfigs(link.noteId, await this.db.getLiveLinkConfigIds(link.noteId, link.configId));
+      this.onNotePulled?.(link.noteId);
     }
-    await this.db.refreshNoteSyncStatus(noteId);
+    await this.db.refreshNoteSyncStatus(link.noteId);
     return changed;
+  }
+
+  // ─── Conflicts ────────────────────────────────────────────────────────────
+
+  /** The note's conflicts: per link, the fields changed in the app and on the server to different values. */
+  async conflictsOf(noteId: string): Promise<NoteConflict[]> {
+    return (await this.db.getNoteLinks(noteId))
+      .filter((l) => l.remoteState === "ok" && l.params?.conflict?.fields)
+      .map((l) => ({
+        linkId: l.id, configId: l.configId, model: l.model, resId: l.resId,
+        fields: l.params!.conflict.fields,
+      }));
+  }
+
+  /**
+   * Settles one conflict with the user's choice per field: "theirs" puts
+   * the server's value in the note, "mine" keeps the note's, to be sent by
+   * the next push (the base takes the server's value, so the note's reads
+   * as a change). The server leaves "conflict" once none of the note's
+   * links there has one left: pending, so the push runs.
+   */
+  async resolveConflict(noteId: string, linkId: string, choices: Partial<Record<MirrorField, "mine" | "theirs">>): Promise<void> {
+    await this.db.updateNotePerServerStatus(noteId, async (perServer) => {
+      const note = await this.db.getNoteById(noteId);
+      const link = (await this.db.getNoteLinks(noteId)).find((l) => l.id === linkId);
+      const conflict = link?.params?.conflict?.fields as MergeResult["conflicts"] | undefined;
+      if (!note || !link || !conflict) return;
+      const theirs: MirrorValues = {};
+      const remote: MirrorValues = {};
+      for (const [f, values] of Object.entries(conflict) as Array<[MirrorField, { mine: any; theirs: any }]>) {
+        remote[f] = values.theirs;
+        if ((choices[f] ?? "mine") === "theirs") theirs[f] = values.theirs;
+      }
+      const next = applyValues(await this.named(note), theirs, uuidv4);
+      if (Object.keys(theirs).length > 0) {
+        await this.db.updateNote(noteId, { ...next, tags: "tags" in theirs ? await this.tagIdsFor(next.tags) : note.tags });
+      }
+      const nextLocal = localValues(next, this.buildHtml(next.entries));
+      const base = baseOf(link) ?? { local: {}, remote: {} };
+      const nextBase: MirrorBase = {
+        local: { ...base.local, ...remote, ...pick(nextLocal, Object.keys(theirs) as MirrorField[]) },
+        remote: { ...base.remote, ...remote },
+      };
+      await this.db.setNoteLinkParams(link.id, { ...link.params, base: nextBase, conflict: null });
+      const others = (await this.db.getNoteLinks(noteId)).some((l) =>
+        l.id !== link.id && l.configId === link.configId && l.remoteState === "ok" && l.params?.conflict);
+      if (!others) perServer[link.configId] = "pending";
+    });
+    await this.db.refreshNoteSyncStatus(noteId);
   }
 
   // ─── Sync all ────────────────────────────────────────────────────────────
@@ -2194,8 +2626,9 @@ export class SyncService {
         result.pushed++;
       } catch (e: unknown) {
         result.errors.push(`Push ${noteId}: ${e instanceof Error ? e.message : String(e)}`);
-        // Deleted remote task: already dropped from the queue by pushNote
-        if (e instanceof RemoteRecordDeletedError) continue;
+        // Deleted remote task: already dropped from the queue by pushNote;
+        // a conflict: the server's status says so already
+        if (e instanceof RemoteRecordDeletedError || e instanceof SyncConflictError) continue;
         await this.db.setNotePerServerStatus(noteId, configId, "error").catch(() => {});
         await this.db.refreshNoteSyncStatus(noteId).catch(() => {});
       }
@@ -2205,22 +2638,28 @@ export class SyncService {
     result.pushed += drained.done;
     result.errors.push(...drained.errors);
 
-    const cursorScope = configId;
-    const oldestLink = (await this.db.getNoteLinksForConfig(configId))
-      .map((l) => l.lastSyncedAt)
-      .filter(Boolean)
-      .sort()
-      .at(0);
-    const since = (await this.db.getSyncPullCursor(cursorScope))
-      ?? (oldestLink
-        ? new Date(new Date(oldestLink).getTime() - FIRST_PULL_CLOCK_MARGIN_MS).toISOString()
-        : new Date(0).toISOString());
-    try {
-      const pulled = await this.pullTasks(creds, since);
-      result.pulled = pulled.updated;
-      if (pulled.maxWriteDate) await this.db.setSyncPullCursor(cursorScope, pulled.maxWriteDate);
-    } catch (e: unknown) {
-      result.errors.push(`Pull: ${e instanceof Error ? e.message : String(e)}`);
+    // One cursor per model: a record of one model written during the pull
+    // of another is never skipped by a cursor moved past it
+    for (const kind of MIRROR_KINDS) {
+      const spec = MIRROR_SPECS[kind];
+      const cursorScope = kind === "task" ? configId : `${configId}#${spec.model}`;
+      const oldestLink = (await this.db.getNoteLinksForConfig(configId))
+        .filter((l) => l.model === spec.model && l.kind === spec.linkKind)
+        .map((l) => l.lastSyncedAt)
+        .filter(Boolean)
+        .sort()
+        .at(0);
+      const since = (await this.db.getSyncPullCursor(cursorScope))
+        ?? (oldestLink
+          ? new Date(new Date(oldestLink).getTime() - FIRST_PULL_CLOCK_MARGIN_MS).toISOString()
+          : new Date(0).toISOString());
+      try {
+        const pulled = await this.pullMirrored(creds, kind, since);
+        result.pulled += pulled.updated;
+        if (pulled.maxWriteDate) await this.db.setSyncPullCursor(cursorScope, pulled.maxWriteDate);
+      } catch (e: unknown) {
+        result.errors.push(`Pull ${spec.model}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
 
     return result;
@@ -2317,7 +2756,7 @@ export class SyncService {
       priority: note.pinned ? "1" : "0",
       active: !note.archived,
       tag_ids: [[6, 0, tagIds]],
-      date_deadline: this.getFirstDate(note.entries),
+      date_deadline: taskDeadline(this.getFirstDate(note.entries), odooVersion),
     };
 
     // state field introduced in Odoo 17
@@ -2353,7 +2792,8 @@ export class SyncService {
         ? [html, `<p><small>${clientMarker(clientUuid)}</small></p>`].filter(Boolean).join("\n")
         : html,
       tag_ids: [[6, 0, tagIds]],
-      ...(day ? { date_deadline: day } : {}),
+      // false clears it: a date removed in the app goes too
+      date_deadline: day ?? false,
     };
   }
 

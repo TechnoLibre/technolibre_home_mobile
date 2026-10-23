@@ -17,7 +17,12 @@ import { sameServerUrl, syncConfigIdFor } from "../models/syncConfig";
 export type SyncStatus = "local" | "pending" | "synced" | "conflict" | "error";
 
 /** Status of a note on ONE server, stored in notes.sync_per_server_status. */
-export type PerServerSyncStatus = "synced" | "error" | "pending";
+/**
+ * A note's state on one server: synced; pending (something to send);
+ * error (the last push failed); conflict (a record of it changed in the
+ * app and on the server, the user must choose; nothing is sent meanwhile).
+ */
+export type PerServerSyncStatus = "synced" | "error" | "pending" | "conflict";
 
 /**
  * How a note is bound to a remote record. "create": the note created the
@@ -959,8 +964,9 @@ export class DatabaseService {
 
   /**
    * Derives the note's global sync_status from its per-server statuses:
-   * any "error" → error, else any "pending" → pending, else any "synced" →
-   * synced. Entries of ids no live application has (deleted, renamed, or
+   * any "conflict", or a live link holding one (params.conflict) →
+   * conflict (the user must act), else any "error" →
+   * error, else any "pending" → pending, else any "synced" → synced. Entries of ids no live application has (deleted, renamed, or
    * switched to another database) are ignored: nothing would ever clear
    * them. With no live entry left, the note is "synced" if it still has a
    * live link, "local" otherwise. A note "synced" or "local" with a
@@ -971,14 +977,18 @@ export class DatabaseService {
     const statuses = Object.entries(await this.getNotePerServerStatus(noteId))
       .filter(([configId]) => live.has(configId))
       .map(([, status]) => status);
+    // A link holding a conflict keeps the note in conflict, whatever wrote its server's status last
+    const conflicted = (await this.getNoteLinks(noteId))
+      .some((l) => l.remoteState === "ok" && live.has(l.configId) && !!l.params?.conflict);
     let status: SyncStatus;
-    if (statuses.includes("error")) status = "error";
+    if (conflicted || statuses.includes("conflict")) status = "conflict";
+    else if (statuses.includes("error")) status = "error";
     else if (statuses.includes("pending")) status = "pending";
     else if (statuses.includes("synced")) status = "synced";
     else status = (await this.getLiveLinkConfigIds(noteId)).length > 0 ? "synced" : "local";
     // A creation still in the outbox for a live server (waiting for a choice,
     // blocked, retrying) is not sent: the note is not synced there yet
-    if (status !== "error" && status !== "pending"
+    if (status !== "error" && status !== "pending" && status !== "conflict"
       && (await this.outboxOpsOrNone(noteId)).some((op) => live.has(op.configId))) {
       status = "pending";
     }

@@ -3,7 +3,7 @@ import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
 import {
   SyncService, SyncCredentials, syncSessionKey, syncConfigIdOf, RemoteRecordDeletedError,
-  TASK_CREATE, LEAD_CREATE, ACTIVITY_CREATE, MESSAGE_POST, INVOICE_CREATE, clientMarker,
+  TASK_CREATE, LEAD_CREATE, ACTIVITY_CREATE, MESSAGE_POST, INVOICE_CREATE, clientMarker, SyncConflictError,
 } from "../services/syncService";
 import { OutboxBlockedError } from "../services/outboxService";
 import { Note, NoteEntry } from "../models/note";
@@ -51,6 +51,7 @@ async function prepareSyncDb(db: DatabaseService, apps: SyncCredentials[] = [CRE
   await db.createServerCapabilitiesTable();
   await db.createRemoteRecordsCacheTable();
   await db.createSyncTargetPrefsTable();
+  await db.createTagsTable();
   for (const c of apps) await addApp(db, c);
 }
 
@@ -1312,7 +1313,8 @@ describe("SyncService — pending notes", () => {
     await Promise.all([svc.pushNote(CREDS, "pd-8"), svc.pushNote(CREDS, "pd-8")]);
 
     const methods = rpcCalls(fetchMock).map((c) => c.body.params.method);
-    expect(methods).toEqual(["create", "write"]);
+    // The second push reads the task back before writing it: no second create
+    expect(methods).toEqual(["create", "search_read", "write"]);
     expect(await db.getNoteLinks("pd-8")).toHaveLength(1);
   });
 });
@@ -1739,6 +1741,7 @@ describe("SyncService — task creation through the outbox", () => {
     await svc.pushNote(CREDS, "ob-7");
     const [link] = await db.getNoteLinks("ob-7");
 
+    await db.updateNote("ob-7", makeNote({ id: "ob-7", entries: [{ id: "e", type: "text", params: { text: "More", readonly: false } } as any] }));
     const fetchMock = serverWith([]);
     vi.stubGlobal("fetch", fetchMock);
     await svc.pushNote(CREDS, "ob-7");
@@ -2387,7 +2390,7 @@ describe("SyncService — opportunity", () => {
     expect(await db.getNotePerServerStatus("ld-17")).toEqual({ [CONFIG_ID]: "pending" });
   });
 
-  it("sends active on create only, and date_deadline only for a note with a date", async () => {
+  it("sends active on create only, and date_deadline false for a note without a date", async () => {
     await db.addNote(makeNote({ id: "ld-18", archived: false }));
     await linkLead("ld-18", 70);
     const fetchMock = server();
@@ -2395,7 +2398,8 @@ describe("SyncService — opportunity", () => {
     await svc.pushNote(CREDS, "ld-18");
     const values = sent(fetchMock, "crm.lead", "write")[0].body.params.args![1];
     expect(values).not.toHaveProperty("active");
-    expect(values).not.toHaveProperty("date_deadline");
+    // false clears a date removed in the app
+    expect(values.date_deadline).toBe(false);
   });
 
   it("takes the device's local day for the opportunity's date", async () => {
@@ -2550,14 +2554,23 @@ describe("SyncService — activities", () => {
     const known: Record<string, number> = { "res.partner": 5, "mail.activity.type": 2, "res.users": 8 };
     const fail = (name: string) => ({ error: { code: 200, message: "Odoo Server Error", data: { name, message: "nope" } } });
     return routeFetch((_url, body) => {
-      const { model, method } = body.params as any;
+      const { model, method, args } = body.params as any;
       const kwargs = (body.params as any).kwargs ?? {};
       if (method === "fields_get") {
         return { result: options.noActivities?.includes(model) ? { name: {} } : { name: {}, activity_ids: {} } };
       }
       if (model === "mail.activity" && method === "search_read" && kwargs.domain?.[0]?.[0] === "id") {
         const id = kwargs.domain[0][2];
-        return { result: id >= 500 ? [{ id, active: !(options.archived ?? []).includes(id) }] : [] };
+        const stored = activities.get(id) ?? {};
+        // A deleted activity is not read back
+        if (options.activityError === "odoo.exceptions.MissingError") return { result: [] };
+        return { result: id >= 500 ? [{ id, active: !(options.archived ?? []).includes(id), ...stored }] : [] };
+      }
+      if (model === "mail.activity" && method === "write" && !options.activityError) {
+        activities.set(args[0][0], { ...(activities.get(args[0][0]) ?? {}), ...args[1] });
+      }
+      if (model === "mail.activity" && method === "create" && !options.createError) {
+        activities.set(next, { summary: args[0].summary, note: args[0].note, date_deadline: args[0].date_deadline ?? false });
       }
       if (method === "search_read" && kwargs.domain?.[0]?.[0] === "note") {
         return { result: (options.markerHits ?? []).map((id) => ({ id })) };
@@ -2573,6 +2586,10 @@ describe("SyncService — activities", () => {
       return { result: method === "search_read" ? [] : true };
     });
   }
+
+  /** What the fake server holds of each activity it created or wrote, by id. */
+  let activities: Map<number, Record<string, any>>;
+  beforeEach(() => { activities = new Map(); });
 
   const sent = (fetchMock: ReturnType<typeof routeFetch>, model: string, method: string) =>
     rpcCalls(fetchMock).filter((c) => c.body.params.model === model && c.body.params.method === method);
@@ -2611,7 +2628,9 @@ describe("SyncService — activities", () => {
     await svc.setActivity("ac-2", CONFIG_ID, { ...ON_PARTNER, typeId: null, deadline: null, userId: null });
     await svc.pushNote(CREDS, "ac-2", { userInitiated: true });
     const values = sent(fetchMock, "mail.activity", "create")[0].body.params.args![0];
-    for (const key of ["activity_type_id", "date_deadline", "user_id"]) expect(values).not.toHaveProperty(key);
+    for (const key of ["activity_type_id", "user_id"]) expect(values).not.toHaveProperty(key);
+    // Due today on the device, sent so the base knows the day the server holds
+    expect(values.date_deadline).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   it("keeps several activities of one note on one server apart", async () => {
@@ -2638,7 +2657,8 @@ describe("SyncService — activities", () => {
     await svc.pushNote(CREDS, "ac-4");
     const [ids, values] = sent(fetchMock, "mail.activity", "write")[0].body.params.args!;
     expect(ids).toEqual([500]);
-    expect(Object.keys(values).sort()).toEqual(["note", "summary"]);
+    // Only the title changed: only the summary is written
+    expect(Object.keys(values)).toEqual(["summary"]);
     expect(values.summary).toBe("Renamed");
     expect(sent(fetchMock, "mail.activity", "create")).toHaveLength(0);
   });
@@ -2695,6 +2715,7 @@ describe("SyncService — activities", () => {
     vi.stubGlobal("fetch", server());
     await svc.setActivity("ac-8", CONFIG_ID, ON_PARTNER);
     await svc.pushNote(CREDS, "ac-8", { userInitiated: true });
+    await db.updateNote("ac-8", makeNote({ id: "ac-8", title: "Changed" }));
     vi.stubGlobal("fetch", server({ activityError: "odoo.exceptions.AccessError" }));
     await expect(svc.pushNote(CREDS, "ac-8")).rejects.toThrow("nope");
     expect((await activityLinks("ac-8"))[0].remoteState).toBe("ok");
@@ -2772,7 +2793,7 @@ describe("SyncService — activities", () => {
     vi.stubGlobal("fetch", fetchMock);
     await svc.pushNote(CREDS, "ac-25");
     const read = sent(fetchMock, "mail.activity", "search_read")[0];
-    expect((read.body.params as any).kwargs).toMatchObject({ fields: ["active"], context: { active_test: false } });
+    expect((read.body.params as any).kwargs).toMatchObject({ fields: expect.arrayContaining(["active"]), context: { active_test: false } });
     expect(sent(fetchMock, "mail.activity", "action_feedback")).toHaveLength(0);
     expect(sent(fetchMock, "mail.activity", "write")).toHaveLength(0);
     expect((await activityLinks("ac-25"))[0].remoteState).toBe("done");
@@ -2787,10 +2808,13 @@ describe("SyncService — activities", () => {
     vi.stubGlobal("fetch", server());
     await svc.setActivity("ac-26", CONFIG_ID, ON_PARTNER);
     await svc.pushNote(CREDS, "ac-26", { userInitiated: true });
+    await db.updateNote("ac-26", makeNote({ id: "ac-26", title: "Changed" }));
     const fetchMock = server();
     vi.stubGlobal("fetch", fetchMock);
     await svc.pushNote(CREDS, "ac-26");
-    expect(sent(fetchMock, "mail.activity", "search_read")).toHaveLength(0);
+    for (const read of sent(fetchMock, "mail.activity", "search_read")) {
+      expect((read.body.params as any).kwargs.fields).not.toContain("active");
+    }
     expect(sent(fetchMock, "mail.activity", "write")).toHaveLength(1);
   });
 
@@ -2923,6 +2947,7 @@ describe("SyncService — activities", () => {
     vi.stubGlobal("fetch", server());
     await svc.setActivity("ac-21", CONFIG_ID, ON_PARTNER);
     await svc.pushNote(CREDS, "ac-21", { userInitiated: true });
+    await db.updateNote("ac-21", makeNote({ id: "ac-21", title: "Changed" }));
     await db.setNotePerServerStatus("ac-21", CONFIG_ID, "pending");
     expect(await svc.hasDueWork(CONFIG_ID)).toBe(true);
 
@@ -2939,6 +2964,7 @@ describe("SyncService — activities", () => {
     vi.stubGlobal("fetch", server());
     await svc.setActivity("ac-22", CONFIG_ID, ON_PARTNER);
     await svc.pushNote(CREDS, "ac-22", { userInitiated: true }).catch(() => {});
+    await db.updateNote("ac-22", makeNote({ id: "ac-22", title: "Changed" }));
     await db.setNotePerServerStatus("ac-22", CONFIG_ID, "pending");
 
     const fetchMock = server();
@@ -3499,5 +3525,414 @@ describe("SyncService — draft invoice", () => {
     await svc.pushNote(CREDS, "iv-9", { userInitiated: true });
     const search = rpcCalls(fetchMock).find((c) => c.body.params.model === "account.move" && c.body.params.method === "search_read")!;
     expect((search.body.params as any).kwargs.domain[0][0]).toBe("narration");
+  });
+});
+
+describe("SyncService — two-way sync and conflicts", () => {
+  let svc: SyncService;
+  let db: DatabaseService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await prepareSyncDb(db);
+    await db.addParamsToNoteLinks();
+    svc = new SyncService(db);
+    await SecureStoragePlugin.set({
+      key: syncSessionKey(CREDS),
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 17 }),
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  /**
+   * A small Odoo keeping its records: create and write (tag commands 6, 4
+   * and 3 included) change them, search_read reads them back by id or
+   * write_date; edit() changes one as another user would.
+   */
+  function odoo() {
+    const records: Record<string, Map<number, any>> = {
+      "project.task": new Map(), "crm.lead": new Map(), "account.move": new Map(), "mail.activity": new Map(),
+    };
+    const tags: Record<string, Map<number, string>> = { "project.tags": new Map(), "crm.tag": new Map() };
+    let nextId = 100;
+    let clock = 0;
+    const stamp = () => `2099-01-01 00:00:${String(++clock).padStart(2, "0")}`;
+    const applyTags = (current: number[], commands: any[]): number[] => {
+      let ids = [...current];
+      for (const c of commands ?? []) {
+        if (c[0] === 6) ids = [...c[2]];
+        if (c[0] === 4 && !ids.includes(c[1])) ids.push(c[1]);
+        if (c[0] === 3) ids = ids.filter((id) => id !== c[1]);
+      }
+      return ids;
+    };
+    const tagId = (model: string, name: string) => {
+      for (const [id, n] of tags[model]) if (n === name) return id;
+      const id = nextId++;
+      tags[model].set(id, name);
+      return id;
+    };
+    const writeValues = (rec: any, values: any) => {
+      const { tag_ids, ...rest } = values;
+      Object.assign(rec, rest);
+      if (tag_ids) rec.tag_ids = applyTags(rec.tag_ids ?? [], tag_ids);
+      rec.write_date = stamp();
+    };
+    const fetchMock = routeFetch((_url, body) => {
+      const { model, method, args } = body.params as any;
+      const kwargs = (body.params as any).kwargs ?? {};
+      const domain: any[] = kwargs.domain ?? [];
+      if (method === "fields_get") return { result: { name: {}, message_ids: {}, activity_ids: {} } };
+      if (model === "res.partner" && method === "search_read") return { result: [{ id: 5 }] };
+      if (model in tags) {
+        if (method === "create") return { result: tagId(model, args[0].name) };
+        if (method === "search_read") {
+          const [field, , value] = domain[0];
+          const rows = [...tags[model]].map(([id, name]) => ({ id, name }));
+          return { result: rows.filter((r) => (field === "id" ? value.includes(r.id) : value.includes(r.name))) };
+        }
+      }
+      if (model in records) {
+        const table = records[model];
+        if (method === "create") {
+          const id = nextId++;
+          const rec = { id, state: "01_in_progress", active: true, tag_ids: [] as number[], ...args[0] };
+          rec.tag_ids = applyTags([], args[0].tag_ids ?? []);
+          rec.write_date = stamp();
+          table.set(id, rec);
+          return { result: id };
+        }
+        if (method === "write") {
+          for (const id of args[0]) if (table.has(id)) writeValues(table.get(id), args[1]);
+          return { result: true };
+        }
+        if (method === "search_read") {
+          let rows = [...table.values()];
+          for (const [field, op, value] of domain) {
+            if (field === "id" && op === "=") rows = rows.filter((r) => r.id === value);
+            if (field === "id" && op === "in") rows = rows.filter((r) => value.includes(r.id));
+            if (field === "id" && op === "not in") rows = rows.filter((r) => !value.includes(r.id));
+            if (field === "write_date") rows = rows.filter((r) => r.write_date >= value);
+            if (op === "ilike") rows = [];
+          }
+          return { result: rows.map((r) => ({ ...r })) };
+        }
+      }
+      if (method === "message_post") return { result: 1 };
+      return { result: method === "search_read" ? [] : true };
+    });
+    return {
+      fetchMock,
+      records,
+      tags,
+      tagId,
+      edit: (model: string, id: number, values: any) => writeValues(records[model].get(id), values),
+    };
+  }
+
+  /** The names of the app's tags of ids, a value no tag has as id kept as a name. */
+  const tagNames = async (ids: string[]) => {
+    const byId = new Map((await db.getAllTags()).map((t) => [t.id, t.name]));
+    return ids.map((id) => byId.get(id) ?? id).sort();
+  };
+
+  const writes = (fetchMock: ReturnType<typeof routeFetch>, model: string) =>
+    rpcCalls(fetchMock).filter((c) => c.body.params.model === model && c.body.params.method === "write")
+      .map((c) => c.body.params.args![1]);
+
+  /** A note sent once as a task: created, linked, its base set. */
+  async function sentTask(server: ReturnType<typeof odoo>, id: string, over: Partial<Note> = {}) {
+    await db.addNote(makeNote({ id, title: "Plan", tags: ["a"], entries: [{ id: "e", type: "text", params: { text: "First", readonly: false } } as any], ...over }));
+    vi.stubGlobal("fetch", server.fetchMock);
+    await svc.setTarget(id, CONFIG_ID, "task", { projectId: null });
+    await svc.pushNote(CREDS, id, { userInitiated: true });
+    return (await db.findNoteLink(id, CONFIG_ID, "project.task", "create"))!;
+  }
+
+  it("brings back into the note the title, text, tags and date changed on the server", async () => {
+    const server = odoo();
+    const link = await sentTask(server, "tw-1");
+    expect(link.params!.base).toBeTruthy();
+    server.edit("project.task", link.resId, {
+      name: "Plan v2", description: "<p>Second</p><p>Third</p>", tag_ids: [[4, server.tagId("project.tags", "b")]],
+      date_deadline: "2026-11-05 12:00:00",
+    });
+    await svc.syncAll(CREDS);
+    const note = (await db.getNoteById("tw-1"))!;
+    expect(note.title).toBe("Plan v2");
+    expect(await tagNames(note.tags)).toEqual(["a", "b"]);
+    expect(note.entries.filter((e) => e.type === "text").map((e) => (e.params as any).text)).toEqual(["Second", "Third"]);
+    expect(note.entries.some((e) => e.type === "date")).toBe(true);
+    expect((await db.getNotePerServerStatus("tw-1"))[CONFIG_ID]).toBe("synced");
+  });
+
+  it("merges a field changed on the server with another changed in the app, writing only the app's", async () => {
+    const server = odoo();
+    const link = await sentTask(server, "tw-2");
+    server.edit("project.task", link.resId, { name: "Server title" });
+    await db.updateNote("tw-2", { ...(await db.getNoteById("tw-2"))!, pinned: true });
+    await db.setNotePerServerStatus("tw-2", CONFIG_ID, "pending");
+    server.fetchMock.mockClear();
+    await svc.pushNote(CREDS, "tw-2", { userInitiated: true });
+    expect(writes(server.fetchMock, "project.task")).toEqual([{ priority: "1" }]);
+    expect(server.records["project.task"].get(link.resId)).toMatchObject({ name: "Server title", priority: "1" });
+    expect((await db.getNoteById("tw-2"))!.title).toBe("Server title");
+  });
+
+  it("stops on a field changed on both sides, then sends the version kept", async () => {
+    const server = odoo();
+    const link = await sentTask(server, "tw-3");
+    server.edit("project.task", link.resId, { name: "Theirs" });
+    await db.updateNote("tw-3", { ...(await db.getNoteById("tw-3"))!, title: "Mine" });
+    await db.setNotePerServerStatus("tw-3", CONFIG_ID, "pending");
+    server.fetchMock.mockClear();
+    await expect(svc.pushNote(CREDS, "tw-3", { userInitiated: true })).rejects.toBeInstanceOf(SyncConflictError);
+    expect(writes(server.fetchMock, "project.task")).toEqual([]);
+    expect((await db.getNoteSyncInfo("tw-3")).syncStatus).toBe("conflict");
+    const [conflict] = await svc.conflictsOf("tw-3");
+    expect(conflict.fields).toEqual({ title: { mine: "Mine", theirs: "Theirs" } });
+    expect(await svc.pendingNoteIds(CONFIG_ID)).not.toContain("tw-3");
+
+    await svc.resolveConflict("tw-3", conflict.linkId, { title: "mine" });
+    expect(await svc.conflictsOf("tw-3")).toEqual([]);
+    await svc.pushNote(CREDS, "tw-3", { userInitiated: true });
+    expect(server.records["project.task"].get(link.resId).name).toBe("Mine");
+    expect((await db.getNoteSyncInfo("tw-3")).syncStatus).toBe("synced");
+  });
+
+  it("takes the server's version of a conflict when chosen", async () => {
+    const server = odoo();
+    const link = await sentTask(server, "tw-4");
+    server.edit("project.task", link.resId, { name: "Theirs" });
+    await db.updateNote("tw-4", { ...(await db.getNoteById("tw-4"))!, title: "Mine" });
+    await svc.syncAll(CREDS);
+    const [conflict] = await svc.conflictsOf("tw-4");
+    await svc.resolveConflict("tw-4", conflict.linkId, { title: "theirs" });
+    expect((await db.getNoteById("tw-4"))!.title).toBe("Theirs");
+    server.fetchMock.mockClear();
+    await svc.pushNote(CREDS, "tw-4", { userInitiated: true });
+    expect(writes(server.fetchMock, "project.task")).toEqual([]);
+  });
+
+  it("adds and removes only the app's tags, leaving those others set", async () => {
+    const server = odoo();
+    const link = await sentTask(server, "tw-5", { tags: ["a", "b"] });
+    server.edit("project.task", link.resId, { tag_ids: [[4, server.tagId("project.tags", "theirs")]] });
+    await svc.syncAll(CREDS);
+    // The pull turned every tag into the app's own; "b" is removed, "c" added
+    const tagged = (await db.getNoteById("tw-5"))!;
+    const idOf = async (name: string) => (await db.getAllTags()).find((t) => t.name === name)!.id;
+    await db.updateNote("tw-5", { ...tagged, tags: [await idOf("a"), "c", await idOf("theirs")] });
+    await db.setNotePerServerStatus("tw-5", CONFIG_ID, "pending");
+    server.fetchMock.mockClear();
+    await svc.pushNote(CREDS, "tw-5");
+    const [values] = writes(server.fetchMock, "project.task");
+    expect(values.tag_ids.map((c: any[]) => c[0]).sort()).toEqual([3, 4]);
+    const names = server.records["project.task"].get(link.resId).tag_ids.map((id: number) => server.tags["project.tags"].get(id)).sort();
+    expect(names).toEqual(["a", "c", "theirs"]);
+  });
+
+  it("writes a task's state only when done changes in the app, keeping one another user set", async () => {
+    const server = odoo();
+    const link = await sentTask(server, "tw-6");
+    server.edit("project.task", link.resId, { state: "03_approved" });
+    await svc.syncAll(CREDS);
+    await db.updateNote("tw-6", { ...(await db.getNoteById("tw-6"))!, title: "Renamed" });
+    await db.setNotePerServerStatus("tw-6", CONFIG_ID, "pending");
+    await svc.pushNote(CREDS, "tw-6");
+    expect(server.records["project.task"].get(link.resId)).toMatchObject({ name: "Renamed", state: "03_approved" });
+    await db.updateNote("tw-6", { ...(await db.getNoteById("tw-6"))!, done: true });
+    await db.setNotePerServerStatus("tw-6", CONFIG_ID, "pending");
+    await svc.pushNote(CREDS, "tw-6");
+    expect(server.records["project.task"].get(link.resId).state).toBe("1_done");
+  });
+
+  it("brings back an opportunity's, an invoice's and an activity's changes", async () => {
+    const server = odoo();
+    vi.stubGlobal("fetch", server.fetchMock);
+    await db.addNote(makeNote({ id: "tw-7", title: "Deal" }));
+    await svc.setTarget("tw-7", CONFIG_ID, "lead", { partnerId: null });
+    await svc.pushNote(CREDS, "tw-7", { userInitiated: true });
+    const lead = (await db.findNoteLink("tw-7", CONFIG_ID, "crm.lead", "create"))!;
+    server.edit("crm.lead", lead.resId, { name: "Deal 2", tag_ids: [[4, server.tagId("crm.tag", "hot")]] });
+
+    await db.addNote(makeNote({ id: "tw-8", title: "Bill" }));
+    await svc.setTarget("tw-8", CONFIG_ID, "invoice", {
+      moveType: "out_invoice", partnerId: null, invoiceDate: null, ref: null, lines: [], extra: {}, linkKind: null,
+    });
+    await svc.pushNote(CREDS, "tw-8", { userInitiated: true });
+    const invoice = (await db.findNoteLink("tw-8", CONFIG_ID, "account.move", "create"))!;
+    server.edit("account.move", invoice.resId, { narration: "<p><b>Bill 2</b></p><p>Net 30</p>" });
+
+    await svc.syncAll(CREDS);
+    const deal = (await db.getNoteById("tw-7"))!;
+    expect(deal.title).toBe("Deal 2");
+    expect(await tagNames(deal.tags)).toEqual(["hot"]);
+    const bill = (await db.getNoteById("tw-8"))!;
+    expect(bill.title).toBe("Bill 2");
+    expect(bill.entries.map((e) => (e.params as any).text)).toEqual(["Net 30"]);
+  });
+
+  it("brings back an activity's summary, note and deadline, and its archiving as done", async () => {
+    const server = odoo();
+    vi.stubGlobal("fetch", server.fetchMock);
+    await db.addNote(makeNote({ id: "tw-9", title: "Call" }));
+    await svc.setActivity("tw-9", CONFIG_ID, {
+      resModel: "res.partner", resId: 5, typeId: null, deadline: "2026-11-02", userId: null,
+    });
+    await svc.pushNote(CREDS, "tw-9", { userInitiated: true });
+    const link = (await db.getNoteLinks("tw-9")).find((l) => l.kind === "activity")!;
+    expect(link.params!.base.remote.date).toBe("2026-11-02");
+    server.edit("mail.activity", link.resId, { summary: "Call back", date_deadline: "2026-11-09" });
+    await svc.syncAll(CREDS);
+    const n = (await db.getNoteById("tw-9"))!;
+    expect(n.title).toBe("Call back");
+    const date = n.entries.find((e) => e.type === "date");
+    expect(new Date((date!.params as any).date).getDate()).toBe(9);
+    server.edit("mail.activity", link.resId, { active: false });
+    await svc.syncAll(CREDS);
+    expect((await db.getNoteLinks("tw-9")).find((l) => l.kind === "activity")!.remoteState).toBe("done");
+  });
+
+  it("keeps one pull cursor per model, so a record written during another model's pull is not skipped", async () => {
+    const server = odoo();
+    const task = await sentTask(server, "tw-11");
+    await db.addNote(makeNote({ id: "tw-12", title: "Deal" }));
+    await svc.setTarget("tw-12", CONFIG_ID, "lead", { partnerId: null });
+    await svc.pushNote(CREDS, "tw-12", { userInitiated: true });
+    const lead = (await db.findNoteLink("tw-12", CONFIG_ID, "crm.lead", "create"))!;
+    await svc.syncAll(CREDS);
+    server.edit("project.task", task.resId, { name: "Moved on" });
+    await svc.syncAll(CREDS);
+    // Written while the task was read, with a write_date before the task's cursor
+    server.edit("crm.lead", lead.resId, { name: "Deal 2" });
+    const taskStamp: string = server.records["project.task"].get(task.resId).write_date;
+    server.records["crm.lead"].get(lead.resId).write_date = taskStamp.replace(/(\d\d)$/, (n) => `${String(Number(n) - 1).padStart(2, "0")}.5`);
+    await svc.syncAll(CREDS);
+    expect((await db.getNoteById("tw-12"))!.title).toBe("Deal 2");
+  });
+
+  it("sends a tag's name, not the app's id of it", async () => {
+    const server = odoo();
+    await db.addTag({ id: "tag-uuid-1", name: "urgent", color: "#000" });
+    const link = await sentTask(server, "tw-13", { tags: ["tag-uuid-1"] });
+    const names = server.records["project.task"].get(link.resId).tag_ids.map((id: number) => server.tags["project.tags"].get(id));
+    expect(names).toEqual(["urgent"]);
+  });
+
+  it("writes a task's date so it reads back as the same day, and clears an opportunity's", async () => {
+    const server = odoo();
+    const evening = new Date(2026, 10, 5, 21, 30).toISOString();
+    const link = await sentTask(server, "tw-14", { entries: [{ id: "d", type: "date", params: { date: evening } } as any] });
+    const sentDate: string = server.records["project.task"].get(link.resId).date_deadline;
+    expect(sentDate).toBe(evening.slice(0, 19).replace("T", " "));
+    server.fetchMock.mockClear();
+    await svc.syncAll(CREDS);
+    const date = (await db.getNoteById("tw-14"))!.entries.find((e) => e.type === "date")!;
+    expect((date.params as any).date).toBe(evening);
+
+    await db.addNote(makeNote({ id: "tw-15", entries: [{ id: "d", type: "date", params: { date: evening } } as any] }));
+    await svc.setTarget("tw-15", CONFIG_ID, "lead", { partnerId: null });
+    await svc.pushNote(CREDS, "tw-15", { userInitiated: true });
+    const lead = (await db.findNoteLink("tw-15", CONFIG_ID, "crm.lead", "create"))!;
+    await db.updateNote("tw-15", { ...(await db.getNoteById("tw-15"))!, entries: [] });
+    await db.setNotePerServerStatus("tw-15", CONFIG_ID, "pending");
+    await svc.pushNote(CREDS, "tw-15");
+    expect(server.records["crm.lead"].get(lead.resId).date_deadline).toBe(false);
+    await svc.syncAll(CREDS);
+    expect((await db.getNoteById("tw-15"))!.entries).toEqual([]);
+  });
+
+  it("never sends an activity's deadline, and does not stay pending for it", async () => {
+    const server = odoo();
+    vi.stubGlobal("fetch", server.fetchMock);
+    await db.addNote(makeNote({ id: "tw-16", entries: [{ id: "d", type: "date", params: { date: new Date(2026, 10, 5, 9).toISOString() } } as any] }));
+    await svc.setActivity("tw-16", CONFIG_ID, { resModel: "res.partner", resId: 5, typeId: null, deadline: "2026-11-02", userId: null });
+    await svc.pushNote(CREDS, "tw-16", { userInitiated: true });
+    await svc.syncAll(CREDS);
+    expect((await db.getNotePerServerStatus("tw-16"))[CONFIG_ID]).toBe("synced");
+    expect(await svc.hasDueWork(CONFIG_ID)).toBe(false);
+    await db.updateNote("tw-16", { ...(await db.getNoteById("tw-16"))!, entries: [] });
+    await db.setNotePerServerStatus("tw-16", CONFIG_ID, "pending");
+    server.fetchMock.mockClear();
+    await svc.syncAll(CREDS);
+    for (const values of writes(server.fetchMock, "mail.activity")) expect(values).not.toHaveProperty("date_deadline");
+    // The note's date changed, the activity's deadline did not: nothing left to send
+    expect((await db.getNotePerServerStatus("tw-16"))[CONFIG_ID]).toBe("synced");
+    // And a deadline moved on the server while the note's date changed is no conflict
+    const link = (await db.getNoteLinks("tw-16")).find((l) => l.kind === "activity")!;
+    server.edit("mail.activity", link.resId, { date_deadline: "2026-11-20" });
+    await db.updateNote("tw-16", { ...(await db.getNoteById("tw-16"))!, entries: [
+      { id: "d2", type: "date", params: { date: new Date(2026, 10, 12, 9).toISOString() } } as any,
+    ] });
+    await db.setNotePerServerStatus("tw-16", CONFIG_ID, "pending");
+    await svc.syncAll(CREDS);
+    // The deadline only comes back: the server's wins over the note's date
+    expect(new Date(((await db.getNoteById("tw-16"))!.entries[0].params as any).date).getDate()).toBe(20);
+    expect(await svc.conflictsOf("tw-16")).toEqual([]);
+  });
+
+  it("does not take an activity's deadline as a server change on a link with no base", async () => {
+    const server = odoo();
+    vi.stubGlobal("fetch", server.fetchMock);
+    const day = new Date(2026, 10, 5, 9).toISOString();
+    server.records["mail.activity"].set(60, { id: 60, summary: "Call", note: "", date_deadline: "2026-11-02", active: true, write_date: "2099-01-01 00:00:00" });
+    await db.addNote(makeNote({ id: "tw-17", title: "Call", entries: [{ id: "d", type: "date", params: { date: day } } as any] }));
+    await db.addNoteLink({
+      id: "lk-17", noteId: "tw-17", configId: CONFIG_ID, model: "mail.activity", resId: 60, kind: "activity",
+      remoteState: "ok", createdAt: "2026-01-01T00:00:00.000Z", lastSyncedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await svc.syncAll(CREDS);
+    expect(((await db.getNoteById("tw-17"))!.entries[0].params as any).date).toBe(day);
+  });
+
+  it("keeps the note in conflict while a link holds one, whatever writes the server's status", async () => {
+    const server = odoo();
+    const link = await sentTask(server, "tw-18");
+    server.edit("project.task", link.resId, { name: "Theirs" });
+    await db.updateNote("tw-18", { ...(await db.getNoteById("tw-18"))!, title: "Mine" });
+    await db.setNotePerServerStatus("tw-18", CONFIG_ID, "pending");
+    const result = await svc.syncAll(CREDS);
+    expect(result.errors).toEqual([]);
+    expect((await db.getNoteSyncInfo("tw-18")).syncStatus).toBe("conflict");
+    // An edit, or another record's push, writes "pending" or "synced" there
+    await db.setNotePerServerStatus("tw-18", CONFIG_ID, "synced");
+    expect(await db.refreshNoteSyncStatus("tw-18")).toBe("conflict");
+  });
+
+  it("writes a media change alone, and a date change does not touch the text", async () => {
+    const server = odoo();
+    const link = await sentTask(server, "tw-19");
+    await db.updateNote("tw-19", { ...(await db.getNoteById("tw-19"))!, entries: [
+      ...(await db.getNoteById("tw-19"))!.entries, { id: "p", type: "photo", params: { path: "p.jpg" } } as any,
+    ] });
+    await db.setNotePerServerStatus("tw-19", CONFIG_ID, "pending");
+    server.fetchMock.mockClear();
+    await svc.pushNote(CREDS, "tw-19");
+    expect(Object.keys(writes(server.fetchMock, "project.task")[0])).toEqual(["description"]);
+    // The server changes the text while the app changes the date: no conflict
+    server.edit("project.task", link.resId, { description: server.records["project.task"].get(link.resId).description.replace("First", "Edited") });
+    await db.updateNote("tw-19", { ...(await db.getNoteById("tw-19"))!, entries: [
+      { id: "d", type: "date", params: { date: new Date(2026, 10, 5, 9).toISOString() } } as any,
+      ...(await db.getNoteById("tw-19"))!.entries,
+    ] });
+    await db.setNotePerServerStatus("tw-19", CONFIG_ID, "pending");
+    await svc.pushNote(CREDS, "tw-19", { userInitiated: true });
+    expect(await svc.conflictsOf("tw-19")).toEqual([]);
+    expect((await db.getNoteById("tw-19"))!.entries.some((e) => e.type === "text" && (e.params as any).text === "Edited")).toBe(true);
+  });
+
+  it("applies the server's values to a link sent before bases existed, then keeps a base", async () => {
+    const server = odoo();
+    vi.stubGlobal("fetch", server.fetchMock);
+    server.records["project.task"].set(50, { id: 50, name: "Server", description: "<p>Body</p>", tag_ids: [], active: true, state: "01_in_progress", write_date: "2099-01-01 00:00:00" });
+    await db.addNote(makeNote({ id: "tw-10", title: "Old" }));
+    await linkTask(db, "tw-10", 50);
+    await svc.syncAll(CREDS);
+    expect((await db.getNoteById("tw-10"))!.title).toBe("Server");
+    expect((await db.findNoteLink("tw-10", CONFIG_ID, "project.task", "create"))!.params!.base).toBeTruthy();
   });
 });
