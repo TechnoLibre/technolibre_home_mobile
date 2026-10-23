@@ -1963,6 +1963,38 @@ export const FEATURE_TREE: FeatureNode[] = [
                 files: ["src/services/odoo/odooRpcClient.ts"],
             },
             {
+                id: "sync.attachments",
+                label: { en: "Note files as attachments", fr: "Fichiers de la note en pièces jointes" },
+                description: {
+                    en: "A note's photos, recordings and videos go to its records and messages, within a size and network limit.",
+                    fr: "Les photos, enregistrements et vidéos d'une note vont à ses records et messages, dans une limite de taille et de réseau.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/attachmentService.test.ts", "src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "After each create or write of a note's task, opportunity or invoice, and "
+                        + "of each message it posted, its media files not sent yet to that record "
+                        + "become ir.attachment of it (a message then lists them beside its own). "
+                        + "Options › Odoo sync set Wi-Fi only (a file held back goes on the next "
+                        + "push) and a largest size (a larger file is left out). Each file goes "
+                        + "once per record; a removed one stays on the server; a refusal is kept "
+                        + "and never fails the push. Activities take none.",
+                    fr: "Après chaque création ou écriture de la tâche, de l'opportunité ou de la "
+                        + "facture d'une note, et de chaque message qu'elle a posté, ses fichiers "
+                        + "pas encore envoyés à ce record en deviennent des ir.attachment (un "
+                        + "message les ajoute alors aux siens). Options › Synchronisation Odoo "
+                        + "règle le Wi-Fi seulement (un fichier retenu part à l'envoi suivant) et "
+                        + "la plus grosse taille (au-delà, le fichier est laissé de côté). Chaque "
+                        + "fichier part une fois par record ; un fichier retiré reste sur le "
+                        + "serveur ; un refus est noté sans faire échouer l'envoi. Les activités "
+                        + "n'en prennent pas.",
+                },
+                dependsOn: ["sync.task-project", "sync.message"],
+                demo: { kind: "options", sectionId: "sync" },
+                files: ["src/services/attachmentService.ts"],
+            },
+            {
                 id: "sync.http-policy",
                 label: { en: "Unencrypted http", fr: "http non chiffré" },
                 description: {

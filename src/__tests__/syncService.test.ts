@@ -4010,3 +4010,114 @@ describe("SyncService — companies", () => {
     }
   });
 });
+
+describe("SyncService — attachments", () => {
+  let svc: SyncService;
+  let db: DatabaseService;
+  let storage: Map<string, string>;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    storage = new Map();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => { storage.set(k, String(v)); },
+      removeItem: (k: string) => { storage.delete(k); },
+    });
+    db = new DatabaseService();
+    await db.initialize();
+    await prepareSyncDb(db);
+    await db.addParamsToNoteLinks();
+    svc = new SyncService(db);
+    svc.attachmentIO = { size: async () => 1000, read: async () => "QUJD", onWifi: async () => true };
+    await SecureStoragePlugin.set({
+      key: syncSessionKey(CREDS),
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 17 }),
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function server(options: { attachmentError?: boolean } = {}) {
+    let next = 300;
+    return routeFetch((url, body) => {
+      if (url.endsWith("/mail/message/update_content")) return { result: {} };
+      const { model, method } = body.params as any;
+      const kwargs = (body.params as any).kwargs ?? {};
+      if (model === "ir.attachment" && method === "create") {
+        if (options.attachmentError) return { error: { code: 200, message: "x", data: { name: "odoo.exceptions.AccessError", message: "no" } } };
+        return { result: next++ };
+      }
+      if (method === "fields_get") return { result: { message_ids: {} } };
+      if (model === "mail.message" && method === "search_read" && kwargs.domain?.[0]?.[0] === "id") {
+        return { result: [{ id: kwargs.domain[0][2], body: "<p>x</p>", attachment_ids: [7] }] };
+      }
+      // The record checks find what they look for; the task is not read back, so a push writes it whole
+      if (method === "search_read" && kwargs.domain?.[0]?.[0] === "id" && model !== "project.task") {
+        return { result: [{ id: kwargs.domain[0][2] }] };
+      }
+      if (method === "message_post") return { result: 600 };
+      if (method === "create") return { result: 900 };
+      return { result: method === "search_read" ? [] : true };
+    });
+  }
+
+  const photo = (id = "p1") => ({ id, type: "photo", params: { path: `file:///data/${id}.jpg` } } as any);
+  const attachments = (fetchMock: ReturnType<typeof routeFetch>) =>
+    rpcCalls(fetchMock).filter((c) => c.body.params.model === "ir.attachment").map((c) => c.body.params.args![0]);
+
+  it("sends a new task's photos to it once, then a photo added later", async () => {
+    await db.addNote(makeNote({ id: "at-1", entries: [photo("p1")] }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTarget("at-1", CONFIG_ID, "task", { projectId: null });
+    await svc.pushNote(CREDS, "at-1", { userInitiated: true });
+    expect(attachments(fetchMock)).toEqual([{ name: "p1.jpg", datas: "QUJD", res_model: "project.task", res_id: 900, mimetype: "image/jpeg" }]);
+    const link = (await db.findNoteLink("at-1", CONFIG_ID, "project.task", "create"))!;
+    expect(link.params!.attachments).toEqual({ p1: 300 });
+
+    await db.updateNote("at-1", makeNote({ id: "at-1", entries: [photo("p1"), photo("p2")] }));
+    fetchMock.mockClear();
+    await svc.pushNote(CREDS, "at-1");
+    expect(attachments(fetchMock).map((a) => a.name)).toEqual(["p2.jpg"]);
+  });
+
+  it("holds the files for Wi-Fi, and leaves out one over the size limit", async () => {
+    storage.set("options.sync.attachments", JSON.stringify({ wifiOnly: true, maxMb: 1 }));
+    svc.attachmentIO = { size: async (p) => (p.includes("big") ? 5 * 1024 * 1024 : 10), read: async () => "QUJD", onWifi: async () => false };
+    await db.addNote(makeNote({ id: "at-2", entries: [photo("small"), photo("big")] }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setTarget("at-2", CONFIG_ID, "task", { projectId: null });
+    await svc.pushNote(CREDS, "at-2", { userInitiated: true });
+    expect(attachments(fetchMock)).toEqual([]);
+
+    svc.attachmentIO = { ...svc.attachmentIO, onWifi: async () => true };
+    await db.updateNote("at-2", makeNote({ id: "at-2", title: "Wifi now", entries: [photo("small"), photo("big")] }));
+    await svc.pushNote(CREDS, "at-2");
+    expect(attachments(fetchMock).map((a) => a.name)).toEqual(["small.jpg"]);
+    const link = (await db.findNoteLink("at-2", CONFIG_ID, "project.task", "create"))!;
+    expect(link.params!.attachmentsSkipped).toEqual({ big: 5 * 1024 * 1024 });
+  });
+
+  it("adds a message's files to it, beside those it has", async () => {
+    await db.addNote(makeNote({ id: "at-3", entries: [photo("p1")] }));
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.setMessage("at-3", CONFIG_ID, { resModel: "crm.lead", resId: 7, typeId: null, deadline: null, userId: null });
+    await svc.pushNote(CREDS, "at-3", { userInitiated: true });
+    expect(attachments(fetchMock)[0]).toMatchObject({ res_model: "crm.lead", res_id: 7 });
+    const edit = rpcCalls(fetchMock).find((c) => c.url.endsWith("/mail/message/update_content"))!;
+    expect(edit.body.params).toMatchObject({ message_id: 600, attachment_ids: [7, 300] });
+  });
+
+  it("never fails the push for a file the server refuses, keeping the reason", async () => {
+    await db.addNote(makeNote({ id: "at-4", entries: [photo("p1")] }));
+    vi.stubGlobal("fetch", server({ attachmentError: true }));
+    await svc.setTarget("at-4", CONFIG_ID, "task", { projectId: null });
+    await expect(svc.pushNote(CREDS, "at-4", { userInitiated: true })).resolves.toBeUndefined();
+    const link = (await db.findNoteLink("at-4", CONFIG_ID, "project.task", "create"))!;
+    expect(link.params!.attachmentError).toContain("no");
+    expect(link.params!.attachments).toEqual({});
+  });
+});

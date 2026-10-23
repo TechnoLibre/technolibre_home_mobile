@@ -12,6 +12,7 @@ import {
   MirrorField, mirrorFields, MirrorKind, MirrorValues, PULL_ONLY, PUSH_ONLY, remoteDay, textOf, titledValues, titleOf,
 } from "./noteMirror";
 import type { Tag } from "../models/tag";
+import { AttachmentIO, attachmentSettings, deviceAttachmentIO, fileVerdict, mediaFiles } from "./attachmentService";
 import { Application } from "../models/application";
 import {
   Note,
@@ -745,6 +746,8 @@ export class SyncService {
   readonly projects: ProjectService;
   /** Partner search for a new opportunity, with the found ones cached. */
   readonly partners: RecordSearchService;
+  /** How media files are read and the network known (the device's; replaced in tests). */
+  attachmentIO: AttachmentIO = deviceAttachmentIO;
   /** The extra required fields of a new invoice per server and type, kept for offline. */
   readonly invoiceForms: InvoiceFormService;
   /** The activity calendar: activities per server, cached, and its offline actions. */
@@ -1175,6 +1178,11 @@ export class SyncService {
       await this.outbox.attempt(op.id, (running) => this.createRecord(kind, creds, running, adopt, fingerprint));
       // The row is deleted only once the attempt settled: derive the status without it
       await this.db.refreshNoteSyncStatus(noteId);
+      const created = await this.db.findNoteLink(noteId, configId, def.model, "create");
+      if (created) {
+        await this.callWithAuth(creds, async (sessionId) =>
+          this.sendAttachments(creds, sessionId, created.id, def.model, created.resId, await this.named(note)));
+      }
       return;
     }
     // A creation that linked its record but was cut short before its row
@@ -1228,6 +1236,7 @@ export class SyncService {
         }
       }
       await this.db.setNoteLinkParams(fresh.id, { ...(fresh.params ?? {}), base: advanceBase(base, local, sent, fields) });
+      await this.sendAttachments(creds, sessionId, link.id, def.model, link.resId, current);
       const now = new Date().toISOString();
       await this.db.setNoteLinkSyncedAt(link.id, now);
       // The fingerprint of the push's start: a change since, the pull's included, stays to send
@@ -2030,6 +2039,14 @@ export class SyncService {
       }
     }
     const done = (await this.db.getNoteById(noteId))?.done ?? false;
+    // A message just posted gets the note's files at once
+    for (const link of (await live()).filter((l) => l.kind === "message" && !before.some((b) => b.id === l.id))) {
+      try {
+        await this.writeMessage(creds, noteId, link, fingerprint);
+      } catch (e: unknown) {
+        keep(e);
+      }
+    }
     const created = (await live()).filter((l) => l.kind === "activity" && !before.some((b) => b.id === l.id));
     const toWrite = [...(options.onlyAttachedOp ? [] : before), ...(done ? created : [])];
     for (const link of toWrite) {
@@ -2266,6 +2283,11 @@ export class SyncService {
         }
         await this.db.setNoteLinkParams(link.id, { ...(link.params ?? {}), bodyHash: hash });
       }
+      // The files go to the message's record, then into the message, beside those it has
+      await this.sendAttachments(creds, sessionId, link.id, link.params?.resModel, link.params?.resId, note, async (ids) => {
+        const current = await this.readMessage(creds, sessionId, link.resId);
+        if (current) await this.updateMessage(creds, sessionId, link.resId, body, [...current.attachmentIds, ...ids]);
+      });
       const now = new Date().toISOString();
       await this.db.setNoteLinkSyncedAt(link.id, now);
       await this.settlePush(noteId, link.configId, fingerprint, now, null);
@@ -2291,6 +2313,69 @@ export class SyncService {
     const text = String(row.body || "").replace(/<[^>]*>/g, "").trim();
     const attachmentIds = row.attachment_ids ?? [];
     return text || attachmentIds.length > 0 ? { attachmentIds } : null;
+  }
+
+  /**
+   * Sends the note's photo, audio and video files not sent yet to this
+   * link's record (resModel, resId) as ir.attachment, as the attachment
+   * settings allow (see fileVerdict): on Wi-Fi only, under a size; a file
+   * held back is tried again on the next push, one over the size is noted
+   * (params.attachmentsSkipped) and left out. Each file goes once per link
+   * (params.attachments: entry id → attachment id); a file removed from the
+   * note stays on the server. linked receives the new attachment ids (a
+   * message adds them to itself). Best effort: a failure stops the round,
+   * kept in params.attachmentError, and never fails the push.
+   */
+  private async sendAttachments(
+    creds: SyncCredentials,
+    sessionId: string,
+    linkId: string,
+    resModel: string | undefined,
+    resId: number | undefined,
+    note: Note,
+    linked: (ids: number[]) => Promise<void> = async () => {}
+  ): Promise<void> {
+    const files = mediaFiles(note);
+    if (files.length === 0 || !resModel || !resId) return;
+    const link = (await this.db.getNoteLinks(note.id)).find((l) => l.id === linkId);
+    if (!link) return;
+    const sent: Record<string, number> = { ...(link.params?.attachments ?? {}) };
+    const skipped: Record<string, number> = { ...(link.params?.attachmentsSkipped ?? {}) };
+    const settings = attachmentSettings();
+    const added: number[] = [];
+    let error: string | null = null;
+    for (const file of files) {
+      if (file.entryId in sent) continue;
+      try {
+        const { verdict, size } = await fileVerdict(file, settings, this.attachmentIO);
+        if (verdict === "too_big") {
+          skipped[file.entryId] = size!;
+          continue;
+        }
+        if (verdict === "wait") continue;
+        delete skipped[file.entryId];
+        const datas = await this.attachmentIO.read(file.path);
+        const id: number = await this.jsonRpc(creds.odooUrl, sessionId, "ir.attachment", "create", [{
+          name: file.name, datas, res_model: resModel, res_id: resId, mimetype: file.mimetype,
+        }]);
+        sent[file.entryId] = id;
+        added.push(id);
+      } catch (e: unknown) {
+        error = e instanceof Error ? e.message : String(e);
+        break;
+      }
+    }
+    if (added.length > 0) {
+      try {
+        await linked(added);
+      } catch (e: unknown) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+    }
+    const fresh = (await this.db.getNoteLinks(note.id)).find((l) => l.id === linkId);
+    await this.db.setNoteLinkParams(linkId, {
+      ...(fresh?.params ?? {}), attachments: sent, attachmentsSkipped: skipped, attachmentError: error,
+    });
   }
 
   /**

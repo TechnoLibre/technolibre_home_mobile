@@ -3,6 +3,7 @@ import { useState, xml } from "@odoo/owl";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { isHttpAllowed, setHttpAllowed } from "../../../services/odoo/httpPolicy";
 import { reminderSettings, scheduleReminders, setReminderSettings } from "../../../services/calendarReminders";
+import { attachmentSettings, setAttachmentSettings } from "../../../services/attachmentService";
 
 export class OptionsSyncComponent extends EnhancedComponent {
   static template = xml`
@@ -41,13 +42,34 @@ export class OptionsSyncComponent extends EnhancedComponent {
           </label>
         </t>
         <p class="options-sync__info" t-esc="t('sync.calendar_reminders_hint')" />
+        <label class="options-sync__toggle">
+          <input type="checkbox" t-att-checked="state.attachments.wifiOnly" t-on-change="(ev) => this.setAttachments('wifiOnly', ev.target.checked)" />
+          <t t-esc="t('sync.attachments_wifi')"/>
+        </label>
+        <label class="options-sync__info">
+          <t t-esc="t('sync.attachments_max')"/>
+          <input type="number" min="0" step="1" t-att-value="state.attachments.maxMb ?? ''" t-on-change="(ev) => this.setAttachments('maxMb', ev.target.value)" />
+        </label>
+        <p class="options-sync__info" t-esc="t('sync.attachments_hint')" />
         <button class="options-sync__btn options-sync__btn--add" t-on-click="goToApps" t-esc="t('button.go_to_applications')" />
       </div>
     </li>
   `;
 
   setup() {
-    this.state = useState({ expanded: false, allowHttp: isHttpAllowed(), reminders: { ...reminderSettings() } });
+    this.state = useState({
+      expanded: false, allowHttp: isHttpAllowed(), reminders: { ...reminderSettings() }, attachments: { ...attachmentSettings() },
+    });
+  }
+
+  /** Stores one attachment setting; an empty or zero size is no limit. */
+  setAttachments(key: "wifiOnly" | "maxMb", value: boolean | string) {
+    const current = attachmentSettings();
+    const next = key === "wifiOnly"
+      ? { ...current, wifiOnly: value === true }
+      : { ...current, maxMb: Number(value) > 0 ? Number(value) : null };
+    setAttachmentSettings(next);
+    this.state.attachments = { ...attachmentSettings() };
   }
 
   /**
