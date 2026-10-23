@@ -1834,8 +1834,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(date_deadline) apply to the cache at once and wait in the outbox "
                         + "(calendar.done, calendar.reschedule) when offline. A day's \"New "
                         + "note\" creates a dated note and opens the sync picker on an activity "
-                        + "due that day. Each refresh reschedules local reminders of the "
-                        + "user's open activities (hour and days before, in the sync options).",
+                        + "due that day. Each refresh, and the app's start from the cache (an "
+                        + "update or a forced stop cancels alarms), reschedules local reminders "
+                        + "of the user's open activities (hour and days before, in the sync options).",
                     fr: "Par serveur, les mail.activity ouvertes de l'utilisateur connecté (uid "
                         + "de get_session_info) et des utilisateurs choisis, dues jusqu'à 90 jours, "
                         + "celles en retard comprises, plus en Odoo 17+ celles faites (archivées) "
@@ -1845,8 +1846,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "reporter (date_deadline) s'appliquent au cache aussitôt et attendent "
                         + "dans la file (calendar.done, calendar.reschedule) hors ligne. « Nouvelle "
                         + "note » d'un jour crée une note datée et ouvre le sélecteur sur une "
-                        + "activité due ce jour. Chaque rafraîchissement replanifie les rappels "
-                        + "locaux des activités ouvertes (heure et jours avant, dans les options).",
+                        + "activité due ce jour. Chaque rafraîchissement, et le démarrage de "
+                        + "l'app depuis le cache (une mise à jour ou un arrêt forcé annule les "
+                        + "alarmes), replanifie les rappels locaux des activités ouvertes (heure "
+                        + "et jours avant, dans les options).",
                 },
                 dependsOn: ["sync.activity", "sync.outbox"],
                 demo: { kind: "route", url: "/activities" },
@@ -1982,7 +1985,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "Options › Odoo sync set Wi-Fi only (a file held back goes on the next "
                         + "push) and a largest size (a larger file is left out). Each file goes "
                         + "once per record; a removed one stays on the server; a refusal is kept "
-                        + "and never fails the push. Activities take none.",
+                        + "and never fails the push. Activities take none. A file left out "
+                        + "(too big, missing, refused) is named on the note, with why, until sent.",
                     fr: "Après chaque création ou écriture de la tâche, de l'opportunité ou de la "
                         + "facture d'une note, et de chaque message qu'elle a posté, ses fichiers "
                         + "pas encore envoyés à ce record en deviennent des ir.attachment (un "
@@ -1991,7 +1995,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "la plus grosse taille (au-delà, le fichier est laissé de côté). Chaque "
                         + "fichier part une fois par record ; un fichier retiré reste sur le "
                         + "serveur ; un refus est noté sans faire échouer l'envoi. Les activités "
-                        + "n'en prennent pas.",
+                        + "n'en prennent pas. Un fichier laissé de côté (trop gros, introuvable, "
+                        + "refusé) est nommé sur la note, avec la raison, jusqu'à son envoi.",
                 },
                 dependsOn: ["sync.task-project", "sync.message"],
                 demo: { kind: "options", sectionId: "sync" },
