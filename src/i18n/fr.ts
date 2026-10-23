@@ -421,6 +421,7 @@ export const translations: Record<string, string> = {
   "label.sync_target_queued": "En attente d'envoi.",
   "label.sync_target_stuck": "Sa création échoue encore : décochez pour l'abandonner.",
   "label.sync_kind_lead": "Opportunité",
+  "label.sync_company": "Société des nouveaux enregistrements",
   "label.conflict_title": "Modifiée dans l'app et sur le serveur",
   "label.conflict_hint": "Choisissez, champ par champ, la version à garder. Rien n'est envoyé avant.",
   "label.conflict_mine": "Celle de l'app",

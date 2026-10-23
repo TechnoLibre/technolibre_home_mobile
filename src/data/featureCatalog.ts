@@ -1935,6 +1935,34 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "sync.companies",
+                label: { en: "Several companies", fr: "Plusieurs sociétés" },
+                description: {
+                    en: "For a user of several companies, each send chooses the company of the new records.",
+                    fr: "Pour un utilisateur de plusieurs sociétés, chaque envoi choisit la société des nouveaux enregistrements.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "The picker reads the user's companies from get_session_info "
+                        + "(user_companies), kept per server for offline, and shows a choice only "
+                        + "when there are several, the last one chosen first. Every call to that "
+                        + "server is then made in all of them (allowed_company_ids), so records of "
+                        + "each are seen and written; a creation puts the chosen company first, "
+                        + "where the server creates the record.",
+                    fr: "Le sélecteur lit les sociétés de l'utilisateur dans get_session_info "
+                        + "(user_companies), gardées par serveur hors ligne, et ne propose un "
+                        + "choix que s'il y en a plusieurs, la dernière choisie d'abord. Chaque "
+                        + "appel à ce serveur se fait alors dans toutes (allowed_company_ids), pour "
+                        + "voir et écrire les records de chacune ; une création met la société "
+                        + "choisie en tête, celle où le serveur crée le record.",
+                },
+                dependsOn: ["sync.odoo-rpc"],
+                demo: NONE_BG,
+                files: ["src/services/odoo/odooRpcClient.ts"],
+            },
+            {
                 id: "sync.http-policy",
                 label: { en: "Unencrypted http", fr: "http non chiffré" },
                 description: {

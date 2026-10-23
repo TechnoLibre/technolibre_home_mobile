@@ -18,6 +18,14 @@ export interface StoredSession {
   createdAt?: string;
 }
 
+/** Who a session is (see OdooRpcClient.sessionInfo). */
+export interface SessionInfo {
+  uid: number;
+  /** The companies the user may work in, the current one first. */
+  companies: Array<{ id: number; name: string }>;
+  currentCompany: number | null;
+}
+
 /** One field of fields_get, with the attributes the app asks for. */
 export interface OdooFieldInfo {
   type: string;
@@ -324,19 +332,35 @@ export class OdooRpcClient {
    * server and database for the app's lifetime.
    */
   async currentUid(creds: SyncCredentials): Promise<number> {
+    return (await this.sessionInfo(creds)).uid;
+  }
+
+  /**
+   * The user the credentials log in as and the companies they may work in
+   * (user_companies of /web/session/get_session_info, an authenticated
+   * route; current first), read once per server and database for the
+   * app's lifetime.
+   */
+  async sessionInfo(creds: SyncCredentials): Promise<SessionInfo> {
     const key = `${creds.odooUrl}|${creds.username}|${creds.database}`;
-    const known = this._uids.get(key);
-    if (known !== undefined) return known;
+    const known = this._sessions.get(key);
+    if (known) return known;
     const info = await this.callWithAuth(creds, (sessionId) =>
       this.jsonRoute(creds.odooUrl, sessionId, "/web/session/get_session_info", {}));
     const uid = Number(info?.uid);
     if (!Number.isInteger(uid) || uid <= 0) throw new Error(`Utilisateur inconnu sur ${creds.odooUrl}.`);
-    this._uids.set(key, uid);
-    return uid;
+    const allowed = Object.values(info?.user_companies?.allowed_companies ?? {}) as Array<{ id: number; name: string }>;
+    const current = Number(info?.user_companies?.current_company) || null;
+    const companies = allowed
+      .map((c) => ({ id: Number(c.id), name: String(c.name ?? `#${c.id}`) }))
+      .sort((a, b) => Number(b.id === current) - Number(a.id === current));
+    const result: SessionInfo = { uid, companies, currentCompany: current };
+    this._sessions.set(key, result);
+    return result;
   }
 
-  /** currentUid's answers, per "url|username|database". */
-  private _uids = new Map<string, number>();
+  /** sessionInfo's answers, per "url|username|database". */
+  private _sessions = new Map<string, SessionInfo>();
 
   /**
    * Calls a JSON route of the web client (type="json"), such as

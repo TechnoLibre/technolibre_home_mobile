@@ -3936,3 +3936,77 @@ describe("SyncService — two-way sync and conflicts", () => {
     expect((await db.findNoteLink("tw-10", CONFIG_ID, "project.task", "create"))!.params!.base).toBeTruthy();
   });
 });
+
+describe("SyncService — companies", () => {
+  let svc: SyncService;
+  let db: DatabaseService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await prepareSyncDb(db);
+    await db.addParamsToNoteLinks();
+    svc = new SyncService(db);
+    await SecureStoragePlugin.set({
+      key: syncSessionKey(CREDS),
+      value: JSON.stringify({ sessionId: "fake-session", odooMajorVersion: 17 }),
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Server whose user works in companies 1 (current) and 2, or only 1. */
+  function server(companies: number[] = [1, 2]) {
+    return routeFetch((url, body) => {
+      if (url.endsWith("/web/session/get_session_info")) {
+        return { result: {
+          uid: 2,
+          user_companies: {
+            current_company: 1,
+            allowed_companies: Object.fromEntries(companies.map((id) => [id, { id, name: `Company ${id}` }])),
+          },
+        } };
+      }
+      const { method } = body.params as any;
+      if (method === "create") return { result: 900 };
+      return { result: method === "search_read" ? [] : true };
+    });
+  }
+
+  it("reads the user's companies, current first, and keeps them for offline", async () => {
+    vi.stubGlobal("fetch", server([2, 1]));
+    expect(await svc.serverCompanies(CREDS, { online: true })).toEqual({
+      companies: [{ id: 1, name: "Company 1" }, { id: 2, name: "Company 2" }], last: null,
+    });
+    vi.stubGlobal("fetch", routeFetch(() => { throw new TypeError("Failed to fetch"); }));
+    expect((await new SyncService(db).serverCompanies(CREDS, { online: false })).companies).toHaveLength(2);
+  });
+
+  it("makes every call in the user's companies, and a creation in the one chosen first", async () => {
+    const fetchMock = server();
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.serverCompanies(CREDS, { online: true });
+    await db.addNote(makeNote({ id: "co-1" }));
+    await svc.setTarget("co-1", CONFIG_ID, "task", { projectId: null });
+    await svc.setCreationCompany("co-1", CONFIG_ID, 2);
+    await svc.pushNote(CREDS, "co-1", { userInitiated: true });
+    const create = rpcCalls(fetchMock).find((c) => (c.body.params as any).method === "create")!;
+    expect((create.body.params as any).kwargs.context.allowed_company_ids).toEqual([2, 1]);
+    const others = rpcCalls(fetchMock).filter((c) => c.body.params.model && (c.body.params as any).method !== "create");
+    for (const c of others) expect((c.body.params as any).kwargs.context?.allowed_company_ids).toEqual([1, 2]);
+    expect((await svc.serverCompanies(CREDS, { online: false })).last).toBe(2);
+  });
+
+  it("adds no company context for a user of one company", async () => {
+    const fetchMock = server([1]);
+    vi.stubGlobal("fetch", fetchMock);
+    await svc.serverCompanies(CREDS, { online: true });
+    await db.addNote(makeNote({ id: "co-2" }));
+    await svc.setTarget("co-2", CONFIG_ID, "task", { projectId: null });
+    await svc.pushNote(CREDS, "co-2", { userInitiated: true });
+    for (const c of rpcCalls(fetchMock).filter((c) => c.body.params.model)) {
+      expect((c.body.params as any).kwargs?.context?.allowed_company_ids).toBeUndefined();
+    }
+  });
+});

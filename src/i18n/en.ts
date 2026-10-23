@@ -421,6 +421,7 @@ export const translations: Record<string, string> = {
   "label.sync_target_queued": "Waiting to be sent.",
   "label.sync_target_stuck": "Its creation keeps failing: uncheck to give it up.",
   "label.sync_kind_lead": "Opportunity",
+  "label.sync_company": "Company of the new records",
   "label.conflict_title": "Changed in the app and on the server",
   "label.conflict_hint": "Choose, field by field, the version to keep. Nothing is sent before.",
   "label.conflict_mine": "The app's",

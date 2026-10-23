@@ -162,6 +162,18 @@ export class NoteComponent extends EnhancedComponent {
 									/>
 									<span t-esc="cfg.name or cfg.appUrl"/>
 								</label>
+								<div t-if="state.selectedConfigIds.includes(cfg.id) and state.companies[cfg.id] and state.companies[cfg.id].list.length > 1" class="breadcrumb__config-kind">
+									<label class="breadcrumb__config-note" t-att-for="'sync-company-' + cfg_index"><t t-esc="t('label.sync_company')"/></label>
+									<select
+										class="breadcrumb__config-select"
+										t-att-id="'sync-company-' + cfg_index"
+										t-on-change="(ev) => this.setCompany(cfg.id, ev.target.value)"
+									>
+										<t t-foreach="state.companies[cfg.id].list" t-as="company" t-key="company.id">
+											<option t-att-value="'' + company.id" t-att-selected="state.companies[cfg.id].selection === company.id" t-esc="company.name"/>
+										</t>
+									</select>
+								</div>
 								<t t-if="state.targets[cfg.id] and state.selectedConfigIds.includes(cfg.id)">
 									<t t-foreach="kindRows(cfg.id)" t-as="row" t-key="row.kind">
 										<div class="breadcrumb__config-kind">
@@ -773,6 +785,8 @@ export class NoteComponent extends EnhancedComponent {
 			targets: {} as Record<string, Record<TargetKind, TargetRow>>,
 			/** Per sync config id: the note's activities there, and those being added. */
 			activities: {} as Record<string, ActivitySection>,
+			/** Per sync config id: the user's companies there and the one new records go to. */
+			companies: {} as Record<string, { list: Array<{ id: number; name: string }>; selection: number | null }>,
 			showOptionsMenu: false,
 			debugDialog: { visible: false, message: "" },
 			errorDialog: { visible: false, message: "" },
@@ -970,6 +984,11 @@ export class NoteComponent extends EnhancedComponent {
 		if (row) row.revenue = value;
 	}
 
+	setCompany(configId: string, value: string) {
+		const company = this.state.companies[configId];
+		if (company) company.selection = Number(value) || null;
+	}
+
 	/** Pending partner search per config id, run 300 ms after the last keystroke. */
 	private _partnerSearch = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -1130,11 +1149,16 @@ export class NoteComponent extends EnhancedComponent {
 		const today = localDay(new Date().toISOString())!;
 		await Promise.all(configs.map(async (cfg) => {
 			const creds = () => this.credsFor(cfg);
-			const [rows, section] = await Promise.all([
+			const [rows, section, companies] = await Promise.all([
 				buildTargetRows(this.syncService, noteId, cfg.id, creds, online),
 				buildActivitySection(this.syncService, noteId, cfg.id, creds, online, noteDay, today),
+				creds().then((c) => this.syncService.serverCompanies(c, { online })).catch(() => ({ companies: [], last: null })),
 			]);
 			if (load !== this._targetsLoad || this.state.noteId !== noteId) return;
+			this.state.companies[cfg.id] = {
+				list: companies.companies,
+				selection: companies.last ?? companies.companies[0]?.id ?? null,
+			};
 			this.state.targets[cfg.id] = rows;
 			this.state.activities[cfg.id] = section;
 			for (const row of section.rows) {
@@ -1425,6 +1449,13 @@ export class NoteComponent extends EnhancedComponent {
 			const activities = planActivities(this.syncService, this.state.noteId, ids, this.state.activities);
 			await applyTaskTargets(this.syncService, this.state.noteId, ids, this.state.targets, work);
 			for (const record of activities) await record();
+			// The company chosen, where the user has several, goes to every new record of the note there
+			for (const id of ids) {
+				const company = this.state.companies[id];
+				if (company && company.list.length > 1 && company.selection !== null) {
+					await this.syncService.setCreationCompany(this.state.noteId, id, company.selection);
+				}
+			}
 		} catch (e: unknown) {
 			this.showErrorDialog(e instanceof Error ? e.message : String(e));
 			return;

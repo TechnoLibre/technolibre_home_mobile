@@ -82,6 +82,10 @@ export type InvoiceMoveType = "out_invoice" | "in_invoice";
 /** sync_target_prefs kind of the target kinds last checked per server. */
 const TARGET_KINDS_PREF = "targets";
 
+/** sync_target_prefs kinds of the user's companies on a server, and of the one last chosen. */
+const COMPANIES_PREF = "companies";
+const COMPANY_PREF = "company";
+
 /** Model of a note's opportunity. */
 const LEAD_MODEL = "crm.lead";
 
@@ -817,13 +821,29 @@ export class SyncService {
     return this.rpc.authenticate(creds);
   }
 
-  private callWithAuth<T>(
+  /**
+   * callWithAuth, the calls of fn made in the companies kept for that
+   * server (see companyScope).
+   */
+  private async callWithAuth<T>(
     creds: SyncCredentials,
     fn: (sessionId: string, odooVersion: number) => Promise<T>
   ): Promise<T> {
-    return this.rpc.callWithAuth(creds, fn);
+    const scope = await this.companyScope(syncConfigIdOf(creds));
+    return this.rpc.callWithAuth(creds, (sessionId, odooVersion) => {
+      if (scope.length > 0) this._sessionCompanies.set(sessionId, scope);
+      return fn(sessionId, odooVersion);
+    });
   }
 
+  /** The companies each session's calls are made in, by session id (see companyScope). */
+  private _sessionCompanies = new Map<string, number[]>();
+
+  /**
+   * A call on the server, in the session's companies (allowed_company_ids,
+   * unless the call names its own): a user of several companies then sees,
+   * and writes, the records of each, not only those of the current one.
+   */
   private jsonRpc(
     odooUrl: string,
     sessionId: string,
@@ -832,7 +852,65 @@ export class SyncService {
     args: any[],
     kwargs: Record<string, any> = {}
   ): Promise<any> {
-    return this.rpc.jsonRpc(odooUrl, sessionId, model, method, args, kwargs);
+    const companies = this._sessionCompanies.get(sessionId);
+    const scoped = companies && !kwargs.context?.allowed_company_ids
+      ? { ...kwargs, context: { ...(kwargs.context ?? {}), allowed_company_ids: companies } }
+      : kwargs;
+    return this.rpc.jsonRpc(odooUrl, sessionId, model, method, args, scoped);
+  }
+
+  // ─── Companies ────────────────────────────────────────────────────────────
+
+  /**
+   * The companies of the user on one server, the current one first, read
+   * online (OdooRpcClient.sessionInfo) and kept in sync_target_prefs for
+   * offline; the one last chosen there. Several companies make the picker
+   * ask which one a new record goes to.
+   */
+  async serverCompanies(
+    creds: SyncCredentials,
+    options: { online: boolean }
+  ): Promise<{ companies: Array<{ id: number; name: string }>; last: number | null }> {
+    const configId = syncConfigIdOf(creds);
+    let companies: Array<{ id: number; name: string }> = [];
+    if (options.online) {
+      try {
+        companies = (await this.rpc.sessionInfo(creds)).companies;
+        await this.db.setSyncTargetPref({
+          configId, kind: COMPANIES_PREF, params: { companies }, updatedAt: new Date().toISOString(),
+        });
+      } catch {
+        companies = [];
+      }
+    }
+    if (companies.length === 0) companies = (await this.db.getSyncTargetPref(configId, COMPANIES_PREF))?.params.companies ?? [];
+    const last = (await this.db.getSyncTargetPref(configId, COMPANY_PREF))?.params.companyId ?? null;
+    return { companies, last: companies.some((c) => c.id === last) ? last : null };
+  }
+
+  /**
+   * The companies a server's calls are made in: those kept for it when the
+   * user has several (the current one first), none otherwise.
+   */
+  private async companyScope(configId: string): Promise<number[]> {
+    const companies: Array<{ id: number }> = (await this.db.getSyncTargetPref(configId, COMPANIES_PREF).catch(() => null))
+      ?.params.companies ?? [];
+    return companies.length > 1 ? companies.map((c) => c.id) : [];
+  }
+
+  /**
+   * Records the company the note's new records on this server go to: every
+   * creation of the note there not run yet takes it (params.companyId),
+   * and it is the server's default next time.
+   */
+  async setCreationCompany(noteId: string, configId: string, companyId: number): Promise<void> {
+    for (const op of await this.db.getOutboxOpsForNote(noteId)) {
+      if (op.configId !== configId || op.status === "running") continue;
+      await this.outbox.setParams(op.id, { companyId });
+    }
+    await this.db.setSyncTargetPref({
+      configId, kind: COMPANY_PREF, params: { companyId }, updatedAt: new Date().toISOString(),
+    });
   }
 
   // ─── Tag resolution ───────────────────────────────────────────────────────
@@ -1400,6 +1478,12 @@ export class SyncService {
       }
     }
     await this.callWithAuth(creds, async (sessionId, odooVersion) => {
+      // The company chosen goes first: the record is created in it
+      const companyId: number | null = op.params.companyId ?? null;
+      if (companyId !== null) {
+        const scope = this._sessionCompanies.get(sessionId) ?? [];
+        spec = { ...spec, context: { ...(spec.context ?? {}), allowed_company_ids: [companyId, ...scope.filter((c) => c !== companyId)] } };
+      }
       const payload = await spec.values(sessionId, odooVersion, note);
       let resId: number | null = adoptId;
       if (resId === null && op.attempts > 1) {
