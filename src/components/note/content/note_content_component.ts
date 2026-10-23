@@ -172,6 +172,8 @@ export class NoteContentComponent extends EnhancedComponent {
 		this.eventBus.addEventListener(Events.FOCUS_LAST_ENTRY, this.focusLastEntry.bind(this));
 		this.eventBus.addEventListener(Events.SCROLL_TO_LAST_ENTRY, this.scrollToLastEntry.bind(this));
 		this.eventBus.addEventListener(Events.TAGS_UPDATED, () => this.getTags());
+		// A pull may create the app's tags for the server's names
+		this.eventBus.addEventListener(Events.NOTE_PULLED, () => this.getTags());
 	}
 
 	private onSort() {

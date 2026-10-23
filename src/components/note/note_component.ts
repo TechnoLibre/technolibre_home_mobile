@@ -2099,8 +2099,9 @@ export class NoteComponent extends EnhancedComponent {
 				await this.noteService.crud.add(this.state.note);
 				this.state.newNote = false;
 			} else {
-
+				// An edit marks the note pending on its servers: the indicator reads it back
 				await this.noteService.crud.edit(this.state.noteId, this.state.note);
+				await this.refreshSyncStatusFromDb();
 			}
 		} catch (error: unknown) {
 			if (error instanceof Error) {
@@ -2175,6 +2176,8 @@ export class NoteComponent extends EnhancedComponent {
 		const onTagsUpdated    = (e: any) => {
 			if (e?.detail?.noteId === this.state.noteId) {
 				this.state.note.tags = e?.detail?.tagIds ?? [];
+				// The tag manager saved them, marking the note pending
+				void this.refreshSyncStatusFromDb();
 			}
 		};
 		// Stream Deck remote-add: keys 1-3 fire while a note page is
