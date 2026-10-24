@@ -155,6 +155,7 @@ describe("featureCatalog", () => {
         "src/constants/storage.ts",    // shared localStorage keys
         "src/components/applications/application_mixins.scss", // sass mixins
         "src/utils/debugUtils.ts",     // glue for the debug ⋮ menu
+        "src/testing/syncTestKit.ts",  // test entry point of ERPLibre's integration tests
     ]);
 
     it("every src/ file is referenced by some feature (or allow-listed)", () => {
