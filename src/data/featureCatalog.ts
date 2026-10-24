@@ -3333,6 +3333,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 demo: NONE_BG,
                 files: [
                     "src/services/migrationService.ts",
+                    "src/services/migrations/index.ts",
                     "src/services/dataMigration.ts",
                 ],
                 tests: [
