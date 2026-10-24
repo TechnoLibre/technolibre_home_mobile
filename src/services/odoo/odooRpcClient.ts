@@ -598,9 +598,14 @@ export class OdooRpcClient {
       body: JSON.stringify(body),
     });
     const text = await resp.text();
-    const respHeaders: Record<string, string> = {};
+    const respHeaders: Record<string, string | string[]> = {};
     // Optional chaining: test mocks may omit headers; real fetch() always has it.
     resp.headers?.forEach?.((val: string, key: string) => { respHeaders[key] = val; });
+    // forEach gives each Set-Cookie on its own, the last overwriting the others:
+    // all of them, as the native path gives them (an old session deleted after
+    // the new one would otherwise hide it)
+    const setCookies = (resp.headers as any)?.getSetCookie?.() as string[] | undefined;
+    if (setCookies?.length) respHeaders["set-cookie"] = setCookies;
     return { status: resp.status, headers: respHeaders, data: text };
   }
 

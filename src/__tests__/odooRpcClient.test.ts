@@ -28,6 +28,29 @@ async function storeSession(version: number) {
 
 const rpcError = (name: string, message = "nope") => ({ error: { code: 200, message: "Odoo Server Error", data: { name, message } } });
 
+describe("OdooRpcClient authenticate over fetch", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    SecureStoragePlugin._store.clear();
+  });
+
+  it("keeps the new session when the old one's deletion comes after it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const headers = new Headers();
+      if (url.endsWith("/web/session/authenticate")) {
+        headers.append("set-cookie", "session_id=NEWSESSION; Path=/; HttpOnly");
+        headers.append("set-cookie", "session_id=OLDSESSION; Max-Age=0; Path=/");
+      }
+      const result = url.endsWith("/web/session/authenticate")
+        ? { uid: 2, server_version_info: [17, 0, 0, "final", 0] }
+        : { server_version_info: [17, 0, 0, "final", 0] };
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), { status: 200, headers });
+    }));
+    const session = await new OdooRpcClient().authenticate(CREDS);
+    expect(session.sessionId).toBe("NEWSESSION");
+  });
+});
+
 describe("OdooRpcClient helpers", () => {
   let rpc: OdooRpcClient;
 
