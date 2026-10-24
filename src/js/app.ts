@@ -242,6 +242,12 @@ async function startApp() {
 
 	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, marianService, processService, repoExtractorService, repoEditService, codeStyleService, streamDeckController, streamDeckCameraStreamer, streamDeckLcdTextRenderer };
 
+	if (import.meta.env.MODE === "development") {
+		// ERPLibre's device tests set the app up through it; absent from a production build
+		const { deviceTestHook } = await import("../testing/deviceTestHook");
+		(window as any).__erplibreTest = deviceTestHook(env);
+	}
+
 	setBootStep(t("boot.mounting_interface"));
 	await mount(RootComponent, document.body, { env });
 	defineCustomElements(window);

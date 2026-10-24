@@ -156,6 +156,7 @@ describe("featureCatalog", () => {
         "src/components/applications/application_mixins.scss", // sass mixins
         "src/utils/debugUtils.ts",     // glue for the debug ⋮ menu
         "src/testing/syncTestKit.ts",  // test entry point of ERPLibre's integration tests
+        "src/testing/deviceTestHook.ts", // test entry point of ERPLibre's device tests
     ]);
 
     it("every src/ file is referenced by some feature (or allow-listed)", () => {
