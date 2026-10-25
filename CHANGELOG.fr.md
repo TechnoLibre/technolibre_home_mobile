@@ -8,6 +8,20 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Non publié]
 
 ### Ajouté
+- **Clavardage avec Discuss d'Odoo 18, lot 1** — une tuile Clavardage sur la
+  page d'accueil, avec son nombre de non lus, ouvre la liste des
+  conversations de chaque serveur Odoo 18 de l'app (filtre par serveur,
+  recherche, discussions directes, groupes et canaux). Une conversation
+  montre son historique par pages (ou en entier d'un coup), qui écrit, qui
+  est en ligne, et ce qu'est devenu chaque message : envoi, envoyé, vu par
+  tous, non envoyé. Les messages arrivent aussitôt par le websocket du
+  serveur, qui se reconnecte seul et recharge ce qu'il ne peut pas rejouer.
+  Un message écrit hors ligne attend dans une file, dans l'ordre, et un envoi
+  dont la réponse s'est perdue est retrouvé par un marqueur caché dans son
+  corps au lieu d'être posté deux fois ; avec le module serveur facultatif
+  `erplibre_mobile_chat`, installé depuis Options › Clavardage par un
+  utilisateur système, le serveur le reconnaît aussi. Options › Clavardage
+  coupe les accusés de lecture et l'indicateur de frappe envoyés au serveur.
 - **Points d'entrée des tests de synchro** — `src/testing/syncTestKit.ts`
   (versionné par `HARNESS_API`) prépare le code de synchro pour les tests
   d'intégration d'ERPLibre contre de vrais Odoo ; une construction de
