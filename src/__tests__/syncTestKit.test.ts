@@ -3,6 +3,7 @@ import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { __setNetworkStatus, Network } from "@capacitor/network";
 import {
 	HARNESS_API, createSyncEnv, nodeTransport, installLocalStorage, memoryAttachmentIO, resetMocks,
+	restartSyncEnv, setOnline, chatTitle,
 } from "../testing/syncTestKit";
 import { syncSessionKey } from "../services/syncService";
 import { isHttpAllowed } from "../services/odoo/httpPolicy";
@@ -93,6 +94,64 @@ describe("syncTestKit", () => {
 
 		it("ignore mode never sends the uuid", async () => {
 			expect((await queued("ignore"))[0].params.useModule).toBe(false);
+		});
+
+		it("ignore mode also turns off the module's create dedupe and member removal", async () => {
+			installLocalStorage({ allowHttp: true });
+			const env = await createSyncEnv([TARGET], { chatModule: "ignore" });
+			const configId = env.configIds[0];
+			await env.chat.repo.setSourceState({ configId, moduleState: "installed", isSystem: true });
+			expect(await env.chat.features(configId)).toEqual({ canRemoveMembers: false, idempotentCreate: false });
+		});
+
+		it("setOnline is the network the chat reads", async () => {
+			installLocalStorage({ allowHttp: true });
+			const env = await createSyncEnv([TARGET]);
+			setOnline(false);
+			expect(await env.chat.isOnline()).toBe(false);
+			setOnline(true);
+			expect(await env.chat.isOnline()).toBe(true);
+		});
+
+		it("restartSyncEnv keeps the database and the queue, with a new chat service of the same mode", async () => {
+			installLocalStorage({ allowHttp: true });
+			const env = await createSyncEnv([TARGET], { chatModule: "ignore" });
+			const configId = env.configIds[0];
+			await env.chat.repo.setSourceState({ configId, selfPartnerId: 3 });
+			setOnline(false);
+			const src = { configId, creds: env.creds[0], label: "x", app: {} } as any;
+			const { channelId } = await env.chat.createGroup(src, [7], "Team");
+			await env.chat.send(src, channelId, "hello");
+
+			const after = await restartSyncEnv(env);
+			expect(after.db).toBe(env.db);
+			expect(after.chat).not.toBe(env.chat);
+			expect(after.chat).toBe(after.sync.chat);
+			expect(after.chat.moduleMode).toBe("ignore");
+			expect(await after.chat.isOnline()).toBe(false);
+			expect((await after.db.getOutboxOpsForConfig(configId)).map((o: any) => o.kind).sort()).toEqual(["chat.create", "chat.post"]);
+			expect(await after.chat.messages(configId, channelId)).toMatchObject([{ status: "pending" }]);
+		});
+
+		it("chatTitle names a group without a name by its members", async () => {
+			installLocalStorage({ allowHttp: true });
+			const env = await createSyncEnv([TARGET]);
+			const configId = env.configIds[0];
+			await env.chat.repo.setSourceState({ configId, selfPartnerId: 3 });
+			await env.chat.repo.applyDelta(configId, {
+				channels: [{ channelId: 5, channelType: "group", name: "", isMember: true }],
+				deletedChannelIds: [],
+				members: [{ memberId: 1, channelId: 5, partnerId: 3 }, { memberId: 2, channelId: 5, partnerId: 7 }],
+				deletedMemberIds: [],
+				messages: [],
+				partners: [{ partnerId: 3, name: "Ann" }, { partnerId: 7, name: "Bob" }] as any,
+				inboxCounter: null,
+				selfPartnerId: null,
+			} as any);
+			expect(await chatTitle(env, configId, 5)).toBe("Ann and Bob");
+			await env.chat.repo.patchChannel(configId, 5, { name: "Team" });
+			expect(await chatTitle(env, configId, 5)).toBe("Team");
+			await expect(chatTitle(env, configId, 6)).rejects.toThrow();
 		});
 
 		it("nodeTransport is a BusTransport with inert default handlers", () => {

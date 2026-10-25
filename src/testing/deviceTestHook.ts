@@ -18,7 +18,7 @@ import type { NoteService } from "../services/note/noteService";
 import type { NotificationService } from "../services/notificationService";
 import { SyncService } from "../services/syncService";
 
-export const DEVICE_HOOK_API = 2;
+export const DEVICE_HOOK_API = 3;
 
 /** The services of app.ts the hook uses. */
 export interface DeviceHookEnv {
@@ -95,6 +95,18 @@ export function deviceTestHook(env: DeviceHookEnv) {
 		async chatSend(configId: string, channelId: number, text: string): Promise<string> {
 			const message = await env.syncService.chat.send(await chatSourceOf(env, configId), channelId, text);
 			return message.clientUuid as string;
+		},
+		/**
+		 * Creates a group with these people (self added by Odoo) as the new
+		 * conversation screen does; returns its id, the server's once the
+		 * create settled (online), else the temporary one.
+		 */
+		async chatNewGroup(configId: string, partnerIds: number[], name = ""): Promise<number> {
+			return (await env.syncService.chat.createGroup(await chatSourceOf(env, configId), partnerIds, name)).channelId;
+		},
+		/** Shows the information screen of the conversation (members, name, mute, leave). */
+		chatOpenInfo(configId: string, channelId: number): void {
+			env.eventBus.trigger(Events.ROUTER_NAVIGATION, { url: `/chat/${encodeURIComponent(configId)}/${channelId}/info` });
 		},
 		/** The cached messages of the channel, oldest first. */
 		chatMessages(configId: string, channelId: number) {

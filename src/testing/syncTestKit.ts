@@ -17,6 +17,7 @@ import { NoteService } from "../services/note/noteService";
 import { SyncService, syncConfigIdOf } from "../services/syncService";
 import type { SyncCredentials } from "../services/syncService";
 import type { ChatService } from "../services/chat/chatService";
+import { displayNameOf } from "../services/chat/chatNames";
 import type { BusTransport } from "../services/chat/chatBus";
 import type { AttachmentIO } from "../services/attachmentService";
 
@@ -77,6 +78,44 @@ export async function createSyncEnv(
 		creds,
 		configIds: creds.map(syncConfigIdOf),
 	};
+}
+
+/**
+ * The app killed and started again over env's database: a new sync service
+ * (the chat's module mode carried over), then the startup repair the app
+ * runs (OutboxService.recoverInterrupted, ChatService.recover). The stored
+ * sessions and the network state stay as they were; the old chat service is
+ * disposed (its bus and typing timers stop).
+ */
+export async function restartSyncEnv(env: SyncEnv): Promise<SyncEnv> {
+	env.chat.dispose();
+	const sync = new SyncService(env.db);
+	sync.chat.moduleMode = env.chat.moduleMode;
+	await sync.outbox.recoverInterrupted();
+	await sync.chat.recover();
+	return { ...env, sync, chat: sync.chat, notes: new NoteService(new EventBus(), env.db) };
+}
+
+/**
+ * The device's network as the app reads it: off, the chat queues without
+ * sending and the outbox waits; back on, nothing is flushed until a caller
+ * flushes. resetMocks() turns it back on.
+ */
+export function setOnline(connected: boolean): void {
+	(network as any).__setNetworkStatus({ connected, connectionType: connected ? "wifi" : "none" });
+}
+
+/**
+ * The name a conversation is shown under in the list and the thread
+ * (displayNameOf over the cache: its members, the partners, self); lang as
+ * the app language ("en" or "fr").
+ */
+export async function chatTitle(env: SyncEnv, configId: string, channelId: number, lang = "en"): Promise<string> {
+	const channel = await env.chat.repo.channel(configId, channelId);
+	if (!channel) throw new Error(`No cached conversation ${channelId}`);
+	const partners = new Map((await env.chat.repo.partners(configId)).map((p) => [p.partnerId, p]));
+	const self = (await env.chat.repo.sourceState(configId)).selfPartnerId;
+	return displayNameOf(channel, await env.chat.repo.members(configId, channelId), partners, self, lang);
 }
 
 /**
