@@ -283,4 +283,28 @@ describe("ChatThreadComponent", () => {
             vi.useRealTimers();
         }
     });
+
+    it("an edited message is re-rendered, with or without a write date", async () => {
+        const list: any[] = [msg(10, { body: "<p>one</p>", writeDate: "2020-01-01 10:00:00" })];
+        const c = make(fakeChat(list));
+        await c.open();
+        expect(String(c.state.rows[0].html)).toContain("one");
+        list[0] = msg(10, { body: "<p>two</p>", writeDate: "2020-01-01 11:00:00" });
+        await c.refresh();
+        expect(String(c.state.rows[0].html)).toContain("two");
+        list[0] = msg(10, { body: "<p>three</p>", writeDate: "2020-01-01 11:00:00" });
+        await c.refresh();
+        expect(String(c.state.rows[0].html)).toContain("three");
+    });
+
+    it("the short-history stop is lifted when a newer message arrives", async () => {
+        const ch = channel();
+        const chat = fakeChat([msg(10)], undefined, ch);
+        const c = make(chat);
+        await c.open();
+        c._noMore = true;
+        ch.lastMessageId = 20;
+        await c.refresh();
+        expect(c._noMore).toBe(false);
+    });
 });

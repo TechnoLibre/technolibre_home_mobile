@@ -47,6 +47,13 @@ interface ThreadState {
     inputRows: number;
 }
 
+/** Cheap 32-bit hash (djb2) of a body, so a changed body never reuses a cached render. */
+function bodyHash(body: string): string {
+    let h = 5381;
+    for (let i = 0; i < body.length; i++) h = ((h << 5) + h + body.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36) + "." + body.length;
+}
+
 /** Epoch ms of an Odoo UTC date string (space or ISO form); NaN when unreadable. */
 function utcMs(dt: string | null | undefined): number {
     if (!dt) return NaN;
@@ -149,6 +156,7 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _self: number | null = null;
     /** Set once a history page brought nothing, so the short-history fill stops. */
     private _noMore = false;
+    private _lastSeen: number | null = null;
     private _onChanged = (ev: Event) => {
         const d = (ev as CustomEvent).detail ?? {};
         if (d.configId !== this.configId) return;
@@ -250,6 +258,11 @@ export class ChatThreadComponent extends EnhancedComponent {
         const names = new Map(partners.map((p) => [p.partnerId, p.name]));
         const self = st.selfPartnerId;
         this.state.found = true;
+        // New history appeared (a gap reset, a newer message): older pages may exist again
+        if ((this.state.historyComplete && !channel.historyComplete) || channel.lastMessageId !== this._lastSeen) {
+            this._noMore = false;
+        }
+        this._lastSeen = channel.lastMessageId;
         this.state.historyComplete = channel.historyComplete;
         this.fillHeader(channel, partners, names);
         this._members = members;
@@ -261,7 +274,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         const before = el ? el.scrollHeight - el.scrollTop : 0;
         const rows = messages.map((m) => this.rowOf(m, channel, members, self, ops));
         // A change of members or typing alone leaves the rows, and the DOM, untouched
-        const sig = rows.map((r) => [r.key, r.meta, r.time, r.opId].join("|")).join("\n");
+        const sig = rows.map((r, i) => [r.key, r.meta, r.time, r.opId, this.htmlKey(messages[i])].join("|")).join("\n");
         if (sig === this._sig) return;
         this._sig = sig;
         this.state.rows = rows;
@@ -282,8 +295,8 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     private htmlKey(m: ChatMessage): string {
         return m.messageId !== null
-            ? "m" + m.messageId + "|" + (m.writeDate ?? "")
-            : "u" + (m.clientUuid ?? m.outboxOpId ?? m.date);
+            ? "m" + m.messageId + "|" + (m.writeDate ?? "") + "|" + bodyHash(m.body)
+            : "u" + (m.clientUuid ?? m.outboxOpId ?? m.date) + "|" + bodyHash(m.body);
     }
 
     /** Recomputes the typing line and schedules the next recomputation at the oldest typer's expiry. */
