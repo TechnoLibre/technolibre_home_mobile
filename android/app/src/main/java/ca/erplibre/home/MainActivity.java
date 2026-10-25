@@ -25,6 +25,7 @@ public class MainActivity extends BridgeActivity {
         applyLockScreenPolicy(getIntent());
         registerPlugin(RawHttpPlugin.class);
         registerPlugin(SshPlugin.class);
+        registerPlugin(ChatSocketPlugin.class);
         // Whisper plugin pulls in libwhisper_jni.so / libggml.so. When the
         // dev fast-path BUNDLE_SKIP_WHISPER=1 build was used, those libs
         // are absent — registering the plugin would crash on the static

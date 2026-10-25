@@ -4346,6 +4346,21 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.socket",
+                label: { en: "Native websocket", fr: "Websocket natif" },
+                description: {
+                    en: "OkHttp websocket plugin carrying the session cookie and the server's own Origin, with a transport adapter for the bus client.",
+                    fr: "Plugin websocket OkHttp portant le cookie de session et l'Origin propre du serveur, avec un adaptateur de transport pour le client du bus.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/ChatSocketPlugin.java",
+                    "src/plugins/chatSocketPlugin.ts",
+                ],
+                tests: ["src/__tests__/chatSocketPlugin.test.ts"],
+            },
+            {
                 id: "chat.outbox",
                 label: { en: "Chat outbox", fr: "Boîte d'envoi du clavardage" },
                 description: {
