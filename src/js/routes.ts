@@ -4,6 +4,7 @@ import { OptionsComponent } from "../components/options/options_component";
 import { OptionsDatabaseComponent } from "../components/options/database/options_database_component";
 import { OptionsErplibreComponent } from "../components/options/erplibre/options_erplibre_component";
 import { ChatListComponent } from "../components/chat/chat_list_component";
+import { ChatThreadComponent } from "../components/chat/chat_thread_component";
 import { ApplicationsAddComponent } from "../components/applications/add/applications_add_component";
 import { ApplicationsEditComponent } from "../components/applications/edit/applications_edit_component";
 import { IntentComponent } from "../components/intent/intent_component";
@@ -39,6 +40,7 @@ export const routes: Route[] = [
 	{ pathname: "/applications/add", component: ApplicationsAddComponent },
 	{ pathname: "/applications/gallery", component: ApplicationsGalleryComponent },
 	{ pathname: "/applications", component: ApplicationsComponent },
+	{ pathname: "/chat/:source/:channelId", component: ChatThreadComponent },
 	{ pathname: "/chat", component: ChatListComponent },
 	{ pathname: "/servers/edit", component: ServersEditComponent },
 	{ pathname: "/servers/add", component: ServersAddComponent },

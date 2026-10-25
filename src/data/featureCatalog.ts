@@ -4440,6 +4440,35 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
                 tests: ["src/__tests__/chatListComponent.test.ts"],
             },
+            {
+                id: "chat.thread",
+                label: { en: "Conversation screen", fr: "Écran de conversation" },
+                description: {
+                    en: "Bubbles with read marks, pending and failed posts with retry, typing line, history paging and composer.",
+                    fr: "Bulles avec accusés de lecture, envois en attente ou échoués avec réessai, ligne « écrit… », historique paginé et zone de saisie.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The screen renders from the cache and refreshes when its conversation changes. Bodies go "
+                        + "through the whitelisting renderer; scrolling to the top pages the history in, reaching "
+                        + "the bottom marks the conversation read, and every send is queued in the outbox first.",
+                    fr: "L'écran s'affiche depuis le cache et se rafraîchit quand sa conversation change. Les "
+                        + "corps passent par le rendu à liste blanche; remonter en haut charge l'historique, "
+                        + "atteindre le bas marque la conversation lue, et chaque envoi passe d'abord par la file.",
+                },
+                demo: {
+                    kind: "none",
+                    reason: {
+                        en: "Opened from a row of the conversation list.",
+                        fr: "S'ouvre depuis une ligne de la liste des conversations.",
+                    },
+                },
+                files: [
+                    "src/components/chat/chat_thread_component.ts",
+                    "src/components/chat/chat_thread_component.scss",
+                ],
+                tests: ["src/__tests__/chatThreadComponent.test.ts"],
+            },
         ],
     },
 ];

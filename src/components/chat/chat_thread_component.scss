@@ -1,0 +1,151 @@
+#chat-thread {
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+	padding: 0 var(--page-gutter, 0.75rem) 0.5rem;
+}
+
+.chat-thread__header {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.chat-thread__avatar {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 2rem;
+	height: 2rem;
+	border-radius: 50%;
+	background: var(--text-greyed-out);
+	color: #fff;
+	font-size: 0.8rem;
+}
+
+.chat-thread__server {
+	font-size: 0.8rem;
+	opacity: 0.7;
+	flex: 1;
+}
+
+.chat-thread__presence {
+	width: 0.6rem;
+	height: 0.6rem;
+	border-radius: 50%;
+	background: var(--text-greyed-out);
+}
+
+.chat-thread__presence--online {
+	background: #2e9e4f;
+}
+
+.chat-thread__presence--away {
+	background: #e0a020;
+}
+
+.chat-thread__menu-btn {
+	border: none;
+	background: transparent;
+	color: inherit;
+	font-size: 1.2rem;
+}
+
+.chat-thread__menu {
+	position: absolute;
+	right: 0;
+	top: 100%;
+	z-index: 5;
+	padding: 0.4rem 0.6rem;
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 0.5rem;
+	background: var(--background, #fff);
+}
+
+.chat-thread__menu-item {
+	border: none;
+	background: transparent;
+	color: inherit;
+}
+
+.chat-thread__menu-note {
+	margin: 0;
+	font-size: 0.85rem;
+}
+
+.chat-thread__scroll {
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+	height: calc(100vh - 14rem);
+	overflow-y: auto;
+}
+
+.chat-thread__bubble {
+	align-self: flex-start;
+	max-width: 80%;
+	padding: 0.4rem 0.6rem;
+	border-radius: 0.8rem;
+	background: rgba(127, 127, 127, 0.18);
+	overflow-wrap: anywhere;
+}
+
+.chat-thread__bubble--own {
+	align-self: flex-end;
+	background: rgba(46, 158, 79, 0.25);
+}
+
+.chat-thread__meta {
+	display: flex;
+	gap: 0.4rem;
+	justify-content: flex-end;
+	font-size: 0.7rem;
+	opacity: 0.75;
+}
+
+.chat-thread__failed {
+	color: #c0392b;
+}
+
+.chat-thread__retry {
+	border: none;
+	background: transparent;
+	color: inherit;
+	text-decoration: underline;
+	font-size: 0.7rem;
+}
+
+.chat-thread__typing {
+	margin: 0;
+	font-size: 0.8rem;
+	font-style: italic;
+	opacity: 0.75;
+}
+
+.chat-thread__composer {
+	display: flex;
+	gap: 0.4rem;
+	align-items: flex-end;
+}
+
+.chat-thread__input {
+	flex: 1;
+	resize: none;
+	max-height: 6rem;
+	padding: 0.4rem 0.6rem;
+	border-radius: 1rem;
+	border: 1px solid var(--text-greyed-out);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+}
+
+.chat-thread__send {
+	border: none;
+	border-radius: 50%;
+	width: 2.4rem;
+	height: 2.4rem;
+	background: #2e9e4f;
+	color: #fff;
+}
