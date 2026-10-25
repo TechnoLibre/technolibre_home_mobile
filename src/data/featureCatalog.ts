@@ -4293,6 +4293,21 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.options",
+                label: { en: "Chat options", fr: "Options du clavardage" },
+                description: {
+                    en: "Options section with the send read and send typing switches.",
+                    fr: "Section des options avec les interrupteurs d'envoi de « lu » et de « écrit… ».",
+                },
+                status: "experimental",
+                dependsOn: ["chat.settings"],
+                demo: { kind: "options", sectionId: "chat" },
+                files: [
+                    "src/components/options/chat/options_chat_component.ts",
+                ],
+                tests: ["src/__tests__/optionsChatComponent.test.ts"],
+            },
+            {
                 id: "chat.store",
                 label: { en: "Odoo Store parser", fr: "Analyseur du Store Odoo" },
                 description: {
@@ -4330,6 +4345,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/chat/chatModule.ts",
+                    "src/components/applications/edit/applications_edit_component.ts",
                 ],
             },
             {

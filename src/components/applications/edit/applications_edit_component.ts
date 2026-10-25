@@ -6,6 +6,13 @@ import { BiometryUtils } from "../../../utils/biometryUtils";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { ErrorMessages } from "../../../constants/errorMessages";
 
+import { SyncService } from "../../../services/syncService";
+import { networkService } from "../../../services/networkService";
+import { syncConfigIdFor } from "../../../models/syncConfig";
+import { CHAT_MAJOR, parseOdooMajor } from "../../../services/chat/chatSources";
+import { installModule, moduleState } from "../../../services/chat/chatModule";
+import { t } from "../../../i18n";
+
 import { HeadingComponent } from "../../heading/heading_component";
 
 export class ApplicationsEditComponent extends EnhancedComponent {
@@ -56,6 +63,17 @@ export class ApplicationsEditComponent extends EnhancedComponent {
                 </div>
                 <t t-if="state.detectedVersion">
                     <span class="app-edit__detected-version" t-esc="state.detectedVersion"/>
+                </t>
+                <t t-if="state.chatModule">
+                    <span class="app-edit__detected-version app-edit__chat-module" t-esc="t('chat.module_' + state.chatModule)"/>
+                    <button type="button" class="app-edit__autocomplete-btn app-edit__chat-install"
+                            t-if="state.chatModule === 'available'"
+                            t-att-disabled="state.chatInstalling"
+                            t-on-click="installChatModule">
+                        <t t-if="state.chatInstalling"><t t-esc="t('chat.module_installing')"/></t>
+                        <t t-else=""><t t-esc="t('chat.module_install')"/></t>
+                    </button>
+                    <span class="app-edit__chat-error" t-if="state.chatError" t-esc="state.chatError"/>
                 </t>
             </div>
 
@@ -127,6 +145,9 @@ export class ApplicationsEditComponent extends EnhancedComponent {
             },
             isLoadingDb: false,
             detectedVersion: "",
+            chatModule: "",
+            chatInstalling: false,
+            chatError: "",
         });
 
         this.setParams();
@@ -234,8 +255,59 @@ export class ApplicationsEditComponent extends EnhancedComponent {
             if (app.odooVersion) {
                 this.state.detectedVersion = `Odoo ${app.odooVersion}`;
             }
+            this.chatApp = app;
         } catch {
             // App not found or migration not yet run — keep defaults
+            return;
+        }
+        await this.loadChatModule();
+    }
+
+    private chatApp: any = null;
+
+    /** Credentials and sync config id of the stored app, null without a database. */
+    private chatTarget(): { creds: ReturnType<typeof SyncService.credentialsFrom>; configId: string } | null {
+        const app = this.chatApp;
+        if (!app || !app.database) return null;
+        return {
+            creds: SyncService.credentialsFrom(app, app.database),
+            configId: syncConfigIdFor(app.url, app.username, app.database),
+        };
+    }
+
+    /**
+     * Shows the chat server module state for an app whose stored version is
+     * Odoo 18; a blank or other version shows nothing, as the stored string
+     * is cheaper than a login to ask the server. A failed probe reads
+     * "unknown". Runs after the form data, so it never delays the form.
+     */
+    private async loadChatModule(): Promise<void> {
+        const target = this.chatTarget();
+        if (!target || parseOdooMajor(this.chatApp.odooVersion ?? "") !== CHAT_MAJOR) return;
+        try {
+            const online = await networkService.isOnline();
+            this.state.chatModule = await moduleState(
+                this.syncService.rpc, this.syncService.capabilities, target.creds, { online }
+            );
+        } catch {
+            this.state.chatModule = "unknown";
+        }
+    }
+
+    /** Installs the module, persists and shows the state returned; a failure shows an error line. */
+    async installChatModule(): Promise<void> {
+        const target = this.chatTarget();
+        if (!target || this.state.chatInstalling) return;
+        this.state.chatInstalling = true;
+        this.state.chatError = "";
+        try {
+            const next = await installModule(this.syncService.rpc, this.syncService.capabilities, target.creds);
+            await this.chatService.repo.setSourceState({ configId: target.configId, moduleState: next });
+            this.state.chatModule = next;
+        } catch {
+            this.state.chatError = t("chat.module_install_error");
+        } finally {
+            this.state.chatInstalling = false;
         }
     }
 

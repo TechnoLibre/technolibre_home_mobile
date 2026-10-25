@@ -15,6 +15,7 @@ import { OptionsDeviceInfoComponent } from "./device_info/options_device_info_co
 import { OptionsPermissionsComponent } from "./permissions/options_permissions_component";
 import { OptionsMigrationHistoryComponent } from "./migration_history/options_migration_history_component";
 import { OptionsSyncComponent } from "./sync/options_sync_component";
+import { OptionsChatComponent } from "./chat/options_chat_component";
 import { OptionsRemindersComponent } from "./reminders/options_reminders_component";
 import { OptionsGraphicComponent } from "./graphic/options_graphic_component";
 import { OptionsCodeStyleComponent } from "./code_style/options_code_style_component";
@@ -48,6 +49,7 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsMigrationHistoryComponent />
         <OptionsSyncComponent />
         <OptionsRemindersComponent />
+        <OptionsChatComponent />
         <OptionsGraphicComponent />
         <OptionsCodeStyleComponent />
         <OptionsChangelogComponent />
@@ -160,6 +162,7 @@ export class OptionsComponent extends EnhancedComponent {
 		OptionsPermissionsComponent,
 		OptionsMigrationHistoryComponent,
 		OptionsSyncComponent,
+		OptionsChatComponent,
 		OptionsRemindersComponent,
 		OptionsGraphicComponent,
 		OptionsCodeStyleComponent,
