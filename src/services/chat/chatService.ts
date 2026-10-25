@@ -67,9 +67,16 @@ const maxDt = (a: string | null, b: string | null | undefined): string | null =>
  * notification applied raises to its own; stored, it holds across
  * restarts. A channel's unread and mention counters carry their own bus id
  * marks, as Odoo's records do: a load sets them, a bus value older than the
- * mark is not taken, a local change is made only by a notification above it. So a notification replayed after a
- * load or a restart is never counted twice and never rolls a counter back.
- * Records (messages, members, partners) are upserts and are always applied.
+ * mark is not taken, a local change is made only by a notification above
+ * it. So a notification replayed after a load or a restart is never counted
+ * twice and never rolls a counter back. Records (messages, members,
+ * partners) are upserts and are always applied.
+ *
+ * The writers of server counters of one account (load, a history page, a
+ * bus delivery) run one at a time, each from its server read to its last
+ * write, in call order: a load writes its read as authoritative, so a bus
+ * notification applied between that read and that write would be
+ * overwritten by the older read and never replayed.
  */
 export class ChatService {
   readonly repo: ChatRepository;
@@ -84,6 +91,9 @@ export class ChatService {
   /** The running bus of each account, and the counter that voids a start overtaken by a stop. */
   private buses = new Map<string, ChatBus>();
   private realtimeRun = 0;
+
+  /** Per account, the end of the queue of serial() tasks; settled tasks leave it. */
+  private chains = new Map<string, Promise<void>>();
 
   /** Per "configId#channelId", when "typing" was last sent and the pending stop. */
   private typingState = new Map<string, { sentAt: number | null; stop: ReturnType<typeof setTimeout> | null }>();
@@ -110,6 +120,22 @@ export class ChatService {
 
   private changed(configId: string, channelId: number | null): void {
     this.onChange?.(configId, channelId);
+  }
+
+  /**
+   * Runs `task` once every task queued before it for the account has
+   * settled, and returns its result. A task that fails rejects its own
+   * caller only; the next ones still run. A task must not await serial()
+   * for its own account: it would wait on itself.
+   */
+  private serial<T>(configId: string, task: () => Promise<T>): Promise<T> {
+    const run = (this.chains.get(configId) ?? Promise.resolve()).then(task);
+    const tail = run.then(() => undefined, () => undefined);
+    this.chains.set(configId, tail);
+    void tail.then(() => {
+      if (this.chains.get(configId) === tail) this.chains.delete(configId);
+    });
+    return run;
   }
 
   private async raiseBusId(configId: string, busId: number): Promise<void> {
@@ -166,9 +192,15 @@ export class ChatService {
    * miss messages in between: its history restarts (oldestLoadedId null,
    * not complete), so the next pages come down from the last message again
    * and upsert the rows already cached. A failed module probe keeps the
-   * state stored before; any other failure propagates.
+   * state stored before; any other failure propagates. Queued behind the
+   * account's other server writers (see the class).
    */
-  async load(src: ChatSource): Promise<void> {
+  load(src: ChatSource): Promise<void> {
+    return this.serial(src.configId, () => this.loadNow(src));
+  }
+
+  /** load() without the queue, for a task already running in it. */
+  private async loadNow(src: ChatSource): Promise<void> {
     const { configId, creds } = src;
     const info = await this.rpc.sessionInfo(creds);
     const self = info.partnerId || null;
@@ -287,9 +319,14 @@ export class ChatService {
    * mentions. `around` also returns up to `size` newer messages; only the
    * ones at or below it are this page. Fewer than `size` means the start of
    * the history is reached. Returns the messages of the page (fetched) and
-   * those of them not cached before (added).
+   * those of them not cached before (added). Queued behind the account's
+   * other server writers (see the class).
    */
-  private async page(src: ChatSource, channelId: number, size: number): Promise<{ fetched: number; added: number }> {
+  private page(src: ChatSource, channelId: number, size: number): Promise<{ fetched: number; added: number }> {
+    return this.serial(src.configId, () => this.pageNow(src, channelId, size));
+  }
+
+  private async pageNow(src: ChatSource, channelId: number, size: number): Promise<{ fetched: number; added: number }> {
     const { configId, creds } = src;
     const channel = await this.repo.channel(configId, channelId);
     if (!channel || channel.historyComplete) return { fetched: 0, added: 0 };
@@ -510,9 +547,15 @@ export class ChatService {
   /**
    * Applies bus notifications of one account in order. Each handled type
    * ends with onChange; an unknown type is ignored. See the class for the
-   * bus id rule that guards the counters.
+   * bus id rule that guards the counters. Queued behind the account's other
+   * server writers; a notification that reloads the account (a channel
+   * joined, a message of an unknown channel) runs that load inline.
    */
-  async applyBus(configId: string, notifications: BusNotification[]): Promise<void> {
+  applyBus(configId: string, notifications: BusNotification[]): Promise<void> {
+    return this.serial(configId, () => this.applyBusNow(configId, notifications));
+  }
+
+  private async applyBusNow(configId: string, notifications: BusNotification[]): Promise<void> {
     for (const n of notifications) {
       const fresh = n.id > (await this.repo.sourceState(configId)).counterBusId;
       const result = await this.applyOne(configId, n.message?.type, n.message?.payload ?? {}, n.id, fresh);
@@ -595,9 +638,10 @@ export class ChatService {
     return delta;
   }
 
+  /** Loads the account from inside a bus delivery, which already holds its queue. */
   private async reload(configId: string): Promise<void> {
     const src = await this.sourceOf(configId);
-    if (src) await this.load(src);
+    if (src) await this.loadNow(src);
   }
 
   /**

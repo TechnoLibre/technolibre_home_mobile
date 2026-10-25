@@ -75,6 +75,8 @@ function fakeOdoo(opts: { version?: number } = {}) {
   const state = {
     nextId: 5000,
     onPost: null as null | ((params: any, id: number) => Promise<void>),
+    /** While set, /mail/data holds its answer until the promise settles. */
+    hold: null as null | Promise<void>,
     data: mailData() as any,
   };
   const ok = (result: unknown) => ({
@@ -90,8 +92,11 @@ function fakeOdoo(opts: { version?: number } = {}) {
         return ok({ uid: 2, session_id: "sid", server_version_info: [opts.version ?? 18, 0, 0, "final", 0, ""] });
       case "/web/session/get_session_info":
         return ok({ uid: 2, partner_id: SELF, is_system: false, websocket_worker_version: "18.0-7" });
-      case "/mail/data":
-        return ok(state.data);
+      case "/mail/data": {
+        const answer = JSON.parse(JSON.stringify(state.data));
+        if (state.hold) await state.hold;
+        return ok(answer);
+      }
       case "/discuss/channel/messages": {
         const ids = [...(history[params.channel_id] ?? [])].sort((a, b) => b - a);
         const half = Math.floor(params.limit / 2);
@@ -508,6 +513,52 @@ describe("ChatService", () => {
     })]);
     expect(await chat.repo.channel(config, CHAT)).toMatchObject({ unreadCounter: 4, unreadCounterBusId: 5 });
     expect((await chat.repo.sourceState(config)).counterBusId).toBe(5);
+  });
+
+  const selfMember = (unread: number, busId: number) => ({
+    "discuss.channel.member": [{ id: 100, thread: { id: CHAT, model: "discuss.channel" }, persona: { id: SELF, type: "partner" }, message_unread_counter: unread, message_unread_counter_bus_id: busId }],
+  });
+
+  it("a bus record delivered while a load reads is not overwritten by the load", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    let release!: () => void;
+    odoo.state.hold = new Promise((r) => { release = r; });
+    const reads = odoo.on("/mail/data").length;
+    const loading = chat.load(src);
+    await vi.waitFor(() => expect(odoo.on("/mail/data")).toHaveLength(reads + 1));
+    // The load's answer is read (unread 3 as of 1000); a newer record arrives before it is written
+    const delivering = chat.applyBus(config, [bus(2335, "mail.record/insert", selfMember(5, 2335))]);
+    await new Promise((r) => setTimeout(r, 10));
+    release();
+    await Promise.all([loading, delivering]);
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ unreadCounter: 5, unreadCounterBusId: 2335 });
+    expect((await chat.repo.sourceState(config)).counterBusId).toBe(2335);
+  });
+
+  it("a joined delivery loads the account without waiting on itself", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    odoo.state.data["discuss.channel"].push({ id: 16, channel_type: "channel", name: "New", last_interest_dt: "2026-10-25 12:00:00" });
+    odoo.state.data["discuss.channel.member"].push({ id: 160, thread: { id: 16, model: "discuss.channel" }, persona: { id: SELF, type: "partner" }, message_unread_counter: 0 });
+    await chat.applyBus(config, [bus(1001, "discuss.channel/joined", { channel: { id: 16, model: "discuss.channel" } })]);
+    expect((await chat.repo.channel(config, 16))?.isMember).toBe(true);
+    await chat.load(src);
+    await chat.applyBus(config, [bus(1002, "mail.record/insert", selfMember(6, 1002))]);
+    expect((await chat.repo.channel(config, CHAT))!.unreadCounter).toBe(6);
+  });
+
+  it("a delivery that fails does not hold back the next one", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    vi.spyOn(chat.repo, "applyDelta").mockRejectedValueOnce(new Error("disk full"));
+    const failing = chat.applyBus(config, [bus(1001, "mail.record/insert", selfMember(5, 1001))]);
+    const next = chat.applyBus(config, [bus(1002, "mail.record/insert", selfMember(6, 1002))]);
+    await expect(failing).rejects.toThrow("disk full");
+    await next;
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ unreadCounter: 6, unreadCounterBusId: 1002 });
   });
 
   it("a load without per-record bus ids seeds the marks with the inbox bus id", async () => {
