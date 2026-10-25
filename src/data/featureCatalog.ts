@@ -4465,12 +4465,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                 },
                 status: "experimental",
                 howItWorks: {
-                    en: "The screen renders from the cache and refreshes when its conversation changes. Bodies go "
-                        + "through the whitelisting renderer; scrolling to the top pages the history in, reaching "
-                        + "the bottom marks the conversation read, and every send is queued in the outbox first.",
-                    fr: "L'écran s'affiche depuis le cache et se rafraîchit quand sa conversation change. Les "
-                        + "corps passent par le rendu à liste blanche; remonter en haut charge l'historique, "
-                        + "atteindre le bas marque la conversation lue, et chaque envoi passe d'abord par la file.",
+                    en: "The screen renders the newest 100 cached messages and refreshes when its conversation "
+                        + "changes. Bodies go through the whitelisting renderer; scrolling to the top renders more "
+                        + "from the cache, then pages the history in from the server. Reaching the bottom, or a new "
+                        + "message with the bottom in view, marks the conversation read; every send is queued in "
+                        + "the outbox first.",
+                    fr: "L'écran affiche les 100 messages les plus récents du cache et se rafraîchit quand sa "
+                        + "conversation change. Les corps passent par le rendu à liste blanche; remonter en haut "
+                        + "en affiche davantage depuis le cache, puis charge l'historique du serveur. Atteindre le "
+                        + "bas, ou un nouveau message avec le bas visible, marque la conversation lue; chaque envoi "
+                        + "passe d'abord par la file.",
                 },
                 demo: {
                     kind: "none",

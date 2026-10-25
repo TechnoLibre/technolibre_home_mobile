@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-import { ChatThreadComponent, typingLine } from "../components/chat/chat_thread_component";
+import { ChatThreadComponent, THREAD_PAGE, THREAD_WINDOW, typingLine } from "../components/chat/chat_thread_component";
 import { EventBus } from "@odoo/owl";
 import { Events } from "../constants/events";
 
@@ -28,10 +28,18 @@ const member = (partnerId: number, p: any = {}) => ({
     fetchedMessageId: null, isTyping: false, typingAt: null, ...p,
 });
 
+/** ChatRepository.messages over a list: beforeId keeps older server rows only, limit the newest of them. */
+function cached(list: any[], opts: { beforeId?: number; limit?: number } = {}) {
+    let sent = list.filter((m) => m.messageId !== null);
+    if (opts.beforeId !== undefined) sent = sent.filter((m) => m.messageId < opts.beforeId!);
+    if (opts.limit !== undefined) sent = sent.slice(Math.max(0, sent.length - opts.limit));
+    return opts.beforeId !== undefined ? sent : [...sent, ...list.filter((m) => m.messageId === null)];
+}
+
 function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: any = channel()) {
     return {
         sources: vi.fn().mockResolvedValue([{ configId: "a", label: "Srv", creds: {} }]),
-        messages: vi.fn(async () => messages),
+        messages: vi.fn(async (_c: string, _ch: number, opts?: any) => cached(messages, opts)),
         loadOlder: vi.fn().mockResolvedValue(3),
         loadAll: vi.fn(async (_s: any, _c: number, on?: (n: number) => void) => { on?.(4); return 4; }),
         send: vi.fn().mockResolvedValue(msg(null)),
@@ -317,6 +325,43 @@ describe("ChatThreadComponent", () => {
         list[0] = msg(10, { body: "<p>three</p>", writeDate: "2020-01-01 11:00:00" });
         await c.refresh();
         expect(String(c.state.rows[0].html)).toContain("three");
+    });
+
+    it("renders the newest rows of a long history, then more from the cache before the server", async () => {
+        const list = Array.from({ length: THREAD_WINDOW + THREAD_PAGE + 20 }, (_, i) => msg(i + 1));
+        list.push(msg(null, { outboxOpId: "o1" }));
+        const chat = fakeChat(list, undefined, channel({ lastMessageId: list.length - 1 }));
+        const c = make(chat, [{ id: "o1", dependsOn: null }]);
+        await c.open();
+        expect(c.state.rows).toHaveLength(THREAD_WINDOW + 1);
+        expect(c.state.rows[0].key).toBe("m" + (list.length - 1 - THREAD_WINDOW + 1));
+        expect(c.state.rows.at(-1).meta).toBe("pending");
+        c.scroller = { el: { scrollTop: 0, scrollHeight: 1000, clientHeight: 300 } };
+        await c.onScroll();
+        expect(c.state.rows).toHaveLength(THREAD_WINDOW + THREAD_PAGE + 1);
+        expect(chat.loadOlder).not.toHaveBeenCalled();
+        await c.onScroll();
+        expect(c.state.rows).toHaveLength(list.length);
+        expect(chat.loadOlder).not.toHaveBeenCalled();
+        // The cache is exhausted: the next scroll to the top asks the server
+        await c.onScroll();
+        expect(chat.loadOlder).toHaveBeenCalledTimes(1);
+    });
+
+    it("rows the server pages in are rendered on top of the window", async () => {
+        const list = Array.from({ length: THREAD_WINDOW }, (_, i) => msg(i + 100));
+        const chat = fakeChat(list, undefined, channel({ lastMessageId: THREAD_WINDOW + 99 }));
+        chat.loadOlder.mockImplementation(async () => {
+            list.unshift(...Array.from({ length: 30 }, (_, i) => msg(i + 70)));
+            return 30;
+        });
+        const c = make(chat);
+        await c.open();
+        c.scroller = { el: { scrollTop: 0, scrollHeight: 1000, clientHeight: 300 } };
+        await c.onScroll();
+        expect(chat.loadOlder).toHaveBeenCalledTimes(1);
+        expect(c.state.rows).toHaveLength(THREAD_WINDOW + 30);
+        expect(c.state.rows[0].key).toBe("m70");
     });
 
     it("the short-history stop is lifted when a newer message arrives", async () => {

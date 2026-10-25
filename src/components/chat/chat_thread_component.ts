@@ -17,6 +17,10 @@ const TYPING_FRESH_MS = 60000;
 const EDGE_PX = 40;
 /** The composer grows to this many lines, then scrolls. */
 const MAX_INPUT_ROWS = 5;
+/** Server messages rendered at open: the newest ones, however long the cached history. */
+export const THREAD_WINDOW = 100;
+/** Cached messages a scroll to the top adds to the rendered ones before the server is asked. */
+export const THREAD_PAGE = 50;
 
 type MetaKind = "none" | "sent" | "seen" | "pending" | "waiting" | "failed";
 
@@ -82,8 +86,11 @@ export function typingLine(
 
 /**
  * The conversation screen of /chat/:source/:channelId. It renders from the
- * cache and refreshes on CHAT_CHANGED for its own conversation; scrolling to
- * the top pages the history in, reaching the bottom marks it read, and so
+ * cache and refreshes on CHAT_CHANGED for its own conversation. It renders
+ * the newest THREAD_WINDOW server messages and the queued ones; scrolling
+ * to the top first renders THREAD_PAGE more from the cache, and pages the
+ * history in from the server once the cache has none older. Reaching the
+ * bottom marks it read, and so
  * does a new message arriving while the bottom is in view. Message
  * bodies go through renderBody (whitelisted HTML) and nothing else is
  * rendered as markup.
@@ -157,6 +164,10 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _self: number | null = null;
     /** Set once a history page brought nothing, so the short-history fill stops. */
     private _noMore = false;
+    /** How many of the newest server messages build() renders; scrolling up raises it. */
+    private _window = THREAD_WINDOW;
+    /** Oldest server message id rendered, null when none is. */
+    private _oldestShown: number | null = null;
     private _lastSeen: number | null = null;
     private _onChanged = (ev: Event) => {
         const d = (ev as CustomEvent).detail ?? {};
@@ -242,7 +253,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             return;
         }
         const [messages, members, partners, st] = await Promise.all([
-            this.chatService.messages(this.configId, this.channelId),
+            this.chatService.messages(this.configId, this.channelId, { limit: this._window }),
             repo.members(this.configId, this.channelId),
             repo.partners(this.configId),
             repo.sourceState(this.configId),
@@ -274,6 +285,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         if (sig === this._sig) return;
         this._sig = sig;
         this.state.rows = rows;
+        this._oldestShown = messages.find((m) => m.messageId !== null)?.messageId ?? null;
         this.pruneHtml(messages);
         // Prepended history keeps the viewport on the same message; new ones follow the bottom
         if (el) {
@@ -312,11 +324,11 @@ export class ChatThreadComponent extends EnhancedComponent {
         this._typingTimer = setTimeout(() => this.refreshTyping(), Math.min(...stamps) + 1);
     }
 
-    /** A history shorter than the screen cannot be scrolled: pages are fetched until it fills or ends. */
+    /** A history shorter than the screen cannot be scrolled: pages are added until it fills or ends. */
     private fillShortHistory(): void {
         setTimeout(() => {
             const el = this.scroller.el as HTMLElement | null;
-            if (this.destroyed || !el || this._noMore || this.state.historyComplete) return;
+            if (this.destroyed || !el || this._noMore) return;
             if (el.scrollHeight <= el.clientHeight) this.loadOlder();
         }, 0);
     }
@@ -406,14 +418,26 @@ export class ChatThreadComponent extends EnhancedComponent {
         if (this.atBottom(el)) await this.markRead();
     }
 
-    /** One page of older messages; the scroll position stays on the message that was on screen. */
+    /**
+     * One page of older messages: THREAD_PAGE more rendered from the cache
+     * while it holds older ones, else a history page from the server. The
+     * scroll position stays on the message that was on screen.
+     */
     async loadOlder(): Promise<void> {
-        if (this._loadingOlder || !this.source || this.state.historyComplete) return;
+        if (this._loadingOlder || !this.source) return;
         this._loadingOlder = true;
         try {
             const el = this.scroller.el as HTMLElement | null;
             const before = el ? el.scrollHeight - el.scrollTop : 0;
+            if (await this.cachedOlder()) {
+                this._window += THREAD_PAGE;
+                await this.refresh();
+                if (el) this.keepPosition(before);
+                return;
+            }
+            if (this.state.historyComplete) return;
             const added = await this.chatService.loadOlder(this.source, this.channelId);
+            this._window += added;
             await this.refresh();
             if (added === 0) this._noMore = true;
             if (added > 0 && el) this.keepPosition(before);
@@ -422,6 +446,16 @@ export class ChatThreadComponent extends EnhancedComponent {
         } finally {
             this._loadingOlder = false;
         }
+    }
+
+    /** Whether the cache holds a server message older than the oldest one rendered. */
+    private async cachedOlder(): Promise<boolean> {
+        if (this._oldestShown === null) return false;
+        const older = await this.chatService.messages(this.configId, this.channelId, {
+            beforeId: this._oldestShown,
+            limit: 1,
+        });
+        return older.length > 0;
     }
 
     /**

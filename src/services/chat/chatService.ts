@@ -284,8 +284,13 @@ export class ChatService {
     return total;
   }
 
-  async messages(configId: string, channelId: number): Promise<ChatMessage[]> {
-    return this.repo.messages(configId, channelId);
+  /** The cached messages of a channel; opts as ChatRepository.messages (beforeId, limit). */
+  async messages(
+    configId: string,
+    channelId: number,
+    opts: { beforeId?: number; limit?: number } = {},
+  ): Promise<ChatMessage[]> {
+    return this.repo.messages(configId, channelId, opts);
   }
 
   // ─── History ──────────────────────────────────────────────────────────────
