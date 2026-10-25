@@ -135,6 +135,21 @@ describe("ChatOutbox", () => {
     expect((await repo.messages(CONFIG, CHANNEL)).map((x) => x.clientUuid)).toEqual([op.clientUuid]);
   });
 
+  it("a post settled after its account was deleted writes nothing", async () => {
+    await chat.queuePost(CONFIG, CHANNEL, "hi", true);
+    const [op] = await db.getOutboxOpsForConfig(CONFIG);
+    await chat.dropAll(CONFIG);
+    await repo.dropSource(CONFIG);
+    await (chat as any).settleNow(op, 600, {
+      "mail.message": [{ id: 600, body: "hi", date: "2026-10-25 10:00:05", message_type: "comment",
+        author: { id: 3, type: "partner" }, thread: { id: CHANNEL, model: "discuss.channel" } }],
+      "res.partner": [{ id: 3, name: "Alice" }],
+    });
+    expect(await repo.messages(CONFIG, CHANNEL)).toEqual([]);
+    expect(await repo.partners(CONFIG)).toEqual([]);
+    expect(await repo.channels(CONFIG)).toEqual([]);
+  });
+
   it("post with module sends uuid and settles", async () => {
     const odoo = chatOdoo({ module: true });
     const m = await chat.queuePost(CONFIG, CHANNEL, "hello", true);

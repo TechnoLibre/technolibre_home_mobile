@@ -427,6 +427,8 @@ describe("NotificationService", () => {
         const fakeChat = () => ({
             startRealtime: vi.fn().mockResolvedValue(undefined),
             stopRealtime: vi.fn(),
+            startSourceRealtime: vi.fn().mockResolvedValue(undefined),
+            stopSourceRealtime: vi.fn(),
             forgetSource: vi.fn().mockResolvedValue(undefined),
         }) as any;
 
@@ -466,26 +468,39 @@ describe("NotificationService", () => {
             expect(chat.stopRealtime).toHaveBeenCalledTimes(1);
         });
 
-        it("an application change restarts realtime while active, a deletion erases its chat first", async () => {
+        it("an application change restarts only its own bus while active, a deletion erases its chat", async () => {
             makeServices([]);
             const chat = fakeChat();
             const order: string[] = [];
-            chat.stopRealtime.mockImplementation(() => order.push("stop"));
+            chat.stopSourceRealtime.mockImplementation((id: string) => order.push("stop " + id));
             chat.forgetSource.mockImplementation(async (id: string) => { order.push("forget " + id); });
-            chat.startRealtime.mockImplementation(async () => { order.push("start"); });
+            chat.startSourceRealtime.mockImplementation(async (id: string) => { order.push("start " + id); });
             const life = new ChatLifecycle(chat);
             await life.start();
+            chat.startRealtime.mockClear();
             order.length = 0;
-            await life.applicationsChanged({ kind: "add", configId: "https://a|u|db" });
-            expect(order).toEqual(["stop", "start"]);
+            const id = "https://a|u|db";
+            await life.applicationsChanged({ kind: "add", configId: id, realtimeRelevant: true });
+            expect(order).toEqual(["start " + id]);
             order.length = 0;
-            await life.applicationsChanged({ kind: "delete", configId: "https://a|u|db" });
-            expect(order).toEqual(["stop", "forget https://a|u|db", "start"]);
+            await life.applicationsChanged({ kind: "edit", configId: id, realtimeRelevant: true });
+            expect(order).toEqual(["stop " + id, "start " + id]);
+            order.length = 0;
+            await life.applicationsChanged({ kind: "edit", configId: "https://a|u|new", previousConfigId: id, realtimeRelevant: true });
+            expect(order).toEqual(["stop " + id, "start https://a|u|new"]);
+            // autoSync, poll interval and ntfy edits restart no bus
+            order.length = 0;
+            await life.applicationsChanged({ kind: "edit", configId: id, realtimeRelevant: false });
+            expect(order).toEqual([]);
+            await life.applicationsChanged({ kind: "delete", configId: id, realtimeRelevant: true });
+            expect(order).toEqual(["forget " + id]);
+            expect(chat.startRealtime).not.toHaveBeenCalled();
+            expect(chat.stopRealtime).not.toHaveBeenCalled();
             // In the background a change starts nothing
             appStateCb!({ isActive: false });
             order.length = 0;
-            await life.applicationsChanged({ kind: "edit", configId: "https://a|u|db" });
-            expect(order).toEqual(["stop"]);
+            await life.applicationsChanged({ kind: "edit", configId: id, realtimeRelevant: true });
+            expect(order).toEqual(["stop " + id]);
         });
 
         it("re-arms the retry timer when a row fails elsewhere (a tap on sync)", async () => {

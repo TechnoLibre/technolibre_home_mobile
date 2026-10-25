@@ -175,7 +175,7 @@ describe("AppService with SQLite", () => {
   });
 
   describe("onChanged", () => {
-    it("tells each add, edit and delete with the config id the application had", async () => {
+    it("tells each add, edit and delete with the config id after the change and the one before", async () => {
       const changes: any[] = [];
       appService.onChanged = async (c) => { changes.push(c); };
       const app = baseApp({ database: "db1" });
@@ -184,11 +184,28 @@ describe("AppService with SQLite", () => {
       await appService.delete({ url: app.url, username: app.username });
       await appService.add(baseApp({ username: "nodb" }));
       expect(changes).toEqual([
-        { kind: "add", configId: "https://erp.example.com|admin|db1" },
-        { kind: "edit", configId: "https://erp.example.com|admin|db1" },
-        { kind: "delete", configId: "https://erp.example.com|admin|db2" },
-        { kind: "add", configId: null },
+        { kind: "add", configId: "https://erp.example.com|admin|db1", realtimeRelevant: true },
+        { kind: "edit", configId: "https://erp.example.com|admin|db2", previousConfigId: "https://erp.example.com|admin|db1", realtimeRelevant: true },
+        { kind: "delete", configId: "https://erp.example.com|admin|db2", realtimeRelevant: true },
+        { kind: "add", configId: null, realtimeRelevant: false },
       ]);
+    });
+
+    it("an edit of autoSync, poll interval or ntfy is not relevant to realtime, one of the password is", async () => {
+      const changes: any[] = [];
+      const app = baseApp({ database: "db1" });
+      await appService.add(app);
+      appService.onChanged = async (c) => { changes.push(c); };
+      const id = { url: app.url, username: app.username };
+      await appService.edit(id, { ...app, autoSync: !app.autoSync, pollIntervalMinutes: 99, ntfyUrl: "https://ntfy.example.com", ntfyTopic: "t", ntfyToken: "k" });
+      await appService.edit(id, { ...app, password: "other" });
+      await appService.edit(id, { ...app, password: "other", odooVersion: "17.0" });
+      expect(changes.map((c) => [c.configId, c.realtimeRelevant])).toEqual([
+        ["https://erp.example.com|admin|db1", false],
+        ["https://erp.example.com|admin|db1", true],
+        ["https://erp.example.com|admin|db1", true],
+      ]);
+      expect(changes.every((c) => c.previousConfigId === undefined)).toBe(true);
     });
 
     it("a failing listener does not fail the change", async () => {

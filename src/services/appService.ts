@@ -13,12 +13,19 @@ export interface GetMatchesResult extends GetAppListResult {
 }
 
 /**
- * What changed in the application list: kind, and the sync config id the
- * application had before the change (null without a database).
+ * What changed in the application list: the kind; the sync config id the
+ * application has after the change (the one it had, for a delete; null
+ * without a database); for an edit that renamed it, the id before;
+ * and whether the change touches the connection a chat bus runs on (the
+ * address, user, password, database or Odoo version, or an application
+ * added or deleted), which autoSync, the poll interval and the ntfy fields
+ * do not.
  */
 export interface ApplicationsChange {
   kind: "add" | "edit" | "delete";
   configId: string | null;
+  previousConfigId?: string;
+  realtimeRelevant: boolean;
 }
 
 const configIdOf = (app: Application): string | null =>
@@ -63,8 +70,14 @@ export class AppService {
     }
 
     await this._db.addApplication(app);
-    await this.notify({ kind: "add", configId: configIdOf(app) });
+    const configId = configIdOf(app);
+    await this.notify({ kind: "add", configId, realtimeRelevant: configId !== null });
     return true;
+  }
+
+  private async notifyDelete(app: Application): Promise<void> {
+    const configId = configIdOf(app);
+    await this.notify({ kind: "delete", configId, realtimeRelevant: configId !== null });
   }
 
   private async notify(change: ApplicationsChange): Promise<void> {
@@ -86,7 +99,7 @@ export class AppService {
     const apps = await this.getApps();
     for (const app of apps) {
       await this._db.deleteApplication(app.url, app.username);
-      await this.notify({ kind: "delete", configId: configIdOf(app) });
+      await this.notifyDelete(app);
     }
     return true;
   }
@@ -113,7 +126,7 @@ export class AppService {
     await this._db.deleteApplication(matchingApp.url, matchingApp.username);
     // Its per-server entries no longer count in the notes' global status
     await this._db.refreshAllNoteSyncStatuses();
-    await this.notify({ kind: "delete", configId: configIdOf(matchingApp) });
+    await this.notifyDelete(matchingApp);
     return true;
   }
 
@@ -165,7 +178,17 @@ export class AppService {
       );
     }
     await this._db.refreshAllNoteSyncStatuses();
-    await this.notify({ kind: "edit", configId: configIdOf(appToEdit) });
+    const before = configIdOf(appToEdit);
+    const after = configIdOf(newApp);
+    const connectionChanged = !sameServerUrl(appToEdit.url, newApp.url) || appToEdit.username !== newApp.username
+      || appToEdit.password !== newApp.password || appToEdit.database !== newApp.database
+      || appToEdit.odooVersion !== newApp.odooVersion;
+    await this.notify({
+      kind: "edit",
+      configId: after,
+      ...(before !== null && before !== after ? { previousConfigId: before } : {}),
+      realtimeRelevant: (before !== null || after !== null) && connectionChanged,
+    });
     return true;
   }
 

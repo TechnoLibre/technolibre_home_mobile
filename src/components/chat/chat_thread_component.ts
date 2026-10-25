@@ -156,6 +156,7 @@ export class ChatThreadComponent extends EnhancedComponent {
     /** lastMessageId last sent to markRead, and whether a call is running. */
     private _markedUpTo: number | null = null;
     private _marking = false;
+    private _markAgain = false;
     /** Rendered body per message version: renderBody runs for new or edited messages only. */
     private _html = new Map<string, unknown>();
     private _sig = "";
@@ -468,20 +469,35 @@ export class ChatThreadComponent extends EnhancedComponent {
     /**
      * Marks the conversation read when its last message is newer than the
      * one last marked; a failed call leaves the mark unset, so the next
-     * bottom scroll tries again. One call runs at a time.
+     * bottom scroll tries again. One call runs at a time; calls made
+     * meanwhile fold into one rerun after it, so a message that landed
+     * during the call is marked too.
      */
     async markRead(): Promise<void> {
-        if (!this.source || this._marking) return;
+        if (!this.source) return;
+        if (this._marking) {
+            this._markAgain = true;
+            return;
+        }
         this._marking = true;
+        try {
+            do {
+                this._markAgain = false;
+                await this.markReadOnce();
+            } while (this._markAgain && !this.destroyed);
+        } finally {
+            this._marking = false;
+        }
+    }
+
+    private async markReadOnce(): Promise<void> {
         try {
             const last = (await this.chatService.repo.channel(this.configId, this.channelId))?.lastMessageId ?? null;
             if (last === null || (this._markedUpTo !== null && last <= this._markedUpTo)) return;
-            await this.chatService.markRead(this.source, this.channelId);
+            await this.chatService.markRead(this.source!, this.channelId);
             this._markedUpTo = last;
         } catch {
             // Not marked: the next bottom scroll sends it again
-        } finally {
-            this._marking = false;
         }
     }
 

@@ -289,7 +289,8 @@ export class ChatOutbox {
    * Gives the pending message its server id, applies the Store the post
    * answered, and marks the channel read for its author as Odoo does on a
    * post, unless a newer message is already known. Runs in the account's
-   * queue of counter writers (serial).
+   * queue of counter writers (serial). An op no longer stored (its account
+   * was erased while the post was on the wire) writes nothing.
    */
   private settle(op: OutboxOp, messageId: number, result: any): Promise<void> {
     return this.serial(op.configId, () => this.settleNow(op, messageId, result));
@@ -297,6 +298,7 @@ export class ChatOutbox {
 
   private async settleNow(op: OutboxOp, messageId: number, result: any): Promise<void> {
     const { configId } = op;
+    if (!(await this.db.getOutboxOp(op.id))) return;
     if (result) {
       const self = (await this.repo.sourceState(configId)).selfPartnerId;
       await this.repo.applyDelta(configId, parseStore(result, configId, self));

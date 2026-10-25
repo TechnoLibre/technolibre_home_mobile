@@ -219,6 +219,29 @@ describe("ChatThreadComponent", () => {
         expect(chat.markRead).toHaveBeenCalledTimes(2);
     });
 
+    it("a markRead arriving during an in-flight markRead runs once more after it", async () => {
+        const chat = fakeChat([msg(10)]);
+        const ch = channel({ lastMessageId: 10 });
+        chat.repo.channel.mockImplementation(async () => ch);
+        const c = make(chat);
+        await c.open();
+        expect(chat.markRead).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(c._marking).toBe(false));
+        let release!: () => void;
+        chat.markRead.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
+        ch.lastMessageId = 11;
+        const first = c.markRead();
+        await vi.waitFor(() => expect(chat.markRead).toHaveBeenCalledTimes(2));
+        // A message lands while the call is in flight: asked twice, rerun once
+        ch.lastMessageId = 12;
+        await c.markRead();
+        await c.markRead();
+        expect(chat.markRead).toHaveBeenCalledTimes(2);
+        release();
+        await first;
+        expect(chat.markRead).toHaveBeenCalledTimes(3);
+    });
+
     it("a failed markRead is retried on the next bottom scroll", async () => {
         const chat = fakeChat([msg(10)]);
         chat.markRead.mockRejectedValueOnce(new Error("x"));

@@ -89,6 +89,12 @@ export class ChatService {
   /** The running bus of each account, and the counter that voids a start overtaken by a stop. */
   private buses = new Map<string, ChatBus>();
   private realtimeRun = 0;
+  /** Per account, the counter that voids a bus start overtaken by a stop of that account alone. */
+  private sourceRuns = new Map<string, number>();
+  /** The transport factory of the last startRealtime, reused to start one account's bus alone. */
+  private transportFor: ((configId: string) => BusTransport) | null = null;
+  /** Per account, the counter forgetSource moves: a load or page that began before it discards its answer. */
+  private generations = new Map<string, number>();
 
   /** Per account, the end of the queue of serial() tasks; settled tasks leave it. */
   private chains = new Map<string, Promise<void>>();
@@ -202,7 +208,9 @@ export class ChatService {
   /** load() without the queue, for a task already running in it. */
   private async loadNow(src: ChatSource): Promise<void> {
     const { configId, creds } = src;
+    const erased = this.erasedSince(configId);
     const info = await this.rpc.sessionInfo(creds);
+    if (erased()) return;
     const self = info.partnerId || null;
     await this.repo.setSourceState({
       configId,
@@ -212,6 +220,7 @@ export class ChatService {
     });
     const result = await this.rpc.callWithAuth(creds, (sessionId) =>
       this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/data", { init_messaging: {}, channels_as_member: true }));
+    if (erased()) return;
     const delta = parseStore(result, configId, self);
     const lastOf = new Map(delta.channels.map((c) => [c.channelId, c.lastMessageId]));
     const gaps: number[] = [];
@@ -234,6 +243,7 @@ export class ChatService {
         if (c.needactionCounter !== undefined && c.needactionCounterBusId === undefined) c.needactionCounterBusId = busId;
       }
     }
+    if (erased()) return;
     await this.repo.applyDelta(configId, delta);
     for (const channelId of gaps) {
       await this.repo.patchChannel(configId, channelId, { oldestLoadedId: null, historyComplete: false });
@@ -247,12 +257,23 @@ export class ChatService {
     } catch {
       // The state stored before stands
     }
+    if (erased()) return;
     await this.repo.setSourceState({
       configId,
       ...(module ? { moduleState: module } : {}),
       loadedAt: this.now().toISOString(),
     });
     this.changed(configId, null);
+  }
+
+  /**
+   * A probe for the account's erasure: take it before an await on the
+   * server, call it after; true when forgetSource ran meanwhile, so the
+   * answer must not be written.
+   */
+  private erasedSince(configId: string): () => boolean {
+    const gen = this.generations.get(configId) ?? 0;
+    return () => (this.generations.get(configId) ?? 0) !== gen;
   }
 
   private async configIds(configIds?: string[]): Promise<string[]> {
@@ -333,6 +354,7 @@ export class ChatService {
 
   private async pageNow(src: ChatSource, channelId: number, size: number): Promise<{ fetched: number; added: number }> {
     const { configId, creds } = src;
+    const erased = this.erasedSince(configId);
     const channel = await this.repo.channel(configId, channelId);
     if (!channel || channel.historyComplete) return { fetched: 0, added: 0 };
     const around = channel.oldestLoadedId !== null
@@ -348,6 +370,7 @@ export class ChatService {
         around,
         limit: 2 * size,
       }));
+    if (erased()) return { fetched: 0, added: 0 };
     const self = (await this.repo.sourceState(configId)).selfPartnerId;
     const delta = parseStore(result?.data, configId, self);
     delta.messages = delta.messages.filter((m) => m.messageId <= around && m.channelId === channelId);
@@ -399,6 +422,11 @@ export class ChatService {
     const { configId } = src;
     const channel = await this.repo.channel(configId, channelId);
     if (!channel || channel.lastMessageId === null) return;
+    // Odoo marked the author read on a post: nothing is left to tell it
+    if (
+      channel.seenMessageId !== null && channel.seenMessageId >= channel.lastMessageId
+      && channel.unreadCounter === 0 && channel.needactionCounter === 0
+    ) return;
     await this.queue.queueRead(configId, channelId, channel.lastMessageId, channel.needactionCounter > 0);
     if (!(await this.isOnline())) return;
     try {
@@ -474,17 +502,24 @@ export class ChatService {
   }
 
   /**
-   * Erases one account's chat from the phone: its rows leave the outbox
-   * (posts not sent are lost), then its cache goes. Queued behind the
-   * account's server writers, so a delivery already running cannot write
-   * after the erase.
+   * Erases one account's chat from the phone: its bus stops, its rows
+   * leave the outbox (posts not sent are lost), then its cache goes. It
+   * does not wait for a request in flight: moving the account's generation
+   * makes a load or a page answer that lands later discard itself, and a
+   * post settled later finds its op gone. A second erase queued behind the
+   * account's writers removes whatever a writer past its check still wrote.
    */
   async forgetSource(configId: string): Promise<void> {
-    await this.serial(configId, async () => {
-      await this.queue.dropAll(configId);
-      await this.repo.dropSource(configId);
-    });
+    this.stopSourceRealtime(configId);
+    this.generations.set(configId, (this.generations.get(configId) ?? 0) + 1);
+    await this.erase(configId);
+    this.serial(configId, () => this.erase(configId)).catch((e) => console.warn("chat: second erase failed", e));
     this.changed(configId, null);
+  }
+
+  private async erase(configId: string): Promise<void> {
+    await this.queue.dropAll(configId);
+    await this.repo.dropSource(configId);
   }
 
   /**
@@ -517,19 +552,46 @@ export class ChatService {
    */
   async startRealtime(transportFor: (configId: string) => BusTransport): Promise<void> {
     this.stopRealtime();
+    this.transportFor = transportFor;
     const run = this.realtimeRun;
     const sources = await this.sources({ online: true });
     if (run !== this.realtimeRun) return;
     await Promise.all(sources.map((src) => this.startSource(src, run, transportFor)));
   }
 
+  /**
+   * Starts one account's bus alone, after a stop of it: the account is
+   * read again from the application list (its credentials may have
+   * changed), loaded, and its bus started, the other buses untouched. Does
+   * nothing before startRealtime gave a transport, or for an account that
+   * is not a source.
+   */
+  async startSourceRealtime(configId: string): Promise<void> {
+    const transportFor = this.transportFor;
+    if (!transportFor) return;
+    this.stopSourceRealtime(configId);
+    const run = this.realtimeRun;
+    const src = (await this.sources({ online: true })).find((s) => s.configId === configId);
+    if (!src || run !== this.realtimeRun) return;
+    await this.startSource(src, run, transportFor);
+  }
+
+  /** Stops one account's bus and cancels its start still loading; the others keep running. */
+  stopSourceRealtime(configId: string): void {
+    this.sourceRuns.set(configId, (this.sourceRuns.get(configId) ?? 0) + 1);
+    this.buses.get(configId)?.stop();
+    this.buses.delete(configId);
+  }
+
   private async startSource(src: ChatSource, run: number, transportFor: (configId: string) => BusTransport): Promise<void> {
+    const token = this.sourceRuns.get(src.configId) ?? 0;
+    const current = () => run === this.realtimeRun && token === (this.sourceRuns.get(src.configId) ?? 0);
     try {
       await this.load(src);
     } catch (e) {
       console.warn("chat: load before realtime failed", e);
     }
-    if (run !== this.realtimeRun) return;
+    if (!current()) return;
     const bus = new ChatBus(src, {
       transport: () => transportFor(src.configId),
       session: async () => ({
@@ -559,6 +621,7 @@ export class ChatService {
       console.warn("chat: realtime not started", e);
       return;
     }
+    this.buses.get(src.configId)?.stop();
     this.buses.set(src.configId, bus);
   }
 

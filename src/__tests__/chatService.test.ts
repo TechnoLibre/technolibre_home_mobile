@@ -684,6 +684,74 @@ describe("ChatService", () => {
     expect(changes).toEqual([[mine, null]]);
   });
 
+  it("deleting an account does not wait for a pending load of that account", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    odoo.state.hold = new Promise(() => {});
+    void chat.load(src).catch(() => {});
+    await vi.waitFor(() => expect(odoo.on("/mail/data")).toHaveLength(1));
+    await chat.queue.queuePost(config, GROUP, "not sent", false);
+    const forgotten = await Promise.race([
+      chat.forgetSource(config).then(() => true),
+      new Promise((r) => setTimeout(() => r(false), 1000)),
+    ]);
+    expect(forgotten).toBe(true);
+    expect(await chat.repo.hasSourceState(config)).toBe(false);
+    expect(await chat.queue.pendingPostCount(config)).toBe(0);
+  });
+
+  it("a load landing after its account was deleted writes nothing", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    let release!: () => void;
+    odoo.state.hold = new Promise((r) => { release = r; });
+    const loading = chat.load(src);
+    await vi.waitFor(() => expect(odoo.on("/mail/data")).toHaveLength(1));
+    await chat.forgetSource(config);
+    release();
+    await loading;
+    expect(await chat.repo.channels(config)).toEqual([]);
+    expect(await chat.repo.hasSourceState(config)).toBe(false);
+  });
+
+  it("stopping one source's realtime leaves the others, starting it opens a single new bus", async () => {
+    fakeOdoo();
+    await build([TARGET, { ...TARGET, username: "bob" }]);
+    for (const app of await env.db.getAllApplications()) await env.db.setApplicationOdooVersion(app.url, app.username, "18.0");
+    const [a, b] = env.configIds;
+    const made: Record<string, any[]> = { [a]: [], [b]: [] };
+    const transportFor = (id: string) => {
+      const t = { open: vi.fn(), send: vi.fn(), close: vi.fn(), onOpen: () => {}, onMessage: () => {}, onClose: () => {} };
+      made[id].push(t);
+      return t as any;
+    };
+    await chat.startRealtime(transportFor);
+    await vi.waitFor(() => expect(made[a][0]?.open).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(made[b][0]?.open).toHaveBeenCalledTimes(1));
+    chat.stopSourceRealtime(a);
+    expect(made[a][0].close).toHaveBeenCalled();
+    expect(made[b][0].close).not.toHaveBeenCalled();
+    await chat.startSourceRealtime(a);
+    await vi.waitFor(() => expect(made[a]).toHaveLength(2));
+    await vi.waitFor(() => expect(made[a][1].open).toHaveBeenCalledTimes(1));
+    expect(made[b]).toHaveLength(1);
+    chat.stopRealtime();
+  });
+
+  it("markRead after an own send sends nothing when already seen", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.send(src, GROUP, "hello");
+    // The author's own message arrives on the bus and raises the last message
+    await chat.repo.patchChannel(config, GROUP, { lastMessageId: 5000 });
+    const reads = odoo.kw("mark_as_read").length + odoo.on("/discuss/channel/mark_as_read").length;
+    const ops = (await env.db.getOutboxOpsForConfig(config)).length;
+    await chat.markRead(src, GROUP);
+    expect(odoo.kw("mark_as_read").length + odoo.on("/discuss/channel/mark_as_read").length).toBe(reads);
+    expect((await env.db.getOutboxOpsForConfig(config)).length).toBe(ops);
+  });
+
   it("a source whose load never answers does not hold back another source's bus", async () => {
     fakeOdoo();
     await build([TARGET, { ...TARGET, username: "bob" }]);
