@@ -15,6 +15,8 @@ const CHANGE_DEBOUNCE_MS = 150;
 const TYPING_FRESH_MS = 60000;
 /** Distance from the edge, in px, that counts as "at the top" or "at the bottom". */
 const EDGE_PX = 40;
+/** The composer grows to this many lines, then scrolls. */
+const MAX_INPUT_ROWS = 5;
 
 type MetaKind = "none" | "sent" | "seen" | "pending" | "waiting" | "failed";
 
@@ -39,6 +41,10 @@ interface ThreadState {
     loadingAll: number | null;
     historyComplete: boolean;
     found: boolean;
+    /** Text of the last failed send or retry; "" when none. */
+    error: string;
+    /** Rows the composer shows, from 1 up to MAX_INPUT_ROWS. */
+    inputRows: number;
 }
 
 /** Epoch ms of an Odoo UTC date string (space or ISO form); NaN when unreadable. */
@@ -115,10 +121,11 @@ export class ChatThreadComponent extends EnhancedComponent {
         </div>
       </div>
       <p t-if="state.typing" class="chat-thread__typing" t-esc="state.typing"/>
+      <p t-if="state.error" class="chat-thread__failed" role="alert" t-esc="state.error"/>
       <div class="chat-thread__composer">
-        <textarea class="chat-thread__input" rows="1" t-att-placeholder="t('chat.compose_placeholder')"
+        <textarea class="chat-thread__input" t-att-rows="state.inputRows" t-att-placeholder="t('chat.compose_placeholder')"
                   t-att-value="state.text" t-on-input="onInput"/>
-        <button class="chat-thread__send" t-att-aria-label="t('chat.send')" t-on-click="onSend">➤</button>
+        <button class="chat-thread__send" t-att-aria-label="t('chat.send')" t-on-mousedown.prevent="" t-on-click="onSend">➤</button>
       </div>
     </div>`;
 
@@ -129,6 +136,19 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _again = false;
     private _loadingOlder = false;
     private _debounce: ReturnType<typeof setTimeout> | null = null;
+    private _typingTimer: ReturnType<typeof setTimeout> | null = null;
+    destroyed = false;
+    /** lastMessageId last sent to markRead, and whether a call is running. */
+    private _markedUpTo: number | null = null;
+    private _marking = false;
+    /** Rendered body per message version: renderBody runs for new or edited messages only. */
+    private _html = new Map<string, unknown>();
+    private _sig = "";
+    private _members: ChatMember[] = [];
+    private _names = new Map<number, string>();
+    private _self: number | null = null;
+    /** Set once a history page brought nothing, so the short-history fill stops. */
+    private _noMore = false;
     private _onChanged = (ev: Event) => {
         const d = (ev as CustomEvent).detail ?? {};
         if (d.configId !== this.configId) return;
@@ -153,6 +173,8 @@ export class ChatThreadComponent extends EnhancedComponent {
             loadingAll: null,
             historyComplete: false,
             found: true,
+            error: "",
+            inputRows: 1,
         });
         const params = this.router.getRouteParams(window.location.pathname, "/chat/:source/:channelId");
         this.configId = params.get("source") ?? "";
@@ -161,21 +183,27 @@ export class ChatThreadComponent extends EnhancedComponent {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
             await this.open();
         });
-        onWillUnmount(() => {
-            this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
-            if (this._debounce !== null) clearTimeout(this._debounce);
-            const v = this.chatService.viewing;
-            if (v && v.configId === this.configId && v.channelId === this.channelId) {
-                this.chatService.viewing = null;
-            }
-            this.source && this.chatService.typing(this.source, this.channelId, false).catch(() => {});
-        });
+        onWillUnmount(() => this.teardown());
+    }
+
+    /** Detaches the listener and timers and clears the viewed conversation; open() after it does nothing. */
+    teardown(): void {
+        this.destroyed = true;
+        this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
+        if (this._debounce !== null) clearTimeout(this._debounce);
+        if (this._typingTimer !== null) clearTimeout(this._typingTimer);
+        const v = this.chatService.viewing;
+        if (v && v.configId === this.configId && v.channelId === this.channelId) {
+            this.chatService.viewing = null;
+        }
+        if (this.source) this.chatService.typing(this.source, this.channelId, false).catch(() => {});
     }
 
     /** Resolves the source, marks the conversation as viewed, shows the cache, scrolls down and marks read. */
     async open(): Promise<void> {
         const sources = await this.chatService.sources({ online: false });
         this.source = sources.find((s) => s.configId === this.configId) ?? null;
+        if (this.destroyed) return;
         this.state.serverLabel = this.source?.label ?? "";
         this.chatService.viewing = { configId: this.configId, channelId: this.channelId };
         await this.refresh();
@@ -209,28 +237,77 @@ export class ChatThreadComponent extends EnhancedComponent {
             this.state.found = false;
             return;
         }
-        const [messages, members, partners, st, ops] = await Promise.all([
+        const [messages, members, partners, st] = await Promise.all([
             this.chatService.messages(this.configId, this.channelId),
             repo.members(this.configId, this.channelId),
             repo.partners(this.configId),
             repo.sourceState(this.configId),
-            this.databaseService.getOutboxOpsForConfig(this.configId),
         ]);
+        // Outbox ops matter only to pending rows, once per build
+        const ops = messages.some((m) => m.status === "pending")
+            ? await this.databaseService.getOutboxOpsForConfig(this.configId)
+            : [];
         const names = new Map(partners.map((p) => [p.partnerId, p.name]));
         const self = st.selfPartnerId;
         this.state.found = true;
         this.state.historyComplete = channel.historyComplete;
         this.fillHeader(channel, partners, names);
+        this._members = members;
+        this._names = names;
+        this._self = self;
+        this.refreshTyping();
         const el = this.scroller.el as HTMLElement | null;
         const stick = !el || this.atBottom(el);
         const before = el ? el.scrollHeight - el.scrollTop : 0;
-        this.state.rows = messages.map((m) => this.rowOf(m, channel, members, self, ops));
-        this.state.typing = typingLine(members, self, names, Date.now());
+        const rows = messages.map((m) => this.rowOf(m, channel, members, self, ops));
+        // A change of members or typing alone leaves the rows, and the DOM, untouched
+        const sig = rows.map((r) => [r.key, r.meta, r.time, r.opId].join("|")).join("\n");
+        if (sig === this._sig) return;
+        this._sig = sig;
+        this.state.rows = rows;
+        this.pruneHtml(messages);
         // Prepended history keeps the viewport on the same message; new ones follow the bottom
         if (el) {
             if (stick) this.scrollToBottomSoon();
             else this.keepPosition(before);
+            this.fillShortHistory();
         }
+    }
+
+    /** Drops the cached bodies of messages no longer shown. */
+    private pruneHtml(messages: ChatMessage[]): void {
+        const live = new Set(messages.map((m) => this.htmlKey(m)));
+        for (const k of this._html.keys()) if (!live.has(k)) this._html.delete(k);
+    }
+
+    private htmlKey(m: ChatMessage): string {
+        return m.messageId !== null
+            ? "m" + m.messageId + "|" + (m.writeDate ?? "")
+            : "u" + (m.clientUuid ?? m.outboxOpId ?? m.date);
+    }
+
+    /** Recomputes the typing line and schedules the next recomputation at the oldest typer's expiry. */
+    private refreshTyping(): void {
+        if (this._typingTimer !== null) clearTimeout(this._typingTimer);
+        this._typingTimer = null;
+        const now = Date.now();
+        this.state.typing = typingLine(this._members, this._self, this._names, now);
+        if (!this.state.typing || this.destroyed) return;
+        const stamps = this._members
+            .filter((m) => m.partnerId !== this._self && m.isTyping)
+            .map((m) => utcMs(m.typingAt) + TYPING_FRESH_MS - now)
+            .filter((d) => Number.isFinite(d) && d >= 0);
+        if (stamps.length === 0) return;
+        this._typingTimer = setTimeout(() => this.refreshTyping(), Math.min(...stamps) + 1);
+    }
+
+    /** A history shorter than the screen cannot be scrolled: pages are fetched until it fills or ends. */
+    private fillShortHistory(): void {
+        setTimeout(() => {
+            const el = this.scroller.el as HTMLElement | null;
+            if (this.destroyed || !el || this._noMore || this.state.historyComplete) return;
+            if (el.scrollHeight <= el.clientHeight) this.loadOlder();
+        }, 0);
     }
 
     private fillHeader(channel: ChatChannel, partners: ChatPartner[], names: Map<number, string>): void {
@@ -266,11 +343,21 @@ export class ChatThreadComponent extends EnhancedComponent {
         return {
             key: m.messageId !== null ? "m" + m.messageId : "u" + (m.clientUuid ?? m.outboxOpId ?? m.date),
             own,
-            html: markup(renderBody(m.body)),
+            html: this.htmlOf(m),
             time: formatListTime(m.date),
             meta,
             opId: m.outboxOpId,
         };
+    }
+
+    private htmlOf(m: ChatMessage): unknown {
+        const k = this.htmlKey(m);
+        let html = this._html.get(k);
+        if (html === undefined) {
+            html = markup(renderBody(m.body));
+            this._html.set(k, html);
+        }
+        return html;
     }
 
     initials(): string {
@@ -317,6 +404,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             const before = el ? el.scrollHeight - el.scrollTop : 0;
             const added = await this.chatService.loadOlder(this.source, this.channelId);
             await this.refresh();
+            if (added === 0) this._noMore = true;
             if (added > 0 && el) this.keepPosition(before);
         } catch {
             // Offline or refused: the next scroll to the top tries again
@@ -325,12 +413,23 @@ export class ChatThreadComponent extends EnhancedComponent {
         }
     }
 
+    /**
+     * Marks the conversation read when its last message is newer than the
+     * one last marked; a failed call leaves the mark unset, so the next
+     * bottom scroll tries again. One call runs at a time.
+     */
     async markRead(): Promise<void> {
-        if (!this.source) return;
+        if (!this.source || this._marking) return;
+        this._marking = true;
         try {
+            const last = (await this.chatService.repo.channel(this.configId, this.channelId))?.lastMessageId ?? null;
+            if (last === null || (this._markedUpTo !== null && last <= this._markedUpTo)) return;
             await this.chatService.markRead(this.source, this.channelId);
+            this._markedUpTo = last;
         } catch {
-            // Kept in the outbox for the next flush
+            // Not marked: the next bottom scroll sends it again
+        } finally {
+            this._marking = false;
         }
     }
 
@@ -358,18 +457,33 @@ export class ChatThreadComponent extends EnhancedComponent {
     // ─── Composer ─────────────────────────────────────────────────────────
 
     onInput(ev: Event): void {
-        this.state.text = (ev.target as HTMLTextAreaElement).value;
-        if (this.source && this.state.text.trim()) {
+        const value = (ev.target as HTMLTextAreaElement).value;
+        this.state.text = value;
+        this.state.inputRows = Math.min(MAX_INPUT_ROWS, value.split("\n").length);
+        if (this.source && value.trim()) {
             this.chatService.typing(this.source, this.channelId, true).catch(() => {});
         }
     }
 
-    /** Queues the trimmed text; empty or blank text is never sent. */
+    /**
+     * Queues the trimmed text; empty or blank text is never sent. The
+     * composer clears before the first await, so a second tap finds it
+     * empty; a failed send puts the text back and shows the error.
+     */
     async onSend(): Promise<void> {
         const text = this.state.text.trim();
         if (!text || !this.source) return;
+        const raw = this.state.text;
         this.state.text = "";
-        await this.chatService.send(this.source, this.channelId, text);
+        this.state.inputRows = 1;
+        this.state.error = "";
+        try {
+            await this.chatService.send(this.source, this.channelId, text);
+        } catch {
+            if (!this.state.text) this.state.text = raw;
+            this.state.error = t("chat.send_error");
+            return;
+        }
         await this.refresh();
         this.scrollToBottomSoon();
     }
@@ -377,11 +491,12 @@ export class ChatThreadComponent extends EnhancedComponent {
     /** Puts a failed post back in the outbox and drains it. */
     async onRetry(row: ThreadRow): Promise<void> {
         if (!row.opId || !this.source) return;
-        await this.syncService.outbox.retry(row.opId);
+        this.state.error = "";
         try {
+            await this.syncService.outbox.retry(row.opId);
             await this.chatService.queue.flush(this.source.creds, { force: true });
         } catch {
-            // Stays queued for the next flush
+            this.state.error = t("chat.send_error");
         }
         await this.refresh();
     }

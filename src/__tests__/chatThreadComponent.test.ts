@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 
 import { ChatThreadComponent, typingLine } from "../components/chat/chat_thread_component";
 import { EventBus } from "@odoo/owl";
+import { Events } from "../constants/events";
 
 function stubLocale() {
     const store: Record<string, string> = { app_lang: "en" };
@@ -136,10 +137,8 @@ describe("ChatThreadComponent", () => {
         const chat = fakeChat([msg(10)]);
         const c = make(chat);
         await c.open();
-        chat.markRead.mockClear();
         c.scroller = { el: { scrollTop: 400, scrollHeight: 1000, clientHeight: 300 } };
         await c.onScroll();
-        expect(chat.markRead).not.toHaveBeenCalled();
         c.scroller = { el: { scrollTop: 690, scrollHeight: 1000, clientHeight: 300 } };
         await c.onScroll();
         expect(chat.markRead).toHaveBeenCalledTimes(1);
@@ -178,5 +177,110 @@ describe("ChatThreadComponent", () => {
         await c.onLoadAll();
         expect(chat.loadAll).toHaveBeenCalled();
         expect(c.state.loadingAll).toBeNull();
+    });
+
+    it("markRead fires once for many bottom scrolls, again after a new message", async () => {
+        const chat = fakeChat([msg(10)]);
+        const ch = channel();
+        chat.repo.channel.mockImplementation(async () => ch);
+        const c = make(chat);
+        await c.open();
+        c.scroller = { el: { scrollTop: 690, scrollHeight: 1000, clientHeight: 300 } };
+        for (let i = 0; i < 5; i++) await c.onScroll();
+        expect(chat.markRead).toHaveBeenCalledTimes(1);
+        ch.lastMessageId = 13;
+        await c.onScroll();
+        await c.onScroll();
+        expect(chat.markRead).toHaveBeenCalledTimes(2);
+    });
+
+    it("a failed markRead is retried on the next bottom scroll", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.markRead.mockRejectedValueOnce(new Error("x"));
+        const c = make(chat);
+        await c.open();
+        c.scroller = { el: { scrollTop: 690, scrollHeight: 1000, clientHeight: 300 } };
+        await c.onScroll();
+        expect(chat.markRead).toHaveBeenCalledTimes(2);
+    });
+
+    it("unmount clears viewing; unmount before open leaves it unset", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        c.teardown();
+        expect(chat.viewing).toBeNull();
+        const chat2 = fakeChat([msg(10)]);
+        const d = make(chat2);
+        const opening = d.open();
+        d.teardown();
+        await opening;
+        expect(chat2.viewing).toBeNull();
+    });
+
+    it("double tap sends once", async () => {
+        const chat = fakeChat([]);
+        const c = make(chat);
+        await c.open();
+        c.state.text = "hello";
+        await Promise.all([c.onSend(), c.onSend()]);
+        expect(chat.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("a failed send restores the text and shows the error", async () => {
+        const chat = fakeChat([]);
+        chat.send.mockRejectedValue(new Error("x"));
+        const c = make(chat);
+        await c.open();
+        c.state.text = "hello";
+        await c.onSend();
+        expect(c.state.text).toBe("hello");
+        expect(c.state.error).not.toBe("");
+    });
+
+    it("refreshes on CHAT_CHANGED for this conversation only", async () => {
+        vi.useFakeTimers();
+        try {
+            const c = make(fakeChat([msg(10)]));
+            const spy = vi.spyOn(c, "refresh").mockResolvedValue(undefined);
+            c.eventBus.addEventListener(Events.CHAT_CHANGED, c._onChanged);
+            c.eventBus.trigger(Events.CHAT_CHANGED, { configId: "a", channelId: 6 });
+            c.eventBus.trigger(Events.CHAT_CHANGED, { configId: "b", channelId: 5 });
+            vi.advanceTimersByTime(500);
+            expect(spy).not.toHaveBeenCalled();
+            c.eventBus.trigger(Events.CHAT_CHANGED, { configId: "a", channelId: 5 });
+            c.eventBus.trigger(Events.CHAT_CHANGED, { configId: "a", channelId: null });
+            vi.advanceTimersByTime(500);
+            expect(spy).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("a hostile body renders sanitised and is rendered once per version", async () => {
+        const chat = fakeChat([msg(10, { body: '<p>x</p><img src=x onerror="alert(1)"><script>alert(1)</script>' })]);
+        const c = make(chat);
+        await c.open();
+        const html = String(c.state.rows[0].html);
+        expect(html).not.toMatch(/onerror|<script|<img/i);
+        const first = c.state.rows[0].html;
+        await c.refresh();
+        expect(c.state.rows[0].html).toBe(first);
+    });
+
+    it("the typing line expires on its own", async () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date("2020-01-01T10:00:30Z"));
+            const chat = fakeChat([msg(10)], [member(1), member(7, { isTyping: true, typingAt: "2020-01-01 10:00:00" })]);
+            const c = make(chat);
+            await c.open();
+            expect(c.state.typing).toContain("Alice");
+            vi.advanceTimersByTime(31000);
+            expect(c.state.typing).toBe("");
+            c.teardown();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

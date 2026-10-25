@@ -1009,4 +1009,5 @@ export const translations: Record<string, string> = {
   "chat.retry": "Retry",
   "chat.compose_placeholder": "Write a message",
   "chat.send": "Send",
+  "chat.send_error": "Could not send the message. Try again.",
 };
