@@ -55,6 +55,34 @@ export interface DrainResult {
   errors: string[];
 }
 
+/**
+ * The operations with each one after the operation it depends on, when that
+ * one is in the list; otherwise in the given order (the database's: oldest
+ * first, then by id). Operations created in the same millisecond tie on
+ * their creation time and their random ids may sort a dependent first: in
+ * this order a dependent still runs in the pass its dependency succeeds in.
+ * A dependency cycle is broken where the walk meets it again.
+ */
+export function dependencyOrder(ops: OutboxOp[]): OutboxOp[] {
+  const byId = new Map(ops.map((op) => [op.id, op]));
+  const placed = new Set<string>();
+  const ordered: OutboxOp[] = [];
+  for (const op of ops) {
+    const chain: OutboxOp[] = [];
+    const seen = new Set<string>();
+    for (let cur: OutboxOp | undefined = op; cur && !placed.has(cur.id) && !seen.has(cur.id);
+      cur = cur.dependsOn ? byId.get(cur.dependsOn) : undefined) {
+      seen.add(cur.id);
+      chain.push(cur);
+    }
+    for (const o of chain.reverse()) {
+      placed.add(o.id);
+      ordered.push(o);
+    }
+  }
+  return ordered;
+}
+
 /** Delay before the retry that follows the given number of attempts. */
 export function retryDelayMs(attempts: number): number {
   return Math.min(RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1), RETRY_MAX_MS);
@@ -283,7 +311,8 @@ export class OutboxService {
   }
 
   /**
-   * Runs, oldest first, the due operations of one server (see isDue;
+   * Runs, oldest first and each after its dependency (see
+   * dependencyOrder), the due operations of one server (see isDue;
    * force ignores the retry delay) whose dependency is done and whose
    * kind has a handler. An operation of a note in skipNoteIds is left for
    * later: the caller already ran that note in this pass. With
@@ -296,7 +325,7 @@ export class OutboxService {
     options: { force?: boolean; skipNoteIds?: Set<string>; onlyNoteIds?: Set<string> } = {}
   ): Promise<DrainResult> {
     const result: DrainResult = { done: 0, failed: 0, blocked: 0, errors: [] };
-    const ops = await this.db.getOutboxOpsForConfig(configId);
+    const ops = dependencyOrder(await this.db.getOutboxOpsForConfig(configId));
     const pendingIds = new Set(ops.map((op) => op.id));
     for (const op of ops) {
       if (options.skipNoteIds?.has(op.noteId)) continue;

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
-import { OutboxBlockedError, OutboxRetryLaterError, OutboxService, RETRY_MAX_MS, retryDelayMs } from "../services/outboxService";
+import { OutboxBlockedError, OutboxRetryLaterError, OutboxService, RETRY_MAX_MS, dependencyOrder, retryDelayMs } from "../services/outboxService";
 import type { SyncCredentials } from "../services/odoo/odooRpcClient";
 import { addSyncOutboxTable } from "../services/migrations/addSyncOutboxTable";
 
@@ -181,6 +181,32 @@ describe("OutboxService", () => {
       await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "k", params: { tag: "child" }, dependsOn: parent.id });
       await outbox.drain(CREDS, CONFIG);
       expect(ran).toEqual(["parent", "child"]);
+    });
+
+    it("runs a chain created in one millisecond in one pass, whatever its ids", async () => {
+      const ran: string[] = [];
+      outbox.registerHandler("k", record(ran));
+      // Equal creation times, ids sorting each dependent before its dependency
+      const row = (id: string, dependsOn: string | null) => db.addOutboxOp({
+        id, clientUuid: id, noteId: "chat", configId: CONFIG, kind: "k", params: { tag: id },
+        status: "queued", attempts: 0, nextAttemptAt: null, lastError: null, dependsOn,
+        createdAt: clock.toISOString(), updatedAt: clock.toISOString(),
+      });
+      await row("c", null);
+      await row("b", "c");
+      await row("a", "b");
+      expect((await db.getOutboxOpsForConfig(CONFIG)).map((o) => o.id)).toEqual(["a", "b", "c"]);
+      const result = await outbox.drain(CREDS, CONFIG);
+      expect(ran).toEqual(["c", "b", "a"]);
+      expect(result).toMatchObject({ done: 3, failed: 0 });
+      expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+    });
+
+    it("orders by dependency, then keeps the given order; a cycle does not loop", () => {
+      const op = (id: string, dependsOn: string | null = null) => ({ id, dependsOn } as any);
+      expect(dependencyOrder([op("a", "c"), op("b"), op("c")]).map((o) => o.id)).toEqual(["c", "a", "b"]);
+      expect(dependencyOrder([op("a", "x"), op("b")]).map((o) => o.id)).toEqual(["a", "b"]);
+      expect(dependencyOrder([op("a", "b"), op("b", "a")]).map((o) => o.id)).toEqual(["b", "a"]);
     });
 
     it("counts a blocked row apart from a failed one", async () => {
