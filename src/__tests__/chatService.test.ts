@@ -2196,6 +2196,9 @@ describe("ChatService", () => {
     offline();
     await chat.rename(src, GROUP, "Renamed");
     await chat.mute(src, GROUP, 60);
+    // A follow-up of the same rename (as behind a running one) is the same action
+    const [rename] = (await actionOps()).filter((o) => o.kind === "chat.rename");
+    await env.db.addOutboxOp({ ...rename, id: "follow-up", clientUuid: "follow-up-uuid", dependsOn: rename.id });
     await chat.applyBus(config, [
       bus(1001, "discuss.channel/delete", { id: GROUP }),
       bus(1002, "discuss.channel/leave", { "discuss.channel": [{ id: GENERAL }] }),
@@ -2247,5 +2250,40 @@ describe("ChatService", () => {
     odoo.state.onKw = null;
     expect((await chat.send(src, GROUP, "again")).status).toBe("pending");
     expect(odoo.on("/mail/message/post")).toHaveLength(1);
+  });
+
+  it("leaving a conversation whose create failed after a send that may have arrived leaves it once created", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    // The group is made on the server, its answer lost: the op fails with its stamp kept
+    server.state.dropNext = 1;
+    const { channelId: tempId } = await chat.createGroup(src, [BOB, 8]);
+    const [create] = (await env.db.getOutboxOpsForConfig(config)).filter((o) => o.kind === "chat.create");
+    expect(create).toMatchObject({ status: "failed", attempts: 1 });
+    expect(create.params.createSentAt).toBeTruthy();
+    expect(server.channels).toHaveLength(1);
+    offline();
+    await chat.send(src, tempId, "hello");
+    await chat.leave(src, tempId);
+    // The create is kept and the leave waits for it
+    const ops = await env.db.getOutboxOpsForConfig(config);
+    expect(ops.map((o) => o.kind).sort()).toEqual(["chat.create", "chat.leave"]);
+    expect(ops.find((o) => o.kind === "chat.leave")!.dependsOn).toBe(create.id);
+    expect(await chat.repo.channel(config, tempId)).toMatchObject({ isMember: false, leftUnsent: true, createOpId: create.id });
+    online();
+    advance(3 * 60_000 + 1);
+    await chat.flushAll();
+    // The retry adopts the group the lost send made: one group, left, its text kept as failed
+    expect(createCalls(odoo)).toHaveLength(1);
+    expect(server.channels).toHaveLength(1);
+    const realId = server.channels[0].id;
+    expect(await chat.realIdOf(config, tempId)).toBe(realId);
+    expect(kwOf(odoo, "action_unfollow")).toEqual([[[realId], {}]]);
+    expect(odoo.on("/mail/message/post")).toHaveLength(0);
+    expect(await chat.repo.channel(config, realId)).toMatchObject({ isMember: false, leftUnsent: true, createOpId: null });
+    expect((await chat.messages(config, realId)).map((m) => m.status)).toEqual(["failed"]);
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
   });
 });

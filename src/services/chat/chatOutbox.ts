@@ -778,15 +778,18 @@ export class ChatOutbox {
    * bus): their rows leave the outbox as dropChannels does. When the user
    * still had actions waiting for one (USER_ACTIONS, queued or given up as
    * notices), one notice per conversation (CHAT_DROPPED, blocked) says how
-   * many were cancelled, its count added to the one such a notice already
+   * many were cancelled (one per kind, per person for a removal, whatever
+   * the number of ops), its count added to the one such a notice already
    * held; it stays until dismissed.
    */
   async dropTaken(configId: string, channelIds: number[]): Promise<void> {
     const ops = await this.db.getOutboxOpsForConfig(configId);
     for (const channelId of channelIds) {
       const mine = ops.filter((o) => o.noteId === CHAT_NOTE && o.params.channelId === channelId);
-      const count = mine.reduce((n, o) =>
-        n + (USER_ACTIONS.has(o.kind) ? 1 : o.kind === CHAT_DROPPED ? (o.params.count ?? 0) : 0), 0);
+      // One action per kind (per person for a removal), however many ops of it wait: a follow-up behind a running one, a notice
+      const actions = new Set(mine.filter((o) => USER_ACTIONS.has(o.kind))
+        .map((o) => (o.kind === CHAT_REMOVE ? `${o.kind}#${o.params.partnerId}` : o.kind)));
+      const count = actions.size + mine.reduce((n, o) => n + (o.kind === CHAT_DROPPED ? (o.params.count ?? 0) : 0), 0);
       for (const o of mine) await this.outbox.cancel(o.id);
       if (count === 0) continue;
       const channel = await this.repo.channel(configId, channelId);
