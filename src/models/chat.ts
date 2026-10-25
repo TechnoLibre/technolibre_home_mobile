@@ -74,6 +74,8 @@ export interface ChatSourceState {
   moduleState: ChatModuleState;
   inboxCounter: number;
   loadedAt: string | null;
+  /** Highest bus id whose counter changes are applied; a notification at or below it moves no counter. */
+  counterBusId: number;
 }
 
 /** One notification of the Odoo bus: its bus id and the typed message it carries. */

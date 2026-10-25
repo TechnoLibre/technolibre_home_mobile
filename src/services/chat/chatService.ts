@@ -60,11 +60,12 @@ const maxDt = (a: string | null, b: string | null | undefined): string | null =>
  * construction, so the service builds in node as in the app.
  *
  * Counters come from the server: /mail/data at load, then the bus. A bus
- * notification moves a counter only when its bus id is above the last one
- * applied for that account, starting from the bus id /mail/data reports
- * (Store.inbox.counter_bus_id), so a notification replayed after a load is
- * never counted twice. Records (messages, members, partners) are upserts
- * and are always applied.
+ * notification moves a counter only when its bus id is above the account's
+ * stored counterBusId, which load raises to the bus id /mail/data reports
+ * (Store.inbox.counter_bus_id) and each notification applied raises to its
+ * own; stored, it holds across restarts, so a notification replayed after a
+ * load or a restart is never counted twice. Records (messages, members,
+ * partners) are upserts and are always applied.
  */
 export class ChatService {
   readonly repo: ChatRepository;
@@ -76,8 +77,6 @@ export class ChatService {
   /** Whether a server may answer now; replaceable in tests. */
   isOnline: () => Promise<boolean> = () => networkService.isOnline();
 
-  /** Per account, the highest bus id whose counter changes are applied. */
-  private counterBusId = new Map<string, number>();
   /** Per "configId#channelId", when "typing" was last sent and the pending stop. */
   private typingState = new Map<string, { sentAt: number | null; stop: ReturnType<typeof setTimeout> | null }>();
 
@@ -96,8 +95,10 @@ export class ChatService {
     this.onChange?.(configId, channelId);
   }
 
-  private raiseBusId(configId: string, busId: number): void {
-    this.counterBusId.set(configId, Math.max(this.counterBusId.get(configId) ?? 0, busId));
+  private async raiseBusId(configId: string, busId: number): Promise<void> {
+    if (busId > (await this.repo.sourceState(configId)).counterBusId) {
+      await this.repo.setSourceState({ configId, counterBusId: busId });
+    }
   }
 
   // ─── Sources ──────────────────────────────────────────────────────────────
@@ -143,7 +144,11 @@ export class ChatService {
    * right, websocket version), then /mail/data with the member channels and
    * their last message, then the server module state. A cached conversation
    * the server no longer lists (left or hidden meanwhile) is dropped, unless
-   * it still holds a post waiting to go. A failed module probe keeps the
+   * it is pinned locally or still holds a post waiting to go. A channel
+   * whose last message is above every cached one and not cached itself may
+   * miss messages in between: its history restarts (oldestLoadedId null,
+   * not complete), so the next pages come down from the last message again
+   * and upsert the rows already cached. A failed module probe keeps the
    * state stored before; any other failure propagates.
    */
   async load(src: ChatSource): Promise<void> {
@@ -159,15 +164,25 @@ export class ChatService {
     const result = await this.rpc.callWithAuth(creds, (sessionId) =>
       this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/data", { init_messaging: {}, channels_as_member: true }));
     const delta = parseStore(result, configId, self);
-    const listed = new Set(delta.channels.map((c) => c.channelId));
+    const lastOf = new Map(delta.channels.map((c) => [c.channelId, c.lastMessageId]));
+    const gaps: number[] = [];
     for (const c of await this.repo.channels(configId)) {
-      if (listed.has(c.channelId) || c.localPinned) continue;
-      const waiting = (await this.repo.messages(configId, c.channelId)).some((m) => m.messageId === null);
-      if (!waiting) delta.deletedChannelIds.push(c.channelId);
+      const cached = await this.repo.messages(configId, c.channelId);
+      if (!lastOf.has(c.channelId)) {
+        if (c.localPinned || cached.some((m) => m.messageId === null)) continue;
+        delta.deletedChannelIds.push(c.channelId);
+        continue;
+      }
+      const last = lastOf.get(c.channelId);
+      const highest = Math.max(0, ...cached.map((m) => m.messageId ?? 0));
+      if (last != null && highest > 0 && highest < last) gaps.push(c.channelId);
     }
     await this.repo.applyDelta(configId, delta);
+    for (const channelId of gaps) {
+      await this.repo.patchChannel(configId, channelId, { oldestLoadedId: null, historyComplete: false });
+    }
     const busId = Number(result?.Store?.inbox?.counter_bus_id);
-    if (Number.isFinite(busId)) this.raiseBusId(configId, busId);
+    if (Number.isFinite(busId)) await this.raiseBusId(configId, busId);
 
     let module: ChatModuleState | null = null;
     try {
@@ -219,20 +234,24 @@ export class ChatService {
 
   // ─── History ──────────────────────────────────────────────────────────────
 
-  /** One page of older messages; returns how many it added. */
-  loadOlder(src: ChatSource, channelId: number): Promise<number> {
-    return this.page(src, channelId, CHAT_PAGE);
+  /** One page of older messages; returns how many were not cached before. */
+  async loadOlder(src: ChatSource, channelId: number): Promise<number> {
+    return (await this.page(src, channelId, CHAT_PAGE)).added;
   }
 
-  /** Every older message, CHAT_FULL_PAGE per request; onProgress gets the running count. */
+  /**
+   * Every older message, CHAT_FULL_PAGE per request, until the start of the
+   * history; returns and reports (onProgress) the running count of messages
+   * not cached before.
+   */
   async loadAll(src: ChatSource, channelId: number, onProgress?: (n: number) => void): Promise<number> {
     let total = 0;
     for (;;) {
-      const added = await this.page(src, channelId, CHAT_FULL_PAGE);
+      const { fetched, added } = await this.page(src, channelId, CHAT_FULL_PAGE);
       total += added;
       if (added > 0) onProgress?.(total);
       const channel = await this.repo.channel(src.configId, channelId);
-      if (added === 0 || !channel || channel.historyComplete) return total;
+      if (fetched === 0 || !channel || channel.historyComplete) return total;
     }
   }
 
@@ -242,18 +261,19 @@ export class ChatService {
    * `around`: without it Odoo marks the fetched messages done, which clears
    * mentions. `around` also returns up to `size` newer messages; only the
    * ones at or below it are this page. Fewer than `size` means the start of
-   * the history is reached.
+   * the history is reached. Returns the messages of the page (fetched) and
+   * those of them not cached before (added).
    */
-  private async page(src: ChatSource, channelId: number, size: number): Promise<number> {
+  private async page(src: ChatSource, channelId: number, size: number): Promise<{ fetched: number; added: number }> {
     const { configId, creds } = src;
     const channel = await this.repo.channel(configId, channelId);
-    if (!channel || channel.historyComplete) return 0;
+    if (!channel || channel.historyComplete) return { fetched: 0, added: 0 };
     const around = channel.oldestLoadedId !== null
       ? channel.oldestLoadedId - 1
       : channel.lastMessageId !== null ? channel.lastMessageId + 1 : 0;
     if (around < 1) {
       await this.repo.patchChannel(configId, channelId, { historyComplete: true });
-      return 0;
+      return { fetched: 0, added: 0 };
     }
     const result = await this.rpc.callWithAuth(creds, (sessionId) =>
       this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/channel/messages", {
@@ -264,6 +284,8 @@ export class ChatService {
     const self = (await this.repo.sourceState(configId)).selfPartnerId;
     const delta = parseStore(result?.data, configId, self);
     delta.messages = delta.messages.filter((m) => m.messageId <= around && m.channelId === channelId);
+    let added = 0;
+    for (const m of delta.messages) if (!(await this.repo.message(configId, m.messageId))) added++;
     await this.repo.applyDelta(configId, delta);
     const ids = delta.messages.map((m) => m.messageId);
     const patch: Partial<ChatChannel> = {};
@@ -271,7 +293,7 @@ export class ChatService {
     if (ids.length < size) patch.historyComplete = true;
     await this.repo.patchChannel(configId, channelId, patch);
     this.changed(configId, channelId);
-    return ids.length;
+    return { fetched: ids.length, added };
   }
 
   // ─── Send, read, typing ───────────────────────────────────────────────────
@@ -404,9 +426,9 @@ export class ChatService {
    */
   async applyBus(configId: string, notifications: BusNotification[]): Promise<void> {
     for (const n of notifications) {
-      const fresh = n.id > (this.counterBusId.get(configId) ?? 0);
+      const fresh = n.id > (await this.repo.sourceState(configId)).counterBusId;
       const result = await this.applyOne(configId, n.message?.type, n.message?.payload ?? {}, fresh);
-      if (fresh) this.raiseBusId(configId, n.id);
+      if (fresh) await this.raiseBusId(configId, n.id);
       if (result !== undefined) this.changed(configId, result);
     }
   }
@@ -540,14 +562,14 @@ export class ChatService {
 
   /**
    * Messages whose needaction the user cleared: the inbox counter takes the
-   * server's value, and each cached message lowers its channel's mentions
+   * server's value (a replay at or below counterBusId changes nothing), and each cached message lowers its channel's mentions
    * by one (every id listed was a needaction of the user).
    */
   private async applyMarkAsRead(configId: string, p: any, fresh: boolean): Promise<number | null> {
+    if (!fresh) return null;
     if (typeof p.needaction_inbox_counter === "number") {
       await this.repo.setSourceState({ configId, inboxCounter: p.needaction_inbox_counter });
     }
-    if (!fresh) return null;
     const perChannel = new Map<number, number>();
     for (const id of p.message_ids ?? []) {
       const m = typeof id === "number" ? await this.repo.message(configId, id) : null;

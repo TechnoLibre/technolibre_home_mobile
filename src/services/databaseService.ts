@@ -1263,7 +1263,8 @@ export class DatabaseService {
         is_system       INTEGER NOT NULL,
         module_state    TEXT NOT NULL,
         inbox_counter   INTEGER NOT NULL,
-        loaded_at       TEXT
+        loaded_at       TEXT,
+        counter_bus_id  INTEGER NOT NULL DEFAULT 0
       )
     `);
     for (const [table, col] of [

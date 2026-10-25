@@ -50,10 +50,10 @@ function mailData() {
     messages.push(msg(o.last, id));
   };
   add(CHAT, "chat", "", "2026-10-25 09:00:00", { unread: 3, last: 80 });
-  add(GROUP, "group", "Team", "2026-10-25 08:00:00", { unread: 2, last: 60 });
-  add(GENERAL, "channel", "General", "2026-10-25 10:00:00", { unread: 5, needaction: 1, last: 70 });
-  add(MUTED, "channel", "Muted", "2026-10-25 07:00:00", { unread: 4, needaction: 2, mute: "9999-12-31 23:59:59", last: 30 });
-  add(QUIET, "channel", "Quiet", "2026-10-25 11:00:00", { unread: 7, last: 20 });
+  add(GROUP, "group", "Team", "2026-10-25 08:00:00", { unread: 2, last: 600 });
+  add(GENERAL, "channel", "General", "2026-10-25 10:00:00", { unread: 5, needaction: 1, last: 700 });
+  add(MUTED, "channel", "Muted", "2026-10-25 07:00:00", { unread: 4, needaction: 2, mute: "9999-12-31 23:59:59", last: 800 });
+  add(QUIET, "channel", "Quiet", "2026-10-25 11:00:00", { unread: 7, last: 900 });
   return {
     Store: { inbox: { counter: 4, counter_bus_id: 1000, id: "inbox", model: "mail.box" } },
     "discuss.channel": channels,
@@ -73,7 +73,7 @@ function fakeOdoo(opts: { version?: number } = {}) {
   const calls: Call[] = [];
   const history: Record<number, number[]> = { [CHAT]: Array.from({ length: 80 }, (_, i) => i + 1) };
   const state = {
-    nextId: 500,
+    nextId: 5000,
     onPost: null as null | ((params: any, id: number) => Promise<void>),
     data: mailData() as any,
   };
@@ -220,7 +220,8 @@ describe("ChatService", () => {
     const odoo = fakeOdoo();
     const src = await source();
     await chat.load(src);
-    expect(await chat.loadOlder(src, CHAT)).toBe(CHAT_PAGE);
+    // The first page holds the last message, already cached by the load
+    expect(await chat.loadOlder(src, CHAT)).toBe(CHAT_PAGE - 1);
     expect(await chat.loadOlder(src, CHAT)).toBe(CHAT_PAGE);
     const pages = odoo.on("/discuss/channel/messages").map((c) => c.params);
     expect(pages).toEqual([
@@ -241,7 +242,7 @@ describe("ChatService", () => {
     odoo.history[CHAT] = Array.from({ length: 40 }, (_, i) => i + 41);
     const src = await source();
     await chat.load(src);
-    expect(await chat.loadOlder(src, CHAT)).toBe(CHAT_PAGE);
+    expect(await chat.loadOlder(src, CHAT)).toBe(CHAT_PAGE - 1);
     expect((await chat.repo.channel(config, CHAT))!.historyComplete).toBe(false);
     expect(await chat.loadOlder(src, CHAT)).toBe(10);
     expect((await chat.repo.channel(config, CHAT))!.historyComplete).toBe(true);
@@ -257,10 +258,46 @@ describe("ChatService", () => {
     const src = await source();
     await chat.load(src);
     const progress: number[] = [];
-    expect(await chat.loadAll(src, CHAT, (n) => progress.push(n))).toBe(250);
-    expect(progress).toEqual([100, 200, 250]);
+    expect(await chat.loadAll(src, CHAT, (n) => progress.push(n))).toBe(249);
+    expect(progress).toEqual([99, 199, 249]);
+    expect((await chat.messages(config, CHAT))).toHaveLength(250);
     expect(odoo.on("/discuss/channel/messages").every((c) => c.params.limit === 200 && "around" in c.params)).toBe(true);
     expect((await chat.repo.channel(config, CHAT))!.historyComplete).toBe(true);
+  });
+
+  it("reload over a gap restarts the history from the last message", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.loadOlder(src, CHAT);
+    await chat.loadOlder(src, CHAT);
+    // Meanwhile the server got 81..100; /mail/data gives only the last one
+    odoo.history[CHAT] = Array.from({ length: 100 }, (_, i) => i + 1);
+    odoo.state.data["mail.message"][0] = msg(100, CHAT);
+    await chat.load(src);
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ lastMessageId: 100, oldestLoadedId: null, historyComplete: false });
+    expect(await chat.loadOlder(src, CHAT)).toBe(19);
+    expect(odoo.on("/discuss/channel/messages").at(-1)!.params).toEqual({ channel_id: CHAT, around: 101, limit: 2 * CHAT_PAGE });
+    const ids = (await chat.messages(config, CHAT)).map((m) => m.messageId);
+    expect(ids).toEqual(Array.from({ length: 80 }, (_, i) => i + 21));
+    // A reload with no new message keeps the history where it is
+    await chat.load(src);
+    expect((await chat.repo.channel(config, CHAT))!.oldestLoadedId).toBe(71);
+  });
+
+  it("load drops the conversations the server no longer lists, but a pinned or waiting one", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    offline();
+    await chat.send(src, GROUP, "waiting");
+    await chat.repo.patchChannel(config, QUIET, { localPinned: true });
+    online();
+    odoo.state.data["discuss.channel"] = odoo.state.data["discuss.channel"].filter((c: any) => c.id === CHAT);
+    odoo.state.data["discuss.channel.member"] = odoo.state.data["discuss.channel.member"].filter((m: any) => m.thread.id === CHAT);
+    odoo.state.data["mail.message"] = odoo.state.data["mail.message"].filter((m: any) => m.thread.id === CHAT);
+    await chat.load(src);
+    expect((await chat.repo.channels(config)).map((c) => c.channelId).sort()).toEqual([CHAT, GROUP, QUIET]);
   });
 
   it("send offline keeps a pending message", async () => {
@@ -288,7 +325,7 @@ describe("ChatService", () => {
     expect(posts[0].params.post_data).not.toHaveProperty("erplibre_client_uuid");
     const mine = (await chat.messages(config, GROUP)).filter((m) => m.clientUuid === sent.clientUuid);
     expect(mine).toHaveLength(1);
-    expect(mine[0]).toMatchObject({ status: "sent", messageId: 500 });
+    expect(mine[0]).toMatchObject({ status: "sent", messageId: 5000 });
   });
 
   it("send online posts at once, with the module uuid when it is installed", async () => {
@@ -299,7 +336,7 @@ describe("ChatService", () => {
     const sent = await chat.send(src, GROUP, "hello");
     expect(sent.status).toBe("pending");
     expect(odoo.on("/mail/message/post")[0].params.post_data.erplibre_client_uuid).toBe(sent.clientUuid);
-    expect((await chat.messages(config, GROUP)).at(-1)).toMatchObject({ status: "sent", messageId: 500 });
+    expect((await chat.messages(config, GROUP)).at(-1)).toMatchObject({ status: "sent", messageId: 5000 });
   });
 
   it("own post echoed by bus before response stays one message", async () => {
@@ -315,9 +352,9 @@ describe("ChatService", () => {
     };
     const sent = await chat.send(src, GROUP, "echoed");
     const thread = await chat.messages(config, GROUP);
-    const mine = thread.filter((m) => m.clientUuid === sent.clientUuid || m.messageId === 500);
+    const mine = thread.filter((m) => m.clientUuid === sent.clientUuid || m.messageId === 5000);
     expect(mine).toHaveLength(1);
-    expect(mine[0]).toMatchObject({ messageId: 500, status: "sent", clientUuid: sent.clientUuid, outboxOpId: null });
+    expect(mine[0]).toMatchObject({ messageId: 5000, status: "sent", clientUuid: sent.clientUuid, outboxOpId: null });
     expect(thread.filter((m) => m.status === "pending")).toHaveLength(0);
     expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(0);
     expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
@@ -396,9 +433,9 @@ describe("ChatService", () => {
     await chat.load(await source());
     const changes: any[] = [];
     chat.onChange = (c, ch) => changes.push([c, ch]);
-    const incoming = bus(1001, "discuss.channel/new_message", { id: GROUP, data: { "mail.message": [msg(61, GROUP)] } });
+    const incoming = bus(1001, "discuss.channel/new_message", { id: GROUP, data: { "mail.message": [msg(601, GROUP)] } });
     await chat.applyBus(config, [incoming]);
-    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ unreadCounter: 3, lastMessageId: 61 });
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ unreadCounter: 3, lastMessageId: 601 });
     expect(changes).toEqual([[config, GROUP]]);
     // The same notification again changes nothing
     await chat.applyBus(config, [incoming]);
@@ -410,27 +447,48 @@ describe("ChatService", () => {
     expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(0);
     // While the conversation is open, a message does not count as unread
     chat.viewing = { configId: config, channelId: GROUP };
-    await chat.applyBus(config, [bus(1003, "discuss.channel/new_message", { id: GROUP, data: { "mail.message": [msg(62, GROUP)] } })]);
+    await chat.applyBus(config, [bus(1003, "discuss.channel/new_message", { id: GROUP, data: { "mail.message": [msg(602, GROUP)] } })]);
     expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(0);
   });
 
   it("bus notifications older than the load leave the counters alone", async () => {
     fakeOdoo();
     await chat.load(await source());
-    await chat.applyBus(config, [bus(999, "discuss.channel/new_message", { id: GROUP, data: { "mail.message": [msg(61, GROUP)] } })]);
+    await chat.applyBus(config, [bus(999, "discuss.channel/new_message", { id: GROUP, data: { "mail.message": [msg(601, GROUP)] } })]);
     expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(2);
-    expect((await chat.messages(config, GROUP)).map((m) => m.messageId)).toContain(61);
+    expect((await chat.messages(config, GROUP)).map((m) => m.messageId)).toContain(601);
   });
 
   it("inbox notifications move the inbox and mention counters", async () => {
     fakeOdoo();
     await chat.load(await source());
-    await chat.applyBus(config, [bus(1001, "mail.message/inbox", { "mail.message": [msg(71, GENERAL)] })]);
+    await chat.applyBus(config, [bus(1001, "mail.message/inbox", { "mail.message": [msg(701, GENERAL)] })]);
     expect((await chat.repo.sourceState(config)).inboxCounter).toBe(5);
     expect((await chat.repo.channel(config, GENERAL))!.needactionCounter).toBe(2);
-    await chat.applyBus(config, [bus(1002, "mail.message/mark_as_read", { message_ids: [70, 71], needaction_inbox_counter: 3 })]);
+    await chat.applyBus(config, [bus(1002, "mail.message/mark_as_read", { message_ids: [700, 701], needaction_inbox_counter: 3 })]);
     expect((await chat.repo.sourceState(config)).inboxCounter).toBe(3);
     expect((await chat.repo.channel(config, GENERAL))!.needactionCounter).toBe(0);
+  });
+
+  it("a replayed mark_as_read leaves the inbox counter of the load", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    await chat.applyBus(config, [bus(999, "mail.message/mark_as_read", { message_ids: [700], needaction_inbox_counter: 0 })]);
+    expect((await chat.repo.sourceState(config)).inboxCounter).toBe(4);
+    expect((await chat.repo.channel(config, GENERAL))!.needactionCounter).toBe(1);
+  });
+
+  it("the counter bus id holds across a restart", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    const inbox = bus(1001, "mail.message/inbox", { "mail.message": [msg(701, GENERAL)] });
+    await chat.applyBus(config, [inbox]);
+    expect((await chat.repo.sourceState(config)).counterBusId).toBe(1001);
+    const rpc = new OdooRpcClient();
+    const restarted = new ChatService(env.db, rpc, new OutboxService(env.db), new CapabilityService(env.db, rpc));
+    await restarted.applyBus(config, [inbox]);
+    expect((await chat.repo.sourceState(config)).inboxCounter).toBe(5);
+    expect((await chat.repo.channel(config, GENERAL))!.needactionCounter).toBe(2);
   });
 
   it("bus leave, delete, fetched, presence and joined", async () => {
@@ -443,6 +501,10 @@ describe("ChatService", () => {
       bus(1004, "discuss.channel/delete", { id: MUTED }),
       bus(1005, "some.unknown/type", { id: 1 }),
     ]);
+    const changes: any[] = [];
+    chat.onChange = (c, ch) => changes.push([c, ch]);
+    await chat.applyBus(config, [bus(1007, "some.unknown/type", { id: 1 })]);
+    expect(changes).toEqual([]);
     expect((await chat.repo.members(config, CHAT)).find((m) => m.memberId === 101)!.fetchedMessageId).toBe(80);
     expect((await chat.repo.partners(config)).find((p) => p.partnerId === BOB)!.imStatus).toBe("away");
     expect((await chat.conversations()).map((c) => c.channelId)).toEqual([GENERAL, CHAT, GROUP]);

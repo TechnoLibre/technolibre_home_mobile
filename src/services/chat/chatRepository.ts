@@ -109,6 +109,7 @@ function sourceFromRow(r: Row): ChatSourceState {
     moduleState: r.module_state,
     inboxCounter: r.inbox_counter,
     loadedAt: r.loaded_at ?? null,
+    counterBusId: r.counter_bus_id ?? 0,
   };
 }
 
@@ -228,6 +229,7 @@ export class ChatRepository {
       module_state: s.moduleState,
       inbox_counter: s.inboxCounter,
       loaded_at: s.loadedAt,
+      counter_bus_id: s.counterBusId,
     };
   }
 
@@ -478,6 +480,7 @@ export class ChatRepository {
       moduleState: "unknown",
       inboxCounter: 0,
       loadedAt: null,
+      counterBusId: 0,
     };
   }
 

@@ -189,10 +189,10 @@ describe("ChatRepository", () => {
   });
 
   it("sourceState defaults, merges and follows the delta", async () => {
-    expect(await repo.sourceState(A)).toMatchObject({ configId: A, lastBusId: 0, moduleState: "unknown", isSystem: false, selfPartnerId: null });
-    await repo.setSourceState({ configId: A, lastBusId: 9, isSystem: true });
+    expect(await repo.sourceState(A)).toMatchObject({ configId: A, lastBusId: 0, moduleState: "unknown", isSystem: false, selfPartnerId: null, counterBusId: 0 });
+    await repo.setSourceState({ configId: A, lastBusId: 9, isSystem: true, counterBusId: 12 });
     await repo.setSourceState({ configId: A, moduleState: "installed" });
-    expect(await repo.sourceState(A)).toMatchObject({ lastBusId: 9, isSystem: true, moduleState: "installed" });
+    expect(await repo.sourceState(A)).toMatchObject({ lastBusId: 9, isSystem: true, moduleState: "installed", counterBusId: 12 });
     await repo.applyDelta(A, delta({ inboxCounter: 4, selfPartnerId: 3 }));
     expect(await repo.sourceState(A)).toMatchObject({ inboxCounter: 4, selfPartnerId: 3, lastBusId: 9 });
   });
