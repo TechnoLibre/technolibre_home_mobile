@@ -97,4 +97,28 @@ describe("nativeTransport", () => {
         await flush();
         expect(onClose).toHaveBeenCalledWith(1006, "boom");
     });
+
+    it("close before the listeners are ready skips the native open", async () => {
+        const t = nativeTransport("f");
+        t.open("wss://x/w", {});
+        t.close();
+        await flush();
+        expect(mockApi.open).not.toHaveBeenCalled();
+    });
+
+    it("a rejected listener registration is retried by the next open", async () => {
+        vi.resetModules();
+        mockApi.addListener.mockRejectedValueOnce(new Error("no bridge"));
+        const fresh = await import("../plugins/chatSocketPlugin");
+        const t1 = fresh.nativeTransport("g");
+        const onClose = vi.fn();
+        t1.onClose = onClose;
+        t1.open("wss://x/w", {});
+        await flush();
+        expect(onClose).toHaveBeenCalledWith(1006, "no bridge");
+        const t2 = fresh.nativeTransport("g");
+        t2.open("wss://x/w", {});
+        await flush();
+        expect(mockApi.open).toHaveBeenCalledTimes(1);
+    });
 });

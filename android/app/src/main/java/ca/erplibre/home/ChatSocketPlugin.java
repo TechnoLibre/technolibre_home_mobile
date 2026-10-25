@@ -44,6 +44,16 @@ public class ChatSocketPlugin extends Plugin {
 
     private final Map<String, WebSocket> sockets = new ConcurrentHashMap<>();
 
+    /**
+     * Registration invariant: OkHttp connects on its own thread as soon as
+     * newWebSocket returns, so a callback can run before open() has stored
+     * the socket. open() holds this lock across newWebSocket and the map
+     * put, and every callback takes it before checking the map; a callback
+     * therefore always sees its own socket registered, and a replaced or
+     * closed socket is told apart by identity.
+     */
+    private final Object lock = new Object();
+
     @PluginMethod
     public void open(PluginCall call) {
         final String id = call.getString("id");
@@ -64,28 +74,43 @@ public class ChatSocketPlugin extends Plugin {
                 Iterator<String> keys = headers.keys();
                 while (keys.hasNext()) {
                     String key = keys.next();
-                    rb.header(key, headers.getString(key));
+                    if (headers.isNull(key)) continue;
+                    String value = headers.optString(key, null);
+                    if (value != null) rb.header(key, value);
                 }
             }
-        } catch (IllegalArgumentException e) {
+        } catch (RuntimeException e) {
             call.reject("Invalid request: " + e.getMessage());
             return;
         }
 
-        WebSocket ws = CLIENT.newWebSocket(rb.build(), new WebSocketListener() {
+        Request request;
+        try {
+            request = rb.build();
+        } catch (RuntimeException e) {
+            call.reject("Invalid request: " + e.getMessage());
+            return;
+        }
+
+        synchronized (lock) {
+        WebSocket ws = CLIENT.newWebSocket(request, new WebSocketListener() {
             @Override
             public void onOpen(WebSocket webSocket, Response response) {
-                if (sockets.get(id) == webSocket) {
-                    notifyListeners("chatSocketOpen", idOnly(id));
+                synchronized (lock) {
+                    if (sockets.get(id) == webSocket) {
+                        notifyListeners("chatSocketOpen", idOnly(id));
+                    }
                 }
             }
 
             @Override
             public void onMessage(WebSocket webSocket, String text) {
-                if (sockets.get(id) != webSocket) return;
-                JSObject data = idOnly(id);
-                data.put("text", text);
-                notifyListeners("chatSocketMessage", data);
+                synchronized (lock) {
+                    if (sockets.get(id) != webSocket) return;
+                    JSObject data = idOnly(id);
+                    data.put("text", text);
+                    notifyListeners("chatSocketMessage", data);
+                }
             }
 
             @Override
@@ -101,16 +126,19 @@ public class ChatSocketPlugin extends Plugin {
             }
         });
         sockets.put(id, ws);
+        }
         call.resolve();
     }
 
     /** Emits the close of a socket that is still registered, once. */
     private void finish(String id, WebSocket ws, int code, String reason) {
-        if (!sockets.remove(id, ws)) return;
-        JSObject data = idOnly(id);
-        data.put("code", code);
-        data.put("reason", reason);
-        notifyListeners("chatSocketClose", data);
+        synchronized (lock) {
+            if (!sockets.remove(id, ws)) return;
+            JSObject data = idOnly(id);
+            data.put("code", code);
+            data.put("reason", reason);
+            notifyListeners("chatSocketClose", data);
+        }
     }
 
     private static JSObject idOnly(String id) {

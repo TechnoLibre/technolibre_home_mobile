@@ -50,7 +50,11 @@ function ensureListeners(): Promise<unknown> {
                 routes.delete(ev.id);
                 t.onClose(ev.code, ev.reason);
             }),
-        ]);
+        ]).catch((e) => {
+            // A failed registration is retried by the next open().
+            listenersReady = null;
+            throw e;
+        });
     }
     return listenersReady;
 }
@@ -65,7 +69,11 @@ class NativeTransport implements BusTransport {
     open(url: string, headers: Record<string, string>): void {
         routes.set(this.id, this);
         ensureListeners()
-            .then(() => ChatSocket.open({ id: this.id, url, headers }))
+            .then(() => {
+                // Closed or replaced while the listeners registered.
+                if (routes.get(this.id) !== this) return;
+                return ChatSocket.open({ id: this.id, url, headers });
+            })
             .catch((e) => {
                 // A failed open is a close like any other: 1006, no frame.
                 if (routes.get(this.id) !== this) return;
