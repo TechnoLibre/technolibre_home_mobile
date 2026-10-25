@@ -111,12 +111,15 @@ export class ChatThreadComponent extends EnhancedComponent {
     <div id="chat-thread">
       <HeadingComponent title="state.title"/>
       <div class="chat-thread__header">
-        <span class="chat-thread__avatar" aria-hidden="true" t-esc="initials()"/>
+        <button class="chat-thread__info" t-att-aria-label="t('chat.info')" t-on-click="onInfo">
+          <span class="chat-thread__avatar" aria-hidden="true" t-esc="initials()"/>
+        </button>
         <span class="chat-thread__server" t-esc="state.serverLabel"/>
         <span t-if="state.presence" class="chat-thread__presence" t-att-class="'chat-thread__presence--' + state.presence"
               t-att-title="t('chat.presence_' + state.presence)" t-att-aria-label="t('chat.presence_' + state.presence)"/>
         <button class="chat-thread__menu-btn" t-att-aria-label="t('nav.options')" t-on-click="onToggleMenu">⋮</button>
         <div t-if="state.menu" class="chat-thread__menu" role="menu">
+          <button role="menuitem" class="chat-thread__menu-item" t-on-click="onInfo" t-esc="t('chat.info')"/>
           <p t-if="state.historyComplete" class="chat-thread__menu-note" t-esc="t('chat.history_complete')"/>
           <button t-else="" role="menuitem" class="chat-thread__menu-item" t-on-click="onLoadAll">
             <t t-if="state.loadingAll === null" t-esc="t('chat.load_all')"/>
@@ -542,6 +545,12 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     onToggleMenu(): void {
         this.state.menu = !this.state.menu;
+    }
+
+    /** Opens the information screen of this conversation. */
+    onInfo(): void {
+        this.state.menu = false;
+        this.navigate("/chat/" + encodeURIComponent(this.configId) + "/" + this.channelId + "/info");
     }
 
     async onLoadAll(): Promise<void> {

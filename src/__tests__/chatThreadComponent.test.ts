@@ -79,6 +79,15 @@ function make(chat: any, ops: any[] = [], channelId = "5") {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ChatThreadComponent", () => {
+    it("the header opens the information screen of the conversation, temporary id included", async () => {
+        const c = make(fakeChat([msg(10)]), [], "-3");
+        c.navigate = vi.fn();
+        c.state.menu = true;
+        c.onInfo();
+        expect(c.navigate).toHaveBeenCalledWith("/chat/a/-3/info");
+        expect(c.state.menu).toBe(false);
+    });
+
     it("send clears the composer and shows the pending bubble", async () => {
         const list: any[] = [msg(10)];
         const chat = fakeChat(list);

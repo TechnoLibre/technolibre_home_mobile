@@ -4591,6 +4591,42 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
                 tests: ["src/__tests__/chatNewComponent.test.ts"],
             },
+            {
+                id: "chat.info",
+                label: { en: "Conversation info", fr: "Infos de la conversation" },
+                description: {
+                    en: "Name, description, members with presence, invite, remove, mute, leave or hide, and giving up a blocked create.",
+                    fr: "Nom, description, membres avec présence, invitation, retrait, sourdine, départ ou masquage, et abandon d'une création bloquée.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Opened from the thread header. Rename follows Odoo per type: a channel never to empty, a "
+                        + "group to empty shows its members' names, a chat sets the user's own label. Leave is "
+                        + "offered as Odoo's canLeave and always asks; a direct message is hidden without asking. "
+                        + "Removing a member needs a system user and the server module 1.1. Mute offers 15 min to "
+                        + "until turned back on and is hidden while the global mute is active. A create blocked as "
+                        + "ambiguous can be cancelled.",
+                    fr: "S'ouvre depuis l'en-tête de la conversation. Le renommage suit Odoo selon le type : un "
+                        + "canal jamais à vide, un groupe à vide montre les noms des membres, un message direct "
+                        + "fixe le libellé propre à l'utilisateur. Quitter est offert comme le canLeave d'Odoo et "
+                        + "demande toujours confirmation ; un message direct se masque sans confirmation. Retirer "
+                        + "un membre exige un utilisateur système et le module serveur 1.1. La sourdine va de 15 min "
+                        + "à jusqu'à réactivation et se cache sous la sourdine globale. Une création bloquée comme "
+                        + "ambiguë peut être annulée.",
+                },
+                demo: {
+                    kind: "none",
+                    reason: {
+                        en: "Opened from the header of a conversation.",
+                        fr: "S'ouvre depuis l'en-tête d'une conversation.",
+                    },
+                },
+                files: [
+                    "src/components/chat/chat_info_component.ts",
+                    "src/components/chat/chat_info_component.scss",
+                ],
+                tests: ["src/__tests__/chatInfoComponent.test.ts"],
+            },
         ],
     },
 ];
