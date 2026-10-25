@@ -80,7 +80,7 @@ describe("parseStore /mail/data", () => {
     const d = parseStore(result, CFG, null);
     expect(d.inboxCounter).toBe(4);
     expect(d.selfPartnerId).toBe(SELF);
-    expect(d.partners).toContainEqual({ configId: CFG, partnerId: 8, name: "Alice", imStatus: null });
+    expect(d.partners).toContainEqual({ configId: CFG, partnerId: 8, name: "Alice" });
     expect(d.members.find((m) => m.memberId === 12)).toMatchObject({ channelId: 1, partnerId: 8, seenMessageId: 41 });
     expect(d.members.find((m) => m.memberId === 14)?.partnerId).toBeUndefined();
     // self resolved from Store.self gives the same channel counters
@@ -195,5 +195,37 @@ describe("mergeDeltas", () => {
     const a = parseStore({ Store: { inbox: { counter: 7 } } }, CFG, null);
     const b = parseStore({}, CFG, null);
     expect(mergeDeltas(a, b).inboxCounter).toBe(7);
+  });
+});
+
+describe("parseStore lot 2 keys", () => {
+  it("copies the channel, member and settings keys", () => {
+    const d = parseStore({
+      Store: { settings: { mute_until_dt: "2026-02-01 10:00:00" } },
+      "discuss.channel": [chan(9, "channel", {
+        is_pinned: false, is_editable: true, custom_channel_name: "Pal", memberCount: 4,
+        group_public_id: { id: 12 }, authorizedGroupFullName: "Staff", create_uid: { id: 6 },
+        group_based_subscription: true, parent_channel_id: { id: 2 },
+      })],
+      "discuss.channel.member": [{ id: 31, thread: thread(9), persona: partner(8), create_date: "2026-01-02 09:00:00" }],
+      "res.partner": [{ id: 8, im_status: "away" }, { id: 9, name: "Bob" }],
+    }, CFG, SELF);
+    expect(d.channels[0]).toMatchObject({
+      isPinned: false, isEditable: true, customChannelName: "Pal", memberCount: 4, groupPublicId: 12,
+      authorizedGroupFullName: "Staff", createUid: 6, groupBasedSubscription: true, parentChannelId: 2,
+    });
+    expect(d.members[0].createDate).toBe("2026-01-02 09:00:00");
+    expect(d.globalMuteUntil).toBe("2026-02-01 10:00:00");
+    expect(d.partners).toEqual([{ configId: CFG, partnerId: 8, imStatus: "away" }, { configId: CFG, partnerId: 9, name: "Bob" }]);
+  });
+
+  it("a false value clears, an absent key stays absent", () => {
+    const d = parseStore({
+      Store: { settings: { mute_until_dt: false } },
+      "discuss.channel": [{ id: 4, group_public_id: false, custom_channel_name: false }],
+    }, CFG, SELF);
+    expect(d.channels[0]).toEqual({ channelId: 4, groupPublicId: null, customChannelName: null });
+    expect(d.globalMuteUntil).toBeNull();
+    expect(parseStore({}, CFG, SELF).globalMuteUntil).toBeUndefined();
   });
 });

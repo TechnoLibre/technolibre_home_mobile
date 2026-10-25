@@ -4267,6 +4267,19 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.names",
+                label: { en: "Conversation names", fr: "Noms des conversations" },
+                description: {
+                    en: "The name a chat, group or channel is shown under, as Odoo.",
+                    fr: "Le nom sous lequel une discussion, un groupe ou un canal s'affiche, comme Odoo.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatNames.ts",
+                ],
+            },
+            {
                 id: "chat.body",
                 label: { en: "Message body", fr: "Corps des messages" },
                 description: {
@@ -4331,6 +4344,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/migrations/addChatTables.ts",
+                    "src/services/migrations/addChatLot2Columns.ts",
                     "src/services/chat/chatRepository.ts",
                 ],
             },

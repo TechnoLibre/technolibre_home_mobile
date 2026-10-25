@@ -217,6 +217,9 @@ export class ChatService {
       selfPartnerId: self,
       isSystem: info.isSystem,
       wsVersion: info.websocketWorkerVersion,
+      internalUserGroupId: info.internalUserGroupId,
+      globalMuteUntil: info.globalMuteUntil,
+      isInternalUser: info.isInternalUser,
     });
     const result = await this.rpc.callWithAuth(creds, (sessionId) =>
       this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/data", { init_messaging: {}, channels_as_member: true }));
@@ -300,8 +303,9 @@ export class ChatService {
     for (const id of await this.configIds(configIds)) {
       const channels = await this.repo.channels(id);
       const mentions = channels.reduce((sum, c) => sum + c.needactionCounter, 0);
-      const inbox = Math.max(0, (await this.repo.sourceState(id)).inboxCounter - mentions);
-      total += totalUnread(channels.filter(shown), [inbox], this.now());
+      const state = await this.repo.sourceState(id);
+      const inbox = Math.max(0, state.inboxCounter - mentions);
+      total += totalUnread(channels.filter(shown), [inbox], this.now(), state.globalMuteUntil);
     }
     return total;
   }

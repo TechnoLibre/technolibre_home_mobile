@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
+import { APP_MIGRATIONS } from "../services/migrations";
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
 import type { StoreDelta } from "../services/chat/chatStore";
@@ -302,5 +303,113 @@ describe("ChatRepository", () => {
     const pend = await repo.pendingMessages(A);
     expect([...pend.keys()].sort()).toEqual([7, 8]);
     expect(pend.get(7)).toHaveLength(1);
+  });
+});
+
+describe("ChatRepository lot 2", () => {
+  let db: DatabaseService;
+  let repo: ChatRepository;
+  const LOT2 = {
+    chat_channels: ["is_pinned", "is_editable", "custom_channel_name", "member_count", "group_public_id",
+      "authorized_group_full_name", "create_uid", "group_based_subscription", "parent_channel_id", "create_op_id"],
+    chat_members: ["create_date"],
+    chat_sources: ["internal_user_group_id", "global_mute_until", "is_internal_user"],
+  };
+  const columnsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+  });
+
+  it("a fresh install has the lot 2 columns after every migration", async () => {
+    for (const m of APP_MIGRATIONS) {
+      if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+    }
+    for (const [t, cols] of Object.entries(LOT2)) expect(await columnsOf(t)).toEqual(expect.arrayContaining(cols));
+  });
+
+  it("migration 2026102601 adds the columns to lot 1 tables, keeps their rows, and runs twice", async () => {
+    // The lot 1 shape: only the columns lot 1 created
+    const raw = (db as any).db;
+    await raw.execute("CREATE TABLE IF NOT EXISTS chat_channels (id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL, channel_id INTEGER NOT NULL)");
+    await raw.execute("CREATE TABLE IF NOT EXISTS chat_members (id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL)");
+    await raw.execute("CREATE TABLE IF NOT EXISTS chat_sources (config_id TEXT PRIMARY KEY NOT NULL)");
+    await db.rawRun("INSERT INTO chat_channels (id, config_id, channel_id) VALUES (?, ?, ?)", ["a#1", "a", 1]);
+    await db.rawRun("INSERT INTO chat_sources (config_id) VALUES (?)", ["a"]);
+    const migration = APP_MIGRATIONS.find((m) => m.version === 2026102601)!;
+    await migration.run(db);
+    await migration.run(db);
+    for (const [t, cols] of Object.entries(LOT2)) expect(await columnsOf(t)).toEqual(expect.arrayContaining(cols));
+    const [row] = await db.rawQuery("SELECT * FROM chat_channels");
+    expect(row).toMatchObject({ channel_id: 1, is_editable: null });
+    expect(await db.rawQuery("SELECT * FROM chat_sources")).toHaveLength(1);
+    // the mock stores no column defaults; a row read without them takes the code's
+    const repo2 = new ChatRepository(db);
+    expect((await repo2.channel("a", 1))!).toMatchObject({ isPinned: true, groupBasedSubscription: false });
+    expect(await repo2.sourceState("a")).toMatchObject({ isInternalUser: false, globalMuteUntil: null });
+  });
+
+  describe("on the chat tables", () => {
+    beforeEach(async () => {
+      await addChatTables(db);
+      repo = new ChatRepository(db);
+    });
+
+    it("round trips the lot 2 channel, member and source fields, a new channel shown by default", async () => {
+      await repo.applyDelta(A, delta({ channels: [{ channelId: 7 }] }));
+      expect((await repo.channel(A, 7))!).toMatchObject({ isPinned: true, isEditable: null, groupBasedSubscription: false });
+      await repo.applyDelta(A, delta({
+        channels: [{
+          channelId: 7, isPinned: false, isEditable: true, customChannelName: "Pal", memberCount: 3, groupPublicId: 12,
+          authorizedGroupFullName: "Staff", createUid: 6, groupBasedSubscription: true, parentChannelId: 2, createOpId: "op1",
+        }],
+        members: [{ memberId: 5, channelId: 7, partnerId: 8, createDate: "2026-01-02 09:00:00" }],
+        globalMuteUntil: "2026-02-01 10:00:00",
+      }));
+      expect((await repo.channel(A, 7))!).toMatchObject({
+        isPinned: false, isEditable: true, customChannelName: "Pal", memberCount: 3, groupPublicId: 12,
+        authorizedGroupFullName: "Staff", createUid: 6, groupBasedSubscription: true, parentChannelId: 2, createOpId: "op1",
+      });
+      expect((await repo.members(A, 7))[0].createDate).toBe("2026-01-02 09:00:00");
+      await repo.setSourceState({ configId: A, internalUserGroupId: 11, isInternalUser: true });
+      expect(await repo.sourceState(A)).toMatchObject({
+        internalUserGroupId: 11, isInternalUser: true, globalMuteUntil: "2026-02-01 10:00:00",
+      });
+      await repo.applyDelta(A, delta({ globalMuteUntil: null }));
+      expect((await repo.sourceState(A)).globalMuteUntil).toBeNull();
+    });
+
+    it("a partner record keeps what it does not carry", async () => {
+      await repo.applyDelta(A, delta({ partners: [{ configId: A, partnerId: 8, name: "Alice", imStatus: "online" }] }));
+      await repo.applyDelta(A, delta({ partners: [{ configId: A, partnerId: 8, name: "Alicia" }] }));
+      expect((await repo.partners(A))[0]).toMatchObject({ name: "Alicia", imStatus: "online" });
+      await repo.applyDelta(A, delta({ partners: [{ configId: A, partnerId: 8, imStatus: "away" }] }));
+      expect((await repo.partners(A))[0]).toMatchObject({ name: "Alicia", imStatus: "away" });
+      await repo.applyDelta(A, delta({ partners: [{ configId: A, partnerId: 8, imStatus: null }] }));
+      expect((await repo.partners(A))[0]).toMatchObject({ name: "Alicia", imStatus: null });
+    });
+
+    it("a group renamed to an empty name keeps it empty; other types ignore it", async () => {
+      await repo.applyDelta(A, delta({ channels: [
+        { channelId: 1, channelType: "group", name: "Team" },
+        { channelId: 2, channelType: "channel", name: "general" },
+      ] }));
+      await repo.applyDelta(A, delta({ channels: [{ channelId: 1, name: "" }, { channelId: 2, name: "" }] }));
+      expect((await repo.channel(A, 1))!.name).toBe("");
+      expect((await repo.channel(A, 2))!.name).toBe("general");
+    });
+
+    it("membersBySource groups an account's members by channel in member-id order", async () => {
+      await repo.applyDelta(A, delta({ members: [
+        { memberId: 9, channelId: 1, partnerId: 3 }, { memberId: 4, channelId: 1, partnerId: 2 },
+        { memberId: 6, channelId: 2, partnerId: 2 },
+      ] }));
+      await repo.applyDelta(B, delta({ members: [{ memberId: 1, channelId: 1, partnerId: 2 }] }));
+      const by = await repo.membersBySource(A);
+      expect(by.get(1)!.map((m) => m.memberId)).toEqual([4, 9]);
+      expect(by.get(2)!.map((m) => m.memberId)).toEqual([6]);
+    });
   });
 });

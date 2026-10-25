@@ -30,6 +30,12 @@ export interface SessionInfo {
   isSystem: boolean;
   /** Version the bus websocket handshake expects, null without the bus. */
   websocketWorkerVersion: string | null;
+  /** Id of the internal-users group (`Store.internalUserGroupId`), null when the server does not say. */
+  internalUserGroupId: number | null;
+  /** End of the account-wide mute (`Store.settings.mute_until_dt`), null when not muted. */
+  globalMuteUntil: string | null;
+  /** The user is an internal user, not a portal one. */
+  isInternalUser: boolean;
 }
 
 /** One field of fields_get, with the attributes the app asks for. */
@@ -367,6 +373,7 @@ export class OdooRpcClient {
     const companies = allowed
       .map((c) => ({ id: Number(c.id), name: String(c.name ?? `#${c.id}`) }))
       .sort((a, b) => Number(b.id === current) - Number(a.id === current));
+    const store = info?.storeData?.Store;
     const result: SessionInfo = {
       uid,
       companies,
@@ -374,6 +381,9 @@ export class OdooRpcClient {
       partnerId: Number(info?.partner_id) || 0,
       isSystem: info?.is_system === true,
       websocketWorkerVersion: typeof info?.websocket_worker_version === "string" ? info.websocket_worker_version : null,
+      internalUserGroupId: Number(store?.internalUserGroupId) || null,
+      globalMuteUntil: store?.settings?.mute_until_dt || null,
+      isInternalUser: info?.is_internal_user === true,
     };
     this._sessions.set(key, result);
     return result;

@@ -166,14 +166,30 @@ describe("OdooRpcClient helpers", () => {
     expect(await rpc.sessionInfo(CREDS)).toEqual({
       uid: 7, companies: [{ id: 1, name: "Main" }], currentCompany: 1,
       partnerId: 42, isSystem: true, websocketWorkerVersion: "18.0-7",
+      internalUserGroupId: null, globalMuteUntil: null, isInternalUser: false,
     });
     await rpc.sessionInfo(CREDS);
     expect(calls).toHaveLength(1);
   });
 
+  it("sessionInfo reads the internal group, the global mute and the internal-user flag", async () => {
+    server(() => ({
+      result: {
+        uid: 7, is_internal_user: true,
+        storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: "2026-02-01 10:00:00" } } },
+      },
+    }));
+    expect(await rpc.sessionInfo(CREDS)).toMatchObject({
+      internalUserGroupId: 11, globalMuteUntil: "2026-02-01 10:00:00", isInternalUser: true,
+    });
+  });
+
   it("sessionInfo falls back when the server omits the new keys", async () => {
     server(() => ({ result: { uid: 7 } }));
-    expect(await rpc.sessionInfo(CREDS)).toMatchObject({ partnerId: 0, isSystem: false, websocketWorkerVersion: null });
+    expect(await rpc.sessionInfo(CREDS)).toMatchObject({
+      partnerId: 0, isSystem: false, websocketWorkerVersion: null,
+      internalUserGroupId: null, globalMuteUntil: null, isInternalUser: false,
+    });
   });
 
   it("odooVersion reads the stored session", async () => {

@@ -48,6 +48,22 @@ describe("isMuted", () => {
   });
 });
 
+describe("isMuted with the global mute", () => {
+  it("is muted while the account-wide mute is ahead, whatever the conversation says", () => {
+    expect(isMuted(ch(), now, "2026-01-01 13:00:00")).toBe(true);
+    expect(isMuted(ch(), now, "9999-12-31 23:59:59")).toBe(true);
+    expect(isMuted(ch(), now, "2026-01-01 11:00:00")).toBe(false);
+    expect(isMuted(ch(), now, null)).toBe(false);
+    expect(isMuted(ch({ muteUntilDt: "2026-01-01 13:00:00" }), now, null)).toBe(true);
+  });
+
+  it("totalUnread skips every conversation under a global mute, not the inbox", () => {
+    const list = [ch({ unreadCounter: 3 }), ch({ channelId: 2, channelType: "group", unreadCounter: 4 })];
+    expect(totalUnread(list, [1], now, "2026-01-01 13:00:00")).toBe(1);
+    expect(totalUnread(list, [1], now)).toBe(8);
+  });
+});
+
 describe("totalUnread", () => {
   it("adds inbox counters and skips muted conversations", () => {
     const list = [

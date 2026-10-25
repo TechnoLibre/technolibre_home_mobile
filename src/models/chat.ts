@@ -29,6 +29,22 @@ export interface ChatChannel {
   unreadCounterBusId: number;
   /** Bus id the stored needactionCounter is as of; an older counter is not taken. */
   needactionCounterBusId: number;
+  /** Shown in the user's list; a hidden direct message is false. A row never read defaults to shown. */
+  isPinned: boolean;
+  /** Whether the user may rename or edit the channel; null while the server never said. */
+  isEditable: boolean | null;
+  /** The user's own label of a chat (`custom_channel_name`). */
+  customChannelName: string | null;
+  memberCount: number | null;
+  /** Id of the group that may join; null for everyone. */
+  groupPublicId: number | null;
+  authorizedGroupFullName: string | null;
+  createUid: number | null;
+  /** Membership follows an access group, so the user cannot leave it. */
+  groupBasedSubscription: boolean;
+  parentChannelId: number | null;
+  /** Outbox op that creates the channel while it only exists on the phone. */
+  createOpId: string | null;
 }
 
 /** sent: known to the server; pending: queued in the outbox; failed: the outbox gave up. */
@@ -57,6 +73,7 @@ export interface ChatMember {
   fetchedMessageId: number | null;
   isTyping: boolean;
   typingAt: string | null;
+  createDate: string | null;
 }
 
 export interface ChatPartner {
@@ -80,6 +97,11 @@ export interface ChatSourceState {
   loadedAt: string | null;
   /** Highest bus id whose counter changes are applied; a notification at or below it moves no counter. */
   counterBusId: number;
+  /** Id of Odoo's internal-users group, the default access group of a new channel. */
+  internalUserGroupId: number | null;
+  /** End of the account-wide mute (`res.users.settings.mute_until_dt`); null when not muted. */
+  globalMuteUntil: string | null;
+  isInternalUser: boolean;
 }
 
 /** One notification of the Odoo bus: its bus id and the typed message it carries. */

@@ -17,9 +17,11 @@ export interface StoreDelta {
   members: (Partial<ChatMember> & { memberId: number })[];
   deletedMemberIds: number[];
   messages: (Partial<ChatMessage> & { messageId: number })[];
-  partners: ChatPartner[];
+  partners: (Partial<ChatPartner> & { partnerId: number })[];
   inboxCounter: number | null;
   selfPartnerId: number | null;
+  /** The account-wide mute end when the Store carries `settings`: a date, or null when unmuted. */
+  globalMuteUntil?: string | null;
 }
 
 const CHANNEL_MODEL = "discuss.channel";
@@ -95,20 +97,21 @@ export function parseStore(
   if (store.inbox && typeof store.inbox.counter === "number") {
     delta.inboxCounter = store.inbox.counter;
   }
+  if (store.settings && typeof store.settings === "object" && "mute_until_dt" in store.settings) {
+    delta.globalMuteUntil = store.settings.mute_until_dt || null;
+  }
   const self = delta.selfPartnerId;
 
   const partnerNames = new Map<number, string>();
   for (const p of res["res.partner"] || []) {
-    if (typeof p.id !== "number" || p._DELETE || typeof p.name !== "string") {
-      continue;
+    if (typeof p.id !== "number" || p._DELETE) continue;
+    const row: StoreDelta["partners"][number] = { configId, partnerId: p.id };
+    if (typeof p.name === "string") {
+      row.name = p.name;
+      partnerNames.set(p.id, p.name);
     }
-    partnerNames.set(p.id, p.name);
-    delta.partners.push({
-      configId,
-      partnerId: p.id,
-      name: p.name,
-      imStatus: typeof p.im_status === "string" ? p.im_status : null,
-    });
+    if ("im_status" in p) row.imStatus = typeof p.im_status === "string" ? p.im_status : null;
+    delta.partners.push(row);
   }
 
   const channels = new Map<number, Partial<ChatChannel> & { channelId: number }>();
@@ -151,6 +154,7 @@ export function parseStore(
     copy(row, m, "fetched_message_id", "fetchedMessageId", (v) => relId(v));
     copy(row, m, "isTyping", "isTyping", (v) => !!v);
     copy(row, m, "is_typing_dt", "typingAt", (v) => v || null);
+    copy(row, m, "create_date", "createDate", (v) => v || null);
     delta.members.push(row);
 
     if (channelId === null || partnerId === null) continue;
@@ -176,6 +180,15 @@ export function parseStore(
     copy(c, rec, "message_needaction_counter_bus_id", "needactionCounterBusId");
     copy(c, rec, "mute_until_dt", "muteUntilDt", (v) => v || null);
     copy(c, rec, "custom_notifications", "customNotifications", (v) => v || null);
+    copy(c, rec, "is_pinned", "isPinned", (v) => !!v);
+    copy(c, rec, "is_editable", "isEditable", (v) => (v == null ? null : !!v));
+    copy(c, rec, "custom_channel_name", "customChannelName", (v) => v || null);
+    copy(c, rec, "memberCount", "memberCount", (v) => (typeof v === "number" ? v : null));
+    copy(c, rec, "group_public_id", "groupPublicId", (v) => relId(v));
+    copy(c, rec, "authorizedGroupFullName", "authorizedGroupFullName", (v) => v || null);
+    copy(c, rec, "create_uid", "createUid", (v) => relId(v));
+    copy(c, rec, "group_based_subscription", "groupBasedSubscription", (v) => !!v);
+    copy(c, rec, "parent_channel_id", "parentChannelId", (v) => relId(v));
     delta.deletedMemberIds.push(...commandIds(rec.channelMembers, "DELETE"));
 
     // selfMember: a member id (row sent in the same result), an inline row, or false.
@@ -263,5 +276,6 @@ export function mergeDeltas(a: StoreDelta, b: StoreDelta): StoreDelta {
     partners: mergeBy(a.partners, b.partners, "partnerId"),
     inboxCounter: b.inboxCounter ?? a.inboxCounter,
     selfPartnerId: b.selfPartnerId ?? a.selfPartnerId,
+    globalMuteUntil: b.globalMuteUntil !== undefined ? b.globalMuteUntil : a.globalMuteUntil,
   };
 }

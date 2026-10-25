@@ -3,9 +3,10 @@ import { onMounted, onWillUnmount, useState, xml } from "@odoo/owl";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { HeadingComponent } from "../heading/heading_component";
 import { Events } from "../../constants/events";
-import { t } from "../../i18n";
+import { getCurrentLocale, t } from "../../i18n";
 import { bodyPreview } from "../../services/chat/chatBody";
 import { serverChoiceMode, type ChoiceMode } from "../../services/chat/chatSources";
+import { displayNameOf } from "../../services/chat/chatNames";
 import { isBold, unreadOf } from "../../services/chat/chatUnread";
 import type { ChatChannel, ChatMessage } from "../../models/chat";
 
@@ -226,16 +227,19 @@ export class ChatListComponent extends EnhancedComponent {
         const byKey = new Map<string, ChatRow>();
         for (const id of new Set(channels.map((c) => c.configId))) {
             const mine = channels.filter((c) => c.configId === id);
-            const [partners, lasts, pendings] = await Promise.all([
+            const [partners, lasts, pendings, membersOf, state] = await Promise.all([
                 this.chatService.repo.partners(id),
                 this.chatService.repo.lastMessages(id, mine),
                 this.chatService.repo.pendingMessages(id),
+                this.chatService.repo.membersBySource(id),
+                this.chatService.repo.sourceState(id),
             ]);
-            const names = new Map(partners.map((p) => [p.partnerId, p.name]));
+            const byPartner = new Map(partners.map((p) => [p.partnerId, p]));
             for (const c of mine) {
                 const queued = pendings.get(c.channelId);
                 const last = queued?.[queued.length - 1] ?? lasts.get(c.channelId) ?? null;
-                byKey.set(c.configId + ":" + c.channelId, this.rowOf(c, labelOf.get(id) ?? "", names, last));
+                const title = displayNameOf(c, membersOf.get(c.channelId) ?? [], byPartner, state.selfPartnerId, getCurrentLocale());
+                byKey.set(c.configId + ":" + c.channelId, this.rowOf(c, labelOf.get(id) ?? "", title, last));
             }
         }
         // Rows keep the order the service gave
@@ -247,12 +251,8 @@ export class ChatListComponent extends EnhancedComponent {
         this.state.rows = ordered;
     }
 
-    private rowOf(c: ChatChannel, serverLabel: string, names: Map<number, string>, last: ChatMessage | null): ChatRow {
+    private rowOf(c: ChatChannel, serverLabel: string, title: string, last: ChatMessage | null): ChatRow {
         const text = last ? bodyPreview(last.body, PREVIEW_MAX) : "";
-        const title =
-            c.channelType === "chat" && c.correspondentPartnerId != null
-                ? (names.get(c.correspondentPartnerId) ?? c.name)
-                : c.name;
         return {
             configId: c.configId,
             channelId: c.channelId,

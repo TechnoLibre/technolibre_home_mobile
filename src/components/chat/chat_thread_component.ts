@@ -3,9 +3,10 @@ import { markup, onMounted, onWillUnmount, useRef, useState, xml } from "@odoo/o
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { HeadingComponent } from "../heading/heading_component";
 import { Events } from "../../constants/events";
-import { t } from "../../i18n";
+import { getCurrentLocale, t } from "../../i18n";
 import { renderBody } from "../../services/chat/chatBody";
 import type { ChatSource } from "../../services/chat/chatService";
+import { displayNameOf } from "../../services/chat/chatNames";
 import type { ChatChannel, ChatMember, ChatMessage, ChatPartner } from "../../models/chat";
 import { formatListTime, initialsOf } from "./chat_list_component";
 
@@ -278,7 +279,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         }
         this._lastSeen = channel.lastMessageId;
         this.state.historyComplete = channel.historyComplete;
-        this.fillHeader(channel, partners, names);
+        this.fillHeader(channel, partners, members, st.selfPartnerId);
         this._members = members;
         this._names = names;
         this._self = self;
@@ -340,9 +341,14 @@ export class ChatThreadComponent extends EnhancedComponent {
         }, 0);
     }
 
-    private fillHeader(channel: ChatChannel, partners: ChatPartner[], names: Map<number, string>): void {
+    private fillHeader(
+        channel: ChatChannel,
+        partners: ChatPartner[],
+        members: ChatMember[],
+        self: number | null,
+    ): void {
         const other = channel.channelType === "chat" ? channel.correspondentPartnerId : null;
-        this.state.title = other != null ? (names.get(other) ?? channel.name) : channel.name;
+        this.state.title = displayNameOf(channel, members, new Map(partners.map((p) => [p.partnerId, p])), self, getCurrentLocale());
         const status = other != null ? partners.find((p) => p.partnerId === other)?.imStatus : null;
         this.state.presence = status === "online" ? "online" : status === "away" ? "away" : other != null ? "offline" : null;
     }

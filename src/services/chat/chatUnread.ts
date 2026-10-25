@@ -5,6 +5,13 @@ function utcMs(odooDt: string): number {
   return Date.parse(odooDt.replace(" ", "T") + "Z");
 }
 
+/** Whether an Odoo date is set and still ahead of `now`. */
+function ahead(dt: string | null | undefined, now: Date): boolean {
+  if (!dt) return false;
+  const until = utcMs(dt);
+  return Number.isFinite(until) && until > now.getTime();
+}
+
 /**
  * Messages a conversation counts as unread: a chat or group counts every
  * unread message, a channel only the ones that mention the user.
@@ -19,20 +26,24 @@ export function isBold(c: ChatChannel): boolean {
 }
 
 /**
- * Muted until a date still ahead of `now`, as Odoo's Thread.isMuted: the
+ * Muted until a date still ahead of `now`, the conversation's own or the
+ * account-wide one (`globalMuteUntil`), as Odoo's Thread.isMuted: the
  * "no_notif" setting only silences notifications, the conversation still
  * counts.
  */
-export function isMuted(c: ChatChannel, now: Date): boolean {
-  if (!c.muteUntilDt) return false;
-  const until = utcMs(c.muteUntilDt);
-  return Number.isFinite(until) && until > now.getTime();
+export function isMuted(c: ChatChannel, now: Date, globalMuteUntil?: string | null): boolean {
+  return ahead(c.muteUntilDt, now) || ahead(globalMuteUntil, now);
 }
 
 /** Messages the tile and chips show: the inbox counters plus every conversation not muted. */
-export function totalUnread(channels: ChatChannel[], inboxCounters: number[], now: Date): number {
+export function totalUnread(
+  channels: ChatChannel[],
+  inboxCounters: number[],
+  now: Date,
+  globalMuteUntil?: string | null,
+): number {
   let total = inboxCounters.reduce((sum, n) => sum + n, 0);
-  for (const c of channels) if (!isMuted(c, now)) total += unreadOf(c);
+  for (const c of channels) if (!isMuted(c, now, globalMuteUntil)) total += unreadOf(c);
   return total;
 }
 

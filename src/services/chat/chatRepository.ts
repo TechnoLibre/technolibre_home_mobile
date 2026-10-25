@@ -97,6 +97,16 @@ function channelFromRow(r: Row): ChatChannel {
     correspondentPartnerId: r.correspondent_partner_id ?? null,
     unreadCounterBusId: r.unread_counter_bus_id ?? 0,
     needactionCounterBusId: r.needaction_counter_bus_id ?? 0,
+    isPinned: r.is_pinned == null ? true : bool(r.is_pinned),
+    isEditable: r.is_editable == null ? null : bool(r.is_editable),
+    customChannelName: r.custom_channel_name ?? null,
+    memberCount: r.member_count ?? null,
+    groupPublicId: r.group_public_id ?? null,
+    authorizedGroupFullName: r.authorized_group_full_name ?? null,
+    createUid: r.create_uid ?? null,
+    groupBasedSubscription: bool(r.group_based_subscription),
+    parentChannelId: r.parent_channel_id ?? null,
+    createOpId: r.create_op_id ?? null,
   };
 }
 
@@ -126,6 +136,7 @@ function memberFromRow(r: Row): ChatMember {
     fetchedMessageId: r.fetched_message_id ?? null,
     isTyping: bool(r.is_typing),
     typingAt: r.typing_at ?? null,
+    createDate: r.create_date ?? null,
   };
 }
 
@@ -141,6 +152,9 @@ function sourceFromRow(r: Row): ChatSourceState {
     inboxCounter: r.inbox_counter,
     loadedAt: r.loaded_at ?? null,
     counterBusId: r.counter_bus_id ?? 0,
+    internalUserGroupId: r.internal_user_group_id ?? null,
+    globalMuteUntil: r.global_mute_until ?? null,
+    isInternalUser: bool(r.is_internal_user),
   };
 }
 
@@ -216,6 +230,16 @@ export class ChatRepository {
       updated_at: this.now(),
       unread_counter_bus_id: c.unreadCounterBusId,
       needaction_counter_bus_id: c.needactionCounterBusId,
+      is_pinned: flag(c.isPinned),
+      is_editable: c.isEditable === null ? null : flag(c.isEditable),
+      custom_channel_name: c.customChannelName,
+      member_count: c.memberCount,
+      group_public_id: c.groupPublicId,
+      authorized_group_full_name: c.authorizedGroupFullName,
+      create_uid: c.createUid,
+      group_based_subscription: flag(c.groupBasedSubscription),
+      parent_channel_id: c.parentChannelId,
+      create_op_id: c.createOpId,
     };
   }
 
@@ -248,6 +272,7 @@ export class ChatRepository {
       fetched_message_id: m.fetchedMessageId,
       is_typing: flag(m.isTyping),
       typing_at: m.typingAt,
+      create_date: m.createDate,
     };
   }
 
@@ -263,6 +288,9 @@ export class ChatRepository {
       inbox_counter: s.inboxCounter,
       loaded_at: s.loadedAt,
       counter_bus_id: s.counterBusId,
+      internal_user_group_id: s.internalUserGroupId,
+      global_mute_until: s.globalMuteUntil,
+      is_internal_user: flag(s.isInternalUser),
     };
   }
 
@@ -279,15 +307,7 @@ export class ChatRepository {
     for (const p of d.channels) await this.upsertChannel(configId, p, !!opts.fromBus);
     for (const p of d.members) await this.upsertMember(configId, p);
     for (const p of d.messages) await this.upsertMessage(configId, p);
-    for (const p of d.partners) {
-      await this.put("chat_partners", {
-        id: key(configId, p.partnerId),
-        config_id: configId,
-        partner_id: p.partnerId,
-        name: p.name,
-        im_status: p.imStatus,
-      });
-    }
+    for (const p of d.partners) await this.upsertPartner(configId, p);
     for (const id of d.deletedMemberIds) await this.del("chat_members", { id: key(configId, id) });
     for (const id of d.deletedChannelIds) {
       await this.del("chat_channels", { id: key(configId, id) });
@@ -301,6 +321,7 @@ export class ChatRepository {
     const state: Partial<ChatSourceState> = {};
     if (d.inboxCounter !== null) state.inboxCounter = d.inboxCounter;
     if (d.selfPartnerId !== null) state.selfPartnerId = d.selfPartnerId;
+    if (d.globalMuteUntil !== undefined) state.globalMuteUntil = d.globalMuteUntil;
     if (Object.keys(state).length > 0) await this.setSourceState({ ...state, configId });
   }
 
@@ -333,9 +354,22 @@ export class ChatRepository {
           correspondentPartnerId: null,
           unreadCounterBusId: 0,
           needactionCounterBusId: 0,
+          isPinned: true,
+          isEditable: null,
+          customChannelName: null,
+          memberCount: null,
+          groupPublicId: null,
+          authorizedGroupFullName: null,
+          createUid: null,
+          groupBasedSubscription: false,
+          parentChannelId: null,
+          createOpId: null,
         };
     const patch = defined(p);
-    if (patch.name === "" && base.name !== "") delete patch.name;
+    // A name sent blank is a source that never filled it, except for a group, renamed back to its members' names
+    if (patch.name === "" && base.name !== "" && (patch.channelType ?? base.channelType) !== "group") {
+      delete patch.name;
+    }
     gateCounter(patch, base, "unreadCounter", "unreadCounterBusId", fromBus);
     gateCounter(patch, base, "needactionCounter", "needactionCounterBusId", fromBus);
     const next: ChatChannel = { ...base, ...patch, configId };
@@ -357,8 +391,26 @@ export class ChatRepository {
           fetchedMessageId: null,
           isTyping: false,
           typingAt: null,
+          createDate: null,
         };
     await this.put("chat_members", this.memberRow({ ...base, ...defined(p), configId }));
+  }
+
+  /**
+   * A partner record overlays only the keys it carries: one without
+   * `im_status` keeps the stored presence, one without `name` updates the
+   * other keys of a known partner. A partner never seen and nameless is
+   * stored with an empty name, which displayNameOf skips.
+   */
+  private async upsertPartner(configId: string, p: StoreDelta["partners"][number]): Promise<void> {
+    const stored = (await this.rows("chat_partners", { id: key(configId, p.partnerId) }))[0];
+    await this.put("chat_partners", {
+      id: key(configId, p.partnerId),
+      config_id: configId,
+      partner_id: p.partnerId,
+      name: p.name ?? stored?.name ?? "",
+      im_status: p.imStatus !== undefined ? p.imStatus : (stored?.im_status ?? null),
+    });
   }
 
   private async upsertMessage(configId: string, p: Partial<ChatMessage> & { messageId: number }): Promise<void> {
@@ -535,6 +587,16 @@ export class ChatRepository {
     return (await this.rows("chat_members", { config_id: configId, channel_id: channelId })).map(memberFromRow);
   }
 
+  /** Every member of an account grouped by channel, in one read; each group in member-id order. */
+  async membersBySource(configId: string): Promise<Map<number, ChatMember[]>> {
+    const out = new Map<number, ChatMember[]>();
+    const all = (await this.rows("chat_members", { config_id: configId }))
+      .map(memberFromRow)
+      .sort((a, b) => a.memberId - b.memberId);
+    for (const m of all) out.set(m.channelId, [...(out.get(m.channelId) ?? []), m]);
+    return out;
+  }
+
   async partners(configId: string): Promise<ChatPartner[]> {
     return (await this.rows("chat_partners", { config_id: configId })).map((r) => ({
       configId: r.config_id,
@@ -559,6 +621,9 @@ export class ChatRepository {
       inboxCounter: 0,
       loadedAt: null,
       counterBusId: 0,
+      internalUserGroupId: null,
+      globalMuteUntil: null,
+      isInternalUser: false,
     };
   }
 

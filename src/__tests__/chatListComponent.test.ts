@@ -37,6 +37,8 @@ function fakeChat(ids: string[], channels: any[], unread: Record<string, number>
             messages: vi.fn().mockResolvedValue([]),
             lastMessages: vi.fn().mockResolvedValue(new Map()),
             pendingMessages: vi.fn().mockResolvedValue(new Map()),
+            membersBySource: vi.fn().mockResolvedValue(new Map()),
+            sourceState: vi.fn().mockResolvedValue({ selfPartnerId: 3 }),
         },
     };
 }

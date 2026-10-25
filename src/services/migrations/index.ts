@@ -25,6 +25,7 @@ import { addNoteLinkParams } from "./addNoteLinkParams";
 import { addActivitiesCacheTable } from "./addActivitiesCacheTable";
 import { addSyncTargetTables } from "./addSyncTargetTables";
 import { addChatTables } from "./addChatTables";
+import { addChatLot2Columns } from "./addChatLot2Columns";
 
 /**
  * The app's database migrations, in version order: runMigrations runs at
@@ -161,5 +162,10 @@ export const APP_MIGRATIONS: Migration[] = [
 		version: 2026102501,
 		description: "Tables du clavardage",
 		run: addChatTables,
+	},
+	{
+		version: 2026102601,
+		description: "Clavardage : colonnes du lot 2",
+		run: addChatLot2Columns,
 	},
 ];

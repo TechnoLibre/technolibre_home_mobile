@@ -91,7 +91,10 @@ function fakeOdoo(opts: { version?: number } = {}) {
       case "/web/session/authenticate":
         return ok({ uid: 2, session_id: "sid", server_version_info: [opts.version ?? 18, 0, 0, "final", 0, ""] });
       case "/web/session/get_session_info":
-        return ok({ uid: 2, partner_id: SELF, is_system: false, websocket_worker_version: "18.0-7" });
+        return ok({
+          uid: 2, partner_id: SELF, is_system: false, websocket_worker_version: "18.0-7", is_internal_user: true,
+          storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: false } } },
+        });
       case "/mail/data": {
         const answer = JSON.parse(JSON.stringify(state.data));
         if (state.hold) await state.hold;
@@ -214,8 +217,13 @@ describe("ChatService", () => {
     expect(await chat.unreadTotal()).toBe(7);
     expect(await chat.unreadTotal([config])).toBe(7);
     expect(await chat.unreadTotal(["https://other.example.com|x|y"])).toBe(0);
+    // an account-wide mute ahead leaves only the inbox remainder
+    await chat.repo.setSourceState({ configId: config, globalMuteUntil: "9999-12-31 23:59:59" });
+    expect(await chat.unreadTotal([config])).toBe(1);
+    await chat.repo.setSourceState({ configId: config, globalMuteUntil: null });
     expect(await chat.repo.sourceState(config)).toMatchObject({
       selfPartnerId: SELF, isSystem: false, wsVersion: "18.0-7", moduleState: "unknown", inboxCounter: 4,
+      internalUserGroupId: 11, isInternalUser: true, globalMuteUntil: null,
       loadedAt: clock.toISOString(),
     });
     expect(changes).toContainEqual([config, null]);

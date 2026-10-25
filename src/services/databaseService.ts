@@ -1214,7 +1214,17 @@ export class DatabaseService {
         correspondent_partner_id  INTEGER,
         updated_at                TEXT NOT NULL,
         unread_counter_bus_id     INTEGER NOT NULL DEFAULT 0,
-        needaction_counter_bus_id INTEGER NOT NULL DEFAULT 0
+        needaction_counter_bus_id INTEGER NOT NULL DEFAULT 0,
+        is_pinned                 INTEGER NOT NULL DEFAULT 1,
+        is_editable               INTEGER,
+        custom_channel_name       TEXT,
+        member_count              INTEGER,
+        group_public_id           INTEGER,
+        authorized_group_full_name TEXT,
+        create_uid                INTEGER,
+        group_based_subscription  INTEGER NOT NULL DEFAULT 0,
+        parent_channel_id         INTEGER,
+        create_op_id              TEXT
       )
     `);
     await this.db.execute(`
@@ -1246,7 +1256,8 @@ export class DatabaseService {
         seen_message_id    INTEGER,
         fetched_message_id INTEGER,
         is_typing          INTEGER NOT NULL,
-        typing_at          TEXT
+        typing_at          TEXT,
+        create_date        TEXT
       )
     `);
     await this.db.execute(`
@@ -1269,7 +1280,10 @@ export class DatabaseService {
         module_state    TEXT NOT NULL,
         inbox_counter   INTEGER NOT NULL,
         loaded_at       TEXT,
-        counter_bus_id  INTEGER NOT NULL DEFAULT 0
+        counter_bus_id  INTEGER NOT NULL DEFAULT 0,
+        internal_user_group_id INTEGER,
+        global_mute_until      TEXT,
+        is_internal_user       INTEGER NOT NULL DEFAULT 0
       )
     `);
     for (const [table, col] of [
@@ -1279,6 +1293,41 @@ export class DatabaseService {
       ["chat_partners", "config_id"],
     ]) {
       await this.db.execute(`CREATE INDEX IF NOT EXISTS idx_${table}_cfg ON ${table}(${col})`);
+    }
+  }
+
+  /**
+   * Adds the lot 2 chat columns to tables created by lot 1. Each column is
+   * added only when PRAGMA table_info does not list it, so a fresh install
+   * (createChatTables already has them) and a second run change nothing.
+   */
+  async addChatLot2Columns(): Promise<void> {
+    const columns: Record<string, [string, string][]> = {
+      chat_channels: [
+        ["is_pinned", "INTEGER NOT NULL DEFAULT 1"],
+        ["is_editable", "INTEGER"],
+        ["custom_channel_name", "TEXT"],
+        ["member_count", "INTEGER"],
+        ["group_public_id", "INTEGER"],
+        ["authorized_group_full_name", "TEXT"],
+        ["create_uid", "INTEGER"],
+        ["group_based_subscription", "INTEGER NOT NULL DEFAULT 0"],
+        ["parent_channel_id", "INTEGER"],
+        ["create_op_id", "TEXT"],
+      ],
+      chat_members: [["create_date", "TEXT"]],
+      chat_sources: [
+        ["internal_user_group_id", "INTEGER"],
+        ["global_mute_until", "TEXT"],
+        ["is_internal_user", "INTEGER NOT NULL DEFAULT 0"],
+      ],
+    };
+    for (const [table, wanted] of Object.entries(columns)) {
+      const existing = await this.db.query(`PRAGMA table_info(${table})`);
+      const names = (existing.values ?? []).map((r: any) => r.name as string);
+      for (const [col, def] of wanted) {
+        if (!names.includes(col)) await this.db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+      }
     }
   }
 
