@@ -360,6 +360,30 @@ describe("ChatRepository lot 2", () => {
     expect(await repo2.sourceState("a")).toMatchObject({ isInternalUser: false, globalMuteUntil: null });
   });
 
+  it("a fresh install has the left-unsent flag after every migration", async () => {
+    for (const m of APP_MIGRATIONS) {
+      if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+    }
+    expect(await columnsOf("chat_channels")).toContain("left_unsent");
+  });
+
+  it("migration 2026102603 adds the left-unsent flag to tables without it, and runs twice", async () => {
+    // A database that ran 2026102602 before the flag existed
+    const raw = (db as any).db;
+    await raw.execute("CREATE TABLE IF NOT EXISTS chat_channels (id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL, channel_id INTEGER NOT NULL, create_failed INTEGER)");
+    await db.rawRun("INSERT INTO chat_channels (id, config_id, channel_id) VALUES (?, ?, ?)", ["a#4", "a", 4]);
+    expect(await columnsOf("chat_channels")).not.toContain("left_unsent");
+    const migration = APP_MIGRATIONS.find((m) => m.version === 2026102603)!;
+    expect(migration.description).toBe("Clavardage : conversations quittées avec des messages non envoyés");
+    await migration.run(db);
+    await migration.run(db);
+    expect(await columnsOf("chat_channels")).toContain("left_unsent");
+    const repo2 = new ChatRepository(db);
+    expect((await repo2.channel("a", 4))!).toMatchObject({ leftUnsent: false });
+    await repo2.patchChannel("a", 4, { leftUnsent: true });
+    expect((await repo2.channel("a", 4))!).toMatchObject({ leftUnsent: true });
+  });
+
   it("migration 2026102602 completes a database that ran 2026102601 without the create columns", async () => {
     // 2026102601 as an earlier lot 2 build ran it: its columns, no create_failed, no chat_temp_ids
     const raw = (db as any).db;

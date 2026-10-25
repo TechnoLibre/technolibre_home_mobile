@@ -134,6 +134,20 @@
 	margin-left: 0.3rem;
 }
 
+.chat-list__notices {
+	list-style: none;
+	margin: 0 0 0.5rem;
+	padding: 0;
+}
+
+.chat-list__notice {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0.3rem 0;
+}
+
 .chat-list__failed {
 	color: #c0392b;
 	font-size: 0.82rem;

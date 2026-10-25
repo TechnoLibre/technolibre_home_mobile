@@ -23,7 +23,7 @@ export const THREAD_WINDOW = 100;
 /** Cached messages a scroll to the top adds to the rendered ones before the server is asked. */
 export const THREAD_PAGE = 50;
 
-type MetaKind = "none" | "sent" | "seen" | "pending" | "waiting" | "waiting_create" | "ambiguous" | "failed";
+type MetaKind = "none" | "sent" | "seen" | "pending" | "waiting" | "waiting_create" | "ambiguous" | "failed" | "left";
 
 export interface ThreadRow {
     key: string;
@@ -46,8 +46,11 @@ interface ThreadState {
     loadingAll: number | null;
     historyComplete: boolean;
     found: boolean;
-    /** The server refused to create ("create") or join ("join") the conversation; "" otherwise. */
-    failedCreate: "" | "create" | "join";
+    /**
+     * The server refused to create ("create") or join ("join") the
+     * conversation, or the user left it with texts unsent ("left"); "" otherwise.
+     */
+    failedCreate: "" | "create" | "join" | "left";
     /** Text of the last failed send or retry; "" when none. */
     error: string;
     /** Rows the composer shows, from 1 up to MAX_INPUT_ROWS. */
@@ -123,7 +126,7 @@ export class ChatThreadComponent extends EnhancedComponent {
       </div>
       <p t-if="!state.found" class="chat-thread__missing" t-esc="state.rows.length ? t('chat.channel_gone') : t('chat.thread_missing')"/>
       <div t-if="state.failedCreate" class="chat-thread__create-failed" role="alert">
-        <p t-esc="state.failedCreate === 'join' ? t('chat.join_failed') : t('chat.create_failed')"/>
+        <p t-esc="state.failedCreate === 'left' ? t('chat.left_failed') : state.failedCreate === 'join' ? t('chat.join_failed') : t('chat.create_failed')"/>
         <button class="chat-thread__dismiss" t-on-click="onDismiss" t-esc="t('chat.dismiss')"/>
       </div>
       <div class="chat-thread__scroll" t-ref="scroller" t-on-scroll="onScroll">
@@ -139,6 +142,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             <span t-if="row.meta === 'waiting_create'" t-esc="'⏳ ' + t('chat.waiting_create')"/>
             <span t-if="row.meta === 'ambiguous'" class="chat-thread__failed" t-esc="'⚠️ ' + t('chat.create_ambiguous')"/>
             <span t-if="row.meta === 'failed'" class="chat-thread__failed" t-esc="'⚠️ ' + t('chat.failed')"/>
+            <span t-if="row.meta === 'left'" class="chat-thread__failed" t-esc="'⚠️ ' + t('chat.left_conversation')"/>
             <button t-if="row.meta === 'failed' and row.opId" class="chat-thread__retry"
                     t-on-click="() => this.onRetry(row)" t-esc="t('chat.retry')"/>
           </div>
@@ -294,7 +298,9 @@ export class ChatThreadComponent extends EnhancedComponent {
         const names = new Map(partners.map((p) => [p.partnerId, p.name]));
         const self = st.selfPartnerId;
         this.state.found = true;
-        this.state.failedCreate = !channel.createFailed ? "" : channel.channelId < 0 ? "create" : "join";
+        this.state.failedCreate = channel.createFailed
+            ? (channel.channelId < 0 ? "create" : "join")
+            : channel.leftUnsent ? "left" : "";
         // New history appeared (a gap reset, a newer message): older pages may exist again
         if ((this.state.historyComplete && !channel.historyComplete) || channel.lastMessageId !== this._lastSeen) {
             this._noMore = false;
@@ -385,7 +391,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         const own = self !== null && m.authorPartnerId === self;
         let meta: MetaKind = "none";
         if (own) {
-            if (m.status === "failed") meta = "failed";
+            if (m.status === "failed") meta = channel?.leftUnsent ? "left" : "failed";
             else if (m.status === "pending") {
                 const op = ops.find((o) => o.id === m.outboxOpId);
                 const create = channel?.createOpId ? ops.find((o) => o.id === channel.createOpId) : undefined;
@@ -590,7 +596,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.scrollToBottomSoon();
     }
 
-    /** Removes a conversation the server refused, with its unsent texts, and goes back to the list. */
+    /** Removes a conversation the server refused, or one left, with its unsent texts, and goes back to the list. */
     async onDismiss(): Promise<void> {
         await this.chatService.discardCreate(this.configId, this.channelId);
         this.navigate("/chat");

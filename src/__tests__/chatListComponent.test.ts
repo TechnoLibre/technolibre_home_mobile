@@ -32,6 +32,7 @@ function fakeChat(ids: string[], channels: any[], unread: Record<string, number>
             channels.filter((c) => !cfg || cfg.includes(c.configId))),
         unreadTotal: vi.fn(async (cfg?: string[]) =>
             (cfg ?? ids).reduce((s, id) => s + (unread[id] ?? 0), 0)),
+        notices: vi.fn().mockResolvedValue([]),
         repo: {
             partners: vi.fn().mockResolvedValue([{ partnerId: 7, name: "Alice Roy" }]),
             messages: vi.fn().mockResolvedValue([]),
@@ -67,14 +68,36 @@ describe("ChatListComponent", () => {
     });
 
     it("a refused conversation is listed as such and can be dismissed", async () => {
-        const chat: any = fakeChat(["a"], [chan("a", -7, { name: "Secret", createFailed: true }), chan("a", 30, { createFailed: true }), chan("a", 2)]);
+        const chat: any = fakeChat(["a"], [
+            chan("a", -7, { name: "Secret", createFailed: true }), chan("a", 30, { createFailed: true }),
+            chan("a", 31, { leftUnsent: true }), chan("a", 2),
+        ]);
         chat.discardCreate = vi.fn().mockResolvedValue(undefined);
         const c = make(chat);
         await c.loadCache();
-        expect(c.state.rows.map((r: any) => r.failed)).toEqual(["create", "join", ""]);
+        expect(c.state.rows.map((r: any) => r.failed)).toEqual(["create", "join", "left", ""]);
+        expect(c.failedText(c.state.rows[2])).toBe("Conversation left");
         await c.onDismiss(c.state.rows[0]);
         expect(chat.discardCreate).toHaveBeenCalledWith("a", -7);
         expect(chat.conversations).toHaveBeenCalledTimes(2);
+    });
+
+    it("an action the outbox gave up on is shown until dismissed", async () => {
+        const chat: any = fakeChat(["a", "b"], [chan("a", 5, { name: "Team" })]);
+        chat.notices = vi.fn().mockResolvedValue([
+            { id: "op1", configId: "a", kind: "chat.rename", channelId: 5, reason: "refused", error: "no" },
+            { id: "op2", configId: "b", kind: "chat.global_mute", channelId: null, reason: "vanished", error: "" },
+        ]);
+        chat.dismissNotice = vi.fn().mockResolvedValue(undefined);
+        const c = make(chat);
+        await c.loadCache();
+        expect(chat.notices).toHaveBeenCalledWith(["a", "b"]);
+        expect(c.state.notices.map((n: any) => n.text)).toEqual([
+            "Team — Renaming: refused by the server.",
+            "Mute of every conversation: not sent, the conversation is gone or no longer yours.",
+        ]);
+        await c.onDismissNotice(c.state.notices[0]);
+        expect(chat.dismissNotice).toHaveBeenCalledWith("a", "op1");
     });
 
     it("rows keep the service order (unread first) and flag bold", async () => {

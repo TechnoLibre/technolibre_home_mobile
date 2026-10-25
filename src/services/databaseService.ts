@@ -1225,7 +1225,8 @@ export class DatabaseService {
         group_based_subscription  INTEGER NOT NULL DEFAULT 0,
         parent_channel_id         INTEGER,
         create_op_id              TEXT,
-        create_failed             INTEGER NOT NULL DEFAULT 0
+        create_failed             INTEGER NOT NULL DEFAULT 0,
+        left_unsent               INTEGER NOT NULL DEFAULT 0
       )
     `);
     await this.db.execute(`
@@ -1335,6 +1336,20 @@ export class DatabaseService {
       }
     }
     await this.createChatTempIdsTable();
+  }
+
+  /**
+   * Adds the flag of a conversation left with texts still queued
+   * (chat_channels.left_unsent) to tables created before it, when PRAGMA
+   * table_info does not list it; a fresh install (createChatTables already
+   * has it) and a second run change nothing.
+   */
+  async addChatLeftUnsent(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(chat_channels)");
+    const names = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!names.includes("left_unsent")) {
+      await this.db.execute("ALTER TABLE chat_channels ADD COLUMN left_unsent INTEGER NOT NULL DEFAULT 0");
+    }
   }
 
   /**

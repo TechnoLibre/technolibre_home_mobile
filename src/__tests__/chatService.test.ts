@@ -1732,4 +1732,350 @@ describe("ChatService", () => {
     expect(odoo.on("/mail/message/post").map((c) => c.params.thread_id)).toEqual([realId]);
     expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
   });
+
+  // ─── Lot 2: invite, rename, describe, leave, hide, mute, remove ───────────
+
+  const kwOf = (odoo: ReturnType<typeof fakeOdoo>, method: string) =>
+    odoo.kw(method).map((c) => [c.params.args, c.params.kwargs]);
+  const actionOps = async () => (await env.db.getOutboxOpsForConfig(config)).filter((o) => o.kind !== CHAT_READ);
+
+  it("each management action sends its Odoo call", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.repo.setSourceState({ configId: config, moduleState: "installed", isSystem: true });
+    await chat.invite(src, GROUP, [7, 8]);
+    await chat.rename(src, GROUP, "  Crew ");
+    await chat.rename(src, CHAT, "Pal");
+    await chat.describe(src, GENERAL, "News");
+    await chat.hide(src, CHAT);
+    await chat.removeMember(src, GROUP, BOB);
+    await chat.mute(src, GENERAL, 60);
+    await chat.globalMute(src, 15);
+    await chat.leave(src, QUIET);
+    expect(kwOf(odoo, "add_members")).toEqual([[[[GROUP]], { partner_ids: [7, 8] }]]);
+    expect(kwOf(odoo, "channel_rename")).toEqual([[[[GROUP]], { name: "Crew" }]]);
+    expect(kwOf(odoo, "channel_set_custom_name")).toEqual([[[[CHAT]], { name: "Pal" }]]);
+    expect(kwOf(odoo, "channel_change_description")).toEqual([[[[GENERAL]], { description: "News" }]]);
+    expect(kwOf(odoo, "channel_pin")).toEqual([[[CHAT], { pinned: false }]]);
+    expect(kwOf(odoo, "erplibre_remove_member")).toEqual([[[[GROUP], BOB], {}]]);
+    expect(kwOf(odoo, "action_unfollow")).toEqual([[[QUIET], {}]]);
+    expect(odoo.on("/discuss/settings/mute").map((c) => c.params)).toEqual([
+      { minutes: 60, channel_id: GENERAL },
+      { minutes: 15 },
+    ]);
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+    // Applied on the phone at once
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ name: "Crew" });
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ customChannelName: "Pal", isPinned: false });
+    expect(await chat.repo.channel(config, GENERAL)).toMatchObject({ description: "News", muteUntilDt: "2026-10-25 11:00:00" });
+    expect(await chat.repo.channel(config, QUIET)).toMatchObject({ isMember: false, leftUnsent: false });
+    expect(await chat.repo.sourceState(config)).toMatchObject({
+      globalMuteUntil: "2026-10-25 10:15:00", globalMuteAt: clock.toISOString(),
+    });
+    expect((await chat.conversations()).map((c) => c.channelId)).not.toContain(QUIET);
+    expect((await chat.conversations()).map((c) => c.channelId)).not.toContain(CHAT);
+    // A channel keeps a name; a group may go back to its members' names
+    await expect(chat.rename(src, GENERAL, "  ")).rejects.toThrow();
+    await chat.rename(src, GROUP, "");
+    expect(kwOf(odoo, "channel_rename").at(-1)).toEqual([[[GROUP]], { name: "" }]);
+  });
+
+  it("target-state actions coalesce one op per conversation, and a load keeps their local value", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    offline();
+    await chat.rename(src, GROUP, "First");
+    await chat.rename(src, GROUP, "Last");
+    await chat.invite(src, GROUP, [7]);
+    await chat.invite(src, GROUP, [8, 7]);
+    await chat.mute(src, GENERAL, 60);
+    await chat.mute(src, GENERAL, 15);
+    await chat.globalMute(src, 60);
+    await chat.globalMute(src, false);
+    const ops = await actionOps();
+    expect(ops.map((o) => o.kind).sort()).toEqual(["chat.global_mute", "chat.invite", "chat.mute", "chat.rename"]);
+    // The server's older values do not undo what the phone shows
+    await chat.load(src);
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ name: "Last" });
+    expect(await chat.repo.channel(config, GENERAL)).toMatchObject({ muteUntilDt: "2026-10-25 10:15:00" });
+    odoo.state.sessionMute = "2026-10-25 12:00:00";
+    await chat.load(src);
+    expect((await chat.repo.sourceState(config)).globalMuteUntil).toBeNull();
+    online();
+    await chat.flushAll();
+    expect(kwOf(odoo, "channel_rename")).toEqual([[[[GROUP]], { name: "Last" }]]);
+    expect(kwOf(odoo, "add_members")).toEqual([[[[GROUP]], { partner_ids: [7, 8] }]]);
+    const mutes = odoo.on("/discuss/settings/mute").map((c) => c.params);
+    expect(mutes).toHaveLength(2);
+    expect(mutes).toEqual(expect.arrayContaining([{ minutes: 15, channel_id: GENERAL }, { minutes: false }]));
+  });
+
+  it("an action queued while the same one is on the wire goes after it with its own value", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    let renamed = 0;
+    odoo.state.onKw = async ({ method }) => {
+      if (method === "channel_rename" && renamed++ === 0) await held;
+      return undefined;
+    };
+    const first = chat.rename(src, GROUP, "One");
+    await vi.waitFor(() => expect(odoo.kw("channel_rename")).toHaveLength(1));
+    await chat.rename(src, GROUP, "Two");
+    release();
+    await first;
+    await chat.flushAll();
+    expect(kwOf(odoo, "channel_rename").map(([, k]) => k.name)).toEqual(["One", "Two"]);
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+  });
+
+  it("leave cancels the queued posts of that conversation with a notice", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    offline();
+    await chat.send(src, GROUP, "one");
+    await chat.send(src, GROUP, "two");
+    await chat.send(src, CHAT, "elsewhere");
+    await chat.rename(src, GROUP, "Renamed");
+    await chat.mute(src, GROUP, 60);
+    await chat.leave(src, GROUP);
+    const ops = await actionOps();
+    expect(ops.map((o) => [o.kind, o.params.channelId]).sort()).toEqual([["chat.leave", GROUP], ["chat.post", CHAT]]);
+    // The texts stay readable, failed, out of the outbox; the conversation is listed as left
+    const kept = await chat.messages(config, GROUP);
+    expect(kept.filter((m) => m.messageId === null).map((m) => [m.status, m.outboxOpId])).toEqual([["failed", null], ["failed", null]]);
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ isMember: false, leftUnsent: true });
+    expect((await chat.conversations()).map((c) => c.channelId)).toContain(GROUP);
+    // Its unread no longer counts
+    expect(await chat.unreadTotal()).toBe(5);
+    // A text written into it now fails at once and queues nothing
+    expect((await chat.send(src, GROUP, "three")).status).toBe("failed");
+    await expect(chat.rename(src, GROUP, "Again")).rejects.toThrow();
+    // A load before the leave is sent does not make it a member again
+    await chat.load(src);
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ isMember: false, leftUnsent: true });
+    online();
+    await chat.flushAll();
+    expect(kwOf(odoo, "action_unfollow")).toEqual([[[GROUP], {}]]);
+    expect(odoo.on("/mail/message/post").map((c) => c.params.thread_id)).toEqual([CHAT]);
+    expect(odoo.kw("channel_rename")).toHaveLength(0);
+    expect(odoo.on("/discuss/settings/mute")).toHaveLength(0);
+    // The server's leave keeps the conversation while it holds those texts, and so does a load
+    await chat.applyBus(config, [bus(1001, "discuss.channel/leave", { "discuss.channel": [{ id: GROUP, is_pinned: false }] })]);
+    const data = odoo.state.data;
+    data["discuss.channel"] = data["discuss.channel"].filter((c: any) => c.id !== GROUP);
+    data["discuss.channel.member"] = data["discuss.channel.member"].filter((m: any) => m.thread.id !== GROUP);
+    data["mail.message"] = data["mail.message"].filter((m: any) => m.thread.id !== GROUP);
+    await chat.load(src);
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ isMember: false, leftUnsent: true });
+    expect((await chat.messages(config, GROUP)).filter((m) => m.status === "failed")).toHaveLength(3);
+    // Dismissed, it goes with its texts
+    await chat.discardCreate(config, GROUP);
+    expect(await chat.repo.channel(config, GROUP)).toBeNull();
+    expect(await chat.messages(config, GROUP)).toEqual([]);
+  });
+
+  it("a post on the wire when leaving is answered first, the leave goes after it", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    odoo.state.onPost = async () => { await held; };
+    const posting = chat.send(src, GROUP, "on the wire");
+    await vi.waitFor(() => expect(odoo.on("/mail/message/post")).toHaveLength(1));
+    await chat.leave(src, GROUP);
+    expect(kwOf(odoo, "action_unfollow")).toHaveLength(0);
+    release();
+    await posting;
+    await chat.flushAll();
+    expect(kwOf(odoo, "action_unfollow")).toEqual([[[GROUP], {}]]);
+    expect((await chat.messages(config, GROUP)).at(-1)!.status).toBe("sent");
+    // Nothing was lost: the left conversation is not kept listed
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ isMember: false, leftUnsent: false });
+    expect((await chat.conversations()).map((c) => c.channelId)).not.toContain(GROUP);
+  });
+
+  it("a post retried after a leave is not sent and keeps the conversation listed as left", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    odoo.state.onPost = async () => { throw new Error("Server busy"); };
+    await chat.send(src, GROUP, "will fail");
+    const [post] = await actionOps();
+    expect(post.status).toBe("failed");
+    // The leave is queued while the post runs again
+    await env.db.updateOutboxOp(post.id, { status: "running", updatedAt: clock.toISOString() });
+    await chat.leave(src, GROUP);
+    await env.db.updateOutboxOp(post.id, { status: "failed", updatedAt: clock.toISOString() });
+    odoo.state.onPost = null;
+    await chat.flushAll({ force: true });
+    expect(odoo.on("/mail/message/post")).toHaveLength(1);
+    expect(kwOf(odoo, "action_unfollow")).toEqual([[[GROUP], {}]]);
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ leftUnsent: true });
+    expect((await chat.messages(config, GROUP)).at(-1)).toMatchObject({ status: "failed", outboxOpId: null });
+  });
+
+  it("an expired queued mute sends false", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    offline();
+    await chat.mute(src, GENERAL, 15);
+    await chat.mute(src, GROUP, 60);
+    await chat.globalMute(src, 15);
+    expect(await chat.repo.channel(config, GENERAL)).toMatchObject({ muteUntilDt: "2026-10-25 10:15:00" });
+    advance(20 * 60_000 + 30_000);
+    online();
+    await chat.flushAll();
+    const sent = odoo.on("/discuss/settings/mute").map((c) => c.params);
+    expect(sent).toEqual(expect.arrayContaining([
+      { minutes: false, channel_id: GENERAL },
+      { minutes: 40, channel_id: GROUP },
+      { minutes: false },
+    ]));
+    expect(sent).toHaveLength(3);
+  });
+
+  it("forever mute sends -1, and unmute false", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.mute(src, GENERAL, -1);
+    expect(await chat.repo.channel(config, GENERAL)).toMatchObject({ muteUntilDt: "9999-12-31 23:59:59" });
+    await chat.mute(src, GENERAL, false);
+    expect(await chat.repo.channel(config, GENERAL)).toMatchObject({ muteUntilDt: null });
+    await chat.globalMute(src, -1);
+    expect((await chat.repo.sourceState(config)).globalMuteUntil).toBe("9999-12-31 23:59:59");
+    expect(odoo.on("/discuss/settings/mute").map((c) => c.params)).toEqual([
+      { minutes: -1, channel_id: GENERAL },
+      { minutes: false, channel_id: GENERAL },
+      { minutes: -1 },
+    ]);
+  });
+
+  it("mute is never sent for a non-member channel", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.repo.applyDelta(config, parseStore({ "discuss.channel": [{ id: 15, channel_type: "channel", name: "Public" }] }, config, SELF));
+    await expect(chat.mute(src, 15, 60)).rejects.toThrow();
+    await expect(chat.rename(src, 15, "Mine")).rejects.toThrow();
+    await expect(chat.invite(src, 15, [7])).rejects.toThrow();
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+    // A conversation that stops being a member before the mute leaves drops it, with a notice
+    offline();
+    await chat.mute(src, GENERAL, 60);
+    await chat.repo.patchChannel(config, GENERAL, { isMember: false });
+    online();
+    await chat.flushAll();
+    expect(odoo.on("/discuss/settings/mute")).toHaveLength(0);
+    const notices = await chat.notices();
+    expect(notices).toEqual([expect.objectContaining({ configId: config, kind: "chat.mute", channelId: GENERAL, reason: "vanished" })]);
+    await chat.dismissNotice(config, notices[0].id);
+    expect(await chat.notices()).toEqual([]);
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+  });
+
+  it("an action of a conversation still being created waits for it and goes to the server id", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    offline();
+    const { channelId: tempId } = await chat.createGroup(src, [BOB]);
+    await chat.rename(src, tempId, "Named");
+    await chat.mute(src, tempId, 60);
+    expect(await chat.repo.channel(config, tempId)).toMatchObject({ name: "Named" });
+    online();
+    await chat.flushAll();
+    const realId = server.channels[0].id;
+    expect(kwOf(odoo, "channel_rename")).toEqual([[[[realId]], { name: "Named" }]]);
+    expect(odoo.on("/discuss/settings/mute").map((c) => c.params)).toEqual([{ minutes: 60, channel_id: realId }]);
+    expect(odoo.on("/discuss/settings/mute").every((c) => c.params.channel_id > 0)).toBe(true);
+  });
+
+  it("remove refused when not admin or module old", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    for (const [isSystem, moduleState] of [[false, "installed"], [true, "outdated"], [true, "absent"]] as const) {
+      await chat.repo.setSourceState({ configId: config, isSystem, moduleState });
+      await expect(chat.removeMember(src, GROUP, BOB)).rejects.toThrow();
+    }
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+    expect(odoo.kw("erplibre_remove_member")).toHaveLength(0);
+    // An admin with module 1.1 sends it; the server's refusal stays as a notice
+    await chat.repo.setSourceState({ configId: config, isSystem: true, moduleState: "installed" });
+    odoo.state.onKw = async ({ method }) =>
+      (method === "erplibre_remove_member" ? { __error: "odoo.exceptions.UserError" } : undefined);
+    await chat.removeMember(src, GROUP, 7);
+    expect(kwOf(odoo, "erplibre_remove_member")).toEqual([[[[GROUP], 7], {}]]);
+    expect(await chat.notices()).toEqual([expect.objectContaining({ kind: "chat.remove", channelId: GROUP, reason: "refused" })]);
+    // Done, the member leaves the cached list
+    odoo.state.onKw = null;
+    await chat.removeMember(src, GROUP, BOB);
+    expect((await chat.repo.members(config, GROUP)).map((m) => m.partnerId)).toEqual([SELF]);
+  });
+
+  it("invite into a chat creates a group", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    const result = await chat.invite(src, CHAT, [7]);
+    expect(odoo.kw("add_members")).toHaveLength(0);
+    expect(kwOf(odoo, "create_group")).toEqual([[[], { partners_to: [BOB, 7] }]]);
+    expect(result).toEqual({ configId: config, channelId: server.channels[0].id });
+    expect(await chat.repo.channel(config, result.channelId)).toMatchObject({ channelType: "group" });
+  });
+
+  it("a hidden direct message opened again drops its queued hide", async () => {
+    const odoo = fakeOdoo();
+    createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    offline();
+    await chat.hide(src, CHAT);
+    await chat.startDirect(src, BOB);
+    expect((await actionOps()).map((o) => o.kind)).toEqual(["chat.create"]);
+  });
+
+  it("members pages until all are cached", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    // The server's members of General: self (104, already cached) and four others, two per page
+    const all = [104, 201, 202, 203, 204];
+    odoo.state.onRoute = async (path, params) => {
+      if (path !== "/discuss/channel/members") return undefined;
+      const page = all.filter((id) => !params.known_member_ids.includes(id)).slice(0, 2);
+      return {
+        "discuss.channel": [{ id: params.channel_id, memberCount: all.length }],
+        "discuss.channel.member": page.map((id) => ({
+          id, thread: { id: params.channel_id, model: "discuss.channel" }, persona: { id: id === 104 ? SELF : id - 100, type: "partner" },
+        })),
+        "res.partner": page.filter((id) => id !== 104).map((id) => ({ id: id - 100, name: `P${id - 100}` })),
+      };
+    };
+    // A placeholder from an offline create gives way to the server's members
+    await chat.repo.applyDelta(config, { ...parseStore({}, config, SELF), members: [{ memberId: -5, channelId: GENERAL, partnerId: 101 }] });
+    const members = await chat.members(src, GENERAL);
+    expect(members.map((m) => m.memberId).sort()).toEqual(all);
+    const asked = odoo.on("/discuss/channel/members").map((c) => c.params);
+    expect(asked).toEqual([
+      { channel_id: GENERAL, known_member_ids: [104] },
+      { channel_id: GENERAL, known_member_ids: [104, 201, 202] },
+    ]);
+    expect(await chat.repo.channel(config, GENERAL)).toMatchObject({ memberCount: 5 });
+    // Offline: the cache alone
+    offline();
+    expect((await chat.members(src, GENERAL)).map((m) => m.memberId).sort()).toEqual(all);
+    expect(odoo.on("/discuss/channel/members")).toHaveLength(2);
+  });
 });

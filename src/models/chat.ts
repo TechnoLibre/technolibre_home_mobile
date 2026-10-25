@@ -50,6 +50,11 @@ export interface ChatChannel {
    * sent, until the user dismisses it.
    */
   createFailed: boolean;
+  /**
+   * The user left it while texts were still queued: kept, no longer a
+   * member, listed with those texts as not sent until the user dismisses it.
+   */
+  leftUnsent: boolean;
 }
 
 /** sent: known to the server; pending: queued in the outbox; failed: the outbox gave up. */
@@ -109,6 +114,22 @@ export interface ChatSourceState {
   /** ISO time `globalMuteUntil` was last set from the bus; a load that started earlier does not overwrite it. */
   globalMuteAt: string | null;
   isInternalUser: boolean;
+}
+
+/**
+ * An action the chat outbox gave up on, kept until the user dismisses it:
+ * the server refused it ("refused"), or its conversation is gone or no
+ * longer the user's ("vanished"). `id` is the outbox row that holds it.
+ */
+export interface ChatNotice {
+  id: string;
+  configId: string;
+  /** The outbox kind of the action (chat.rename, chat.mute, ...). */
+  kind: string;
+  channelId: number | null;
+  reason: "refused" | "vanished";
+  /** The server's message for a refusal; "" otherwise. */
+  error: string;
 }
 
 /** One notification of the Odoo bus: its bus id and the typed message it carries. */

@@ -108,6 +108,7 @@ function channelFromRow(r: Row): ChatChannel {
     parentChannelId: r.parent_channel_id ?? null,
     createOpId: r.create_op_id ?? null,
     createFailed: bool(r.create_failed),
+    leftUnsent: bool(r.left_unsent),
   };
 }
 
@@ -243,6 +244,7 @@ export class ChatRepository {
       parent_channel_id: c.parentChannelId,
       create_op_id: c.createOpId,
       create_failed: flag(c.createFailed),
+      left_unsent: flag(c.leftUnsent),
     };
   }
 
@@ -372,6 +374,7 @@ export class ChatRepository {
           parentChannelId: null,
           createOpId: null,
           createFailed: false,
+          leftUnsent: false,
         };
     const patch = defined(p);
     // A name sent blank is a source that never filled it, except for a group, renamed back to its members' names
@@ -650,6 +653,21 @@ export class ChatRepository {
         await this.put("chat_messages", this.messageRow({ ...m, status: "failed", outboxOpId: null }));
       }
     }
+  }
+
+  /**
+   * Turns one queued message into a failed one detached from the outbox
+   * (its op was cancelled): no retry can reach a row that is gone.
+   */
+  async failQueued(configId: string, clientUuid: string): Promise<void> {
+    const queued = await this.row("chat_messages", key(configId, `u${clientUuid}`));
+    if (!queued) return;
+    await this.put("chat_messages", this.messageRow({ ...messageFromRow(queued), status: "failed", outboxOpId: null }));
+  }
+
+  /** Removes the cached member rows of one person in one channel. */
+  async dropMember(configId: string, channelId: number, partnerId: number): Promise<void> {
+    await this.del("chat_members", { config_id: configId, channel_id: channelId, partner_id: partnerId });
   }
 
   /** Flags a queued message as given up on. The row has no error column: the outbox keeps the reason. */

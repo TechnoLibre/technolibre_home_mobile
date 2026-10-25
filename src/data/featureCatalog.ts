@@ -4346,6 +4346,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addChatTables.ts",
                     "src/services/migrations/addChatLot2Columns.ts",
                     "src/services/migrations/addChatCreateFailed.ts",
+                    "src/services/migrations/addChatLeftUnsent.ts",
                     "src/services/chat/chatRepository.ts",
                 ],
             },
@@ -4427,6 +4428,41 @@ export const FEATURE_TREE: FeatureNode[] = [
                 files: [
                     "src/services/chat/chatOutbox.ts",
                     "src/services/outboxMarker.ts",
+                ],
+            },
+            {
+                id: "chat.manage",
+                label: { en: "Conversation management", fr: "Gestion des conversations" },
+                description: {
+                    en: "Invite, rename, describe, leave, hide, mute (one conversation or all), remove a member, list the members: queued offline, shown at once.",
+                    fr: "Inviter, renommer, décrire, quitter, masquer, mettre en sourdine (une conversation ou toutes), retirer un membre, lister les membres : en file hors ligne, visibles tout de suite.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Each action is a target state in the chat outbox: one row per conversation and "
+                        + "kind waits, a later call writes its value into it, and the phone shows the "
+                        + "value at once (a load keeps it until it is sent). An action waits for the "
+                        + "create of a conversation made offline. A mute leaves with the minutes left at "
+                        + "send time, so one queued past its end unmutes. Leaving cancels what the "
+                        + "conversation still had queued; its texts turn failed and keep it listed as "
+                        + "left until dismissed. An action refused, or whose conversation is gone, stays "
+                        + "as a notice in the list. Members are paged from the server and cached.",
+                    fr: "Chaque action est un état visé dans la boîte d'envoi du clavardage : une ligne "
+                        + "par conversation et par sorte attend, un appel suivant y écrit sa valeur, et "
+                        + "le téléphone affiche la valeur tout de suite (un chargement la garde jusqu'à "
+                        + "l'envoi). Une action attend la création d'une conversation faite hors ligne. "
+                        + "Une sourdine part avec les minutes qui restent au moment de l'envoi : en "
+                        + "file au-delà de sa fin, elle la retire. Quitter annule ce que la conversation "
+                        + "avait encore en file ; ses textes passent en échec et la gardent listée comme "
+                        + "quittée jusqu'à ce qu'on la retire. Une action refusée, ou dont la "
+                        + "conversation n'existe plus, reste comme avis dans la liste. Les membres sont "
+                        + "lus du serveur page par page et mis en cache.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/components/chat/chat_list_component.ts",
                 ],
             },
             {

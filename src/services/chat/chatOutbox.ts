@@ -1,4 +1,4 @@
-import type { ChannelType, ChatMessage } from "../../models/chat";
+import type { ChannelType, ChatMessage, ChatNotice } from "../../models/chat";
 import type { DatabaseService, OutboxOp } from "../databaseService";
 import { networkService } from "../networkService";
 import { OdooRpcError, RequestNotSentError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
@@ -12,7 +12,7 @@ import { syncConfigIdFor } from "../../models/syncConfig";
 import { CREATE_QUIET_WINDOW_MS, clientMarker } from "../outboxMarker";
 import { bodyHasMarker, textToBody } from "./chatBody";
 import type { ChatRepository } from "./chatRepository";
-import { parseStore } from "./chatStore";
+import { parseStore, type StoreDelta } from "./chatStore";
 import { v4 as uuidv4 } from "uuid";
 
 /** Pseudo note id of every chat row in sync_outbox: the note sync leaves them alone. */
@@ -30,6 +30,46 @@ export const CHAT_READ = "chat.read";
 export const CHAT_CREATE = "chat.create";
 /** params { channelId } */
 export const CHAT_JOIN = "chat.join";
+/** params { channelId, partnerIds }; a group or a channel (a chat takes a new group instead). */
+export const CHAT_INVITE = "chat.invite";
+/** params { channelId, name }: a group or channel's name, a chat's own label. */
+export const CHAT_RENAME = "chat.rename";
+/** params { channelId, description } */
+export const CHAT_DESCRIBE = "chat.describe";
+/** params { channelId } */
+export const CHAT_LEAVE = "chat.leave";
+/** params { channelId }: a direct message unpinned on the server. */
+export const CHAT_HIDE = "chat.hide";
+/** params { channelId, until }; until: an ISO date, "forever", or null (not muted). */
+export const CHAT_MUTE = "chat.mute";
+/** params { until }, as CHAT_MUTE, for the whole account. */
+export const CHAT_GLOBAL_MUTE = "chat.global_mute";
+/** params { channelId, partnerId }: another member removed, by a system user (server module 1.1). */
+export const CHAT_REMOVE = "chat.remove";
+
+/** The actions handled by runAction, each a target state of one conversation (or of the account). */
+const ACTION_KINDS = [
+  CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_LEAVE, CHAT_HIDE, CHAT_MUTE, CHAT_GLOBAL_MUTE, CHAT_REMOVE,
+];
+
+/** The actions Odoo would make the user a member for (the mute route joins a non-member): sent only for a member. */
+const MEMBER_ONLY = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE]);
+
+/** Odoo's "muted until I turn it back on", as mute_until_dt carries it. */
+export const MUTE_FOREVER_DT = "9999-12-31 23:59:59";
+
+/**
+ * The `minutes` of /discuss/settings/mute for a mute that ends at `until`,
+ * computed when the request leaves: -1 for "forever", false for no mute or
+ * one already over (a mute queued longer than it lasts unmutes), otherwise
+ * the minutes left, rounded up.
+ */
+export function muteMinutes(until: string | null, now: Date): number | false {
+  if (until === "forever") return -1;
+  if (!until) return false;
+  const left = Math.ceil((Date.parse(until) - now.getTime()) / 60000);
+  return Number.isFinite(left) && left > 0 ? left : false;
+}
 
 export type CreateMode = "dm" | "group" | "channel";
 
@@ -58,6 +98,10 @@ const isRefused = (e: unknown): boolean => e instanceof OdooRpcError && e.odooNa
 
 /** Odoo's "YYYY-MM-DD HH:MM:SS" UTC string for a date. */
 const odooDate = (d: Date): string => d.toISOString().slice(0, 19).replace("T", " ");
+
+/** The mute_until_dt a queued `until` stands for on the phone. */
+const muteDt = (until: string | null): string | null =>
+  until === "forever" ? MUTE_FOREVER_DT : until ? odooDate(new Date(until)) : null;
 
 /**
  * The chat's own outbox: posts and reads queued in sync_outbox under the
@@ -89,6 +133,10 @@ export class ChatOutbox {
    * pinned again); ChatService resubscribes and tells the screens.
    */
   created: (configId: string, tempId: number, channelId: number) => void = () => {};
+  /** Called once the server took a leave; ChatService resubscribes and tells the screens. */
+  left: (configId: string, channelId: number) => void = () => {};
+  /** Called after an action wrote to the cache or was given up; ChatService tells the screens. */
+  changed: (configId: string, channelId: number | null) => void = () => {};
 
   /** Per account, the end of the queue of exclusive() tasks. */
   private locks = new Map<string, Promise<void>>();
@@ -104,6 +152,7 @@ export class ChatOutbox {
     outbox.registerHandler(CHAT_READ, (creds, op) => this.runRead(creds, op));
     outbox.registerHandler(CHAT_CREATE, (creds, op) => this.runCreate(creds, op));
     outbox.registerHandler(CHAT_JOIN, (creds, op) => this.runJoin(creds, op));
+    for (const kind of ACTION_KINDS) outbox.registerHandler(kind, (creds, op) => this.runAction(creds, op));
   }
 
   /**
@@ -135,7 +184,8 @@ export class ChatOutbox {
    * already settled is taken as the server's id. A conversation that cannot
    * take a post (one whose create was refused, or a temporary id with no
    * create left) keeps the text as a failed message and queues nothing: a
-   * negative id never reaches the server.
+   * negative id never reaches the server. So does a conversation the user
+   * is leaving or left with texts unsent.
    */
   queuePost(configId: string, channelId: number, text: string, useModule: boolean): Promise<ChatMessage> {
     return this.exclusive(configId, async () =>
@@ -144,7 +194,7 @@ export class ChatOutbox {
 
   private async queuePostNow(configId: string, channelId: number, text: string, useModule: boolean): Promise<ChatMessage> {
     const channel = await this.repo.channel(configId, channelId);
-    if (channel?.createFailed || (channelId < 0 && !channel?.createOpId)) {
+    if (channel?.createFailed || (channelId < 0 && !channel?.createOpId) || (await this.leaving(configId, channelId))) {
       const failed: ChatMessage = {
         configId,
         channelId,
@@ -259,6 +309,10 @@ export class ChatOutbox {
     });
     try {
       if (channelId >= 0) {
+        // Shown again: a hide still waiting would undo it
+        for (const o of await this.db.getOutboxOpsForConfig(configId)) {
+          if (o.kind === CHAT_HIDE && o.params.channelId === channelId && o.status !== "running") await this.outbox.cancel(o.id);
+        }
         await this.repo.patchChannel(configId, channelId, { isPinned: true, createOpId: op.id });
       } else {
         const self = (await this.repo.sourceState(configId)).selfPartnerId;
@@ -327,6 +381,233 @@ export class ChatOutbox {
   }
 
   /**
+   * Whether the user is leaving the conversation (its leave is queued) or
+   * left it with texts unsent: nothing more of it goes to the server.
+   */
+  private async leaving(configId: string, channelId: number): Promise<boolean> {
+    if ((await this.repo.channel(configId, channelId))?.leftUnsent) return true;
+    return (await this.db.getOutboxOpsForConfig(configId))
+      .some((o) => o.kind === CHAT_LEAVE && o.params.channelId === channelId);
+  }
+
+  /**
+   * Queues an action as a target state: one op per account, kind and
+   * conversation (and `same`, e.g. the person removed) waits at a time. A
+   * later call writes its value into the waiting op (`merge`: the stored
+   * params to the new ones; the last value by default), so the server gets
+   * only the last; an op already running has sent its values, so a call
+   * meanwhile queues a second op behind it. An op the outbox gave up on
+   * (blocked, a notice) is replaced. A conversation still being created or
+   * joined holds the op until that op is done; the swap then moves it to the
+   * server's id. Runs under exclusive(), with the id the create settled on
+   * when it did.
+   */
+  private queueAction(
+    configId: string,
+    kind: string,
+    channelId: number | null,
+    params: Record<string, any>,
+    opts: { same?: (o: OutboxOp) => boolean; merge?: (stored: Record<string, any>) => Record<string, any>; local?: (channelId: number | null) => Promise<void> } = {},
+  ): Promise<OutboxOp> {
+    return this.exclusive(configId, async () => {
+      const id = channelId === null ? null : ((await this.realIdOf(configId, channelId)) ?? channelId);
+      const all = await this.db.getOutboxOpsForConfig(configId);
+      const same = all.filter((o) => o.kind === kind && (id === null || o.params.channelId === id) && (opts.same?.(o) ?? true));
+      for (const o of same) if (o.status === "blocked") await this.outbox.cancel(o.id);
+      const values = { ...(id === null ? {} : { channelId: id }), ...params };
+      const waiting = same.find((o) => o.status !== "running" && o.status !== "blocked");
+      let op: OutboxOp;
+      if (waiting) {
+        await this.outbox.setParams(waiting.id, opts.merge ? opts.merge(waiting.params) : params);
+        // The row may have started or finished between the lookup and the write
+        const now = await this.db.getOutboxOp(waiting.id);
+        if (now && now.status !== "running") op = now;
+        else op = await this.outbox.enqueue({ noteId: CHAT_NOTE, configId, kind, params: values, dependsOn: now?.id ?? null });
+      } else {
+        const running = same.find((o) => o.status === "running");
+        const createOpId = id === null ? null : ((await this.repo.channel(configId, id))?.createOpId ?? null);
+        const creating = createOpId !== null && all.some((o) => o.id === createOpId) ? createOpId : null;
+        op = await this.outbox.enqueue({ noteId: CHAT_NOTE, configId, kind, params: values, dependsOn: running?.id ?? creating });
+      }
+      await opts.local?.(id);
+      return op;
+    });
+  }
+
+  /** The cached conversation an action names, refused (Error) unless the user is a member of it. */
+  private async memberChannel(configId: string, channelId: number) {
+    const id = (await this.realIdOf(configId, channelId)) ?? channelId;
+    const channel = await this.repo.channel(configId, id);
+    if (!channel || !channel.isMember || channel.createFailed || (await this.leaving(configId, id))) {
+      throw new Error(`Conversation ${channelId} is not one the user is a member of.`);
+    }
+    return channel;
+  }
+
+  /** Invites people into a group or channel; the people of the op waiting are kept (union). A chat refuses: it takes a new group. */
+  async queueInvite(configId: string, channelId: number, partnerIds: number[]): Promise<OutboxOp> {
+    const channel = await this.memberChannel(configId, channelId);
+    if (channel.channelType === "chat") throw new Error("A direct message takes no member: invite into a new group.");
+    const ids = [...new Set(partnerIds)];
+    return this.queueAction(configId, CHAT_INVITE, channelId, { partnerIds: ids }, {
+      merge: (stored) => ({ partnerIds: [...new Set([...(stored.partnerIds ?? []), ...ids])] }),
+    });
+  }
+
+  /**
+   * Renames a conversation, shown at once: a group or channel's name (a
+   * channel never to "", a group to "" shows its members' names again), a
+   * chat's own label (customChannelName; "" shows the correspondent again).
+   */
+  async queueRename(configId: string, channelId: number, name: string): Promise<OutboxOp> {
+    const channel = await this.memberChannel(configId, channelId);
+    const trimmed = name.trim();
+    if (channel.channelType === "channel" && !trimmed) throw new Error("A channel needs a name.");
+    return this.queueAction(configId, CHAT_RENAME, channelId, { name: trimmed }, {
+      local: (id) => this.repo.patchChannel(configId, id!, channel.channelType === "chat"
+        ? { customChannelName: trimmed || null }
+        : { name: trimmed }),
+    });
+  }
+
+  /** Changes the description of a group or channel, shown at once. */
+  async queueDescribe(configId: string, channelId: number, description: string): Promise<OutboxOp> {
+    await this.memberChannel(configId, channelId);
+    return this.queueAction(configId, CHAT_DESCRIBE, channelId, { description }, {
+      local: (id) => this.repo.patchChannel(configId, id!, { description }),
+    });
+  }
+
+  /** Hides a direct message (unpinned on the server), at once on the phone; its next message shows it again. */
+  async queueHide(configId: string, channelId: number): Promise<OutboxOp> {
+    return this.queueAction(configId, CHAT_HIDE, channelId, {}, {
+      local: (id) => this.repo.patchChannel(configId, id!, { isPinned: false }),
+    });
+  }
+
+  /**
+   * Mutes a conversation until `until` (an ISO date, "forever"; null
+   * unmutes), shown at once. The minutes leave with the request
+   * (muteMinutes), so a mute that waited past its end unmutes.
+   */
+  async queueMute(configId: string, channelId: number, until: string | null): Promise<OutboxOp> {
+    await this.memberChannel(configId, channelId);
+    return this.queueAction(configId, CHAT_MUTE, channelId, { until }, {
+      local: (id) => this.repo.patchChannel(configId, id!, { muteUntilDt: muteDt(until) }),
+    });
+  }
+
+  /**
+   * Mutes the whole account until `until`, as queueMute; applied at once
+   * and stamped (globalMuteAt), so a load that began before it does not
+   * write the older value over it.
+   */
+  async queueGlobalMute(configId: string, until: string | null): Promise<OutboxOp> {
+    return this.queueAction(configId, CHAT_GLOBAL_MUTE, null, { until }, {
+      local: () => this.repo.setSourceState({ configId, globalMuteUntil: muteDt(until), globalMuteAt: this.now().toISOString() }),
+    });
+  }
+
+  /** Removes another person from a group or channel (one op per person); the caller checks the right. */
+  async queueRemove(configId: string, channelId: number, partnerId: number): Promise<OutboxOp> {
+    return this.queueAction(configId, CHAT_REMOVE, channelId, { partnerId }, {
+      same: (o) => o.params.partnerId === partnerId,
+    });
+  }
+
+  /**
+   * Leaves a conversation. On the phone at once: it is no longer a member,
+   * so the list stops showing it; every other chat row of it waiting in the
+   * outbox (posts, reads, actions) is cancelled, and the texts of its posts
+   * turn failed. With failed texts it stays listed (leftUnsent) until the
+   * user dismisses it (discardCreate). A row already running is left to
+   * finish and the leave waits for it; a post that fails then is not
+   * retried (sendPost). The leave also waits for the conversation's create
+   * or join when that is still queued. A second leave returns the first.
+   */
+  queueLeave(configId: string, channelId: number): Promise<OutboxOp> {
+    return this.exclusive(configId, async () => {
+      const id = (await this.realIdOf(configId, channelId)) ?? channelId;
+      const all = await this.db.getOutboxOpsForConfig(configId);
+      const queued = all.find((o) => o.kind === CHAT_LEAVE && o.params.channelId === id);
+      if (queued) return queued;
+      const channel = await this.repo.channel(configId, id);
+      const createOpId = channel?.createOpId && all.some((o) => o.id === channel.createOpId) ? channel.createOpId : null;
+      const mine = all.filter((o) => o.noteId === CHAT_NOTE && o.params.channelId === id && o.id !== createOpId);
+      const running = mine.find((o) => o.status === "running");
+      for (const o of mine) {
+        if (o.status === "running") continue;
+        await this.outbox.cancel(o.id);
+        if (o.kind === CHAT_POST) await this.repo.failQueued(configId, o.clientUuid);
+      }
+      const op = await this.outbox.enqueue({
+        noteId: CHAT_NOTE,
+        configId,
+        kind: CHAT_LEAVE,
+        params: { channelId: id },
+        dependsOn: running?.id ?? createOpId,
+      });
+      const unsent = (await this.repo.messages(configId, id)).some((m) => m.messageId === null && m.status === "failed");
+      await this.repo.patchChannel(configId, id, { isMember: false, localPinned: false, leftUnsent: unsent });
+      return op;
+    });
+  }
+
+  /**
+   * Lays the target states still queued (not given up) over a delta a load
+   * read, so the server's older values do not undo what the phone shows
+   * until the action is sent: a name or label, a description, a mute, a
+   * hidden direct message, a conversation left, the account's mute. Only
+   * conversations the delta carries are touched.
+   */
+  async overlayPending(configId: string, delta: StoreDelta): Promise<void> {
+    const byId = new Map(delta.channels.map((c) => [c.channelId, c]));
+    for (const op of await this.db.getOutboxOpsForConfig(configId)) {
+      if (op.noteId !== CHAT_NOTE || op.status === "blocked") continue;
+      if (op.kind === CHAT_GLOBAL_MUTE) {
+        delta.globalMuteUntil = muteDt(op.params.until ?? null);
+        continue;
+      }
+      const c = byId.get(op.params.channelId);
+      if (!c) continue;
+      const type = c.channelType ?? (await this.repo.channel(configId, c.channelId))?.channelType;
+      if (op.kind === CHAT_RENAME) {
+        if (type === "chat") c.customChannelName = op.params.name || null;
+        else c.name = op.params.name;
+      } else if (op.kind === CHAT_DESCRIBE) c.description = op.params.description;
+      else if (op.kind === CHAT_MUTE) c.muteUntilDt = muteDt(op.params.until ?? null);
+      else if (op.kind === CHAT_HIDE) c.isPinned = false;
+      else if (op.kind === CHAT_LEAVE) c.isMember = false;
+    }
+  }
+
+  /** The actions of the given accounts the outbox gave up on, oldest first, until dismissed. */
+  async notices(configIds: string[]): Promise<ChatNotice[]> {
+    const out: ChatNotice[] = [];
+    for (const configId of configIds) {
+      for (const o of await this.db.getOutboxOpsForConfig(configId)) {
+        if (o.status !== "blocked" || !ACTION_KINDS.includes(o.kind)) continue;
+        const reason = o.params.blockedReason === "vanished" ? "vanished" : "refused";
+        out.push({
+          id: o.id,
+          configId,
+          kind: o.kind,
+          channelId: o.params.channelId ?? null,
+          reason,
+          error: reason === "refused" ? (o.lastError ?? "") : "",
+        });
+      }
+    }
+    return out;
+  }
+
+  /** Dismisses a notice: its outbox row goes. */
+  async dismissNotice(configId: string, id: string): Promise<void> {
+    const op = await this.db.getOutboxOp(id);
+    if (op && op.configId === configId && op.status === "blocked" && ACTION_KINDS.includes(op.kind)) await this.outbox.cancel(id);
+  }
+
+  /**
    * A create or join the server refused: every chat row of the account
    * naming the conversation leaves the outbox (the op and what waits for
    * it), and the conversation stays listed as failed (createFailed), its
@@ -352,11 +633,17 @@ export class ChatOutbox {
    * The user gives up a conversation still being created or joined, or
    * dismisses one the server refused: its rows leave the outbox, and the
    * conversation goes from the cache with its unsent texts. A direct
-   * message pinned again keeps its history and is only unpinned again.
+   * message pinned again keeps its history and is only unpinned again. A
+   * conversation left with texts unsent (leftUnsent) goes with them; its
+   * leave stays queued.
    */
   discardCreate(configId: string, channelId: number): Promise<void> {
     return this.exclusive(configId, async () => {
       const channel = await this.repo.channel(configId, channelId);
+      if (channel?.leftUnsent) {
+        await this.repo.dropChannel(configId, channelId);
+        return;
+      }
       if (!channel || (!channel.createOpId && !channel.createFailed)) return;
       if (channelId >= 0 && channel.channelType === "chat") {
         if (channel.createOpId) await this.outbox.cancel(channel.createOpId);
@@ -452,6 +739,13 @@ export class ChatOutbox {
 
   private async sendPost(creds: SyncCredentials, op: OutboxOp): Promise<void> {
     const { channelId, text } = op.params;
+    if (await this.leaving(op.configId, channelId)) {
+      // Left while this post was on the wire or waiting for its retry: never sent after the leave
+      await this.repo.failQueued(op.configId, op.clientUuid);
+      await this.repo.patchChannel(op.configId, channelId, { leftUnsent: true });
+      this.changed(op.configId, channelId);
+      return;
+    }
     const useModule = !!op.params.useModule;
     const sentAt = await this.quietStamp(creds, op);
 
@@ -715,6 +1009,94 @@ export class ChatOutbox {
       }
       await this.settleCreate(running, channelId, result);
     });
+  }
+
+  /**
+   * Sends one action with the params stored when it starts (a value
+   * written into the op until then goes out). An action of a conversation
+   * the user is leaving, or left with texts unsent, is dropped. A conversation gone, created
+   * on the phone only, refused, or one the user is no longer a member of
+   * for an action Odoo would join them for (MEMBER_ONLY) is not sent:
+   * the op is given up as "vanished". A refusal (REFUSED_ERRORS) gives it
+   * up as "refused". Given up, it stays blocked in the outbox as a notice
+   * (notices) until dismissed, unless a later op of the same action
+   * supersedes it; a leave is never a notice: refused, the next load shows
+   * the membership the server has.
+   */
+  private runAction(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, async (running) => {
+      const act: OutboxOp = { ...running, params: (await this.db.getOutboxOp(running.id))?.params ?? running.params };
+      if (!(await this.isOnline())) throw new RequestNotSentError(`Offline: ${act.kind} waits for the network.`);
+      const channelId: number | null = act.params.channelId ?? null;
+      const channel = channelId === null ? null : await this.repo.channel(act.configId, channelId);
+      if (act.kind !== CHAT_LEAVE && act.kind !== CHAT_GLOBAL_MUTE) {
+        // Running when the user left, and retried since: dropped with the rest of the conversation
+        if (await this.leaving(act.configId, channelId!)) return;
+        const gone = !channel || channelId! <= 0 || channel.createFailed
+          || (MEMBER_ONLY.has(act.kind) && !channel.isMember);
+        if (gone) return this.giveUp(act, "vanished", `The conversation of ${act.kind} is gone or no longer the user's.`);
+      }
+      try {
+        await this.sendAction(creds, act, channel);
+      } catch (e: unknown) {
+        if (!isRefused(e)) throw e;
+        if (act.kind === CHAT_LEAVE) return;
+        return this.giveUp(act, "refused", (e as Error).message);
+      }
+      if (act.kind === CHAT_LEAVE) this.left(act.configId, channelId!);
+      if (act.kind === CHAT_REMOVE) {
+        await this.repo.dropMember(act.configId, channelId!, act.params.partnerId);
+        this.changed(act.configId, channelId);
+      }
+    });
+  }
+
+  private async sendAction(creds: SyncCredentials, op: OutboxOp, channel: { channelType: ChannelType } | null): Promise<void> {
+    const p = op.params;
+    const cid: number = p.channelId;
+    const mute = (params: Record<string, any>) => this.rpc.callWithAuth(creds, (sessionId) =>
+      this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/settings/mute", params));
+    switch (op.kind) {
+      case CHAT_INVITE:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "add_members", [[cid]], { partner_ids: p.partnerIds });
+        return;
+      case CHAT_RENAME:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, channel?.channelType === "chat" ? "channel_set_custom_name" : "channel_rename",
+          [[cid]], { name: p.name });
+        return;
+      case CHAT_DESCRIBE:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "channel_change_description", [[cid]], { description: p.description });
+        return;
+      case CHAT_LEAVE:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "action_unfollow", [cid]);
+        return;
+      case CHAT_HIDE:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "channel_pin", [cid], { pinned: false });
+        return;
+      case CHAT_MUTE:
+        await mute({ minutes: muteMinutes(p.until ?? null, this.now()), channel_id: cid });
+        return;
+      case CHAT_GLOBAL_MUTE:
+        await mute({ minutes: muteMinutes(p.until ?? null, this.now()) });
+        return;
+      case CHAT_REMOVE:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "erplibre_remove_member", [[cid], p.partnerId]);
+        return;
+    }
+  }
+
+  /**
+   * Gives an action up: blocked with its reason, as a notice, unless a
+   * later op of the same action and conversation (or person removed) is
+   * queued, which supersedes it: then it simply leaves the outbox.
+   */
+  private async giveUp(op: OutboxOp, reason: "vanished" | "refused", message: string): Promise<void> {
+    const later = (await this.db.getOutboxOpsForConfig(op.configId)).some((o) =>
+      o.id !== op.id && o.kind === op.kind && o.params.channelId === op.params.channelId
+      && o.params.partnerId === op.params.partnerId);
+    this.changed(op.configId, op.params.channelId ?? null);
+    if (later) return;
+    throw new OutboxBlockedError(message, reason, [], op.kind, op.id);
   }
 
   private runRead(creds: SyncCredentials, op: OutboxOp): Promise<void> {

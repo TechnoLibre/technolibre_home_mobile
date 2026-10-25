@@ -27,6 +27,7 @@ import { addSyncTargetTables } from "./addSyncTargetTables";
 import { addChatTables } from "./addChatTables";
 import { addChatLot2Columns } from "./addChatLot2Columns";
 import { addChatCreateFailed } from "./addChatCreateFailed";
+import { addChatLeftUnsent } from "./addChatLeftUnsent";
 
 /**
  * The app's database migrations, in version order: runMigrations runs at
@@ -173,5 +174,10 @@ export const APP_MIGRATIONS: Migration[] = [
 		version: 2026102602,
 		description: "Clavardage : création refusée et identifiants temporaires",
 		run: addChatCreateFailed,
+	},
+	{
+		version: 2026102603,
+		description: "Clavardage : conversations quittées avec des messages non envoyés",
+		run: addChatLeftUnsent,
 	},
 ];

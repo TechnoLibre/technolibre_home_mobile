@@ -1,5 +1,5 @@
 import type { Application } from "../../models/application";
-import type { BusNotification, ChatChannel, ChatMessage, ChatModuleState } from "../../models/chat";
+import type { BusNotification, ChatChannel, ChatMember, ChatMessage, ChatModuleState, ChatNotice } from "../../models/chat";
 import { syncConfigIdFor } from "../../models/syncConfig";
 import type { DatabaseService } from "../databaseService";
 import { networkService } from "../networkService";
@@ -53,12 +53,16 @@ const emptyDelta = (): StoreDelta => ({
 });
 
 /**
- * A conversation the list shows: one the user is a member of, or keeps
- * pinned locally; a direct message only while pinned on the server, so a
- * hidden one and the other person's new one still empty stay out.
+ * A conversation the list shows: one the user is a member of, keeps
+ * pinned locally, or left with texts unsent (until dismissed); a direct
+ * message only while pinned on the server, so a hidden one and the other
+ * person's new one still empty stay out.
  */
 const shown = (c: ChatChannel): boolean =>
-  (c.isMember || c.localPinned) && (c.channelType !== "chat" || c.isPinned);
+  (c.isMember || c.localPinned || c.leftUnsent) && (c.channelType !== "chat" || c.isPinned);
+
+/** A shown conversation whose unread counts: not one the user left. */
+const counted = (c: ChatChannel): boolean => shown(c) && !c.leftUnsent;
 
 const maxDt = (a: string | null, b: string | null | undefined): string | null =>
   !b ? a : !a || b > a ? b : a;
@@ -143,6 +147,12 @@ export class ChatService {
       this.resubscribe(configId);
       this.changed(configId, channelId);
     };
+    this.queue.left = (configId, channelId) => {
+      // The local row stopped being a member before: no load or delivery sees the membership change
+      this.resubscribe(configId);
+      this.changed(configId, channelId);
+    };
+    this.queue.changed = (configId, channelId) => this.changed(configId, channelId);
   }
 
   private changed(configId: string, channelId: number | null): void {
@@ -286,6 +296,8 @@ export class ChatService {
       }
     }
     if (erased()) return;
+    // What the phone already changed and still has to send wins over the server's older values
+    await this.queue.overlayPending(configId, delta);
     await this.repo.applyDelta(configId, delta);
     for (const channelId of gaps) {
       await this.repo.patchChannel(configId, channelId, { oldestLoadedId: null, historyComplete: false });
@@ -344,7 +356,7 @@ export class ChatService {
       const mentions = channels.reduce((sum, c) => sum + c.needactionCounter, 0);
       const state = await this.repo.sourceState(id);
       const inbox = Math.max(0, state.inboxCounter - mentions);
-      total += totalUnread(channels.filter(shown), [inbox], this.now(), state.globalMuteUntil);
+      total += totalUnread(channels.filter(counted), [inbox], this.now(), state.globalMuteUntil);
     }
     return total;
   }
@@ -552,8 +564,9 @@ export class ChatService {
 
   /**
    * Gives up a conversation still being created (or joined), or dismisses
-   * one the server refused (createFailed): its rows leave the outbox and it
-   * goes from the cache with its unsent texts (ChatOutbox.discardCreate).
+   * one the server refused (createFailed) or one left with texts unsent
+   * (leftUnsent): its rows leave the outbox (a leave stays) and it goes
+   * from the cache with its unsent texts (ChatOutbox.discardCreate).
    * Queued behind the account's other writers: a create settled before it
    * is kept (nothing left to discard); one whose answer lands after it
    * writes nothing, and the next load brings what the server made.
@@ -563,6 +576,164 @@ export class ChatService {
       await this.queue.discardCreate(configId, channelId);
       this.changed(configId, null);
     });
+  }
+
+  // ─── Managing a conversation ──────────────────────────────────────────────
+
+  /**
+   * Flushes the account's chat outbox once an action is queued, when
+   * online; a failed flush leaves it queued for the next one.
+   */
+  private async afterAction(src: ChatSource, channelId: number | null): Promise<void> {
+    this.changed(src.configId, channelId);
+    if (!(await this.isOnline())) return;
+    try {
+      await this.queue.flush(src.creds);
+    } catch {
+      // Kept in the outbox for the next flush
+    }
+    this.changed(src.configId, channelId);
+  }
+
+  /**
+   * Invites people into a group or a channel the user is a member of. A
+   * direct message takes no member: inviting there creates a group with
+   * the correspondent and the people picked (createGroup), whose id is
+   * returned; otherwise the conversation's own.
+   */
+  async invite(src: ChatSource, channelId: number, partnerIds: number[]): Promise<{ configId: string; channelId: number }> {
+    const channel = await this.repo.channel(src.configId, channelId);
+    if (channel?.channelType === "chat") {
+      const people = [channel.correspondentPartnerId, ...partnerIds].filter((id): id is number => id != null);
+      return this.createGroup(src, people);
+    }
+    await this.queue.queueInvite(src.configId, channelId, partnerIds);
+    await this.afterAction(src, channelId);
+    return { configId: src.configId, channelId };
+  }
+
+  /** Renames a conversation as Odoo's rules per type allow (see ChatOutbox.queueRename); rejects otherwise. */
+  async rename(src: ChatSource, channelId: number, name: string): Promise<void> {
+    await this.queue.queueRename(src.configId, channelId, name);
+    await this.afterAction(src, channelId);
+  }
+
+  /** Changes the description of a group or channel. */
+  async describe(src: ChatSource, channelId: number, description: string): Promise<void> {
+    await this.queue.queueDescribe(src.configId, channelId, description);
+    await this.afterAction(src, channelId);
+  }
+
+  /** Leaves a group or a channel (see ChatOutbox.queueLeave): out of the list at once, its queued texts not sent. */
+  async leave(src: ChatSource, channelId: number): Promise<void> {
+    await this.queue.queueLeave(src.configId, channelId);
+    await this.afterAction(src, channelId);
+  }
+
+  /** Hides a direct message; its next message shows it again. */
+  async hide(src: ChatSource, channelId: number): Promise<void> {
+    await this.queue.queueHide(src.configId, channelId);
+    await this.afterAction(src, channelId);
+  }
+
+  /**
+   * The `until` an action queues for `minutes` of mute from now: -1 is
+   * "forever", false or 0 unmutes.
+   */
+  private muteUntil(minutes: number | false): string | null {
+    if (minutes === -1) return "forever";
+    if (!minutes) return null;
+    return new Date(this.now().getTime() + minutes * 60000).toISOString();
+  }
+
+  /**
+   * Mutes a conversation the user is a member of for `minutes` (-1:
+   * until turned back on; false: unmute); rejects for any other one, which
+   * Odoo's mute route would join.
+   */
+  async mute(src: ChatSource, channelId: number, minutes: number | false): Promise<void> {
+    await this.queue.queueMute(src.configId, channelId, this.muteUntil(minutes));
+    await this.afterAction(src, channelId);
+  }
+
+  /** Mutes every conversation of the account for `minutes`, as mute(). */
+  async globalMute(src: ChatSource, minutes: number | false): Promise<void> {
+    await this.queue.queueGlobalMute(src.configId, this.muteUntil(minutes));
+    await this.afterAction(src, null);
+  }
+
+  /**
+   * Removes another person from a group or a channel; rejects unless the
+   * server allows it (features().canRemoveMembers: a system user and the
+   * server module 1.1). A refusal of the server is a notice.
+   */
+  async removeMember(src: ChatSource, channelId: number, partnerId: number): Promise<void> {
+    if (!(await this.features(src.configId)).canRemoveMembers) {
+      throw new Error("Removing a member needs a system user and the server module 1.1.");
+    }
+    await this.queue.queueRemove(src.configId, channelId, partnerId);
+    await this.afterAction(src, channelId);
+  }
+
+  /**
+   * The members of a conversation. Online, the ones not cached yet are
+   * read from /discuss/channel/members (at most 100 per page, the cached
+   * member ids sent as known) page after page, until the cache holds the
+   * count the server gives or a page brings nobody new; each page is cached
+   * with that count (memberCount), and the placeholder members of a
+   * conversation created offline (negative ids) give way. Offline, for a conversation only the
+   * phone knows, or when a page fails, the cached members are returned.
+   * Queued behind the account's other server writers.
+   */
+  async members(src: ChatSource, channelId: number): Promise<ChatMember[]> {
+    const { configId } = src;
+    if (channelId > 0 && (await this.isOnline())) {
+      try {
+        await this.serial(configId, () => this.membersNow(src, channelId));
+      } catch (e) {
+        console.warn("chat: members page failed", e);
+      }
+    }
+    return this.repo.members(configId, channelId);
+  }
+
+  private async membersNow(src: ChatSource, channelId: number): Promise<void> {
+    const { configId, creds } = src;
+    const erased = this.erasedSince(configId);
+    for (;;) {
+      const known = (await this.repo.members(configId, channelId))
+        .map((m) => m.memberId).filter((id) => id > 0).sort((a, b) => a - b);
+      const result = await this.rpc.callWithAuth(creds, (sessionId) =>
+        this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/channel/members", {
+          channel_id: channelId,
+          known_member_ids: known,
+        }));
+      if (erased()) return;
+      const delta = parseStore(result, configId, await this.selfOf(configId));
+      // A page answers for this channel only: the self member it may carry does not change membership elsewhere
+      delta.members = delta.members.filter((m) => m.channelId === channelId);
+      // The server's members replace the placeholders written while only the phone knew the conversation
+      delta.deletedMemberIds = (await this.repo.members(configId, channelId)).map((m) => m.memberId).filter((id) => id < 0);
+      delta.channels = delta.channels.filter((c) => c.channelId === channelId).map((c) => ({
+        channelId, ...(c.memberCount !== undefined ? { memberCount: c.memberCount } : {}),
+      }));
+      const fresh = delta.members.filter((m) => !known.includes(m.memberId)).length;
+      await this.repo.applyDelta(configId, delta);
+      this.changed(configId, channelId);
+      const count = (await this.repo.channel(configId, channelId))?.memberCount ?? null;
+      if (fresh === 0 || count === null || known.length + fresh >= count) return;
+    }
+  }
+
+  /** The actions the outbox gave up on for the given accounts (all live ones by default), until dismissed. */
+  async notices(configIds?: string[]): Promise<ChatNotice[]> {
+    return this.queue.notices(await this.configIds(configIds));
+  }
+
+  /** Dismisses a notice of notices(). */
+  async dismissNotice(configId: string, id: string): Promise<void> {
+    await this.queue.dismissNotice(configId, id);
+    this.changed(configId, null);
   }
 
   /**
@@ -947,7 +1118,13 @@ export class ChatService {
           : (p[CHANNEL_MODEL] ?? []).map((c: any) => Number(c.id))).filter(Number.isInteger);
         // Nothing left to post to: the rows leave the outbox, their texts stay as not sent (see applyDelta)
         await this.queue.dropChannels(configId, ids);
-        await this.repo.applyDelta(configId, { ...emptyDelta(), deletedChannelIds: ids });
+        // Left by the user with texts unsent: kept, out of membership, until dismissed
+        const kept: number[] = [];
+        if (type === "discuss.channel/leave") {
+          for (const id of ids) if ((await this.repo.channel(configId, id))?.leftUnsent) kept.push(id);
+          for (const id of kept) await this.repo.patchChannel(configId, id, { isMember: false });
+        }
+        await this.repo.applyDelta(configId, { ...emptyDelta(), deletedChannelIds: ids.filter((id) => !kept.includes(id)) });
         return ids.length === 1 ? ids[0] : null;
       }
       case "mail.message/inbox":

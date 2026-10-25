@@ -173,6 +173,18 @@ describe("ChatThreadComponent", () => {
         expect(j.state.failedCreate).toBe("join");
     });
 
+    it("a conversation left with texts unsent says so in a banner and on each of them", async () => {
+        const chat = fakeChat(
+            [msg(12), msg(null, { status: "failed", outboxOpId: null, body: "<p>late</p>" })],
+            [member(1), member(7)],
+            channel({ channelType: "group", isMember: false, leftUnsent: true }),
+        );
+        const c = make(chat, [], "5");
+        await c.open();
+        expect(c.state.failedCreate).toBe("left");
+        expect(c.state.rows.map((r: any) => r.meta)).toEqual(["sent", "left"]);
+    });
+
     it("posts waiting for an ambiguous create show it", async () => {
         const chat = fakeChat([msg(null, { channelId: -7, outboxOpId: "p1" })], [member(1)], channel({ channelId: -7, createOpId: "c1" }));
         const ops = [
