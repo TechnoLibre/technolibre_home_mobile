@@ -161,3 +161,14 @@
 	font-size: 0.75rem;
 	padding: 0.1rem 0.5rem;
 }
+
+.chat-list__new {
+	align-self: flex-end;
+	width: 2.6rem;
+	height: 2.6rem;
+	border: none;
+	border-radius: 50%;
+	background: var(--btn-blue-color, #2563eb);
+	color: #fff;
+	font-size: 1.4rem;
+}

@@ -92,6 +92,8 @@ export class ChatListComponent extends EnhancedComponent {
     static template = xml`
     <div id="chat-list">
       <HeadingComponent title="t('label.chat')"/>
+      <button t-if="state.mode !== 'unavailable'" class="chat-list__new" t-att-aria-label="t('chat.new')"
+              t-on-click="onNew">＋</button>
       <div t-if="state.mode === 'unavailable'" class="chat-list__unavailable">
         <p t-esc="t('chat.unavailable')"/>
         <button class="chat-list__add" t-on-click="onAddServer" t-esc="t('chat.add_server')"/>
@@ -367,6 +369,10 @@ export class ChatListComponent extends EnhancedComponent {
     async onDismissNotice(n: NoticeRow): Promise<void> {
         await this.chatService.dismissNotice(n.configId, n.id);
         await this.loadCache();
+    }
+
+    onNew(): void {
+        this.navigate("/chat/new");
     }
 
     onAddServer(): void {

@@ -1,0 +1,126 @@
+#chat-new {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	padding: 0 var(--page-gutter, 0.75rem) 1rem;
+}
+
+.chat-new__chips,
+.chat-new__tabs {
+	display: flex;
+	gap: 0.4rem;
+	overflow-x: auto;
+}
+
+.chat-new__chip,
+.chat-new__tab {
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 999px;
+	background: transparent;
+	color: inherit;
+	padding: 0.3rem 0.8rem;
+	white-space: nowrap;
+}
+
+.chat-new__chip--on,
+.chat-new__tab--on {
+	background: var(--btn-blue-color, #2563eb);
+	border-color: var(--btn-blue-color, #2563eb);
+	color: #fff;
+}
+
+.chat-new__select,
+.chat-new__search,
+.chat-new__name,
+.chat-new__access {
+	width: 100%;
+	padding: 0.5rem;
+	box-sizing: border-box;
+}
+
+.chat-new__group-form,
+.chat-new__channel-form {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.chat-new__picked {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3rem;
+}
+
+.chat-new__picked-item {
+	display: flex;
+	align-items: center;
+	gap: 0.3rem;
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 999px;
+	padding: 0.2rem 0.6rem;
+}
+
+.chat-new__remove {
+	border: none;
+	background: transparent;
+	color: inherit;
+}
+
+.chat-new__go {
+	padding: 0.6rem;
+	border: none;
+	border-radius: 0.4rem;
+	background: var(--btn-blue-color, #2563eb);
+	color: #fff;
+}
+
+.chat-new__go:disabled {
+	opacity: 0.5;
+}
+
+.chat-new__people,
+.chat-new__channels {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.chat-new__person,
+.chat-new__channel {
+	display: flex;
+	align-items: center;
+	gap: 0.7rem;
+	padding: 0.6rem 0.2rem;
+	border-bottom: 1px solid var(--text-greyed-out);
+}
+
+.chat-new__channel {
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 0.1rem;
+}
+
+.chat-new__avatar {
+	width: 2.2rem;
+	height: 2.2rem;
+	border-radius: 50%;
+	background: var(--text-greyed-out);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.chat-new__channel-desc,
+.chat-new__hint,
+.chat-new__empty,
+.chat-new__title {
+	color: var(--text-greyed-out);
+	font-size: 0.85rem;
+}
+
+.chat-new__error {
+	color: #dc2626;
+}

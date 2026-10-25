@@ -4564,6 +4564,33 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
                 tests: ["src/__tests__/chatThreadComponent.test.ts"],
             },
+            {
+                id: "chat.new",
+                label: { en: "New conversation", fr: "Nouvelle conversation" },
+                description: {
+                    en: "Pick a server, then write to a person, create a group or a channel, or join a public channel.",
+                    fr: "Choisir un serveur, puis écrire à une personne, créer un groupe ou un canal, ou rejoindre un canal public.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The server is the list's filter, else the last one used here, else the first. Recent "
+                        + "people come from the cache; a typed term asks the server after 300 ms. One person "
+                        + "picked is a direct message, two or more a group. A channel needs a name and takes "
+                        + "Odoo's default access group unless changed. Every action is queued and opens the "
+                        + "thread, whose id may still be temporary.",
+                    fr: "Le serveur est le filtre de la liste, sinon le dernier utilisé ici, sinon le premier. "
+                        + "Les personnes récentes viennent du cache ; un terme tapé interroge le serveur après "
+                        + "300 ms. Une personne choisie donne un message direct, deux ou plus un groupe. Un "
+                        + "canal exige un nom et prend le groupe d'accès par défaut d'Odoo sauf changement. "
+                        + "Chaque action est mise en file et ouvre la conversation, dont l'id peut être provisoire.",
+                },
+                demo: { kind: "route", url: "/chat/new" },
+                files: [
+                    "src/components/chat/chat_new_component.ts",
+                    "src/components/chat/chat_new_component.scss",
+                ],
+                tests: ["src/__tests__/chatNewComponent.test.ts"],
+            },
         ],
     },
 ];
