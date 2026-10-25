@@ -1,5 +1,5 @@
 import { Capacitor, CapacitorCookies } from "@capacitor/core";
-import { RawHttp } from "../../plugins/rawHttpPlugin";
+import { RAW_HTTP_UNSENT, RawHttp } from "../../plugins/rawHttpPlugin";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { StorageConstants } from "../../constants/storage";
 import { assertUrlAllowed } from "./httpPolicy";
@@ -63,6 +63,13 @@ export class OdooRpcError extends Error {
     super(message);
   }
 }
+
+/**
+ * A request that provably never reached the server: the connection itself
+ * failed (RawHttp's UNSENT). A caller may retry it at once; nothing of it
+ * can have run there. callWithAuth passes it through unwrapped.
+ */
+export class RequestNotSentError extends Error {}
 
 /**
  * The task a note is linked to on this server was deleted there. Raised by
@@ -595,6 +602,7 @@ export class OdooRpcClient {
         return { status: resp.status, headers: resp.headers, data: resp.data };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
+        if ((e as { code?: unknown } | null)?.code === RAW_HTTP_UNSENT) throw new RequestNotSentError(msg);
         if (msg.toLowerCase().includes("not implement")) {
           throw new Error(
             "Le plugin HTTP natif (RawHttp) n'est pas disponible. " +

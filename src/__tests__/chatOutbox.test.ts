@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
-import { OdooRpcClient, OdooRpcError, SyncCredentials, syncSessionKey } from "../services/odoo/odooRpcClient";
+import { OdooRpcClient, OdooRpcError, RequestNotSentError, SyncCredentials, syncSessionKey } from "../services/odoo/odooRpcClient";
 import { OutboxService } from "../services/outboxService";
 import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS, clientMarker } from "../services/syncService";
 import { addChatTables } from "../services/migrations/addChatTables";
@@ -22,13 +22,14 @@ interface Call { path: string; params: any }
  * A fake Odoo for the chat routes. Records each call; `dropResponses` makes
  * the next N /mail/message/post calls run on the server and then fail on the
  * wire (response lost); `failBefore` makes the next N fail before reaching it;
+ * `unsent` makes the next N fail as a connection that never opened does;
  * `postError` answers the next post with a JSON-RPC error. With `module` it
  * dedups posts by erplibre_client_uuid as the server module does.
  */
 function chatOdoo(opts: { module?: boolean } = {}) {
   const messages: Posted[] = [];
   const calls: Call[] = [];
-  const state = { dropResponses: 0, failBefore: 0, postError: null as string | null, nextId: 500 };
+  const state = { dropResponses: 0, failBefore: 0, unsent: 0, postError: null as string | null, nextId: 500 };
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
     headers: { forEach: () => {} },
@@ -45,6 +46,7 @@ function chatOdoo(opts: { module?: boolean } = {}) {
     calls.push({ path, params });
     if (path === "/mail/message/post") {
       if (state.failBefore > 0) { state.failBefore--; throw new TypeError("Failed to fetch"); }
+      if (state.unsent > 0) { state.unsent--; throw new RequestNotSentError("RawHttp error: connection refused"); }
       if (state.postError) return rpcError(state.postError);
       const uuid: string | null = params.post_data.erplibre_client_uuid ?? null;
       let msg = opts.module && uuid ? messages.find((m) => m.uuid === uuid) : undefined;
@@ -207,6 +209,48 @@ describe("ChatOutbox", () => {
     expect(second.params.post_data.body).toBe(first.params.post_data.body);
     expect(first.params.post_data.body).toContain("a &lt; b &amp; c");
     expect(first.params.post_data.body).not.toContain("&amp;lt;");
+    expect(odoo.messages).toHaveLength(1);
+  });
+
+  it("a post whose connection never opened is retried without the quiet window", async () => {
+    const odoo = chatOdoo();
+    odoo.state.unsent = 1;
+    await chat.queuePost(CONFIG, CHANNEL, "hello", false);
+    expect(await chat.flush(CREDS)).toMatchObject({ failed: 1 });
+    const [op] = await db.getOutboxOpsForConfig(CONFIG);
+    expect(op.params.createSentAt ?? null).toBeNull();
+    advance(1000);
+    expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
+    expect(odoo.messages).toHaveLength(1);
+    expect((await repo.messages(CONFIG, CHANNEL)).map((x) => x.status)).toEqual(["sent"]);
+  });
+
+  it("offline, a post is not tried and its retry waits for no window", async () => {
+    const odoo = chatOdoo();
+    chat.isOnline = async () => false;
+    await chat.queuePost(CONFIG, CHANNEL, "hello", false);
+    expect(await chat.flush(CREDS)).toMatchObject({ failed: 1 });
+    expect(odoo.posts()).toHaveLength(0);
+    expect((await db.getOutboxOpsForConfig(CONFIG))[0].params.createSentAt ?? null).toBeNull();
+    chat.isOnline = async () => true;
+    expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
+    expect(odoo.posts()).toHaveLength(1);
+  });
+
+  it("an unsent retry gives back the earlier stamp, whose window is over", async () => {
+    const odoo = chatOdoo();
+    // A failure the client cannot place: the post may have run, the window holds
+    odoo.state.failBefore = 1;
+    await chat.queuePost(CONFIG, CHANNEL, "hello", false);
+    await chat.flush(CREDS);
+    const stamped = clock.toISOString();
+    expect((await db.getOutboxOpsForConfig(CONFIG))[0].params.createSentAt).toBe(stamped);
+    advance(CREATE_QUIET_WINDOW_MS);
+    odoo.state.unsent = 1;
+    expect(await chat.flush(CREDS, { force: true })).toMatchObject({ failed: 1 });
+    expect((await db.getOutboxOpsForConfig(CONFIG))[0].params.createSentAt).toBe(stamped);
+    advance(1000);
+    expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
     expect(odoo.messages).toHaveLength(1);
   });
 

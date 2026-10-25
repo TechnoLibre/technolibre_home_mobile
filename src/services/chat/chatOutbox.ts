@@ -1,6 +1,7 @@
 import type { ChatMessage } from "../../models/chat";
 import type { DatabaseService, OutboxOp } from "../databaseService";
-import { OdooRpcError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
+import { networkService } from "../networkService";
+import { OdooRpcError, RequestNotSentError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
 import {
   OutboxBlockedError,
   OutboxRetryLaterError,
@@ -47,9 +48,15 @@ const odooDate = (d: Date): string => d.toISOString().slice(0, 19).replace("T", 
  * CREATE_QUIET_WINDOW_MS (the first request may still be running, its row
  * not yet visible to a search), then searches the channel for the comment
  * among the user's own messages and adopts the message it finds instead of
- * posting again.
+ * posting again. A send that provably never reached the server (offline
+ * before it, or a connection that failed: RequestNotSentError) gives the
+ * stamp back, so its retry waits for no window; a timeout or a lost answer
+ * keeps it.
  */
 export class ChatOutbox {
+  /** Whether a server may answer now; ChatService points it at its own. */
+  isOnline: () => Promise<boolean> = () => networkService.isOnline();
+
   constructor(
     private db: DatabaseService,
     private rpc: OdooRpcClient,
@@ -191,6 +198,7 @@ export class ChatOutbox {
     let messageId: number | null = null;
     let result: any = null;
     try {
+      if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the post waits for the network.");
       if (op.attempts > 1) messageId = await this.findSent(creds, op);
       if (messageId === null) {
         await this.outbox.setParams(op.id, { createSentAt: this.now().toISOString() });
@@ -215,6 +223,11 @@ export class ChatOutbox {
         messageId = id;
       }
     } catch (e: unknown) {
+      if (e instanceof RequestNotSentError) {
+        // Nothing of this attempt reached the server: the stamp goes back to the earlier one, whose window is over
+        await this.outbox.setParams(op.id, { createSentAt: sentAt ?? null });
+        throw e;
+      }
       if (!isRefused(e)) throw e;
       // Refused for good: the quiet window must not hold a later manual retry
       await this.outbox.setParams(op.id, { createSentAt: null });

@@ -116,6 +116,7 @@ export class ChatService {
     this.moduleMode = opts.moduleMode ?? "auto";
     this.repo = new ChatRepository(db);
     this.queue = new ChatOutbox(db, rpc, outbox, this.repo, now);
+    this.queue.isOnline = () => this.isOnline();
   }
 
   private changed(configId: string, channelId: number | null): void {

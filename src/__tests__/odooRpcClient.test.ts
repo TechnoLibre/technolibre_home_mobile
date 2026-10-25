@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
-import { OdooRpcClient, OdooRpcError, SyncCredentials, syncSessionKey } from "../services/odoo/odooRpcClient";
+import { Capacitor, __clearPluginMocks, __setPluginMock } from "@capacitor/core";
+import { OdooRpcClient, OdooRpcError, RequestNotSentError, SyncCredentials, syncSessionKey } from "../services/odoo/odooRpcClient";
 
 const CREDS: SyncCredentials = { odooUrl: "https://odoo.example.com", username: "u", password: "p", database: "db" };
 
@@ -178,5 +179,34 @@ describe("OdooRpcClient helpers", () => {
   it("odooVersion reads the stored session", async () => {
     await storeSession(16);
     expect(await rpc.odooVersion(CREDS)).toBe(16);
+  });
+});
+
+describe("OdooRpcClient over the native RawHttp", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    __clearPluginMocks();
+  });
+
+  const nativeRejecting = (error: unknown) => {
+    vi.spyOn(Capacitor, "isNativePlatform").mockReturnValue(true);
+    __setPluginMock("RawHttp", { post: vi.fn(async () => { throw error; }) });
+  };
+
+  it("a connection that never opened is a RequestNotSentError, through callWithAuth too", async () => {
+    nativeRejecting(Object.assign(new Error("RawHttp error: Connection refused"), { code: "UNSENT" }));
+    await storeSession(18);
+    const rpc = new OdooRpcClient();
+    await expect(rpc.callWithAuth(CREDS, (sid) => rpc.jsonRoute(CREDS.odooUrl, sid, "/mail/message/post", {})))
+      .rejects.toBeInstanceOf(RequestNotSentError);
+  });
+
+  it("any other failure, a read timeout among them, is not", async () => {
+    nativeRejecting(new Error("RawHttp error: Read timed out"));
+    await storeSession(18);
+    const rpc = new OdooRpcClient();
+    const failure = rpc.callWithAuth(CREDS, (sid) => rpc.jsonRoute(CREDS.odooUrl, sid, "/mail/message/post", {}));
+    await expect(failure).rejects.toThrow("Read timed out");
+    await expect(failure).rejects.not.toBeInstanceOf(RequestNotSentError);
   });
 });
