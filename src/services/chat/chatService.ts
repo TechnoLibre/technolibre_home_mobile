@@ -9,6 +9,7 @@ import type { OutboxService } from "../outboxService";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
 import { moduleState } from "./chatModule";
 import { ChatOutbox, type CreateMode } from "./chatOutbox";
+import { ChatPeople } from "./chatPeople";
 import { ChatRepository } from "./chatRepository";
 import { chatSettings } from "./chatSettings";
 import { CHAT_MAJOR, parseOdooMajor, sourceLabels, type ChatSource } from "./chatSources";
@@ -129,6 +130,9 @@ export class ChatService {
    */
   moduleMode: "auto" | "ignore";
 
+  /** Who to write to, channels to join and access groups of a new channel. */
+  readonly people: ChatPeople;
+
   constructor(
     private db: DatabaseService,
     private rpc: OdooRpcClient,
@@ -139,6 +143,7 @@ export class ChatService {
   ) {
     this.moduleMode = opts.moduleMode ?? "auto";
     this.repo = new ChatRepository(db);
+    this.people = new ChatPeople(rpc, this.repo, () => this.isOnline());
     this.queue = new ChatOutbox(db, rpc, outbox, this.repo, now);
     this.queue.isOnline = () => this.isOnline();
     this.queue.serial = (configId, task) => this.serial(configId, task);

@@ -1051,4 +1051,6 @@ export const translations: Record<string, string> = {
   "chat.module_upgrade": "Upgrade the chat module",
   "chat.module_upgrading": "Upgrading…",
   "chat.module_upgrade_error": "Could not upgrade the module. Try again.",
+  "chat.access_everyone": "Everyone",
+  "chat.access_internal": "Internal users",
 };

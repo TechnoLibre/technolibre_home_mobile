@@ -1051,4 +1051,6 @@ export const translations: Record<string, string> = {
   "chat.module_upgrade": "Mettre à jour le module de clavardage",
   "chat.module_upgrading": "Mise à jour…",
   "chat.module_upgrade_error": "Impossible de mettre à jour le module. Réessayez.",
+  "chat.access_everyone": "Tout le monde",
+  "chat.access_internal": "Utilisateurs internes",
 };

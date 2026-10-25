@@ -4351,6 +4351,19 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.people",
+                label: { en: "Chat people and channels", fr: "Personnes et canaux du clavardage" },
+                description: {
+                    en: "Recent people, server people search, public channels to join, invite candidates and access groups of a new channel.",
+                    fr: "Personnes récentes, recherche de personnes sur le serveur, canaux publics à rejoindre, candidats à l'invitation et groupes d'accès d'un nouveau canal.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatPeople.ts",
+                ],
+            },
+            {
                 id: "chat.module",
                 label: { en: "Chat server module", fr: "Module serveur du clavardage" },
                 description: {
