@@ -1158,6 +1158,7 @@ export class DatabaseService {
         [`${newId}#${row.kind}`, newId, row.kind, row.params_json, row.updated_at]
       );
     }
+    await this.renameChatRows(oldId, newId);
     const cursor = await this.getSyncPullCursor(oldId);
     if (cursor) {
       await this.setSyncPullCursor(newId, cursor);
@@ -1178,6 +1179,124 @@ export class DatabaseService {
         perServer[newId] = perServer[oldId];
         delete perServer[oldId];
       });
+    }
+  }
+
+  // Chat cache
+
+  /**
+   * Chat cache: one row per channel, message, member and partner, keyed
+   * `configId#<id>` so two accounts on one server never share a row (a
+   * message not yet known to the server is `configId#u<clientUuid>`), plus one
+   * sync-state row per source. The text key is the first column of each table.
+   */
+  async createChatTables(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_channels (
+        id                        TEXT PRIMARY KEY NOT NULL,
+        config_id                 TEXT NOT NULL,
+        channel_id                INTEGER NOT NULL,
+        channel_type              TEXT NOT NULL,
+        name                      TEXT NOT NULL,
+        description               TEXT NOT NULL,
+        last_interest_dt          TEXT,
+        unread_counter            INTEGER NOT NULL,
+        needaction_counter        INTEGER NOT NULL,
+        new_message_separator     INTEGER NOT NULL,
+        seen_message_id           INTEGER,
+        mute_until_dt             TEXT,
+        custom_notifications      TEXT,
+        is_member                 INTEGER NOT NULL,
+        local_pinned              INTEGER NOT NULL,
+        last_message_id           INTEGER,
+        oldest_loaded_id          INTEGER,
+        history_complete          INTEGER NOT NULL,
+        correspondent_partner_id  INTEGER,
+        updated_at                TEXT NOT NULL
+      )
+    `);
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id                TEXT PRIMARY KEY NOT NULL,
+        config_id         TEXT NOT NULL,
+        channel_id        INTEGER NOT NULL,
+        message_id        INTEGER,
+        client_uuid       TEXT,
+        author_partner_id INTEGER,
+        body              TEXT NOT NULL,
+        date              TEXT NOT NULL,
+        message_type      TEXT NOT NULL,
+        status            TEXT NOT NULL,
+        outbox_op_id      TEXT,
+        write_date        TEXT
+      )
+    `);
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_members (
+        id                 TEXT PRIMARY KEY NOT NULL,
+        config_id          TEXT NOT NULL,
+        channel_id         INTEGER NOT NULL,
+        member_id          INTEGER NOT NULL,
+        partner_id         INTEGER NOT NULL,
+        seen_message_id    INTEGER,
+        fetched_message_id INTEGER,
+        is_typing          INTEGER NOT NULL,
+        typing_at          TEXT
+      )
+    `);
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_partners (
+        id         TEXT PRIMARY KEY NOT NULL,
+        config_id  TEXT NOT NULL,
+        partner_id INTEGER NOT NULL,
+        name       TEXT NOT NULL,
+        im_status  TEXT
+      )
+    `);
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_sources (
+        config_id       TEXT PRIMARY KEY NOT NULL,
+        self_partner_id INTEGER,
+        last_bus_id     INTEGER NOT NULL,
+        bus_seen_at     TEXT,
+        ws_version      TEXT,
+        is_system       INTEGER NOT NULL,
+        module_state    TEXT NOT NULL,
+        inbox_counter   INTEGER NOT NULL,
+        loaded_at       TEXT
+      )
+    `);
+    for (const [table, col] of [
+      ["chat_channels", "config_id"],
+      ["chat_messages", "config_id, channel_id"],
+      ["chat_members", "config_id, channel_id"],
+      ["chat_partners", "config_id"],
+    ]) {
+      await this.db.execute(`CREATE INDEX IF NOT EXISTS idx_${table}_cfg ON ${table}(${col})`);
+    }
+  }
+
+  /**
+   * Moves the chat rows of one config id under another: both the `config_id`
+   * column and the `configId#` prefix of the key. A table not created yet is skipped.
+   */
+  private async renameChatRows(oldId: string, newId: string): Promise<void> {
+    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_sources"]) {
+      try {
+        const keyed = table !== "chat_sources";
+        const key = keyed ? "id" : "config_id";
+        const result = await this.db.query(`SELECT * FROM ${table} WHERE config_id = ?`, [oldId]);
+        for (const row of result.values ?? []) {
+          const next: Record<string, any> = { ...row, config_id: newId };
+          if (keyed) next.id = newId + String(row.id).slice(oldId.length);
+          await this.db.run(`DELETE FROM ${table} WHERE ${key} = ?`, [row[key]]);
+          const cols = Object.keys(next);
+          await this.db.run(
+            `INSERT OR REPLACE INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
+            cols.map((c) => next[c])
+          );
+        }
+      } catch { /* table absent on a database not migrated yet */ }
     }
   }
 

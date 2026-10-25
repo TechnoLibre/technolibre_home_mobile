@@ -21,6 +21,7 @@ import { addSyncPerServerStatus }
     from "../services/migrations/addSyncPerServerStatus";
 import { addSelectedSyncConfigIds }
     from "../services/migrations/addSelectedSyncConfigIds";
+import { addChatTables } from "../services/migrations/addChatTables";
 
 // Each migration is a thin wrapper that delegates to one DatabaseService
 // method and returns { counts: {} }. The contract under test is that
@@ -47,6 +48,7 @@ const cases: Array<{
     { name: "addSyncConfigId",            migration: addSyncConfigId,            method: "addSyncConfigIdColumn" },
     { name: "addSyncPerServerStatus",     migration: addSyncPerServerStatus,     method: "addSyncPerServerStatusColumn" },
     { name: "addSelectedSyncConfigIds",   migration: addSelectedSyncConfigIds,   method: "addSelectedSyncConfigIdsColumn" },
+    { name: "addChatTables",             migration: addChatTables,             method: "createChatTables" },
 ];
 
 describe("schema migrations (one-method wrappers)", () => {

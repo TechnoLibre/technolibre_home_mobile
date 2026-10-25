@@ -24,6 +24,7 @@ import { addSyncOutboxTable } from "./addSyncOutboxTable";
 import { addNoteLinkParams } from "./addNoteLinkParams";
 import { addActivitiesCacheTable } from "./addActivitiesCacheTable";
 import { addSyncTargetTables } from "./addSyncTargetTables";
+import { addChatTables } from "./addChatTables";
 
 /**
  * The app's database migrations, in version order: runMigrations runs at
@@ -155,5 +156,10 @@ export const APP_MIGRATIONS: Migration[] = [
 		version: 2026102302,
 		description: "Table activities_cache : activités du calendrier, gardées hors ligne",
 		run: addActivitiesCacheTable,
+	},
+	{
+		version: 2026102501,
+		description: "Tables du clavardage",
+		run: addChatTables,
 	},
 ];

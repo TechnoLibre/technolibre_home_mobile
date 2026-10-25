@@ -4305,6 +4305,20 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatStore.ts",
                 ],
             },
+            {
+                id: "chat.cache",
+                label: { en: "Chat cache", fr: "Cache du clavardage" },
+                description: {
+                    en: "SQLite tables and repository holding channels, messages, members and pending posts per account.",
+                    fr: "Tables SQLite et dépôt des canaux, messages, membres et envois en attente, par compte.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/migrations/addChatTables.ts",
+                    "src/services/chat/chatRepository.ts",
+                ],
+            },
         ],
     },
 ];
