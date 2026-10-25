@@ -3,9 +3,12 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 
 const moduleState = vi.fn();
 const installModule = vi.fn();
+const upgradeModule = vi.fn();
+let isSystem = true;
 vi.mock("../services/chat/chatModule", () => ({
     moduleState: (...a: any[]) => moduleState(...a),
     installModule: (...a: any[]) => installModule(...a),
+    upgradeModule: (...a: any[]) => upgradeModule(...a),
 }));
 vi.mock("../services/networkService", () => ({
     networkService: { isOnline: vi.fn().mockResolvedValue(true) },
@@ -30,7 +33,7 @@ function make(version: string) {
         router: { getRouteParams: () => new Map([["url", "x"], ["username", "alice"]]) },
         appService: { getMatch: vi.fn().mockResolvedValue(app) },
         syncService: {
-            rpc: {}, capabilities: {},
+            rpc: { sessionInfo: async () => ({ isSystem }) }, capabilities: {},
             chat: { repo: { setSourceState } },
         },
     };
@@ -41,6 +44,8 @@ function make(version: string) {
 afterEach(() => {
     moduleState.mockReset();
     installModule.mockReset();
+    upgradeModule.mockReset();
+    isSystem = true;
     delete (globalThis as any).localStorage;
 });
 
@@ -100,5 +105,55 @@ describe("ApplicationsEditComponent chat module line", () => {
         expect(c.state.chatInstalling).toBe(false);
         expect(c.state.chatError).not.toBe("");
         expect(setSourceState).not.toHaveBeenCalled();
+    });
+
+    it("upgrade button only for an admin of an outdated module", async () => {
+        for (const [admin, shown] of [[true, true], [false, false]] as const) {
+            isSystem = admin;
+            moduleState.mockResolvedValue("outdated");
+            const { c } = make("18.0");
+            await c.loadAppData();
+            expect(c.state.chatModule).toBe("outdated");
+            expect(c.state.chatCanUpgrade).toBe(shown);
+        }
+        isSystem = true;
+        moduleState.mockResolvedValue("installed");
+        const { c } = make("18.0");
+        await c.loadAppData();
+        expect(c.state.chatCanUpgrade).toBe(false);
+    });
+
+    it("upgrade updates the line to installed and persists it", async () => {
+        moduleState.mockResolvedValue("outdated");
+        upgradeModule.mockResolvedValue("installed");
+        const { c, setSourceState } = make("18.0");
+        await c.loadAppData();
+        await c.upgradeChatModule();
+        expect(c.state.chatModule).toBe("installed");
+        expect(c.state.chatCanUpgrade).toBe(false);
+        expect(c.state.chatInstalling).toBe(false);
+        expect(setSourceState).toHaveBeenCalledWith({
+            configId: "https://odoo.example.test|alice|db1", moduleState: "installed",
+        });
+    });
+
+    it("a non-admin cannot trigger the upgrade", async () => {
+        isSystem = false;
+        moduleState.mockResolvedValue("outdated");
+        const { c } = make("18.0");
+        await c.loadAppData();
+        await c.upgradeChatModule();
+        expect(upgradeModule).not.toHaveBeenCalled();
+    });
+
+    it("an upgrade failure shows an error line and keeps the button", async () => {
+        moduleState.mockResolvedValue("outdated");
+        upgradeModule.mockRejectedValue(new Error("nope"));
+        const { c } = make("18.0");
+        await c.loadAppData();
+        await c.upgradeChatModule();
+        expect(c.state.chatModule).toBe("outdated");
+        expect(c.state.chatCanUpgrade).toBe(true);
+        expect(c.state.chatError).not.toBe("");
     });
 });

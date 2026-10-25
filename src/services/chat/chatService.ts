@@ -426,14 +426,26 @@ export class ChatService {
   // ─── Send, read, typing ───────────────────────────────────────────────────
 
   /**
+   * What the account's server supports, from the stored module state: member
+   * removal needs a system user and module 1.1; an idempotent channel create
+   * needs module 1.1 (message posts also work with 1.0).
+   */
+  async features(configId: string): Promise<{ canRemoveMembers: boolean; idempotentCreate: boolean }> {
+    const state = await this.repo.sourceState(configId);
+    const installed = this.moduleMode === "auto" && state.moduleState === "installed";
+    return { canRemoveMembers: state.isSystem && installed, idempotentCreate: installed };
+  }
+
+  /**
    * Queues the text (stored as a pending message before any request), then,
    * online, flushes the account's chat outbox at once. Returns the pending
    * message; a failed flush leaves it queued for the next one.
    */
   async send(src: ChatSource, channelId: number, text: string): Promise<ChatMessage> {
     const { configId } = src;
-    const useModule = this.moduleMode === "auto"
-      && (await this.repo.sourceState(configId)).moduleState === "installed";
+    // Module 1.0 already dedupes message posts by uuid; only 1.1 adds channels
+    const state = (await this.repo.sourceState(configId)).moduleState;
+    const useModule = this.moduleMode === "auto" && (state === "installed" || state === "outdated");
     const message = await this.queue.queuePost(configId, channelId, text, useModule);
     this.changed(configId, channelId);
     if (await this.isOnline()) {

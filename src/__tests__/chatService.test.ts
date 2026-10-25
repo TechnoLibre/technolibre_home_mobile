@@ -410,6 +410,37 @@ describe("ChatService", () => {
     expect((await chat.messages(config, GROUP)).at(-1)).toMatchObject({ status: "sent", messageId: 5000 });
   });
 
+  it("send uses the module uuid for post when outdated (1.0), not when absent or unknown", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    const uuids: Array<string | undefined> = [];
+    for (const st of ["outdated", "absent", "unknown"] as const) {
+      await chat.repo.setSourceState({ configId: config, moduleState: st });
+      await chat.send(src, GROUP, st);
+      uuids.push(odoo.on("/mail/message/post").at(-1)!.params.post_data.erplibre_client_uuid);
+    }
+    expect(uuids[0]).toEqual(expect.any(String));
+    expect(uuids[1]).toBeUndefined();
+    expect(uuids[2]).toBeUndefined();
+  });
+
+  it("features need module 1.1 installed, member removal also a system user", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    const matrix: Array<[any, boolean, boolean, boolean]> = [
+      ["installed", true, true, true],
+      ["installed", false, false, true],
+      ["outdated", true, false, false],
+      ["available", true, false, false],
+      ["unknown", false, false, false],
+    ];
+    for (const [moduleState, isSystem, remove, create] of matrix) {
+      await chat.repo.setSourceState({ configId: config, moduleState, isSystem });
+      expect(await chat.features(config)).toEqual({ canRemoveMembers: remove, idempotentCreate: create });
+    }
+  });
+
   it("own post echoed by bus before response stays one message", async () => {
     const odoo = fakeOdoo();
     const src = await source();

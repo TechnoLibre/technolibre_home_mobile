@@ -1027,4 +1027,8 @@ export const translations: Record<string, string> = {
   "chat.module_install": "Install the chat module",
   "chat.module_installing": "Installing…",
   "chat.module_install_error": "Could not install the module. Try again.",
+  "chat.module_outdated": "Chat module on the server is out of date.",
+  "chat.module_upgrade": "Upgrade the chat module",
+  "chat.module_upgrading": "Upgrading…",
+  "chat.module_upgrade_error": "Could not upgrade the module. Try again.",
 };

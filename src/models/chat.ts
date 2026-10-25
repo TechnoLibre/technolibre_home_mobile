@@ -83,7 +83,7 @@ export interface ChatPartner {
   imStatus: string | null;
 }
 
-export type ChatModuleState = "installed" | "available" | "absent" | "unknown";
+export type ChatModuleState = "installed" | "outdated" | "available" | "absent" | "unknown";
 
 export interface ChatSourceState {
   configId: string;

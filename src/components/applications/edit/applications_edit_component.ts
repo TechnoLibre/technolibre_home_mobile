@@ -10,7 +10,8 @@ import { SyncService } from "../../../services/syncService";
 import { networkService } from "../../../services/networkService";
 import { syncConfigIdFor } from "../../../models/syncConfig";
 import { CHAT_MAJOR, parseOdooMajor } from "../../../services/chat/chatSources";
-import { installModule, moduleState } from "../../../services/chat/chatModule";
+import { installModule, moduleState, upgradeModule } from "../../../services/chat/chatModule";
+import type { SyncCredentials } from "../../../services/odoo/odooRpcClient";
 import { t } from "../../../i18n";
 
 import { HeadingComponent } from "../../heading/heading_component";
@@ -72,6 +73,13 @@ export class ApplicationsEditComponent extends EnhancedComponent {
                             t-on-click="installChatModule">
                         <t t-if="state.chatInstalling"><t t-esc="t('chat.module_installing')"/></t>
                         <t t-else=""><t t-esc="t('chat.module_install')"/></t>
+                    </button>
+                    <button type="button" class="app-edit__autocomplete-btn app-edit__chat-upgrade"
+                            t-if="state.chatCanUpgrade"
+                            t-att-disabled="state.chatInstalling"
+                            t-on-click="upgradeChatModule">
+                        <t t-if="state.chatInstalling"><t t-esc="t('chat.module_upgrading')"/></t>
+                        <t t-else=""><t t-esc="t('chat.module_upgrade')"/></t>
                     </button>
                     <span class="app-edit__chat-error" t-if="state.chatError" t-esc="state.chatError"/>
                 </t>
@@ -147,6 +155,7 @@ export class ApplicationsEditComponent extends EnhancedComponent {
             detectedVersion: "",
             chatModule: "",
             chatInstalling: false,
+            chatCanUpgrade: false,
             chatError: "",
         });
 
@@ -289,8 +298,38 @@ export class ApplicationsEditComponent extends EnhancedComponent {
             this.state.chatModule = await moduleState(
                 this.syncService.rpc, this.syncService.capabilities, target.creds, { online }
             );
+            await this.refreshChatCanUpgrade(target.creds);
         } catch {
             this.state.chatModule = "unknown";
+        }
+    }
+
+    /** The upgrade is offered to a system user on an outdated module only; a failed check hides it. */
+    private async refreshChatCanUpgrade(creds: SyncCredentials): Promise<void> {
+        this.state.chatCanUpgrade = false;
+        if (this.state.chatModule !== "outdated") return;
+        try {
+            this.state.chatCanUpgrade = (await this.syncService.rpc.sessionInfo(creds)).isSystem;
+        } catch {
+            this.state.chatCanUpgrade = false;
+        }
+    }
+
+    /** Upgrades the module for a system user, persists and shows the state returned; a failure shows an error line. */
+    async upgradeChatModule(): Promise<void> {
+        const target = this.chatTarget();
+        if (!target || !this.state.chatCanUpgrade || this.state.chatInstalling) return;
+        this.state.chatInstalling = true;
+        this.state.chatError = "";
+        try {
+            const next = await upgradeModule(this.syncService.rpc, this.syncService.capabilities, target.creds);
+            await this.chatService.repo.setSourceState({ configId: target.configId, moduleState: next });
+            this.state.chatModule = next;
+            await this.refreshChatCanUpgrade(target.creds);
+        } catch {
+            this.state.chatError = t("chat.module_upgrade_error");
+        } finally {
+            this.state.chatInstalling = false;
         }
     }
 
