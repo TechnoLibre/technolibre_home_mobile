@@ -152,6 +152,18 @@ export class ChatOutbox {
     return this.outbox.drain(creds, configId, { force: opts.force, onlyNoteIds: new Set([CHAT_NOTE]) });
   }
 
+  /** Posts of the account still in the outbox, failed and blocked ones included. */
+  async pendingPostCount(configId: string): Promise<number> {
+    return (await this.db.getOutboxOpsForConfig(configId)).filter((o) => o.kind === CHAT_POST).length;
+  }
+
+  /** Removes every chat row of the account from the outbox, posts and reads alike. */
+  async dropAll(configId: string): Promise<void> {
+    for (const op of await this.db.getOutboxOpsForConfig(configId)) {
+      if (op.noteId === CHAT_NOTE) await this.outbox.cancel(op.id);
+    }
+  }
+
   private runPost(creds: SyncCredentials, op: OutboxOp): Promise<void> {
     return this.outbox.attempt(op.id, (running) => this.sendPost(creds, running));
   }

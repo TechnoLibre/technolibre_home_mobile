@@ -468,6 +468,20 @@ export class ChatService {
     this.typingState.clear();
   }
 
+  /**
+   * Erases one account's chat from the phone: its rows leave the outbox
+   * (posts not sent are lost), then its cache goes. Queued behind the
+   * account's server writers, so a delivery already running cannot write
+   * after the erase.
+   */
+  async forgetSource(configId: string): Promise<void> {
+    await this.serial(configId, async () => {
+      await this.queue.dropAll(configId);
+      await this.repo.dropSource(configId);
+    });
+    this.changed(configId, null);
+  }
+
   /** Flushes the chat outbox of every application; one that fails does not stop the others. */
   async flushAll(): Promise<void> {
     for (const app of await this.db.getAllApplications()) {

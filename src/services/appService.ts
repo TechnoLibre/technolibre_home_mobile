@@ -12,8 +12,25 @@ export interface GetMatchesResult extends GetAppListResult {
   matches: Array<Application>;
 }
 
+/**
+ * What changed in the application list: kind, and the sync config id the
+ * application had before the change (null without a database).
+ */
+export interface ApplicationsChange {
+  kind: "add" | "edit" | "delete";
+  configId: string | null;
+}
+
+const configIdOf = (app: Application): string | null =>
+  app.database ? syncConfigIdFor(app.url, app.username, app.database) : null;
+
 export class AppService {
   private _db: DatabaseService;
+  /**
+   * Awaited after each add, edit and delete that reached the database. A
+   * listener that fails is logged and does not fail the change.
+   */
+  onChanged: ((change: ApplicationsChange) => Promise<void> | void) | null = null;
 
   constructor(db: DatabaseService) {
     this._db = db;
@@ -46,7 +63,16 @@ export class AppService {
     }
 
     await this._db.addApplication(app);
+    await this.notify({ kind: "add", configId: configIdOf(app) });
     return true;
+  }
+
+  private async notify(change: ApplicationsChange): Promise<void> {
+    try {
+      await this.onChanged?.(change);
+    } catch (e) {
+      console.warn("[appService] change listener failed:", e);
+    }
   }
 
   /**
@@ -60,6 +86,7 @@ export class AppService {
     const apps = await this.getApps();
     for (const app of apps) {
       await this._db.deleteApplication(app.url, app.username);
+      await this.notify({ kind: "delete", configId: configIdOf(app) });
     }
     return true;
   }
@@ -86,6 +113,7 @@ export class AppService {
     await this._db.deleteApplication(matchingApp.url, matchingApp.username);
     // Its per-server entries no longer count in the notes' global status
     await this._db.refreshAllNoteSyncStatuses();
+    await this.notify({ kind: "delete", configId: configIdOf(matchingApp) });
     return true;
   }
 
@@ -137,6 +165,7 @@ export class AppService {
       );
     }
     await this._db.refreshAllNoteSyncStatuses();
+    await this.notify({ kind: "edit", configId: configIdOf(appToEdit) });
     return true;
   }
 

@@ -353,6 +353,7 @@ export const translations: Record<string, string> = {
   // Dialog messages
   "dialog.translate_to": "Translate to:",
   "dialog.confirm_delete_app": "Are you sure you want to delete the application {url} for account {username}?",
+  "dialog.confirm_delete_app_chat": "Its chat goes too: {count} message(s) not sent yet will be lost.",
   "dialog.confirm_delete_entry": "Delete this {label} entry?",
   "dialog.confirm_reset_browser": "Do you want to reset the embedded browser?",
   "dialog.biometry_info": "This application uses biometric authentication to ensure only you have access to secured information.",

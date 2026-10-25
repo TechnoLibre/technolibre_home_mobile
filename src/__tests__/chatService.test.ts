@@ -620,6 +620,32 @@ describe("ChatService", () => {
     await chat.applyBus(config, [bus(1006, "discuss.channel/joined", { channel: { id: 16, model: "discuss.channel" } })]);
     expect(odoo.on("/mail/data")).toHaveLength(loads + 1);
   });
+  it("forgetSource erases one account's chat and its outbox rows, not another's", async () => {
+    fakeOdoo();
+    await build([TARGET, { ...TARGET, username: "bob" }]);
+    const [mine, other] = env.configIds;
+    for (const id of [mine, other]) {
+      await chat.repo.setSourceState({ configId: id, selfPartnerId: SELF });
+      await chat.repo.applyDelta(id, {
+        channels: [{ channelId: GROUP, channelType: "group", name: "Team", isMember: true }],
+        deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], partners: [], inboxCounter: null, selfPartnerId: null,
+      });
+      await chat.queue.queuePost(id, GROUP, "not sent", false);
+      await chat.queue.queueRead(id, GROUP, 5, false);
+    }
+    expect(await chat.queue.pendingPostCount(mine)).toBe(1);
+    const changes: any[] = [];
+    chat.onChange = (c, ch) => changes.push([c, ch]);
+    await chat.forgetSource(mine);
+    expect(await chat.queue.pendingPostCount(mine)).toBe(0);
+    expect((await env.db.getOutboxOpsForConfig(mine)).map((o) => o.noteId)).not.toContain("chat");
+    expect(await chat.repo.channels(mine)).toEqual([]);
+    expect(await chat.repo.hasSourceState(mine)).toBe(false);
+    expect(await chat.queue.pendingPostCount(other)).toBe(1);
+    expect(await chat.repo.channels(other)).toHaveLength(1);
+    expect(changes).toEqual([[mine, null]]);
+  });
+
   it("realtime keeps a second start keeps one bus per source, stop closes its transport", async () => {
     fakeOdoo();
     const made: { open: any; close: any }[] = [];

@@ -5,6 +5,7 @@ import {Capacitor} from "@capacitor/core";
 import type {PluginListenerHandle} from "@capacitor/core";
 
 import {Application, ApplicationID} from "../../models/application";
+import {syncConfigIdFor} from "../../models/syncConfig";
 import {Server, ServerID} from "../../models/server";
 import {BiometryUtils} from "../../utils/biometryUtils";
 import {EnhancedComponent} from "../../js/enhancedComponent";
@@ -525,9 +526,25 @@ export class ApplicationsComponent extends EnhancedComponent {
         });
     }
 
+    /** Chat posts of the application still in the outbox; 0 when it cannot be told. */
+    private async unsentChatPosts(appID: ApplicationID): Promise<number> {
+        try {
+            const app = await this.appService.getMatch(appID);
+            if (!app.database) return 0;
+            return await this.syncService.chat.queue.pendingPostCount(
+                syncConfigIdFor(app.url, app.username, app.database)
+            );
+        } catch {
+            return 0;
+        }
+    }
+
     async deleteApplication(appID: ApplicationID) {
+        // The application's chat goes with it: posts still waiting are announced
+        const unsent = await this.unsentChatPosts(appID);
         const deleteConfirmed = confirm(
             this.t("dialog.confirm_delete_app", { url: appID.url, username: appID.username })
+            + (unsent > 0 ? "\n\n" + this.t("dialog.confirm_delete_app_chat", { count: unsent }) : "")
         );
 
         if (!deleteConfirmed) {

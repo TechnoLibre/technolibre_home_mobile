@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { mockApp, ntfyHolder, publishPending } = vi.hoisted(() => ({
-    mockApp: { addListener: vi.fn() },
+    mockApp: { addListener: vi.fn(), getState: vi.fn() },
     ntfyHolder: { last: undefined as any },
     publishPending: vi.fn(async () => {}),
 }));
@@ -91,6 +91,8 @@ describe("NotificationService", () => {
             }),
         });
         mockApp.addListener.mockReset();
+        mockApp.getState.mockReset();
+        mockApp.getState.mockResolvedValue({ isActive: true });
     });
     afterEach(() => {
         vi.useRealTimers();
@@ -408,10 +410,16 @@ describe("NotificationService", () => {
     });
 
     describe("ChatLifecycle", () => {
+        const fakeChat = () => ({
+            startRealtime: vi.fn().mockResolvedValue(undefined),
+            stopRealtime: vi.fn(),
+            forgetSource: vi.fn().mockResolvedValue(undefined),
+        }) as any;
+
         it("going inactive stops realtime, active starts it", async () => {
             makeServices([]);
-            const chat = { startRealtime: vi.fn().mockResolvedValue(undefined), stopRealtime: vi.fn() } as any;
-            new ChatLifecycle(chat).start();
+            const chat = fakeChat();
+            await new ChatLifecycle(chat).start();
             expect(chat.startRealtime).toHaveBeenCalledTimes(1);
             expect(chat.startRealtime).toHaveBeenCalledWith(nativeTransport);
 
@@ -419,6 +427,51 @@ describe("NotificationService", () => {
             expect(chat.stopRealtime).toHaveBeenCalledTimes(1);
             appStateCb!({ isActive: true });
             expect(chat.startRealtime).toHaveBeenCalledTimes(2);
+        });
+
+        it("a cold start in the background opens no socket until the app comes forward", async () => {
+            makeServices([]);
+            mockApp.getState.mockResolvedValue({ isActive: false });
+            const chat = fakeChat();
+            await new ChatLifecycle(chat).start();
+            expect(chat.startRealtime).not.toHaveBeenCalled();
+            appStateCb!({ isActive: true });
+            expect(chat.startRealtime).toHaveBeenCalledTimes(1);
+        });
+
+        it("a state change reported before the state is read wins over the read", async () => {
+            makeServices([]);
+            let answer!: (s: { isActive: boolean }) => void;
+            mockApp.getState.mockReturnValue(new Promise((r) => { answer = r; }));
+            const chat = fakeChat();
+            const starting = new ChatLifecycle(chat).start();
+            appStateCb!({ isActive: false });
+            answer({ isActive: true });
+            await starting;
+            expect(chat.startRealtime).not.toHaveBeenCalled();
+            expect(chat.stopRealtime).toHaveBeenCalledTimes(1);
+        });
+
+        it("an application change restarts realtime while active, a deletion erases its chat first", async () => {
+            makeServices([]);
+            const chat = fakeChat();
+            const order: string[] = [];
+            chat.stopRealtime.mockImplementation(() => order.push("stop"));
+            chat.forgetSource.mockImplementation(async (id: string) => { order.push("forget " + id); });
+            chat.startRealtime.mockImplementation(async () => { order.push("start"); });
+            const life = new ChatLifecycle(chat);
+            await life.start();
+            order.length = 0;
+            await life.applicationsChanged({ kind: "add", configId: "https://a|u|db" });
+            expect(order).toEqual(["stop", "start"]);
+            order.length = 0;
+            await life.applicationsChanged({ kind: "delete", configId: "https://a|u|db" });
+            expect(order).toEqual(["stop", "forget https://a|u|db", "start"]);
+            // In the background a change starts nothing
+            appStateCb!({ isActive: false });
+            order.length = 0;
+            await life.applicationsChanged({ kind: "edit", configId: "https://a|u|db" });
+            expect(order).toEqual(["stop"]);
         });
 
         it("re-arms the retry timer when a row fails elsewhere (a tap on sync)", async () => {

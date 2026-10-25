@@ -174,6 +174,30 @@ describe("AppService with SQLite", () => {
     });
   });
 
+  describe("onChanged", () => {
+    it("tells each add, edit and delete with the config id the application had", async () => {
+      const changes: any[] = [];
+      appService.onChanged = async (c) => { changes.push(c); };
+      const app = baseApp({ database: "db1" });
+      await appService.add(app);
+      await appService.edit({ url: app.url, username: app.username }, { ...app, database: "db2" });
+      await appService.delete({ url: app.url, username: app.username });
+      await appService.add(baseApp({ username: "nodb" }));
+      expect(changes).toEqual([
+        { kind: "add", configId: "https://erp.example.com|admin|db1" },
+        { kind: "edit", configId: "https://erp.example.com|admin|db1" },
+        { kind: "delete", configId: "https://erp.example.com|admin|db2" },
+        { kind: "add", configId: null },
+      ]);
+    });
+
+    it("a failing listener does not fail the change", async () => {
+      appService.onChanged = async () => { throw new Error("listener"); };
+      await expect(appService.add(baseApp())).resolves.toBe(true);
+      expect(await appService.getApps()).toHaveLength(1);
+    });
+  });
+
   describe("clear", () => {
     it("should remove all apps", async () => {
       await appService.add(baseApp({ url: "https://erp1.com", username: "u1", password: "p1" }));
