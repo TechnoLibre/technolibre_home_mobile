@@ -1,5 +1,8 @@
 import { DatabaseService, NoteLink, NoteLinkKind, OutboxOp } from "./databaseService";
 import { CHAT_NOTE } from "./chat/chatOutbox";
+import { CREATE_QUIET_WINDOW_MS, clientMarker } from "./outboxMarker";
+
+export { CREATE_QUIET_WINDOW_MS, clientMarker };
 import { OutboxBlockedError, OutboxRetryLaterError, OutboxService } from "./outboxService";
 import { CapabilityService } from "./odoo/capabilityService";
 import { PROJECT_MODEL, ProjectService } from "./odoo/projectService";
@@ -51,13 +54,6 @@ export interface SyncResult {
 /** Remote model a note is mirrored to by pushNote / pullNotes. */
 const TASK_MODEL = "project.task";
 
-/**
- * Minimum time between sending a task create and a retry that searches
- * its marker: longer than the HTTP read timeout plus Odoo's
- * default limit_time_real (120 s), so a create still running on the server
- * has committed — or been killed — before the search.
- */
-export const CREATE_QUIET_WINDOW_MS = 3 * 60 * 1000;
 
 /** Tasks an ambiguous marker search lists for the user to pick from. */
 const AMBIGUOUS_CANDIDATES_SHOWN = 5;
@@ -336,13 +332,6 @@ export type TargetState =
 /** TargetState of a note's task. */
 export type TaskTargetState = TargetState;
 
-/**
- * Text the app writes in a record it creates, searched to find that record
- * again when the answer to create() was lost.
- */
-export function clientMarker(clientUuid: string): string {
-  return `erplibre-mobile:${clientUuid}`;
-}
 
 /** project.task.state of a closed task (Odoo 17+). */
 const TASK_STATE_DONE = "1_done";

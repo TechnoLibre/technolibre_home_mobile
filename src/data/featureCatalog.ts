@@ -4343,6 +4343,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/chat/chatOutbox.ts",
+                    "src/services/outboxMarker.ts",
                 ],
             },
         ],

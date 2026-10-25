@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
-import { OdooRpcClient, SyncCredentials, syncSessionKey } from "../services/odoo/odooRpcClient";
+import { OdooRpcClient, OdooRpcError, SyncCredentials, syncSessionKey } from "../services/odoo/odooRpcClient";
 import { OutboxService } from "../services/outboxService";
-import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS } from "../services/syncService";
+import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS, clientMarker } from "../services/syncService";
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
 import { CHAT_NOTE, CHAT_POST, CHAT_READ, ChatOutbox } from "../services/chat/chatOutbox";
@@ -15,7 +15,7 @@ const GONE: SyncCredentials = { ...CREDS, username: "bob" };
 const GONE_CONFIG = syncConfigIdOf(GONE);
 const CHANNEL = 7;
 
-interface Posted { id: number; model: string; res_id: number; body: string; uuid: string | null }
+interface Posted { id: number; model: string; res_id: number; body: string; uuid: string | null; author?: number }
 interface Call { path: string; params: any }
 
 /**
@@ -49,7 +49,7 @@ function chatOdoo(opts: { module?: boolean } = {}) {
       const uuid: string | null = params.post_data.erplibre_client_uuid ?? null;
       let msg = opts.module && uuid ? messages.find((m) => m.uuid === uuid) : undefined;
       if (!msg) {
-        msg = { id: state.nextId++, model: params.thread_model, res_id: params.thread_id, body: params.post_data.body, uuid };
+        msg = { id: state.nextId++, model: params.thread_model, res_id: params.thread_id, body: params.post_data.body, uuid, author: 3 };
         messages.push(msg);
       }
       if (state.dropResponses > 0) { state.dropResponses--; throw new TypeError("Failed to fetch"); }
@@ -63,11 +63,15 @@ function chatOdoo(opts: { module?: boolean } = {}) {
       if (model === "mail.message" && method === "search_read") {
         const needle = (kwargs.domain.find((d: any[]) => d[1] === "ilike") ?? [])[2] as string;
         const resId = kwargs.domain.find((d: any[]) => d[0] === "res_id")[2];
-        const rows = messages.filter((m) => m.res_id === resId && m.body.includes(needle)).map((m) => ({ id: m.id }));
+        const author = (kwargs.domain.find((d: any[]) => d[0] === "author_id") ?? [])[2];
+        const rows = messages
+          .filter((m) => m.res_id === resId && m.body.includes(needle) && (author === undefined || m.author === author))
+          .map((m) => ({ id: m.id, body: m.body }));
         return ok(rows.slice(0, kwargs.limit ?? rows.length));
       }
       return ok(method === "search_read" ? [] : true);
     }
+    if (path === "/web/session/get_session_info") return ok({ uid: 2, partner_id: 3, is_system: false });
     return ok(true);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -138,7 +142,7 @@ describe("ChatOutbox", () => {
     expect(call.params.thread_model).toBe("discuss.channel");
     expect(call.params.thread_id).toBe(CHANNEL);
     expect(call.params.post_data).toMatchObject({ message_type: "comment", subtype_xmlid: "mail.mt_comment", erplibre_client_uuid: m.clientUuid });
-    expect(call.params.post_data.body).toBe("hello");
+    expect(call.params.post_data.body).toBe("hello" + chatMarker(m.clientUuid!));
     expect(call.params.context).toEqual({ temporary_id: m.clientUuid });
     expect(await db.getOutboxOpsForConfig(CONFIG)).toHaveLength(0);
     const rows = await repo.messages(CONFIG, CHANNEL);
@@ -211,7 +215,7 @@ describe("ChatOutbox", () => {
     odoo.state.dropResponses = 1;
     const m = await chat.queuePost(CONFIG, CHANNEL, "hello", false);
     await chat.flush(CREDS);
-    odoo.messages.push({ id: 900, model: "discuss.channel", res_id: CHANNEL, body: "x" + chatMarker(m.clientUuid!), uuid: null });
+    odoo.messages.push({ id: 900, model: "discuss.channel", res_id: CHANNEL, body: "x" + chatMarker(m.clientUuid!), uuid: null, author: 3 });
     advance(CREATE_QUIET_WINDOW_MS);
     const res = await chat.flush(CREDS, { force: true });
     expect(res.blocked).toBe(1);
@@ -220,17 +224,58 @@ describe("ChatOutbox", () => {
     expect(odoo.posts()).toHaveLength(1);
   });
 
-  it("lost response with module retries the same uuid", async () => {
+  it("lost response with module waits the quiet window then adopts", async () => {
     const odoo = chatOdoo({ module: true });
     odoo.state.dropResponses = 1;
     const m = await chat.queuePost(CONFIG, CHANNEL, "hello", true);
     expect(await chat.flush(CREDS)).toMatchObject({ failed: 1 });
+
+    advance(60_000);
+    await chat.flush(CREDS, { force: true });
+    expect(odoo.posts()).toHaveLength(1);
+
+    advance(CREATE_QUIET_WINDOW_MS);
     expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
-    const posts = odoo.posts();
-    expect(posts).toHaveLength(2);
-    expect(posts.map((c) => c.params.post_data.erplibre_client_uuid)).toEqual([m.clientUuid, m.clientUuid]);
+    expect(odoo.posts()).toHaveLength(1);
     expect(odoo.messages).toHaveLength(1);
+    expect(odoo.posts()[0].params.post_data.erplibre_client_uuid).toBe(m.clientUuid);
     expect((await repo.messages(CONFIG, CHANNEL)).map((x) => [x.messageId, x.status])).toEqual([[500, "sent"]]);
+  });
+
+  it("a message of another author carrying the marker text is not adopted", async () => {
+    const odoo = chatOdoo();
+    odoo.state.failBefore = 1;
+    const m = await chat.queuePost(CONFIG, CHANNEL, "hello", false);
+    await chat.flush(CREDS);
+    odoo.messages.push({ id: 900, model: "discuss.channel", res_id: CHANNEL, body: chatMarker(m.clientUuid!), uuid: null, author: 99 });
+    advance(CREATE_QUIET_WINDOW_MS);
+    expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
+    expect(odoo.posts()).toHaveLength(2);
+    expect((await repo.messages(CONFIG, CHANNEL)).map((x) => x.messageId)).toEqual([500]);
+  });
+
+  it("a hit whose body only quotes the uuid is not adopted", async () => {
+    const odoo = chatOdoo();
+    odoo.state.failBefore = 1;
+    const m = await chat.queuePost(CONFIG, CHANNEL, "hello", false);
+    await chat.flush(CREDS);
+    odoo.messages.push({ id: 900, model: "discuss.channel", res_id: CHANNEL, body: "see " + clientMarker(m.clientUuid!), uuid: null, author: 3 });
+    advance(CREATE_QUIET_WINDOW_MS);
+    expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
+    expect(odoo.posts()).toHaveLength(2);
+  });
+
+  it("a refused marker search blocks the op and keeps the text as failed", async () => {
+    const odoo = chatOdoo();
+    odoo.state.failBefore = 1;
+    const m = await chat.queuePost(CONFIG, CHANNEL, "keep me", false);
+    await chat.flush(CREDS);
+    vi.spyOn(rpc, "searchRead").mockImplementation(async () => { throw new OdooRpcError("no", "odoo.exceptions.AccessError"); });
+    advance(CREATE_QUIET_WINDOW_MS);
+    expect(await chat.flush(CREDS, { force: true })).toMatchObject({ blocked: 1 });
+    const [op] = await db.getOutboxOpsForConfig(CONFIG);
+    expect(op).toMatchObject({ status: "blocked", params: { blockedReason: "refused" } });
+    expect((await repo.messages(CONFIG, CHANNEL))[0]).toMatchObject({ status: "failed", clientUuid: m.clientUuid });
   });
 
   it("a refused post blocks the op and keeps the text as failed", async () => {
@@ -261,8 +306,26 @@ describe("ChatOutbox", () => {
     expect(odoo.posts()).toHaveLength(1);
     expect(odoo.messages).toHaveLength(0);
 
+    advance(CREATE_QUIET_WINDOW_MS);
     expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 2 });
     expect(odoo.messages.map((m) => m.uuid)).toEqual([a.clientUuid, b.clientUuid]);
+  });
+
+  it("three posts queued at the same instant form a chain", async () => {
+    chatOdoo({ module: true });
+    for (const t of ["1", "2", "3"]) await chat.queuePost(CONFIG, CHANNEL, t, true);
+    const ops = await db.getOutboxOpsForConfig(CONFIG);
+    const byText = (t: string) => ops.find((o) => o.params.text === t)!;
+    expect(byText("1").dependsOn).toBeNull();
+    expect(byText("2").dependsOn).toBe(byText("1").id);
+    expect(byText("3").dependsOn).toBe(byText("2").id);
+  });
+
+  it("a pending message that cannot be stored leaves no op behind", async () => {
+    chatOdoo({ module: true });
+    vi.spyOn(repo, "putPending").mockRejectedValueOnce(new Error("disk full"));
+    await expect(chat.queuePost(CONFIG, CHANNEL, "hello", true)).rejects.toThrow("disk full");
+    expect(await db.getOutboxOpsForConfig(CONFIG)).toHaveLength(0);
   });
 
   it("posts of different channels do not wait for each other", async () => {
@@ -322,6 +385,22 @@ describe("ChatOutbox", () => {
     expect(ops.find((o) => o.id === op.id)!.params.lastMessageId).toBe(50);
     expect(ops.find((o) => o.id !== op.id)!.params.lastMessageId).toBe(70);
     expect(odoo.calls).toHaveLength(0);
+  });
+
+  it("a read that starts during the write queues a follow-up behind it", async () => {
+    chatOdoo();
+    await chat.queueRead(CONFIG, CHANNEL, 50, false);
+    const real = outbox.setParams.bind(outbox);
+    vi.spyOn(outbox, "setParams").mockImplementationOnce(async (id, v) => {
+      await db.updateOutboxOp(id, { status: "running", updatedAt: clock.toISOString() });
+      await real(id, v);
+    });
+    await chat.queueRead(CONFIG, CHANNEL, 70, true);
+    const ops = await db.getOutboxOpsForConfig(CONFIG);
+    expect(ops).toHaveLength(2);
+    const follow = ops.find((o) => o.status !== "running")!;
+    expect(follow.dependsOn).toBe(ops.find((o) => o.status === "running")!.id);
+    expect(follow.params).toMatchObject({ lastMessageId: 70, mentions: true });
   });
 
   it("drain ignores chat rows of a removed application", async () => {
