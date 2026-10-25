@@ -684,6 +684,24 @@ describe("ChatService", () => {
     expect(changes).toEqual([[mine, null]]);
   });
 
+  it("a source whose load never answers does not hold back another source's bus", async () => {
+    fakeOdoo();
+    await build([TARGET, { ...TARGET, username: "bob" }]);
+    for (const id of env.configIds) await chat.repo.setSourceState({ configId: id, selfPartnerId: SELF });
+    for (const app of await env.db.getAllApplications()) await env.db.setApplicationOdooVersion(app.url, app.username, "18.0");
+    const [silent, live] = env.configIds;
+    const load = chat.load.bind(chat);
+    vi.spyOn(chat, "load").mockImplementation((src) => (src.configId === silent ? new Promise(() => {}) : load(src)));
+    const opened: string[] = [];
+    const starting = chat.startRealtime((configId) => {
+      const t = { open: vi.fn(() => opened.push(configId)), send: vi.fn(), close: vi.fn(), onOpen: () => {}, onMessage: () => {}, onClose: () => {} };
+      return t as any;
+    });
+    await vi.waitFor(() => expect(opened).toEqual([live]));
+    chat.stopRealtime();
+    void starting;
+  });
+
   it("realtime keeps a second start keeps one bus per source, stop closes its transport", async () => {
     fakeOdoo();
     const made: { open: any; close: any }[] = [];

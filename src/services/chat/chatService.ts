@@ -506,54 +506,59 @@ export class ChatService {
 
   /**
    * Starts one ChatBus per source (the buses running before are stopped
-   * first, so there is never more than one per account). Each account is
-   * loaded before its bus starts, so the bus catches up from a fresh cache;
-   * a load that fails (server unreachable) does not hold the bus back, which
-   * reconnects by itself. A stopRealtime during the loads cancels the start.
-   * The bus resubscribes after a delivery that joined a channel, once the
-   * reload that delivery triggers is done.
+   * first, so there is never more than one per account). The sources start
+   * side by side: each is loaded, then its bus starts, so the bus catches
+   * up from a fresh cache, and a slow or silent server holds back its own
+   * bus only. A load that fails (server unreachable) does not hold its bus
+   * back, which reconnects by itself. A stopRealtime during the start
+   * cancels what has not started yet. The bus resubscribes after a delivery
+   * that joined a channel, once the reload that delivery triggers is done.
    */
   async startRealtime(transportFor: (configId: string) => BusTransport): Promise<void> {
     this.stopRealtime();
     const run = this.realtimeRun;
-    for (const src of await this.sources({ online: true })) {
-      try {
-        await this.load(src);
-      } catch (e) {
-        console.warn("chat: load before realtime failed", e);
-      }
-      if (run !== this.realtimeRun) return;
-      const bus = new ChatBus(src, {
-        transport: () => transportFor(src.configId),
-        session: async () => ({
-          sessionId: (await this.rpc.getSession(src.creds)).sessionId,
-          version: (await this.repo.sourceState(src.configId)).wsVersion ?? BUS_VERSION_FALLBACK,
-        }),
-        reauth: async () => {
-          await this.rpc.authenticate(src.creds);
-        },
-        state: () => this.repo.sourceState(src.configId),
-        saveLast: (id) =>
-          this.repo.setSourceState({ configId: src.configId, lastBusId: id, busSeenAt: this.now().toISOString() }),
-        channels: async () =>
-          (await this.repo.channels(src.configId))
-            .filter((c) => c.correspondentPartnerId != null)
-            .map((c) => `odoo-presence-res.partner_${c.correspondentPartnerId}`),
-        deliver: async (n) => {
-          await this.applyBus(src.configId, n);
-          if (n.some((x) => x.message?.type === "discuss.channel/joined")) bus.resubscribe();
-        },
-        reload: () => this.load(src),
-      });
-      try {
-        bus.start();
-      } catch (e) {
-        // An insecure server (http without the option) gets no realtime
-        console.warn("chat: realtime not started", e);
-        continue;
-      }
-      this.buses.set(src.configId, bus);
+    const sources = await this.sources({ online: true });
+    if (run !== this.realtimeRun) return;
+    await Promise.all(sources.map((src) => this.startSource(src, run, transportFor)));
+  }
+
+  private async startSource(src: ChatSource, run: number, transportFor: (configId: string) => BusTransport): Promise<void> {
+    try {
+      await this.load(src);
+    } catch (e) {
+      console.warn("chat: load before realtime failed", e);
     }
+    if (run !== this.realtimeRun) return;
+    const bus = new ChatBus(src, {
+      transport: () => transportFor(src.configId),
+      session: async () => ({
+        sessionId: (await this.rpc.getSession(src.creds)).sessionId,
+        version: (await this.repo.sourceState(src.configId)).wsVersion ?? BUS_VERSION_FALLBACK,
+      }),
+      reauth: async () => {
+        await this.rpc.authenticate(src.creds);
+      },
+      state: () => this.repo.sourceState(src.configId),
+      saveLast: (id) =>
+        this.repo.setSourceState({ configId: src.configId, lastBusId: id, busSeenAt: this.now().toISOString() }),
+      channels: async () =>
+        (await this.repo.channels(src.configId))
+          .filter((c) => c.correspondentPartnerId != null)
+          .map((c) => `odoo-presence-res.partner_${c.correspondentPartnerId}`),
+      deliver: async (n) => {
+        await this.applyBus(src.configId, n);
+        if (n.some((x) => x.message?.type === "discuss.channel/joined")) bus.resubscribe();
+      },
+      reload: () => this.load(src),
+    });
+    try {
+      bus.start();
+    } catch (e) {
+      // An insecure server (http without the option) gets no realtime
+      console.warn("chat: realtime not started", e);
+      return;
+    }
+    this.buses.set(src.configId, bus);
   }
 
   /** The network is back: every bus not connected tries at once (ChatBus.reconnectNow). */
