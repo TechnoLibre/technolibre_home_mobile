@@ -19,9 +19,10 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Un message écrit hors ligne attend dans une file, dans l'ordre, et un envoi
   dont la réponse s'est perdue est retrouvé par un marqueur caché dans son
   corps au lieu d'être posté deux fois ; avec le module serveur facultatif
-  `erplibre_mobile_chat`, installé depuis Options › Clavardage par un
-  utilisateur système, le serveur le reconnaît aussi. Options › Clavardage
-  coupe les accusés de lecture et l'indicateur de frappe envoyés au serveur.
+  `erplibre_mobile_chat`, installé depuis « Modifier une application » par
+  un utilisateur système, le serveur le reconnaît aussi. Options ›
+  Clavardage coupe les accusés de lecture et l'indicateur de frappe envoyés
+  au serveur.
 - **Points d'entrée des tests de synchro** — `src/testing/syncTestKit.ts`
   (versionné par `HARNESS_API`) prépare le code de synchro pour les tests
   d'intégration d'ERPLibre contre de vrais Odoo ; une construction de

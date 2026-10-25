@@ -118,7 +118,7 @@ export class ChatThreadComponent extends EnhancedComponent {
           </button>
         </div>
       </div>
-      <p t-if="!state.found" class="chat-thread__missing" t-esc="t('chat.thread_missing')"/>
+      <p t-if="!state.found" class="chat-thread__missing" t-esc="state.rows.length ? t('chat.channel_gone') : t('chat.thread_missing')"/>
       <div class="chat-thread__scroll" t-ref="scroller" t-on-scroll="onScroll">
         <div t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-thread__bubble"
              t-att-class="{'chat-thread__bubble--own': row.own}">
@@ -249,7 +249,13 @@ export class ChatThreadComponent extends EnhancedComponent {
         const repo = this.chatService.repo;
         const channel = await repo.channel(this.configId, this.channelId);
         if (!channel) {
+            // Left or deleted: what was still to post stays shown, as not sent
             this.state.found = false;
+            const self = (await repo.sourceState(this.configId)).selfPartnerId;
+            const kept = (await this.chatService.messages(this.configId, this.channelId))
+                .filter((m) => m.messageId === null);
+            this._sig = "";
+            this.state.rows = kept.map((m) => this.rowOf(m, null, [], self, []));
             return;
         }
         const [messages, members, partners, st] = await Promise.all([
@@ -342,7 +348,7 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     private rowOf(
         m: ChatMessage,
-        channel: ChatChannel,
+        channel: ChatChannel | null,
         members: ChatMember[],
         self: number | null,
         ops: { id: string; dependsOn: string | null }[],
@@ -357,6 +363,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             } else if (m.messageId !== null) {
                 const others = members.filter((x) => x.partnerId !== self);
                 const seen =
+                    channel !== null &&
                     channel.channelType !== "channel" &&
                     others.length > 0 &&
                     others.every((x) => x.seenMessageId !== null && x.seenMessageId >= m.messageId!);
@@ -522,8 +529,11 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.state.text = "";
         this.state.inputRows = 1;
         this.state.error = "";
+        const sending = this.chatService.send(this.source, this.channelId, text);
+        // The message ends the typing, as Odoo's composer does on a post
+        this.chatService.typing(this.source, this.channelId, false).catch(() => {});
         try {
-            await this.chatService.send(this.source, this.channelId, text);
+            await sending;
         } catch {
             if (!this.state.text) this.state.text = raw;
             this.state.error = t("chat.send_error");

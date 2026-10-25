@@ -24,9 +24,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   A message written offline waits in a queue, in order, and a post whose
   answer was lost is found again by a hidden marker in its body instead of
   being posted twice; with the optional `erplibre_mobile_chat` server
-  module, installed from Options › Chat by a system user, the server
-  recognises it too. Options › Chat turns off the read receipts and the
-  typing indicator sent to the server.
+  module, installed from « Edit an application » by a system user, the
+  server recognises it too. Options › Chat turns off the read receipts and
+  the typing indicator sent to the server.
 - **Sync test entry points** — `src/testing/syncTestKit.ts` (versioned by
   `HARNESS_API`) sets the sync code up for ERPLibre's integration tests
   against real Odoo servers; a development build also exposes
@@ -430,9 +430,10 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Un message écrit hors ligne attend dans une file, dans l'ordre, et un envoi
   dont la réponse s'est perdue est retrouvé par un marqueur caché dans son
   corps au lieu d'être posté deux fois ; avec le module serveur facultatif
-  `erplibre_mobile_chat`, installé depuis Options › Clavardage par un
-  utilisateur système, le serveur le reconnaît aussi. Options › Clavardage
-  coupe les accusés de lecture et l'indicateur de frappe envoyés au serveur.
+  `erplibre_mobile_chat`, installé depuis « Modifier une application » par
+  un utilisateur système, le serveur le reconnaît aussi. Options ›
+  Clavardage coupe les accusés de lecture et l'indicateur de frappe envoyés
+  au serveur.
 - **Points d'entrée des tests de synchro** — `src/testing/syncTestKit.ts`
   (versionné par `HARNESS_API`) prépare le code de synchro pour les tests
   d'intégration d'ERPLibre contre de vrais Odoo ; une construction de

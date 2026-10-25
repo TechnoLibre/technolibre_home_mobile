@@ -702,6 +702,38 @@ describe("ChatService", () => {
     void starting;
   });
 
+  it("leaving a channel drops its outbox rows and keeps its unsent texts as failed", async () => {
+    fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.queue.queuePost(config, QUIET, "too late", false);
+    await chat.queue.queueRead(config, QUIET, 900, false);
+    await chat.queue.queuePost(config, GROUP, "stays", false);
+    await chat.applyBus(config, [bus(1001, "discuss.channel/leave", { "discuss.channel": [{ id: QUIET }] })]);
+    const ops = await env.db.getOutboxOpsForConfig(config);
+    expect(ops.map((o) => o.params.channelId)).toEqual([GROUP]);
+    expect((await chat.messages(config, QUIET)).map((m) => [m.status, m.outboxOpId])).toEqual([["failed", null]]);
+  });
+
+  it("a post answered while a load reads is settled after the load writes", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    let release!: () => void;
+    odoo.state.hold = new Promise((r) => { release = r; });
+    const reads = odoo.on("/mail/data").length;
+    // The load reads GROUP with 2 unread, before the post exists
+    const loading = chat.load(src);
+    await vi.waitFor(() => expect(odoo.on("/mail/data")).toHaveLength(reads + 1));
+    const sending = chat.send(src, GROUP, "hello");
+    await vi.waitFor(() => expect(odoo.on("/mail/message/post")).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 10));
+    release();
+    await Promise.all([loading, sending]);
+    // Posting reads the channel for its author: the older read does not bring the 2 back
+    expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(0);
+  });
+
   it("realtime keeps a second start keeps one bus per source, stop closes its transport", async () => {
     fakeOdoo();
     const made: { open: any; close: any }[] = [];

@@ -269,9 +269,11 @@ export class ChatRepository {
   /**
    * Applies a store delta: upserts first, then deletions, so a record both
    * upserted and deleted in one delta ends deleted. A channel deletion takes
-   * its messages and members with it. Channel counters follow gateCounter;
-   * `fromBus` says the delta comes from a bus delivery, where a counter
-   * without its bus id is not taken.
+   * its members and server messages with it; the messages it still had to
+   * post stay, as failed and detached from the outbox, so the text typed is
+   * not lost (the conversation screen shows them). Channel counters follow
+   * gateCounter; `fromBus` says the delta comes from a bus delivery, where
+   * a counter without its bus id is not taken.
    */
   async applyDelta(configId: string, d: StoreDelta, opts: { fromBus?: boolean } = {}): Promise<void> {
     for (const p of d.channels) await this.upsertChannel(configId, p, !!opts.fromBus);
@@ -289,7 +291,11 @@ export class ChatRepository {
     for (const id of d.deletedMemberIds) await this.del("chat_members", { id: key(configId, id) });
     for (const id of d.deletedChannelIds) {
       await this.del("chat_channels", { id: key(configId, id) });
-      await this.del("chat_messages", { config_id: configId, channel_id: id });
+      for (const r of await this.rows("chat_messages", { config_id: configId, channel_id: id })) {
+        const m = messageFromRow(r);
+        if (m.messageId !== null) await this.del("chat_messages", { id: r.id });
+        else await this.put("chat_messages", this.messageRow({ ...m, status: "failed", outboxOpId: null }));
+      }
       await this.del("chat_members", { config_id: configId, channel_id: id });
     }
     const state: Partial<ChatSourceState> = {};
@@ -369,6 +375,8 @@ export class ChatRepository {
         return;
       }
     }
+    // A bus partial of a message never cached, without its channel (a reaction, an edit): nothing to show it in
+    if (!base && p.channelId === undefined) return;
     const fresh: ChatMessage = base ?? {
       configId,
       channelId: p.channelId ?? 0,

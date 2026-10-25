@@ -94,6 +94,25 @@ describe("ChatThreadComponent", () => {
         expect(c.state.rows.at(-1).meta).toBe("pending");
     });
 
+    it("a send stops the typing notice at once", async () => {
+        const chat = fakeChat([]);
+        const c = make(chat);
+        await c.open();
+        c.state.text = "hello";
+        await c.onSend();
+        expect(chat.typing).toHaveBeenCalledWith(expect.anything(), 5, false);
+    });
+
+    it("a conversation gone with unsent messages shows them as not sent, with the notice", async () => {
+        const chat = fakeChat([msg(null, { status: "failed", outboxOpId: null, body: "<p>late</p>" })]);
+        chat.repo.channel.mockResolvedValue(null);
+        const c = make(chat);
+        await c.open();
+        expect(c.state.found).toBe(false);
+        expect(c.state.rows.map((r: any) => [r.meta, r.opId])).toEqual([["failed", null]]);
+        expect(String(c.state.rows[0].html)).toContain("late");
+    });
+
     it("empty text is not sent", async () => {
         const chat = fakeChat([]);
         const c = make(chat);

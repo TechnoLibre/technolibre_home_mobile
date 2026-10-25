@@ -115,6 +115,7 @@ export class ChatService {
     this.repo = new ChatRepository(db);
     this.queue = new ChatOutbox(db, rpc, outbox, this.repo, now);
     this.queue.isOnline = () => this.isOnline();
+    this.queue.serial = (configId, task) => this.serial(configId, task);
   }
 
   private changed(configId: string, channelId: number | null): void {
@@ -626,10 +627,12 @@ export class ChatService {
         return typeof p.channel?.id === "number" ? p.channel.id : null;
       case "discuss.channel/leave":
       case "discuss.channel/delete": {
-        const ids: number[] = type === "discuss.channel/delete"
+        const ids: number[] = (type === "discuss.channel/delete"
           ? [Number(p.id)]
-          : (p[CHANNEL_MODEL] ?? []).map((c: any) => Number(c.id));
-        await this.repo.applyDelta(configId, { ...emptyDelta(), deletedChannelIds: ids.filter(Number.isInteger) });
+          : (p[CHANNEL_MODEL] ?? []).map((c: any) => Number(c.id))).filter(Number.isInteger);
+        // Nothing left to post to: the rows leave the outbox, their texts stay as not sent (see applyDelta)
+        await this.queue.dropChannels(configId, ids);
+        await this.repo.applyDelta(configId, { ...emptyDelta(), deletedChannelIds: ids });
         return ids.length === 1 ? ids[0] : null;
       }
       case "mail.message/inbox":

@@ -56,6 +56,12 @@ const odooDate = (d: Date): string => d.toISOString().slice(0, 19).replace("T", 
 export class ChatOutbox {
   /** Whether a server may answer now; ChatService points it at its own. */
   isOnline: () => Promise<boolean> = () => networkService.isOnline();
+  /**
+   * Runs a write of server counters in the account's queue of such writers;
+   * ChatService points it at its own (see the class there), so a load
+   * reading before a post answered never writes its older counters after it.
+   */
+  serial: <T>(configId: string, task: () => Promise<T>) => Promise<T> = (_configId, task) => task();
 
   constructor(
     private db: DatabaseService,
@@ -162,6 +168,14 @@ export class ChatOutbox {
   /** Posts of the account still in the outbox, failed and blocked ones included. */
   async pendingPostCount(configId: string): Promise<number> {
     return (await this.db.getOutboxOpsForConfig(configId)).filter((o) => o.kind === CHAT_POST).length;
+  }
+
+  /** Removes the chat rows of the given channels from the outbox, posts and reads alike. */
+  async dropChannels(configId: string, channelIds: number[]): Promise<void> {
+    const gone = new Set(channelIds);
+    for (const op of await this.db.getOutboxOpsForConfig(configId)) {
+      if (op.noteId === CHAT_NOTE && gone.has(op.params.channelId)) await this.outbox.cancel(op.id);
+    }
   }
 
   /** Removes every chat row of the account from the outbox, posts and reads alike. */
@@ -274,9 +288,14 @@ export class ChatOutbox {
   /**
    * Gives the pending message its server id, applies the Store the post
    * answered, and marks the channel read for its author as Odoo does on a
-   * post, unless a newer message is already known.
+   * post, unless a newer message is already known. Runs in the account's
+   * queue of counter writers (serial).
    */
-  private async settle(op: OutboxOp, messageId: number, result: any): Promise<void> {
+  private settle(op: OutboxOp, messageId: number, result: any): Promise<void> {
+    return this.serial(op.configId, () => this.settleNow(op, messageId, result));
+  }
+
+  private async settleNow(op: OutboxOp, messageId: number, result: any): Promise<void> {
     const { configId } = op;
     if (result) {
       const self = (await this.repo.sourceState(configId)).selfPartnerId;

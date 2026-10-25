@@ -114,6 +114,24 @@ describe("ChatRepository", () => {
     expect(await repo.messages(A, 8)).toHaveLength(1);
   });
 
+  it("a deleted channel keeps its unsent messages as failed, detached from the outbox", async () => {
+    await repo.applyDelta(A, delta({
+      channels: [{ channelId: 7, name: "Team" }],
+      messages: [{ messageId: 1, channelId: 7, body: "x" }],
+    }));
+    await repo.putPending(pending(A, "u1"));
+    await repo.applyDelta(A, delta({ deletedChannelIds: [7] }));
+    expect(await repo.channel(A, 7)).toBeNull();
+    expect((await repo.messages(A, 7)).map((m) => [m.messageId, m.status, m.outboxOpId, m.body]))
+      .toEqual([[null, "failed", null, "hello"]]);
+  });
+
+  it("a bus partial of an uncached message without its channel writes nothing", async () => {
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 9, body: "edited" }] }));
+    expect(await repo.message(A, 9)).toBeNull();
+    expect(await repo.messages(A, 0)).toEqual([]);
+  });
+
   it("a new message defaults to sent, a partial keeps other keys", async () => {
     await repo.applyDelta(A, delta({ messages: [{ messageId: 4, channelId: 7, body: "hi", date: "2026-10-25 09:00:00" }] }));
     await repo.applyDelta(A, delta({ messages: [{ messageId: 4, body: "hi!" }] }));
@@ -151,8 +169,11 @@ describe("ChatRepository", () => {
 
   it("a bare bus record never blanks the queued text on settle", async () => {
     await repo.putPending(pending(A, "u1"));
+    // Without its channel the record of an uncached message is left out
     await repo.applyDelta(A, delta({ messages: [{ messageId: 42, writeDate: "w" }] }));
     await repo.settlePending(A, "u1", 42);
+    // Once cached, a bare record overlays only what it carries
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 42, writeDate: "w" }] }));
     const rows = await repo.messages(A, 7);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
