@@ -1014,6 +1014,7 @@ export const translations: Record<string, string> = {
   "chat.left_conversation": "Conversation quittée",
   "chat.left_failed": "Vous avez quitté cette conversation : les messages ci-dessous n'ont pas été envoyés.",
   "chat.notice_refused": "{action} : refusé par le serveur.",
+  "chat.notice_dropped": "conversation retirée — {count} actions annulées",
   "chat.notice_vanished": "{action} : non envoyé, la conversation n'existe plus ou n'est plus la vôtre.",
   "chat.action_invite": "Invitation",
   "chat.action_rename": "Renommage",

@@ -77,7 +77,8 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
   const history: Record<number, number[]> = { [CHAT]: Array.from({ length: 80 }, (_, i) => i + 1) };
   const state = {
     nextId: 5000,
-    onPost: null as null | ((params: any, id: number) => Promise<void>),
+    /** Runs while a post is on the server; a `{__error: name}` it returns answers a JSON-RPC error. */
+    onPost: null as null | ((params: any, id: number) => Promise<any>),
     /** While set, /mail/data holds its answer until the promise settles. */
     hold: null as null | Promise<void>,
     data: mailData() as any,
@@ -125,7 +126,8 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
       }
       case "/mail/message/post": {
         const id = state.nextId++;
-        if (state.onPost) await state.onPost(params, id);
+        const refusal = state.onPost ? await state.onPost(params, id) : undefined;
+        if (refusal && typeof refusal === "object" && "__error" in refusal) return answer(refusal);
         return ok({ "mail.message": [{ ...msg(id, params.thread_id, SELF, params.post_data.body), date: "2026-10-25 10:00:05" }] });
       }
       case "/web/dataset/call_kw": {
@@ -1998,6 +2000,8 @@ describe("ChatService", () => {
     expect(kwOf(odoo, "channel_rename")).toEqual([[[[realId]], { name: "Named" }]]);
     expect(odoo.on("/discuss/settings/mute").map((c) => c.params)).toEqual([{ minutes: 60, channel_id: realId }]);
     expect(odoo.on("/discuss/settings/mute").every((c) => c.params.channel_id > 0)).toBe(true);
+    // The server's row won the swap, the phone's queued values were laid over it again
+    expect(await chat.repo.channel(config, realId)).toMatchObject({ name: "Named", muteUntilDt: "2026-10-25 11:00:00" });
   });
 
   it("remove refused when not admin or module old", async () => {
@@ -2077,5 +2081,171 @@ describe("ChatService", () => {
     offline();
     expect((await chat.members(src, GENERAL)).map((m) => m.memberId).sort()).toEqual(all);
     expect(odoo.on("/discuss/channel/members")).toHaveLength(2);
+  });
+
+  it("a value queued after the in-flight op failed is the one the server ends on", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    let renamed = 0;
+    odoo.state.onKw = async ({ method }) => {
+      if (method === "channel_rename" && renamed++ === 0) { await held; throw new TypeError("Failed to fetch"); }
+      return undefined;
+    };
+    const first = chat.rename(src, GROUP, "One");
+    await vi.waitFor(() => expect(odoo.kw("channel_rename")).toHaveLength(1));
+    await chat.rename(src, GROUP, "Two");
+    release();
+    await first;
+    // The first op failed back to its retry; the third value reaches both waiting ops
+    offline();
+    await chat.rename(src, GROUP, "Three");
+    expect((await actionOps()).map((o) => o.params.name)).toEqual(["Three", "Three"]);
+    online();
+    await chat.flushAll({ force: true });
+    await chat.flushAll({ force: true });
+    expect(kwOf(odoo, "channel_rename").map(([, k]) => k.name).at(-1)).toBe("Three");
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ name: "Three" });
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+  });
+
+  it("a post on the wire refused while leaving is done as left, and the leave goes", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    odoo.state.onPost = async () => { await held; return { __error: "odoo.exceptions.AccessError" }; };
+    const posting = chat.send(src, GROUP, "refused late");
+    await vi.waitFor(() => expect(odoo.on("/mail/message/post")).toHaveLength(1));
+    await chat.leave(src, GROUP);
+    // Nothing failed yet when the leave was queued: the conversation is hidden
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ leftUnsent: false });
+    release();
+    await posting;
+    await chat.flushAll();
+    expect(kwOf(odoo, "action_unfollow")).toEqual([[[GROUP], {}]]);
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ isMember: false, leftUnsent: true });
+    expect((await chat.conversations()).map((c) => c.channelId)).toContain(GROUP);
+    expect((await chat.messages(config, GROUP)).at(-1)).toMatchObject({ status: "failed", outboxOpId: null });
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+  });
+
+  it("leaving a conversation whose create never left gives it up, nothing reaches the server", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    offline();
+    const { channelId: typed } = await chat.createGroup(src, [BOB]);
+    await chat.send(src, typed, "hello");
+    await chat.rename(src, typed, "Ours");
+    await chat.leave(src, typed);
+    const { channelId: empty } = await chat.createGroup(src, [7]);
+    await chat.leave(src, empty);
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+    // With a text typed into it, it stays listed as left; without, it is gone
+    expect(await chat.repo.channel(config, typed)).toMatchObject({ isMember: false, leftUnsent: true, createOpId: null });
+    expect((await chat.messages(config, typed)).map((m) => m.status)).toEqual(["failed"]);
+    expect(await chat.repo.channel(config, empty)).toBeNull();
+    online();
+    await chat.flushAll();
+    await chat.load(src);
+    expect(server.channels).toHaveLength(0);
+    expect(createCalls(odoo)).toHaveLength(0);
+    expect(odoo.kw("action_unfollow")).toHaveLength(0);
+    expect(await chat.repo.channel(config, typed)).toMatchObject({ leftUnsent: true });
+    await chat.discardCreate(config, typed);
+    expect(await chat.repo.channel(config, typed)).toBeNull();
+  });
+
+  it("leaving a conversation whose create is on the wire leaves it once created", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    server.state.onCreate = async () => { await held; };
+    const creating = chat.createGroup(src, [BOB]);
+    await vi.waitFor(() => expect(createCalls(odoo)).toHaveLength(1));
+    const tempId = (await chat.repo.channels(config)).find((c) => c.channelId < 0)!.channelId;
+    offline();
+    await chat.send(src, tempId, "hello");
+    await chat.leave(src, tempId);
+    release();
+    await creating;
+    const realId = server.channels[0].id;
+    // The swap keeps it left, with its text: the server's row does not make it a member again
+    expect(await chat.repo.channel(config, realId)).toMatchObject({ isMember: false, leftUnsent: true });
+    online();
+    await chat.flushAll();
+    expect(kwOf(odoo, "action_unfollow")).toEqual([[[realId], {}]]);
+    expect(odoo.on("/mail/message/post")).toHaveLength(0);
+    expect(server.channels).toHaveLength(1);
+    expect((await chat.messages(config, realId)).map((m) => m.status)).toEqual(["failed"]);
+    expect((await chat.conversations()).map((c) => c.channelId)).toContain(realId);
+  });
+
+  it("a conversation the server takes away leaves one notice for the actions it cancels", async () => {
+    fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    offline();
+    await chat.rename(src, GROUP, "Renamed");
+    await chat.mute(src, GROUP, 60);
+    await chat.applyBus(config, [
+      bus(1001, "discuss.channel/delete", { id: GROUP }),
+      bus(1002, "discuss.channel/leave", { "discuss.channel": [{ id: GENERAL }] }),
+    ]);
+    const notices = await chat.notices();
+    expect(notices).toEqual([expect.objectContaining({ kind: "chat.dropped", channelId: GROUP, count: 2, label: "Renamed", reason: "vanished" })]);
+    // Only the notice stays in the outbox, and no flush sends it
+    expect((await env.db.getOutboxOpsForConfig(config)).map((o) => [o.kind, o.status])).toEqual([["chat.dropped", "blocked"]]);
+    online();
+    await chat.flushAll();
+    expect((await chat.notices())).toHaveLength(1);
+    await chat.dismissNotice(config, notices[0].id);
+    expect(await chat.notices()).toEqual([]);
+  });
+
+  it("removal on a server whose module lacks it is refused once and the module state probed again", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.repo.setSourceState({ configId: config, isSystem: true, moduleState: "installed" });
+    odoo.state.onKw = async ({ method }) =>
+      (method === "erplibre_remove_member" ? { __error: "builtins.AttributeError" } : undefined);
+    await chat.removeMember(src, GROUP, BOB);
+    expect(await chat.notices()).toEqual([expect.objectContaining({ kind: "chat.remove", reason: "refused" })]);
+    expect((await env.db.getOutboxOpsForConfig(config)).map((o) => o.status)).toEqual(["blocked"]);
+    expect((await chat.repo.sourceState(config)).moduleState).not.toBe("installed");
+    expect((await chat.features(config)).canRemoveMembers).toBe(false);
+    await chat.flushAll({ force: true });
+    expect(odoo.kw("erplibre_remove_member")).toHaveLength(1);
+  });
+
+  it("a refused leave shows a notice and gives the conversation back", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    offline();
+    await chat.send(src, GROUP, "typed");
+    await chat.leave(src, GROUP);
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ leftUnsent: true });
+    odoo.state.onKw = async ({ method }) =>
+      (method === "action_unfollow" ? { __error: "odoo.exceptions.AccessError" } : undefined);
+    online();
+    await chat.flushAll();
+    expect(await chat.notices()).toEqual([expect.objectContaining({ kind: "chat.leave", channelId: GROUP, reason: "refused" })]);
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ leftUnsent: false });
+    // The next load shows the membership the server kept, and posting works again
+    await chat.load(src);
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ isMember: true });
+    odoo.state.onKw = null;
+    expect((await chat.send(src, GROUP, "again")).status).toBe("pending");
+    expect(odoo.on("/mail/message/post")).toHaveLength(1);
   });
 });

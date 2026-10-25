@@ -276,12 +276,18 @@ export class ChatListComponent extends EnhancedComponent {
         this.state.notices = notices.map((n) => this.noticeOf(n, byKey.get(n.configId + ":" + n.channelId)?.title ?? ""));
     }
 
-    /** The notice's line: the conversation's title when it is listed, then what was not done and why. */
+    /**
+     * The notice's line: the conversation's title when it is listed (else
+     * the name the notice kept), then what was not done and why.
+     */
     private noticeOf(n: ChatNotice, title: string): NoticeRow {
-        const text = t(n.reason === "vanished" ? "chat.notice_vanished" : "chat.notice_refused", {
-            action: t("chat.action_" + n.kind.replace(/^chat\./, "")),
-        });
-        return { id: n.id, configId: n.configId, text: title ? title + " — " + text : text };
+        const name = title || n.label;
+        const text = n.kind === "chat.dropped"
+            ? t("chat.notice_dropped", { count: n.count })
+            : t(n.reason === "vanished" ? "chat.notice_vanished" : "chat.notice_refused", {
+                action: t("chat.action_" + n.kind.replace(/^chat\./, "")),
+            });
+        return { id: n.id, configId: n.configId, text: name ? name + " — " + text : text };
     }
 
     failedText(row: ChatRow): string {

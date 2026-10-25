@@ -119,7 +119,9 @@ export interface ChatSourceState {
 /**
  * An action the chat outbox gave up on, kept until the user dismisses it:
  * the server refused it ("refused"), or its conversation is gone or no
- * longer the user's ("vanished"). `id` is the outbox row that holds it.
+ * longer the user's ("vanished"); or the actions a conversation the server
+ * took away cancelled (kind chat.dropped). `id` is the outbox row that
+ * holds it.
  */
 export interface ChatNotice {
   id: string;
@@ -130,6 +132,10 @@ export interface ChatNotice {
   reason: "refused" | "vanished";
   /** The server's message for a refusal; "" otherwise. */
   error: string;
+  /** Actions it stands for: those a conversation taken away cancelled (chat.dropped), else 1. */
+  count: number;
+  /** The conversation's name as cached when the notice was made (chat.dropped); "" otherwise. */
+  label: string;
 }
 
 /** One notification of the Odoo bus: its bus id and the typed message it carries. */

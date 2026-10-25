@@ -85,8 +85,8 @@ describe("ChatListComponent", () => {
     it("an action the outbox gave up on is shown until dismissed", async () => {
         const chat: any = fakeChat(["a", "b"], [chan("a", 5, { name: "Team" })]);
         chat.notices = vi.fn().mockResolvedValue([
-            { id: "op1", configId: "a", kind: "chat.rename", channelId: 5, reason: "refused", error: "no" },
-            { id: "op2", configId: "b", kind: "chat.global_mute", channelId: null, reason: "vanished", error: "" },
+            { id: "op1", configId: "a", kind: "chat.rename", channelId: 5, reason: "refused", error: "no", count: 1, label: "" },
+            { id: "op2", configId: "b", kind: "chat.dropped", channelId: 9, reason: "vanished", error: "", count: 3, label: "Gone" },
         ]);
         chat.dismissNotice = vi.fn().mockResolvedValue(undefined);
         const c = make(chat);
@@ -94,7 +94,7 @@ describe("ChatListComponent", () => {
         expect(chat.notices).toHaveBeenCalledWith(["a", "b"]);
         expect(c.state.notices.map((n: any) => n.text)).toEqual([
             "Team — Renaming: refused by the server.",
-            "Mute of every conversation: not sent, the conversation is gone or no longer yours.",
+            "Gone — conversation removed — 3 actions cancelled",
         ]);
         await c.onDismissNotice(c.state.notices[0]);
         expect(chat.dismissNotice).toHaveBeenCalledWith("a", "op1");

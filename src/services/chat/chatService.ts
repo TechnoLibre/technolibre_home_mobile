@@ -153,6 +153,7 @@ export class ChatService {
       this.changed(configId, channelId);
     };
     this.queue.changed = (configId, channelId) => this.changed(configId, channelId);
+    this.queue.moduleRefused = (configId) => this.probeModule(configId);
   }
 
   private changed(configId: string, channelId: number | null): void {
@@ -725,6 +726,19 @@ export class ChatService {
     }
   }
 
+  /**
+   * Probes the server module again, skipping the capability cache, and
+   * stores the state: a call of the module answered as a missing method
+   * means the module is older or gone, so the features it gives go.
+   */
+  private async probeModule(configId: string): Promise<void> {
+    const src = await this.sourceOf(configId);
+    if (!src) return;
+    const state = await moduleState(this.rpc, this.capabilities, src.creds, { online: true, fresh: true });
+    await this.repo.setSourceState({ configId, moduleState: state });
+    this.changed(configId, null);
+  }
+
   /** The actions the outbox gave up on for the given accounts (all live ones by default), until dismissed. */
   async notices(configIds?: string[]): Promise<ChatNotice[]> {
     return this.queue.notices(await this.configIds(configIds));
@@ -1116,8 +1130,9 @@ export class ChatService {
         const ids: number[] = (type === "discuss.channel/delete"
           ? [Number(p.id)]
           : (p[CHANNEL_MODEL] ?? []).map((c: any) => Number(c.id))).filter(Number.isInteger);
-        // Nothing left to post to: the rows leave the outbox, their texts stay as not sent (see applyDelta)
-        await this.queue.dropChannels(configId, ids);
+        // Nothing left to post to: the rows leave the outbox, their texts stay as not sent (see applyDelta);
+        // actions the user still had for it leave a notice
+        await this.queue.dropTaken(configId, ids);
         // Left by the user with texts unsent: kept, out of membership, until dismissed
         const kept: number[] = [];
         if (type === "discuss.channel/leave") {
