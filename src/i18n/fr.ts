@@ -983,4 +983,12 @@ export const translations: Record<string, string> = {
   "streamdeck.log_clear": "🗑 Vider",
   "streamdeck.log_empty": "Aucun événement.",
   "streamdeck.log_no_usb_device": "⚠️ aucun device USB — OTG inactif ou câble HS",
+  "label.chat": "Clavardage",
+  "chat.all": "Tous",
+  "chat.unavailable": "Le clavardage demande un serveur Odoo 18 configuré.",
+  "chat.add_server": "Ajouter un serveur",
+  "chat.search_placeholder": "Rechercher une conversation",
+  "chat.empty": "Aucune conversation.",
+  "chat.server_filter": "Serveur",
+  "chat.loading": "Actualisation…",
 };

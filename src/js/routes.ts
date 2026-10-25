@@ -3,6 +3,7 @@ import { ApplicationsComponent } from "../components/applications/applications_c
 import { OptionsComponent } from "../components/options/options_component";
 import { OptionsDatabaseComponent } from "../components/options/database/options_database_component";
 import { OptionsErplibreComponent } from "../components/options/erplibre/options_erplibre_component";
+import { ChatListComponent } from "../components/chat/chat_list_component";
 import { ApplicationsAddComponent } from "../components/applications/add/applications_add_component";
 import { ApplicationsEditComponent } from "../components/applications/edit/applications_edit_component";
 import { IntentComponent } from "../components/intent/intent_component";
@@ -34,7 +35,8 @@ export interface Route {
 
 export const routes: Route[] = [
 	{ pathname: "/", component: HomeComponent },
-	{ pathname: "/applications/edit/:url/:username", component: ApplicationsEditComponent },
+	{ pathname: "/chat", component: ChatListComponent },
+{ pathname: "/applications/edit/:url/:username", component: ApplicationsEditComponent },
 	{ pathname: "/applications/add", component: ApplicationsAddComponent },
 	{ pathname: "/applications/gallery", component: ApplicationsGalleryComponent },
 	{ pathname: "/applications", component: ApplicationsComponent },

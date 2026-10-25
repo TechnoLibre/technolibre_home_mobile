@@ -4416,6 +4416,30 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatLifecycle.ts",
                 ],
             },
+            {
+                id: "chat.list",
+                label: { en: "Conversation list", fr: "Liste des conversations" },
+                description: {
+                    en: "Home tile with the unread badge and the mixed conversation list of every chat server.",
+                    fr: "Tuile d'accueil avec le badge de non lus et liste mixte des conversations de tous les serveurs.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The list renders from the cache with the sources decided offline, then each server is "
+                        + "read in the background and the list is rebuilt when the chat cache changes. With one "
+                        + "server no choice is shown, with two to four chips, with five or more a dropdown.",
+                    fr: "La liste s'affiche depuis le cache, les sources étant décidées hors ligne, puis chaque "
+                        + "serveur est lu en arrière-plan et la liste est refaite quand le cache change. Avec un "
+                        + "serveur aucun choix n'est montré, avec deux à quatre des pastilles, avec cinq ou plus "
+                        + "une liste déroulante.",
+                },
+                demo: { kind: "route", url: "/chat" },
+                files: [
+                    "src/components/chat/chat_list_component.ts",
+                    "src/components/chat/chat_list_component.scss",
+                ],
+                tests: ["src/__tests__/chatListComponent.test.ts"],
+            },
         ],
     },
 ];

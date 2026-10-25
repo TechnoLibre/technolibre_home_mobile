@@ -1,0 +1,135 @@
+#chat-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	padding: 0 var(--page-gutter, 0.75rem) 1rem;
+}
+
+.chat-list__unavailable {
+	text-align: center;
+	padding: 2rem 1rem;
+}
+
+.chat-list__chips {
+	display: flex;
+	gap: 0.4rem;
+	overflow-x: auto;
+}
+
+.chat-list__chip {
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 999px;
+	background: transparent;
+	color: inherit;
+	padding: 0.3rem 0.8rem;
+	white-space: nowrap;
+}
+
+.chat-list__chip--on {
+	background: var(--btn-blue-color, #2563eb);
+	border-color: var(--btn-blue-color, #2563eb);
+	color: #fff;
+}
+
+.chat-list__select,
+.chat-list__search {
+	width: 100%;
+	padding: 0.5rem;
+	box-sizing: border-box;
+}
+
+.chat-list__refreshing,
+.chat-list__empty {
+	color: var(--text-greyed-out);
+	text-align: center;
+	font-size: 0.85rem;
+}
+
+.chat-list__rows {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.chat-list__row {
+	display: flex;
+	gap: 0.7rem;
+	align-items: center;
+	padding: 0.6rem 0;
+	border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+	cursor: pointer;
+}
+
+.chat-list__row--bold .chat-list__title,
+.chat-list__row--bold .chat-list__preview {
+	font-weight: 700;
+}
+
+.chat-list__avatar {
+	flex: 0 0 2.4rem;
+	height: 2.4rem;
+	border-radius: 50%;
+	background: var(--btn-blue-color, #2563eb);
+	color: #fff;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 0.9rem;
+}
+
+.chat-list__body {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+}
+
+.chat-list__top,
+.chat-list__bottom {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.chat-list__title {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chat-list__time {
+	font-size: 0.72rem;
+	color: var(--text-greyed-out);
+}
+
+.chat-list__tag {
+	font-size: 0.65rem;
+	color: #1e7e34;
+	border: 1px solid #1e7e34;
+	border-radius: 4px;
+	padding: 0 0.25rem;
+}
+
+.chat-list__preview {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 0.82rem;
+	color: var(--text-greyed-out);
+}
+
+.chat-list__pill {
+	background: #d93025;
+	color: #fff;
+	border-radius: 999px;
+	font-size: 0.68rem;
+	font-weight: 700;
+	min-width: 1.1rem;
+	padding: 0.15rem 0.35rem;
+	text-align: center;
+	margin-left: 0.3rem;
+}

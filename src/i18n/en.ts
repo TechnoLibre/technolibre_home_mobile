@@ -983,4 +983,12 @@ export const translations: Record<string, string> = {
   "streamdeck.log_clear": "🗑 Clear",
   "streamdeck.log_empty": "No events.",
   "streamdeck.log_no_usb_device": "⚠️ no USB device — OTG inactive or cable faulty",
+  "label.chat": "Chat",
+  "chat.all": "All",
+  "chat.unavailable": "Chat needs an Odoo 18 server to be configured.",
+  "chat.add_server": "Add a server",
+  "chat.search_placeholder": "Search conversations",
+  "chat.empty": "No conversation.",
+  "chat.server_filter": "Server",
+  "chat.loading": "Refreshing…",
 };
