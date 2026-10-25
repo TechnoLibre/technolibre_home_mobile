@@ -4333,6 +4333,19 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.bus",
+                label: { en: "Odoo bus client", fr: "Client du bus Odoo" },
+                description: {
+                    en: "Subscribes to the Odoo 18 bus over a websocket transport, delivers frames, saves the last id and reconnects by close code.",
+                    fr: "S'abonne au bus d'Odoo 18 par un transport websocket, livre les trames, garde le dernier id et se reconnecte selon le code de fermeture.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatBus.ts",
+                ],
+            },
+            {
                 id: "chat.outbox",
                 label: { en: "Chat outbox", fr: "Boîte d'envoi du clavardage" },
                 description: {
