@@ -4264,6 +4264,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/chat/chatUnread.ts",
+                    "src/services/chat/chatMute.ts",
                 ],
             },
             {
@@ -4309,8 +4310,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.options",
                 label: { en: "Chat options", fr: "Options du clavardage" },
                 description: {
-                    en: "Options section with the send read and send typing switches.",
-                    fr: "Section des options avec les interrupteurs d'envoi de « lu » et de « écrit… ».",
+                    en: "Options section with the send read and send typing switches and the global mute per server.",
+                    fr: "Section des options avec les interrupteurs d'envoi de « lu » et de « écrit… » et la sourdine globale par serveur.",
                 },
                 status: "experimental",
                 dependsOn: ["chat.settings"],
