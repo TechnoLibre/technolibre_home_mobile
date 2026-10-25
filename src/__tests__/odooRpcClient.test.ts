@@ -155,6 +155,26 @@ describe("OdooRpcClient helpers", () => {
     expect(calls[0].params.kwargs).not.toHaveProperty("body_is_html");
   });
 
+  it("sessionInfo returns partner id, system flag and websocket version", async () => {
+    const calls = server(() => ({
+      result: {
+        uid: 7, partner_id: 42, is_system: true, websocket_worker_version: "18.0-7",
+        user_companies: { allowed_companies: { 1: { id: 1, name: "Main" } }, current_company: 1 },
+      },
+    }));
+    expect(await rpc.sessionInfo(CREDS)).toEqual({
+      uid: 7, companies: [{ id: 1, name: "Main" }], currentCompany: 1,
+      partnerId: 42, isSystem: true, websocketWorkerVersion: "18.0-7",
+    });
+    await rpc.sessionInfo(CREDS);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("sessionInfo falls back when the server omits the new keys", async () => {
+    server(() => ({ result: { uid: 7 } }));
+    expect(await rpc.sessionInfo(CREDS)).toMatchObject({ partnerId: 0, isSystem: false, websocketWorkerVersion: null });
+  });
+
   it("odooVersion reads the stored session", async () => {
     await storeSession(16);
     expect(await rpc.odooVersion(CREDS)).toBe(16);

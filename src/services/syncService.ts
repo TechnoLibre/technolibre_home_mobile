@@ -1,4 +1,5 @@
 import { DatabaseService, NoteLink, NoteLinkKind, OutboxOp } from "./databaseService";
+import { CHAT_NOTE } from "./chat/chatOutbox";
 import { OutboxBlockedError, OutboxRetryLaterError, OutboxService } from "./outboxService";
 import { CapabilityService } from "./odoo/capabilityService";
 import { PROJECT_MODEL, ProjectService } from "./odoo/projectService";
@@ -56,7 +57,7 @@ const TASK_MODEL = "project.task";
  * default limit_time_real (120 s), so a create still running on the server
  * has committed — or been killed — before the search.
  */
-const CREATE_QUIET_WINDOW_MS = 3 * 60 * 1000;
+export const CREATE_QUIET_WINDOW_MS = 3 * 60 * 1000;
 
 /** Tasks an ambiguous marker search lists for the user to pick from. */
 const AMBIGUOUS_CANDIDATES_SHOWN = 5;
@@ -2964,6 +2965,8 @@ export class SyncService {
   async hasDueWork(configId: string): Promise<boolean> {
     const ops = await this.db.getOutboxOpsForConfig(configId);
     for (const op of ops) {
+      // The chat outbox drains its own rows (ChatOutbox.flush)
+      if (op.noteId === CHAT_NOTE) continue;
       // drain leaves an operation whose dependency is still queued
       if (!this.outbox.isDue(op) || (op.dependsOn && ops.some((o) => o.id === op.dependsOn))) continue;
       if (!(await this.tieWaiting(op))) return true;
@@ -3059,7 +3062,7 @@ export class SyncService {
       }
     }
 
-    const drained = await this.outbox.drain(creds, configId, { force: options.force, skipNoteIds: pushed });
+    const drained = await this.outbox.drain(creds, configId, { force: options.force, skipNoteIds: new Set([...pushed, CHAT_NOTE]) });
     result.pushed += drained.done;
     result.errors.push(...drained.errors);
 

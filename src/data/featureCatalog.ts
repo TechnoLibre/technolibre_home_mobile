@@ -4319,6 +4319,32 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatRepository.ts",
                 ],
             },
+            {
+                id: "chat.outbox",
+                label: { en: "Chat outbox", fr: "Boîte d'envoi du clavardage" },
+                description: {
+                    en: "Queued posts and reads, sent once even when an answer is lost, apart from the note sync.",
+                    fr: "Envois et lectures en file, faits une seule fois même si une réponse se perd, à part de la synchro des notes.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "A post is stored as a pending message and an outbox row before any request. "
+                        + "With the server module the client uuid travels in the post and the server "
+                        + "answers a repeat with the message it holds; without it the body ends with "
+                        + "a hidden comment that a retry searches for and adopts. Posts of one channel "
+                        + "wait for each other; reads merge to the highest message id.",
+                    fr: "Un envoi est gardé comme message en attente et ligne de la boîte d'envoi "
+                        + "avant toute requête. Avec le module serveur, l'uuid du client voyage dans "
+                        + "l'envoi et le serveur répond à une répétition par le message qu'il détient ; "
+                        + "sans lui, le corps se termine par un commentaire caché qu'un nouvel essai "
+                        + "cherche et adopte. Les envois d'un canal s'attendent ; les lectures "
+                        + "fusionnent vers le plus haut id de message.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatOutbox.ts",
+                ],
+            },
         ],
     },
 ];

@@ -145,6 +145,17 @@ describe("OutboxService", () => {
       expect(await db.getOutboxOpsForConfig(CONFIG)).toHaveLength(4);
     });
 
+    it("onlyNoteIds restricts a drain to those notes", async () => {
+      const ran: string[] = [];
+      outbox.registerHandler("k", record(ran));
+      await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "k", params: { tag: "a" } });
+      await outbox.enqueue({ noteId: "chat", configId: CONFIG, kind: "k", params: { tag: "c" } });
+
+      await outbox.drain(CREDS, CONFIG, { onlyNoteIds: new Set(["chat"]) });
+      expect(ran).toEqual(["c"]);
+      expect(await db.getOutboxOpsForConfig(CONFIG)).toHaveLength(1);
+    });
+
     it("runs a row only once the row it depends on is done", async () => {
       const ran: string[] = [];
       outbox.registerHandler("k", record(ran));

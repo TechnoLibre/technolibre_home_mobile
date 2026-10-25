@@ -24,6 +24,12 @@ export interface SessionInfo {
   /** The companies the user may work in, the current one first. */
   companies: Array<{ id: number; name: string }>;
   currentCompany: number | null;
+  /** The user's partner (0 when the server does not say). */
+  partnerId: number;
+  /** Member of the system administration group. */
+  isSystem: boolean;
+  /** Version the bus websocket handshake expects, null without the bus. */
+  websocketWorkerVersion: string | null;
 }
 
 /** One field of fields_get, with the attributes the app asks for. */
@@ -354,7 +360,14 @@ export class OdooRpcClient {
     const companies = allowed
       .map((c) => ({ id: Number(c.id), name: String(c.name ?? `#${c.id}`) }))
       .sort((a, b) => Number(b.id === current) - Number(a.id === current));
-    const result: SessionInfo = { uid, companies, currentCompany: current };
+    const result: SessionInfo = {
+      uid,
+      companies,
+      currentCompany: current,
+      partnerId: Number(info?.partner_id) || 0,
+      isSystem: info?.is_system === true,
+      websocketWorkerVersion: typeof info?.websocket_worker_version === "string" ? info.websocket_worker_version : null,
+    };
     this._sessions.set(key, result);
     return result;
   }

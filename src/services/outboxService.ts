@@ -286,19 +286,21 @@ export class OutboxService {
    * Runs, oldest first, the due operations of one server (see isDue;
    * force ignores the retry delay) whose dependency is done and whose
    * kind has a handler. An operation of a note in skipNoteIds is left for
-   * later: the caller already ran that note in this pass. A failure is
+   * later: the caller already ran that note in this pass. With
+   * onlyNoteIds, only the operations of those notes run. A failure is
    * counted and the next operation still runs.
    */
   async drain(
     creds: SyncCredentials,
     configId: string,
-    options: { force?: boolean; skipNoteIds?: Set<string> } = {}
+    options: { force?: boolean; skipNoteIds?: Set<string>; onlyNoteIds?: Set<string> } = {}
   ): Promise<DrainResult> {
     const result: DrainResult = { done: 0, failed: 0, blocked: 0, errors: [] };
     const ops = await this.db.getOutboxOpsForConfig(configId);
     const pendingIds = new Set(ops.map((op) => op.id));
     for (const op of ops) {
       if (options.skipNoteIds?.has(op.noteId)) continue;
+      if (options.onlyNoteIds && !options.onlyNoteIds.has(op.noteId)) continue;
       if (!this.isDue(op, options.force)) continue;
       if (op.dependsOn && pendingIds.has(op.dependsOn)) continue;
       const handler = this.handlers.get(op.kind);
