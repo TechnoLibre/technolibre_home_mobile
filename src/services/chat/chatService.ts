@@ -85,13 +85,22 @@ export class ChatService {
   /** Per "configId#channelId", when "typing" was last sent and the pending stop. */
   private typingState = new Map<string, { sentAt: number | null; stop: ReturnType<typeof setTimeout> | null }>();
 
+  /**
+   * "auto" posts through the server module when it is installed; "ignore"
+   * always takes the marker path, as against a server without the module.
+   * Public so a test kit can switch it on the service SyncService builds.
+   */
+  moduleMode: "auto" | "ignore";
+
   constructor(
     private db: DatabaseService,
     private rpc: OdooRpcClient,
     outbox: OutboxService,
     private capabilities: CapabilityService,
     private now: () => Date = () => new Date(),
+    opts: { moduleMode?: "auto" | "ignore" } = {},
   ) {
+    this.moduleMode = opts.moduleMode ?? "auto";
     this.repo = new ChatRepository(db);
     this.queue = new ChatOutbox(db, rpc, outbox, this.repo, now);
   }
@@ -310,7 +319,8 @@ export class ChatService {
    */
   async send(src: ChatSource, channelId: number, text: string): Promise<ChatMessage> {
     const { configId } = src;
-    const useModule = (await this.repo.sourceState(configId)).moduleState === "installed";
+    const useModule = this.moduleMode === "auto"
+      && (await this.repo.sourceState(configId)).moduleState === "installed";
     const message = await this.queue.queuePost(configId, channelId, text, useModule);
     this.changed(configId, channelId);
     if (await this.isOnline()) {

@@ -16,9 +16,11 @@ import { APP_MIGRATIONS } from "../services/migrations";
 import { NoteService } from "../services/note/noteService";
 import { SyncService, syncConfigIdOf } from "../services/syncService";
 import type { SyncCredentials } from "../services/syncService";
+import type { ChatService } from "../services/chat/chatService";
+import type { BusTransport } from "../services/chat/chatBus";
 import type { AttachmentIO } from "../services/attachmentService";
 
-export const HARNESS_API = 1;
+export const HARNESS_API = 2;
 
 /** Migrations that read what an older install left (secure storage, video files): none on a new database. */
 const SKIPPED_MIGRATIONS = new Set([2026031801, 2026032401]);
@@ -35,6 +37,8 @@ export interface SyncEnv {
 	db: DatabaseService;
 	sync: SyncService;
 	notes: NoteService;
+	/** The chat service of sync: it shares sync's rpc client and outbox. */
+	chat: ChatService;
 	/** Per target, in the order given: its credentials and its sync config id. */
 	creds: SyncCredentials[];
 	configIds: string[];
@@ -43,9 +47,13 @@ export interface SyncEnv {
 /**
  * A new app database, migrated as the app migrates it, with one application
  * per target, and the sync service over it. Nothing is read from a server
- * until a sync runs.
+ * until a sync runs. chatModule "ignore" makes chat posts take the marker
+ * path even where the server module is installed.
  */
-export async function createSyncEnv(targets: SyncTarget[]): Promise<SyncEnv> {
+export async function createSyncEnv(
+	targets: SyncTarget[],
+	opts: { chatModule?: "auto" | "ignore" } = {},
+): Promise<SyncEnv> {
 	const db = new DatabaseService();
 	await db.initialize();
 	for (const migration of APP_MIGRATIONS) {
@@ -59,9 +67,12 @@ export async function createSyncEnv(targets: SyncTarget[]): Promise<SyncEnv> {
 		} as any);
 		creds.push({ odooUrl: target.url, username: target.username, password: target.password, database: target.database });
 	}
+	const sync = new SyncService(db);
+	sync.chat.moduleMode = opts.chatModule ?? "auto";
 	return {
 		db,
-		sync: new SyncService(db),
+		sync,
+		chat: sync.chat,
 		notes: new NoteService(new EventBus(), db),
 		creds,
 		configIds: creds.map(syncConfigIdOf),
@@ -113,4 +124,29 @@ export function memoryAttachmentIO(options: { files?: Record<string, string>; wi
 export function resetMocks(): void {
 	(SecureStoragePlugin as any)._store?.clear?.();
 	(network as any).__resetNetwork?.();
+}
+
+/**
+ * A bus transport over Node's global WebSocket (Node 22+), for the long tests
+ * that run the chat bus against a real server. The headers (cookie, user
+ * agent) go in the second constructor argument, which undici accepts.
+ */
+export function nodeTransport(): BusTransport {
+	let ws: WebSocket | null = null;
+	const transport: BusTransport = {
+		open(url, headers) {
+			ws = new (WebSocket as any)(url, { headers });
+			ws!.onopen = () => transport.onOpen();
+			ws!.onmessage = (event: MessageEvent) => {
+				if (typeof event.data === "string") transport.onMessage(event.data);
+			};
+			ws!.onclose = (event: CloseEvent) => transport.onClose(event.code, event.reason);
+		},
+		send: (text) => ws?.send(text),
+		close: () => ws?.close(),
+		onOpen: () => {},
+		onMessage: () => {},
+		onClose: () => {},
+	};
+	return transport;
 }

@@ -18,7 +18,7 @@ import type { NoteService } from "../services/note/noteService";
 import type { NotificationService } from "../services/notificationService";
 import { SyncService } from "../services/syncService";
 
-export const DEVICE_HOOK_API = 1;
+export const DEVICE_HOOK_API = 2;
 
 /** The services of app.ts the hook uses. */
 export interface DeviceHookEnv {
@@ -36,6 +36,12 @@ export interface DeviceTarget {
 	username: string;
 	password: string;
 	database: string;
+}
+
+async function chatSourceOf(env: DeviceHookEnv, configId: string) {
+	const src = (await env.syncService.chat.sources()).find((s) => s.configId === configId);
+	if (!src) throw new Error(`No chat source for ${configId}`);
+	return src;
 }
 
 export function deviceTestHook(env: DeviceHookEnv) {
@@ -76,6 +82,23 @@ export function deviceTestHook(env: DeviceHookEnv) {
 				errors[syncConfigIdFor(app.url, app.username, app.database)] = (await env.syncService.syncAll(creds)).errors;
 			}
 			return errors;
+		},
+		/** The chat sources (Odoo 18 applications): their config id and label. */
+		async chatSources(): Promise<{ configId: string; label: string }[]> {
+			return (await env.syncService.chat.sources()).map(({ configId, label }) => ({ configId, label }));
+		},
+		/** Fills the chat cache of configId from the server (conversations and their latest messages). */
+		async chatLoad(configId: string): Promise<void> {
+			await env.syncService.chat.load(await chatSourceOf(env, configId));
+		},
+		/** Posts text in the channel as the composer does; returns the pending message's clientUuid. */
+		async chatSend(configId: string, channelId: number, text: string): Promise<string> {
+			const message = await env.syncService.chat.send(await chatSourceOf(env, configId), channelId, text);
+			return message.clientUuid as string;
+		},
+		/** The cached messages of the channel, oldest first. */
+		chatMessages(configId: string, channelId: number) {
+			return env.syncService.chat.messages(configId, channelId);
 		},
 		note(id: string) {
 			return env.databaseService.getNoteById(id);

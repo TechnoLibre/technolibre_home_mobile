@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { __setNetworkStatus, Network } from "@capacitor/network";
 import {
-	HARNESS_API, createSyncEnv, installLocalStorage, memoryAttachmentIO, resetMocks,
+	HARNESS_API, createSyncEnv, nodeTransport, installLocalStorage, memoryAttachmentIO, resetMocks,
 } from "../testing/syncTestKit";
 import { syncSessionKey } from "../services/syncService";
 import { isHttpAllowed } from "../services/odoo/httpPolicy";
@@ -15,8 +15,8 @@ describe("syncTestKit", () => {
 		resetMocks();
 	});
 
-	it("is at API 1", () => {
-		expect(HARNESS_API).toBe(1);
+	it("is at API 2", () => {
+		expect(HARNESS_API).toBe(2);
 	});
 
 	it("builds a migrated database with one application per target and pushes a note through it", async () => {
@@ -65,5 +65,42 @@ describe("syncTestKit", () => {
 		resetMocks();
 		await expect(SecureStoragePlugin.get({ key: "k" })).rejects.toBeTruthy();
 		expect(await Network.getStatus()).toEqual({ connected: true, connectionType: "wifi" });
+	});
+
+	describe("chat", () => {
+		async function queued(chatModule?: "auto" | "ignore") {
+			installLocalStorage({ allowHttp: true });
+			const env = await createSyncEnv([TARGET], chatModule ? { chatModule } : undefined);
+			const configId = env.configIds[0];
+			await (env.chat as any).repo.setSourceState({ configId, moduleState: "installed" });
+			env.chat.isOnline = async () => false;
+			const src = { configId, creds: env.creds[0], label: "x", app: {} } as any;
+			await env.chat.send(src, 7, "hello");
+			return (await env.db.getOutboxOpsForConfig(configId)).filter((o: any) => o.params?.channelId === 7);
+		}
+
+		it("createSyncEnv exposes chat sharing the sync rpc and outbox", async () => {
+			installLocalStorage({ allowHttp: true });
+			const env = await createSyncEnv([TARGET]);
+			expect(env.chat).toBe(env.sync.chat);
+			expect((env.chat as any).rpc).toBe(env.sync.rpc);
+			expect(env.chat.moduleMode).toBe("auto");
+		});
+
+		it("auto mode sends through the module when it is installed", async () => {
+			expect((await queued())[0].params.useModule).toBe(true);
+		});
+
+		it("ignore mode never sends the uuid", async () => {
+			expect((await queued("ignore"))[0].params.useModule).toBe(false);
+		});
+
+		it("nodeTransport is a BusTransport with inert default handlers", () => {
+			const t = nodeTransport();
+			for (const m of ["open", "send", "close", "onOpen", "onMessage", "onClose"] as const) {
+				expect(typeof t[m]).toBe("function");
+			}
+			expect(() => t.send("x")).not.toThrow();
+		});
 	});
 });
