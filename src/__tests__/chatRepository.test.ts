@@ -149,6 +149,30 @@ describe("ChatRepository", () => {
     expect(rows[0]).toMatchObject({ messageId: 42, status: "sent", writeDate: "w" });
   });
 
+  it("a bare bus record never blanks the queued text on settle", async () => {
+    await repo.putPending(pending(A, "u1"));
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 42, writeDate: "w" }] }));
+    await repo.settlePending(A, "u1", 42);
+    const rows = await repo.messages(A, 7);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      body: "hello", date: "2026-10-25 10:00:00", channelId: 7, authorPartnerId: 3,
+      writeDate: "w", status: "sent", outboxOpId: null,
+    });
+  });
+
+  it("a bus message carrying the client uuid ends like settlePending", async () => {
+    await repo.putPending(pending(A, "u1"));
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 42, clientUuid: "u1", writeDate: "w" }] }));
+    const viaBus = await repo.messages(A, 7);
+    expect(viaBus).toHaveLength(1);
+    await repo.putPending(pending(B, "u1"));
+    await repo.settlePending(B, "u1", 42, { writeDate: "w" });
+    const viaSettle = await repo.messages(B, 7);
+    expect(viaBus[0]).toMatchObject({ status: "sent", outboxOpId: null, clientUuid: "u1", body: "hello", messageId: 42 });
+    expect({ ...viaBus[0], configId: B }).toEqual(viaSettle[0]);
+  });
+
   it("markFailed flags the pending row", async () => {
     await repo.putPending(pending(A, "u1"));
     await repo.markFailed(A, "u1", "boom");
@@ -184,14 +208,14 @@ describe("ChatRepository", () => {
 
   it("renameSyncConfigId keeps a pending message and its channel", async () => {
     await repo.applyDelta(A, delta({ channels: [{ channelId: 7, name: "Team" }], partners: [{ configId: A, partnerId: 3, name: "Zoe", imStatus: null }] }));
-    await repo.putPending(pending(A, "u1"));
+    await repo.putPending(pending(A, "u1", { outboxOpId: "op-u1" }));
     await repo.setSourceState({ configId: A, lastBusId: 5 });
     await db.renameSyncConfigId(A, B);
     expect(await repo.channels(A)).toEqual([]);
     expect((await repo.channel(B, 7))!.name).toBe("Team");
     const rows = await repo.messages(B, 7);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ configId: B, status: "pending", clientUuid: "u1" });
+    expect(rows[0]).toMatchObject({ configId: B, status: "pending", clientUuid: "u1", outboxOpId: "op-u1" });
     await repo.settlePending(B, "u1", 50);
     expect((await repo.messages(B, 7))[0].messageId).toBe(50);
     expect((await repo.partners(B))).toHaveLength(1);

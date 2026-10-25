@@ -24,6 +24,16 @@ function defined<T extends object>(p: T): Partial<T> {
   return out;
 }
 
+/** The keys of a row that carry a value: not null, "" or 0 (a column the source never filled). */
+function meaningful<T extends object>(p: T): Partial<T> {
+  const out: Partial<T> = {};
+  for (const k of Object.keys(p) as (keyof T)[]) {
+    const v = p[k];
+    if (v !== undefined && v !== null && v !== "" && v !== 0) out[k] = v;
+  }
+  return out;
+}
+
 function maxOf(a: number | null | undefined, b: number | null | undefined): number | null {
   if (a == null) return b ?? null;
   if (b == null) return a;
@@ -302,15 +312,16 @@ export class ChatRepository {
 
   private async upsertMessage(configId: string, p: Partial<ChatMessage> & { messageId: number }): Promise<void> {
     const id = key(configId, `m${p.messageId}`);
-    let base: ChatMessage | null = null;
     const stored = await this.row("chat_messages", id);
-    if (stored) base = messageFromRow(stored);
-    // A bus echo of a queued post carries its client uuid: the queued row folds into it
+    let base: ChatMessage | null = stored ? messageFromRow(stored) : null;
+    // A bus echo of a queued post carries its client uuid: the queued row settles into it
     if (p.clientUuid) {
       const queued = await this.row("chat_messages", key(configId, `u${p.clientUuid}`));
       if (queued) {
-        base = { ...messageFromRow(queued), ...(base ? defined(base) : {}) };
+        const merged = this.mergeSettled(messageFromRow(queued), base, p, configId, p.messageId, p.clientUuid);
         await this.del("chat_messages", { id: queued.id });
+        await this.put("chat_messages", this.messageRow(merged));
+        return;
       }
     }
     const fresh: ChatMessage = base ?? {
@@ -328,8 +339,33 @@ export class ChatRepository {
     };
     const next: ChatMessage = { ...fresh, ...defined(p), configId };
     if (!base && p.status === undefined) next.status = "sent";
-    if (base && base.messageId === null) next.status = p.status ?? "sent";
     await this.put("chat_messages", this.messageRow(next));
+  }
+
+  /**
+   * The one final state of a queued post that reached the server: a single
+   * sent row, client uuid kept, no outbox op. The queued row supplies what the
+   * user typed; the server's row overlays only the values it really carries,
+   * so a bus record without a body never blanks the text.
+   */
+  private mergeSettled(
+    queued: ChatMessage | null,
+    echoed: ChatMessage | null,
+    patch: Partial<ChatMessage>,
+    configId: string,
+    messageId: number,
+    clientUuid: string,
+  ): ChatMessage {
+    return {
+      ...(queued ?? {}),
+      ...(echoed ? meaningful(echoed) : {}),
+      ...defined(patch),
+      configId,
+      messageId,
+      clientUuid,
+      status: "sent",
+      outboxOpId: null,
+    } as ChatMessage;
   }
 
   /** Every channel of one account, or of all accounts without an argument. */
@@ -390,16 +426,14 @@ export class ChatRepository {
     const queued = await this.row("chat_messages", queuedId);
     const echoed = await this.row("chat_messages", key(configId, `m${messageId}`));
     if (!queued && !echoed) return;
-    const merged: ChatMessage = {
-      ...(queued ? messageFromRow(queued) : {}),
-      ...(echoed ? defined(messageFromRow(echoed)) : {}),
-      ...defined(patch),
+    const merged = this.mergeSettled(
+      queued ? messageFromRow(queued) : null,
+      echoed ? messageFromRow(echoed) : null,
+      patch,
       configId,
       messageId,
       clientUuid,
-      status: "sent",
-      outboxOpId: null,
-    } as ChatMessage;
+    );
     if (queued) await this.del("chat_messages", { id: queuedId });
     await this.put("chat_messages", this.messageRow(merged));
   }
