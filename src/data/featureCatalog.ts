@@ -4413,6 +4413,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 demo: NONE_PLUMBING,
                 files: [
                     "src/services/chat/chatService.ts",
+                    "src/services/chat/chatLifecycle.ts",
                 ],
             },
         ],

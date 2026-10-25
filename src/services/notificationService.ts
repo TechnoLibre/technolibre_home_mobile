@@ -155,6 +155,8 @@ export class NotificationService {
         if (!any) break;
       }
       if (synced) this.eventBus.trigger(Events.RELOAD_NOTES);
+      // Chat rows have their own drain; SyncService.hasDueWork leaves them out
+      await this.syncService.chat.flushAll();
       await this.scheduleRetry();
     } catch (e) {
       console.warn("[NotificationService] flush of due work failed:", e);
@@ -272,6 +274,7 @@ export class NotificationService {
       if ((await this.syncService.pendingNoteIds(configId)).length > 0) await syncApp(app, false);
     }
     this.eventBus.trigger(Events.RELOAD_NOTES);
+    await this.syncService.chat.flushAll().catch((e) => console.warn("[NotificationService] chat flush:", e));
     this.startNtfy();
     await this.scheduleRetry().catch((e) => console.warn("[NotificationService] retry timer:", e));
   }

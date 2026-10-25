@@ -512,4 +512,22 @@ describe("ChatService", () => {
     await chat.applyBus(config, [bus(1006, "discuss.channel/joined", { channel: { id: 16, model: "discuss.channel" } })]);
     expect(odoo.on("/mail/data")).toHaveLength(loads + 1);
   });
+  it("realtime keeps a second start keeps one bus per source, stop closes its transport", async () => {
+    fakeOdoo();
+    const made: { open: any; close: any }[] = [];
+    const transportFor = () => {
+      const t = { open: vi.fn(), send: vi.fn(), close: vi.fn(), onOpen: () => {}, onMessage: () => {}, onClose: () => {} };
+      made.push(t as any);
+      return t as any;
+    };
+    await chat.startRealtime(transportFor);
+    await chat.startRealtime(transportFor);
+    await vi.waitFor(() => expect(made.length).toBe(1));
+    await vi.waitFor(() => expect(made[0].open).toHaveBeenCalledTimes(1));
+    chat.stopRealtime();
+    expect(made[0].close).toHaveBeenCalled();
+    const before = made.length;
+    await new Promise((r) => setTimeout(r, 20));
+    expect(made.length).toBe(before);
+  });
 });

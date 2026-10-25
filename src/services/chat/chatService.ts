@@ -6,6 +6,7 @@ import { networkService } from "../networkService";
 import type { CapabilityService } from "../odoo/capabilityService";
 import type { OdooRpcClient, SyncCredentials } from "../odoo/odooRpcClient";
 import type { OutboxService } from "../outboxService";
+import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
 import { moduleState } from "./chatModule";
 import { ChatOutbox } from "./chatOutbox";
 import { ChatRepository } from "./chatRepository";
@@ -76,6 +77,10 @@ export class ChatService {
   viewing: { configId: string; channelId: number } | null = null;
   /** Whether a server may answer now; replaceable in tests. */
   isOnline: () => Promise<boolean> = () => networkService.isOnline();
+
+  /** The running bus of each account, and the counter that voids a start overtaken by a stop. */
+  private buses = new Map<string, ChatBus>();
+  private realtimeRun = 0;
 
   /** Per "configId#channelId", when "typing" was last sent and the pending stop. */
   private typingState = new Map<string, { sentAt: number | null; stop: ReturnType<typeof setTimeout> | null }>();
@@ -398,6 +403,7 @@ export class ChatService {
 
   /** Cancels the pending typing stops; nothing more is sent for them. */
   dispose(): void {
+    this.stopRealtime();
     for (const state of this.typingState.values()) {
       if (state.stop) clearTimeout(state.stop);
     }
@@ -415,6 +421,67 @@ export class ChatService {
         // Kept in the outbox for the next flush
       }
     }
+  }
+
+  // ─── Realtime ─────────────────────────────────────────────────────────────
+
+  /**
+   * Starts one ChatBus per source (the buses running before are stopped
+   * first, so there is never more than one per account). Each account is
+   * loaded before its bus starts, so the bus catches up from a fresh cache;
+   * a load that fails (server unreachable) does not hold the bus back, which
+   * reconnects by itself. A stopRealtime during the loads cancels the start.
+   * The bus resubscribes after a delivery that joined a channel, once the
+   * reload that delivery triggers is done.
+   */
+  async startRealtime(transportFor: (configId: string) => BusTransport): Promise<void> {
+    this.stopRealtime();
+    const run = this.realtimeRun;
+    for (const src of await this.sources({ online: true })) {
+      try {
+        await this.load(src);
+      } catch (e) {
+        console.warn("chat: load before realtime failed", e);
+      }
+      if (run !== this.realtimeRun) return;
+      const bus = new ChatBus(src, {
+        transport: () => transportFor(src.configId),
+        session: async () => ({
+          sessionId: (await this.rpc.getSession(src.creds)).sessionId,
+          version: (await this.repo.sourceState(src.configId)).wsVersion ?? BUS_VERSION_FALLBACK,
+        }),
+        reauth: async () => {
+          await this.rpc.authenticate(src.creds);
+        },
+        state: () => this.repo.sourceState(src.configId),
+        saveLast: (id) =>
+          this.repo.setSourceState({ configId: src.configId, lastBusId: id, busSeenAt: this.now().toISOString() }),
+        channels: async () =>
+          (await this.repo.channels(src.configId))
+            .filter((c) => c.correspondentPartnerId != null)
+            .map((c) => `odoo-presence-res.partner_${c.correspondentPartnerId}`),
+        deliver: async (n) => {
+          await this.applyBus(src.configId, n);
+          if (n.some((x) => x.message?.type === "discuss.channel/joined")) bus.resubscribe();
+        },
+        reload: () => this.load(src),
+      });
+      try {
+        bus.start();
+      } catch (e) {
+        // An insecure server (http without the option) gets no realtime
+        console.warn("chat: realtime not started", e);
+        continue;
+      }
+      this.buses.set(src.configId, bus);
+    }
+  }
+
+  /** Stops and forgets every bus; a start still loading is cancelled. */
+  stopRealtime(): void {
+    this.realtimeRun++;
+    for (const bus of this.buses.values()) bus.stop();
+    this.buses.clear();
   }
 
   // ─── Bus ──────────────────────────────────────────────────────────────────

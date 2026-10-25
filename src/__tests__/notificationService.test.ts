@@ -13,6 +13,7 @@ vi.mock("@capacitor/app", () => ({ App: mockApp }));
 vi.mock("@capacitor/core", () => ({
     Capacitor: { isNativePlatform: () => true },
 }));
+vi.mock("../plugins/chatSocketPlugin", () => ({ nativeTransport: vi.fn() }));
 vi.mock("../services/pendingSyncNotice", () => ({ publishPending }));
 vi.mock("../services/ntfyService", () => {
     class FakeNtfyService {
@@ -33,6 +34,8 @@ vi.mock("../services/ntfyService", () => {
 });
 
 import { NotificationService } from "../services/notificationService";
+import { ChatLifecycle } from "../services/chat/chatLifecycle";
+import { nativeTransport } from "../plugins/chatSocketPlugin";
 import { Events } from "../constants/events";
 import { EventBus } from "@odoo/owl";
 
@@ -73,6 +76,7 @@ function makeServices(apps: any[]) {
         pendingNoteIds: vi.fn().mockResolvedValue([]),
         hasDueWork: vi.fn().mockResolvedValue(false),
         nextRetryAt: vi.fn().mockResolvedValue(null),
+        chat: { flushAll: vi.fn().mockResolvedValue(undefined) },
     } as any;
     const bus = new EventBus();
     return { appService, syncService, bus };
@@ -368,6 +372,53 @@ describe("NotificationService", () => {
             await vi.advanceTimersByTimeAsync(2_500);
             expect(syncService.syncAll).toHaveBeenCalledTimes(1);
             expect(syncService.syncAll.mock.calls[0][2]).toEqual({ force: false });
+        });
+
+        it("network restore flushes chat", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            syncService.chat.flushAll.mockClear();
+            onlineCb!();
+            for (let i = 0; i < 40; i++) await Promise.resolve();
+            expect(syncService.chat.flushAll).toHaveBeenCalledTimes(1);
+        });
+
+        it("retry timer counts chat rows: a due chat row is flushed once, the timer is not re-armed", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
+            // nextRetryAt reads the whole outbox, chat rows included; hasDueWork skips them
+            const dueAt = Date.now() + 30_000;
+            let failedChatRowAt: string | null = new Date(dueAt).toISOString();
+            syncService.nextRetryAt.mockImplementation(async () => failedChatRowAt);
+            // The flush drains the row only once it is due (as ChatOutbox.flush does)
+            syncService.chat.flushAll.mockImplementation(async () => {
+                if (Date.now() >= dueAt) failedChatRowAt = null;
+            });
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 20; i++) await Promise.resolve();
+            syncService.chat.flushAll.mockClear();
+
+            await vi.advanceTimersByTimeAsync(29_000);
+            expect(syncService.chat.flushAll).not.toHaveBeenCalled();
+            await vi.advanceTimersByTimeAsync(2_500);
+            expect(syncService.chat.flushAll).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(10_000);
+            expect(syncService.chat.flushAll).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("ChatLifecycle", () => {
+        it("going inactive stops realtime, active starts it", async () => {
+            makeServices([]);
+            const chat = { startRealtime: vi.fn().mockResolvedValue(undefined), stopRealtime: vi.fn() } as any;
+            new ChatLifecycle(chat).start();
+            expect(chat.startRealtime).toHaveBeenCalledTimes(1);
+            expect(chat.startRealtime).toHaveBeenCalledWith(nativeTransport);
+
+            appStateCb!({ isActive: false });
+            expect(chat.stopRealtime).toHaveBeenCalledTimes(1);
+            appStateCb!({ isActive: true });
+            expect(chat.startRealtime).toHaveBeenCalledTimes(2);
         });
 
         it("re-arms the retry timer when a row fails elsewhere (a tap on sync)", async () => {

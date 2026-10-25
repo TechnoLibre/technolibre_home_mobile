@@ -33,6 +33,7 @@ import { ProcessService } from "../services/processService";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
 import type { FontFamily, ColorTheme } from "../models/graphicPrefs";
 import { SyncService } from "../services/syncService";
+import { ChatLifecycle } from "../services/chat/chatLifecycle";
 import { NotificationService } from "../services/notificationService";
 import { ReminderService } from "../services/reminderService";
 import { BiometryUtils } from "../utils/biometryUtils";
@@ -234,6 +235,9 @@ async function startApp() {
 		streamDeckEventLog.add(`raw[${ev.len}]: ${ev.bytes}`),
 	).catch(() => {});
 	notificationService.start();
+	syncService.chat.onChange = (configId, channelId) =>
+		eventBus.trigger(Events.CHAT_CHANGED, { configId, channelId });
+	new ChatLifecycle(syncService.chat).start();
 
 	// Re-schedule any reminders whose notification batch is expiring
 	reminderService.rebatchExpiring().catch((e) =>
