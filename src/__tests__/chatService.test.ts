@@ -4,9 +4,12 @@ import { createSyncEnv, installLocalStorage, resetMocks, type SyncEnv } from "..
 import { OdooRpcClient } from "../services/odoo/odooRpcClient";
 import { OutboxService } from "../services/outboxService";
 import { CapabilityService } from "../services/odoo/capabilityService";
-import { CHAT_PAGE, ChatService, TYPING_RESEND_MS, TYPING_STOP_MS, type ChatSource } from "../services/chat/chatService";
+import {
+  CHAT_PAGE, ChatService, PRESENCE_CAP, RELOAD_WINDOW_MS, TYPING_RESEND_MS, TYPING_STOP_MS, type ChatSource,
+} from "../services/chat/chatService";
 import { CHAT_READ } from "../services/chat/chatOutbox";
 import { setChatSettings } from "../services/chat/chatSettings";
+import { parseStore } from "../services/chat/chatStore";
 import type { BusNotification } from "../models/chat";
 
 const TARGET = { url: "https://odoo.example.com", username: "alice", password: "pw", database: "db1" };
@@ -892,5 +895,230 @@ describe("ChatService", () => {
     const before = made.length;
     await new Promise((r) => setTimeout(r, 20));
     expect(made.length).toBe(before);
+  });
+  // ─── Lot 2: hidden direct messages, membership, presence, global mute ────
+
+  /** Starts realtime on a fake socket and opens it; frames go in through deliver(). */
+  const openBus = async () => {
+    const made: any[] = [];
+    await source();
+    await chat.startRealtime(() => {
+      const t = { open: vi.fn(), send: vi.fn(), close: vi.fn(), onOpen: () => {}, onMessage: (_: string) => {}, onClose: () => {} };
+      made.push(t);
+      return t as any;
+    });
+    await vi.waitFor(() => expect(made[0]?.open).toHaveBeenCalledTimes(1));
+    const t = made[0];
+    const subscribes = (): string[][] => t.send.mock.calls
+      .map((c: any[]) => JSON.parse(c[0]))
+      .filter((f: any) => f.event_name === "subscribe")
+      .map((f: any) => f.data.channels);
+    t.onOpen();
+    await vi.waitFor(() => expect(subscribes()).toHaveLength(1));
+    const deliver = async (n: BusNotification[]) => {
+      t.onMessage(JSON.stringify(n));
+      const top = Math.max(...n.map((x) => x.id));
+      await vi.waitFor(async () => expect((await chat.repo.sourceState(config)).lastBusId).toBe(top));
+      // resubscribe reads the channels after the delivery: let it send
+      await new Promise((r) => setTimeout(r, 10));
+    };
+    return { subscribes, deliver };
+  };
+
+  /** The Store the other person's new group or DM brings: the channel, self and their member rows. */
+  const newConversation = (id: number, type: string, others: number[], o: { pinned?: boolean } = {}) => ({
+    "discuss.channel": [{ id, channel_type: type, name: type === "chat" ? "" : "Fresh", last_interest_dt: "2026-10-25 12:00:00",
+      message_needaction_counter: 0, ...(o.pinned === undefined ? {} : { is_pinned: o.pinned }) }],
+    "discuss.channel.member": [SELF, ...others].map((partner, i) => ({
+      id: id * 10 + i, thread: { id, model: "discuss.channel" }, persona: { id: partner, type: "partner" },
+      create_date: "2026-10-25 12:00:00", ...(partner === SELF ? { message_unread_counter: 0 } : {}),
+    })),
+    "res.partner": others.map((partner) => ({ id: partner, name: `P${partner}`, im_status: "offline" })),
+  });
+
+  it("unpin hides a DM, a new message shows it again", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    const changes: any[] = [];
+    chat.onChange = (c, ch) => changes.push([c, ch]);
+    await chat.applyBus(config, [bus(1001, "discuss.channel/unpin", { id: CHAT })]);
+    expect(changes).toContainEqual([config, CHAT]);
+    expect((await chat.conversations()).map((c) => c.channelId)).not.toContain(CHAT);
+    // A replay older than the load leaves the pin the load read
+    await chat.repo.patchChannel(config, GROUP, { isPinned: true });
+    await chat.applyBus(config, [bus(999, "discuss.channel/unpin", { id: GROUP })]);
+    expect((await chat.repo.channel(config, GROUP))!.isPinned).toBe(true);
+    // A post pins the chat for every member: Odoo sends {id, is_pinned:true} before the message
+    await chat.applyBus(config, [
+      bus(1002, "mail.record/insert", { "discuss.channel": [{ id: CHAT, is_pinned: true }] }),
+      bus(1003, "discuss.channel/new_message", { id: CHAT, data: { "mail.message": [msg(81, CHAT)] } }),
+    ]);
+    expect((await chat.conversations()).map((c) => c.channelId)).toContain(CHAT);
+    // The message alone pins it too
+    await chat.applyBus(config, [bus(1004, "discuss.channel/unpin", { id: CHAT })]);
+    await chat.applyBus(config, [bus(1005, "discuss.channel/new_message", { id: CHAT, data: { "mail.message": [msg(82, CHAT)] } })]);
+    expect((await chat.conversations()).map((c) => c.channelId)).toContain(CHAT);
+    // The other person's brand-new empty DM arrives unpinned: not listed until its first message
+    await chat.applyBus(config, [bus(1006, "mail.record/insert", newConversation(20, "chat", [7], { pinned: false }))]);
+    expect(await chat.repo.channel(config, 20)).toMatchObject({ isMember: true, isPinned: false });
+    expect((await chat.conversations()).map((c) => c.channelId)).not.toContain(20);
+    // A group or a channel is never hidden by the pin flag
+    await chat.repo.patchChannel(config, GROUP, { isPinned: false });
+    expect((await chat.conversations()).map((c) => c.channelId)).toContain(GROUP);
+  });
+
+  it("a channel that gains self membership resubscribes once", async () => {
+    fakeOdoo();
+    const { subscribes, deliver } = await openBus();
+    // Neither a counter nor a known member channel changes the subscription
+    await deliver([bus(1001, "mail.record/insert", selfMember(5, 1001))]);
+    expect(subscribes()).toHaveLength(1);
+    // A non-member channel seen is no membership either
+    await deliver([bus(1002, "mail.record/insert", { "discuss.channel": [{ id: 15, channel_type: "channel", name: "Public" }] })]);
+    expect(subscribes()).toHaveLength(1);
+    // The other person's new group and new DM in one batch: one subscribe, carrying their presence
+    await deliver([
+      bus(1003, "mail.record/insert", newConversation(21, "group", [BOB, 7])),
+      bus(1004, "mail.record/insert", newConversation(22, "chat", [8], { pinned: false })),
+    ]);
+    expect(subscribes()).toHaveLength(2);
+    expect(subscribes()[1]).toEqual(expect.arrayContaining(["odoo-presence-res.partner_7", "odoo-presence-res.partner_8"]));
+    // The channel seen before becomes a member one
+    await deliver([bus(1005, "mail.record/insert", {
+      "discuss.channel": [{ id: 15, selfMember: { id: 150, thread: { id: 15, model: "discuss.channel" }, persona: { id: SELF, type: "partner" } } }],
+    })]);
+    expect(subscribes()).toHaveLength(3);
+    chat.stopRealtime();
+  });
+
+  it("an answer applied outside the bus resubscribes through noteMembershipChange", async () => {
+    fakeOdoo();
+    const { subscribes } = await openBus();
+    const before = await chat.memberChannelIds(config);
+    expect(chat.noteMembershipChange(config, before, new Set(before))).toBe(false);
+    await chat.repo.applyDelta(config, parseStore(newConversation(23, "group", [BOB]), config, SELF));
+    expect(chat.noteMembershipChange(config, before, await chat.memberChannelIds(config))).toBe(true);
+    await vi.waitFor(() => expect(subscribes()).toHaveLength(2));
+    chat.stopRealtime();
+  });
+
+  it("leave resubscribes", async () => {
+    fakeOdoo();
+    const { subscribes, deliver } = await openBus();
+    await deliver([bus(1001, "discuss.channel/leave", { "discuss.channel": [{ id: QUIET, is_pinned: false, isLocallyPinned: false }] })]);
+    expect(subscribes()).toHaveLength(2);
+    // A joined delivery resubscribes once, after the reload it runs
+    await deliver([bus(1002, "discuss.channel/joined", { channel: { id: 16, model: "discuss.channel" } })]);
+    expect(subscribes()).toHaveLength(3);
+    chat.stopRealtime();
+  });
+
+  it("presence channels include group members, never self nor a partner without a user", async () => {
+    const odoo = fakeOdoo();
+    odoo.state.data["discuss.channel.member"].push({ id: 190, thread: { id: GROUP, model: "discuss.channel" }, persona: { id: 5, type: "partner" } });
+    odoo.state.data["res.partner"].push({ id: 5, name: "Carol", im_status: "away" }, { id: 6, name: "Contact", im_status: "im_partner" });
+    const { subscribes } = await openBus();
+    const first = subscribes()[0];
+    expect(first).toEqual(expect.arrayContaining(["odoo-presence-res.partner_4", "odoo-presence-res.partner_5"]));
+    expect(first).not.toContain(`odoo-presence-res.partner_${SELF}`);
+    expect(first).not.toContain("odoo-presence-res.partner_6");
+    expect(new Set(first).size).toBe(first.length);
+    chat.stopRealtime();
+  });
+
+  it("presence keeps the PRESENCE_CAP partners of the most recent conversations", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    // One group per partner, the higher the id the more recent; one old partner with no conversation
+    const n = PRESENCE_CAP + 5;
+    for (let i = 0; i < n; i++) {
+      const id = 1000 + i;
+      const dt = `2026-10-${String(1 + Math.floor(i / 10)).padStart(2, "0")} ${String(i % 10).padStart(2, "0")}:00:00`;
+      await chat.repo.applyDelta(config, {
+        ...parseStore(newConversation(id, "group", [10000 + i]), config, SELF),
+      });
+      await chat.repo.patchChannel(config, id, { lastInterestDt: dt });
+    }
+    const channels = await chat.presenceChannels(config);
+    expect(channels).toHaveLength(PRESENCE_CAP);
+    expect(channels).toContain(`odoo-presence-res.partner_${10000 + n - 1}`);
+    expect(channels).not.toContain("odoo-presence-res.partner_10000");
+  });
+
+  it("global mute from settings mutes every conversation and clears", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    expect(await chat.unreadTotal()).toBe(7);
+    const changes: any[] = [];
+    chat.onChange = (c, ch) => changes.push([c, ch]);
+    await chat.applyBus(config, [bus(1001, "res.users.settings", { id: 1, mute_until_dt: "9999-12-31 23:59:59" })]);
+    expect(changes).toEqual([[config, null]]);
+    const muted = await chat.repo.sourceState(config);
+    expect(muted.globalMuteUntil).toBe("9999-12-31 23:59:59");
+    expect(muted.globalMuteAt).not.toBeNull();
+    // Only the inbox remainder is left
+    expect(await chat.unreadTotal()).toBe(1);
+    // Settings without the mute key leave it as it is
+    await chat.applyBus(config, [bus(1002, "res.users.settings", { id: 1, channel_notifications: "mentions" })]);
+    expect((await chat.repo.sourceState(config)).globalMuteUntil).toBe("9999-12-31 23:59:59");
+    // A replay older than the load changes nothing
+    await chat.applyBus(config, [bus(998, "res.users.settings", { id: 1, mute_until_dt: false })]);
+    expect((await chat.repo.sourceState(config)).globalMuteUntil).toBe("9999-12-31 23:59:59");
+    await chat.applyBus(config, [bus(1003, "res.users.settings", { id: 1, mute_until_dt: false })]);
+    expect((await chat.repo.sourceState(config)).globalMuteUntil).toBeNull();
+    expect(await chat.unreadTotal()).toBe(7);
+  });
+
+  it("new_message on a non-member cached channel reloads nothing", async () => {
+    const odoo = fakeOdoo();
+    await chat.load(await source());
+    await chat.applyBus(config, [bus(1001, "mail.record/insert", { "discuss.channel": [{ id: 15, channel_type: "channel", name: "Public" }] })]);
+    const loads = odoo.on("/mail/data").length;
+    const changes: any[] = [];
+    chat.onChange = (c, ch) => changes.push([c, ch]);
+    for (let i = 0; i < 5; i++) {
+      await chat.applyBus(config, [bus(1002 + i, "discuss.channel/new_message", { id: 15, data: { "mail.message": [msg(900 + i, 15)] } })]);
+    }
+    expect(odoo.on("/mail/data")).toHaveLength(loads);
+    expect(await chat.repo.messages(config, 15)).toEqual([]);
+    expect(await chat.repo.channel(config, 15)).toMatchObject({ unreadCounter: 0, lastMessageId: null });
+    expect(changes).toEqual([]);
+  });
+
+  it("unknown channels reload at most once per window", async () => {
+    const odoo = fakeOdoo();
+    await chat.load(await source());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const loads = () => odoo.on("/mail/data").length;
+    const before = loads();
+    const unknown = (busId: number, channelId: number) =>
+      bus(busId, "discuss.channel/new_message", { id: channelId, data: { "mail.message": [msg(busId, channelId)] } });
+    await chat.applyBus(config, [unknown(1001, 30), unknown(1002, 31)]);
+    await chat.applyBus(config, [unknown(1003, 32)]);
+    expect(loads()).toBe(before + 1);
+    // What the window held back is loaded once at its end
+    clock = new Date(clock.getTime() + RELOAD_WINDOW_MS);
+    await vi.advanceTimersByTimeAsync(RELOAD_WINDOW_MS);
+    await vi.waitFor(() => expect(loads()).toBe(before + 2));
+    await vi.advanceTimersByTimeAsync(RELOAD_WINDOW_MS);
+    expect(loads()).toBe(before + 2);
+    // Past the window, an unknown channel reloads at once
+    clock = new Date(clock.getTime() + RELOAD_WINDOW_MS);
+    await chat.applyBus(config, [unknown(1004, 33)]);
+    expect(loads()).toBe(before + 3);
+  });
+
+  it("load keeps a channel being created offline", async () => {
+    fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.repo.applyDelta(config, {
+      ...parseStore({ "discuss.channel": [{ id: -1, channel_type: "group", name: "Offline" }] }, config, SELF),
+    });
+    await chat.repo.patchChannel(config, -1, { isMember: true, createOpId: "op-create-1" });
+    await chat.repo.applyDelta(config, parseStore({ "discuss.channel": [{ id: -2, channel_type: "group", name: "Settled" }] }, config, SELF));
+    await chat.load(src);
+    expect(await chat.repo.channel(config, -1)).toMatchObject({ name: "Offline", createOpId: "op-create-1" });
+    expect(await chat.repo.channel(config, -2)).toBeNull();
   });
 });

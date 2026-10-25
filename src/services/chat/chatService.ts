@@ -25,6 +25,10 @@ export const CHAT_FULL_PAGE = 100;
 export const TYPING_RESEND_MS = 50000;
 /** "Stopped typing" is sent this long after the last keystroke (Odoo's SHORT_TYPING). */
 export const TYPING_STOP_MS = 5000;
+/** Partners whose presence the bus follows, the most recent conversations first. */
+export const PRESENCE_CAP = 200;
+/** A message of a channel the cache does not hold reloads the account at most once per this window. */
+export const RELOAD_WINDOW_MS = 10000;
 
 const CHANNEL_MODEL = "discuss.channel";
 
@@ -48,8 +52,13 @@ const emptyDelta = (): StoreDelta => ({
   selfPartnerId: null,
 });
 
-/** A conversation the list shows: one the user is a member of, or keeps pinned locally. */
-const shown = (c: ChatChannel): boolean => c.isMember || c.localPinned;
+/**
+ * A conversation the list shows: one the user is a member of, or keeps
+ * pinned locally; a direct message only while pinned on the server, so a
+ * hidden one and the other person's new one still empty stay out.
+ */
+const shown = (c: ChatChannel): boolean =>
+  (c.isMember || c.localPinned) && (c.channelType !== "chat" || c.isPinned);
 
 const maxDt = (a: string | null, b: string | null | undefined): string | null =>
   !b ? a : !a || b > a ? b : a;
@@ -98,6 +107,10 @@ export class ChatService {
 
   /** Per account, the end of the queue of serial() tasks; settled tasks leave it. */
   private chains = new Map<string, Promise<void>>();
+
+  /** Per account, when a message of an unknown channel last reloaded it, and the reload the window holds back. */
+  private unknownReloadAt = new Map<string, number>();
+  private unknownReloadOwed = new Map<string, ReturnType<typeof setTimeout>>();
 
   /** Per "configId#channelId", when "typing" was last sent and the pending stop. */
   private typingState = new Map<string, { sentAt: number | null; stop: ReturnType<typeof setTimeout> | null }>();
@@ -193,16 +206,17 @@ export class ChatService {
    * right, websocket version), then /mail/data with the member channels and
    * their last message, then the server module state. A cached conversation
    * the server no longer lists (left or hidden meanwhile) is dropped, unless
-   * it is pinned locally or still holds a post waiting to go. A channel
-   * whose last message is above every cached one and not cached itself may
-   * miss messages in between: its history restarts (oldestLoadedId null,
-   * not complete), so the next pages come down from the last message again
-   * and upsert the rows already cached. A failed module probe keeps the
+   * it is pinned locally, still being created (createOpId) or still holds
+   * a post waiting to go. A channel whose last message is above every
+   * cached one and not cached itself may miss messages in between: its
+   * history restarts (oldestLoadedId null, not complete), so the next
+   * pages come down from the last message again and upsert the rows
+   * already cached. A failed module probe keeps the
    * state stored before; any other failure propagates. Queued behind the
    * account's other server writers (see the class).
    */
   load(src: ChatSource): Promise<void> {
-    return this.serial(src.configId, () => this.loadNow(src));
+    return this.serial(src.configId, () => this.tracked(src.configId, () => this.loadNow(src)));
   }
 
   /** load() without the queue, for a task already running in it. */
@@ -237,7 +251,7 @@ export class ChatService {
     for (const c of await this.repo.channels(configId)) {
       const cached = await this.repo.messages(configId, c.channelId);
       if (!lastOf.has(c.channelId)) {
-        if (c.localPinned || cached.some((m) => m.messageId === null)) continue;
+        if (c.localPinned || c.createOpId !== null || cached.some((m) => m.messageId === null)) continue;
         delta.deletedChannelIds.push(c.channelId);
         continue;
       }
@@ -506,6 +520,8 @@ export class ChatService {
   /** Cancels the pending typing stops; nothing more is sent for them. */
   dispose(): void {
     this.stopRealtime();
+    for (const timer of this.unknownReloadOwed.values()) clearTimeout(timer);
+    this.unknownReloadOwed.clear();
     for (const state of this.typingState.values()) {
       if (state.stop) clearTimeout(state.stop);
     }
@@ -523,6 +539,9 @@ export class ChatService {
    */
   async forgetSource(configId: string): Promise<void> {
     this.stopSourceRealtime(configId);
+    clearTimeout(this.unknownReloadOwed.get(configId));
+    this.unknownReloadOwed.delete(configId);
+    this.unknownReloadAt.delete(configId);
     this.generations.set(configId, (this.generations.get(configId) ?? 0) + 1);
     await this.erase(configId);
     const gen = this.generations.get(configId);
@@ -564,8 +583,9 @@ export class ChatService {
    * up from a fresh cache, and a slow or silent server holds back its own
    * bus only. A load that fails (server unreachable) does not hold its bus
    * back, which reconnects by itself. A stopRealtime during the start
-   * cancels what has not started yet. The bus resubscribes after a delivery
-   * that joined a channel, once the reload that delivery triggers is done.
+   * cancels what has not started yet. The bus follows the presence of
+   * presenceChannels(), read again at each subscribe; applyBus decides
+   * when it subscribes again.
    */
   async startRealtime(transportFor: (configId: string) => BusTransport): Promise<void> {
     this.stopRealtime();
@@ -621,14 +641,8 @@ export class ChatService {
       state: () => this.repo.sourceState(src.configId),
       saveLast: (id) =>
         this.repo.setSourceState({ configId: src.configId, lastBusId: id, busSeenAt: this.now().toISOString() }),
-      channels: async () =>
-        (await this.repo.channels(src.configId))
-          .filter((c) => c.correspondentPartnerId != null)
-          .map((c) => `odoo-presence-res.partner_${c.correspondentPartnerId}`),
-      deliver: async (n) => {
-        await this.applyBus(src.configId, n);
-        if (n.some((x) => x.message?.type === "discuss.channel/joined")) bus.resubscribe();
-      },
+      channels: () => this.presenceChannels(src.configId),
+      deliver: (n) => this.applyBus(src.configId, n),
       reload: () => this.load(src),
     });
     try {
@@ -640,6 +654,70 @@ export class ChatService {
     }
     this.buses.get(src.configId)?.stop();
     this.buses.set(src.configId, bus);
+  }
+
+  /**
+   * Sends the account's subscription again (ChatBus.resubscribe): the server
+   * fixes the channels a socket receives at subscribe time, from the
+   * memberships it has then. Nothing happens while its bus is not connected.
+   */
+  resubscribe(configId: string): void {
+    this.buses.get(configId)?.resubscribe();
+  }
+
+  /** The channels of the account where self is a member, as noteMembershipChange compares them. */
+  async memberChannelIds(configId: string): Promise<Set<number>> {
+    return new Set((await this.repo.channels(configId)).filter((c) => c.isMember).map((c) => c.channelId));
+  }
+
+  /**
+   * Resubscribes the account once when `after` (memberChannelIds once a
+   * Store is applied) holds a member channel `before` did not, or lost one:
+   * a new member gets no message of its channel before it subscribes
+   * again, and a left channel would keep sending messages of a channel no
+   * longer cached. Returns whether it resubscribed. An answer applied
+   * outside applyBus and load (a create, a join) calls it itself.
+   */
+  noteMembershipChange(configId: string, before: Set<number>, after: Set<number>): boolean {
+    const changed = before.size !== after.size || [...after].some((id) => !before.has(id));
+    if (changed) this.resubscribe(configId);
+    return changed;
+  }
+
+  /** Runs `task` between two reads of the memberships and resubscribes once when they differ. */
+  private async tracked(configId: string, task: () => Promise<void>, force = false): Promise<void> {
+    const before = await this.memberChannelIds(configId);
+    await task();
+    const after = await this.memberChannelIds(configId);
+    if (!this.noteMembershipChange(configId, before, after) && force) this.resubscribe(configId);
+  }
+
+  /**
+   * The presence channels the bus follows: every cached partner of the
+   * account but self and those without a user (`im_partner`), as Odoo's
+   * browser tracks every persona of its store. At most PRESENCE_CAP, ranked
+   * by the last interest of the most recent conversation they are a member
+   * or the correspondent of, then by partner id, higher first; a partner of
+   * no cached conversation ranks last.
+   */
+  async presenceChannels(configId: string): Promise<string[]> {
+    const self = await this.selfOf(configId);
+    const channels = await this.repo.channels(configId);
+    const interest = new Map(channels.map((c) => [c.channelId, c.lastInterestDt ?? ""]));
+    const seen = new Map<number, string>();
+    const see = (partnerId: number, dt: string) => {
+      if ((seen.get(partnerId) ?? "") <= dt) seen.set(partnerId, dt);
+    };
+    for (const [channelId, members] of await this.repo.membersBySource(configId)) {
+      for (const m of members) see(m.partnerId, interest.get(channelId) ?? "");
+    }
+    for (const c of channels) if (c.correspondentPartnerId != null) see(c.correspondentPartnerId, c.lastInterestDt ?? "");
+    return (await this.repo.partners(configId))
+      .filter((p) => p.partnerId !== self && p.imStatus !== "im_partner")
+      .map((p) => ({ id: p.partnerId, dt: seen.get(p.partnerId) ?? "" }))
+      .sort((a, b) => (a.dt === b.dt ? b.id - a.id : a.dt < b.dt ? 1 : -1))
+      .slice(0, PRESENCE_CAP)
+      .map((p) => `odoo-presence-res.partner_${p.id}`);
   }
 
   /** The network is back: every bus not connected tries at once (ChatBus.reconnectNow). */
@@ -661,10 +739,13 @@ export class ChatService {
    * ends with onChange; an unknown type is ignored. See the class for the
    * bus id rule that guards the counters. Queued behind the account's other
    * server writers; a notification that reloads the account (a channel
-   * joined, a message of an unknown channel) runs that load inline.
+   * joined, a message of an unknown channel) runs that load inline. The
+   * bus resubscribes at most once per call: when the memberships differ
+   * after it (noteMembershipChange), or after a channel joined.
    */
   applyBus(configId: string, notifications: BusNotification[]): Promise<void> {
-    return this.serial(configId, () => this.applyBusNow(configId, notifications));
+    const joined = notifications.some((n) => n.message?.type === "discuss.channel/joined");
+    return this.serial(configId, () => this.tracked(configId, () => this.applyBusNow(configId, notifications), joined));
   }
 
   private async applyBusNow(configId: string, notifications: BusNotification[]): Promise<void> {
@@ -701,6 +782,19 @@ export class ChatService {
           members: [{ memberId: Number(p.id), channelId, partnerId: Number(p.partner_id), fetchedMessageId: Number(p.last_message_id) }],
         });
         return channelId;
+      }
+      case "discuss.channel/unpin": {
+        // A direct message hidden: the next post pins it again ({id, is_pinned:true}, then the message)
+        const channelId = Number(p.id);
+        if (!fresh || !(await this.repo.channel(configId, channelId))) return undefined;
+        await this.repo.patchChannel(configId, channelId, { isPinned: false });
+        return channelId;
+      }
+      case "res.users.settings": {
+        if (!fresh || !("mute_until_dt" in p)) return undefined;
+        // fromBus stamps globalMuteAt: a load that began earlier does not write its older value over it
+        await this.repo.applyDelta(configId, { ...emptyDelta(), globalMuteUntil: p.mute_until_dt || null }, { fromBus: true });
+        return null;
       }
       case "discuss.channel/joined":
         await this.reload(configId);
@@ -752,6 +846,29 @@ export class ChatService {
     return delta;
   }
 
+  /**
+   * Reloads the account for a message of a channel it does not hold, at
+   * most once per RELOAD_WINDOW_MS: a message inside the window leaves one
+   * reload owed for its end, so a burst costs two loads and none is lost.
+   * Runs inside a bus delivery, which already holds the account's queue.
+   */
+  private async reloadForUnknown(configId: string): Promise<void> {
+    const now = this.now().getTime();
+    const last = this.unknownReloadAt.get(configId);
+    if (last === undefined || now - last >= RELOAD_WINDOW_MS) {
+      this.unknownReloadAt.set(configId, now);
+      await this.reload(configId);
+      return;
+    }
+    if (this.unknownReloadOwed.has(configId)) return;
+    this.unknownReloadOwed.set(configId, setTimeout(() => {
+      this.unknownReloadOwed.delete(configId);
+      this.unknownReloadAt.set(configId, this.now().getTime());
+      this.serial(configId, () => this.tracked(configId, () => this.reload(configId)))
+        .catch((e) => console.warn("chat: reload for an unknown channel failed", e));
+    }, RELOAD_WINDOW_MS - (now - last)));
+  }
+
   /** Loads the account from inside a bus delivery, which already holds its queue. */
   private async reload(configId: string): Promise<void> {
     const src = await this.sourceOf(configId);
@@ -759,8 +876,10 @@ export class ChatService {
   }
 
   /**
-   * A new message in a channel. A channel the cache does not hold as a
-   * member one reloads the account. The message settles the pending post
+   * A new message in a channel. A channel the cache holds without self as
+   * a member takes nothing; one the cache does not hold reloads the account
+   * (reloadForUnknown). A post pins the channel for every member, as Odoo
+   * does, so a hidden direct message shows again. The message settles the pending post
    * whose client uuid is the payload's temporary_id. A message of someone
    * else, newer than the last known one, raises the unread counter by one
    * in any conversation type, the open one included, as the browser's
@@ -769,13 +888,14 @@ export class ChatService {
    * the member record the server sends back, bring it down again; a
    * channel's unread still counts nowhere but in its bold (unreadOf).
    */
-  private async applyNewMessage(configId: string, p: any, busId: number, fresh: boolean): Promise<number | null> {
+  private async applyNewMessage(configId: string, p: any, busId: number, fresh: boolean): Promise<number | null | undefined> {
     const channelId = Number(p.id);
     const known = await this.repo.channel(configId, channelId);
-    if (!known || !known.isMember) {
-      await this.reload(configId);
+    if (!known) {
+      await this.reloadForUnknown(configId);
       return channelId;
     }
+    if (!known.isMember) return undefined;
     const delta = await this.applyStore(configId, p.data);
     const message = delta.messages.find((m) => m.channelId === channelId);
     if (!message) return channelId;
@@ -790,6 +910,7 @@ export class ChatService {
     const patch: Partial<ChatChannel> = {
       lastMessageId: Math.max(known.lastMessageId ?? 0, message.messageId),
       lastInterestDt: maxDt(known.lastInterestDt, message.date),
+      isPinned: true,
     };
     const serverCounted = delta.channels.some((c) => c.channelId === channelId && c.unreadCounter !== undefined);
     const fromOther = self === null || message.authorPartnerId !== self;

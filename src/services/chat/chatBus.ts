@@ -37,7 +37,7 @@ export interface ChatBusDeps {
   state: () => Promise<ChatSourceState>;
   /** Persists the last bus id (and the time it was seen) once a frame is applied. */
   saveLast: (id: number) => Promise<void>;
-  /** "odoo-presence-res.partner_<id>" of every chat correspondent; member channels are implicit. */
+  /** The presence channels to follow ("odoo-presence-res.partner_<id>"); member channels are implicit. */
   channels: () => Promise<string[]>;
   deliver: (n: BusNotification[]) => Promise<void>;
   /** Reloads the whole Discuss store after a gap the bus cannot replay. */
