@@ -35,11 +35,11 @@ export interface Route {
 
 export const routes: Route[] = [
 	{ pathname: "/", component: HomeComponent },
-	{ pathname: "/chat", component: ChatListComponent },
-{ pathname: "/applications/edit/:url/:username", component: ApplicationsEditComponent },
+	{ pathname: "/applications/edit/:url/:username", component: ApplicationsEditComponent },
 	{ pathname: "/applications/add", component: ApplicationsAddComponent },
 	{ pathname: "/applications/gallery", component: ApplicationsGalleryComponent },
 	{ pathname: "/applications", component: ApplicationsComponent },
+	{ pathname: "/chat", component: ChatListComponent },
 	{ pathname: "/servers/edit", component: ServersEditComponent },
 	{ pathname: "/servers/add", component: ServersAddComponent },
 	{ pathname: "/servers/settings/:host/:username", component: ServersSettingsComponent },

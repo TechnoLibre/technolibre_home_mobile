@@ -988,6 +988,7 @@ export const translations: Record<string, string> = {
   "chat.unavailable": "Le clavardage demande un serveur Odoo 18 configuré.",
   "chat.add_server": "Ajouter un serveur",
   "chat.search_placeholder": "Rechercher une conversation",
+  "chat.tile_unread": "Clavardage, {count} non lus",
   "chat.empty": "Aucune conversation.",
   "chat.server_filter": "Serveur",
   "chat.loading": "Actualisation…",

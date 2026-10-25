@@ -244,4 +244,20 @@ describe("ChatRepository", () => {
     expect(await repo.messages(B, 7)).toHaveLength(2);
     expect((await repo.sourceState(B)).lastBusId).toBe(2);
   });
+
+  it("lastMessages looks up by id and pendingMessages groups queued rows by channel", async () => {
+    await repo.applyDelta(A, delta({
+      messages: [1, 2].map((id) => ({ messageId: id, channelId: 7, body: "m" + id })),
+    }));
+    await repo.putPending(pending(A, "u1"));
+    await repo.putPending(pending(A, "u2", { channelId: 8 }));
+    await repo.putPending(pending(B, "u3"));
+    const chans = [{ channelId: 7, lastMessageId: 2 }, { channelId: 8, lastMessageId: null }] as any[];
+    const lasts = await repo.lastMessages(A, chans);
+    expect(lasts.get(7)?.body).toBe("m2");
+    expect(lasts.has(8)).toBe(false);
+    const pend = await repo.pendingMessages(A);
+    expect([...pend.keys()].sort()).toEqual([7, 8]);
+    expect(pend.get(7)).toHaveLength(1);
+  });
 });

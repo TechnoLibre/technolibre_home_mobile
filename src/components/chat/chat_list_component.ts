@@ -11,6 +11,8 @@ import type { ChatChannel, ChatMessage } from "../../models/chat";
 
 const FILTER_KEY = "chat.filter";
 const PREVIEW_MAX = 80;
+/** Quiet period that folds a burst of CHAT_CHANGED into one rebuild. */
+const CHANGE_DEBOUNCE_MS = 150;
 
 interface ListSource {
     configId: string;
@@ -85,12 +87,14 @@ export class ChatListComponent extends EnhancedComponent {
       </div>
       <t t-else="">
         <div t-if="state.mode === 'chips'" class="chat-list__chips" role="tablist">
-          <button class="chat-list__chip" t-att-class="{'chat-list__chip--on': state.filter === null}"
+          <button class="chat-list__chip" role="tab" t-att-aria-selected="state.filter === null ? 'true' : 'false'"
+                  t-att-class="{'chat-list__chip--on': state.filter === null}"
                   t-on-click="() => this.onFilter(null)">
             <t t-esc="t('chat.all')"/>
             <span t-if="totalUnread() > 0" class="chat-list__pill" t-esc="totalUnread()"/>
           </button>
-          <button t-foreach="state.sources" t-as="s" t-key="s.configId" class="chat-list__chip"
+          <button t-foreach="state.sources" t-as="s" t-key="s.configId" class="chat-list__chip" role="tab"
+                  t-att-aria-selected="state.filter === s.configId ? 'true' : 'false'"
                   t-att-class="{'chat-list__chip--on': state.filter === s.configId}"
                   t-on-click="() => this.onFilter(s.configId)">
             <t t-esc="s.label"/>
@@ -129,9 +133,17 @@ export class ChatListComponent extends EnhancedComponent {
       </t>
     </div>`;
 
-    private _rows: ChatRow[] = [];
+    private _building: Promise<void> | null = null;
+    private _again = false;
+    /** Bumped by every filter change; a build started under an older value is dropped. */
+    private _gen = 0;
+    private _debounce: ReturnType<typeof setTimeout> | null = null;
     private _onChanged = () => {
-        this.loadCache();
+        if (this._debounce !== null) clearTimeout(this._debounce);
+        this._debounce = setTimeout(() => {
+            this._debounce = null;
+            this.loadCache();
+        }, CHANGE_DEBOUNCE_MS);
     };
 
     setup() {
@@ -150,6 +162,7 @@ export class ChatListComponent extends EnhancedComponent {
         });
         onWillUnmount(() => {
             this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
+            if (this._debounce !== null) clearTimeout(this._debounce);
         });
     }
 
@@ -170,12 +183,35 @@ export class ChatListComponent extends EnhancedComponent {
         }
     }
 
-    /** Builds the list from the cache; no network call. */
-    async loadCache(): Promise<void> {
+    /**
+     * Builds the list from the cache; no network call. One build runs at a
+     * time: a call made meanwhile folds into a single rerun, so the last
+     * request always wins and no build writes over a newer one.
+     */
+    loadCache(): Promise<void> {
+        if (this._building) {
+            this._again = true;
+            return this._building;
+        }
+        this._building = (async () => {
+            try {
+                do {
+                    this._again = false;
+                    await this.buildRows();
+                } while (this._again);
+            } finally {
+                this._building = null;
+            }
+        })();
+        return this._building;
+    }
+
+    private async buildRows(): Promise<void> {
+        const gen = this._gen;
+        const filter = this.state.filter;
         const sources = await this.chatService.sources({ online: false });
         const known = new Set(sources.map((s) => s.configId));
-        if (this.state.filter !== null && !known.has(this.state.filter)) this.state.filter = null;
-        this.state.mode = serverChoiceMode(sources.length);
+        const kept = filter !== null && !known.has(filter) ? null : filter;
         const withUnread: ListSource[] = [];
         for (const s of sources) {
             withUnread.push({
@@ -184,30 +220,38 @@ export class ChatListComponent extends EnhancedComponent {
                 unread: await this.chatService.unreadTotal([s.configId]),
             });
         }
-        this.state.sources = withUnread;
-        const ids = this.state.filter === null ? undefined : [this.state.filter];
+        const channels =
+            sources.length === 0 ? [] : await this.chatService.conversations(kept === null ? undefined : [kept]);
         const labelOf = new Map(sources.map((s) => [s.configId, s.label]));
-        const channels = sources.length === 0 ? [] : await this.chatService.conversations(ids);
-        const partners = new Map<string, Map<number, string>>();
+        const byKey = new Map<string, ChatRow>();
         for (const id of new Set(channels.map((c) => c.configId))) {
-            const list = await this.chatService.repo.partners(id);
-            partners.set(id, new Map(list.map((p) => [p.partnerId, p.name])));
+            const mine = channels.filter((c) => c.configId === id);
+            const [partners, lasts, pendings] = await Promise.all([
+                this.chatService.repo.partners(id),
+                this.chatService.repo.lastMessages(id, mine),
+                this.chatService.repo.pendingMessages(id),
+            ]);
+            const names = new Map(partners.map((p) => [p.partnerId, p.name]));
+            for (const c of mine) {
+                const queued = pendings.get(c.channelId);
+                const last = queued?.[queued.length - 1] ?? lasts.get(c.channelId) ?? null;
+                byKey.set(c.configId + ":" + c.channelId, this.rowOf(c, labelOf.get(id) ?? "", names, last));
+            }
         }
-        const rows: ChatRow[] = [];
-        for (const c of channels) {
-            rows.push(await this.rowOf(c, labelOf.get(c.configId) ?? "", partners.get(c.configId)));
-        }
-        this._rows = rows;
-        this.state.rows = rows;
+        // Rows keep the order the service gave
+        const ordered = channels.map((c) => byKey.get(c.configId + ":" + c.channelId)!);
+        if (gen !== this._gen) return;
+        this.state.filter = kept;
+        this.state.mode = serverChoiceMode(sources.length);
+        this.state.sources = withUnread;
+        this.state.rows = ordered;
     }
 
-    private async rowOf(c: ChatChannel, serverLabel: string, names?: Map<number, string>): Promise<ChatRow> {
-        const messages: ChatMessage[] = await this.chatService.repo.messages(c.configId, c.channelId);
-        const last = messages.length > 0 ? messages[messages.length - 1] : null;
+    private rowOf(c: ChatChannel, serverLabel: string, names: Map<number, string>, last: ChatMessage | null): ChatRow {
         const text = last ? bodyPreview(last.body, PREVIEW_MAX) : "";
         const title =
             c.channelType === "chat" && c.correspondentPartnerId != null
-                ? (names?.get(c.correspondentPartnerId) ?? c.name)
+                ? (names.get(c.correspondentPartnerId) ?? c.name)
                 : c.name;
         return {
             configId: c.configId,
@@ -227,13 +271,8 @@ export class ChatListComponent extends EnhancedComponent {
         this.state.refreshing = true;
         try {
             const sources = await this.chatService.sources();
-            for (const s of sources) {
-                try {
-                    await this.chatService.load(s);
-                } catch {
-                    // Unreachable server: its cached conversations stay
-                }
-            }
+            // An unreachable server rejects alone; its cached conversations stay
+            await Promise.allSettled(sources.map((s) => this.chatService.load(s)));
             await this.loadCache();
         } finally {
             this.state.refreshing = false;
@@ -256,6 +295,7 @@ export class ChatListComponent extends EnhancedComponent {
     }
 
     async onFilter(configId: string | null): Promise<void> {
+        this._gen++;
         this.state.filter = configId;
         this.writeFilter(configId);
         await this.loadCache();

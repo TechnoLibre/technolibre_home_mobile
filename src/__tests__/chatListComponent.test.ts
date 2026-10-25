@@ -35,6 +35,8 @@ function fakeChat(ids: string[], channels: any[], unread: Record<string, number>
         repo: {
             partners: vi.fn().mockResolvedValue([{ partnerId: 7, name: "Alice Roy" }]),
             messages: vi.fn().mockResolvedValue([]),
+            lastMessages: vi.fn().mockResolvedValue(new Map()),
+            pendingMessages: vi.fn().mockResolvedValue(new Map()),
         },
     };
 }
@@ -62,7 +64,7 @@ describe("ChatListComponent", () => {
         expect(modes).toEqual(["unavailable", "none", "chips", "dropdown"]);
     });
 
-    it("rows sorted unread first", async () => {
+    it("rows keep the service order (unread first) and flag bold", async () => {
         const chat = fakeChat(["a"], [
             chan("a", 1, { unreadCounter: 2, needactionCounter: 2 }),
             chan("a", 2),
@@ -101,14 +103,35 @@ describe("ChatListComponent", () => {
         const chat = fakeChat(["a"], [
             chan("a", 1, { channelType: "chat", name: "x", correspondentPartnerId: 7 }),
         ]);
-        chat.repo.messages.mockResolvedValue([
-            { status: "pending", body: "<p>hello</p>", date: "2020-01-01 10:00:00" },
-        ]);
+        chat.repo.lastMessages.mockResolvedValue(
+            new Map([[1, { status: "sent", body: "<p>old</p>", date: "2020-01-01 09:00:00" }]]),
+        );
+        chat.repo.pendingMessages.mockResolvedValue(
+            new Map([[1, [{ status: "pending", body: "<p>hello</p>", date: "2020-01-01 10:00:00" }]]]),
+        );
         const c = make(chat);
         await c.loadCache();
+        expect(chat.repo.messages).not.toHaveBeenCalled();
         expect(c.state.rows[0].title).toBe("Alice Roy");
         expect(c.state.rows[0].typeIcon).toBe("👤");
         expect(c.state.rows[0].preview).toBe("⏳ hello");
+    });
+
+    it("a stale build for All never overwrites the chip B rows", async () => {
+        const chat = fakeChat(["a", "b"], [chan("a", 1), chan("b", 2)]);
+        let release!: () => void;
+        const gate = new Promise<void>((r) => { release = r; });
+        const orig = chat.conversations.getMockImplementation()!;
+        chat.conversations.mockImplementationOnce(async (cfg?: string[]) => {
+            await gate;
+            return orig(cfg);
+        });
+        const c = make(chat);
+        const first = c.loadCache();
+        const second = c.onFilter("b");
+        release();
+        await Promise.all([first, second]);
+        expect(c.state.rows.map((r: any) => r.configId)).toEqual(["b"]);
     });
 
     it("search filters title and preview", async () => {

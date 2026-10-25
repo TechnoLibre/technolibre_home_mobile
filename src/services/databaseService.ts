@@ -1231,6 +1231,9 @@ export class DatabaseService {
         write_date        TEXT
       )
     `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS chat_messages_channel ON chat_messages (config_id, channel_id)",
+    );
     await this.db.execute(`
       CREATE TABLE IF NOT EXISTS chat_members (
         id                 TEXT PRIMARY KEY NOT NULL,

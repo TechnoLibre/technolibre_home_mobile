@@ -117,7 +117,7 @@ export class HomeComponent extends EnhancedComponent {
                 t-esc="state.serverCount" aria-hidden="true"/>
         </button>
         <button class="home-action-card" role="listitem" t-on-click="onChatClick"
-                t-att-aria-label="t('label.chat')">
+                t-att-aria-label="chatAriaLabel()">
           <span class="home-action-card__icon" aria-hidden="true">💬</span>
           <span class="home-action-card__label" t-esc="t('label.chat')"/>
           <span t-if="state.chatUnread > 0" class="home-action-card__badge home-action-card__badge--unread"
@@ -240,6 +240,10 @@ export class HomeComponent extends EnhancedComponent {
         } catch {
             // The badge keeps its last value
         }
+    }
+
+    chatAriaLabel(): string {
+        return this.state.chatUnread > 0 ? this.t("chat.tile_unread", {count: this.state.chatUnread}) : this.t("label.chat");
     }
 
     onChatClick() {

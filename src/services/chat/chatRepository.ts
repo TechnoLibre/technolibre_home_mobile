@@ -453,6 +453,33 @@ export class ChatRepository {
     return row ? messageFromRow(row) : null;
   }
 
+  /**
+   * The last server message of each given channel, by primary key (one
+   * lookup per channel, no history scan). A channel without a known last
+   * message, or whose last message is not cached, has no entry.
+   */
+  async lastMessages(configId: string, channels: ChatChannel[]): Promise<Map<number, ChatMessage>> {
+    const found = await Promise.all(
+      channels.map(async (c) => (c.lastMessageId == null ? null : await this.message(configId, c.lastMessageId))),
+    );
+    const out = new Map<number, ChatMessage>();
+    channels.forEach((c, i) => {
+      const m = found[i];
+      if (m) out.set(c.channelId, m);
+    });
+    return out;
+  }
+
+  /** The queued messages of an account grouped by channel, each group oldest first. */
+  async pendingMessages(configId: string): Promise<Map<number, ChatMessage[]>> {
+    const rows = await this.rows("chat_messages", { config_id: configId, status: "pending" });
+    const out = new Map<number, ChatMessage[]>();
+    for (const m of rows.map(messageFromRow).sort(byThread)) {
+      out.set(m.channelId, [...(out.get(m.channelId) ?? []), m]);
+    }
+    return out;
+  }
+
   async members(configId: string, channelId: number): Promise<ChatMember[]> {
     return (await this.rows("chat_members", { config_id: configId, channel_id: channelId })).map(memberFromRow);
   }

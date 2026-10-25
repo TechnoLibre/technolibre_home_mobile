@@ -988,6 +988,7 @@ export const translations: Record<string, string> = {
   "chat.unavailable": "Chat needs an Odoo 18 server to be configured.",
   "chat.add_server": "Add a server",
   "chat.search_placeholder": "Search conversations",
+  "chat.tile_unread": "Chat, {count} unread",
   "chat.empty": "No conversation.",
   "chat.server_filter": "Server",
   "chat.loading": "Refreshing…",
