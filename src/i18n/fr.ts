@@ -1072,4 +1072,5 @@ export const translations: Record<string, string> = {
   "chat.new_join_offline": "Les canaux à rejoindre sont listés quand vous êtes en ligne.",
   "chat.new_no_channel": "Aucun canal à rejoindre.",
   "chat.action_error": "Impossible de le faire. Réessayer.",
+  "chat.new_retry": "Réessayer",
 };

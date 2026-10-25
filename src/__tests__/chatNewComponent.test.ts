@@ -72,12 +72,10 @@ describe("ChatNewComponent", () => {
         expect((await make(fakeChat(ids), { "chat.filter": "b", "chat.new.server": "c" })).state.serverId).toBe("b");
         expect((await make(fakeChat(ids), { "chat.new.server": "c" })).state.serverId).toBe("c");
         expect((await make(fakeChat(ids), { "chat.filter": "gone" })).state.serverId).toBe("a");
-        const store = stubStorage();
         const c = await make(fakeChat(ids));
         await c.onServer("b");
         expect(c.state.serverId).toBe("b");
         expect(localStorage.getItem("chat.new.server")).toBe("b");
-        void store;
     });
 
     it("shows recent people, then the search after the debounce; empty term is recent only", async () => {
@@ -174,6 +172,112 @@ describe("ChatNewComponent", () => {
         chat.people.joinableChannels.mockResolvedValue({ channels: [], offline: true });
         await c.onView("join");
         expect(c.state.offline).toBe(true);
+    });
+});
+
+describe("ChatNewComponent fixes", () => {
+    it("a failed access groups read blocks the channel creation and is retried", async () => {
+        const chat = fakeChat(["a"]);
+        chat.people.accessGroups.mockRejectedValueOnce(new Error("down"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const c = await make(chat);
+        await c.onView("channel");
+        c.onChannelName(input("news"));
+        expect(c.canCreateChannel()).toBe(false);
+        await c.onCreateChannel();
+        expect(chat.createChannel).not.toHaveBeenCalled();
+        await c.onView("people");
+        await c.onView("channel");
+        expect(c.canCreateChannel()).toBe(true);
+        expect(c.state.groupId).toBe(11);
+    });
+
+    it("keeps the chosen access group across tabs and resets it on a server change", async () => {
+        const chat = fakeChat(["a", "b"]);
+        const c = await make(chat);
+        await c.onView("channel");
+        c.onAccessChange(input("12"));
+        await c.onView("people");
+        await c.onView("channel");
+        expect(c.state.groupId).toBe(12);
+        expect(chat.people.accessGroups).toHaveBeenCalledTimes(1);
+        await c.onServer("b");
+        expect(chat.people.accessGroups).toHaveBeenCalledTimes(2);
+        expect(c.state.groupId).toBe(11);
+    });
+
+    it("clears the channels to join on a server change", async () => {
+        const chat = fakeChat(["a", "b"]);
+        const c = await make(chat);
+        await c.onView("join");
+        chat.people.joinableChannels.mockResolvedValue({ channels: [], offline: true });
+        await c.onServer("b");
+        expect(c.state.joinable).toEqual([]);
+        expect(c.state.offline).toBe(true);
+    });
+
+    it("a double tap picks a person once", async () => {
+        const c = await make(fakeChat(["a"]));
+        await c.onView("group");
+        c.onPerson(c.state.recent[0]);
+        c.onPerson(c.state.recent[0]);
+        expect(c.state.picked).toHaveLength(1);
+        expect(c.canCreateGroup()).toBe(false);
+        c.state.picked = [c.state.recent[0], c.state.recent[0]];
+        expect(c.canCreateGroup()).toBe(false);
+    });
+
+    it("a double tap on an action runs it once", async () => {
+        const chat = fakeChat(["a"]);
+        const c = await make(chat);
+        await Promise.all([c.onPerson(c.state.recent[0]), c.onPerson(c.state.recent[0])]);
+        expect(chat.startDirect).toHaveBeenCalledTimes(1);
+    });
+
+    it("typing while the recent list loads, then clearing, shows the recent people", async () => {
+        const chat = fakeChat(["a"]);
+        let release: (v: any) => void = () => {};
+        const c = await make(chat);
+        chat.people.recentPeople.mockReturnValue(new Promise((res) => { release = res; }));
+        const loading = c.onServer("a");
+        c.onQueryInput(input("x"));
+        c.onQueryInput(input(""));
+        release([person(1, "Alice")]);
+        await loading;
+        expect(c.shownPeople().map((p: any) => p.name)).toEqual(["Alice"]);
+    });
+
+    it("a search answered after a newer keystroke is dropped", async () => {
+        const chat = fakeChat(["a"]);
+        let release: (v: any) => void = () => {};
+        chat.people.searchPeople.mockReturnValue(new Promise((res) => { release = res; }));
+        const c = await make(chat);
+        const pending = c.search("old");
+        c.onQueryInput(input(""));
+        release([person(3, "Carol")]);
+        await pending;
+        expect(c.state.results).toEqual([]);
+    });
+
+    it("unmounting cancels a pending search", async () => {
+        vi.useFakeTimers();
+        const chat = fakeChat(["a"]);
+        const c = await make(chat);
+        c.onQueryInput(input("car"));
+        c._searchGen++;
+        await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS * 2);
+        expect(chat.people.searchPeople).not.toHaveBeenCalled();
+    });
+
+    it("a failed init offers a retry", async () => {
+        const chat = fakeChat(["a"]);
+        chat.sources.mockRejectedValueOnce(new Error("db"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const c = await make(chat);
+        expect(c.state.initFailed).toBe(true);
+        await c.init();
+        expect(c.state.initFailed).toBe(false);
+        expect(c.state.serverId).toBe("a");
     });
 });
 

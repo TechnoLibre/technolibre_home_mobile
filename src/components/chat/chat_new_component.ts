@@ -38,6 +38,8 @@ interface ChatNewState {
     offline: boolean;
     busy: boolean;
     error: string;
+    /** The screen could not read its sources; a retry is offered. */
+    initFailed: boolean;
 }
 
 /**
@@ -76,6 +78,7 @@ export class ChatNewComponent extends EnhancedComponent {
                 t-on-click="() => this.onView('join')" t-esc="t('chat.new_join')"/>
       </nav>
       <p t-if="state.error" class="chat-new__error" role="alert" t-esc="state.error"/>
+      <button t-if="state.initFailed" class="chat-new__go" t-on-click="init" t-esc="t('chat.new_retry')"/>
 
       <t t-if="state.view === 'people' or state.view === 'group'">
         <input class="chat-new__search" type="search" t-att-placeholder="t('chat.new_search')"
@@ -99,10 +102,11 @@ export class ChatNewComponent extends EnhancedComponent {
         </div>
         <h3 t-if="showRecent()" class="chat-new__title" t-esc="t('chat.new_recent')"/>
         <ul class="chat-new__people">
-          <li t-foreach="shownPeople()" t-as="p" t-key="p.partnerId" class="chat-new__person"
-              t-on-click="() => this.onPerson(p)">
-            <span class="chat-new__avatar" aria-hidden="true" t-esc="initialOf(p)"/>
-            <span class="chat-new__person-name" t-esc="p.name"/>
+          <li t-foreach="shownPeople()" t-as="p" t-key="p.partnerId">
+            <button class="chat-new__person" t-on-click="() => this.onPerson(p)">
+              <span class="chat-new__avatar" aria-hidden="true" t-esc="initialOf(p)"/>
+              <span class="chat-new__person-name" t-esc="p.name"/>
+            </button>
           </li>
         </ul>
         <p t-if="shownPeople().length === 0" class="chat-new__empty" t-esc="t('chat.new_no_people')"/>
@@ -123,10 +127,11 @@ export class ChatNewComponent extends EnhancedComponent {
       <t t-if="state.view === 'join'">
         <p t-if="state.offline" class="chat-new__hint" t-esc="t('chat.new_join_offline')"/>
         <ul class="chat-new__channels">
-          <li t-foreach="state.joinable" t-as="c" t-key="c.channelId" class="chat-new__channel"
-              t-on-click="() => this.onJoin(c)">
-            <span class="chat-new__channel-name" t-esc="'# ' + c.name"/>
-            <span t-if="c.description" class="chat-new__channel-desc" t-esc="c.description"/>
+          <li t-foreach="state.joinable" t-as="c" t-key="c.channelId">
+            <button class="chat-new__channel" t-on-click="() => this.onJoin(c)">
+              <span class="chat-new__channel-name" t-esc="'# ' + c.name"/>
+              <span t-if="c.description" class="chat-new__channel-desc" t-esc="c.description"/>
+            </button>
           </li>
         </ul>
         <p t-if="!state.offline and state.joinable.length === 0" class="chat-new__empty"
@@ -135,8 +140,10 @@ export class ChatNewComponent extends EnhancedComponent {
     </div>`;
 
     private _timer: ReturnType<typeof setTimeout> | null = null;
-    /** Bumped by every search or server change; an answer for an older value is dropped. */
-    private _gen = 0;
+    /** Bumped by every keystroke or server change; a search answered under an older value is dropped. */
+    private _searchGen = 0;
+    /** Bumped by every server change; a load answered under an older value is dropped. */
+    private _loadGen = 0;
     private _sources: ChatSource[] = [];
 
     setup() {
@@ -157,10 +164,12 @@ export class ChatNewComponent extends EnhancedComponent {
             offline: false,
             busy: false,
             error: "",
+            initFailed: false,
         });
         onMounted(() => this.init());
         onWillUnmount(() => {
-            this._gen++;
+            this._searchGen++;
+            this._loadGen++;
             if (this._timer !== null) clearTimeout(this._timer);
         });
     }
@@ -183,10 +192,13 @@ export class ChatNewComponent extends EnhancedComponent {
 
     /** Reads the sources from the cache and picks the server: the list's filter, else the last used here, else the first. */
     async init(): Promise<void> {
+        this.state.initFailed = false;
+        this.state.error = "";
         try {
             this._sources = await this.chatService.sources({ online: false });
         } catch (e) {
             this.fail(e);
+            this.state.initFailed = true;
             return;
         }
         const ids = this._sources.map((s) => s.configId);
@@ -209,15 +221,22 @@ export class ChatNewComponent extends EnhancedComponent {
     /** Reloads what depends on the server: recent people, then the data of the current view. */
     private async loadServer(): Promise<void> {
         const src = this.source();
-        const gen = ++this._gen;
+        const gen = ++this._loadGen;
+        this._searchGen++;
+        if (this._timer !== null) clearTimeout(this._timer);
+        this._timer = null;
         this.state.error = "";
         this.state.results = [];
         this.state.picked = [];
         this.state.recent = [];
+        this.state.groups = [];
+        this.state.groupId = false;
+        this.state.joinable = [];
+        this.state.offline = false;
         if (!src) return;
         try {
             const recent = await this.chatService.people.recentPeople(src.configId);
-            if (gen !== this._gen) return;
+            if (gen !== this._loadGen) return;
             this.state.recent = recent;
         } catch (e) {
             this.fail(e);
@@ -230,16 +249,18 @@ export class ChatNewComponent extends EnhancedComponent {
     private async loadView(): Promise<void> {
         const src = this.source();
         if (!src) return;
-        const gen = this._gen;
+        const gen = this._loadGen;
         try {
             if (this.state.view === "channel") {
+                // Kept across tab switches; a failed read is retried on the next visit
+                if (this.state.groups.length > 0) return;
                 const r = await this.chatService.people.accessGroups(src);
-                if (gen !== this._gen) return;
+                if (gen !== this._loadGen) return;
                 this.state.groups = r.groups;
                 this.state.groupId = r.defaultId;
             } else if (this.state.view === "join") {
                 const r = await this.chatService.people.joinableChannels(src);
-                if (gen !== this._gen) return;
+                if (gen !== this._loadGen) return;
                 this.state.joinable = r.channels;
                 this.state.offline = r.offline;
             }
@@ -266,15 +287,16 @@ export class ChatNewComponent extends EnhancedComponent {
 
     onQueryInput(ev: Event): void {
         this.state.query = (ev.target as HTMLInputElement).value;
-        const gen = ++this._gen;
+        const gen = ++this._searchGen;
         if (this._timer !== null) clearTimeout(this._timer);
+        this._timer = null;
         if (!this.state.query.trim()) {
             this.state.results = [];
             return;
         }
         this._timer = setTimeout(() => {
             this._timer = null;
-            if (gen === this._gen) this.search(this.state.query);
+            if (gen === this._searchGen) this.search(this.state.query);
         }, SEARCH_DEBOUNCE_MS);
     }
 
@@ -286,12 +308,12 @@ export class ChatNewComponent extends EnhancedComponent {
             this.state.results = [];
             return;
         }
-        const gen = this._gen;
+        const gen = this._searchGen;
         try {
             const found = await this.chatService.people.searchPeople(src, clean);
-            if (gen === this._gen) this.state.results = found;
+            if (gen === this._searchGen) this.state.results = found;
         } catch (e) {
-            if (gen === this._gen) this.fail(e);
+            if (gen === this._searchGen) this.fail(e);
         }
     }
 
@@ -312,15 +334,17 @@ export class ChatNewComponent extends EnhancedComponent {
     }
 
     canCreateGroup(): boolean {
-        return this.state.picked.length >= GROUP_MIN;
+        return new Set(this.state.picked.map((p) => p.partnerId)).size >= GROUP_MIN;
     }
 
     canCreateChannel(): boolean {
-        return this.state.channelName.trim() !== "";
+        // Without the groups read, the access would silently be "everyone"
+        return this.state.channelName.trim() !== "" && this.state.groups.length > 0;
     }
 
     onPerson(p: ChatPartner): Promise<void> | void {
         if (this.state.view === "group") {
+            if (this.state.picked.some((x) => x.partnerId === p.partnerId)) return;
             this.state.picked = [...this.state.picked, p];
             return;
         }

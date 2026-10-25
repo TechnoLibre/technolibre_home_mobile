@@ -90,6 +90,11 @@
 
 .chat-new__person,
 .chat-new__channel {
+	width: 100%;
+	background: transparent;
+	color: inherit;
+	border: none;
+	text-align: left;
 	display: flex;
 	align-items: center;
 	gap: 0.7rem;
