@@ -98,6 +98,18 @@ export class ChatBus {
     this.isConnected = false;
   }
 
+  /**
+   * The network is back: the backoff restarts and, unless the socket is
+   * connected or the bus stopped, a connection is tried at once instead of
+   * at the end of the pending delay. A socket still opening is dropped for
+   * the new one.
+   */
+  reconnectNow(): void {
+    this.attempt = 0;
+    if (this.stopped || this.isConnected) return;
+    void this.connect();
+  }
+
   /** Sends subscribe again with the current channels and last id (after a channel join). */
   resubscribe(): void {
     const t = this.transport;

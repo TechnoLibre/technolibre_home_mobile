@@ -156,7 +156,8 @@ export class NotificationService {
       }
       if (synced) this.eventBus.trigger(Events.RELOAD_NOTES);
       // Chat rows have their own drain; SyncService.hasDueWork leaves them out
-      await this.syncService.chat.flushAll();
+      await this.syncService.chat.flushAll()
+        .catch((e) => console.warn("[NotificationService] chat flush failed:", e));
       await this.scheduleRetry();
     } catch (e) {
       console.warn("[NotificationService] flush of due work failed:", e);
@@ -257,9 +258,14 @@ export class NotificationService {
    * pull queued notes for: a pull that changes a note queues its other
    * servers, and those may already have been synced in the first pass.
    * The second pass respects the delays, so a creation that failed again
-   * in the first pass is not retried at once.
+   * in the first pass is not retried at once. The chat goes first and
+   * beside the notes: its buses reconnect at once and its outbox drains,
+   * retry delays ignored, while the notes sync.
    */
   private async onNetworkRestore(): Promise<void> {
+    this.syncService.chat.reconnectNow();
+    const chatFlush = this.syncService.chat.flushAll({ force: true })
+      .catch((e) => console.warn("[NotificationService] chat flush:", e));
     const apps = (await this.appService.getApps()).filter((a) => a.database);
     const syncApp = async (app: Application, force = true) => {
       try {
@@ -274,7 +280,7 @@ export class NotificationService {
       if ((await this.syncService.pendingNoteIds(configId)).length > 0) await syncApp(app, false);
     }
     this.eventBus.trigger(Events.RELOAD_NOTES);
-    await this.syncService.chat.flushAll().catch((e) => console.warn("[NotificationService] chat flush:", e));
+    await chatFlush;
     this.startNtfy();
     await this.scheduleRetry().catch((e) => console.warn("[NotificationService] retry timer:", e));
   }

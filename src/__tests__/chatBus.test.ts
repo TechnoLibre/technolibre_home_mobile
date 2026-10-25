@@ -201,6 +201,42 @@ describe("ChatBus", () => {
     }
   });
 
+  it("reconnectNow connects at once from a long backoff, and restarts it", async () => {
+    const h = setup();
+    h.bus.start();
+    await flush();
+    for (let i = 0; i < 6; i++) {
+      h.transports[h.transports.length - 1].onClose(1006, "");
+      await flush();
+      vi.advanceTimersByTime(BACKOFF_MAX_MS + BACKOFF_JITTER_MS);
+      await flush();
+    }
+    const before = h.transports.length;
+    h.transports[before - 1].onClose(1006, "");
+    await flush();
+    h.bus.reconnectNow();
+    await flush();
+    expect(h.transports.length).toBe(before + 1);
+    // The pending delay was dropped, and the next failure waits the first step again
+    h.transports[before].onClose(1006, "");
+    await flush();
+    vi.advanceTimersByTime(BACKOFF_START_MS + 0.5 * BACKOFF_JITTER_MS);
+    await flush();
+    expect(h.transports.length).toBe(before + 2);
+  });
+
+  it("reconnectNow leaves a connected or a stopped bus alone", async () => {
+    const h = setup();
+    await opened(h);
+    h.bus.reconnectNow();
+    await flush();
+    expect(h.transports.length).toBe(1);
+    h.bus.stop();
+    h.bus.reconnectNow();
+    await flush();
+    expect(h.transports.length).toBe(1);
+  });
+
   it("backoff restarts after a minute open", async () => {
     const h = setup();
     let t = await opened(h);

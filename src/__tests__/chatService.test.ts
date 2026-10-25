@@ -333,6 +333,38 @@ describe("ChatService", () => {
     expect(mine[0]).toMatchObject({ status: "sent", messageId: 5000 });
   });
 
+  it("a forced flushAll sends a post its retry delay still holds", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.queue.queuePost(config, GROUP, "hello", false);
+    // A drain while the network drops: the attempt fails before any request
+    chat.isOnline = async () => false;
+    await chat.flushAll();
+    chat.isOnline = async () => true;
+    await chat.flushAll();
+    expect(odoo.on("/mail/message/post")).toHaveLength(0);
+    await chat.flushAll({ force: true });
+    expect(odoo.on("/mail/message/post")).toHaveLength(1);
+  });
+
+  it("reconnectNow reaches every running bus", async () => {
+    fakeOdoo();
+    const made: any[] = [];
+    await chat.startRealtime(() => {
+      const t = { open: vi.fn(), send: vi.fn(), close: vi.fn(), onOpen: () => {}, onMessage: () => {}, onClose: () => {} };
+      made.push(t);
+      return t as any;
+    });
+    await vi.waitFor(() => expect(made).toHaveLength(1));
+    made[0].onClose(1006, "");
+    await new Promise((r) => setTimeout(r, 0));
+    chat.reconnectNow();
+    // Well before the first backoff step (1 s and more)
+    await vi.waitFor(() => expect(made).toHaveLength(2), { timeout: 500 });
+    chat.stopRealtime();
+  });
+
   it("send online posts at once, with the module uuid when it is installed", async () => {
     const odoo = fakeOdoo();
     const src = await source();

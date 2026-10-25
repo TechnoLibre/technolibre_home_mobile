@@ -483,12 +483,15 @@ export class ChatService {
     this.changed(configId, null);
   }
 
-  /** Flushes the chat outbox of every application; one that fails does not stop the others. */
-  async flushAll(): Promise<void> {
+  /**
+   * Flushes the chat outbox of every application; one that fails does not
+   * stop the others. force skips the retry delays (not a quiet window).
+   */
+  async flushAll(opts: { force?: boolean } = {}): Promise<void> {
     for (const app of await this.db.getAllApplications()) {
       if (!app.database) continue;
       try {
-        const result = await this.queue.flush(credsOf(app));
+        const result = await this.queue.flush(credsOf(app), { force: opts.force });
         if (result.done + result.failed + result.blocked > 0) this.changed(configOf(app), null);
       } catch {
         // Kept in the outbox for the next flush
@@ -548,6 +551,11 @@ export class ChatService {
       }
       this.buses.set(src.configId, bus);
     }
+  }
+
+  /** The network is back: every bus not connected tries at once (ChatBus.reconnectNow). */
+  reconnectNow(): void {
+    for (const bus of this.buses.values()) bus.reconnectNow();
   }
 
   /** Stops and forgets every bus; a start still loading is cancelled. */

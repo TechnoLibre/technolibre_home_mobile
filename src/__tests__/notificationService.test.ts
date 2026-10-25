@@ -76,7 +76,7 @@ function makeServices(apps: any[]) {
         pendingNoteIds: vi.fn().mockResolvedValue([]),
         hasDueWork: vi.fn().mockResolvedValue(false),
         nextRetryAt: vi.fn().mockResolvedValue(null),
-        chat: { flushAll: vi.fn().mockResolvedValue(undefined) },
+        chat: { flushAll: vi.fn().mockResolvedValue(undefined), reconnectNow: vi.fn() },
     } as any;
     const bus = new EventBus();
     return { appService, syncService, bus };
@@ -376,14 +376,28 @@ describe("NotificationService", () => {
             expect(syncService.syncAll.mock.calls[0][2]).toEqual({ force: false });
         });
 
-        it("network restore flushes chat", async () => {
+        it("network restore reconnects the chat buses and flushes chat, forced, before the notes sync", async () => {
             const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
             new NotificationService(syncService, appService, bus, network).start();
             for (let i = 0; i < 20; i++) await Promise.resolve();
             syncService.chat.flushAll.mockClear();
+            const order: string[] = [];
+            syncService.chat.reconnectNow.mockImplementation(() => order.push("reconnect"));
+            syncService.chat.flushAll.mockImplementation(async () => { order.push("chat"); });
+            syncService.syncAll.mockImplementation(async () => { order.push("notes"); });
             onlineCb!();
             for (let i = 0; i < 40; i++) await Promise.resolve();
             expect(syncService.chat.flushAll).toHaveBeenCalledTimes(1);
+            expect(syncService.chat.flushAll).toHaveBeenCalledWith({ force: true });
+            expect(order.slice(0, 3)).toEqual(["reconnect", "chat", "notes"]);
+        });
+
+        it("a chat flush that throws still arms the retry timer", async () => {
+            const { appService, syncService, bus } = makeServices([fakeApp({ database: "a" })]);
+            syncService.chat.flushAll.mockRejectedValue(new Error("chat down"));
+            new NotificationService(syncService, appService, bus, network).start();
+            for (let i = 0; i < 40; i++) await Promise.resolve();
+            expect(syncService.nextRetryAt).toHaveBeenCalled();
         });
 
         it("retry timer counts chat rows: a due chat row is flushed once, the timer is not re-armed", async () => {
