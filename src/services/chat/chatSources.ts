@@ -1,4 +1,5 @@
 import type { Application } from "../../models/application";
+import type { SyncCredentials } from "../odoo/odooRpcClient";
 
 /** The only Odoo major version the chat speaks. */
 export const CHAT_MAJOR = 18;
@@ -7,6 +8,14 @@ export const CHAT_MAJOR = 18;
 export function parseOdooMajor(version: string): number | null {
   const m = /(\d+)\.\d+/.exec(version) ?? /(\d+)/.exec(version);
   return m ? Number(m[1]) : null;
+}
+
+/** One Odoo account the chat reads: its config id, application, credentials and short label. */
+export interface ChatSource {
+  configId: string;
+  app: Application;
+  creds: SyncCredentials;
+  label: string;
 }
 
 export type ChoiceMode = "unavailable" | "none" | "chips" | "dropdown";

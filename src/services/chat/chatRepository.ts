@@ -445,6 +445,12 @@ export class ChatRepository {
     await this.put("chat_messages", this.messageRow({ ...messageFromRow(queued), status: "failed" }));
   }
 
+  /** A message the server knows, by its id; null when it is not cached. */
+  async message(configId: string, messageId: number): Promise<ChatMessage | null> {
+    const row = await this.row("chat_messages", key(configId, `m${messageId}`));
+    return row ? messageFromRow(row) : null;
+  }
+
   async members(configId: string, channelId: number): Promise<ChatMember[]> {
     return (await this.rows("chat_members", { config_id: configId, channel_id: channelId })).map(memberFromRow);
   }
@@ -473,6 +479,11 @@ export class ChatRepository {
       inboxCounter: 0,
       loadedAt: null,
     };
+  }
+
+  /** Whether a sync state was ever stored for the account, i.e. it was once a chat source. */
+  async hasSourceState(configId: string): Promise<boolean> {
+    return (await this.rows("chat_sources", { config_id: configId })).length > 0;
   }
 
   async setSourceState(s: Partial<ChatSourceState> & { configId: string }): Promise<void> {

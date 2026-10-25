@@ -1,5 +1,6 @@
 import { DatabaseService, NoteLink, NoteLinkKind, OutboxOp } from "./databaseService";
 import { CHAT_NOTE } from "./chat/chatOutbox";
+import { ChatService } from "./chat/chatService";
 import { CREATE_QUIET_WINDOW_MS, clientMarker } from "./outboxMarker";
 
 export { CREATE_QUIET_WINDOW_MS, clientMarker };
@@ -779,6 +780,8 @@ export class SyncService {
   readonly invoiceForms: InvoiceFormService;
   /** The activity calendar: activities per server, cached, and its offline actions. */
   readonly calendar: ActivityCalendarService;
+  /** The Odoo 18 Discuss chat: its cache, its outbox rows and the bus deliveries. */
+  readonly chat: ChatService;
   /** Activity types per server, cached for offline. */
   readonly activityTypes: ActivityTypeService;
   /** Record search per model (records an activity goes on, users), cached. */
@@ -822,6 +825,7 @@ export class SyncService {
     this._recordSearches.set(PARTNER_MODEL, this.partners);
     this.activityTypes = new ActivityTypeService(db, rpc);
     this.calendar = new ActivityCalendarService(db, rpc, outbox);
+    this.chat = new ChatService(db, rpc, outbox, this.capabilities);
     this.outbox.onRetryScheduled = (at) => this.onRetryScheduled?.(at);
     for (const kind of TARGET_KINDS) {
       // drain already found the operation due: its retry delay is over or forced

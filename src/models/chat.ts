@@ -75,3 +75,9 @@ export interface ChatSourceState {
   inboxCounter: number;
   loadedAt: string | null;
 }
+
+/** One notification of the Odoo bus: its bus id and the typed message it carries. */
+export interface BusNotification {
+  id: number;
+  message: { type: string; payload: any };
+}

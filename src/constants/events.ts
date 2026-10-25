@@ -39,4 +39,6 @@ export const Events: Record<string, string> = {
 	/** deckSleepCoupling → Options › Stream Deck: both power options as
 	 *  the plugin now stores them, after a write from another section. */
 	STREAMDECK_POWER_OPTIONS: "streamdeck_power_options",
+	/** The chat cache changed — the screens reread conversations and counters. */
+	CHAT_CHANGED: "chatchanged",
 }

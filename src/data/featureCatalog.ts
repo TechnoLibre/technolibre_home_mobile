@@ -4359,6 +4359,34 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/outboxMarker.ts",
                 ],
             },
+            {
+                id: "chat.service",
+                label: { en: "Chat service", fr: "Service de clavardage" },
+                description: {
+                    en: "Chat sources, conversations and unread total, progressive history, sending, read, typing and bus deliveries.",
+                    fr: "Sources du clavardage, conversations et total non lu, historique progressif, envoi, lecture, saisie et livraisons du bus.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "A chat source is an application on Odoo 18, asked once when its version is unknown. "
+                        + "Loading reads the session, then /mail/data, then the module state. History pages "
+                        + "always use around, so fetching never clears mentions. Posts and reads go through "
+                        + "the chat outbox; typing is throttled and never queued. A bus notification moves a "
+                        + "counter only when its bus id is above the last one applied, starting from the one "
+                        + "/mail/data reports.",
+                    fr: "Une source de clavardage est une application sur Odoo 18, interrogée une fois quand "
+                        + "sa version est inconnue. Le chargement lit la session, puis /mail/data, puis l'état "
+                        + "du module. Les pages d'historique utilisent toujours around, la lecture n'efface "
+                        + "donc jamais les mentions. Envois et lectures passent par la boîte d'envoi du "
+                        + "clavardage ; la saisie est espacée et jamais mise en file. Une notification du bus "
+                        + "ne change un compteur que si son id de bus dépasse le dernier appliqué, à partir de "
+                        + "celui que donne /mail/data.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatService.ts",
+                ],
+            },
         ],
     },
 ];
