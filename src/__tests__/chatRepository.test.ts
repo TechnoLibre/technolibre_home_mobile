@@ -254,7 +254,11 @@ describe("ChatRepository", () => {
     await repo.applyDelta(A, delta({ channels: [{ channelId: 7, name: "Team" }], partners: [{ configId: A, partnerId: 3, name: "Zoe", imStatus: null }] }));
     await repo.putPending(pending(A, "u1", { outboxOpId: "op-u1" }));
     await repo.setSourceState({ configId: A, lastBusId: 5 });
+    await repo.rememberRealId(A, -5, 7);
     await db.renameSyncConfigId(A, B);
+    expect(await repo.realIdOf(A, -5)).toBeNull();
+    expect(await repo.realIdOf(B, -5)).toBe(7);
+    expect(await repo.adoptedIds(B)).toEqual(new Set([7]));
     expect(await repo.channels(A)).toEqual([]);
     expect((await repo.channel(B, 7))!.name).toBe("Team");
     const rows = await repo.messages(B, 7);
@@ -277,8 +281,11 @@ describe("ChatRepository", () => {
       }));
       await repo.putPending(pending(c, "u1"));
       await repo.setSourceState({ configId: c, lastBusId: 2 });
+      await repo.rememberRealId(c, -5, 7);
     }
     await repo.dropSource(A);
+    expect(await repo.realIdOf(A, -5)).toBeNull();
+    expect(await repo.realIdOf(B, -5)).toBe(7);
     expect(await repo.channels(A)).toEqual([]);
     expect(await repo.messages(A, 7)).toEqual([]);
     expect(await repo.members(A, 7)).toEqual([]);
@@ -311,9 +318,11 @@ describe("ChatRepository lot 2", () => {
   let repo: ChatRepository;
   const LOT2 = {
     chat_channels: ["is_pinned", "is_editable", "custom_channel_name", "member_count", "group_public_id",
-      "authorized_group_full_name", "create_uid", "group_based_subscription", "parent_channel_id", "create_op_id"],
+      "authorized_group_full_name", "create_uid", "group_based_subscription", "parent_channel_id", "create_op_id",
+      "create_failed"],
     chat_members: ["create_date"],
     chat_sources: ["internal_user_group_id", "global_mute_until", "is_internal_user"],
+    chat_temp_ids: ["id", "config_id", "temp_id", "real_id"],
   };
   const columnsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
 
@@ -349,6 +358,27 @@ describe("ChatRepository lot 2", () => {
     const repo2 = new ChatRepository(db);
     expect((await repo2.channel("a", 1))!).toMatchObject({ isPinned: true, groupBasedSubscription: false });
     expect(await repo2.sourceState("a")).toMatchObject({ isInternalUser: false, globalMuteUntil: null });
+  });
+
+  it("migration 2026102602 completes a database that ran 2026102601 without the create columns", async () => {
+    // 2026102601 as an earlier lot 2 build ran it: its columns, no create_failed, no chat_temp_ids
+    const raw = (db as any).db;
+    const first = LOT2.chat_channels.filter((c) => c !== "create_failed").map((c) => `${c} TEXT`).join(", ");
+    await raw.execute(`CREATE TABLE IF NOT EXISTS chat_channels (id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL, channel_id INTEGER NOT NULL, ${first})`);
+    await raw.execute("CREATE TABLE IF NOT EXISTS chat_members (id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL, create_date TEXT)");
+    await raw.execute("CREATE TABLE IF NOT EXISTS chat_sources (config_id TEXT PRIMARY KEY NOT NULL, internal_user_group_id INTEGER, global_mute_until TEXT, global_mute_at TEXT, is_internal_user INTEGER)");
+    await db.rawRun("INSERT INTO chat_channels (id, config_id, channel_id, create_op_id) VALUES (?, ?, ?, ?)", ["a#-5", "a", -5, "op-1"]);
+    expect(await columnsOf("chat_channels")).not.toContain("create_failed");
+    expect(await columnsOf("chat_temp_ids")).toEqual([]);
+    const migration = APP_MIGRATIONS.find((m) => m.version === 2026102602)!;
+    expect(migration.description).toBe("Clavardage : création refusée et identifiants temporaires");
+    await migration.run(db);
+    await migration.run(db);
+    for (const [t, cols] of Object.entries(LOT2)) expect(await columnsOf(t)).toEqual(expect.arrayContaining(cols));
+    const repo2 = new ChatRepository(db);
+    expect((await repo2.channel("a", -5))!).toMatchObject({ createOpId: "op-1", createFailed: false });
+    await repo2.rememberRealId("a", -5, 40);
+    expect(await repo2.realIdOf("a", -5)).toBe(40);
   });
 
   describe("on the chat tables", () => {

@@ -26,6 +26,7 @@ import { addActivitiesCacheTable } from "./addActivitiesCacheTable";
 import { addSyncTargetTables } from "./addSyncTargetTables";
 import { addChatTables } from "./addChatTables";
 import { addChatLot2Columns } from "./addChatLot2Columns";
+import { addChatCreateFailed } from "./addChatCreateFailed";
 
 /**
  * The app's database migrations, in version order: runMigrations runs at
@@ -167,5 +168,10 @@ export const APP_MIGRATIONS: Migration[] = [
 		version: 2026102601,
 		description: "Clavardage : colonnes du lot 2",
 		run: addChatLot2Columns,
+	},
+	{
+		version: 2026102602,
+		description: "Clavardage : création refusée et identifiants temporaires",
+		run: addChatCreateFailed,
 	},
 ];
