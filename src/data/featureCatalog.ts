@@ -4320,6 +4320,19 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.module",
+                label: { en: "Chat server module", fr: "Module serveur du clavardage" },
+                description: {
+                    en: "Detects whether the idempotent-post module is installed, available, absent or unknown on a server, and installs it for system users.",
+                    fr: "Détecte si le module d'envoi idempotent est installé, disponible, absent ou inconnu sur un serveur, et l'installe pour les utilisateurs système.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatModule.ts",
+                ],
+            },
+            {
                 id: "chat.outbox",
                 label: { en: "Chat outbox", fr: "Boîte d'envoi du clavardage" },
                 description: {
