@@ -1,4 +1,4 @@
-import type { ChatMessage } from "../../models/chat";
+import type { ChannelType, ChatMessage } from "../../models/chat";
 import type { DatabaseService, OutboxOp } from "../databaseService";
 import { networkService } from "../networkService";
 import { OdooRpcError, RequestNotSentError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
@@ -20,6 +20,26 @@ export const CHAT_NOTE = "chat";
 export const CHAT_POST = "chat.post";
 /** params { channelId, lastMessageId, mentions: boolean } */
 export const CHAT_READ = "chat.read";
+/**
+ * params { channelId, mode: "dm"|"group"|"channel", partnerIds, name,
+ * groupId: number|false, useModule, createSentAt? }. channelId is the
+ * temporary (negative) id until the create settles; a direct message
+ * pinned again carries its own id.
+ */
+export const CHAT_CREATE = "chat.create";
+/** params { channelId } */
+export const CHAT_JOIN = "chat.join";
+
+export type CreateMode = "dm" | "group" | "channel";
+
+/** Odoo's channel_type of each create mode. */
+const TYPE_OF: Record<CreateMode, ChannelType> = { dm: "chat", group: "group", channel: "channel" };
+
+/**
+ * How far before the stamp of a lost create the fingerprint search looks:
+ * create_date is the server's clock and createSentAt the phone's.
+ */
+export const CREATE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 const CHANNEL_MODEL = "discuss.channel";
 
@@ -62,6 +82,17 @@ export class ChatOutbox {
    * reading before a post answered never writes its older counters after it.
    */
   serial: <T>(configId: string, task: () => Promise<T>) => Promise<T> = (_configId, task) => task();
+  /**
+   * Called once a create or a join is written to the cache, with the id
+   * the phone used and the server's (equal for a join or a direct message
+   * pinned again); ChatService resubscribes and tells the screens.
+   */
+  created: (configId: string, tempId: number, channelId: number) => void = () => {};
+
+  /** Per "configId#tempId", the server id a settled create gave it, for the screens and late posts. */
+  private realIds = new Map<string, number>();
+  /** Per account, the end of the queue of exclusive() tasks. */
+  private locks = new Map<string, Promise<void>>();
 
   constructor(
     private db: DatabaseService,
@@ -72,26 +103,57 @@ export class ChatOutbox {
   ) {
     outbox.registerHandler(CHAT_POST, (creds, op) => this.runPost(creds, op));
     outbox.registerHandler(CHAT_READ, (creds, op) => this.runRead(creds, op));
+    outbox.registerHandler(CHAT_CREATE, (creds, op) => this.runCreate(creds, op));
+    outbox.registerHandler(CHAT_JOIN, (creds, op) => this.runJoin(creds, op));
+  }
+
+  /**
+   * Runs `task` once the account's earlier exclusive() tasks settled: a
+   * post being queued and a temporary id being swapped never interleave,
+   * so a post never lands under an id the swap already left. Short cache
+   * work only; never awaits serial().
+   */
+  private exclusive<T>(configId: string, task: () => Promise<T>): Promise<T> {
+    const run = (this.locks.get(configId) ?? Promise.resolve()).then(task);
+    const tail = run.then(() => undefined, () => undefined);
+    this.locks.set(configId, tail);
+    void tail.then(() => {
+      if (this.locks.get(configId) === tail) this.locks.delete(configId);
+    });
+    return run;
+  }
+
+  /** The server id of a conversation created under `tempId` once its create settled, else null. */
+  realIdOf(configId: string, tempId: number): number | null {
+    return this.realIds.get(`${configId}#${tempId}`) ?? null;
   }
 
   /**
    * Stores the text as a pending message and queues its post. The op waits
    * for the newest unfinished post of the same channel, so a failed post
-   * holds the ones written after it.
+   * holds the ones written after it; the first post of a conversation still
+   * being created (or joined) waits for that op. A temporary id whose create
+   * already settled is taken as the server's id.
    */
-  async queuePost(configId: string, channelId: number, text: string, useModule: boolean): Promise<ChatMessage> {
+  queuePost(configId: string, channelId: number, text: string, useModule: boolean): Promise<ChatMessage> {
+    return this.exclusive(configId, () => this.queuePostNow(configId, this.realIdOf(configId, channelId) ?? channelId, text, useModule));
+  }
+
+  private async queuePostNow(configId: string, channelId: number, text: string, useModule: boolean): Promise<ChatMessage> {
     const all = await this.db.getOutboxOpsForConfig(configId);
     // The tail of the channel's chain: the unfinished post no other op waits for
     const previous = all
       .filter((o) => o.kind === CHAT_POST && o.params.channelId === channelId)
       .filter((c) => !all.some((o) => o.dependsOn === c.id))
       .at(-1);
+    const createOpId = (await this.repo.channel(configId, channelId))?.createOpId ?? null;
+    const creating = createOpId !== null && all.some((o) => o.id === createOpId) ? createOpId : null;
     const op = await this.outbox.enqueue({
       noteId: CHAT_NOTE,
       configId,
       kind: CHAT_POST,
       params: { channelId, text, useModule },
-      dependsOn: previous?.id ?? null,
+      dependsOn: previous?.id ?? creating,
     });
     const message: ChatMessage = {
       configId,
@@ -153,6 +215,124 @@ export class ChatOutbox {
   }
 
   /**
+   * Queues the creation of a conversation and writes it to the cache at
+   * once under `channelId`: a temporary id (negative, from
+   * ChatRepository.newTemporaryId) for a new one, or the id of a cached
+   * hidden direct message to pin again. A new conversation is a member,
+   * pinned row carrying createOpId, with placeholder members (self, then
+   * the people invited; ids tempId·1000 − i, never a server's) so a group
+   * without a name shows their names. The op is stored "incomplete" until
+   * the row is written, so no drain sends a create whose row is missing.
+   */
+  async queueCreate(
+    configId: string,
+    channelId: number,
+    p: { mode: CreateMode; partnerIds: number[]; name: string; groupId: number | false; useModule: boolean },
+  ): Promise<OutboxOp> {
+    const op = await this.outbox.enqueue({
+      noteId: CHAT_NOTE,
+      configId,
+      kind: CHAT_CREATE,
+      params: { channelId, ...p },
+      status: "incomplete",
+    });
+    try {
+      if (channelId >= 0) {
+        await this.repo.patchChannel(configId, channelId, { isPinned: true, createOpId: op.id });
+      } else {
+        const self = (await this.repo.sourceState(configId)).selfPartnerId;
+        const people = [...(self !== null ? [self] : []), ...p.partnerIds.filter((id) => id !== self)];
+        await this.repo.applyDelta(configId, {
+          channels: [{
+            channelId,
+            channelType: TYPE_OF[p.mode],
+            name: p.mode === "dm" ? "" : p.name,
+            isMember: true,
+            isPinned: true,
+            lastInterestDt: odooDate(this.now()),
+            correspondentPartnerId: p.mode === "dm" ? (p.partnerIds[0] ?? null) : null,
+            memberCount: people.length,
+            groupPublicId: p.mode === "channel" && p.groupId !== false ? p.groupId : null,
+            createOpId: op.id,
+          }],
+          deletedChannelIds: [],
+          members: people.map((partnerId, i) => ({ memberId: channelId * 1000 - i, channelId, partnerId })),
+          deletedMemberIds: [],
+          messages: [],
+          partners: [],
+          inboxCounter: null,
+          selfPartnerId: null,
+        });
+      }
+    } catch (e: unknown) {
+      await this.outbox.cancel(op.id);
+      throw e;
+    }
+    await this.outbox.complete(op.id, {});
+    return op;
+  }
+
+  /**
+   * Queues joining a public channel. The cached row (written when missing,
+   * from `name`) turns member at once and carries the op as createOpId, so
+   * posts written meanwhile wait for the join and a load keeps it.
+   */
+  async queueJoin(configId: string, channelId: number, name = ""): Promise<OutboxOp> {
+    const op = await this.outbox.enqueue({
+      noteId: CHAT_NOTE,
+      configId,
+      kind: CHAT_JOIN,
+      params: { channelId },
+      status: "incomplete",
+    });
+    try {
+      const cached = await this.repo.channel(configId, channelId);
+      await this.repo.applyDelta(configId, {
+        channels: [{ channelId, ...(cached ? {} : { channelType: "channel" as const, name }), isMember: true, createOpId: op.id }],
+        deletedChannelIds: [],
+        members: [],
+        deletedMemberIds: [],
+        messages: [],
+        partners: [],
+        inboxCounter: null,
+        selfPartnerId: null,
+      });
+    } catch (e: unknown) {
+      await this.outbox.cancel(op.id);
+      throw e;
+    }
+    await this.outbox.complete(op.id, {});
+    return op;
+  }
+
+  /**
+   * Gives up a conversation that does not exist on the server: every chat
+   * row of the account naming it leaves the outbox (its create or join and
+   * what waits for it), then the cached conversation goes, its texts kept
+   * as failed (see ChatRepository.applyDelta). A direct message pinned again
+   * stays as it was, only unpinned again; its posts still go to it.
+   */
+  async cancelCreate(configId: string, channelId: number): Promise<void> {
+    const channel = await this.repo.channel(configId, channelId);
+    if (channelId >= 0 && channel?.channelType === "chat") {
+      if (channel.createOpId) await this.outbox.cancel(channel.createOpId);
+      await this.repo.patchChannel(configId, channelId, { isPinned: false, createOpId: null });
+      return;
+    }
+    await this.dropChannels(configId, [channelId]);
+    await this.repo.applyDelta(configId, {
+      channels: [],
+      deletedChannelIds: [channelId],
+      members: [],
+      deletedMemberIds: [],
+      messages: [],
+      partners: [],
+      inboxCounter: null,
+      selfPartnerId: null,
+    });
+  }
+
+  /**
    * Drains the chat rows of the server the credentials open. A server with
    * no live application has nothing to send to: its rows are left as they
    * are and the call completes.
@@ -189,11 +369,12 @@ export class ChatOutbox {
     return this.outbox.attempt(op.id, (running) => this.sendPost(creds, running));
   }
 
-  private async sendPost(creds: SyncCredentials, op: OutboxOp): Promise<void> {
-    const { channelId, text } = op.params;
-    const useModule = !!op.params.useModule;
-
-    let sentAt: string | undefined = op.params.createSentAt;
+  /**
+   * The stamp of the op's last send that may have reached the server, once
+   * its quiet window is over; throws OutboxRetryLaterError inside it.
+   */
+  private async quietStamp(creds: SyncCredentials, op: OutboxOp): Promise<string | undefined> {
+    let sentAt: string | undefined = op.params.createSentAt ?? undefined;
     if (sentAt && new Date(sentAt).getTime() > this.now().getTime()) {
       // Stored under a clock that ran fast: the window restarts once, now
       sentAt = this.now().toISOString();
@@ -208,6 +389,13 @@ export class ChatOutbox {
         );
       }
     }
+    return sentAt;
+  }
+
+  private async sendPost(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    const { channelId, text } = op.params;
+    const useModule = !!op.params.useModule;
+    const sentAt = await this.quietStamp(creds, op);
 
     let messageId: number | null = null;
     let result: any = null;
@@ -314,6 +502,154 @@ export class ChatOutbox {
       patch.newMessageSeparator = Math.max(channel.newMessageSeparator ?? 0, messageId + 1);
     }
     await this.repo.patchChannel(configId, channel.channelId, patch);
+  }
+
+  private runCreate(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, (running) => this.sendCreate(creds, running));
+  }
+
+  /**
+   * Creates the conversation: channel_get for a direct message (Odoo finds
+   * the existing chat again, so a repeat is safe), create_group or
+   * channel_create otherwise, with the op's client uuid in the context when
+   * the server module 1.1 dedupes creates (useModule). A send stamps
+   * createSentAt and a retry waits out the quiet window as a post does.
+   * Without the module, a retry after a send that may have reached the
+   * server first looks for the conversation by its fingerprint
+   * (findCreated) and adopts it. A refusal gives the conversation up
+   * (cancelCreate): the op, what waits for it, and the cached row go.
+   */
+  private async sendCreate(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    const { channelId, partnerIds, name, groupId } = op.params;
+    const mode = op.params.mode as CreateMode;
+    const useModule = !!op.params.useModule;
+    const sentAt = await this.quietStamp(creds, op);
+
+    let result: any = null;
+    try {
+      if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the create waits for the network.");
+      if (op.attempts > 1 && sentAt && mode !== "dm" && !useModule) result = await this.findCreated(creds, op, sentAt);
+      if (result === null) {
+        await this.outbox.setParams(op.id, { createSentAt: this.now().toISOString() });
+        const context = useModule ? { context: { erplibre_client_uuid: op.clientUuid } } : {};
+        if (mode === "dm") {
+          result = await this.rpc.callKw(creds, CHANNEL_MODEL, "channel_get", [], { partners_to: partnerIds });
+        } else if (mode === "group") {
+          result = await this.rpc.callKw(creds, CHANNEL_MODEL, "create_group", [], {
+            partners_to: partnerIds,
+            ...(name ? { name } : {}),
+            ...context,
+          });
+        } else {
+          result = await this.rpc.callKw(creds, CHANNEL_MODEL, "channel_create", [name, groupId], context);
+        }
+      }
+    } catch (e: unknown) {
+      if (e instanceof RequestNotSentError) {
+        await this.outbox.setParams(op.id, { createSentAt: sentAt ?? null });
+        throw e;
+      }
+      if (!isRefused(e)) throw e;
+      await this.cancelCreate(op.configId, channelId);
+      await this.outbox.cancel(op.id);
+      throw new OutboxBlockedError((e as Error).message, "refused", [], op.kind, op.id);
+    }
+    const realId = result?.[CHANNEL_MODEL]?.[0]?.id;
+    // The server may have created it: a retry finds it again
+    if (typeof realId !== "number") throw new Error("The create answer holds no channel.");
+    await this.settleCreate(op, realId, result);
+  }
+
+  /**
+   * The Store of the conversation a lost create made, or null when there is
+   * none. Searches the user's own member conversations of the op's type
+   * created since createSentAt − CREATE_CLOCK_SKEW_MS (the name too when the
+   * op has one); a group must also have exactly the op's people plus self
+   * as members. Two matches block the op ("ambiguous", their ids as
+   * candidates); one is read through /discuss/channel/info.
+   */
+  private async findCreated(creds: SyncCredentials, op: OutboxOp, sentAt: string): Promise<any | null> {
+    const mode = op.params.mode as CreateMode;
+    const info = await this.rpc.sessionInfo(creds);
+    // Without self the member sets never match, and the create would be sent again
+    if (!info.partnerId) throw new Error("The partner of the session is unknown.");
+    const since = odooDate(new Date(new Date(sentAt).getTime() - CREATE_CLOCK_SKEW_MS));
+    const domain: any[] = [
+      ["create_uid", "=", info.uid],
+      ["channel_type", "=", TYPE_OF[mode]],
+      ["create_date", ">=", since],
+      ["is_member", "=", true],
+    ];
+    if (op.params.name) domain.push(["name", "=", op.params.name]);
+    let found = await this.rpc.searchRead<{ id: number; channel_partner_ids: number[] }>(
+      creds, CHANNEL_MODEL, domain, ["id", "channel_partner_ids"], { limit: 10 },
+    );
+    if (mode === "group") {
+      const wanted = new Set<number>([...(op.params.partnerIds ?? []), info.partnerId]);
+      found = found.filter((c) => {
+        const has = new Set(c.channel_partner_ids ?? []);
+        return has.size === wanted.size && [...wanted].every((id) => has.has(id));
+      });
+    }
+    if (found.length > 1) {
+      throw new OutboxBlockedError(
+        `Several conversations match the create ${op.clientUuid}.`,
+        "ambiguous",
+        found.map((c) => c.id),
+        op.kind,
+        op.id,
+      );
+    }
+    if (found.length === 0) return null;
+    const store = await this.rpc.callWithAuth(creds, (sessionId) =>
+      this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/channel/info", { channel_id: found[0].id }));
+    if (typeof store?.[CHANNEL_MODEL]?.[0]?.id !== "number") throw new Error("The conversation found cannot be read.");
+    return store;
+  }
+
+  /**
+   * Writes a settled create or join in the account's queue of counter
+   * writers (serial): the server's Store first, then the temporary id
+   * swapped for the server's (ChatRepository.swapChannelId, exclusive of a
+   * post being queued), then `created`. An op no longer stored (its account
+   * erased, the conversation given up meanwhile) writes nothing.
+   */
+  private settleCreate(op: OutboxOp, realId: number, result: any): Promise<void> {
+    return this.serial(op.configId, async () => {
+      const { configId } = op;
+      if (!(await this.db.getOutboxOp(op.id))) return;
+      const tempId: number = op.params.channelId;
+      const self = (await this.repo.sourceState(configId)).selfPartnerId;
+      await this.repo.applyDelta(configId, parseStore(result, configId, self));
+      await this.exclusive(configId, async () => {
+        await this.repo.swapChannelId(configId, tempId, realId);
+        if (tempId !== realId) this.realIds.set(`${configId}#${tempId}`, realId);
+      });
+      this.created(configId, tempId, realId);
+    });
+  }
+
+  /**
+   * Joins a public channel through /discuss/channel/join, which adds self
+   * only when missing, so a repeat is safe. A channel the user cannot reach
+   * (NotFound, access) is given up as a refused create is.
+   */
+  private runJoin(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, async (running) => {
+      const { channelId } = running.params;
+      let result: any;
+      try {
+        if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the join waits for the network.");
+        result = await this.rpc.callWithAuth(creds, (sessionId) =>
+          this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/channel/join", { channel_id: channelId }));
+      } catch (e: unknown) {
+        if (!isRefused(e)) throw e;
+        await this.cancelCreate(running.configId, channelId);
+        await this.outbox.cancel(running.id);
+        throw new OutboxBlockedError((e as Error).message, "refused", [], running.kind, running.id);
+      }
+      await this.settleCreate(running, channelId, result);
+    });
   }
 
   private runRead(creds: SyncCredentials, op: OutboxOp): Promise<void> {

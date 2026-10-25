@@ -83,7 +83,17 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
     data: mailData() as any,
     /** The account-wide mute get_session_info reports. */
     sessionMute: (opts.sessionMute ?? false) as string | false,
+    /** Answers a call_kw first when it returns a value; `{__error: name}` answers a JSON-RPC error. */
+    onKw: null as null | ((params: any) => Promise<any>),
+    /** Answers a route the fake does not handle itself, same convention as onKw. */
+    onRoute: null as null | ((path: string, params: any) => Promise<any>),
   };
+  const rpcError = (name: string) => ({
+    ok: true, status: 200,
+    text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: 200, message: "Odoo Server Error", data: { name, message: "refused" } } }),
+    headers: { forEach: () => {} },
+  } as unknown as Response);
+  const answer = (r: any) => (r && typeof r === "object" && "__error" in r ? rpcError(r.__error) : ok(r));
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
     headers: { forEach: () => {} },
@@ -120,17 +130,99 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
       }
       case "/web/dataset/call_kw": {
         const { method } = params;
+        if (state.onKw) {
+          const r = await state.onKw(params);
+          if (r !== undefined) return answer(r);
+        }
         if (method === "fields_get") return ok({ body: { type: "html" } });
         if (method === "search_read") return ok([]);
         return ok(true);
       }
-      default:
+      default: {
+        if (state.onRoute) {
+          const r = await state.onRoute(path, params);
+          if (r !== undefined) return answer(r);
+        }
         return ok(true);
+      }
     }
   });
   vi.stubGlobal("fetch", fetchMock);
   const on = (p: string) => calls.filter((c) => c.path === p);
   return { calls, history, state, on, kw: (method: string) => on("/web/dataset/call_kw").filter((c) => c.params.method === method) };
+}
+
+
+interface ServerChannel { id: number; type: string; name: string; partners: number[]; uuid: string | null; createDate: string }
+
+/**
+ * The conversation side of a fake Odoo 18 over fakeOdoo's hooks:
+ * channel_get (finds a chat again), create_group and channel_create (each
+ * call creates, unless `module` and the context uuid matches a channel of
+ * the user), the discuss.channel fingerprint search, /discuss/channel/info
+ * and /discuss/channel/join. `dropNext` creates and then loses the answer;
+ * `refuse` answers creates with that error; `onCreate` runs while the
+ * create is on the server, before its answer leaves.
+ */
+function createServer(odoo: ReturnType<typeof fakeOdoo>, opts: { module?: boolean; now?: () => Date } = {}) {
+  const channels: ServerChannel[] = [];
+  const state = {
+    nextId: 300, dropNext: 0, refuse: null as string | null,
+    onCreate: null as null | ((store: any) => Promise<void>),
+  };
+  const odooNow = () => (opts.now?.() ?? new Date()).toISOString().slice(0, 19).replace("T", " ");
+  const store = (c: ServerChannel) => ({
+    "discuss.channel": [{ id: c.id, channel_type: c.type, name: c.name, last_interest_dt: c.createDate,
+      message_needaction_counter: 0, is_pinned: true, memberCount: c.partners.length }],
+    "discuss.channel.member": c.partners.map((partner, i) => ({
+      id: c.id * 10 + i, thread: { id: c.id, model: "discuss.channel" }, persona: { id: partner, type: "partner" },
+      create_date: c.createDate, ...(partner === SELF ? { message_unread_counter: 0, seen_message_id: false } : {}),
+    })),
+    "res.partner": c.partners.map((partner) => ({ id: partner, name: partner === SELF ? "Alice" : `P${partner}` })),
+  });
+  const make = (type: string, name: string, partners: number[], uuid: string | null): ServerChannel => {
+    const c = { id: state.nextId++, type, name, partners: [...new Set([SELF, ...partners])], uuid, createDate: odooNow() };
+    channels.push(c);
+    return c;
+  };
+  const create = async (build: () => ServerChannel) => {
+    if (state.refuse) return { __error: state.refuse };
+    const c = build();
+    if (state.onCreate) await state.onCreate(store(c));
+    if (state.dropNext > 0) { state.dropNext--; throw new TypeError("Failed to fetch"); }
+    return store(c);
+  };
+  odoo.state.onKw = async ({ model, method, args, kwargs }) => {
+    if (model !== "discuss.channel") return undefined;
+    const uuid = kwargs?.context?.erplibre_client_uuid ?? null;
+    const known = () => (opts.module && uuid ? channels.find((c) => c.uuid === uuid) : undefined);
+    if (method === "channel_get") {
+      const wanted = [...new Set([SELF, ...kwargs.partners_to])].sort();
+      return create(() => channels.find((c) => c.type === "chat" && [...c.partners].sort().join() === wanted.join())
+        ?? make("chat", "", kwargs.partners_to, null));
+    }
+    if (method === "create_group") return create(() => known() ?? make("group", kwargs.name ?? "", kwargs.partners_to, opts.module ? uuid : null));
+    if (method === "channel_create") return create(() => known() ?? make("channel", args[0], [], opts.module ? uuid : null));
+    if (method === "search_read") {
+      const value = (field: string) => kwargs.domain.find((d: any[]) => d[0] === field)?.[2];
+      return channels
+        .filter((c) => c.type === value("channel_type") && c.createDate >= value("create_date"))
+        .filter((c) => value("name") === undefined || c.name === value("name"))
+        .map((c) => ({ id: c.id, channel_partner_ids: c.partners }));
+    }
+    return undefined;
+  };
+  odoo.state.onRoute = async (path, params) => {
+    const c = channels.find((x) => x.id === params.channel_id);
+    if (path === "/discuss/channel/info") return c ? store(c) : null;
+    if (path === "/discuss/channel/join") {
+      if (!c || c.type !== "channel") return { __error: "werkzeug.exceptions.NotFound" };
+      if (!c.partners.includes(SELF)) c.partners.push(SELF);
+      return store(c);
+    }
+    return undefined;
+  };
+  return { channels, state, store, make };
 }
 
 const offline = () => (network as any).__setNetworkStatus({ connected: false, connectionType: "none" });
@@ -1239,5 +1331,237 @@ describe("ChatService", () => {
     await chat.load(src);
     expect(await chat.repo.channel(config, -1)).toMatchObject({ name: "Offline", createOpId: "op-create-1" });
     expect(await chat.repo.channel(config, -2)).toBeNull();
+  });
+
+  // ─── Lot 2: creates, joins, temporary ids ─────────────────────────────────
+
+  const createCalls = (odoo: ReturnType<typeof fakeOdoo>) =>
+    odoo.on("/web/dataset/call_kw").filter((c) => ["channel_get", "create_group", "channel_create"].includes(c.params.method));
+  const advance = (ms: number) => { clock = new Date(clock.getTime() + ms); };
+
+  it("direct message reuses a cached chat", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    server.channels.push({ id: CHAT, type: "chat", name: "", partners: [SELF, BOB], uuid: null, createDate: "2026-10-01 09:00:00" });
+    const src = await source();
+    await chat.load(src);
+    // Shown: returned at once, nothing sent
+    expect(await chat.startDirect(src, BOB)).toEqual({ configId: config, channelId: CHAT });
+    expect(createCalls(odoo)).toHaveLength(0);
+    // Hidden: the same chat, shown again, and pinned on the server through channel_get
+    await chat.repo.patchChannel(config, CHAT, { isPinned: false });
+    expect(await chat.startDirect(src, BOB)).toEqual({ configId: config, channelId: CHAT });
+    expect(createCalls(odoo).map((c) => c.params.kwargs)).toEqual([{ partners_to: [BOB] }]);
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ isPinned: true, createOpId: null });
+    // Nobody cached: a temporary chat, returned again while offline, created once online
+    offline();
+    const first = await chat.startDirect(src, 7);
+    expect(first.channelId).toBeLessThan(0);
+    expect(await chat.repo.channel(config, first.channelId)).toMatchObject({ channelType: "chat", correspondentPartnerId: 7, isMember: true });
+    expect(await chat.startDirect(src, 7)).toEqual(first);
+    online();
+    await chat.flushAll();
+    await chat.flushAll();
+    expect(createCalls(odoo)).toHaveLength(2);
+    const realId = chat.realIdOf(config, first.channelId)!;
+    expect(realId).toBeGreaterThan(0);
+    expect(await chat.repo.channel(config, first.channelId)).toBeNull();
+    expect(await chat.repo.channel(config, realId)).toMatchObject({ correspondentPartnerId: 7, createOpId: null });
+    expect(await chat.startDirect(src, 7)).toEqual({ configId: config, channelId: realId });
+    expect(createCalls(odoo)).toHaveLength(2);
+  });
+
+  it("offline group then posts survive a restart and the id swap", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    offline();
+    const { channelId: tempId } = await chat.createGroup(src, [BOB, 7]);
+    await chat.send(src, tempId, "first");
+    await chat.send(src, tempId, "second");
+    const ops = await env.db.getOutboxOpsForConfig(config);
+    const create = ops.find((o) => o.kind === "chat.create")!;
+    expect(create.params).toMatchObject({ channelId: tempId, mode: "group", partnerIds: [BOB, 7], name: "", useModule: false });
+    const postOf = (text: string) => ops.find((o) => o.kind === "chat.post" && o.params.text === text)!;
+    expect(postOf("first").dependsOn).toBe(create.id);
+    expect(postOf("second").dependsOn).toBe(postOf("first").id);
+    // The nameless group shows its people while only the phone knows it
+    expect((await chat.repo.members(config, tempId)).map((m) => m.partnerId)).toEqual([SELF, BOB, 7]);
+
+    // The app is killed: a new service over the same database, then the network is back
+    chat.dispose();
+    const rpc = new OdooRpcClient();
+    chat = new ChatService(env.db, rpc, new OutboxService(env.db, () => clock), new CapabilityService(env.db, rpc), () => clock);
+    online();
+    await chat.flushAll();
+
+    expect(server.channels).toHaveLength(1);
+    const realId = server.channels[0].id;
+    expect(createCalls(odoo)).toHaveLength(1);
+    const sent = odoo.on("/mail/message/post");
+    expect(sent.map((c) => c.params.thread_id)).toEqual([realId, realId]);
+    expect(sent.map((c) => c.params.post_data.body.split("<!--")[0])).toEqual(["first", "second"]);
+    expect(await chat.repo.channel(config, tempId)).toBeNull();
+    expect(await chat.repo.channel(config, realId)).toMatchObject({ channelType: "group", isMember: true, createOpId: null });
+    expect((await chat.messages(config, realId)).map((m) => m.status)).toEqual(["sent", "sent"]);
+    expect(await chat.messages(config, tempId)).toEqual([]);
+    expect((await chat.repo.members(config, realId)).every((m) => m.memberId > 0)).toBe(true);
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+    expect(chat.realIdOf(config, tempId)).toBe(realId);
+    // A post from a screen still on the temporary id goes to the group
+    await chat.send(src, tempId, "third");
+    expect(odoo.on("/mail/message/post").at(-1)!.params.thread_id).toBe(realId);
+  });
+
+  it("group create lost response with module adopts", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { module: true, now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    await chat.repo.setSourceState({ configId: config, moduleState: "installed" });
+    server.state.dropNext = 1;
+    const { channelId: tempId } = await chat.createGroup(src, [BOB], "Team B");
+    expect(tempId).toBeLessThan(0);
+    expect(server.channels).toHaveLength(1);
+    // Inside the quiet window nothing is sent again
+    advance(60_000);
+    await chat.flushAll({ force: true });
+    expect(createCalls(odoo)).toHaveLength(1);
+    advance(3 * 60_000);
+    await chat.flushAll({ force: true });
+    const calls = createCalls(odoo);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].params.kwargs).toMatchObject({ partners_to: [BOB], name: "Team B", context: { erplibre_client_uuid: expect.any(String) } });
+    expect(calls[1].params.kwargs.context).toEqual(calls[0].params.kwargs.context);
+    expect(server.channels).toHaveLength(1);
+    expect(chat.realIdOf(config, tempId)).toBe(server.channels[0].id);
+    expect(odoo.kw("search_read").filter((c) => c.params.model === "discuss.channel")).toHaveLength(0);
+  });
+
+  it("group create lost response without module adopts by fingerprint after the quiet window", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    // Same type, created in the window, other members: not this create
+    server.make("group", "", [7], null);
+    server.state.dropNext = 1;
+    const { channelId: tempId } = await chat.createGroup(src, [BOB, 8]);
+    await chat.send(src, tempId, "hello");
+    expect(server.channels).toHaveLength(2);
+    expect(odoo.on("/mail/message/post")).toHaveLength(0);
+    const sentAt = (await env.db.getOutboxOpsForConfig(config)).find((o) => o.kind === "chat.create")!.params.createSentAt;
+    advance(3 * 60_000 + 1);
+    await chat.flushAll();
+    expect(createCalls(odoo)).toHaveLength(1);
+    const search = odoo.kw("search_read").find((c) => c.params.model === "discuss.channel")!;
+    const since = new Date(new Date(sentAt).getTime() - 5 * 60_000).toISOString().slice(0, 19).replace("T", " ");
+    expect(search.params.kwargs.domain).toEqual([
+      ["create_uid", "=", 2], ["channel_type", "=", "group"], ["create_date", ">=", since], ["is_member", "=", true],
+    ]);
+    const realId = server.channels[1].id;
+    expect(odoo.on("/discuss/channel/info").map((c) => c.params)).toEqual([{ channel_id: realId }]);
+    expect(chat.realIdOf(config, tempId)).toBe(realId);
+    expect(odoo.on("/mail/message/post").map((c) => c.params.thread_id)).toEqual([realId]);
+    expect(server.channels).toHaveLength(2);
+  });
+
+  it("two fingerprint matches block ambiguous", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    server.state.dropNext = 1;
+    const { channelId: tempId } = await chat.createChannel(src, "Ops", 11);
+    await chat.send(src, tempId, "hello");
+    // The same channel created again in the window (another device of the user)
+    server.make("channel", "Ops", [], null);
+    advance(3 * 60_000 + 1);
+    await chat.flushAll();
+    const ops = await env.db.getOutboxOpsForConfig(config);
+    const create = ops.find((o) => o.kind === "chat.create")!;
+    const post = ops.find((o) => o.kind === "chat.post")!;
+    expect(create).toMatchObject({ kind: "chat.create", status: "blocked" });
+    expect(create.params).toMatchObject({ blockedReason: "ambiguous", candidates: server.channels.map((c) => c.id) });
+    expect(post).toMatchObject({ kind: "chat.post", status: "queued" });
+    expect(createCalls(odoo)).toHaveLength(1);
+    expect(odoo.on("/mail/message/post")).toHaveLength(0);
+    expect(await chat.repo.channel(config, tempId)).toMatchObject({ name: "Ops", createOpId: create.id });
+  });
+
+  it("bus insert before settle merges into one row", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    server.state.onCreate = (store) => chat.applyBus(config, [bus(1001, "mail.record/insert", store)]);
+    const before = (await chat.repo.channels(config)).length;
+    const { channelId } = await chat.createGroup(src, [BOB], "Fresh");
+    const realId = server.channels[0].id;
+    expect(channelId).toBe(realId);
+    const rows = (await chat.repo.channels(config)).filter((c) => c.name === "Fresh");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ channelId: realId, isMember: true, createOpId: null });
+    expect(await chat.repo.channels(config)).toHaveLength(before + 1);
+    expect((await chat.repo.members(config, realId)).map((m) => m.partnerId).sort()).toEqual([SELF, BOB]);
+  });
+
+  it("join then a message arrives live", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const pub = server.make("channel", "Public", [], null);
+    pub.partners = [BOB];
+    const { subscribes, deliver } = await openBus();
+    const loads = odoo.on("/mail/data").length;
+    const src = (await chat.sources({ online: false }))[0];
+    expect(await chat.join(src, pub.id, "Public")).toEqual({ configId: config, channelId: pub.id });
+    expect(odoo.on("/discuss/channel/join").map((c) => c.params)).toEqual([{ channel_id: pub.id }]);
+    expect(await chat.repo.channel(config, pub.id)).toMatchObject({ isMember: true, createOpId: null, name: "Public" });
+    await vi.waitFor(() => expect(subscribes()).toHaveLength(2));
+    await deliver([bus(1001, "discuss.channel/new_message", { id: pub.id, data: { "mail.message": [msg(950, pub.id)] } })]);
+    expect((await chat.messages(config, pub.id)).map((m) => m.messageId)).toEqual([950]);
+    expect(odoo.on("/mail/data")).toHaveLength(loads);
+    // Joining again is the same membership: the route answers it as it is
+    await chat.join(src, pub.id);
+    expect(server.channels[0].partners.filter((p) => p === SELF)).toHaveLength(1);
+    chat.stopRealtime();
+  });
+
+  it("refused create fails its queued posts with a notice", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    offline();
+    const { channelId: tempId } = await chat.createChannel(src, "Secret", 99);
+    await chat.send(src, tempId, "one");
+    await chat.send(src, tempId, "two");
+    server.state.refuse = "odoo.exceptions.AccessError";
+    online();
+    await chat.flushAll();
+    expect(odoo.on("/mail/message/post")).toHaveLength(0);
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+    expect(await chat.repo.channel(config, tempId)).toBeNull();
+    expect((await chat.conversations()).map((c) => c.channelId)).not.toContain(tempId);
+    const kept = await chat.messages(config, tempId);
+    expect(kept.map((m) => [m.status, m.outboxOpId])).toEqual([["failed", null], ["failed", null]]);
+    // Another create of the account never reuses the id that still holds those texts
+    offline();
+    const next = await chat.createGroup(src, [BOB]);
+    expect(next.channelId).not.toBe(tempId);
+  });
+
+  it("a discarded create takes its posts out of the outbox", async () => {
+    fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    offline();
+    const { channelId: tempId } = await chat.createGroup(src, [BOB]);
+    await chat.send(src, tempId, "draft");
+    await chat.discardCreate(config, tempId);
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+    expect(await chat.repo.channel(config, tempId)).toBeNull();
+    expect((await chat.messages(config, tempId))[0]).toMatchObject({ status: "failed", outboxOpId: null });
   });
 });

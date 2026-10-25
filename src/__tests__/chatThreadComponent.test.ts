@@ -45,6 +45,7 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
         send: vi.fn().mockResolvedValue(msg(null)),
         markRead: vi.fn().mockResolvedValue(undefined),
         typing: vi.fn().mockResolvedValue(undefined),
+        realIdOf: vi.fn((): number | null => null),
         queue: { flush: vi.fn().mockResolvedValue(undefined) },
         repo: {
             channel: vi.fn(async () => ch),
@@ -58,13 +59,13 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
     };
 }
 
-function make(chat: any, ops: any[] = []) {
+function make(chat: any, ops: any[] = [], channelId = "5") {
     stubLocale();
     const outbox = { retry: vi.fn().mockResolvedValue(undefined) };
     const c = new (ChatThreadComponent as any)();
     c.env = {
         eventBus: new EventBus(),
-        router: { getRouteParams: () => new Map([["source", "a"], ["channelId", "5"]]) },
+        router: { getRouteParams: () => new Map([["source", "a"], ["channelId", channelId]]) },
         databaseService: { getOutboxOpsForConfig: vi.fn().mockResolvedValue(ops) },
         syncService: { outbox },
     };
@@ -111,6 +112,48 @@ describe("ChatThreadComponent", () => {
         expect(c.state.found).toBe(false);
         expect(c.state.rows.map((r: any) => [r.meta, r.opId])).toEqual([["failed", null]]);
         expect(String(c.state.rows[0].html)).toContain("late");
+    });
+
+    it("a conversation created meanwhile moves the screen to the server's id", async () => {
+        const chat = fakeChat([msg(30, { channelId: 40 })]);
+        chat.repo.channel.mockImplementation(async (_c: string, id: number) => (id === 40 ? channel({ channelId: 40 }) : null));
+        chat.realIdOf.mockImplementation(() => 40);
+        const replace = vi.spyOn(window.history, "replaceState");
+        const c = make(chat, [], "-7");
+        await c.open();
+        expect(chat.realIdOf).toHaveBeenCalledWith("a", -7);
+        expect(replace).toHaveBeenCalledWith({}, "", "/chat/a/40");
+        expect(c.state.found).toBe(true);
+        expect(chat.messages).toHaveBeenCalledWith("a", 40, expect.anything());
+        c.state.text = "next";
+        await c.onSend();
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 40, "next");
+    });
+
+    it("a conversation whose create was refused says so above its unsent texts", async () => {
+        const chat = fakeChat([msg(null, { channelId: -7, status: "failed", outboxOpId: null })]);
+        chat.repo.channel.mockResolvedValue(null);
+        const c = make(chat, [], "-7");
+        await c.open();
+        expect(c.state.found).toBe(false);
+        expect(c.missingText()).toBe("This conversation could not be created: the messages below were not sent.");
+        expect(c.state.rows.map((r: any) => r.meta)).toEqual(["failed"]);
+    });
+
+    it("posts waiting for an ambiguous create show it", async () => {
+        const chat = fakeChat([msg(null, { channelId: -7, outboxOpId: "p1" })], [member(1)], channel({ channelId: -7, createOpId: "c1" }));
+        const ops = [
+            { id: "c1", dependsOn: null, status: "blocked", params: { blockedReason: "ambiguous" } },
+            { id: "p1", dependsOn: "c1", status: "queued", params: {} },
+        ];
+        const c = make(chat, ops, "-7");
+        await c.open();
+        expect(c.state.rows.map((r: any) => r.meta)).toEqual(["ambiguous"]);
+        // Not ambiguous: the post only waits
+        ops[0].params = {};
+        ops[0].status = "failed";
+        await c.refresh();
+        expect(c.state.rows.map((r: any) => r.meta)).toEqual(["waiting"]);
     });
 
     it("empty text is not sent", async () => {

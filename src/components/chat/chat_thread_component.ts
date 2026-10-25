@@ -23,7 +23,7 @@ export const THREAD_WINDOW = 100;
 /** Cached messages a scroll to the top adds to the rendered ones before the server is asked. */
 export const THREAD_PAGE = 50;
 
-type MetaKind = "none" | "sent" | "seen" | "pending" | "waiting" | "failed";
+type MetaKind = "none" | "sent" | "seen" | "pending" | "waiting" | "ambiguous" | "failed";
 
 export interface ThreadRow {
     key: string;
@@ -119,7 +119,7 @@ export class ChatThreadComponent extends EnhancedComponent {
           </button>
         </div>
       </div>
-      <p t-if="!state.found" class="chat-thread__missing" t-esc="state.rows.length ? t('chat.channel_gone') : t('chat.thread_missing')"/>
+      <p t-if="!state.found" class="chat-thread__missing" t-esc="missingText()"/>
       <div class="chat-thread__scroll" t-ref="scroller" t-on-scroll="onScroll">
         <div t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-thread__bubble"
              t-att-class="{'chat-thread__bubble--own': row.own}">
@@ -130,6 +130,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             <span t-if="row.meta === 'seen'" t-att-title="t('chat.seen')">✓✓</span>
             <span t-if="row.meta === 'pending'" t-esc="'⏳ ' + t('chat.pending')"/>
             <span t-if="row.meta === 'waiting'" t-esc="'⏳ ' + t('chat.waiting_previous')"/>
+            <span t-if="row.meta === 'ambiguous'" class="chat-thread__failed" t-esc="'⚠️ ' + t('chat.create_ambiguous')"/>
             <span t-if="row.meta === 'failed'" class="chat-thread__failed" t-esc="'⚠️ ' + t('chat.failed')"/>
             <button t-if="row.meta === 'failed' and row.opId" class="chat-thread__retry"
                     t-on-click="() => this.onRetry(row)" t-esc="t('chat.retry')"/>
@@ -174,7 +175,8 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _onChanged = (ev: Event) => {
         const d = (ev as CustomEvent).detail ?? {};
         if (d.configId !== this.configId) return;
-        if (d.channelId != null && d.channelId !== this.channelId) return;
+        // A conversation still under its temporary id hears its account: the swap names the server's id
+        if (d.channelId != null && d.channelId !== this.channelId && this.channelId >= 0) return;
         if (this._debounce !== null) clearTimeout(this._debounce);
         this._debounce = setTimeout(() => {
             this._debounce = null;
@@ -249,7 +251,14 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     private async build(): Promise<void> {
         const repo = this.chatService.repo;
-        const channel = await repo.channel(this.configId, this.channelId);
+        let channel = await repo.channel(this.configId, this.channelId);
+        const realId = !channel && this.channelId < 0 ? this.chatService.realIdOf(this.configId, this.channelId) : null;
+        if (realId !== null) {
+            // Created meanwhile: the screen moves to the server's id, in place of the temporary one in the history
+            this.channelId = realId;
+            window.history.replaceState({}, "", "/chat/" + encodeURIComponent(this.configId) + "/" + realId);
+            channel = await repo.channel(this.configId, realId);
+        }
         if (!channel) {
             // Left or deleted: what was still to post stays shown, as not sent
             this.state.found = false;
@@ -287,7 +296,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         const el = this.scroller.el as HTMLElement | null;
         const stick = !el || this.atBottom(el);
         const before = el ? el.scrollHeight - el.scrollTop : 0;
-        const rows = messages.map((m) => this.rowOf(m, channel, members, self, ops));
+        const rows = messages.map((m) => this.rowOf(m, channel!, members, self, ops));
         // A change of members or typing alone leaves the rows, and the DOM, untouched
         const sig = rows.map((r, i) => [r.key, r.meta, r.time, r.opId, this.htmlKey(messages[i])].join("|")).join("\n");
         if (sig === this._sig) return;
@@ -358,7 +367,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         channel: ChatChannel | null,
         members: ChatMember[],
         self: number | null,
-        ops: { id: string; dependsOn: string | null }[],
+        ops: { id: string; dependsOn: string | null; status?: string; params?: Record<string, any> }[],
     ): ThreadRow {
         const own = self !== null && m.authorPartnerId === self;
         let meta: MetaKind = "none";
@@ -366,7 +375,9 @@ export class ChatThreadComponent extends EnhancedComponent {
             if (m.status === "failed") meta = "failed";
             else if (m.status === "pending") {
                 const op = ops.find((o) => o.id === m.outboxOpId);
-                meta = op?.dependsOn && ops.some((o) => o.id === op.dependsOn) ? "waiting" : "pending";
+                const create = channel?.createOpId ? ops.find((o) => o.id === channel.createOpId) : undefined;
+                if (create?.status === "blocked" && create.params?.blockedReason === "ambiguous") meta = "ambiguous";
+                else meta = op?.dependsOn && ops.some((o) => o.id === op.dependsOn) ? "waiting" : "pending";
             } else if (m.messageId !== null) {
                 const others = members.filter((x) => x.partnerId !== self);
                 const seen =
@@ -395,6 +406,16 @@ export class ChatThreadComponent extends EnhancedComponent {
             this._html.set(k, html);
         }
         return html;
+    }
+
+    /**
+     * Why the conversation cannot be shown: a temporary one is gone only
+     * when its create was refused or given up; another one was left or
+     * deleted; with no text kept, it was never cached.
+     */
+    missingText(): string {
+        if (this.channelId < 0) return t("chat.create_failed");
+        return this.state.rows.length ? t("chat.channel_gone") : t("chat.thread_missing");
     }
 
     initials(): string {

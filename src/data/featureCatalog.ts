@@ -4394,8 +4394,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.outbox",
                 label: { en: "Chat outbox", fr: "Boîte d'envoi du clavardage" },
                 description: {
-                    en: "Queued posts and reads, sent once even when an answer is lost, apart from the note sync.",
-                    fr: "Envois et lectures en file, faits une seule fois même si une réponse se perd, à part de la synchro des notes.",
+                    en: "Queued posts, reads, conversation creates and joins, sent once even when an answer is lost, apart from the note sync.",
+                    fr: "Envois, lectures, créations de conversations et adhésions en file, faits une seule fois même si une réponse se perd, à part de la synchro des notes.",
                 },
                 status: "experimental",
                 howItWorks: {
@@ -4403,13 +4403,22 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "With the server module the client uuid travels in the post and the server "
                         + "answers a repeat with the message it holds; without it the body ends with "
                         + "a hidden comment that a retry searches for and adopts. Posts of one channel "
-                        + "wait for each other; reads merge to the highest message id.",
+                        + "wait for each other; reads merge to the highest message id. A conversation "
+                        + "created offline lives under a negative temporary id, swapped for the server's "
+                        + "when its create settles; posts written into it wait for the create. A lost "
+                        + "create is found again by the module's uuid, or else by a fingerprint search "
+                        + "(creator, type, name or members, creation date); two matches hold it.",
                     fr: "Un envoi est gardé comme message en attente et ligne de la boîte d'envoi "
                         + "avant toute requête. Avec le module serveur, l'uuid du client voyage dans "
                         + "l'envoi et le serveur répond à une répétition par le message qu'il détient ; "
                         + "sans lui, le corps se termine par un commentaire caché qu'un nouvel essai "
                         + "cherche et adopte. Les envois d'un canal s'attendent ; les lectures "
-                        + "fusionnent vers le plus haut id de message.",
+                        + "fusionnent vers le plus haut id de message. Une conversation créée hors "
+                        + "ligne vit sous un id temporaire négatif, remplacé par celui du serveur quand "
+                        + "sa création aboutit ; les envois écrits dedans attendent la création. Une "
+                        + "création perdue se retrouve par l'uuid du module, sinon par une recherche "
+                        + "d'empreinte (créateur, type, nom ou membres, date de création) ; deux "
+                        + "correspondances la retiennent.",
                 },
                 demo: NONE_PLUMBING,
                 files: [

@@ -1005,6 +1005,8 @@ export const translations: Record<string, string> = {
   "chat.loading_all": "Téléchargement… {count} messages",
   "chat.history_complete": "Tout l'historique est téléchargé.",
   "chat.thread_missing": "Cette conversation n'est pas disponible.",
+  "chat.create_failed": "Cette conversation n'a pas pu être créée : les messages ci-dessous n'ont pas été envoyés.",
+  "chat.create_ambiguous": "Plusieurs conversations du serveur correspondent à celle-ci : l'envoi est suspendu.",
   "chat.channel_gone": "Cette conversation n'est plus disponible : les messages ci-dessous n'ont pas été envoyés.",
   "chat.sent": "Envoyé",
   "chat.seen": "Vu par tous",

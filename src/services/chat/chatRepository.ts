@@ -491,6 +491,72 @@ export class ChatRepository {
     return row ? channelFromRow(row) : null;
   }
 
+  /**
+   * A temporary channel id for a conversation created on the phone: the
+   * negative of the clock in milliseconds, lowered by one while a cached
+   * channel or a cached message of the account already uses it (the
+   * messages of a refused create stay after their channel is gone).
+   */
+  async newTemporaryId(configId: string, now: Date): Promise<number> {
+    let id = -Math.max(1, now.getTime());
+    for (;;) {
+      const used = (await this.rows("chat_channels", { config_id: configId, channel_id: id })).length > 0
+        || (await this.rows("chat_messages", { config_id: configId, channel_id: id })).length > 0;
+      if (!used) return id;
+      id--;
+    }
+  }
+
+  /**
+   * Moves a conversation created under a temporary id to the id the server
+   * gave it: its messages, its members, and the channelId of every outbox
+   * row of the account that still names the temporary id. The server's row
+   * (written by the create answer or by the bus before it) wins for every
+   * server field; without one the temporary row is re-keyed. Placeholder
+   * members (negative ids, written before the server knew the conversation)
+   * go when the server's members are cached, and move otherwise. createOpId
+   * is cleared. Equal ids only clear createOpId (a hidden direct message
+   * pinned again keeps its id).
+   */
+  async swapChannelId(configId: string, tempId: number, realId: number): Promise<void> {
+    if (tempId === realId) {
+      await this.patchChannel(configId, realId, { createOpId: null });
+      return;
+    }
+    const temp = await this.channel(configId, tempId);
+    const real = await this.channel(configId, realId);
+    await this.db.rawRun(
+      "UPDATE chat_messages SET channel_id = ? WHERE config_id = ? AND channel_id = ?",
+      [realId, configId, tempId],
+    );
+    if ((await this.members(configId, realId)).length > 0) {
+      await this.db.rawRun(
+        "DELETE FROM chat_members WHERE config_id = ? AND channel_id = ? AND member_id < 0",
+        [configId, tempId],
+      );
+    }
+    await this.db.rawRun(
+      "UPDATE chat_members SET channel_id = ? WHERE config_id = ? AND channel_id = ?",
+      [realId, configId, tempId],
+    );
+    if (temp) {
+      const merged: ChatChannel = real
+        ? { ...real, isMember: real.isMember || temp.isMember, localPinned: real.localPinned || temp.localPinned }
+        : { ...temp, channelId: realId };
+      await this.del("chat_channels", { id: key(configId, tempId) });
+      await this.put("chat_channels", this.channelRow({ ...merged, createOpId: null }));
+    } else if (real) {
+      await this.patchChannel(configId, realId, { createOpId: null });
+    }
+    for (const op of await this.db.getOutboxOpsForConfig(configId)) {
+      if (op.params.channelId !== tempId) continue;
+      await this.db.updateOutboxOp(op.id, {
+        params: { ...op.params, channelId: realId },
+        updatedAt: this.now(),
+      });
+    }
+  }
+
   /** Overlays the given keys on a cached channel; nothing happens for an unknown channel. */
   async patchChannel(configId: string, channelId: number, p: Partial<ChatChannel>): Promise<void> {
     const row = await this.row("chat_channels", key(configId, channelId));
