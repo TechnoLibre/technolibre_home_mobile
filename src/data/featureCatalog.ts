@@ -4218,4 +4218,80 @@ export const FEATURE_TREE: FeatureNode[] = [
             },
         ],
     },
+    {
+        id: "chat",
+        label: { en: "Chat", fr: "Clavardage" },
+        description: {
+            en: "Odoo 18 Discuss conversations on the phone, from the local cache.",
+            fr: "Conversations Discuss d'Odoo 18 sur le téléphone, depuis le cache local.",
+        },
+        status: "experimental",
+        howItWorks: {
+            en: "Only Odoo 18 servers are chat sources. Each account is its own "
+                + "source with its own cache. Pure helpers decide the unread "
+                + "count, the sort, the message body and the settings, so the "
+                + "rules are the same on every screen.",
+            fr: "Seuls les serveurs Odoo 18 sont des sources de clavardage. "
+                + "Chaque compte est sa propre source, avec son propre cache. "
+                + "Des fonctions pures décident du compte de non lus, du tri, "
+                + "du corps des messages et des réglages, donc les règles sont "
+                + "les mêmes sur tous les écrans.",
+        },
+        demo: NONE_PLUMBING,
+        children: [
+            {
+                id: "chat.sources",
+                label: { en: "Chat sources", fr: "Sources de clavardage" },
+                description: {
+                    en: "Which servers are chat sources, how to choose one, their labels.",
+                    fr: "Quels serveurs sont des sources, comment en choisir une, leurs étiquettes.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/models/chat.ts",
+                    "src/services/chat/chatSources.ts",
+                ],
+            },
+            {
+                id: "chat.unread",
+                label: { en: "Unread rules", fr: "Règles des non lus" },
+                description: {
+                    en: "Unread counts, muting and the conversation sort.",
+                    fr: "Comptes de non lus, sourdine et tri des conversations.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatUnread.ts",
+                ],
+            },
+            {
+                id: "chat.body",
+                label: { en: "Message body", fr: "Corps des messages" },
+                description: {
+                    en: "Text to body, safe rendering of a received body, previews.",
+                    fr: "Texte vers corps, rendu sûr d'un corps reçu, aperçus.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatBody.ts",
+                ],
+            },
+            {
+                id: "chat.settings",
+                label: { en: "Chat settings", fr: "Réglages du clavardage" },
+                description: {
+                    en: "Whether read and typing are sent to the server.",
+                    fr: "Si la lecture et la frappe sont envoyées au serveur.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatSettings.ts",
+                ],
+            },
+        ],
+    },
 ];
