@@ -108,7 +108,10 @@ export class ChatService {
   /** Per account, the end of the queue of serial() tasks; settled tasks leave it. */
   private chains = new Map<string, Promise<void>>();
 
-  /** Per account, when a message of an unknown channel last reloaded it, and the reload the window holds back. */
+  /**
+   * Per account, when a message of an unknown channel last reloaded it,
+   * and the reload the window holds back.
+   */
   private unknownReloadAt = new Map<string, number>();
   private unknownReloadOwed = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -204,10 +207,12 @@ export class ChatService {
   /**
    * Reads the account from the server: the session (self partner, system
    * right, websocket version), then /mail/data with the member channels and
-   * their last message, then the server module state. A cached conversation
-   * the server no longer lists (left or hidden meanwhile) is dropped, unless
-   * it is pinned locally, still being created (createOpId) or still holds
-   * a post waiting to go. A channel whose last message is above every
+   * their last message, then the account-wide mute, then the server module
+   * state. A cached conversation the server no longer lists (left or hidden
+   * meanwhile) is dropped, unless it is pinned locally, still being created
+   * (createOpId) or still holds a post waiting to go; a direct message, which
+   * /mail/data leaves out while hidden, is kept with its history and marked
+   * unpinned. A channel whose last message is above every
    * cached one and not cached itself may miss messages in between: its
    * history restarts (oldestLoadedId null, not complete), so the next
    * pages come down from the last message again and upsert the rows
@@ -224,34 +229,41 @@ export class ChatService {
     const { configId, creds } = src;
     const erased = this.erasedSince(configId);
     const startedAt = this.now().toISOString();
-    // Fresh: the account-wide mute changes during a session, the other fields come from the cache
-    const info = await this.rpc.sessionInfo(creds, { fresh: true });
-    const mute = info.globalMuteUntil;
+    const info = await this.rpc.sessionInfo(creds);
     if (erased()) return;
     const self = info.partnerId || null;
-    const lastMuteAt = (await this.repo.sourceState(configId)).globalMuteAt;
-    // A bus change newer than this load's start wins over the value read
-    const muteIsStale = lastMuteAt !== null && lastMuteAt > startedAt;
     await this.repo.setSourceState({
       configId,
       selfPartnerId: self,
       isSystem: info.isSystem,
       wsVersion: info.websocketWorkerVersion,
       internalUserGroupId: info.internalUserGroupId,
-      ...(muteIsStale ? {} : { globalMuteUntil: mute }),
       isInternalUser: info.isInternalUser,
     });
     const result = await this.rpc.callWithAuth(creds, (sessionId) =>
       this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/data", { init_messaging: {}, channels_as_member: true }));
     if (erased()) return;
+    // Read fresh after /mail/data: a mute changed before the inbox bus id this load sets is in the
+    // value, since its bus event, at or below that id, is no longer applied
+    const mute = (await this.rpc.sessionInfo(creds, { fresh: true })).globalMuteUntil;
+    if (erased()) return;
+    const lastMuteAt = (await this.repo.sourceState(configId)).globalMuteAt;
+    // A bus change newer than this load's start wins over the value read
+    const muteIsStale = lastMuteAt !== null && lastMuteAt > startedAt;
     const delta = parseStore(result, configId, self);
     if (muteIsStale) delete delta.globalMuteUntil;
+    else delta.globalMuteUntil = mute;
     const lastOf = new Map(delta.channels.map((c) => [c.channelId, c.lastMessageId]));
     const gaps: number[] = [];
     for (const c of await this.repo.channels(configId)) {
       const cached = await this.repo.messages(configId, c.channelId);
       if (!lastOf.has(c.channelId)) {
         if (c.localPinned || c.createOpId !== null || cached.some((m) => m.messageId === null)) continue;
+        // A direct message is never left, only hidden: it stays cached with its history, unpinned
+        if (c.channelType === "chat") {
+          delta.channels.push({ channelId: c.channelId, isPinned: false });
+          continue;
+        }
         delta.deletedChannelIds.push(c.channelId);
         continue;
       }
@@ -520,8 +532,6 @@ export class ChatService {
   /** Cancels the pending typing stops; nothing more is sent for them. */
   dispose(): void {
     this.stopRealtime();
-    for (const timer of this.unknownReloadOwed.values()) clearTimeout(timer);
-    this.unknownReloadOwed.clear();
     for (const state of this.typingState.values()) {
       if (state.stop) clearTimeout(state.stop);
     }
@@ -539,8 +549,6 @@ export class ChatService {
    */
   async forgetSource(configId: string): Promise<void> {
     this.stopSourceRealtime(configId);
-    clearTimeout(this.unknownReloadOwed.get(configId));
-    this.unknownReloadOwed.delete(configId);
     this.unknownReloadAt.delete(configId);
     this.generations.set(configId, (this.generations.get(configId) ?? 0) + 1);
     await this.erase(configId);
@@ -613,8 +621,10 @@ export class ChatService {
     await this.startSource(src, run, transportFor);
   }
 
-  /** Stops one account's bus and cancels its start still loading; the others keep running. */
+  /** Stops one account's bus, its start still loading and its owed reload; the others keep running. */
   stopSourceRealtime(configId: string): void {
+    clearTimeout(this.unknownReloadOwed.get(configId));
+    this.unknownReloadOwed.delete(configId);
     this.sourceRuns.set(configId, (this.sourceRuns.get(configId) ?? 0) + 1);
     this.buses.get(configId)?.stop();
     this.buses.delete(configId);
@@ -725,9 +735,11 @@ export class ChatService {
     for (const bus of this.buses.values()) bus.reconnectNow();
   }
 
-  /** Stops and forgets every bus; a start still loading is cancelled. */
+  /** Stops and forgets every bus; a start still loading and the owed reloads are cancelled. */
   stopRealtime(): void {
     this.realtimeRun++;
+    for (const timer of this.unknownReloadOwed.values()) clearTimeout(timer);
+    this.unknownReloadOwed.clear();
     for (const bus of this.buses.values()) bus.stop();
     this.buses.clear();
   }
@@ -772,7 +784,7 @@ export class ChatService {
       case "discuss.channel/new_message":
         return this.applyNewMessage(configId, p, busId, fresh);
       case "mail.record/insert": {
-        const delta = await this.applyStore(configId, p);
+        const delta = await this.applyStore(configId, p, fresh);
         return delta.channels.length === 1 ? delta.channels[0].channelId : null;
       }
       case "discuss.channel.member/fetched": {
@@ -833,13 +845,18 @@ export class ChatService {
    * Applies a Store as a bus delivers it. A partial of a channel never seen
    * and without its type (a pin flag, a counter) is left out: it would make
    * an empty conversation. A channel counter is taken only with a bus id
-   * not older than the stored one (see ChatRepository.applyDelta).
+   * not older than the stored one (see ChatRepository.applyDelta). Not
+   * `fresh` (at or below counterBusId), a cached channel keeps its pin:
+   * the load after that bus id read it, and a replay must not show a
+   * hidden direct message again.
    */
-  private async applyStore(configId: string, result: any): Promise<StoreDelta> {
+  private async applyStore(configId: string, result: any, fresh: boolean): Promise<StoreDelta> {
     const delta = parseStore(result, configId, await this.selfOf(configId));
     const kept: StoreDelta["channels"] = [];
     for (const c of delta.channels) {
-      if (c.channelType !== undefined || (await this.repo.channel(configId, c.channelId))) kept.push(c);
+      const cached = await this.repo.channel(configId, c.channelId);
+      if (cached && !fresh) delete c.isPinned;
+      if (c.channelType !== undefined || cached) kept.push(c);
     }
     delta.channels = kept;
     await this.repo.applyDelta(configId, delta, { fromBus: true });
@@ -879,14 +896,16 @@ export class ChatService {
    * A new message in a channel. A channel the cache holds without self as
    * a member takes nothing; one the cache does not hold reloads the account
    * (reloadForUnknown). A post pins the channel for every member, as Odoo
-   * does, so a hidden direct message shows again. The message settles the pending post
-   * whose client uuid is the payload's temporary_id. A message of someone
-   * else, newer than the last known one, raises the unread counter by one
-   * in any conversation type, the open one included, as the browser's
-   * local counter does, unless the payload carries the server's counter or
-   * the stored counter is as of this bus id or later. Marking read, and
-   * the member record the server sends back, bring it down again; a
-   * channel's unread still counts nowhere but in its bold (unreadOf).
+   * does, so a hidden direct message shows again; a replay (not fresh)
+   * leaves the pin as the last load read it. The message settles the
+   * pending post whose client uuid is the payload's temporary_id. A
+   * message of someone else, newer than the last known one, raises the
+   * unread counter by one in any conversation type, the open one included,
+   * as the browser's local counter does, unless the payload carries the
+   * server's counter or the stored counter is as of this bus id or later.
+   * Marking read, and the member record the server sends back, bring it
+   * down again; a channel's unread still counts nowhere but in its bold
+   * (unreadOf).
    */
   private async applyNewMessage(configId: string, p: any, busId: number, fresh: boolean): Promise<number | null | undefined> {
     const channelId = Number(p.id);
@@ -896,7 +915,7 @@ export class ChatService {
       return channelId;
     }
     if (!known.isMember) return undefined;
-    const delta = await this.applyStore(configId, p.data);
+    const delta = await this.applyStore(configId, p.data, fresh);
     const message = delta.messages.find((m) => m.channelId === channelId);
     if (!message) return channelId;
 
@@ -910,7 +929,7 @@ export class ChatService {
     const patch: Partial<ChatChannel> = {
       lastMessageId: Math.max(known.lastMessageId ?? 0, message.messageId),
       lastInterestDt: maxDt(known.lastInterestDt, message.date),
-      isPinned: true,
+      ...(fresh ? { isPinned: true } : {}),
     };
     const serverCounted = delta.channels.some((c) => c.channelId === channelId && c.unreadCounter !== undefined);
     const fromOther = self === null || message.authorPartnerId !== self;
@@ -931,7 +950,7 @@ export class ChatService {
    * or later.
    */
   private async applyInbox(configId: string, p: any, busId: number, fresh: boolean): Promise<number | null> {
-    const delta = await this.applyStore(configId, p);
+    const delta = await this.applyStore(configId, p, fresh);
     const channelId = delta.messages[0]?.channelId ?? null;
     if (!fresh) return channelId;
     const state = await this.repo.sourceState(configId);

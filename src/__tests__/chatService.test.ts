@@ -81,6 +81,8 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
     /** While set, /mail/data holds its answer until the promise settles. */
     hold: null as null | Promise<void>,
     data: mailData() as any,
+    /** The account-wide mute get_session_info reports. */
+    sessionMute: (opts.sessionMute ?? false) as string | false,
   };
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
@@ -96,7 +98,7 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
       case "/web/session/get_session_info":
         return ok({
           uid: 2, partner_id: SELF, is_system: false, websocket_worker_version: "18.0-7", is_internal_user: true,
-          storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: opts.sessionMute ?? false } } },
+          storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: state.sessionMute } } },
         });
       case "/mail/data": {
         const answer = JSON.parse(JSON.stringify(state.data));
@@ -902,6 +904,8 @@ describe("ChatService", () => {
   const openBus = async () => {
     const made: any[] = [];
     await source();
+    const applied = vi.spyOn(chat, "applyBus");
+    const presence = vi.spyOn(chat, "presenceChannels");
     await chat.startRealtime(() => {
       const t = { open: vi.fn(), send: vi.fn(), close: vi.fn(), onOpen: () => {}, onMessage: (_: string) => {}, onClose: () => {} };
       made.push(t);
@@ -916,11 +920,13 @@ describe("ChatService", () => {
     t.onOpen();
     await vi.waitFor(() => expect(subscribes()).toHaveLength(1));
     const deliver = async (n: BusNotification[]) => {
+      const calls = applied.mock.results.length;
       t.onMessage(JSON.stringify(n));
-      const top = Math.max(...n.map((x) => x.id));
-      await vi.waitFor(async () => expect((await chat.repo.sourceState(config)).lastBusId).toBe(top));
-      // resubscribe reads the channels after the delivery: let it send
-      await new Promise((r) => setTimeout(r, 10));
+      await vi.waitFor(() => expect(applied.mock.results.length).toBe(calls + 1));
+      await applied.mock.results[calls].value;
+      // A resubscribe sends once its channel list is read: past that read, its send has run
+      await Promise.all(presence.mock.results.map((r) => r.value));
+      await Promise.resolve();
     };
     return { subscribes, deliver };
   };
@@ -1029,20 +1035,30 @@ describe("ChatService", () => {
   it("presence keeps the PRESENCE_CAP partners of the most recent conversations", async () => {
     fakeOdoo();
     await chat.load(await source());
-    // One group per partner, the higher the id the more recent; one old partner with no conversation
+    // A partner of no conversation (an author, a search hit) ranks after every member, whatever its id
+    const LONE = 90000;
+    await chat.repo.applyDelta(config, parseStore({ "res.partner": [{ id: LONE, name: "Lone", im_status: "offline" }] }, config, SELF));
+    expect(await chat.presenceChannels(config)).toEqual([`odoo-presence-res.partner_${BOB}`, `odoo-presence-res.partner_${LONE}`]);
+    // One group per partner, all more recent than BOB's, the later the more recent; the newest holds two partners at one interest
     const n = PRESENCE_CAP + 5;
     for (let i = 0; i < n; i++) {
       const id = 1000 + i;
-      const dt = `2026-10-${String(1 + Math.floor(i / 10)).padStart(2, "0")} ${String(i % 10).padStart(2, "0")}:00:00`;
-      await chat.repo.applyDelta(config, {
-        ...parseStore(newConversation(id, "group", [10000 + i]), config, SELF),
-      });
+      const others = i === n - 1 ? [20001, 20002] : [10000 + i];
+      const dt = `2026-11-${String(1 + Math.floor(i / 10)).padStart(2, "0")} ${String(i % 10).padStart(2, "0")}:00:00`;
+      await chat.repo.applyDelta(config, parseStore(newConversation(id, "group", others), config, SELF));
       await chat.repo.patchChannel(config, id, { lastInterestDt: dt });
     }
     const channels = await chat.presenceChannels(config);
     expect(channels).toHaveLength(PRESENCE_CAP);
-    expect(channels).toContain(`odoo-presence-res.partner_${10000 + n - 1}`);
-    expect(channels).not.toContain("odoo-presence-res.partner_10000");
+    // The same interest: the higher partner id first
+    expect(channels.slice(0, 2)).toEqual(["odoo-presence-res.partner_20002", "odoo-presence-res.partner_20001"]);
+    // Out first: LONE, then BOB (older conversations), then the partners of the oldest groups
+    expect(channels).not.toContain(`odoo-presence-res.partner_${LONE}`);
+    expect(channels).not.toContain(`odoo-presence-res.partner_${BOB}`);
+    const singles = n - 1;
+    const firstKept = singles - (PRESENCE_CAP - 2);
+    expect(channels).not.toContain(`odoo-presence-res.partner_${10000 + firstKept - 1}`);
+    expect(channels.at(-1)).toBe(`odoo-presence-res.partner_${10000 + firstKept}`);
   });
 
   it("global mute from settings mutes every conversation and clears", async () => {
@@ -1106,6 +1122,78 @@ describe("ChatService", () => {
     clock = new Date(clock.getTime() + RELOAD_WINDOW_MS);
     await chat.applyBus(config, [unknown(1004, 33)]);
     expect(loads()).toBe(before + 3);
+  });
+
+  it("a hidden DM keeps its history across a load and shows again on a fresh message only", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.loadOlder(src, CHAT);
+    const cached = (await chat.repo.messages(config, CHAT)).length;
+    expect(cached).toBeGreaterThan(1);
+    await chat.applyBus(config, [bus(1001, "discuss.channel/unpin", { id: CHAT })]);
+    // /mail/data leaves a hidden chat out
+    const data = odoo.state.data;
+    data["discuss.channel"] = data["discuss.channel"].filter((c: any) => c.id !== CHAT);
+    data["discuss.channel.member"] = data["discuss.channel.member"].filter((m: any) => m.thread.id !== CHAT);
+    data["mail.message"] = data["mail.message"].filter((m: any) => m.thread.id !== CHAT);
+    const before = await chat.memberChannelIds(config);
+    const resubscribe = vi.spyOn(chat, "resubscribe");
+    await chat.load(src);
+    expect(resubscribe).not.toHaveBeenCalled();
+    expect(await chat.memberChannelIds(config)).toEqual(before);
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ isMember: true, isPinned: false });
+    expect(await chat.repo.messages(config, CHAT)).toHaveLength(cached);
+    expect(await chat.repo.members(config, CHAT)).toHaveLength(2);
+    expect((await chat.conversations()).map((c) => c.channelId)).not.toContain(CHAT);
+    // A replay at or below the load's bus id shows nothing again
+    await chat.applyBus(config, [
+      bus(999, "mail.record/insert", { "discuss.channel": [{ id: CHAT, is_pinned: true }] }),
+      bus(1000, "discuss.channel/new_message", { id: CHAT, data: { "mail.message": [msg(81, CHAT)] } }),
+    ]);
+    expect((await chat.conversations()).map((c) => c.channelId)).not.toContain(CHAT);
+    // A fresh message is a post: the chat shows again, with no reload
+    const loads = odoo.on("/mail/data").length;
+    await chat.applyBus(config, [bus(1002, "discuss.channel/new_message", { id: CHAT, data: { "mail.message": [msg(82, CHAT)] } })]);
+    expect((await chat.conversations()).map((c) => c.channelId)).toContain(CHAT);
+    expect(odoo.on("/mail/data")).toHaveLength(loads);
+  });
+
+  it("a mute changed while a load reads /mail/data is in what the load writes", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    expect((await chat.repo.sourceState(config)).globalMuteUntil).toBeNull();
+    let release!: () => void;
+    odoo.state.hold = new Promise<void>((r) => (release = r));
+    const loading = chat.load(src);
+    await vi.waitFor(() => expect(odoo.on("/mail/data")).toHaveLength(2));
+    // Muted on the server now: its bus event falls at or below the inbox bus id this load sets
+    odoo.state.sessionMute = "9999-12-31 23:59:59";
+    release();
+    await loading;
+    expect((await chat.repo.sourceState(config)).globalMuteUntil).toBe("9999-12-31 23:59:59");
+  });
+
+  it("stopping realtime cancels a reload the window still owes", async () => {
+    const odoo = fakeOdoo();
+    await chat.load(await source());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const unknown = (busId: number, channelId: number) =>
+      bus(busId, "discuss.channel/new_message", { id: channelId, data: { "mail.message": [msg(busId, channelId)] } });
+    const before = odoo.on("/mail/data").length;
+    await chat.applyBus(config, [unknown(1001, 30), unknown(1002, 31)]);
+    expect(odoo.on("/mail/data")).toHaveLength(before + 1);
+    chat.stopSourceRealtime(config);
+    await vi.advanceTimersByTimeAsync(2 * RELOAD_WINDOW_MS);
+    expect(odoo.on("/mail/data")).toHaveLength(before + 1);
+    clock = new Date(clock.getTime() + RELOAD_WINDOW_MS);
+    await chat.applyBus(config, [unknown(1003, 32)]);
+    clock = new Date(clock.getTime() + 1);
+    await chat.applyBus(config, [unknown(1004, 33)]);
+    chat.stopRealtime();
+    await vi.advanceTimersByTimeAsync(2 * RELOAD_WINDOW_MS);
+    expect(odoo.on("/mail/data")).toHaveLength(before + 2);
   });
 
   it("load keeps a channel being created offline", async () => {
