@@ -11,12 +11,14 @@ export const BACKOFF_MAX_MS = 120000;
 export const BACKOFF_JITTER_MS = 30000;
 /** Keepalive period of the transport (the plugin sends it; the client has no timer for it). */
 export const KEEPALIVE_MS = 60000;
+/** Window of Odoo's `last=0` catch-up: older events are not replayed. */
+export const BUS_FIRST_POLL_MS = 50000;
 /** A connection open this long counts as healthy: the backoff restarts. */
 const STABLE_OPEN_MS = 60000;
 
 /**
  * One websocket, as the bus client sees it. The native plugin implements it
- * on the device, a Node WebSocket in tests. The handlers are assigned by the
+ * on the device, a fake in tests. The handlers are assigned by the
  * client before open(); onClose fires once per opened socket.
  */
 export interface BusTransport {
@@ -60,6 +62,12 @@ export class ChatBus {
   private stableTimer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
   private lastId = 0;
+  /** Bumped by every start/stop/connect so a stale async step aborts. */
+  private generation = 0;
+  /** Set on the first failed frame of a socket: later frames deliver but save nothing. */
+  private saveHeld = false;
+  /** Time of the last reload() this instance ran, standing in for busSeenAt until a frame arrives. */
+  private reloadedAt: number | null = null;
   /** Frames are applied one after the other so the saved id never goes backwards. */
   private queue: Promise<void> = Promise.resolve();
 
@@ -74,6 +82,7 @@ export class ChatBus {
 
   /** Begins connecting; throws InsecureHttpError, without opening, for ws:// while http is off. */
   start(): void {
+    if (!this.stopped) return;
     this.assertSecure();
     this.stopped = false;
     this.stoppedReason = null;
@@ -83,6 +92,7 @@ export class ChatBus {
   /** Clears every timer and closes the socket; nothing reconnects afterwards. */
   stop(): void {
     this.stopped = true;
+    this.generation++;
     this.clearTimers();
     this.detach();
     this.isConnected = false;
@@ -117,9 +127,23 @@ export class ChatBus {
 
   private async connect(): Promise<void> {
     if (this.stopped) return;
+    const gen = ++this.generation;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.detach();
+    try {
+      // Re-checked on every attempt: the http option may have been turned off since start().
+      this.assertSecure();
+    } catch (e) {
+      console.warn("chat bus: insecure url refused", e);
+      this.stopped = true;
+      this.stoppedReason = "insecure";
+      return;
+    }
     try {
       const { sessionId, version } = await this.deps.session();
-      if (this.stopped) return;
+      if (this.stopped || gen !== this.generation) return;
+      this.saveHeld = false;
       const t = this.deps.transport();
       this.transport = t;
       t.onOpen = () => void this.handleOpen(t);
@@ -131,6 +155,7 @@ export class ChatBus {
       });
     } catch (e) {
       console.warn("chat bus: connect failed", e);
+      if (gen !== this.generation) return;
       this.scheduleReconnect(this.backoffDelay());
     }
   }
@@ -140,10 +165,21 @@ export class ChatBus {
     try {
       const state = await this.deps.state();
       let last = state.lastBusId;
-      const seen = state.busSeenAt ? Date.parse(state.busSeenAt) : NaN;
-      if (!Number.isNaN(seen) && Date.now() - seen > BUS_RETENTION_MS) {
+      const seenAt = state.busSeenAt ? Date.parse(state.busSeenAt) : NaN;
+      const loaded = state.loadedAt ? Date.parse(state.loadedAt) : NaN;
+      const seen = Math.max(Number.isNaN(seenAt) ? 0 : seenAt, this.reloadedAt ?? 0);
+      const now = Date.now();
+      let reload = false;
+      if (seen) {
         // The server dropped the rows between: the catch-up would be empty, not complete.
+        reload = now - seen > BUS_RETENTION_MS;
+      } else {
+        // No last id seen: last=0 only replays the last seconds, so the store must be fresh.
+        reload = Number.isNaN(loaded) || now - loaded > BUS_FIRST_POLL_MS;
+      }
+      if (reload) {
         await this.deps.reload();
+        this.reloadedAt = Date.now();
         last = 0;
       }
       const channels = await this.deps.channels();
@@ -182,17 +218,24 @@ export class ChatBus {
       return;
     }
     if (!Array.isArray(frame) || !frame.length) return;
+    if (!frame.every((n) => n && typeof n === "object" && Number.isInteger(n.id))) {
+      console.warn("chat bus: malformed frame dropped");
+      return;
+    }
     const notifications = frame as BusNotification[];
     this.queue = this.queue.then(async () => {
       if (this.transport !== t) return;
       try {
         await this.deps.deliver(notifications);
+        if (this.saveHeld) return;
         const top = Math.max(...notifications.map((n) => n.id));
         await this.deps.saveLast(top);
         this.lastId = Math.max(this.lastId, top);
+        this.reloadedAt = null;
         this.attempt = 0;
       } catch (e) {
-        // Nothing saved: the frame replays on the next connect.
+        // Saving stops for this socket: the next connect replays from the last good id.
+        this.saveHeld = true;
         console.warn("chat bus: frame not applied", e);
       }
     });
@@ -215,12 +258,13 @@ export class ChatBus {
       return;
     }
     if (code === 4001) {
+      const gen = this.generation;
       try {
         await this.deps.reauth();
       } catch (e) {
         console.warn("chat bus: re-authentication failed", e);
       }
-      if (this.stopped) return;
+      if (this.stopped || gen !== this.generation) return;
     }
     this.scheduleReconnect(this.backoffDelay());
   }

@@ -4,6 +4,7 @@ import {
   BACKOFF_MAX_MS,
   BACKOFF_START_MS,
   BUS_RETENTION_MS,
+  BUS_FIRST_POLL_MS,
   ChatBus,
   type BusTransport,
 } from "../services/chat/chatBus";
@@ -36,7 +37,7 @@ function setup(url = "https://odoo.example.org", state: Partial<ChatSourceState>
   const transports: FakeTransport[] = [];
   const saved: number[] = [];
   const log: string[] = [];
-  const st = { lastBusId: 5, busSeenAt: new Date().toISOString(), ...state } as ChatSourceState;
+  const st = { lastBusId: 5, busSeenAt: new Date().toISOString(), loadedAt: null, ...state } as ChatSourceState;
   const deps = {
     transport: () => {
       const t = new FakeTransport();
@@ -253,5 +254,112 @@ describe("ChatBus", () => {
     await flush();
     expect(h.transports.length).toBe(1);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a failed frame holds the saved id so the next connect replays it", async () => {
+    const h = setup();
+    const t = await opened(h);
+    const frame = (id: number) => JSON.stringify([{ id, message: { type: "a", payload: {} } }]);
+    t.onMessage(frame(9));
+    await flush();
+    h.deps.deliver.mockRejectedValueOnce(new Error("boom"));
+    t.onMessage(frame(12));
+    t.onMessage(frame(13));
+    await flush();
+    expect(h.saved).toEqual([9]);
+    h.st.lastBusId = 9;
+    t.onClose(4002, "");
+    await flush();
+    vi.advanceTimersByTime(0);
+    await flush();
+    const t2 = h.transports[1];
+    t2.onOpen();
+    await flush();
+    expect(t2.sent[0].data.last).toBe(9);
+  });
+
+  it("no last id and an old store reloads, a recent one does not", async () => {
+    const old = setup("https://odoo.example.org", { lastBusId: 0, busSeenAt: null, loadedAt: new Date(Date.now() - 3600000).toISOString() });
+    await opened(old);
+    expect(old.deps.reload).toHaveBeenCalledTimes(1);
+    const fresh = setup("https://odoo.example.org", { lastBusId: 0, busSeenAt: null, loadedAt: new Date(Date.now() - 10000).toISOString() });
+    await opened(fresh);
+    expect(fresh.deps.reload).not.toHaveBeenCalled();
+    expect(BUS_FIRST_POLL_MS).toBe(50000);
+  });
+
+  it("two reconnects after one reload reload once", async () => {
+    const h = setup("https://odoo.example.org", { lastBusId: 0, busSeenAt: null });
+    let t = await opened(h);
+    for (let i = 0; i < 2; i++) {
+      t.onClose(4002, "");
+      await flush();
+      vi.advanceTimersByTime(0);
+      await flush();
+      t = h.transports[h.transports.length - 1];
+      t.onOpen();
+      await flush();
+    }
+    expect(h.deps.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("double start opens one transport", async () => {
+    const h = setup();
+    h.bus.start();
+    h.bus.start();
+    await flush();
+    expect(h.transports.length).toBe(1);
+  });
+
+  it("stop then start during a pending session yields one transport", async () => {
+    const h = setup();
+    let release: (v: any) => void = () => {};
+    h.deps.session.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    h.bus.start();
+    h.bus.stop();
+    h.bus.start();
+    await flush();
+    release({ sessionId: "old", version: "18.0-7" });
+    await flush();
+    expect(h.transports.length).toBe(1);
+    expect(h.transports[0].opened!.headers.Cookie).toBe("session_id=sid1");
+  });
+
+  it("http turned off stops reconnects as insecure", async () => {
+    localStorage.setItem(ALLOW_HTTP_KEY, "true");
+    const h = setup("http://odoo.example.org");
+    const t = await opened(h);
+    t.onClose(1006, "");
+    await flush();
+    localStorage.setItem(ALLOW_HTTP_KEY, "false");
+    vi.advanceTimersByTime(BACKOFF_START_MS + BACKOFF_JITTER_MS);
+    await flush();
+    expect(h.transports.length).toBe(1);
+    expect(h.bus.stoppedReason).toBe("insecure");
+  });
+
+  it("a malformed frame is dropped without saving", async () => {
+    const h = setup();
+    const t = await opened(h);
+    t.onMessage(JSON.stringify([{ id: "x" }]));
+    t.onMessage(JSON.stringify([null]));
+    await flush();
+    expect(h.deps.deliver).not.toHaveBeenCalled();
+    expect(h.saved).toEqual([]);
+  });
+
+  it("a stale transport close schedules nothing", async () => {
+    const h = setup();
+    const t = await opened(h);
+    t.onClose(4002, "");
+    await flush();
+    vi.advanceTimersByTime(0);
+    await flush();
+    expect(h.transports.length).toBe(2);
+    t.onClose(1006, "");
+    await flush();
+    vi.advanceTimersByTime(10 * BACKOFF_MAX_MS);
+    await flush();
+    expect(h.transports.length).toBe(2);
   });
 });
