@@ -132,6 +132,7 @@ export function parseStore(
     const c = channelOf(channelId);
     c.isMember = true;
     copy(c, m, "message_unread_counter", "unreadCounter");
+    copy(c, m, "message_unread_counter_bus_id", "unreadCounterBusId");
     copy(c, m, "new_message_separator", "newMessageSeparator");
     copy(c, m, "seen_message_id", "seenMessageId", (v) => relId(v));
   };
@@ -172,6 +173,7 @@ export function parseStore(
     copy(c, rec, "description", "description", (v) => v || "");
     copy(c, rec, "last_interest_dt", "lastInterestDt", (v) => v || null);
     copy(c, rec, "message_needaction_counter", "needactionCounter");
+    copy(c, rec, "message_needaction_counter_bus_id", "needactionCounterBusId");
     copy(c, rec, "mute_until_dt", "muteUntilDt", (v) => v || null);
     copy(c, rec, "custom_notifications", "customNotifications", (v) => v || null);
     delta.deletedMemberIds.push(...commandIds(rec.channelMembers, "DELETE"));

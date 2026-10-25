@@ -442,7 +442,7 @@ describe("ChatService", () => {
     expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(3);
     // A counter the server sends wins over the local count
     await chat.applyBus(config, [bus(1002, "mail.record/insert", {
-      "discuss.channel.member": [{ id: 102, thread: { id: GROUP, model: "discuss.channel" }, persona: { id: SELF, type: "partner" }, message_unread_counter: 0 }],
+      "discuss.channel.member": [{ id: 102, thread: { id: GROUP, model: "discuss.channel" }, persona: { id: SELF, type: "partner" }, message_unread_counter: 0, message_unread_counter_bus_id: 1002 }],
     })]);
     expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(0);
     // While the conversation is open, a message does not count as unread
@@ -457,6 +457,41 @@ describe("ChatService", () => {
     await chat.applyBus(config, [bus(999, "discuss.channel/new_message", { id: GROUP, data: { "mail.message": [msg(601, GROUP)] } })]);
     expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(2);
     expect((await chat.messages(config, GROUP)).map((m) => m.messageId)).toContain(601);
+  });
+
+  it("a replayed record keeps the counters the load read", async () => {
+    const odoo = fakeOdoo();
+    const data = odoo.state.data;
+    data.Store.inbox.counter_bus_id = 2328;
+    const selfChat = data["discuss.channel.member"].find((m: any) => m.thread.id === CHAT && m.persona.id === SELF);
+    Object.assign(selfChat, { message_unread_counter: 1, message_unread_counter_bus_id: 2328 });
+    Object.assign(data["discuss.channel"].find((c: any) => c.id === GENERAL), { message_needaction_counter: 1, message_needaction_counter_bus_id: 2328 });
+    await chat.load(await source());
+    const member = (counter: number, busId?: number) => ({
+      "discuss.channel.member": [{ id: selfChat.id, thread: { id: CHAT, model: "discuss.channel" }, persona: { id: SELF, type: "partner" },
+        message_unread_counter: counter, ...(busId ? { message_unread_counter_bus_id: busId } : {}) }],
+    });
+    const channel = (counter: number, busId?: number) => ({
+      "discuss.channel": [{ id: GENERAL, message_needaction_counter: counter, ...(busId ? { message_needaction_counter_bus_id: busId } : {}) }],
+    });
+    // The first connection replays older rows: the conversation's creation, counters 0
+    await chat.applyBus(config, [bus(2316, "mail.record/insert", member(0, 2316)), bus(2317, "mail.record/insert", channel(0, 2317))]);
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ unreadCounter: 1, unreadCounterBusId: 2328 });
+    expect(await chat.repo.channel(config, GENERAL)).toMatchObject({ needactionCounter: 1, needactionCounterBusId: 2328 });
+    // A counter without its bus id is not taken from the bus
+    await chat.applyBus(config, [bus(2329, "mail.record/insert", member(5)), bus(2329, "mail.record/insert", channel(5))]);
+    expect((await chat.repo.channel(config, CHAT))!.unreadCounter).toBe(1);
+    expect((await chat.repo.channel(config, GENERAL))!.needactionCounter).toBe(1);
+    // Fresher ones are
+    await chat.applyBus(config, [bus(2330, "mail.record/insert", member(2, 2330)), bus(2331, "mail.record/insert", channel(3, 2331))]);
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ unreadCounter: 2, unreadCounterBusId: 2330 });
+    expect(await chat.repo.channel(config, GENERAL)).toMatchObject({ needactionCounter: 3, needactionCounterBusId: 2331 });
+  });
+
+  it("a load without per-record bus ids seeds the marks with the inbox bus id", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ unreadCounterBusId: 1000, needactionCounterBusId: 1000 });
   });
 
   it("inbox notifications move the inbox and mention counters", async () => {

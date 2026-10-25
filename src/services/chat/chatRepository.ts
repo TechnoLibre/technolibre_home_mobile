@@ -46,6 +46,37 @@ function minOf(a: number | null | undefined, b: number | null | undefined): numb
   return Math.min(a, b);
 }
 
+type CounterKey = "unreadCounter" | "needactionCounter";
+type MarkKey = "unreadCounterBusId" | "needactionCounterBusId";
+
+/**
+ * Keeps a server counter of a channel partial only when it is not older
+ * than the stored one. A counter with its bus id is taken when that id is
+ * at or above the stored mark, which then follows it; an older one is
+ * dropped with its id. A counter without a bus id is taken only from an
+ * authoritative read (/mail/data, a request's answer), never from the bus.
+ * A bus id without its counter moves nothing.
+ */
+function gateCounter(
+  patch: Partial<ChatChannel>,
+  base: ChatChannel,
+  counter: CounterKey,
+  mark: MarkKey,
+  fromBus: boolean,
+): void {
+  const busId = patch[mark];
+  if (patch[counter] === undefined) {
+    delete patch[mark];
+  } else if (busId !== undefined) {
+    if (busId < base[mark]) {
+      delete patch[counter];
+      delete patch[mark];
+    }
+  } else if (fromBus) {
+    delete patch[counter];
+  }
+}
+
 function channelFromRow(r: Row): ChatChannel {
   return {
     configId: r.config_id,
@@ -66,6 +97,8 @@ function channelFromRow(r: Row): ChatChannel {
     oldestLoadedId: r.oldest_loaded_id ?? null,
     historyComplete: bool(r.history_complete),
     correspondentPartnerId: r.correspondent_partner_id ?? null,
+    unreadCounterBusId: r.unread_counter_bus_id ?? 0,
+    needactionCounterBusId: r.needaction_counter_bus_id ?? 0,
   };
 }
 
@@ -183,6 +216,8 @@ export class ChatRepository {
       history_complete: flag(c.historyComplete),
       correspondent_partner_id: c.correspondentPartnerId,
       updated_at: this.now(),
+      unread_counter_bus_id: c.unreadCounterBusId,
+      needaction_counter_bus_id: c.needactionCounterBusId,
     };
   }
 
@@ -236,10 +271,12 @@ export class ChatRepository {
   /**
    * Applies a store delta: upserts first, then deletions, so a record both
    * upserted and deleted in one delta ends deleted. A channel deletion takes
-   * its messages and members with it.
+   * its messages and members with it. Channel counters follow gateCounter;
+   * `fromBus` says the delta comes from a bus delivery, where a counter
+   * without its bus id is not taken.
    */
-  async applyDelta(configId: string, d: StoreDelta): Promise<void> {
-    for (const p of d.channels) await this.upsertChannel(configId, p);
+  async applyDelta(configId: string, d: StoreDelta, opts: { fromBus?: boolean } = {}): Promise<void> {
+    for (const p of d.channels) await this.upsertChannel(configId, p, !!opts.fromBus);
     for (const p of d.members) await this.upsertMember(configId, p);
     for (const p of d.messages) await this.upsertMessage(configId, p);
     for (const p of d.partners) {
@@ -263,7 +300,11 @@ export class ChatRepository {
     if (Object.keys(state).length > 0) await this.setSourceState({ ...state, configId });
   }
 
-  private async upsertChannel(configId: string, p: Partial<ChatChannel> & { channelId: number }): Promise<void> {
+  private async upsertChannel(
+    configId: string,
+    p: Partial<ChatChannel> & { channelId: number },
+    fromBus: boolean,
+  ): Promise<void> {
     const stored = await this.row("chat_channels", key(configId, p.channelId));
     const base: ChatChannel = stored
       ? channelFromRow(stored)
@@ -286,9 +327,13 @@ export class ChatRepository {
           oldestLoadedId: null,
           historyComplete: false,
           correspondentPartnerId: null,
+          unreadCounterBusId: 0,
+          needactionCounterBusId: 0,
         };
     const patch = defined(p);
     if (patch.name === "" && base.name !== "") delete patch.name;
+    gateCounter(patch, base, "unreadCounter", "unreadCounterBusId", fromBus);
+    gateCounter(patch, base, "needactionCounter", "needactionCounterBusId", fromBus);
     const next: ChatChannel = { ...base, ...patch, configId };
     next.lastMessageId = maxOf(base.lastMessageId, patch.lastMessageId);
     next.oldestLoadedId = minOf(base.oldestLoadedId, patch.oldestLoadedId);

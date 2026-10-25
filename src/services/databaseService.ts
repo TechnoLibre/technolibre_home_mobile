@@ -1212,7 +1212,9 @@ export class DatabaseService {
         oldest_loaded_id          INTEGER,
         history_complete          INTEGER NOT NULL,
         correspondent_partner_id  INTEGER,
-        updated_at                TEXT NOT NULL
+        updated_at                TEXT NOT NULL,
+        unread_counter_bus_id     INTEGER NOT NULL DEFAULT 0,
+        needaction_counter_bus_id INTEGER NOT NULL DEFAULT 0
       )
     `);
     await this.db.execute(`

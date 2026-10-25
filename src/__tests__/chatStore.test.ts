@@ -89,6 +89,21 @@ describe("parseStore /mail/data", () => {
 });
 
 describe("parseStore deltas", () => {
+  it("carries the counters' bus ids, only where the record has them", () => {
+    const d = parseStore({
+      "discuss.channel": [chan(5, "channel", { message_needaction_counter: 2, message_needaction_counter_bus_id: 2316 })],
+      "discuss.channel.member": [
+        { id: 21, thread: thread(5), persona: partner(SELF), message_unread_counter: 0, message_unread_counter_bus_id: 2317 },
+        { id: 22, thread: thread(6), persona: partner(SELF), message_unread_counter: 4 },
+      ],
+    }, CFG, SELF);
+    const byId = new Map(d.channels.map((c) => [c.channelId, c]));
+    expect(byId.get(5)).toMatchObject({ needactionCounter: 2, needactionCounterBusId: 2316, unreadCounter: 0, unreadCounterBusId: 2317 });
+    expect(byId.get(6)!.unreadCounter).toBe(4);
+    expect(byId.get(6)).not.toHaveProperty("unreadCounterBusId");
+    expect(byId.get(6)).not.toHaveProperty("needactionCounterBusId");
+  });
+
   it("insert with only id and name gives exactly those keys", () => {
     const d = parseStore({ "discuss.channel": [{ id: 5, name: "x" }] }, CFG, SELF);
     expect(d.channels).toEqual([{ channelId: 5, name: "x" }]);

@@ -60,13 +60,16 @@ const maxDt = (a: string | null, b: string | null | undefined): string | null =>
  * shared OdooRpcClient; nothing here starts a timer or a listener at
  * construction, so the service builds in node as in the app.
  *
- * Counters come from the server: /mail/data at load, then the bus. A bus
- * notification moves a counter only when its bus id is above the account's
- * stored counterBusId, which load raises to the bus id /mail/data reports
- * (Store.inbox.counter_bus_id) and each notification applied raises to its
- * own; stored, it holds across restarts, so a notification replayed after a
- * load or a restart is never counted twice. Records (messages, members,
- * partners) are upserts and are always applied.
+ * Counters come from the server: /mail/data at load, then the bus. The
+ * inbox counter moves on a bus notification only when its bus id is above
+ * the account's stored counterBusId, which load raises to the bus id
+ * /mail/data reports (Store.inbox.counter_bus_id) and each notification
+ * applied raises to its own; stored, it holds across restarts. A channel's
+ * unread and mention counters carry their own bus id marks, as Odoo's
+ * records do: a value older than the mark is not taken, a local change is
+ * made only by a notification above it. So a notification replayed after a
+ * load or a restart is never counted twice and never rolls a counter back.
+ * Records (messages, members, partners) are upserts and are always applied.
  */
 export class ChatService {
   readonly repo: ChatRepository;
@@ -191,11 +194,18 @@ export class ChatService {
       const highest = Math.max(0, ...cached.map((m) => m.messageId ?? 0));
       if (last != null && highest > 0 && highest < last) gaps.push(c.channelId);
     }
+    const busId = Number(result?.Store?.inbox?.counter_bus_id);
+    if (Number.isFinite(busId)) {
+      // A counter read without its own bus id is as of the read: it sets the mark a replay must beat
+      for (const c of delta.channels) {
+        if (c.unreadCounter !== undefined && c.unreadCounterBusId === undefined) c.unreadCounterBusId = busId;
+        if (c.needactionCounter !== undefined && c.needactionCounterBusId === undefined) c.needactionCounterBusId = busId;
+      }
+    }
     await this.repo.applyDelta(configId, delta);
     for (const channelId of gaps) {
       await this.repo.patchChannel(configId, channelId, { oldestLoadedId: null, historyComplete: false });
     }
-    const busId = Number(result?.Store?.inbox?.counter_bus_id);
     if (Number.isFinite(busId)) await this.raiseBusId(configId, busId);
 
     let module: ChatModuleState | null = null;
@@ -504,17 +514,26 @@ export class ChatService {
   async applyBus(configId: string, notifications: BusNotification[]): Promise<void> {
     for (const n of notifications) {
       const fresh = n.id > (await this.repo.sourceState(configId)).counterBusId;
-      const result = await this.applyOne(configId, n.message?.type, n.message?.payload ?? {}, fresh);
+      const result = await this.applyOne(configId, n.message?.type, n.message?.payload ?? {}, n.id, fresh);
       if (fresh) await this.raiseBusId(configId, n.id);
       if (result !== undefined) this.changed(configId, result);
     }
   }
 
-  /** Applies one notification; returns the channel it changed (null: several), undefined when ignored. */
-  private async applyOne(configId: string, type: string, p: any, fresh: boolean): Promise<number | null | undefined> {
+  /**
+   * Applies one notification; returns the channel it changed (null: several),
+   * undefined when ignored. `fresh`: above the account's counterBusId.
+   */
+  private async applyOne(
+    configId: string,
+    type: string,
+    p: any,
+    busId: number,
+    fresh: boolean,
+  ): Promise<number | null | undefined> {
     switch (type) {
       case "discuss.channel/new_message":
-        return this.applyNewMessage(configId, p, fresh);
+        return this.applyNewMessage(configId, p, busId, fresh);
       case "mail.record/insert": {
         const delta = await this.applyStore(configId, p);
         return delta.channels.length === 1 ? delta.channels[0].channelId : null;
@@ -539,9 +558,9 @@ export class ChatService {
         return ids.length === 1 ? ids[0] : null;
       }
       case "mail.message/inbox":
-        return this.applyInbox(configId, p, fresh);
+        return this.applyInbox(configId, p, busId, fresh);
       case "mail.message/mark_as_read":
-        return this.applyMarkAsRead(configId, p, fresh);
+        return this.applyMarkAsRead(configId, p, busId, fresh);
       case "bus.bus/im_status_updated": {
         const partner = (await this.repo.partners(configId)).find((x) => x.partnerId === p.partner_id);
         if (partner && typeof p.im_status === "string") {
@@ -561,7 +580,8 @@ export class ChatService {
   /**
    * Applies a Store as a bus delivers it. A partial of a channel never seen
    * and without its type (a pin flag, a counter) is left out: it would make
-   * an empty conversation.
+   * an empty conversation. A channel counter is taken only with a bus id
+   * not older than the stored one (see ChatRepository.applyDelta).
    */
   private async applyStore(configId: string, result: any): Promise<StoreDelta> {
     const delta = parseStore(result, configId, await this.selfOf(configId));
@@ -570,7 +590,7 @@ export class ChatService {
       if (c.channelType !== undefined || (await this.repo.channel(configId, c.channelId))) kept.push(c);
     }
     delta.channels = kept;
-    await this.repo.applyDelta(configId, delta);
+    await this.repo.applyDelta(configId, delta, { fromBus: true });
     return delta;
   }
 
@@ -585,9 +605,10 @@ export class ChatService {
    * whose client uuid is the payload's temporary_id. A message of someone
    * else in a chat or group, newer than the last known one, outside the
    * open conversation, raises the unread counter by one, as the browser's
-   * local counter does, unless the payload carries the server's counter.
+   * local counter does, unless the payload carries the server's counter or
+   * the stored counter is as of this bus id or later.
    */
-  private async applyNewMessage(configId: string, p: any, fresh: boolean): Promise<number | null> {
+  private async applyNewMessage(configId: string, p: any, busId: number, fresh: boolean): Promise<number | null> {
     const channelId = Number(p.id);
     const known = await this.repo.channel(configId, channelId);
     if (!known || !known.isMember) {
@@ -613,7 +634,8 @@ export class ChatService {
     const fromOther = self === null || message.authorPartnerId !== self;
     const open = this.viewing?.configId === configId && this.viewing.channelId === channelId;
     if (
-      fresh && !serverCounted && fromOther && !open
+      fresh && busId > known.unreadCounterBusId
+      && !serverCounted && fromOther && !open
       && known.channelType !== "channel"
       && message.messageId > (known.lastMessageId ?? 0)
     ) {
@@ -623,15 +645,19 @@ export class ChatService {
     return channelId;
   }
 
-  /** A message that needs the user's action: the inbox counter, and its channel's mentions, go up by one. */
-  private async applyInbox(configId: string, p: any, fresh: boolean): Promise<number | null> {
+  /**
+   * A message that needs the user's action: the inbox counter goes up by
+   * one, and its channel's mentions too unless they are as of this bus id
+   * or later.
+   */
+  private async applyInbox(configId: string, p: any, busId: number, fresh: boolean): Promise<number | null> {
     const delta = await this.applyStore(configId, p);
     const channelId = delta.messages[0]?.channelId ?? null;
     if (!fresh) return channelId;
     const state = await this.repo.sourceState(configId);
     await this.repo.setSourceState({ configId, inboxCounter: state.inboxCounter + 1 });
     const channel = channelId !== null ? await this.repo.channel(configId, channelId) : null;
-    if (channel) {
+    if (channel && busId > channel.needactionCounterBusId) {
       await this.repo.patchChannel(configId, channel.channelId, { needactionCounter: channel.needactionCounter + 1 });
     }
     return channelId;
@@ -639,10 +665,12 @@ export class ChatService {
 
   /**
    * Messages whose needaction the user cleared: the inbox counter takes the
-   * server's value (a replay at or below counterBusId changes nothing), and each cached message lowers its channel's mentions
-   * by one (every id listed was a needaction of the user).
+   * server's value (a replay at or below counterBusId changes nothing), and
+   * each cached message lowers its channel's mentions by one (every id
+   * listed was a needaction of the user), unless the channel's mentions are
+   * as of this bus id or later.
    */
-  private async applyMarkAsRead(configId: string, p: any, fresh: boolean): Promise<number | null> {
+  private async applyMarkAsRead(configId: string, p: any, busId: number, fresh: boolean): Promise<number | null> {
     if (!fresh) return null;
     if (typeof p.needaction_inbox_counter === "number") {
       await this.repo.setSourceState({ configId, inboxCounter: p.needaction_inbox_counter });
@@ -654,7 +682,7 @@ export class ChatService {
     }
     for (const [channelId, n] of perChannel) {
       const channel = await this.repo.channel(configId, channelId);
-      if (channel) {
+      if (channel && busId > channel.needactionCounterBusId) {
         await this.repo.patchChannel(configId, channelId, { needactionCounter: Math.max(0, channel.needactionCounter - n) });
       }
     }

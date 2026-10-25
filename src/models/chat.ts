@@ -25,6 +25,10 @@ export interface ChatChannel {
   oldestLoadedId: number | null;
   historyComplete: boolean;
   correspondentPartnerId: number | null;
+  /** Bus id the stored unreadCounter is as of; an older counter is not taken. */
+  unreadCounterBusId: number;
+  /** Bus id the stored needactionCounter is as of; an older counter is not taken. */
+  needactionCounterBusId: number;
 }
 
 /** sent: known to the server; pending: queued in the outbox; failed: the outbox gave up. */
