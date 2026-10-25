@@ -45,7 +45,8 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
         send: vi.fn().mockResolvedValue(msg(null)),
         markRead: vi.fn().mockResolvedValue(undefined),
         typing: vi.fn().mockResolvedValue(undefined),
-        realIdOf: vi.fn((): number | null => null),
+        realIdOf: vi.fn(async (): Promise<number | null> => null),
+        discardCreate: vi.fn().mockResolvedValue(undefined),
         queue: { flush: vi.fn().mockResolvedValue(undefined) },
         repo: {
             channel: vi.fn(async () => ch),
@@ -117,8 +118,10 @@ describe("ChatThreadComponent", () => {
     it("a conversation created meanwhile moves the screen to the server's id", async () => {
         const chat = fakeChat([msg(30, { channelId: 40 })]);
         chat.repo.channel.mockImplementation(async (_c: string, id: number) => (id === 40 ? channel({ channelId: 40 }) : null));
-        chat.realIdOf.mockImplementation(() => 40);
+        chat.realIdOf.mockImplementation(async () => 40);
+        window.history.replaceState({}, "", "/chat/a/-7");
         const replace = vi.spyOn(window.history, "replaceState");
+        replace.mockClear();
         const c = make(chat, [], "-7");
         await c.open();
         expect(chat.realIdOf).toHaveBeenCalledWith("a", -7);
@@ -130,14 +133,44 @@ describe("ChatThreadComponent", () => {
         expect(chat.send).toHaveBeenCalledWith(expect.anything(), 40, "next");
     });
 
-    it("a conversation whose create was refused says so above its unsent texts", async () => {
-        const chat = fakeChat([msg(null, { channelId: -7, status: "failed", outboxOpId: null })]);
-        chat.repo.channel.mockResolvedValue(null);
+    it("a screen no longer on the temporary route moves without touching the history", async () => {
+        const chat = fakeChat([]);
+        chat.repo.channel.mockImplementation(async (_c: string, id: number) => (id === 40 ? channel({ channelId: 40 }) : null));
+        chat.realIdOf.mockImplementation(async () => 40);
+        window.history.replaceState({}, "", "/chat");
+        const replace = vi.spyOn(window.history, "replaceState");
+        replace.mockClear();
         const c = make(chat, [], "-7");
         await c.open();
-        expect(c.state.found).toBe(false);
-        expect(c.missingText()).toBe("This conversation could not be created: the messages below were not sent.");
-        expect(c.state.rows.map((r: any) => r.meta)).toEqual(["failed"]);
+        expect(replace).not.toHaveBeenCalled();
+        // Torn down while the mapping is read: nothing moves
+        const d = make(chat, [], "-7");
+        d.teardown();
+        await d.refresh();
+        expect(d.channelId).toBe(-7);
+    });
+
+    it("a conversation whose create was refused says so, keeps its texts, and can be dismissed", async () => {
+        const chat = fakeChat(
+            [msg(null, { channelId: -7, status: "failed", outboxOpId: null, body: "<p>kept</p>" })],
+            [member(1)],
+            channel({ channelId: -7, createFailed: true }),
+        );
+        const c = make(chat, [], "-7");
+        await c.open();
+        expect(c.state.found).toBe(true);
+        expect(c.state.failedCreate).toBe("create");
+        expect(c.state.rows.map((r: any) => [r.meta, r.opId])).toEqual([["failed", null]]);
+        expect(String(c.state.rows[0].html)).toContain("kept");
+        const nav: string[] = [];
+        c.env.eventBus.addEventListener(Events.ROUTER_NAVIGATION, (ev: any) => nav.push(ev.detail.url));
+        await c.onDismiss();
+        expect(chat.discardCreate).toHaveBeenCalledWith("a", -7);
+        expect(nav).toEqual(["/chat"]);
+        // A refused join reads as such
+        const j = make(fakeChat([], [member(1)], channel({ channelId: 30, createFailed: true })), [], "30");
+        await j.open();
+        expect(j.state.failedCreate).toBe("join");
     });
 
     it("posts waiting for an ambiguous create show it", async () => {
@@ -149,11 +182,11 @@ describe("ChatThreadComponent", () => {
         const c = make(chat, ops, "-7");
         await c.open();
         expect(c.state.rows.map((r: any) => r.meta)).toEqual(["ambiguous"]);
-        // Not ambiguous: the post only waits
+        // Not ambiguous: the post waits for the create, and says so
         ops[0].params = {};
         ops[0].status = "failed";
         await c.refresh();
-        expect(c.state.rows.map((r: any) => r.meta)).toEqual(["waiting"]);
+        expect(c.state.rows.map((r: any) => r.meta)).toEqual(["waiting_create"]);
     });
 
     it("empty text is not sent", async () => {

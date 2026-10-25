@@ -23,7 +23,7 @@ export const THREAD_WINDOW = 100;
 /** Cached messages a scroll to the top adds to the rendered ones before the server is asked. */
 export const THREAD_PAGE = 50;
 
-type MetaKind = "none" | "sent" | "seen" | "pending" | "waiting" | "ambiguous" | "failed";
+type MetaKind = "none" | "sent" | "seen" | "pending" | "waiting" | "waiting_create" | "ambiguous" | "failed";
 
 export interface ThreadRow {
     key: string;
@@ -46,6 +46,8 @@ interface ThreadState {
     loadingAll: number | null;
     historyComplete: boolean;
     found: boolean;
+    /** The server refused to create ("create") or join ("join") the conversation; "" otherwise. */
+    failedCreate: "" | "create" | "join";
     /** Text of the last failed send or retry; "" when none. */
     error: string;
     /** Rows the composer shows, from 1 up to MAX_INPUT_ROWS. */
@@ -119,7 +121,11 @@ export class ChatThreadComponent extends EnhancedComponent {
           </button>
         </div>
       </div>
-      <p t-if="!state.found" class="chat-thread__missing" t-esc="missingText()"/>
+      <p t-if="!state.found" class="chat-thread__missing" t-esc="state.rows.length ? t('chat.channel_gone') : t('chat.thread_missing')"/>
+      <div t-if="state.failedCreate" class="chat-thread__create-failed" role="alert">
+        <p t-esc="state.failedCreate === 'join' ? t('chat.join_failed') : t('chat.create_failed')"/>
+        <button class="chat-thread__dismiss" t-on-click="onDismiss" t-esc="t('chat.dismiss')"/>
+      </div>
       <div class="chat-thread__scroll" t-ref="scroller" t-on-scroll="onScroll">
         <div t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-thread__bubble"
              t-att-class="{'chat-thread__bubble--own': row.own}">
@@ -130,6 +136,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             <span t-if="row.meta === 'seen'" t-att-title="t('chat.seen')">✓✓</span>
             <span t-if="row.meta === 'pending'" t-esc="'⏳ ' + t('chat.pending')"/>
             <span t-if="row.meta === 'waiting'" t-esc="'⏳ ' + t('chat.waiting_previous')"/>
+            <span t-if="row.meta === 'waiting_create'" t-esc="'⏳ ' + t('chat.waiting_create')"/>
             <span t-if="row.meta === 'ambiguous'" class="chat-thread__failed" t-esc="'⚠️ ' + t('chat.create_ambiguous')"/>
             <span t-if="row.meta === 'failed'" class="chat-thread__failed" t-esc="'⚠️ ' + t('chat.failed')"/>
             <button t-if="row.meta === 'failed' and row.opId" class="chat-thread__retry"
@@ -139,7 +146,7 @@ export class ChatThreadComponent extends EnhancedComponent {
       </div>
       <p t-if="state.typing" class="chat-thread__typing" t-esc="state.typing"/>
       <p t-if="state.error" class="chat-thread__failed" role="alert" t-esc="state.error"/>
-      <div class="chat-thread__composer">
+      <div t-if="!state.failedCreate" class="chat-thread__composer">
         <textarea class="chat-thread__input" t-att-rows="state.inputRows" t-att-placeholder="t('chat.compose_placeholder')"
                   t-att-value="state.text" t-on-input="onInput"/>
         <button class="chat-thread__send" t-att-aria-label="t('chat.send')" t-on-mousedown.prevent="" t-on-click="onSend">➤</button>
@@ -197,6 +204,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             loadingAll: null,
             historyComplete: false,
             found: true,
+            failedCreate: "",
             error: "",
             inputRows: 1,
         });
@@ -252,11 +260,15 @@ export class ChatThreadComponent extends EnhancedComponent {
     private async build(): Promise<void> {
         const repo = this.chatService.repo;
         let channel = await repo.channel(this.configId, this.channelId);
-        const realId = !channel && this.channelId < 0 ? this.chatService.realIdOf(this.configId, this.channelId) : null;
+        const tempId = this.channelId;
+        const realId = !channel && tempId < 0 ? await this.chatService.realIdOf(this.configId, tempId) : null;
         if (realId !== null) {
-            // Created meanwhile: the screen moves to the server's id, in place of the temporary one in the history
+            if (this.destroyed) return;
+            // Created meanwhile: the screen moves to the server's id, and the history entry with it while it is still this one
             this.channelId = realId;
-            window.history.replaceState({}, "", "/chat/" + encodeURIComponent(this.configId) + "/" + realId);
+            if (decodeURIComponent(window.location.pathname) === "/chat/" + this.configId + "/" + tempId) {
+                window.history.replaceState({}, "", "/chat/" + encodeURIComponent(this.configId) + "/" + realId);
+            }
             channel = await repo.channel(this.configId, realId);
         }
         if (!channel) {
@@ -282,6 +294,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         const names = new Map(partners.map((p) => [p.partnerId, p.name]));
         const self = st.selfPartnerId;
         this.state.found = true;
+        this.state.failedCreate = !channel.createFailed ? "" : channel.channelId < 0 ? "create" : "join";
         // New history appeared (a gap reset, a newer message): older pages may exist again
         if ((this.state.historyComplete && !channel.historyComplete) || channel.lastMessageId !== this._lastSeen) {
             this._noMore = false;
@@ -377,6 +390,7 @@ export class ChatThreadComponent extends EnhancedComponent {
                 const op = ops.find((o) => o.id === m.outboxOpId);
                 const create = channel?.createOpId ? ops.find((o) => o.id === channel.createOpId) : undefined;
                 if (create?.status === "blocked" && create.params?.blockedReason === "ambiguous") meta = "ambiguous";
+                else if (create) meta = "waiting_create";
                 else meta = op?.dependsOn && ops.some((o) => o.id === op.dependsOn) ? "waiting" : "pending";
             } else if (m.messageId !== null) {
                 const others = members.filter((x) => x.partnerId !== self);
@@ -406,16 +420,6 @@ export class ChatThreadComponent extends EnhancedComponent {
             this._html.set(k, html);
         }
         return html;
-    }
-
-    /**
-     * Why the conversation cannot be shown: a temporary one is gone only
-     * when its create was refused or given up; another one was left or
-     * deleted; with no text kept, it was never cached.
-     */
-    missingText(): string {
-        if (this.channelId < 0) return t("chat.create_failed");
-        return this.state.rows.length ? t("chat.channel_gone") : t("chat.thread_missing");
     }
 
     initials(): string {
@@ -584,6 +588,12 @@ export class ChatThreadComponent extends EnhancedComponent {
         }
         await this.refresh();
         this.scrollToBottomSoon();
+    }
+
+    /** Removes a conversation the server refused, with its unsent texts, and goes back to the list. */
+    async onDismiss(): Promise<void> {
+        await this.chatService.discardCreate(this.configId, this.channelId);
+        this.navigate("/chat");
     }
 
     /** Puts a failed post back in the outbox and drains it. */

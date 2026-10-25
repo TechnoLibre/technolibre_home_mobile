@@ -107,6 +107,7 @@ function channelFromRow(r: Row): ChatChannel {
     groupBasedSubscription: bool(r.group_based_subscription),
     parentChannelId: r.parent_channel_id ?? null,
     createOpId: r.create_op_id ?? null,
+    createFailed: bool(r.create_failed),
   };
 }
 
@@ -241,6 +242,7 @@ export class ChatRepository {
       group_based_subscription: flag(c.groupBasedSubscription),
       parent_channel_id: c.parentChannelId,
       create_op_id: c.createOpId,
+      create_failed: flag(c.createFailed),
     };
   }
 
@@ -369,6 +371,7 @@ export class ChatRepository {
           groupBasedSubscription: false,
           parentChannelId: null,
           createOpId: null,
+          createFailed: false,
         };
     const patch = defined(p);
     // A name sent blank is a source that never filled it, except for a group, renamed back to its members' names
@@ -557,6 +560,31 @@ export class ChatRepository {
     }
   }
 
+  /** Records the server id a create gave to a temporary id (see chat_temp_ids). */
+  async rememberRealId(configId: string, tempId: number, realId: number): Promise<void> {
+    await this.put("chat_temp_ids", { id: key(configId, tempId), config_id: configId, temp_id: tempId, real_id: realId });
+  }
+
+  /** The server id a settled create gave to `tempId`, or null. */
+  async realIdOf(configId: string, tempId: number): Promise<number | null> {
+    return (await this.row("chat_temp_ids", key(configId, tempId)))?.real_id ?? null;
+  }
+
+  /** Every server id a create of this phone settled on, for the account. */
+  async adoptedIds(configId: string): Promise<Set<number>> {
+    return new Set((await this.rows("chat_temp_ids", { config_id: configId })).map((r) => r.real_id as number));
+  }
+
+  /**
+   * Removes a conversation and everything cached of it, the texts it never
+   * sent included: the user dismissed it.
+   */
+  async dropChannel(configId: string, channelId: number): Promise<void> {
+    for (const t of ["chat_channels", "chat_messages", "chat_members"]) {
+      await this.del(t, { config_id: configId, channel_id: channelId });
+    }
+  }
+
   /** Overlays the given keys on a cached channel; nothing happens for an unknown channel. */
   async patchChannel(configId: string, channelId: number, p: Partial<ChatChannel>): Promise<void> {
     const row = await this.row("chat_channels", key(configId, channelId));
@@ -612,6 +640,16 @@ export class ChatRepository {
     );
     if (queued) await this.del("chat_messages", { id: queuedId });
     await this.put("chat_messages", this.messageRow(merged));
+  }
+
+  /** Turns every queued message of a channel into a failed one, detached from the outbox. */
+  async failPending(configId: string, channelId: number): Promise<void> {
+    for (const r of await this.rows("chat_messages", { config_id: configId, channel_id: channelId })) {
+      const m = messageFromRow(r);
+      if (m.messageId === null && m.status === "pending") {
+        await this.put("chat_messages", this.messageRow({ ...m, status: "failed", outboxOpId: null }));
+      }
+    }
   }
 
   /** Flags a queued message as given up on. The row has no error column: the outbox keeps the reason. */
@@ -711,7 +749,7 @@ export class ChatRepository {
 
   /** Removes every cached row of one account, leaving the others. */
   async dropSource(configId: string): Promise<void> {
-    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_sources"]) {
+    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_sources"]) {
       await this.del(t, { config_id: configId });
     }
   }

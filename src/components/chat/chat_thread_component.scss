@@ -108,6 +108,28 @@
 	color: #c0392b;
 }
 
+.chat-thread__create-failed {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	margin: 0.4rem 0.8rem;
+	color: #c0392b;
+	font-size: 0.85rem;
+
+	p {
+		flex: 1;
+		margin: 0;
+	}
+}
+
+.chat-thread__dismiss {
+	border: 1px solid currentColor;
+	border-radius: 0.4rem;
+	background: transparent;
+	color: inherit;
+	padding: 0.2rem 0.6rem;
+}
+
 .chat-thread__retry {
 	border: none;
 	background: transparent;

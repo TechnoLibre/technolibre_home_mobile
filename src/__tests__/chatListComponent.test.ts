@@ -66,6 +66,17 @@ describe("ChatListComponent", () => {
         expect(modes).toEqual(["unavailable", "none", "chips", "dropdown"]);
     });
 
+    it("a refused conversation is listed as such and can be dismissed", async () => {
+        const chat: any = fakeChat(["a"], [chan("a", -7, { name: "Secret", createFailed: true }), chan("a", 30, { createFailed: true }), chan("a", 2)]);
+        chat.discardCreate = vi.fn().mockResolvedValue(undefined);
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.state.rows.map((r: any) => r.failed)).toEqual(["create", "join", ""]);
+        await c.onDismiss(c.state.rows[0]);
+        expect(chat.discardCreate).toHaveBeenCalledWith("a", -7);
+        expect(chat.conversations).toHaveBeenCalledTimes(2);
+    });
+
     it("rows keep the service order (unread first) and flag bold", async () => {
         const chat = fakeChat(["a"], [
             chan("a", 1, { unreadCounter: 2, needactionCounter: 2 }),

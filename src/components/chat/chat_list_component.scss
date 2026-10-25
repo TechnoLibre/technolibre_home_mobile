@@ -133,3 +133,17 @@
 	text-align: center;
 	margin-left: 0.3rem;
 }
+
+.chat-list__failed {
+	color: #c0392b;
+	font-size: 0.82rem;
+}
+
+.chat-list__dismiss {
+	border: 1px solid #c0392b;
+	border-radius: 0.4rem;
+	background: transparent;
+	color: #c0392b;
+	font-size: 0.75rem;
+	padding: 0.1rem 0.5rem;
+}

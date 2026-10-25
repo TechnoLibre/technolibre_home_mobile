@@ -31,6 +31,8 @@ export interface ChatRow {
     unread: number;
     bold: boolean;
     typeIcon: "👤" | "👥" | "#";
+    /** The server refused to create ("create") or join ("join") it; "" otherwise. */
+    failed: "" | "create" | "join";
 }
 
 interface ChatListState {
@@ -123,8 +125,12 @@ export class ChatListComponent extends EnhancedComponent {
               </span>
               <span class="chat-list__bottom">
                 <span t-if="state.mode !== 'none'" class="chat-list__tag" t-esc="row.serverLabel"/>
+                <span t-if="row.failed" class="chat-list__failed"
+                      t-esc="'⚠️ ' + (row.failed === 'join' ? t('chat.join_failed_short') : t('chat.create_failed_short'))"/>
                 <span class="chat-list__preview" t-esc="row.preview"/>
                 <span t-if="row.unread > 0" class="chat-list__pill" t-esc="row.unread"/>
+                <button t-if="row.failed" class="chat-list__dismiss" t-on-click.stop="() => this.onDismiss(row)"
+                        t-esc="t('chat.dismiss')"/>
               </span>
             </span>
           </li>
@@ -263,6 +269,7 @@ export class ChatListComponent extends EnhancedComponent {
             unread: unreadOf(c),
             bold: isBold(c),
             typeIcon: typeIconOf(c),
+            failed: !c.createFailed ? "" : c.channelId < 0 ? "create" : "join",
         };
     }
 
@@ -311,6 +318,12 @@ export class ChatListComponent extends EnhancedComponent {
 
     onRowClick(row: ChatRow): void {
         this.navigate("/chat/" + encodeURIComponent(row.configId) + "/" + row.channelId);
+    }
+
+    /** Removes a conversation the server refused, with its unsent texts. */
+    async onDismiss(row: ChatRow): Promise<void> {
+        await this.chatService.discardCreate(row.configId, row.channelId);
+        await this.loadCache();
     }
 
     onAddServer(): void {

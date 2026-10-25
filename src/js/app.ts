@@ -132,6 +132,8 @@ async function startApp() {
 	if (isNative) {
 		await syncService.outbox.recoverInterrupted().catch((e) =>
 			console.warn("[boot] outbox recovery failed:", e));
+		await syncService.chat.recover().catch((e) =>
+			console.warn("[boot] chat outbox recovery failed:", e));
 		// An update or a forced stop cancels the reminders' alarms: schedule them again from the cache
 		void loadSyncConfigs(appService)
 			.then((configs) => replanFromCache(syncService.calendar, configs.map((c) => c.id)))

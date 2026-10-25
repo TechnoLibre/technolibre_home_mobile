@@ -1224,7 +1224,8 @@ export class DatabaseService {
         create_uid                INTEGER,
         group_based_subscription  INTEGER NOT NULL DEFAULT 0,
         parent_channel_id         INTEGER,
-        create_op_id              TEXT
+        create_op_id              TEXT,
+        create_failed             INTEGER NOT NULL DEFAULT 0
       )
     `);
     await this.db.execute(`
@@ -1287,6 +1288,7 @@ export class DatabaseService {
         is_internal_user       INTEGER NOT NULL DEFAULT 0
       )
     `);
+    await this.createChatTempIdsTable();
     for (const [table, col] of [
       ["chat_channels", "config_id"],
       ["chat_messages", "config_id, channel_id"],
@@ -1315,6 +1317,7 @@ export class DatabaseService {
         ["group_based_subscription", "INTEGER NOT NULL DEFAULT 0"],
         ["parent_channel_id", "INTEGER"],
         ["create_op_id", "TEXT"],
+        ["create_failed", "INTEGER NOT NULL DEFAULT 0"],
       ],
       chat_members: [["create_date", "TEXT"]],
       chat_sources: [
@@ -1331,6 +1334,24 @@ export class DatabaseService {
         if (!names.includes(col)) await this.db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
       }
     }
+    await this.createChatTempIdsTable();
+  }
+
+  /**
+   * The server id each conversation created on the phone was given, by its
+   * temporary id (row key `configId#<tempId>`): a screen or a route still
+   * naming the temporary id finds the conversation, and a fingerprint
+   * search never adopts a conversation another create already took.
+   */
+  private async createChatTempIdsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_temp_ids (
+        id        TEXT PRIMARY KEY NOT NULL,
+        config_id TEXT NOT NULL,
+        temp_id   INTEGER NOT NULL,
+        real_id   INTEGER NOT NULL
+      )
+    `);
   }
 
   /**
@@ -1338,7 +1359,7 @@ export class DatabaseService {
    * column and the `configId#` prefix of the key. A table not created yet is skipped.
    */
   private async renameChatRows(oldId: string, newId: string): Promise<void> {
-    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_sources"]) {
+    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_sources"]) {
       try {
         const keyed = table !== "chat_sources";
         const key = keyed ? "id" : "config_id";

@@ -215,7 +215,8 @@ export class ChatService {
    * their last message, then the account-wide mute, then the server module
    * state. A cached conversation the server no longer lists (left or hidden
    * meanwhile) is dropped, unless it is pinned locally, still being created
-   * (createOpId) or still holds a post waiting to go; a direct message, which
+   * (createOpId), refused and not dismissed yet (createFailed) or still
+   * holds a post waiting to go; a direct message, which
    * /mail/data leaves out while hidden, is kept with its history and marked
    * unpinned. A channel whose last message is above every
    * cached one and not cached itself may miss messages in between: its
@@ -263,7 +264,7 @@ export class ChatService {
     for (const c of await this.repo.channels(configId)) {
       const cached = await this.repo.messages(configId, c.channelId);
       if (!lastOf.has(c.channelId)) {
-        if (c.localPinned || c.createOpId !== null || cached.some((m) => m.messageId === null)) continue;
+        if (c.localPinned || c.createOpId !== null || c.createFailed || cached.some((m) => m.messageId === null)) continue;
         // A direct message is never left, only hidden: it stays cached with its history, unpinned
         if (c.channelType === "chat") {
           delta.channels.push({ channelId: c.channelId, isPinned: false });
@@ -537,7 +538,7 @@ export class ChatService {
         // Kept in the outbox for the next flush
       }
     }
-    return { configId, channelId: this.realIdOf(configId, channelId) ?? channelId };
+    return { configId, channelId: (await this.realIdOf(configId, channelId)) ?? channelId };
   }
 
   /**
@@ -545,24 +546,32 @@ export class ChatService {
    * create settled; null before, or for an id that was never temporary. A
    * screen open on the temporary id moves to it.
    */
-  realIdOf(configId: string, tempId: number): number | null {
+  realIdOf(configId: string, tempId: number): Promise<number | null> {
     return this.queue.realIdOf(configId, tempId);
   }
 
   /**
-   * Gives up a conversation still being created (or joined): its create
-   * and what waits for it leave the outbox, its unsent texts stay as
-   * failed. Queued behind the account's other writers: a create settled
-   * before it is kept (createOpId cleared); one whose answer lands after it
+   * Gives up a conversation still being created (or joined), or dismisses
+   * one the server refused (createFailed): its rows leave the outbox and it
+   * goes from the cache with its unsent texts (ChatOutbox.discardCreate).
+   * Queued behind the account's other writers: a create settled before it
+   * is kept (nothing left to discard); one whose answer lands after it
    * writes nothing, and the next load brings what the server made.
    */
   discardCreate(configId: string, channelId: number): Promise<void> {
     return this.serial(configId, async () => {
-      const channel = await this.repo.channel(configId, channelId);
-      if (!channel?.createOpId) return;
-      await this.queue.cancelCreate(configId, channelId);
-      this.changed(configId, channelId);
+      await this.queue.discardCreate(configId, channelId);
+      this.changed(configId, null);
     });
+  }
+
+  /**
+   * Startup repair of the chat outbox, after OutboxService.recoverInterrupted:
+   * a create or join cut between its op and its row is queued, or removed
+   * when its row is missing (ChatOutbox.recoverIncomplete).
+   */
+  recover(): Promise<number> {
+    return this.queue.recoverIncomplete();
   }
 
   /**
@@ -610,7 +619,9 @@ export class ChatService {
     const key = `${src.configId}#${channelId}`;
     if (isTyping) {
       if (!chatSettings().sendTyping) return;
-      if (!(await this.repo.channel(src.configId, channelId))?.isMember) return;
+      const channel = await this.repo.channel(src.configId, channelId);
+      // A conversation the server does not have yet (or refused) has nobody to tell
+      if (!channel?.isMember || channel.createOpId !== null || channel.createFailed || channelId <= 0) return;
       if (!(await this.isOnline())) return;
     }
     const state = this.typingState.get(key) ?? { sentAt: null, stop: null };

@@ -4407,7 +4407,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "created offline lives under a negative temporary id, swapped for the server's "
                         + "when its create settles; posts written into it wait for the create. A lost "
                         + "create is found again by the module's uuid, or else by a fingerprint search "
-                        + "(creator, type, name or members, creation date); two matches hold it.",
+                        + "(creator, type, name or members, creation date window); two matches hold it. "
+                        + "A refused create stays listed as failed, its texts readable, until dismissed.",
                     fr: "Un envoi est gardé comme message en attente et ligne de la boîte d'envoi "
                         + "avant toute requête. Avec le module serveur, l'uuid du client voyage dans "
                         + "l'envoi et le serveur répond à une répétition par le message qu'il détient ; "
@@ -4417,8 +4418,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "ligne vit sous un id temporaire négatif, remplacé par celui du serveur quand "
                         + "sa création aboutit ; les envois écrits dedans attendent la création. Une "
                         + "création perdue se retrouve par l'uuid du module, sinon par une recherche "
-                        + "d'empreinte (créateur, type, nom ou membres, date de création) ; deux "
-                        + "correspondances la retiennent.",
+                        + "d'empreinte (créateur, type, nom ou membres, plage de date de création) ; "
+                        + "deux correspondances la retiennent. Une création refusée reste listée en "
+                        + "échec, ses textes lisibles, jusqu'à ce qu'on la retire.",
                 },
                 demo: NONE_PLUMBING,
                 files: [

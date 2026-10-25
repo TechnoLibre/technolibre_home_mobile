@@ -205,8 +205,10 @@ function createServer(odoo: ReturnType<typeof fakeOdoo>, opts: { module?: boolea
     if (method === "channel_create") return create(() => known() ?? make("channel", args[0], [], opts.module ? uuid : null));
     if (method === "search_read") {
       const value = (field: string) => kwargs.domain.find((d: any[]) => d[0] === field)?.[2];
+      const dates = kwargs.domain.filter((d: any[]) => d[0] === "create_date");
       return channels
-        .filter((c) => c.type === value("channel_type") && c.createDate >= value("create_date"))
+        .filter((c) => c.type === value("channel_type"))
+        .filter((c) => dates.every(([, op, v]: any[]) => (op === ">=" ? c.createDate >= v : c.createDate <= v)))
         .filter((c) => value("name") === undefined || c.name === value("name"))
         .map((c) => ({ id: c.id, channel_partner_ids: c.partners }));
     }
@@ -1363,7 +1365,7 @@ describe("ChatService", () => {
     await chat.flushAll();
     await chat.flushAll();
     expect(createCalls(odoo)).toHaveLength(2);
-    const realId = chat.realIdOf(config, first.channelId)!;
+    const realId = (await chat.realIdOf(config, first.channelId))!;
     expect(realId).toBeGreaterThan(0);
     expect(await chat.repo.channel(config, first.channelId)).toBeNull();
     expect(await chat.repo.channel(config, realId)).toMatchObject({ correspondentPartnerId: 7, createOpId: null });
@@ -1408,7 +1410,7 @@ describe("ChatService", () => {
     expect(await chat.messages(config, tempId)).toEqual([]);
     expect((await chat.repo.members(config, realId)).every((m) => m.memberId > 0)).toBe(true);
     expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
-    expect(chat.realIdOf(config, tempId)).toBe(realId);
+    expect((await chat.realIdOf(config, tempId))).toBe(realId);
     // A post from a screen still on the temporary id goes to the group
     await chat.send(src, tempId, "third");
     expect(odoo.on("/mail/message/post").at(-1)!.params.thread_id).toBe(realId);
@@ -1435,7 +1437,7 @@ describe("ChatService", () => {
     expect(calls[0].params.kwargs).toMatchObject({ partners_to: [BOB], name: "Team B", context: { erplibre_client_uuid: expect.any(String) } });
     expect(calls[1].params.kwargs.context).toEqual(calls[0].params.kwargs.context);
     expect(server.channels).toHaveLength(1);
-    expect(chat.realIdOf(config, tempId)).toBe(server.channels[0].id);
+    expect((await chat.realIdOf(config, tempId))).toBe(server.channels[0].id);
     expect(odoo.kw("search_read").filter((c) => c.params.model === "discuss.channel")).toHaveLength(0);
   });
 
@@ -1456,13 +1458,17 @@ describe("ChatService", () => {
     await chat.flushAll();
     expect(createCalls(odoo)).toHaveLength(1);
     const search = odoo.kw("search_read").find((c) => c.params.model === "discuss.channel")!;
-    const since = new Date(new Date(sentAt).getTime() - 5 * 60_000).toISOString().slice(0, 19).replace("T", " ");
+    const at = (ms: number) => new Date(new Date(sentAt).getTime() + ms).toISOString().slice(0, 19).replace("T", " ");
     expect(search.params.kwargs.domain).toEqual([
-      ["create_uid", "=", 2], ["channel_type", "=", "group"], ["create_date", ">=", since], ["is_member", "=", true],
+      ["create_uid", "=", 2], ["channel_type", "=", "group"],
+      ["create_date", ">=", at(-5 * 60_000)], ["create_date", "<=", at(3 * 60_000 + 5 * 60_000)],
+      ["is_member", "=", true],
     ]);
+    // Every hit is compared on its members: no limit cuts the list first
+    expect(search.params.kwargs.limit).toBeUndefined();
     const realId = server.channels[1].id;
     expect(odoo.on("/discuss/channel/info").map((c) => c.params)).toEqual([{ channel_id: realId }]);
-    expect(chat.realIdOf(config, tempId)).toBe(realId);
+    expect((await chat.realIdOf(config, tempId))).toBe(realId);
     expect(odoo.on("/mail/message/post").map((c) => c.params.thread_id)).toEqual([realId]);
     expect(server.channels).toHaveLength(2);
   });
@@ -1542,14 +1548,41 @@ describe("ChatService", () => {
     await chat.flushAll();
     expect(odoo.on("/mail/message/post")).toHaveLength(0);
     expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
-    expect(await chat.repo.channel(config, tempId)).toBeNull();
-    expect((await chat.conversations()).map((c) => c.channelId)).not.toContain(tempId);
+    // Still listed, marked failed, with its texts readable
+    expect(await chat.repo.channel(config, tempId)).toMatchObject({ name: "Secret", createFailed: true, createOpId: null });
+    expect((await chat.conversations()).map((c) => c.channelId)).toContain(tempId);
     const kept = await chat.messages(config, tempId);
-    expect(kept.map((m) => [m.status, m.outboxOpId])).toEqual([["failed", null], ["failed", null]]);
-    // Another create of the account never reuses the id that still holds those texts
+    expect(kept.map((m) => [m.status, m.outboxOpId, m.body])).toEqual([["failed", null, "one"], ["failed", null, "two"]]);
+    // A load keeps it; a post written into it now fails at once and queues nothing
+    await chat.load(src);
+    expect(await chat.repo.channel(config, tempId)).toMatchObject({ createFailed: true });
+    const late = await chat.send(src, tempId, "three");
+    expect(late.status).toBe("failed");
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+    // Another create of the account never reuses its id
     offline();
     const next = await chat.createGroup(src, [BOB]);
     expect(next.channelId).not.toBe(tempId);
+    // Dismissing removes it with its texts
+    await chat.discardCreate(config, tempId);
+    expect(await chat.repo.channel(config, tempId)).toBeNull();
+    expect(await chat.messages(config, tempId)).toEqual([]);
+    expect((await chat.conversations()).map((c) => c.channelId)).not.toContain(tempId);
+  });
+
+  it("a refused join stays listed as failed until dismissed", async () => {
+    const odoo = fakeOdoo();
+    createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    await chat.join(src, 77, "Gone");
+    expect(await chat.repo.channel(config, 77)).toMatchObject({ name: "Gone", createFailed: true, isMember: true });
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+    // With no text in it, only the flag keeps it across a load
+    await chat.load(src);
+    expect(await chat.repo.channel(config, 77)).toMatchObject({ createFailed: true });
+    await chat.discardCreate(config, 77);
+    expect(await chat.repo.channel(config, 77)).toBeNull();
   });
 
   it("a discarded create takes its posts out of the outbox", async () => {
@@ -1562,6 +1595,141 @@ describe("ChatService", () => {
     await chat.discardCreate(config, tempId);
     expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
     expect(await chat.repo.channel(config, tempId)).toBeNull();
-    expect((await chat.messages(config, tempId))[0]).toMatchObject({ status: "failed", outboxOpId: null });
+    expect(await chat.messages(config, tempId)).toEqual([]);
+  });
+
+  it("a temporary id resolves after a restart, and one with nothing behind it never reaches the server", async () => {
+    const odoo = fakeOdoo();
+    createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    const { channelId: realId } = await chat.createGroup(src, [BOB], "Kept");
+    const tempId = (await env.db.rawQuery("SELECT temp_id FROM chat_temp_ids"))[0].temp_id;
+    chat.dispose();
+    const rpc = new OdooRpcClient();
+    chat = new ChatService(env.db, rpc, new OutboxService(env.db, () => clock), new CapabilityService(env.db, rpc), () => clock);
+    expect(await chat.realIdOf(config, tempId)).toBe(realId);
+    await chat.send(src, tempId, "after restart");
+    expect(odoo.on("/mail/message/post").at(-1)!.params.thread_id).toBe(realId);
+    // A negative id never created on this phone: the text fails, nothing is queued or sent
+    const posts = odoo.on("/mail/message/post").length;
+    const lost = await chat.send(src, -123, "nowhere");
+    expect(lost).toMatchObject({ status: "failed", outboxOpId: null, channelId: -123 });
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+    expect(odoo.on("/mail/message/post")).toHaveLength(posts);
+  });
+
+  it("a create cut between its op and its row is queued, or removed, at startup", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    offline();
+    const { channelId: tempId } = await chat.createGroup(src, [BOB], "Cut");
+    const [op] = await env.db.getOutboxOpsForConfig(config);
+    await env.db.updateOutboxOp(op.id, { status: "incomplete", updatedAt: clock.toISOString() });
+    // An op whose row never got written
+    const orphan = await new OutboxService(env.db, () => clock).enqueue({
+      noteId: "chat", configId: config, kind: "chat.create", status: "incomplete",
+      params: { channelId: tempId - 1, mode: "group", partnerIds: [BOB], name: "", groupId: false, useModule: false },
+    });
+    expect(await chat.recover()).toBe(1);
+    const ops = await env.db.getOutboxOpsForConfig(config);
+    expect(ops.map((o) => [o.id, o.status])).toEqual([[op.id, "queued"]]);
+    expect(ops.some((o) => o.id === orphan.id)).toBe(false);
+    online();
+    await chat.flushAll();
+    expect(server.channels.map((c) => c.name)).toEqual(["Cut"]);
+    expect(await chat.realIdOf(config, tempId)).toBe(server.channels[0].id);
+  });
+
+  it("typing is never sent for a conversation still being created", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    offline();
+    const { channelId: tempId } = await chat.createGroup(src, [BOB]);
+    online();
+    chat.isOnline = async () => true;
+    await chat.typing(src, tempId, true);
+    expect(odoo.on("/discuss/channel/notify_typing")).toHaveLength(0);
+  });
+
+  it("fingerprint ignores conversations outside the window and those another create took", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    server.state.dropNext = 1;
+    // The create runs on the server but its answer is lost: that group is then claimed by another create of the phone
+    await chat.createGroup(src, [BOB]);
+    const lost = server.channels[0];
+    await chat.repo.rememberRealId(config, -999, lost.id);
+    // Same people, created much later: past the latest moment the lost send could have run
+    const later = server.make("group", "", [BOB], null);
+    later.createDate = "2026-10-25 11:00:00";
+    advance(3 * 60_000 + 1);
+    await chat.flushAll();
+    expect(createCalls(odoo)).toHaveLength(2);
+    expect(server.channels).toHaveLength(3);
+    expect(odoo.on("/discuss/channel/info")).toHaveLength(0);
+  });
+
+  it("bus first: the real channel and its message arrive before the create answers, posts move to it", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    offline();
+    const { channelId: tempId } = await chat.createChannel(src, "Live", 11);
+    await chat.send(src, tempId, "a");
+    await chat.send(src, tempId, "b");
+    server.state.onCreate = async (store) => {
+      const id = store["discuss.channel"][0].id;
+      await chat.applyBus(config, [
+        bus(1001, "mail.record/insert", store),
+        bus(1002, "discuss.channel/new_message", { id, data: { "mail.message": [msg(940, id, SELF, "<div>created this channel.</div>")] } }),
+      ]);
+    };
+    online();
+    await chat.flushAll();
+    const realId = server.channels[0].id;
+    const rows = (await chat.repo.channels(config)).filter((c) => c.name === "Live");
+    expect(rows.map((c) => [c.channelId, c.createOpId, c.lastMessageId])).toEqual([[realId, null, 940]]);
+    expect(odoo.on("/mail/message/post").map((c) => [c.params.thread_id, c.params.post_data.body.split("<!--")[0]]))
+      .toEqual([[realId, "a"], [realId, "b"]]);
+    const thread = await chat.messages(config, realId);
+    expect(thread.map((m) => m.messageId)).toEqual([940, 5000, 5001]);
+    expect(await chat.messages(config, tempId)).toEqual([]);
+  });
+
+  it("a create killed while running is adopted after the quiet window, one conversation", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    // The app dies while create_group is on the server: no answer ever comes back
+    server.state.onCreate = async () => { throw new TypeError("Failed to fetch"); };
+    const { channelId: tempId } = await chat.createGroup(src, [BOB, 7]);
+    await chat.send(src, tempId, "queued");
+    const [create] = (await env.db.getOutboxOpsForConfig(config)).filter((o) => o.kind === "chat.create");
+    await env.db.updateOutboxOp(create.id, { status: "running", updatedAt: clock.toISOString() });
+    server.state.onCreate = null;
+    chat.dispose();
+    const rpc = new OdooRpcClient();
+    const outbox = new OutboxService(env.db, () => clock);
+    chat = new ChatService(env.db, rpc, outbox, new CapabilityService(env.db, rpc), () => clock);
+    expect(await outbox.recoverInterrupted()).toBe(1);
+    await chat.recover();
+    await chat.flushAll();
+    expect(createCalls(odoo)).toHaveLength(1);
+    advance(3 * 60_000 + 1);
+    await chat.flushAll();
+    expect(createCalls(odoo)).toHaveLength(1);
+    expect(server.channels).toHaveLength(1);
+    const realId = server.channels[0].id;
+    expect(await chat.realIdOf(config, tempId)).toBe(realId);
+    expect(odoo.on("/mail/message/post").map((c) => c.params.thread_id)).toEqual([realId]);
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
   });
 });

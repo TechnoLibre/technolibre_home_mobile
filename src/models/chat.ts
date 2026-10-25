@@ -45,6 +45,11 @@ export interface ChatChannel {
   parentChannelId: number | null;
   /** Outbox op that creates the channel while it only exists on the phone. */
   createOpId: string | null;
+  /**
+   * The server refused to create (or join) it: kept, with its texts as not
+   * sent, until the user dismisses it.
+   */
+  createFailed: boolean;
 }
 
 /** sent: known to the server; pending: queued in the outbox; failed: the outbox gave up. */
