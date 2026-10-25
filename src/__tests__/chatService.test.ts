@@ -488,6 +488,28 @@ describe("ChatService", () => {
     expect(await chat.repo.channel(config, GENERAL)).toMatchObject({ needactionCounter: 3, needactionCounterBusId: 2331 });
   });
 
+  it("a load after the server's bus ids restarted resets the marks", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.repo.patchChannel(config, CHAT, { unreadCounterBusId: 2330, needactionCounterBusId: 2330 });
+    await chat.repo.setSourceState({ configId: config, counterBusId: 2330 });
+    // Bus table emptied: the server reads its ids from 0 again
+    const data = odoo.state.data;
+    data.Store.inbox.counter_bus_id = 0;
+    Object.assign(data["discuss.channel.member"].find((m: any) => m.thread.id === CHAT && m.persona.id === SELF),
+      { message_unread_counter: 3, message_unread_counter_bus_id: 0 });
+    Object.assign(data["discuss.channel"].find((c: any) => c.id === CHAT), { message_needaction_counter: 3, message_needaction_counter_bus_id: 0 });
+    await chat.load(src);
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ unreadCounter: 3, unreadCounterBusId: 0, needactionCounter: 3, needactionCounterBusId: 0 });
+    expect((await chat.repo.sourceState(config)).counterBusId).toBe(0);
+    await chat.applyBus(config, [bus(5, "mail.record/insert", {
+      "discuss.channel.member": [{ id: 100, thread: { id: CHAT, model: "discuss.channel" }, persona: { id: SELF, type: "partner" }, message_unread_counter: 4, message_unread_counter_bus_id: 5 }],
+    })]);
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ unreadCounter: 4, unreadCounterBusId: 5 });
+    expect((await chat.repo.sourceState(config)).counterBusId).toBe(5);
+  });
+
   it("a load without per-record bus ids seeds the marks with the inbox bus id", async () => {
     fakeOdoo();
     await chat.load(await source());

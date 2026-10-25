@@ -50,12 +50,14 @@ type CounterKey = "unreadCounter" | "needactionCounter";
 type MarkKey = "unreadCounterBusId" | "needactionCounterBusId";
 
 /**
- * Keeps a server counter of a channel partial only when it is not older
- * than the stored one. A counter with its bus id is taken when that id is
- * at or above the stored mark, which then follows it; an older one is
- * dropped with its id. A counter without a bus id is taken only from an
- * authoritative read (/mail/data, a request's answer), never from the bus.
- * A bus id without its counter moves nothing.
+ * Decides whether a server counter of a channel partial replaces the
+ * stored one. An authoritative read (/mail/data, a request's answer) is
+ * always taken, its bus id too even below the stored mark: the server's
+ * bus ids start again from 0 when its bus table is emptied or the database
+ * is replaced, and a read is the server's present state. From the bus, a
+ * counter is taken only with a bus id at or above the stored mark, which
+ * then follows it; an older one, or one without a bus id, is dropped. A
+ * bus id without its counter moves nothing.
  */
 function gateCounter(
   patch: Partial<ChatChannel>,
@@ -67,13 +69,9 @@ function gateCounter(
   const busId = patch[mark];
   if (patch[counter] === undefined) {
     delete patch[mark];
-  } else if (busId !== undefined) {
-    if (busId < base[mark]) {
-      delete patch[counter];
-      delete patch[mark];
-    }
-  } else if (fromBus) {
+  } else if (fromBus && (busId === undefined || busId < base[mark])) {
     delete patch[counter];
+    delete patch[mark];
   }
 }
 

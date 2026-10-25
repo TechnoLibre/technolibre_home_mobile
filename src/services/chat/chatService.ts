@@ -62,12 +62,12 @@ const maxDt = (a: string | null, b: string | null | undefined): string | null =>
  *
  * Counters come from the server: /mail/data at load, then the bus. The
  * inbox counter moves on a bus notification only when its bus id is above
- * the account's stored counterBusId, which load raises to the bus id
- * /mail/data reports (Store.inbox.counter_bus_id) and each notification
- * applied raises to its own; stored, it holds across restarts. A channel's
- * unread and mention counters carry their own bus id marks, as Odoo's
- * records do: a value older than the mark is not taken, a local change is
- * made only by a notification above it. So a notification replayed after a
+ * the account's stored counterBusId, which load sets to the bus id
+ * /mail/data reports (Store.inbox.counter_bus_id), lower or not, and each
+ * notification applied raises to its own; stored, it holds across
+ * restarts. A channel's unread and mention counters carry their own bus id
+ * marks, as Odoo's records do: a load sets them, a bus value older than the
+ * mark is not taken, a local change is made only by a notification above it. So a notification replayed after a
  * load or a restart is never counted twice and never rolls a counter back.
  * Records (messages, members, partners) are upserts and are always applied.
  */
@@ -206,7 +206,8 @@ export class ChatService {
     for (const channelId of gaps) {
       await this.repo.patchChannel(configId, channelId, { oldestLoadedId: null, historyComplete: false });
     }
-    if (Number.isFinite(busId)) await this.raiseBusId(configId, busId);
+    // Set, not raised: the server's bus ids restart from 0 when its bus table is emptied
+    if (Number.isFinite(busId)) await this.repo.setSourceState({ configId, counterBusId: busId });
 
     let module: ChatModuleState | null = null;
     try {
