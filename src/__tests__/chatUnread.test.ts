@@ -39,12 +39,12 @@ describe("unreadOf / isBold", () => {
 });
 
 describe("isMuted", () => {
-  it("honours a future date, the forever value and no_notif", () => {
+  it("honours a future date and the forever value; no_notif is not muted, as in Odoo", () => {
     expect(isMuted(ch({ muteUntilDt: "2026-01-01 13:00:00" }), now)).toBe(true);
     expect(isMuted(ch({ muteUntilDt: "9999-12-31 23:59:59" }), now)).toBe(true);
     expect(isMuted(ch({ muteUntilDt: "2026-01-01 11:00:00" }), now)).toBe(false);
     expect(isMuted(ch(), now)).toBe(false);
-    expect(isMuted(ch({ customNotifications: "no_notif" }), now)).toBe(true);
+    expect(isMuted(ch({ customNotifications: "no_notif" }), now)).toBe(false);
   });
 });
 
@@ -53,9 +53,10 @@ describe("totalUnread", () => {
     const list = [
       ch({ unreadCounter: 3 }),
       ch({ channelId: 2, channelType: "channel", needactionCounter: 2 }),
-      ch({ channelId: 3, channelType: "group", unreadCounter: 4, customNotifications: "no_notif" }),
+      ch({ channelId: 3, channelType: "group", unreadCounter: 4, muteUntilDt: "9999-12-31 23:59:59" }),
+      ch({ channelId: 4, channelType: "group", unreadCounter: 5, customNotifications: "no_notif" }),
     ];
-    expect(totalUnread(list, [1], now)).toBe(6);
+    expect(totalUnread(list, [1], now)).toBe(11);
   });
 });
 

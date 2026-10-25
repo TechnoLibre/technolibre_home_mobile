@@ -482,10 +482,16 @@ describe("ChatService", () => {
       "discuss.channel.member": [{ id: 102, thread: { id: GROUP, model: "discuss.channel" }, persona: { id: SELF, type: "partner" }, message_unread_counter: 0, message_unread_counter_bus_id: 1002 }],
     })]);
     expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(0);
-    // While the conversation is open, a message does not count as unread
-    chat.viewing = { configId: config, channelId: GROUP };
+    // As in the browser, a message counts even while its conversation is open; marking read brings it down
     await chat.applyBus(config, [bus(1003, "discuss.channel/new_message", { id: GROUP, data: { "mail.message": [msg(602, GROUP)] } })]);
-    expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(0);
+    expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(1);
+    // In a channel too: it makes the channel bold, it is not counted
+    await chat.applyBus(config, [bus(1004, "discuss.channel/new_message", { id: QUIET, data: { "mail.message": [msg(901, QUIET)] } })]);
+    expect((await chat.repo.channel(config, QUIET))!.unreadCounter).toBe(8);
+    expect((await chat.repo.channel(config, QUIET))!.needactionCounter).toBe(0);
+    // The user's own message never counts
+    await chat.applyBus(config, [bus(1005, "discuss.channel/new_message", { id: GROUP, data: { "mail.message": [msg(603, GROUP, SELF)] } })]);
+    expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(1);
   });
 
   it("bus notifications older than the load leave the counters alone", async () => {

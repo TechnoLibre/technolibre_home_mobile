@@ -83,7 +83,8 @@ export function typingLine(
 /**
  * The conversation screen of /chat/:source/:channelId. It renders from the
  * cache and refreshes on CHAT_CHANGED for its own conversation; scrolling to
- * the top pages the history in, reaching the bottom marks it read. Message
+ * the top pages the history in, reaching the bottom marks it read, and so
+ * does a new message arriving while the bottom is in view. Message
  * bodies go through renderBody (whitelisted HTML) and nothing else is
  * rendered as markup.
  */
@@ -194,26 +195,21 @@ export class ChatThreadComponent extends EnhancedComponent {
         onWillUnmount(() => this.teardown());
     }
 
-    /** Detaches the listener and timers and clears the viewed conversation; open() after it does nothing. */
+    /** Detaches the listener and timers and stops the typing notice; open() after it does nothing. */
     teardown(): void {
         this.destroyed = true;
         this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
         if (this._debounce !== null) clearTimeout(this._debounce);
         if (this._typingTimer !== null) clearTimeout(this._typingTimer);
-        const v = this.chatService.viewing;
-        if (v && v.configId === this.configId && v.channelId === this.channelId) {
-            this.chatService.viewing = null;
-        }
         if (this.source) this.chatService.typing(this.source, this.channelId, false).catch(() => {});
     }
 
-    /** Resolves the source, marks the conversation as viewed, shows the cache, scrolls down and marks read. */
+    /** Resolves the source, shows the cache, scrolls down and marks read. */
     async open(): Promise<void> {
         const sources = await this.chatService.sources({ online: false });
         this.source = sources.find((s) => s.configId === this.configId) ?? null;
         if (this.destroyed) return;
         this.state.serverLabel = this.source?.label ?? "";
-        this.chatService.viewing = { configId: this.configId, channelId: this.channelId };
         await this.refresh();
         this.scrollToBottom();
         await this.markRead();
@@ -285,6 +281,8 @@ export class ChatThreadComponent extends EnhancedComponent {
             else this.keepPosition(before);
             this.fillShortHistory();
         }
+        // Rows changed where the user looks (bottom in view, or nothing to scroll): read up to the last one
+        if (!el || stick || el.scrollHeight <= el.clientHeight) void this.markRead();
     }
 
     /** Drops the cached bodies of messages no longer shown. */

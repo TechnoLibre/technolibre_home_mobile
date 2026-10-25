@@ -83,8 +83,6 @@ export class ChatService {
   readonly queue: ChatOutbox;
   /** Called after the cache changed: the account, and the channel when one alone changed. */
   onChange: ((configId: string, channelId: number | null) => void) | null = null;
-  /** The conversation the user has open; its new messages do not count as unread. */
-  viewing: { configId: string; channelId: number } | null = null;
   /** Whether a server may answer now; replaceable in tests. */
   isOnline: () => Promise<boolean> = () => networkService.isOnline();
 
@@ -671,10 +669,12 @@ export class ChatService {
    * A new message in a channel. A channel the cache does not hold as a
    * member one reloads the account. The message settles the pending post
    * whose client uuid is the payload's temporary_id. A message of someone
-   * else in a chat or group, newer than the last known one, outside the
-   * open conversation, raises the unread counter by one, as the browser's
+   * else, newer than the last known one, raises the unread counter by one
+   * in any conversation type, the open one included, as the browser's
    * local counter does, unless the payload carries the server's counter or
-   * the stored counter is as of this bus id or later.
+   * the stored counter is as of this bus id or later. Marking read, and
+   * the member record the server sends back, bring it down again; a
+   * channel's unread still counts nowhere but in its bold (unreadOf).
    */
   private async applyNewMessage(configId: string, p: any, busId: number, fresh: boolean): Promise<number | null> {
     const channelId = Number(p.id);
@@ -700,11 +700,9 @@ export class ChatService {
     };
     const serverCounted = delta.channels.some((c) => c.channelId === channelId && c.unreadCounter !== undefined);
     const fromOther = self === null || message.authorPartnerId !== self;
-    const open = this.viewing?.configId === configId && this.viewing.channelId === channelId;
     if (
       fresh && busId > known.unreadCounterBusId
-      && !serverCounted && fromOther && !open
-      && known.channelType !== "channel"
+      && !serverCounted && fromOther
       && message.messageId > (known.lastMessageId ?? 0)
     ) {
       patch.unreadCounter = known.unreadCounter + 1;

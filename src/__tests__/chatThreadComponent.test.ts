@@ -37,7 +37,6 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
         send: vi.fn().mockResolvedValue(msg(null)),
         markRead: vi.fn().mockResolvedValue(undefined),
         typing: vi.fn().mockResolvedValue(undefined),
-        viewing: null as any,
         queue: { flush: vi.fn().mockResolvedValue(undefined) },
         repo: {
             channel: vi.fn(async () => ch),
@@ -145,12 +144,11 @@ describe("ChatThreadComponent", () => {
         expect(chat.loadOlder).not.toHaveBeenCalled();
     });
 
-    it("opening marks the conversation viewed and read, header shows the correspondent", async () => {
+    it("opening marks the conversation read, header shows the correspondent", async () => {
         const chat = fakeChat([msg(10)]);
         const c = make(chat);
         await c.open();
-        expect(chat.viewing).toEqual({ configId: "a", channelId: 5 });
-        expect(chat.markRead).toHaveBeenCalled();
+        expect(chat.markRead).toHaveBeenCalledTimes(1);
         expect(c.state.title).toBe("Alice Roy");
         expect(c.state.presence).toBe("online");
         expect(c.state.serverLabel).toBe("Srv");
@@ -204,18 +202,42 @@ describe("ChatThreadComponent", () => {
         expect(chat.markRead).toHaveBeenCalledTimes(2);
     });
 
-    it("unmount clears viewing; unmount before open leaves it unset", async () => {
+    it("unmount stops the typing notice; unmount before open marks nothing", async () => {
         const chat = fakeChat([msg(10)]);
         const c = make(chat);
         await c.open();
         c.teardown();
-        expect(chat.viewing).toBeNull();
+        expect(chat.typing).toHaveBeenCalledWith(expect.anything(), 5, false);
         const chat2 = fakeChat([msg(10)]);
         const d = make(chat2);
         const opening = d.open();
         d.teardown();
         await opening;
-        expect(chat2.viewing).toBeNull();
+        expect(chat2.markRead).not.toHaveBeenCalled();
+    });
+
+    it("a new message arriving with the bottom in view marks read, once per message", async () => {
+        const list: any[] = [msg(10)];
+        const ch = channel({ lastMessageId: 10 });
+        const chat = fakeChat(list, undefined, ch);
+        const c = make(chat);
+        await c.open();
+        expect(chat.markRead).toHaveBeenCalledTimes(1);
+        c.scroller = { el: { scrollTop: 700, scrollHeight: 1000, clientHeight: 300 } };
+        list.push(msg(11));
+        ch.lastMessageId = 11;
+        await c.refresh();
+        await vi.waitFor(() => expect(chat.markRead).toHaveBeenCalledTimes(2));
+        // A refresh that changes no row sends nothing more
+        await c.refresh();
+        expect(chat.markRead).toHaveBeenCalledTimes(2);
+        // Scrolled up, a new message waits for the bottom
+        c.scroller = { el: { scrollTop: 0, scrollHeight: 1000, clientHeight: 300 } };
+        list.push(msg(12));
+        ch.lastMessageId = 12;
+        await c.refresh();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(chat.markRead).toHaveBeenCalledTimes(2);
     });
 
     it("double tap sends once", async () => {

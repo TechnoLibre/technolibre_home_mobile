@@ -18,9 +18,12 @@ export function isBold(c: ChatChannel): boolean {
   return c.unreadCounter > 0 || c.needactionCounter > 0;
 }
 
-/** Muted until a date still ahead of `now`, or by the "no_notif" setting. */
+/**
+ * Muted until a date still ahead of `now`, as Odoo's Thread.isMuted: the
+ * "no_notif" setting only silences notifications, the conversation still
+ * counts.
+ */
 export function isMuted(c: ChatChannel, now: Date): boolean {
-  if (c.customNotifications === "no_notif") return true;
   if (!c.muteUntilDt) return false;
   const until = utcMs(c.muteUntilDt);
   return Number.isFinite(until) && until > now.getTime();
