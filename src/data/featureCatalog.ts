@@ -4292,6 +4292,19 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatSettings.ts",
                 ],
             },
+            {
+                id: "chat.store",
+                label: { en: "Odoo Store parser", fr: "Analyseur du Store Odoo" },
+                description: {
+                    en: "Turns an Odoo 18 Discuss Store result into partial cache records.",
+                    fr: "Transforme un résultat Store de Discuss d'Odoo 18 en enregistrements partiels du cache.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatStore.ts",
+                ],
+            },
         ],
     },
 ];
