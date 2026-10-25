@@ -5,7 +5,7 @@ import type { ChatChannel, ChatMember, ChatPartner } from "../../models/chat";
  * a chat's own label, the correspondent's name, a group without a name as the
  * names of its members (self included, in member-id order) joined by the
  * language's "and", then the stored name. A chat with nobody else in it shows
- * the user's own name. `lang` is the app language ("en" or "fr"); a partner
+ * the user's own name, and "?" stands when nothing names it. `lang` is the app language ("en" or "fr"); a partner
  * not cached yet, or without a name, is left out of the list.
  */
 export function displayNameOf(
@@ -30,6 +30,7 @@ export function displayNameOf(
     if (names.length > 0) return new Intl.ListFormat(lang, { type: "conjunction", style: "long" }).format(names);
   }
   if (channel.name) return channel.name;
-  if (channel.channelType === "chat" && channel.correspondentPartnerId === null) return nameOf(selfPartnerId);
-  return "";
+  const alone = members.length > 0 && members.every((m) => m.partnerId === selfPartnerId);
+  if (channel.channelType === "chat" && alone && nameOf(selfPartnerId)) return nameOf(selfPartnerId);
+  return "?";
 }

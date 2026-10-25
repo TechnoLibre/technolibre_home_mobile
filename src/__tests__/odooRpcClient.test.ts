@@ -184,6 +184,19 @@ describe("OdooRpcClient helpers", () => {
     });
   });
 
+  it("sessionInfo fresh renews only the global mute", async () => {
+    let mute: string | false = false;
+    const calls = server(() => ({
+      result: { uid: 7, partner_id: 42, storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: mute } } } },
+    }));
+    expect((await rpc.sessionInfo(CREDS)).globalMuteUntil).toBeNull();
+    mute = "2026-02-01 10:00:00";
+    expect((await rpc.sessionInfo(CREDS)).globalMuteUntil).toBeNull();
+    expect(await rpc.sessionInfo(CREDS, { fresh: true })).toMatchObject({ globalMuteUntil: mute, partnerId: 42 });
+    expect((await rpc.sessionInfo(CREDS)).globalMuteUntil).toBe(mute);
+    expect(calls).toHaveLength(2);
+  });
+
   it("sessionInfo falls back when the server omits the new keys", async () => {
     server(() => ({ result: { uid: 7 } }));
     expect(await rpc.sessionInfo(CREDS)).toMatchObject({

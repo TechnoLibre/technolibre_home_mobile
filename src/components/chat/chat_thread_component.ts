@@ -79,7 +79,7 @@ export function typingLine(
     const who = members
         .filter((m) => m.partnerId !== selfPartnerId && m.isTyping)
         .filter((m) => nowMs - utcMs(m.typingAt) <= TYPING_FRESH_MS)
-        .map((m) => names.get(m.partnerId) ?? "?");
+        .map((m) => names.get(m.partnerId) || "?");
     if (who.length === 0) return "";
     if (who.length === 1) return t("chat.typing_one", { name: who[0] });
     return t("chat.typing_many", { names: who.slice(0, -1).join(", "), last: who[who.length - 1] });

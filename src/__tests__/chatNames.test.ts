@@ -27,13 +27,19 @@ describe("displayNameOf", () => {
   it("a named group or a channel keeps its name; a nameless group without members is empty", () => {
     expect(displayNameOf(ch({ name: "Team" }), [mem(1, 2)], partners, 1, "en")).toBe("Team");
     expect(displayNameOf(ch({ channelType: "channel", name: "general" }), [], partners, 1, "en")).toBe("general");
-    expect(displayNameOf(ch(), [], partners, 1, "en")).toBe("");
+    expect(displayNameOf(ch(), [], partners, 1, "en")).toBe("?");
   });
 
   it("a chat with nobody else shows the user's own name", () => {
     const self = ch({ channelType: "chat", name: "", correspondentPartnerId: null });
     expect(displayNameOf(self, [mem(1, 1)], partners, 1, "en")).toBe("Me");
     expect(displayNameOf({ ...self, name: "Me (you)" }, [mem(1, 1)], partners, 1, "en")).toBe("Me (you)");
+  });
+
+  it("a chat that is not a self-chat never takes the user's name; nothing to name gives a question mark", () => {
+    const chat = ch({ channelType: "chat", name: "", correspondentPartnerId: 99 });
+    expect(displayNameOf(chat, [mem(1, 1), mem(2, 99)], partners, 1, "en")).toBe("?");
+    expect(displayNameOf(ch({ channelType: "channel" }), [], partners, 1, "en")).toBe("?");
   });
 
   it("a correspondent not cached falls back to the stored name", () => {

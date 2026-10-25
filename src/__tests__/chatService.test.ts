@@ -69,7 +69,7 @@ function mailData() {
  * (limit/2 at or below it, limit/2 above it). `onPost` runs while a post is
  * on the server, before its answer leaves.
  */
-function fakeOdoo(opts: { version?: number } = {}) {
+function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {}) {
   const calls: Call[] = [];
   const history: Record<number, number[]> = { [CHAT]: Array.from({ length: 80 }, (_, i) => i + 1) };
   const state = {
@@ -93,7 +93,7 @@ function fakeOdoo(opts: { version?: number } = {}) {
       case "/web/session/get_session_info":
         return ok({
           uid: 2, partner_id: SELF, is_system: false, websocket_worker_version: "18.0-7", is_internal_user: true,
-          storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: false } } },
+          storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: opts.sessionMute ?? false } } },
         });
       case "/mail/data": {
         const answer = JSON.parse(JSON.stringify(state.data));
@@ -227,6 +227,27 @@ describe("ChatService", () => {
       loadedAt: clock.toISOString(),
     });
     expect(changes).toContainEqual([config, null]);
+  });
+
+  it("a load reads the global mute fresh and a newer bus change wins over a load that started earlier", async () => {
+    const odoo = fakeOdoo({ sessionMute: "9999-12-31 23:59:59" });
+    const src = await source();
+    await chat.load(src);
+    expect((await chat.repo.sourceState(src.configId)).globalMuteUntil).toBe("9999-12-31 23:59:59");
+    // the bus unmutes after the load started: the session value read is older
+    await chat.repo.applyDelta(src.configId, { channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [],
+      messages: [], partners: [], inboxCounter: null, selfPartnerId: null, globalMuteUntil: null }, { fromBus: true });
+    const after = await chat.repo.sourceState(src.configId);
+    expect(after.globalMuteUntil).toBeNull();
+    expect(after.globalMuteAt).not.toBeNull();
+    await chat.repo.setSourceState({ configId: src.configId, globalMuteAt: new Date(clock.getTime() + 60000).toISOString() });
+    await chat.load(src);
+    expect((await chat.repo.sourceState(src.configId)).globalMuteUntil).toBeNull();
+    // a load started after the bus change takes the server's value
+    await chat.repo.setSourceState({ configId: src.configId, globalMuteAt: new Date(clock.getTime() - 60000).toISOString() });
+    await chat.load(src);
+    expect((await chat.repo.sourceState(src.configId)).globalMuteUntil).toBe("9999-12-31 23:59:59");
+    void odoo;
   });
 
   it("loadOlder pages with around and never before", async () => {

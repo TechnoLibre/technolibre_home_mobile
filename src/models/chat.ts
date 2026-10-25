@@ -101,6 +101,8 @@ export interface ChatSourceState {
   internalUserGroupId: number | null;
   /** End of the account-wide mute (`res.users.settings.mute_until_dt`); null when not muted. */
   globalMuteUntil: string | null;
+  /** ISO time `globalMuteUntil` was last set from the bus; a load that started earlier does not overwrite it. */
+  globalMuteAt: string | null;
   isInternalUser: boolean;
 }
 

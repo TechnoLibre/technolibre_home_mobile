@@ -209,22 +209,29 @@ export class ChatService {
   private async loadNow(src: ChatSource): Promise<void> {
     const { configId, creds } = src;
     const erased = this.erasedSince(configId);
-    const info = await this.rpc.sessionInfo(creds);
+    const startedAt = this.now().toISOString();
+    // Fresh: the account-wide mute changes during a session, the other fields come from the cache
+    const info = await this.rpc.sessionInfo(creds, { fresh: true });
+    const mute = info.globalMuteUntil;
     if (erased()) return;
     const self = info.partnerId || null;
+    const lastMuteAt = (await this.repo.sourceState(configId)).globalMuteAt;
+    // A bus change newer than this load's start wins over the value read
+    const muteIsStale = lastMuteAt !== null && lastMuteAt > startedAt;
     await this.repo.setSourceState({
       configId,
       selfPartnerId: self,
       isSystem: info.isSystem,
       wsVersion: info.websocketWorkerVersion,
       internalUserGroupId: info.internalUserGroupId,
-      globalMuteUntil: info.globalMuteUntil,
+      ...(muteIsStale ? {} : { globalMuteUntil: mute }),
       isInternalUser: info.isInternalUser,
     });
     const result = await this.rpc.callWithAuth(creds, (sessionId) =>
       this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/data", { init_messaging: {}, channels_as_member: true }));
     if (erased()) return;
     const delta = parseStore(result, configId, self);
+    if (muteIsStale) delete delta.globalMuteUntil;
     const lastOf = new Map(delta.channels.map((c) => [c.channelId, c.lastMessageId]));
     const gaps: number[] = [];
     for (const c of await this.repo.channels(configId)) {

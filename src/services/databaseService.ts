@@ -1283,6 +1283,7 @@ export class DatabaseService {
         counter_bus_id  INTEGER NOT NULL DEFAULT 0,
         internal_user_group_id INTEGER,
         global_mute_until      TEXT,
+        global_mute_at         TEXT,
         is_internal_user       INTEGER NOT NULL DEFAULT 0
       )
     `);
@@ -1319,6 +1320,7 @@ export class DatabaseService {
       chat_sources: [
         ["internal_user_group_id", "INTEGER"],
         ["global_mute_until", "TEXT"],
+        ["global_mute_at", "TEXT"],
         ["is_internal_user", "INTEGER NOT NULL DEFAULT 0"],
       ],
     };

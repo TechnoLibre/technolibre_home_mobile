@@ -360,10 +360,10 @@ export class OdooRpcClient {
    * route; current first), read once per server and database for the
    * app's lifetime.
    */
-  async sessionInfo(creds: SyncCredentials): Promise<SessionInfo> {
+  async sessionInfo(creds: SyncCredentials, opts: { fresh?: boolean } = {}): Promise<SessionInfo> {
     const key = `${creds.odooUrl}|${creds.username}|${creds.database}`;
     const known = this._sessions.get(key);
-    if (known) return known;
+    if (known && !opts.fresh) return known;
     const info = await this.callWithAuth(creds, (sessionId) =>
       this.jsonRoute(creds.odooUrl, sessionId, "/web/session/get_session_info", {}));
     const uid = Number(info?.uid);
@@ -385,8 +385,10 @@ export class OdooRpcClient {
       globalMuteUntil: store?.settings?.mute_until_dt || null,
       isInternalUser: info?.is_internal_user === true,
     };
-    this._sessions.set(key, result);
-    return result;
+    // A fresh read renews only the account-wide mute, which changes during a session; the rest stays as cached
+    const kept = known && opts.fresh ? { ...known, globalMuteUntil: result.globalMuteUntil } : result;
+    this._sessions.set(key, kept);
+    return kept;
   }
 
   /** sessionInfo's answers, per "url|username|database". */

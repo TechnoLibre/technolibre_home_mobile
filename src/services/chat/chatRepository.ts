@@ -154,6 +154,7 @@ function sourceFromRow(r: Row): ChatSourceState {
     counterBusId: r.counter_bus_id ?? 0,
     internalUserGroupId: r.internal_user_group_id ?? null,
     globalMuteUntil: r.global_mute_until ?? null,
+    globalMuteAt: r.global_mute_at ?? null,
     isInternalUser: bool(r.is_internal_user),
   };
 }
@@ -290,6 +291,7 @@ export class ChatRepository {
       counter_bus_id: s.counterBusId,
       internal_user_group_id: s.internalUserGroupId,
       global_mute_until: s.globalMuteUntil,
+      global_mute_at: s.globalMuteAt,
       is_internal_user: flag(s.isInternalUser),
     };
   }
@@ -321,7 +323,10 @@ export class ChatRepository {
     const state: Partial<ChatSourceState> = {};
     if (d.inboxCounter !== null) state.inboxCounter = d.inboxCounter;
     if (d.selfPartnerId !== null) state.selfPartnerId = d.selfPartnerId;
-    if (d.globalMuteUntil !== undefined) state.globalMuteUntil = d.globalMuteUntil;
+    if (d.globalMuteUntil !== undefined) {
+      state.globalMuteUntil = d.globalMuteUntil;
+      if (opts.fromBus) state.globalMuteAt = this.now();
+    }
     if (Object.keys(state).length > 0) await this.setSourceState({ ...state, configId });
   }
 
@@ -623,6 +628,7 @@ export class ChatRepository {
       counterBusId: 0,
       internalUserGroupId: null,
       globalMuteUntil: null,
+      globalMuteAt: null,
       isInternalUser: false,
     };
   }
