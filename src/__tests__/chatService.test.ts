@@ -743,13 +743,57 @@ describe("ChatService", () => {
     const src = await source();
     await chat.load(src);
     await chat.send(src, GROUP, "hello");
-    // The author's own message arrives on the bus and raises the last message
+    // Stands in for the bus delivering the own message: the last message becomes the one the post settled on
+    expect((await chat.repo.channel(config, GROUP))!.seenMessageId).toBe(5000);
     await chat.repo.patchChannel(config, GROUP, { lastMessageId: 5000 });
     const reads = odoo.kw("mark_as_read").length + odoo.on("/discuss/channel/mark_as_read").length;
     const ops = (await env.db.getOutboxOpsForConfig(config)).length;
     await chat.markRead(src, GROUP);
     expect(odoo.kw("mark_as_read").length + odoo.on("/discuss/channel/mark_as_read").length).toBe(reads);
     expect((await env.db.getOutboxOpsForConfig(config)).length).toBe(ops);
+  });
+
+  it("an account re-added while a delete's load hangs keeps what it writes after", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    let release!: () => void;
+    odoo.state.hold = new Promise((r) => { release = r; });
+    const loading = chat.load(src).catch(() => {});
+    await vi.waitFor(() => expect(odoo.on("/mail/data")).toHaveLength(1));
+    await env.db.deleteApplication(TARGET.url, TARGET.username);
+    await chat.forgetSource(config);
+    await env.db.addApplication({
+      ...TARGET, odooVersion: "18.0", autoSync: false, pollIntervalMinutes: 5, ntfyUrl: "", ntfyTopic: "", ntfyToken: "",
+    } as any);
+    await chat.queue.queuePost(config, GROUP, "written after the re-add", false);
+    release();
+    await loading;
+    // The second erase, queued behind the hung load, has run its turn
+    await chat.load(await source());
+    expect(await chat.queue.pendingPostCount(config)).toBe(1);
+    expect((await chat.messages(config, GROUP)).map((m) => m.status)).toEqual(["sent", "pending"]);
+    expect((await chat.repo.channels(config)).length).toBeGreaterThan(0);
+  });
+
+  it("a page landing after a delete writes nothing", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    const real = globalThis.fetch as any;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    vi.stubGlobal("fetch", async (url: string, init: any) => {
+      const answer = real(url, init);
+      if (new URL(url).pathname === "/discuss/channel/messages") await gate;
+      return answer;
+    });
+    const paging = chat.loadOlder(src, CHAT);
+    await vi.waitFor(() => expect(odoo.on("/discuss/channel/messages")).toHaveLength(1));
+    await chat.forgetSource(config);
+    release();
+    expect(await paging).toBe(0);
+    expect(await chat.repo.channels(config)).toEqual([]);
+    expect(await chat.repo.messages(config, CHAT)).toEqual([]);
   });
 
   it("a source whose load never answers does not hold back another source's bus", async () => {

@@ -507,13 +507,19 @@ export class ChatService {
    * does not wait for a request in flight: moving the account's generation
    * makes a load or a page answer that lands later discard itself, and a
    * post settled later finds its op gone. A second erase queued behind the
-   * account's writers removes whatever a writer past its check still wrote.
+   * account's writers removes whatever a writer past its check still wrote,
+   * unless the account was erased again or configured again meanwhile.
    */
   async forgetSource(configId: string): Promise<void> {
     this.stopSourceRealtime(configId);
     this.generations.set(configId, (this.generations.get(configId) ?? 0) + 1);
     await this.erase(configId);
-    this.serial(configId, () => this.erase(configId)).catch((e) => console.warn("chat: second erase failed", e));
+    const gen = this.generations.get(configId);
+    this.serial(configId, async () => {
+      // An account added again meanwhile owns its rows now: they stay
+      if (this.generations.get(configId) !== gen || (await this.sourceOf(configId))) return;
+      await this.erase(configId);
+    }).catch((e) => console.warn("chat: second erase failed", e));
     this.changed(configId, null);
   }
 
