@@ -14,6 +14,9 @@ import type {
     ChatAttachment, ChatChannel, ChatMember, ChatMessage, ChatNotice, ChatPartner, ChatReaction, MessageTarget, OutgoingFile,
 } from "../../models/chat";
 import { EMPTY_MENTIONS, joinMentions, validMentions, type Mentions } from "../../services/chat/chatCompose";
+import {
+    adjustPicks, applySuggestion, mentionQuery, picksOf, picksToMentions, type MentionPick, type Suggestion,
+} from "../../services/chat/chatMentions";
 import type { ChatDraft } from "../../services/chat/chatRepository";
 import { quickReactions } from "../../services/chat/chatEmoji";
 import { CHAT_DELETE, CHAT_UPLOAD, sameTarget, targetOf } from "../../services/chat/chatOutbox";
@@ -39,11 +42,14 @@ import { ChatMessageMenuComponent, type MessageCan } from "./chat_message_menu_c
 import { ChatReactionsComponent, ChatReactionWhoComponent, reactionViews, type ReactionView } from "./chat_reactions_component";
 import { LongPress } from "./chatLongPress";
 import { ChatComposerBannerComponent, type ComposerMode } from "./chat_composer_banner_component";
+import { ChatSuggestionsComponent } from "./chat_suggestions_component";
 
 /** Quiet period that folds a burst of CHAT_CHANGED into one refresh. */
 const CHANGE_DEBOUNCE_MS = 150;
 /** A member counts as typing for this long after the server's timestamp. */
 const TYPING_FRESH_MS = 60000;
+/** Quiet time after the last keystroke before the server is asked for suggestions (Odoo's FETCH_SUGGESTIONS_DELAY). */
+const SUGGEST_FETCH_MS = 250;
 /** Distance from the edge, in px, that counts as "at the top" or "at the bottom". */
 const EDGE_PX = 40;
 /** The composer grows to this many lines, then scrolls. */
@@ -152,6 +158,8 @@ interface ThreadState {
     banner: QuoteView | null;
     /** This conversation's edits refused because the message changed: each offers « Reprendre » and « Ignorer ». */
     resumes: { id: string; text: string }[];
+    /** The @ or # suggestions of the word the caret ends; none hides the list. */
+    suggestions: Suggestion[];
 }
 
 /**
@@ -271,7 +279,10 @@ export function typingLine(
  * their mode (ComposerMode), kept in the draft too, with a banner above
  * it: a reply sends the text as an answer; an edit fills the composer with
  * the message's text, kept apart (editText) from the new message's text,
- * which comes back when the edit is sent or given up.
+ * which comes back when the edit is sent or given up. Typing @ or # lists
+ * the people or channels to mention (ChatSuggestionsComponent over
+ * ChatMentions); a pick is followed by its place in the text and goes
+ * with ➤ while its text is whole.
  */
 export class ChatThreadComponent extends EnhancedComponent {
     state!: ThreadState;
@@ -280,6 +291,7 @@ export class ChatThreadComponent extends EnhancedComponent {
     static components = {
         HeadingComponent, ChatComposerAttachComponent, ChatAttachmentsComponent, ChatImageViewerComponent, ChatEmojiPickerComponent,
         ChatMessageMenuComponent, ChatReactionsComponent, ChatReactionWhoComponent, ChatComposerBannerComponent,
+        ChatSuggestionsComponent,
     };
 
     static template = xml`
@@ -368,6 +380,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         <div class="chat-thread__attach-slot" t-att-class="{'chat-thread__attach-slot--editing': state.mode.kind === 'edit'}">
           <ChatComposerAttachComponent attach="attach"/>
         </div>
+        <ChatSuggestionsComponent t-if="state.suggestions.length" items="state.suggestions" onPick.bind="onSuggestion"/>
         <ChatEmojiPickerComponent t-if="state.emoji" countUse="!state.reactTo" onPick.bind="onEmoji" onClose.bind="toggleEmoji"/>
         <div class="chat-thread__composer">
           <button class="chat-thread__attach" t-att-aria-label="t('chat.attach')" t-att-aria-expanded="attachState.sheet ? 'true' : 'false'"
@@ -411,6 +424,13 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _editStart: string | null = null;
     /** The people and channels picked in the composer, the new message's and the edit's (validMentions keeps those in a text). */
     mentions: Mentions = EMPTY_MENTIONS;
+    /** The picks of the text shown, by place (adjustPicks follows them as it is typed into); they go with ➤. */
+    picks: MentionPick[] = [];
+    /** The conversation as the last build read it; the suggestions need it. */
+    private _channel: ChatChannel | null = null;
+    /** Counts the suggestion queries, so an answer to an older one is never shown. */
+    private _suggestSeq = 0;
+    private _suggestTimer: ReturnType<typeof setTimeout> | null = null;
     /** The appStateChange listener that stores the draft text when the app leaves the front. */
     private _appState: Promise<{ remove: () => Promise<void> }> | undefined;
     /** The files of the shown messages: their views, previews, opening and polling. */
@@ -490,6 +510,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             mode: { kind: "new" },
             banner: null,
             resumes: [],
+            suggestions: [],
         });
         const params = this.router.getRouteParams(window.location.pathname, "/chat/:source/:channelId");
         this.configId = params.get("source") ?? "";
@@ -549,6 +570,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
         if (this._debounce !== null) clearTimeout(this._debounce);
         if (this._typingTimer !== null) clearTimeout(this._typingTimer);
+        if (this._suggestTimer !== null) clearTimeout(this._suggestTimer);
         if (this._flashTimer !== null) clearTimeout(this._flashTimer);
         if (this._highlightTimer !== null) clearTimeout(this._highlightTimer);
         this.press.cancel();
@@ -617,6 +639,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             }
             channel = await repo.channel(this.configId, realId);
         }
+        this._channel = channel;
         if (!channel) {
             // Left or deleted: what was still to post stays shown, as not sent
             this.state.found = false;
@@ -1478,6 +1501,7 @@ export class ChatThreadComponent extends EnhancedComponent {
                 if (joined !== typed) this.showText(joined);
                 if (fresh && draft.replyTo) this.state.mode = { kind: "reply", target: draft.replyTo };
             }
+            this.picks = picksOf(this.state.text, this.mentions);
             if (this.state.mode.kind !== "new") void this.refreshBanner();
         }
         this.attach.restore(draft.files.map((a) => ({
@@ -1487,8 +1511,19 @@ export class ChatThreadComponent extends EnhancedComponent {
         })), draft.lost);
     }
 
-    /** Shows a text in the composer, the field's height following its lines. */
+    /**
+     * Shows a whole text in the composer (a draft, a mode's text): its
+     * picks placed anew from the composer's (picksOf), the suggestions
+     * closed.
+     */
     private showText(text: string): void {
+        this.showValue(text);
+        this.picks = picksOf(text, this.mentions);
+        this.closeSuggestions();
+    }
+
+    /** Shows a text in the field, its height following its lines. */
+    private showValue(text: string): void {
         this.state.text = text;
         this.state.inputRows = rowsOf(text);
     }
@@ -1601,6 +1636,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.showText(start.text);
         this.editText.set(start.text);
         this.addMentions(start.mentions);
+        this.picks = picksOf(start.text, this.mentions);
         this.focusInput();
         await this.refreshBanner();
     }
@@ -1799,6 +1835,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             return;
         }
         this.setText(field.value);
+        this.suggest(field.selectionStart ?? field.value.length);
     }
 
     /**
@@ -1807,7 +1844,9 @@ export class ChatThreadComponent extends EnhancedComponent {
      * the others as typing.
      */
     private setText(value: string): void {
-        this.showText(value);
+        const before = this.state.text;
+        this.showValue(value);
+        this.followPicks(before, value);
         if (this.state.mode.kind === "edit") {
             this.editText.typed(value);
             return;
@@ -1815,6 +1854,106 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.draftText.typed(value);
         if (this.source && value.trim()) {
             this.chatService.typing(this.source, this.channelId, true).catch(() => {});
+        }
+    }
+
+    /**
+     * The picks of the text once `before` became `after` (adjustPicks). A
+     * pick whose text was edited goes from the composer's picks too, unless
+     * a pick left or, while editing, the kept new message still holds it;
+     * the text waiting is then stored, and the picks after it.
+     */
+    private followPicks(before: string, after: string): void {
+        if (this.picks.length === 0) return;
+        const kept = adjustPicks(this.picks, before, after);
+        const broken = kept.length < this.picks.length;
+        this.picks = kept;
+        if (!broken) return;
+        const other = this.state.mode.kind === "edit" ? validMentions(this._kept, this.mentions) : EMPTY_MENTIONS;
+        this.mentions = joinMentions(picksToMentions(kept), { partners: other.partners, channels: other.channels });
+        this.storeMentions();
+    }
+
+    /** Stores the text waiting, then the composer's picks: a draft never holds a pick before its text. */
+    private storeMentions(): void {
+        if (this.state.mode.kind === "edit") this.editText.flush();
+        else this.draftText.flush();
+        this.chatService.saveDraftMentions(this.configId, this.channelId, this.mentions)
+            .catch((e: unknown) => console.warn("chat thread: picks not stored", e));
+    }
+
+    /**
+     * The suggestions of the word the caret ends (mentionQuery): the
+     * cache's at once (ChatMentions.local), then SUGGEST_FETCH_MS after
+     * the last keystroke those of the server with them (remote), which take
+     * their place. A server that fails or does not answer leaves the
+     * cache's; an answer to a query since replaced is not shown. The list
+     * shown stays until the new one answers; no query closes it.
+     */
+    private suggest(caret: number): void {
+        const q = mentionQuery(this.state.text, caret);
+        const source = this.source;
+        const channel = this._channel;
+        if (!q || !source || !channel) {
+            this.closeSuggestions();
+            return;
+        }
+        const seq = ++this._suggestSeq;
+        if (this._suggestTimer !== null) clearTimeout(this._suggestTimer);
+        const mentions = this.chatService.mentions;
+        let merged = false;
+        const show = (list: Suggestion[]) => {
+            if (seq === this._suggestSeq && !this.destroyed) this.state.suggestions = list;
+        };
+        mentions.local(source, channel, q)
+            .then((list: Suggestion[]) => { if (!merged) show(list); })
+            .catch((e: unknown) => console.warn("chat thread: suggestions", e));
+        this._suggestTimer = setTimeout(() => {
+            this._suggestTimer = null;
+            mentions.remote(source, channel, q)
+                .then((list: Suggestion[]) => {
+                    merged = true;
+                    show(list);
+                })
+                .catch(() => {
+                    // The cache's list stays
+                });
+        }, SUGGEST_FETCH_MS);
+    }
+
+    /** Hides the suggestions, and voids the answers still to come and the server request still waiting. */
+    private closeSuggestions(): void {
+        this._suggestSeq++;
+        if (this._suggestTimer !== null) clearTimeout(this._suggestTimer);
+        this._suggestTimer = null;
+        if (this.state.suggestions.length) this.state.suggestions = [];
+    }
+
+    /**
+     * A suggestion picked: the query the caret ends is replaced by its text
+     * and a space (applySuggestion), the caret after it, the focus kept in
+     * the field. The text is stored at once, then the pick with the
+     * composer's (a special one links from the text alone). Refused while a
+     * send runs, as typing is, and when the caret no longer ends a query of
+     * the suggestion's kind.
+     */
+    onSuggestion(s: Suggestion): void {
+        if (this.state.sending || this.destroyed) return;
+        const field = this.input.el as HTMLTextAreaElement | null;
+        const text = this.state.text;
+        const caret = Math.min(field?.selectionStart ?? text.length, text.length);
+        const q = mentionQuery(text, caret);
+        this.closeSuggestions();
+        if (!q || q.kind !== (s.kind === "channel" ? "#" : "@")) return;
+        const picked = applySuggestion(text, q, caret, s);
+        this.setText(picked.text);
+        this.picks = [...this.picks, picked.pick];
+        if (s.kind !== "special") this.mentions = joinMentions(this.mentions, picksToMentions([picked.pick]));
+        this.storeMentions();
+        if (field) {
+            field.value = picked.text;
+            field.setSelectionRange(picked.caret, picked.caret);
+            field.focus?.();
         }
     }
 
@@ -1842,11 +1981,12 @@ export class ChatThreadComponent extends EnhancedComponent {
         const end = Math.min(field?.selectionEnd ?? start, text.length);
         const value = text.slice(0, start) + codepoints + text.slice(end);
         this.setText(value);
+        const caret = start + codepoints.length;
         if (field) {
             field.value = value;
-            const caret = start + codepoints.length;
             field.setSelectionRange(caret, caret);
         }
+        this.suggest(caret);
     }
 
     /**
@@ -1872,7 +2012,7 @@ export class ChatThreadComponent extends EnhancedComponent {
      * send was taken: false leaves extra to the caller. In reply mode the
      * post answers the mode's message: the banner clears with the text, and
      * the outbox takes the reply target out of the draft with the text. The
-     * picks go with the post. In edit mode ➤ sends the edit (sendEdit), and
+     * picks still whole in the text (picks) go with the post. In edit mode ➤ sends the edit (sendEdit), and
      * takes no file.
      */
     async onSend(extra: OutgoingFile[] = []): Promise<boolean> {
@@ -1889,13 +2029,13 @@ export class ChatThreadComponent extends EnhancedComponent {
         let queued = false;
         const chips = this.attach.take();
         const raw = this.state.text;
-        this.state.text = "";
-        this.state.inputRows = 1;
+        const kept = this.mentions;
+        const mentions = picksToMentions(this.picks);
+        this.mentions = EMPTY_MENTIONS;
+        this.showText("");
         this.draftText.set(raw);
         this.state.error = "";
         const replyTo = mode.kind === "reply" ? mode.target : null;
-        const mentions = this.mentions;
-        this.mentions = EMPTY_MENTIONS;
         void this.setMode({ kind: "new" });
         const preparing = chips.length > 0 ? this.showPreparing(text, chips) : 0;
         // The message ends the typing, as Odoo's composer does on a post
@@ -1918,8 +2058,8 @@ export class ChatThreadComponent extends EnhancedComponent {
             this.state.sending = false;
             if (preparing && !queued) this.endPreparing(preparing);
             if (!queued) {
+                this.mentions = kept;
                 this.showText(raw);
-                this.mentions = mentions;
                 void this.setMode(mode);
                 this.state.error = t("chat.send_error");
                 await this.showDraft(false);
@@ -1942,8 +2082,8 @@ export class ChatThreadComponent extends EnhancedComponent {
      * composer shows the new message again and stays locked until the edit
      * is queued (ChatService.editMessage, which ends the draft's edit then).
      * An edit not queued (the message gone from the cache, a write refused)
-     * comes back in the composer with an error; the picks left are those of
-     * the new message's text.
+     * comes back in the composer with an error; the edit's picks go with it,
+     * and the picks left are those of the new message's text.
      */
     private async sendEdit(source: ChatSource, target: MessageTarget): Promise<boolean> {
         if (this.destroyed) return false;
@@ -1968,7 +2108,8 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.state.reactTo = null;
         this.state.error = "";
         this.editText.set(raw);
-        const mentions = this.mentions;
+        const all = this.mentions;
+        const mentions = picksToMentions(this.picks);
         this.leaveEdit();
         let queued = false;
         try {
@@ -1994,8 +2135,9 @@ export class ChatThreadComponent extends EnhancedComponent {
             console.warn("chat thread: after a queued edit", e);
         }
         this.state.sending = false;
-        const left = validMentions(this.state.text, mentions);
+        const left = validMentions(this.state.text, all);
         this.mentions = { partners: left.partners, channels: left.channels };
+        this.picks = picksOf(this.state.text, this.mentions);
         this.chatService.saveDraftMentions(this.configId, this.channelId, this.mentions)
             .catch((e: unknown) => console.warn("chat thread: picks not stored", e));
         await this.refresh();

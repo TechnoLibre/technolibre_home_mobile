@@ -20,6 +20,7 @@ import { countEmojiUse } from "./chatEmoji";
 import { deviceChatFiles, type ChatFiles, type ChatHttp } from "./chatFiles";
 import { ChatModuleLevel, effectiveLevel, levelAtLeast, moduleProbe } from "./chatModule";
 import { CHAT_EDIT, ChatOutbox, sameTarget, targetOf, type CreateMode } from "./chatOutbox";
+import { ChatMentions } from "./chatMentions";
 import { ChatPeople } from "./chatPeople";
 import { ChatRepository, type ChatDraft } from "./chatRepository";
 import { chatSettings } from "./chatSettings";
@@ -157,6 +158,9 @@ export class ChatService {
   /** Who to write to, channels to join and access groups of a new channel. */
   readonly people: ChatPeople;
 
+  /** The composer's @ and # suggestions, from the cache and the server. */
+  readonly mentions: ChatMentions;
+
   /** The attachments' files on the phone: previews, downloads, space, purge (made by useFileIO). */
   attachments!: ChatAttachmentCache;
 
@@ -171,6 +175,7 @@ export class ChatService {
     this.moduleMode = opts.moduleMode ?? "auto";
     this.repo = new ChatRepository(db, now);
     this.people = new ChatPeople(rpc, this.repo, () => this.isOnline());
+    this.mentions = new ChatMentions(this.repo, rpc, this.people, () => this.isOnline());
     this.queue = new ChatOutbox(db, rpc, outbox, this.repo, now);
     this.queue.isOnline = () => this.isOnline();
     this.queue.serial = (configId, task) => this.serial(configId, task);

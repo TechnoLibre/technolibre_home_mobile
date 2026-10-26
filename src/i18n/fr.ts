@@ -1198,6 +1198,8 @@ export const translations: Record<string, string> = {
   "chat.att_downloading": "téléchargement en cours",
   "chat.att_play_failed": "Ce fichier ne peut pas être lu ici.",
   "chat.open_with": "Ouvrir avec",
+  "chat.suggestions": "Suggestions",
+  "chat.suggest_everyone": "Notifier tout le monde",
   "chat.emoji": "Émojis",
   "chat.emoji_search": "Chercher un émoji",
   "chat.emoji_loading": "Chargement des émojis…",

@@ -4563,8 +4563,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.compose",
                 label: { en: "Chat message HTML", fr: "HTML des messages du clavardage" },
                 description: {
-                    en: "The message HTML of Odoo 18's browser composer, byte for byte: line breaks, links, emoticons, mentions and channel links; mention chips and the edited mark shown.",
-                    fr: "Le HTML des messages du compositeur d'Odoo 18 dans le navigateur, octet pour octet : sauts de ligne, liens, émoticônes, mentions et liens de canaux ; pastilles de mention et marque de modification affichées.",
+                    en: "The message HTML of Odoo 18's browser composer, byte for byte: line breaks, links, emoticons, mentions and channel links; @ and # suggestions in the composer; mention chips and the edited mark shown.",
+                    fr: "Le HTML des messages du compositeur d'Odoo 18 dans le navigateur, octet pour octet : sauts de ligne, liens, émoticônes, mentions et liens de canaux ; suggestions @ et # dans le compositeur ; pastilles de mention et marque de modification affichées.",
                 },
                 status: "experimental",
                 demo: NONE_PLUMBING,
@@ -4574,23 +4574,40 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "then Odoo's URL regex with the WHATWG href. composer-golden.json, produced by Odoo's "
                         + "own function in headless Chromium (long_test/mobile_sync_composer.py of ERPLibre), "
                         + "pins every case. chatBody.ts renders mentions as chips by their data-oe-* and reads "
-                        + "a body back as text with <br> as line ends, as the browser does to edit it.",
+                        + "a body back as text with <br> as line ends, as the browser does to edit it. "
+                        + "chatMentions.ts reads the @ or # word the caret ends and lists the cached members "
+                        + "(and the people cache in a public channel) at once, then merges the server's "
+                        + "get_mention_suggestions 250 ms after the last keystroke; a chat, a group or a "
+                        + "channel with an access group offers members only, as the browser does. A pick "
+                        + "is tracked by place (adjustPicks) and goes with the post while its text is whole.",
                     fr: "chatCompose.ts porte prettifyMessageContent du format.js d'Odoo sur des chaînes : "
                         + "échappement et compactage, mentions (la plus longue d'abord, première place "
                         + "seulement), @everyone, conversions d'émojis, puis l'expression d'URL d'Odoo avec "
                         + "le href WHATWG. composer-golden.json, produit par la fonction même d'Odoo dans un "
                         + "Chromium sans écran (long_test/mobile_sync_composer.py d'ERPLibre), fixe chaque "
                         + "cas. chatBody.ts affiche les mentions en pastilles par leurs data-oe-* et relit un "
-                        + "corps en texte, <br> en fins de ligne, comme le navigateur pour le modifier.",
+                        + "corps en texte, <br> en fins de ligne, comme le navigateur pour le modifier. "
+                        + "chatMentions.ts lit le mot @ ou # que finit le curseur et liste aussitôt les "
+                        + "membres en cache (et le cache des personnes dans un canal public), puis fusionne "
+                        + "les get_mention_suggestions du serveur 250 ms après la dernière frappe ; une "
+                        + "conversation, un groupe ou un canal à groupe d'accès n'offre que ses membres, comme "
+                        + "le navigateur. Un choix est suivi par sa place (adjustPicks) et part avec le "
+                        + "message tant que son texte est entier.",
                 },
                 files: [
                     "src/services/chat/chatCompose.ts",
                     "src/services/chat/chatBody.ts",
+                    "src/services/chat/chatMentions.ts",
+                    "src/components/chat/chat_suggestions_component.ts",
+                    "src/components/chat/chat_suggestions_component.scss",
                     "src/__tests__/fixtures/composer-cases.json",
                     "src/__tests__/fixtures/composer-golden.json",
                     "src/__tests__/fixtures/PROVENANCE.md",
                 ],
-                tests: ["src/__tests__/chatCompose.test.ts", "src/__tests__/chatBody.test.ts", "src/__tests__/chatBodyNode.test.ts"],
+                tests: [
+                    "src/__tests__/chatCompose.test.ts", "src/__tests__/chatBody.test.ts", "src/__tests__/chatBodyNode.test.ts",
+                    "src/__tests__/chatMentions.test.ts", "src/__tests__/chatSuggestions.test.ts",
+                ],
             },
             {
                 id: "chat.people",

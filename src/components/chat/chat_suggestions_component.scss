@@ -1,0 +1,39 @@
+// The @ and # suggestions, in the thread's column above the composer row:
+// a capped height that scrolls, so the field and the keyboard stay in view.
+.chat-suggest {
+	flex: none;
+	max-height: 30%;
+	overflow-y: auto;
+	margin: 0;
+	padding: 0.2rem 0;
+	list-style: none;
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 0.6rem;
+	background: var(--background, #fff);
+}
+
+.chat-suggest__item {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	width: 100%;
+	min-height: 2.6rem;
+	padding: 0.3rem 0.7rem;
+	border: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+}
+
+.chat-suggest__name {
+	overflow: hidden;
+	max-width: 100%;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.chat-suggest__note {
+	font-size: 0.8rem;
+	opacity: 0.75;
+}

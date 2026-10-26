@@ -78,6 +78,10 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
         dismissNotice: vi.fn(async (_c: string, _id: string) => {}),
         startDirect: vi.fn(async (_s: any, _p: number, _o?: any) => ({ configId: "a", channelId: 40 })),
         join: vi.fn(async (_s: any, id: number, _n?: string, _o?: any) => ({ configId: "a", channelId: id })),
+        mentions: {
+            local: vi.fn(async (_s: any, _ch: any, _q: any): Promise<any[]> => []),
+            remote: vi.fn(async (_s: any, _ch: any, _q: any): Promise<any[]> => []),
+        },
         queue: {
             flush: vi.fn().mockResolvedValue(undefined),
             files: {
@@ -1757,7 +1761,8 @@ describe("ChatThreadComponent composer modes", () => {
 
     it("send in reply mode passes replyTo and clears the banner", async () => {
         const chat = fakeChat([msg(10), theirs()]);
-        chat.draft.mockResolvedValue({ text: "", files: [], lost: [], replyTo: { messageId: 11, clientUuid: null }, edit: null, mentions: BOB });
+        // The draft's pick is placed in its text, so it goes with the post
+        chat.draft.mockResolvedValue({ text: "on my way @Bob ", files: [], lost: [], replyTo: { messageId: 11, clientUuid: null }, edit: null, mentions: BOB });
         const c = make(chat);
         await c.open();
         let atCall: any = null;
@@ -1766,7 +1771,6 @@ describe("ChatThreadComponent composer modes", () => {
             opts.onQueued();
             return msg(null);
         });
-        c.state.text = "on my way @Bob ";
         await c.onSend();
         expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "on my way @Bob", [], expect.objectContaining({
             draftText: "on my way @Bob ", replyTo: { messageId: 11, clientUuid: null }, mentions: BOB,
@@ -1829,7 +1833,7 @@ describe("ChatThreadComponent composer modes", () => {
     it("send in edit mode edits the message and goes back to the kept text", async () => {
         const chat = fakeChat([msg(10, { body: "<p>hi</p>" })]);
         chat.draft.mockResolvedValue({
-            text: "kept", files: [], lost: [], replyTo: { messageId: 10, clientUuid: null }, edit: { target: M10, text: "hi there " }, mentions: BOB,
+            text: "kept", files: [], lost: [], replyTo: { messageId: 10, clientUuid: null }, edit: { target: M10, text: "hi there @Bob " }, mentions: BOB,
         });
         let sendingAtCall: boolean | null = null;
         chat.editMessage.mockImplementationOnce(async (_s: any, _ch: number, _t: any, _x: string, _m: any, opts: any) => {
@@ -1840,10 +1844,10 @@ describe("ChatThreadComponent composer modes", () => {
         await c.open();
         await c.onSend();
         expect(sendingAtCall).toBe(true);
-        expect(chat.editMessage).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 5, M10, "hi there", BOB,
+        expect(chat.editMessage).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 5, M10, "hi there @Bob", BOB,
             expect.objectContaining({ fromDraft: true }));
         // Stored at the tap; the service ends the draft's edit once queued
-        expect(chat.saveDraftEdit.mock.calls).toEqual([["a", 5, { target: M10, text: "hi there " }]]);
+        expect(chat.saveDraftEdit.mock.calls).toEqual([["a", 5, { target: M10, text: "hi there @Bob " }]]);
         expect(c.state.mode).toEqual({ kind: "reply", target: M10 });
         expect(c.state.text).toBe("kept");
         expect(c.state.sending).toBe(false);
@@ -2120,5 +2124,209 @@ describe("ChatThreadComponent composer modes", () => {
             expect(tag.slice(0, tag.indexOf(">")), cls).toMatch(/t-att-disabled="[^"]*state\.mode\.kind === 'edit'/);
         }
         c.teardown();
+    });
+});
+
+describe("ChatThreadComponent mention suggestions", () => {
+    const ALICE = { kind: "partner", id: 7, name: "Alice Roy" };
+    const BOB = { kind: "partner", id: 8, name: "Bob" };
+    const GEN = { kind: "channel", id: 21, name: "général-test", parentName: null };
+    const M10 = { messageId: 10, clientUuid: null };
+    /** Lets the promises already settled run their callbacks. */
+    const settle = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+
+    afterEach(() => vi.useRealTimers());
+
+    it("the local list shows at once, the server's merges 250 ms after the last keystroke", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.mentions.local.mockResolvedValue([ALICE]);
+        chat.mentions.remote.mockResolvedValue([ALICE, BOB]);
+        const c = make(chat);
+        await c.open();
+        vi.useFakeTimers();
+        c.onInput({ target: { value: "hi @a" } } as any);
+        c.onInput({ target: { value: "hi @al" } } as any);
+        await settle();
+        expect(c.state.suggestions).toEqual([ALICE]);
+        expect(chat.mentions.local).toHaveBeenLastCalledWith(
+            expect.objectContaining({ configId: "a" }), expect.objectContaining({ channelId: 5 }), { kind: "@", term: "al", start: 3 });
+        vi.advanceTimersByTime(249);
+        expect(chat.mentions.remote).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(1);
+        await settle();
+        expect(chat.mentions.remote).toHaveBeenCalledTimes(1);
+        expect(chat.mentions.remote.mock.calls[0][2]).toEqual({ kind: "@", term: "al", start: 3 });
+        expect(c.state.suggestions).toEqual([ALICE, BOB]);
+        c.onInput({ target: { value: "hi @al ok" } } as any);
+        await settle();
+        expect(c.state.suggestions).toEqual([]);
+        c.teardown();
+    });
+
+    it("a server error leaves the local list, and a late answer of an older query is not shown", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.mentions.local.mockResolvedValue([ALICE]);
+        chat.mentions.remote.mockRejectedValueOnce(new Error("server"));
+        const c = make(chat);
+        await c.open();
+        vi.useFakeTimers();
+        c.onInput({ target: { value: "@al" } } as any);
+        vi.advanceTimersByTime(250);
+        await settle();
+        expect(c.state.suggestions).toEqual([ALICE]);
+        let answer!: (v: any[]) => void;
+        chat.mentions.remote.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+        c.onInput({ target: { value: "@ali" } } as any);
+        vi.advanceTimersByTime(250);
+        chat.mentions.local.mockResolvedValue([]);
+        c.onInput({ target: { value: "@alix" } } as any);
+        await settle();
+        answer([ALICE, BOB]);
+        await settle();
+        expect(c.state.suggestions).toEqual([]);
+        c.teardown();
+    });
+
+    it("the cache's list answering after the server's does not replace it", async () => {
+        const chat = fakeChat([msg(10)]);
+        let local!: (v: any[]) => void;
+        chat.mentions.local.mockImplementationOnce(() => new Promise((r) => { local = r; }));
+        chat.mentions.remote.mockResolvedValue([ALICE, BOB]);
+        const c = make(chat);
+        await c.open();
+        vi.useFakeTimers();
+        c.onInput({ target: { value: "@a" } } as any);
+        vi.advanceTimersByTime(250);
+        await settle();
+        expect(c.state.suggestions).toEqual([ALICE, BOB]);
+        local([ALICE]);
+        await settle();
+        expect(c.state.suggestions).toEqual([ALICE, BOB]);
+        c.teardown();
+    });
+
+    it("a draft's pick whose text the draft lacks never makes a name typed by hand a mention", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.draft.mockResolvedValue({ text: "", files: [], lost: [], mentions: { partners: [{ id: 8, name: "Bob" }], channels: [] } });
+        const c = make(chat);
+        await c.open();
+        c.onInput({ target: { value: "ask @Bob" } } as any);
+        await c.onSend();
+        expect(chat.send.mock.calls[0][4].mentions).toEqual({ partners: [], channels: [] });
+        c.teardown();
+    });
+
+    it("a pick inserts the name and records the pick, the text stored first, the caret after it", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.mentions.local.mockResolvedValue([ALICE]);
+        const c = make(chat);
+        await c.open();
+        const field = { value: "hi @al", selectionStart: 6, selectionEnd: 6, setSelectionRange: vi.fn(), focus: vi.fn() };
+        c.input = { el: field };
+        c.onInput({ target: field } as any);
+        await settle();
+        c.onSuggestion(ALICE);
+        expect(c.state.text).toBe("hi @Alice Roy ");
+        expect(field.value).toBe("hi @Alice Roy ");
+        expect(field.setSelectionRange).toHaveBeenCalledWith(14, 14);
+        expect(c.state.suggestions).toEqual([]);
+        expect(c.picks).toEqual([{ kind: "partner", id: 7, text: "@Alice Roy", start: 3 }]);
+        expect(chat.saveDraftText).toHaveBeenLastCalledWith("a", 5, "hi @Alice Roy ");
+        expect(chat.saveDraftMentions).toHaveBeenLastCalledWith("a", 5, { partners: [{ id: 7, name: "Alice Roy" }], channels: [] });
+        expect(chat.saveDraftText.mock.invocationCallOrder.at(-1)!).toBeLessThan(chat.saveDraftMentions.mock.invocationCallOrder.at(-1)!);
+        c.teardown();
+    });
+
+    it("a pick of the other kind than the query, or while a send runs, is refused", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        c.onInput({ target: { value: "@al" } } as any);
+        c.onSuggestion(GEN);
+        expect(c.state.text).toBe("@al");
+        c.state.sending = true;
+        c.onSuggestion(ALICE);
+        expect(c.state.text).toBe("@al");
+        expect(chat.saveDraftMentions).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
+    it("editing inside a picked name drops it; an edit elsewhere keeps it", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        c.onInput({ target: { value: "hi @al" } } as any);
+        c.onSuggestion(ALICE);
+        c.onInput({ target: { value: "oh hi @Alice Roy " } } as any);
+        expect(c.picks).toEqual([{ kind: "partner", id: 7, text: "@Alice Roy", start: 6 }]);
+        c.onInput({ target: { value: "oh hi @Alice Ry " } } as any);
+        expect(c.picks).toEqual([]);
+        expect(c.mentions).toEqual({ partners: [], channels: [] });
+        expect(chat.saveDraftMentions).toHaveBeenLastCalledWith("a", 5, { partners: [], channels: [] });
+        // Typed back by hand, the name is text: no mention goes
+        c.onInput({ target: { value: "oh hi @Alice Roy " } } as any);
+        await c.onSend();
+        expect(chat.send.mock.calls[0][4].mentions).toEqual({ partners: [], channels: [] });
+        c.teardown();
+    });
+
+    it("the send carries the picks, then the composer has none", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        c.onInput({ target: { value: "@al" } } as any);
+        c.onSuggestion(ALICE);
+        c.onInput({ target: { value: "@Alice Roy in #gén" } } as any);
+        c.onSuggestion(GEN);
+        expect(c.state.text).toBe("@Alice Roy in #général-test ");
+        await c.onSend();
+        expect(chat.send.mock.calls[0][2]).toBe("@Alice Roy in #général-test");
+        expect(chat.send.mock.calls[0][4].mentions).toEqual({
+            partners: [{ id: 7, name: "Alice Roy" }], channels: [{ id: 21, name: "général-test", parentName: null }],
+        });
+        expect(c.picks).toEqual([]);
+        expect(c.mentions).toEqual({ partners: [], channels: [] });
+        c.teardown();
+    });
+
+    it("a refused send puts the picks back with the text", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.send.mockRejectedValueOnce(new Error("db"));
+        const c = make(chat);
+        await c.open();
+        c.onInput({ target: { value: "@al" } } as any);
+        c.onSuggestion(ALICE);
+        await c.onSend();
+        expect(c.state.text).toBe("@Alice Roy ");
+        expect(c.picks).toEqual([{ kind: "partner", id: 7, text: "@Alice Roy", start: 0 }]);
+        c.teardown();
+    });
+
+    it("an edit's picks are placed in its text and go with the edit", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.editDraftOf.mockResolvedValue({ text: "ask @Alice Roy", mentions: { partners: [{ id: 7, name: "Alice Roy" }], channels: [] } });
+        const c = make(chat);
+        await c.open();
+        await c.startEdit(M10);
+        expect(c.picks).toEqual([{ kind: "partner", id: 7, text: "@Alice Roy", start: 4 }]);
+        c.onInput({ target: { value: "please ask @Alice Roy" } } as any);
+        await c.onSend();
+        expect(chat.editMessage.mock.calls[0][3]).toBe("please ask @Alice Roy");
+        expect(chat.editMessage.mock.calls[0][4]).toEqual({ partners: [{ id: 7, name: "Alice Roy" }], channels: [] });
+        c.teardown();
+    });
+
+    it("a draft's picks are placed in its text when the conversation opens", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.draft.mockResolvedValue({ text: "to @Alice Roy", files: [], lost: [], mentions: { partners: [{ id: 7, name: "Alice Roy" }], channels: [] } });
+        const c = make(chat);
+        await c.open();
+        expect(c.picks).toEqual([{ kind: "partner", id: 7, text: "@Alice Roy", start: 3 }]);
+        c.teardown();
+    });
+
+    it("the suggestion list sits beside the attachments, above the composer row", () => {
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        expect(source).toMatch(/<ChatComposerAttachComponent attach="attach"\/>\s*<\/div>\s*<ChatSuggestionsComponent t-if="state\.suggestions\.length" items="state\.suggestions" onPick\.bind="onSuggestion"\/>/);
     });
 });

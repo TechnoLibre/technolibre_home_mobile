@@ -95,7 +95,7 @@ export class ChatPeople {
         if (!(e instanceof RequestNotSentError)) throw e;
       }
     }
-    return this.searchCache(src.configId, term, limit);
+    return this.searchCached(src.configId, term, limit);
   }
 
   /**
@@ -208,7 +208,12 @@ export class ChatPeople {
       .sort((a, b) => fold(a.name).localeCompare(fold(b.name)) || a.partnerId - b.partnerId);
   }
 
-  private async searchCache(configId: string, term: string, limit: number): Promise<ChatPartner[]> {
+  /**
+   * The cached partners with a name holding `term` (case and accents
+   * ignored), self left out: the recent ones first (recentPeople), then by
+   * name and id. At most `limit`. Cache only.
+   */
+  async searchCached(configId: string, term: string, limit: number): Promise<ChatPartner[]> {
     const needle = fold(term);
     const state = await this.repo.sourceState(configId);
     const recent = await this.recentPeople(configId);
