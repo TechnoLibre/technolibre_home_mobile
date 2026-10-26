@@ -682,10 +682,96 @@ describe("ChatThreadComponent", () => {
         expect(chat.send).toHaveBeenCalledTimes(1);
         expect(c.state.sending).toBe(false);
         const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
-        for (const cls of ["chat-thread__input", "chat-thread__attach", "chat-thread__mic", "chat-thread__send"]) {
+        for (const cls of ["chat-thread__attach", "chat-thread__mic", "chat-thread__send"]) {
             const tag = source.slice(source.indexOf('class="' + cls + '"'));
             expect(tag.slice(0, tag.indexOf(">")), cls).toMatch(/t-att-disabled="[^"]*state\.sending/);
         }
+        // A disabled or read-only field emptied at the tap makes Android close the keyboard: input is refused instead
+        const input = source.slice(source.indexOf('class="chat-thread__input"'));
+        expect(input.slice(0, input.indexOf("/>"))).toMatch(/t-on-beforeinput="onBeforeInput"/);
+        expect(input.slice(0, input.indexOf("/>"))).not.toMatch(/t-att-(disabled|readonly)/);
+    });
+
+    it("typing while a send runs changes nothing: the field shows the composer's text again", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        let release!: () => void;
+        chat.send.mockImplementationOnce(async (_s: any, _ch: number, _t: string, _f: any, opts: any) => {
+            await new Promise<void>((r) => { release = r; });
+            opts.onQueued();
+            return msg(null);
+        });
+        c.state.text = "first";
+        const sending = c.onSend();
+        await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+        const before = { cancelable: true, preventDefault: vi.fn() };
+        c.onBeforeInput(before as any);
+        expect(before.preventDefault).toHaveBeenCalled();
+        const field = { value: "x" };
+        c.onInput({ target: field } as any);
+        expect(c.state.text).toBe("");
+        expect(field.value).toBe("");
+        expect(chat.typing).not.toHaveBeenCalledWith(expect.anything(), 5, true);
+        release();
+        await sending;
+        const after = { cancelable: true, preventDefault: vi.fn() };
+        c.onBeforeInput(after as any);
+        expect(after.preventDefault).not.toHaveBeenCalled();
+        c.onInput({ target: { value: "next" } } as any);
+        expect(c.state.text).toBe("next");
+    });
+
+    it("a send with files shows its bubble at once, « Preparing the photos… », until the post is queued", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        const a = fakeAttachments(c, { askCompress: true });
+        await c.open();
+        const photo = outFile("IMG_1.jpg");
+        const doc = outFile("plan.pdf", { mimetype: "application/pdf" });
+        a.chip(photo, "camera");
+        a.chip(doc, "file");
+        let answer!: (yes: boolean) => void;
+        a.confirm.mockImplementation(() => new Promise<boolean>((r) => { answer = r; }));
+        let atQueue: any = "unset";
+        chat.send.mockImplementationOnce(async (_s: any, _ch: number, _t: string, _f: any, opts: any) => {
+            atQueue = c.state.preparing ? c.state.preparing.label : null;
+            opts.onQueued();
+            return msg(null);
+        });
+        c.state.text = "look";
+        const sending = c.onSend();
+        expect(c.state.preparing).toMatchObject({
+            text: "look", label: "Preparing the photos…",
+            files: [{ name: "IMG_1.jpg", image: true }, { name: "plan.pdf", image: false, url: null }],
+        });
+        // Still shown while the question waits, the photo by its staged file
+        await vi.waitFor(() => expect(answer).toBeTypeOf("function"));
+        await vi.waitFor(() => expect(c.state.preparing.files[0].url).toBe("http://localhost/_capacitor_file_/data/" + photo.path));
+        expect(c.state.preparing).toMatchObject({ text: "look", label: "Preparing the photos…" });
+        answer(true);
+        await sending;
+        expect(atQueue).toBe("Preparing the photos…");
+        expect(c.state.preparing).toBeNull();
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        expect(source).toMatch(/class="chat-thread__preparing" role="status" t-esc="state\.preparing\.label"/);
+    });
+
+    it("a send of other files says « Preparing the files… »; a text alone shows no such bubble; a refusal takes it away", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        const a = fakeAttachments(c);
+        await c.open();
+        a.chip(outFile("plan.pdf", { mimetype: "application/pdf" }), "file");
+        chat.send.mockRejectedValueOnce(new Error("disk"));
+        const refused = c.onSend();
+        expect(c.state.preparing).toMatchObject({ text: "", label: "Preparing the files…" });
+        await refused;
+        expect(c.state.preparing).toBeNull();
+        c.state.text = "plain";
+        const plain = c.onSend();
+        expect(c.state.preparing).toBeNull();
+        await plain;
     });
 
     it("a send holds its conversation's draft from the tap until the post is queued, or refused", async () => {

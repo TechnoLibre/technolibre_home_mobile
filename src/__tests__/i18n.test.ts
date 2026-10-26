@@ -297,3 +297,16 @@ describe("i18n — Sleep section, deck kept lit", () => {
     expect(dict["sleep.deck_awake_hint"]).toContain(dict["streamdeck.power_keep_awake"]);
   });
 });
+
+// ─── Chat wording ─────────────────────────────────────────────────────────────
+
+describe("chat wording", () => {
+  it("the « Wi-Fi only » hint says it also holds the chat's files, both ways", () => {
+    expect(en["sync.attachments_hint"]).toMatch(/chat/i);
+    expect(en["sync.attachments_hint"]).toMatch(/voice messages/);
+    expect(en["sync.attachments_hint"]).toMatch(/previews/);
+    expect(fr["sync.attachments_hint"]).toMatch(/clavardage/);
+    expect(fr["sync.attachments_hint"]).toMatch(/messages vocaux/);
+    expect(fr["sync.attachments_hint"]).toMatch(/aperçus/);
+  });
+});

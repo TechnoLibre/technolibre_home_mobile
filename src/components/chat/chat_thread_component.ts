@@ -83,9 +83,26 @@ interface ThreadState {
     inputRows: number;
     /** Key of the image the viewer shows; null when it is closed. */
     viewer: string | null;
-    /** From the ➤ tap until the post is queued: the text, 📎, 🎤 and ➤ are off. */
+    /** From the ➤ tap until the post is queued: the text takes no input, 📎, 🎤 and ➤ are off. */
     sending: boolean;
+    /** The bubble of a send with files, from the tap until its post is queued; null otherwise. */
+    preparing: PreparingBubble | null;
 }
+
+/**
+ * What the thread shows of a send with files before its post is queued
+ * (the compress question and the compression take seconds): its text, its
+ * files (an image as its staged file, once its address is known) and a
+ * status line.
+ */
+interface PreparingBubble {
+    text: string;
+    label: string;
+    files: { key: string; name: string; image: boolean; url: string | null }[];
+}
+
+/** Images the web view shows from their staged file in a preparing bubble. */
+const SHOWN_IMAGE = /^image\/(jpeg|png|gif|webp)$/;
 
 /** Rows the composer shows for a text, from 1 up to MAX_INPUT_ROWS. */
 function rowsOf(text: string): number {
@@ -197,6 +214,16 @@ export class ChatThreadComponent extends EnhancedComponent {
                     t-on-click="() => this.onRetry(row)" t-esc="t('chat.retry')"/>
           </div>
         </div>
+        <div t-if="state.preparing" class="chat-thread__bubble chat-thread__bubble--own chat-thread__bubble--preparing">
+          <div t-if="state.preparing.text" class="chat-thread__body" t-esc="state.preparing.text"/>
+          <ul class="chat-thread__preparing-files">
+            <li t-foreach="state.preparing.files" t-as="file" t-key="file.key">
+              <img t-if="file.url" class="chat-thread__preparing-image" t-att-src="file.url" t-att-alt="file.name"/>
+              <span t-else="" t-esc="'📎 ' + file.name"/>
+            </li>
+          </ul>
+          <p class="chat-thread__preparing" role="status" t-esc="state.preparing.label"/>
+        </div>
       </div>
       <p t-if="state.typing" class="chat-thread__typing" t-esc="state.typing"/>
       <p t-if="state.error" class="chat-thread__failed" role="alert" t-esc="state.error"/>
@@ -206,7 +233,7 @@ export class ChatThreadComponent extends EnhancedComponent {
           <button class="chat-thread__attach" t-att-aria-label="t('chat.attach')" t-att-aria-expanded="attachState.sheet ? 'true' : 'false'"
                   t-att-disabled="!attachState.ready or attachState.voice !== 'idle' or state.sending" t-on-mousedown.prevent="" t-on-click="() => this.attach.toggleSheet()">📎</button>
           <textarea class="chat-thread__input" t-att-rows="state.inputRows" t-att-placeholder="t('chat.compose_placeholder')"
-                    t-att-disabled="state.sending" t-att-value="state.text" t-on-input="onInput"/>
+                    t-att-value="state.text" t-on-beforeinput="onBeforeInput" t-on-input="onInput"/>
           <button t-if="!attach.hasVoiceChip()" class="chat-thread__mic"
                   t-att-class="{'chat-thread__mic--on': attachState.voice === 'recording'}"
                   t-att-aria-label="attachState.voice === 'recording' ? t('chat.voice_stop_send') : t('chat.voice_record')"
@@ -291,6 +318,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             inputRows: 1,
             viewer: null,
             sending: false,
+            preparing: null,
         });
         const params = this.router.getRouteParams(window.location.pathname, "/chat/:source/:channelId");
         this.configId = params.get("source") ?? "";
@@ -830,8 +858,27 @@ export class ChatThreadComponent extends EnhancedComponent {
         })), draft.lost);
     }
 
+    /**
+     * While a send runs, an edit of the field is refused before it happens
+     * (one the IME does not let cancel is undone by onInput). The field
+     * keeps no disabled or readonly attribute: either one, set while its
+     * text is emptied, makes Android close the keyboard.
+     */
+    onBeforeInput(ev: Event): void {
+        if (this.state.sending && ev.cancelable) ev.preventDefault();
+    }
+
+    /**
+     * The text typed. An input that still comes while a send runs is
+     * undone, the field showing the composer's text again.
+     */
     onInput(ev: Event): void {
-        const value = (ev.target as HTMLTextAreaElement).value;
+        const field = ev.target as HTMLTextAreaElement;
+        if (this.state.sending) {
+            field.value = this.state.text;
+            return;
+        }
+        const value = field.value;
         this.state.text = value;
         this.state.inputRows = rowsOf(value);
         this.draftText.typed(value);
@@ -847,7 +894,11 @@ export class ChatThreadComponent extends EnhancedComponent {
      * runs. The composer, text and chips, clears before the first await, so
      * a second tap finds it empty, and stays locked (sending) until the post
      * is queued, the compress question (ComposerAttach.prepare) included:
-     * nothing is typed meanwhile. The text is stored as the draft in that
+     * nothing is typed meanwhile. The field refuses input (onBeforeInput,
+     * onInput) rather than being disabled, so it keeps the focus and the
+     * keyboard stays open. A send
+     * with chips shows its bubble at once (showPreparing) until the post is
+     * queued and the thread shows it. The text is stored as the draft in that
      * same first step, so a kill during the question loses nothing, and the
      * outbox removes exactly that text from the draft once the post is
      * stored (draftText). From the tap until the post is queued, the
@@ -872,6 +923,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.state.inputRows = 1;
         this.draftText.set(raw);
         this.state.error = "";
+        const preparing = chips.length > 0 ? this.showPreparing(text, chips) : 0;
         // The message ends the typing, as Odoo's composer does on a post
         this.chatService.typing(this.source, this.channelId, false).catch(() => {});
         try {
@@ -882,11 +934,13 @@ export class ChatThreadComponent extends EnhancedComponent {
                     queued = true;
                     this.state.sending = false;
                     ended();
+                    if (preparing) void this.refresh().finally(() => this.endPreparing(preparing));
                 },
             });
         } catch (e) {
             ended();
             this.state.sending = false;
+            if (preparing && !queued) this.endPreparing(preparing);
             if (!queued) {
                 this.state.text = raw;
                 this.state.inputRows = rowsOf(raw);
@@ -902,6 +956,39 @@ export class ChatThreadComponent extends EnhancedComponent {
         await this.refresh();
         this.scrollToBottomSoon();
         return true;
+    }
+
+    /** Counts the preparing bubbles shown, so an older send never takes away a newer one's. */
+    private _preparingSeq = 0;
+
+    /**
+     * Shows the bubble of a send with files (state.preparing): its text,
+     * its files by name, « Preparing the photos… » when a photo is among
+     * them, « Preparing the files… » otherwise. An image the web view shows
+     * gets its staged file's address once it is known. Returns the
+     * bubble's number for endPreparing.
+     */
+    private showPreparing(text: string, chips: { key: string; file: OutgoingFile }[]): number {
+        const seq = ++this._preparingSeq;
+        const photos = chips.some((c) => c.file.mimetype.startsWith("image/"));
+        this.state.preparing = {
+            text,
+            label: t(photos ? "chat.preparing_photos" : "chat.preparing_files"),
+            files: chips.map((c) => ({ key: c.key, name: c.file.name, image: SHOWN_IMAGE.test(c.file.mimetype), url: null })),
+        };
+        this.scrollToBottomSoon();
+        chips.forEach((c, i) => {
+            if (!SHOWN_IMAGE.test(c.file.mimetype)) return;
+            this.chatService.queue.files.webUrl(c.file.path).then((url: string) => {
+                if (this._preparingSeq === seq && this.state.preparing) this.state.preparing.files[i].url = url;
+            }).catch(() => {});
+        });
+        return seq;
+    }
+
+    /** Takes the preparing bubble away, unless a later send shows its own. */
+    private endPreparing(seq: number): void {
+        if (this._preparingSeq === seq) this.state.preparing = null;
     }
 
     /** Removes a conversation the server refused, or one left, with its unsent texts, and goes back to the list; a failure stays here with a notice. */

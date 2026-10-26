@@ -110,6 +110,33 @@
 	background: rgba(46, 158, 79, 0.25);
 }
 
+.chat-thread__bubble--preparing {
+	opacity: 0.8;
+}
+
+.chat-thread__preparing-files {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3rem;
+	margin: 0.2rem 0;
+	padding: 0;
+	list-style: none;
+	font-size: 0.85rem;
+}
+
+.chat-thread__preparing-image {
+	width: 4rem;
+	height: 4rem;
+	object-fit: cover;
+	border-radius: 0.4rem;
+}
+
+.chat-thread__preparing {
+	margin: 0;
+	font-size: 0.75rem;
+	opacity: 0.75;
+}
+
 .chat-thread__meta {
 	display: flex;
 	gap: 0.4rem;
