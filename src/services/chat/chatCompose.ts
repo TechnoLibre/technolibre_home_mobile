@@ -47,6 +47,14 @@ function channelText(c: Mentions["channels"][number]): string {
   return c.parentName ? `#${c.parentName} > ${c.name}` : `#${c.name}`;
 }
 
+/** Both sets of picks in one, the first's first; a person or a channel picked twice under one name is kept once. */
+export function joinMentions(a: Mentions, b: Mentions): Mentions {
+  return {
+    partners: [...a.partners, ...b.partners.filter((p) => !a.partners.some((x) => x.id === p.id && x.name === p.name))],
+    channels: [...a.channels, ...b.channels.filter((c) => !a.channels.some((x) => x.id === c.id && x.name === c.name))],
+  };
+}
+
 /**
  * The picks whose text is still in the raw text (`getMentionsFromText`,
  * `store_service.js:506-526`): `@name`, `#name` or `#parent > name`; a pick

@@ -346,7 +346,8 @@ export class ChatListComponent extends EnhancedComponent {
                 // A draft stands in the last message's place, after the mark of one still on its way; the time, unread and order stay the conversation's
                 const draft = drafts.get(c.channelId);
                 if (draft) {
-                    row.preview = (last?.status === "pending" ? "⏳ " : "") + draftPreview(draft.text, draft.files, PREVIEW_MAX);
+                    const line = draft.editing ? t("chat.draft_editing") : draftPreview(draft.text, draft.files, PREVIEW_MAX);
+                    row.preview = (last?.status === "pending" ? "⏳ " : "") + line;
                     continue;
                 }
                 if (!text && last && last.messageType === "comment") {

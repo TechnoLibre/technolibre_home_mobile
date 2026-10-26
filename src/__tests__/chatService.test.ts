@@ -3610,6 +3610,59 @@ describe("ChatService", () => {
       expect(await chat.notices()).toEqual([]);
     });
 
+    it("an edit's picks stored before the edit in an empty draft are kept", async () => {
+      await chat.saveDraftMentions(config, GROUP, BOB_PICK);
+      await chat.saveDraftEdit(config, GROUP, { target: sent(601), text: "hello @Bob" });
+      expect((await chat.draft(config, GROUP)).mentions).toEqual(BOB_PICK);
+    });
+
+    it("takeResume stores the refused text in the draft before its notice goes", async () => {
+      const refuse = async (deleted: boolean) => {
+        offline();
+        await chat.editMessage(src, GROUP, sent(601), "late @Bob", BOB_PICK);
+        if (deleted) server.state.bodies.delete(601);
+        else server.state.bodies.set(601, `<p>browser${EDITED}</p>`);
+        online();
+        await chat.flushAll();
+        const [notice] = await chat.notices();
+        chat.requestResume(config, notice.id);
+        return notice;
+      };
+      // A store that fails keeps the notice, its text with it
+      const first = await refuse(false);
+      vi.spyOn(chat.repo, "putDraftEdit").mockRejectedValueOnce(new Error("disk full"));
+      await expect(chat.takeResume(config, GROUP)).rejects.toThrow("disk full");
+      expect((await chat.notices()).map((n) => n.id)).toEqual([first.id]);
+      chat.requestResume(config, first.id);
+      // Changed: the draft's edit, whatever the screen does next
+      await chat.takeResume(config, GROUP);
+      expect(await chat.notices()).toEqual([]);
+      expect(await chat.draft(config, GROUP)).toMatchObject({ edit: { target: sent(601), text: "late @Bob" }, mentions: BOB_PICK });
+      await chat.saveDraftEdit(config, GROUP, null);
+      // Deleted: joined into the new message's text
+      await chat.saveDraftText(config, GROUP, "typed");
+      await refuse(true);
+      await chat.takeResume(config, GROUP);
+      expect(await chat.draft(config, GROUP)).toMatchObject({ text: "typed\nlate @Bob", edit: null, mentions: BOB_PICK });
+      expect(await chat.notices()).toEqual([]);
+    });
+
+    it("takeResume asks first; a refusal keeps the notice and forgets the request", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "late", NONE);
+      server.state.bodies.set(601, `<p>browser${EDITED}</p>`);
+      online();
+      await chat.flushAll();
+      const [notice] = await chat.notices();
+      chat.requestResume(config, notice.id);
+      const asked: any[] = [];
+      expect(await chat.takeResume(config, GROUP, async (e) => { asked.push(e); return false; })).toBeNull();
+      expect(asked).toEqual([expect.objectContaining({ text: "late", deleted: false })]);
+      expect((await chat.notices()).map((n) => n.id)).toEqual([notice.id]);
+      expect((await chat.draft(config, GROUP)).edit).toBeNull();
+      expect(await chat.takeResume(config, GROUP)).toBeNull();
+    });
+
     it("a refused edit's notice survives a new edit of the same message", async () => {
       offline();
       await chat.editMessage(src, GROUP, sent(601), "late", NONE);
@@ -4518,7 +4571,7 @@ describe("ChatService", () => {
 
       it("the drafts of an account read after the writes asked before them", async () => {
         void chat.saveDraftText(config, GROUP, "written as the screen closes");
-        expect(await chat.draftSummaries(config)).toEqual(new Map([[GROUP, { text: "written as the screen closes", files: 0 }]]));
+        expect(await chat.draftSummaries(config)).toEqual(new Map([[GROUP, { text: "written as the screen closes", files: 0, editing: false }]]));
       });
     });
   });

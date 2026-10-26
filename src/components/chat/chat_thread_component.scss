@@ -302,6 +302,11 @@
 	opacity: 0.75;
 }
 
+// While editing, the new message's chips wait out of sight; the attach component stays mounted.
+.chat-thread__attach-slot--editing .chat-attach__chips {
+	display: none;
+}
+
 // The conversation's refused edits, above the composer: the text, « Reprendre », « Ignorer ».
 .chat-thread__resumes {
 	margin: 0 0 0.3rem;

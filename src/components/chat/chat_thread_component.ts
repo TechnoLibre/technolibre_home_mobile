@@ -13,7 +13,7 @@ import { messageKeyOf } from "../../models/chat";
 import type {
     ChatAttachment, ChatChannel, ChatMember, ChatMessage, ChatNotice, ChatPartner, ChatReaction, MessageTarget, OutgoingFile,
 } from "../../models/chat";
-import { EMPTY_MENTIONS, validMentions, type Mentions } from "../../services/chat/chatCompose";
+import { EMPTY_MENTIONS, joinMentions, validMentions, type Mentions } from "../../services/chat/chatCompose";
 import type { ChatDraft } from "../../services/chat/chatRepository";
 import { quickReactions } from "../../services/chat/chatEmoji";
 import { CHAT_DELETE, CHAT_UPLOAD, sameTarget, targetOf } from "../../services/chat/chatOutbox";
@@ -180,14 +180,6 @@ const FLASH_MS = 1500;
 const HIGHLIGHT_MS = 1000;
 /** The edited mark renderBody adds: it alone does not make a body shown. */
 const EDITED_MARK = /<em class="chat-msg__edited">[^<]*<\/em>/g;
-
-/** Both sets of picks in one, a person or a channel picked twice kept once. */
-function mergeMentions(a: Mentions, b: Mentions): Mentions {
-    return {
-        partners: [...a.partners, ...b.partners.filter((p) => !a.partners.some((x) => x.id === p.id && x.name === p.name))],
-        channels: [...a.channels, ...b.channels.filter((c) => !a.channels.some((x) => x.id === c.id && x.name === c.name))],
-    };
-}
 
 /** Rows the composer shows for a text, from 1 up to MAX_INPUT_ROWS. */
 function rowsOf(text: string): number {
@@ -373,7 +365,9 @@ export class ChatThreadComponent extends EnhancedComponent {
           </li>
         </ul>
         <ChatComposerBannerComponent t-if="state.mode.kind !== 'new'" mode="state.mode" quote="state.banner" onCancel.bind="onCancelMode"/>
-        <ChatComposerAttachComponent attach="attach"/>
+        <div class="chat-thread__attach-slot" t-att-class="{'chat-thread__attach-slot--editing': state.mode.kind === 'edit'}">
+          <ChatComposerAttachComponent attach="attach"/>
+        </div>
         <ChatEmojiPickerComponent t-if="state.emoji" countUse="!state.reactTo" onPick.bind="onEmoji" onClose.bind="toggleEmoji"/>
         <div class="chat-thread__composer">
           <button class="chat-thread__attach" t-att-aria-label="t('chat.attach')" t-att-aria-expanded="attachState.sheet ? 'true' : 'false'"
@@ -413,6 +407,8 @@ export class ChatThreadComponent extends EnhancedComponent {
     /** While editing: the new message's text and reply target, shown again when the edit ends. */
     private _kept = "";
     private _keptReply: MessageTarget | null = null;
+    /** The text the edit in progress started from; null when unknown (restored from the draft, or a refused text taken back). */
+    private _editStart: string | null = null;
     /** The people and channels picked in the composer, the new message's and the edit's (validMentions keeps those in a text). */
     mentions: Mentions = EMPTY_MENTIONS;
     /** The appStateChange listener that stores the draft text when the app leaves the front. */
@@ -1471,7 +1467,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             const typed = this.state.text;
             const joined = draft.text ? joinDraftText(draft.text, typed) : typed;
             if (joined !== typed && typed) this.draftText.set(joined);
-            this.mentions = mergeMentions(draft.mentions ?? EMPTY_MENTIONS, this.mentions);
+            this.mentions = joinMentions(draft.mentions ?? EMPTY_MENTIONS, this.mentions);
             const fresh = this.state.mode.kind === "new";
             if (fresh && draft.edit) {
                 this._kept = joined;
@@ -1539,65 +1535,108 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     /** Adds picks to the composer's and stores them with the draft. */
     private addMentions(m: Mentions): void {
-        this.mentions = mergeMentions(this.mentions, m);
+        this.mentions = joinMentions(this.mentions, m);
         this.chatService.saveDraftMentions(this.configId, this.channelId, this.mentions)
             .catch((e: unknown) => console.warn("chat thread: picks not stored", e));
     }
 
     /**
      * Reply: the composer's text answers `target`, kept in the draft
-     * (saveDraftReply) until a post takes it. An edit in progress is given
-     * up first, as ✕ does. Refused while a send runs.
+     * (saveDraftReply) until a post takes it. An edit in progress is left
+     * first (leaveEditFor); one the user keeps stays, and the reply is
+     * recorded under it: its banner comes back once the edit is sent or
+     * given up. Refused while a send runs.
      */
     async startReply(target: MessageTarget): Promise<void> {
         if (this.state.sending || this.destroyed) return;
-        if (this.state.mode.kind === "edit") this.onCancelMode();
+        const left = await this.leaveEditFor();
+        if (this.destroyed) return;
         this.chatService.saveDraftReply(this.configId, this.channelId, target)
             .catch((e: unknown) => console.warn("chat thread: reply not stored", e));
+        if (!left) {
+            if (this.state.mode.kind === "edit") this._keptReply = target;
+            return;
+        }
         this.focusInput();
         await this.setMode({ kind: "reply", target });
     }
 
     /**
-     * Edit: the composer takes the message's text and picks (`given`, else
-     * ChatService.editDraftOf) to rewrite it. The new message's text, stored
-     * at once, and its reply target are kept apart and come back when the
-     * edit ends; an edit of another message in progress is given up. The
-     * edit is stored in the draft (saveDraftEdit) and its typing goes to
-     * editText. A message no longer cached shows an error. Refused while a
-     * send runs.
+     * Edit: the composer takes the message's text and picks
+     * (ChatService.editDraftOf) to rewrite it. The new message's text,
+     * stored at once, and its reply target are kept apart and come back when
+     * the edit ends. An edit of another message in progress is left first
+     * (leaveEditFor), and one the user keeps stays; the same message's edit
+     * stays as it is. The edit is stored in the draft (saveDraftEdit), then
+     * its picks (an empty draft's row exists once the edit is in it), and
+     * its typing goes to editText. A message no longer cached shows an
+     * error. Refused while a send runs, and while a voice message records
+     * (its ⏹ is off in edit mode).
      */
-    async startEdit(target: MessageTarget, given?: { text: string; mentions: Mentions }): Promise<void> {
-        if (this.state.sending || this.destroyed) return;
-        let start = given ?? null;
+    async startEdit(target: MessageTarget): Promise<void> {
+        if (this.state.sending || this.destroyed || this.attachState.voice !== "idle") return;
+        const current = this.state.mode;
+        if (current.kind === "edit" && sameTarget(current.target, target)) return;
+        if (!(await this.leaveEditFor())) return;
+        let start: { text: string; mentions: Mentions } | null = null;
+        try {
+            start = await this.chatService.editDraftOf(this.configId, this.channelId, target);
+        } catch (e) {
+            console.warn("chat thread: edit text unreadable", e);
+        }
+        if (this.destroyed) return;
         if (!start) {
-            try {
-                start = await this.chatService.editDraftOf(this.configId, this.channelId, target);
-            } catch (e) {
-                console.warn("chat thread: edit text unreadable", e);
-            }
-            if (this.destroyed) return;
-            if (!start) {
-                this.state.error = t("chat.action_error");
-                return;
-            }
+            this.state.error = t("chat.action_error");
+            return;
         }
-        if (this.state.sending) return;
         const mode = this.state.mode;
-        if (mode.kind === "edit") this.editText.discard();
-        else {
-            this.draftText.flush();
-            this._kept = this.state.text;
-            this._keptReply = mode.kind === "reply" ? mode.target : null;
-        }
+        if (this.state.sending || mode.kind === "edit") return;
+        this.draftText.flush();
+        this._kept = this.state.text;
+        this._keptReply = mode.kind === "reply" ? mode.target : null;
+        this._editStart = start.text;
         this.state.error = "";
         this.state.banner = null;
         this.state.mode = { kind: "edit", target };
         this.showText(start.text);
-        this.addMentions(start.mentions);
         this.editText.set(start.text);
+        this.addMentions(start.mentions);
         this.focusInput();
         await this.refreshBanner();
+    }
+
+    /**
+     * Leaves the edit in progress for another mode; true when there is
+     * none, or it was left. An edit whose text is still the one it started
+     * from is given up at once; one typed into, or whose start is unknown,
+     * asks first (chat.edit_abandon_confirm): Abandon gives it up, Keep
+     * leaves it (false).
+     */
+    private async leaveEditFor(): Promise<boolean> {
+        if (this.state.mode.kind !== "edit") return true;
+        if (this.state.text !== this._editStart) {
+            let yes = false;
+            try {
+                yes = (await Dialog.confirm({
+                    message: t("chat.edit_abandon_confirm"),
+                    okButtonTitle: t("chat.edit_abandon"),
+                    cancelButtonTitle: t("chat.edit_keep"),
+                })).value;
+            } catch (e) {
+                console.warn("chat thread: abandon confirmation", e);
+            }
+            if (!yes || this.destroyed || this.state.sending || this.state.mode.kind !== "edit") return false;
+        }
+        this.giveUpEdit();
+        return true;
+    }
+
+    /** Gives the edit in progress up: its text dropped, the draft's edit ended, the new message back. */
+    private giveUpEdit(): void {
+        this.editText.discard();
+        this.chatService.saveDraftEdit(this.configId, this.channelId, null)
+            .catch((e: unknown) => console.warn("chat thread: edit not ended in the draft", e));
+        this.leaveEdit();
     }
 
     /** Back from an edit: the new message's text and reply target show again. */
@@ -1606,22 +1645,20 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.showText(this._kept);
         this._kept = "";
         this._keptReply = null;
+        this._editStart = null;
         void this.setMode(reply ? { kind: "reply", target: reply } : { kind: "new" });
     }
 
     /**
-     * The banner's ✕: an edit is given up (its text dropped, the draft's
-     * edit ended) and the new message comes back; a reply ends, the text
-     * staying. Refused while a send runs.
+     * The banner's ✕, an explicit give-up that asks nothing: an edit is
+     * given up (giveUpEdit) and the new message comes back; a reply ends,
+     * the text staying. Refused while a send runs.
      */
     onCancelMode(): void {
         if (this.state.sending) return;
         const mode = this.state.mode;
         if (mode.kind === "edit") {
-            this.editText.discard();
-            this.chatService.saveDraftEdit(this.configId, this.channelId, null)
-                .catch((e: unknown) => console.warn("chat thread: edit not ended in the draft", e));
-            this.leaveEdit();
+            this.giveUpEdit();
         } else if (mode.kind === "reply") {
             this.chatService.saveDraftReply(this.configId, this.channelId, null)
                 .catch((e: unknown) => console.warn("chat thread: reply not ended in the draft", e));
@@ -1644,15 +1681,70 @@ export class ChatThreadComponent extends EnhancedComponent {
         }
     }
 
-    /** Takes the refused edit whose « Reprendre » was asked for this conversation (ChatService.takeResume), if any. */
+    /**
+     * Takes the refused edit whose « Reprendre » was asked for this
+     * conversation, if any (ChatService.takeResume, which stores its text
+     * in the draft before its notice goes), then reads the draft again
+     * (reloadResumed). acceptResume decides first.
+     */
     private async resumeAsked(): Promise<void> {
         let edit: ChatNotice["edit"] | null = null;
+        let locked = false;
         try {
-            edit = await this.chatService.takeResume(this.configId, this.channelId);
+            edit = await this.chatService.takeResume(this.configId, this.channelId, async (e) => {
+                locked = await this.acceptResume(e);
+                return locked;
+            });
+            if (edit && !this.destroyed) await this.reloadResumed();
         } catch (e) {
             console.warn("chat thread: resume", e);
+            if (!this.destroyed) this.state.error = t("chat.action_error");
+        } finally {
+            if (locked) this.state.sending = false;
         }
-        if (edit && !this.destroyed) await this.applyResume(edit);
+    }
+
+    /**
+     * Whether a refused edit may come back now. One whose message changed
+     * takes the composer's edit place: the edit in progress is left first
+     * (leaveEditFor), and one the user keeps refuses it, its notice staying.
+     * One whose message was deleted only joins the new message's text. Once
+     * accepted, the texts waiting are stored and the composer stays locked
+     * (sending) until the draft is read again, so nothing typed meanwhile is
+     * written over.
+     */
+    private async acceptResume(edit: NonNullable<ChatNotice["edit"]>): Promise<boolean> {
+        if (this.destroyed || this.state.sending) return false;
+        if (!edit.deleted && !(await this.leaveEditFor())) return false;
+        if (this.destroyed || this.state.sending) return false;
+        this.draftText.flush();
+        this.editText.flush();
+        this.state.sending = true;
+        return true;
+    }
+
+    /**
+     * The composer as the draft holds it after a refused edit was taken
+     * back: its edit (the refused text, or the edit in progress), the new
+     * message's text and reply target, the picks. A refused text counts as
+     * typed: acceptResume left any edit before it, so _editStart is
+     * unknown; an edit in progress that only saw a deleted message's text
+     * join the new message keeps its start.
+     */
+    private async reloadResumed(): Promise<void> {
+        const draft = await this.chatService.draft(this.configId, this.channelId);
+        if (this.destroyed) return;
+        this.mentions = draft.mentions ?? EMPTY_MENTIONS;
+        if (draft.edit) {
+            this._kept = draft.text;
+            this._keptReply = draft.replyTo ?? null;
+            this.state.mode = { kind: "edit", target: draft.edit.target };
+            this.showText(draft.edit.text);
+        } else {
+            this.showText(draft.text);
+            this.state.mode = draft.replyTo ? { kind: "reply", target: draft.replyTo } : { kind: "new" };
+        }
+        await this.refreshBanner();
     }
 
     /** « Reprendre » on a notice of the banner slot. */
@@ -1669,30 +1761,6 @@ export class ChatThreadComponent extends EnhancedComponent {
         } catch (e) {
             console.warn("chat thread: dismiss", e);
             this.state.error = t("chat.action_error");
-        }
-    }
-
-    /**
-     * A refused edit taken back. Its message still cached and not deleted:
-     * edit mode with the refused text over the message's current body. A
-     * message deleted meanwhile cannot be edited: the text joins the new
-     * message's (joinDraftText), stored at once, with its picks.
-     */
-    private async applyResume(edit: NonNullable<ChatNotice["edit"]>): Promise<void> {
-        const live = !edit.deleted && !!(await this.chatService.repo.messageOf(this.configId, edit.target));
-        if (this.destroyed) return;
-        if (live) {
-            await this.startEdit(edit.target, { text: edit.text, mentions: edit.mentions });
-            return;
-        }
-        this.addMentions(edit.mentions);
-        if (this.state.mode.kind === "edit") {
-            this._kept = joinDraftText(this._kept, edit.text);
-            this.draftText.set(this._kept);
-        } else {
-            const joined = joinDraftText(this.state.text, edit.text);
-            this.showText(joined);
-            this.draftText.set(joined);
         }
     }
 
@@ -1878,14 +1946,24 @@ export class ChatThreadComponent extends EnhancedComponent {
      * the new message's text.
      */
     private async sendEdit(source: ChatSource, target: MessageTarget): Promise<boolean> {
+        if (this.destroyed) return false;
         const raw = this.state.text;
         const text = raw.trim();
-        if (!text && !(await this.hasFiles(target))) {
-            await this.deleteFromEdit(source, target);
-            return true;
-        }
-        if (this.state.sending || this.destroyed) return false;
+        // Locked from the tap: what is typed while the files are looked up is not written over
         this.state.sending = true;
+        if (!text) {
+            let files = false;
+            try {
+                files = await this.hasFiles(target);
+            } catch (e) {
+                console.warn("chat thread: files of the edited message unreadable", e);
+            }
+            if (!files) {
+                this.state.sending = false;
+                await this.deleteFromEdit(source, target);
+                return true;
+            }
+        }
         this.state.emoji = false;
         this.state.reactTo = null;
         this.state.error = "";
@@ -1942,10 +2020,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         }
         const mode = this.state.mode;
         if (!yes || this.destroyed || this.state.sending || mode.kind !== "edit" || !sameTarget(mode.target, target)) return;
-        this.editText.discard();
-        this.chatService.saveDraftEdit(this.configId, this.channelId, null)
-            .catch((e: unknown) => console.warn("chat thread: edit not ended in the draft", e));
-        this.leaveEdit();
+        this.giveUpEdit();
         try {
             await this.chatService.deleteMessage(source, this.channelId, target);
         } catch (e) {

@@ -56,6 +56,18 @@ function parseJson<T>(v: any): T | null {
   }
 }
 
+/** Picks from a column: EMPTY_MENTIONS unless both lists are arrays, so a malformed row never reaches a builder. */
+function mentionsOf(v: any): Mentions {
+  const m = parseJson<Record<string, unknown>>(v);
+  return m && Array.isArray(m.partners) && Array.isArray(m.channels) ? (m as unknown as Mentions) : EMPTY_MENTIONS;
+}
+
+/** A message target from a column: null unless it is an object. */
+function storedTarget(v: any): MessageTarget | null {
+  const t = parseJson<MessageTarget>(v);
+  return t && !Array.isArray(t) ? t : null;
+}
+
 /**
  * What a conversation's composer keeps (ChatRepository.draftOf): the text
  * of a new message with its files and the message it answers, an edit in
@@ -1515,20 +1527,22 @@ export class ChatRepository {
    */
   async draftOf(configId: string, channelId: number): Promise<ChatDraft> {
     const row = await this.row("chat_drafts", key(configId, channelId));
-    const editOf = parseJson<MessageTarget>(row?.edit_of);
+    const editOf = storedTarget(row?.edit_of);
     return {
       text: row?.text ?? "",
       files: await this.draftFiles(configId, channelId),
-      replyTo: parseJson<MessageTarget>(row?.reply_to),
+      replyTo: storedTarget(row?.reply_to),
       edit: editOf ? { target: editOf, text: row?.edit_text ?? "" } : null,
-      mentions: parseJson<Mentions>(row?.mentions) ?? EMPTY_MENTIONS,
+      mentions: mentionsOf(row?.mentions),
     };
   }
 
   /**
    * Writes some fields of a conversation's draft row, the others kept. A
-   * row left with no text, no reply target, no edit and no draft file is
-   * deleted: the picks alone keep nothing.
+   * row left with no text, no reply target, no edit, no picks and no draft
+   * file is deleted. Picks alone keep the row: they may be stored before
+   * the text they belong to (a pick in an empty composer, an edit's picks
+   * before the edit).
    */
   private async patchDraft(configId: string, channelId: number, patch: Partial<DraftRow>): Promise<void> {
     const id = key(configId, channelId);
@@ -1541,7 +1555,7 @@ export class ChatRepository {
       mentions: row?.mentions ?? null,
       ...patch,
     };
-    if (next.text === "" && next.reply_to === null && next.edit_of === null
+    if (next.text === "" && next.reply_to === null && next.edit_of === null && next.mentions === null
       && (await this.draftFiles(configId, channelId)).length === 0) {
       if (row) await this.del("chat_drafts", { id });
       return;
@@ -1569,13 +1583,14 @@ export class ChatRepository {
 
   /** Ends the edit in progress of a conversation's draft when it is still the edit of `target`. */
   async removeDraftEdit(configId: string, channelId: number, target: MessageTarget): Promise<void> {
-    const editOf = parseJson<MessageTarget>((await this.row("chat_drafts", key(configId, channelId)))?.edit_of);
+    const editOf = storedTarget((await this.row("chat_drafts", key(configId, channelId)))?.edit_of);
     if (editOf && sameTarget(editOf, target)) await this.putDraftEdit(configId, channelId, null);
   }
 
-  /** Stores the people and channels picked in a conversation's composer. */
+  /** Stores the people and channels picked in a conversation's composer; none stores null. */
   async putDraftMentions(configId: string, channelId: number, mentions: Mentions): Promise<void> {
-    await this.patchDraft(configId, channelId, { mentions: JSON.stringify(mentions) });
+    const none = mentions.partners.length === 0 && mentions.channels.length === 0;
+    await this.patchDraft(configId, channelId, { mentions: none ? null : JSON.stringify(mentions) });
   }
 
   /**
@@ -1596,7 +1611,7 @@ export class ChatRepository {
     const row = await this.row("chat_drafts", key(configId, channelId));
     if (!row || (row.text ?? "").trim() !== text.trim()) return;
     if (notAfter !== undefined && row.updated_at > notAfter) return;
-    const stored = parseJson<MessageTarget>(row.reply_to);
+    const stored = storedTarget(row.reply_to);
     const answered = !!stored && !!replyTo && sameTarget(stored, replyTo);
     if (!row.text && !answered) return;
     await this.patchDraft(configId, channelId, {
@@ -1606,10 +1621,10 @@ export class ChatRepository {
     });
   }
 
-  /** Deletes a conversation's draft row left with no text, no reply target and no edit once no draft file is left. */
+  /** Deletes a conversation's draft row left with no text, no reply target, no edit and no picks once no draft file is left. */
   private async tidyDraft(configId: string, channelId: number): Promise<void> {
     const row = await this.row("chat_drafts", key(configId, channelId));
-    if (row && !row.text && !row.reply_to && !row.edit_of && (await this.draftFiles(configId, channelId)).length === 0) {
+    if (row && !row.text && !row.reply_to && !row.edit_of && !row.mentions && (await this.draftFiles(configId, channelId)).length === 0) {
       await this.del("chat_drafts", { id: row.id });
     }
   }
@@ -1689,14 +1704,14 @@ export class ChatRepository {
     }
   }
 
-  /** Per conversation of the account with a draft: its text and how many files it keeps. */
-  async draftSummaries(configId: string): Promise<Map<number, { text: string; files: number }>> {
-    const out = new Map<number, { text: string; files: number }>();
+  /** Per conversation of the account with a draft: its text, how many files it keeps, and whether an edit is in progress. */
+  async draftSummaries(configId: string): Promise<Map<number, { text: string; files: number; editing: boolean }>> {
+    const out = new Map<number, { text: string; files: number; editing: boolean }>();
     for (const r of await this.rows("chat_drafts", { config_id: configId })) {
-      if (r.text) out.set(r.channel_id, { text: r.text, files: 0 });
+      if (r.text || r.edit_of) out.set(r.channel_id, { text: r.text ?? "", files: 0, editing: !!r.edit_of });
     }
     for (const r of await this.rows("chat_attachments", { config_id: configId, state: "draft" })) {
-      const d = out.get(r.channel_id) ?? { text: "", files: 0 };
+      const d = out.get(r.channel_id) ?? { text: "", files: 0, editing: false };
       d.files++;
       out.set(r.channel_id, d);
     }

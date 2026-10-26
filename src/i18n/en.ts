@@ -1238,4 +1238,8 @@ export const translations: Record<string, string> = {
   "chat.cancel_reply": "Cancel the reply",
   "chat.cancel_edit": "Cancel the edit",
   "chat.ignore": "Ignore",
+  "chat.edit_abandon_confirm": "Abandon the edit in progress?",
+  "chat.edit_abandon": "Abandon",
+  "chat.edit_keep": "Keep",
+  "chat.draft_editing": "Editing…",
 };

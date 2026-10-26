@@ -13,7 +13,8 @@ import { nativeChatHttp } from "../../plugins/chatFilePlugin";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
 import { ChatAttachmentCache } from "./chatAttachmentCache";
 import { bodyText, mentionAnchors } from "./chatBody";
-import { EMPTY_MENTIONS, type Mentions } from "./chatCompose";
+import { EMPTY_MENTIONS, joinMentions, type Mentions } from "./chatCompose";
+import { joinDraftText } from "./chatDraft";
 import { ChatCsrf } from "./chatCsrf";
 import { countEmojiUse } from "./chatEmoji";
 import { deviceChatFiles, type ChatFiles, type ChatHttp } from "./chatFiles";
@@ -724,8 +725,8 @@ export class ChatService {
     });
   }
 
-  /** Per conversation of the account with a draft: its text and how many files it keeps (the list's line). */
-  draftSummaries(configId: string): Promise<Map<number, { text: string; files: number }>> {
+  /** Per conversation of the account with a draft: its text, how many files it keeps, an edit in progress (the list's line). */
+  draftSummaries(configId: string): Promise<Map<number, { text: string; files: number; editing: boolean }>> {
     return this.queue.draftTask(configId, null, () => this.repo.draftSummaries(configId));
   }
 
@@ -968,7 +969,9 @@ export class ChatService {
    * newer body refuses is a notice keeping the text (takeResume).
    * fromDraft: the edit is the composer's, and the draft's edit of that
    * message ends once it is queued. onQueued is called then, before the
-   * flush.
+   * flush. A kill between the two brings the edit mode back with the text
+   * already queued; sending it again queues nothing more (the shown body
+   * already reads that text).
    */
   async editMessage(
     src: ChatSource,
@@ -1045,10 +1048,20 @@ export class ChatService {
 
   /**
    * The refused edit whose « Reprendre » was asked (requestResume), when
-   * it belongs to this conversation: returned once, its notice dismissed;
-   * null otherwise.
+   * it belongs to this conversation, taken once; null otherwise. `accept`,
+   * when given, is asked first: false leaves the notice and forgets the
+   * request. The text is stored in the draft before the notice goes, so it
+   * is never only in memory: a message still cached and not deleted gets
+   * it as the draft's edit (in place of the draft's own), a deleted or gone
+   * one joins it to the new message's text (joinDraftText); the picks
+   * join the draft's. A store that fails keeps the notice (the error is
+   * thrown). The screen reads the draft again (draft()).
    */
-  async takeResume(configId: string, channelId: number): Promise<ChatNotice["edit"] | null> {
+  async takeResume(
+    configId: string,
+    channelId: number,
+    accept?: (edit: NonNullable<ChatNotice["edit"]>) => Promise<boolean>,
+  ): Promise<ChatNotice["edit"] | null> {
     const noticeId = this.resumes.get(configId);
     if (!noticeId) return null;
     const notice = (await this.queue.notices([configId])).find((n) => n.id === noticeId);
@@ -1058,9 +1071,18 @@ export class ChatService {
     }
     if (notice.channelId !== channelId) return null;
     this.resumes.delete(configId);
-    const edit = await this.queue.takeRefusedEdit(configId, noticeId);
+    const edit = notice.edit;
+    if (accept && !(await accept(edit))) return null;
+    await this.queue.draftTask(configId, channelId, async (id) => {
+      const draft = await this.repo.draftOf(configId, id);
+      const live = !edit.deleted && !!(await this.repo.messageOf(configId, edit.target));
+      if (live) await this.repo.putDraftEdit(configId, id, { target: edit.target, text: edit.text });
+      else await this.repo.putDraftText(configId, id, joinDraftText(draft.text, edit.text));
+      await this.repo.putDraftMentions(configId, id, joinMentions(draft.mentions, edit.mentions));
+    });
+    const taken = await this.queue.takeRefusedEdit(configId, noticeId);
     this.changed(configId, channelId);
-    return edit;
+    return taken;
   }
 
   /** The cached reaction groups of the given message keys (messageKeyOf) of a channel, each list in the server's order. */

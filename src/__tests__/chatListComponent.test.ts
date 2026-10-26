@@ -372,6 +372,14 @@ describe("ChatListComponent", () => {
         expect(chat.repo.attachmentsOf).not.toHaveBeenCalled();
     });
 
+    it("a conversation with an edit in progress reads « Editing… » in place of its last message", async () => {
+        const chat: any = fakeChat(["a"], [chan("a", 1, { name: "Team" })]);
+        chat.draftSummaries.mockResolvedValue(new Map([[1, { text: "a new one", files: 0, editing: true }]]));
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.state.rows[0].preview).toBe("Editing…");
+    });
+
     it("the files of several conversations are read side by side, none for a message that is not a post", async () => {
         const chat = fakeChat(["a"], [chan("a", 1), chan("a", 2), chan("a", 3)]);
         chat.repo.lastMessages.mockResolvedValue(new Map([

@@ -700,7 +700,12 @@ describe("ChatRepository", () => {
       expect(await repo.draftChannels()).toEqual(new Set([`${A}#7`, `${A}#8`, `${B}#9`]));
       expect(await repo.draftFileCount(A)).toBe(2);
       expect(await repo.draftFileCount(B)).toBe(1);
-      expect(await repo.draftSummaries(A)).toEqual(new Map([[7, { text: "hello", files: 0 }], [8, { text: "", files: 2 }]]));
+      expect(await repo.draftSummaries(A)).toEqual(new Map([
+        [7, { text: "hello", files: 0, editing: false }], [8, { text: "", files: 2, editing: false }],
+      ]));
+      // An edit in progress is a draft too, whatever the new message holds
+      await repo.putDraftEdit(A, 9, { target: { messageId: 5, clientUuid: null }, text: "" });
+      expect((await repo.draftSummaries(A)).get(9)).toEqual({ text: "", files: 0, editing: true });
     });
 
     it("queueDrafts turns draft rows into a post's files in place, by one update each", async () => {
@@ -798,7 +803,7 @@ describe("ChatRepository", () => {
       expect(await restarted.draftOf(A, 8)).toEqual({ text: "", files: [], replyTo: null, edit: null, mentions: { partners: [], channels: [] } });
     });
 
-    it("a reply target or an edit alone keeps the draft row; with neither, no text and no file it goes", async () => {
+    it("a reply target, an edit or picks alone keep the draft row; with none, no text and no file it goes", async () => {
       await repo.putDraftReply(A, 7, REPLY);
       expect(await db.rawQuery("SELECT id, text FROM chat_drafts")).toEqual([{ id: `${A}#7`, text: "" }]);
       await repo.putDraftEdit(A, 7, { target: MINE, text: "" });
@@ -806,6 +811,9 @@ describe("ChatRepository", () => {
       expect((await repo.draftOf(A, 7)).edit).toEqual({ target: MINE, text: "" });
       await repo.putDraftMentions(A, 7, PICKS);
       await repo.putDraftEdit(A, 7, null);
+      // Picks stored before the text they belong to (a pick in an empty composer) are kept
+      expect((await repo.draftOf(A, 7)).mentions).toEqual(PICKS);
+      await repo.putDraftMentions(A, 7, { partners: [], channels: [] });
       expect(await db.rawQuery("SELECT * FROM chat_drafts")).toEqual([]);
       // A file removed from a draft that answers a message leaves the reply target
       await repo.putDraftReply(A, 7, REPLY);
@@ -853,6 +861,16 @@ describe("ChatRepository", () => {
       await repo.putDraftReply(A, 7, REPLY);
       await repo.removeDraftText(A, 7, "the answer", undefined, REPLY);
       expect(await repo.draftOf(A, 7)).toMatchObject({ text: "typed on", replyTo: REPLY });
+    });
+
+    it("a malformed stored value reads as none, never throws", async () => {
+      await repo.putDraftText(A, 7, "x");
+      for (const [col, v] of [["mentions", '{"partners": 3}'], ["mentions", "[]"], ["mentions", "{"], ["reply_to", "7"], ["reply_to", "[]"]]) {
+        await db.rawRun(`UPDATE chat_drafts SET ${col} = ? WHERE id = ?`, [v, `${A}#7`]);
+        const d = await repo.draftOf(A, 7);
+        expect(d.mentions).toEqual({ partners: [], channels: [] });
+        expect(d.replyTo).toBeNull();
+      }
     });
 
     it("a swapped temporary id keeps the reply target", async () => {

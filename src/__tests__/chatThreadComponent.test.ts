@@ -1894,14 +1894,25 @@ describe("ChatThreadComponent composer modes", () => {
         const chat = fakeChat([msg(10, { body: "<p>browser</p>" })]);
         chat.repo.messageOf.mockResolvedValue(msg(10, { body: "<p>browser</p>" }));
         chat.takeResume.mockResolvedValueOnce({ target: M10, text: "late", mentions: BOB, deleted: false });
+        // The service stored the refused text in the draft: the thread reads it again
+        chat.draft
+            .mockResolvedValueOnce({ text: "typed", files: [], lost: [], replyTo: null, edit: null, mentions: NONE })
+            .mockResolvedValueOnce({ text: "typed", files: [], lost: [], replyTo: null, edit: { target: M10, text: "late" }, mentions: BOB });
         const c = make(chat);
         await c.open();
-        expect(chat.takeResume).toHaveBeenCalledWith("a", 5);
+        expect(chat.takeResume).toHaveBeenCalledWith("a", 5, expect.any(Function));
         expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
         expect(c.state.text).toBe("late");
         expect(c.state.banner).toMatchObject({ text: "browser" });
+        expect(c.mentions).toEqual(BOB);
         expect(chat.editDraftOf).not.toHaveBeenCalled();
-        expect(chat.saveDraftEdit).toHaveBeenCalledWith("a", 5, { target: M10, text: "late" });
+        expect(chat.saveDraftEdit).not.toHaveBeenCalled();
+        // The resumed text counts as typed: leaving it asks first
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: false });
+        await c.startReply({ messageId: 10, clientUuid: null });
+        expect(Dialog.confirm).toHaveBeenCalledWith(expect.objectContaining({ message: "Abandon the edit in progress?" }));
+        c.onCancelMode();
+        expect(c.state.text).toBe("typed");
         c.teardown();
     });
 
@@ -1918,6 +1929,7 @@ describe("ChatThreadComponent composer modes", () => {
         await c.open();
         expect(c.state.resumes).toEqual([{ id: "n1", text: "Edit not sent: the message changed meanwhile." }]);
         chat.takeResume.mockResolvedValueOnce(edit);
+        chat.draft.mockResolvedValueOnce({ text: "", files: [], lost: [], replyTo: null, edit: { target: M10, text: "late" }, mentions: NONE });
         await c.onResume(c.state.resumes[0]);
         expect(chat.requestResume).toHaveBeenCalledWith("a", "n1");
         expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
@@ -1929,18 +1941,164 @@ describe("ChatThreadComponent composer modes", () => {
 
     it("Reprendre of a deleted message puts the text in the draft", async () => {
         const chat = fakeChat([msg(10)]);
-        chat.draft.mockResolvedValue({ text: "typed", files: [], lost: [], replyTo: null, edit: null, mentions: NONE });
-        // The emptied row may still be cached: deleted is deleted
-        chat.repo.messageOf.mockResolvedValue(msg(9, { body: "" }));
-        chat.takeResume.mockResolvedValueOnce({ target: { messageId: 9, clientUuid: null }, text: "late @Bob", mentions: BOB, deleted: true });
+        chat.draft
+            .mockResolvedValueOnce({ text: "typed", files: [], lost: [], replyTo: null, edit: null, mentions: NONE })
+            .mockResolvedValueOnce({ text: "typed\nlate @Bob", files: [], lost: [], replyTo: null, edit: null, mentions: BOB });
+        let accepted: boolean | null = null;
+        chat.takeResume.mockImplementationOnce(async (_c: string, _ch: number, accept: any) => {
+            const edit = { target: { messageId: 9, clientUuid: null }, text: "late @Bob", mentions: BOB, deleted: true };
+            accepted = await accept(edit);
+            return edit;
+        });
         const c = make(chat);
         await c.open();
+        // Nothing to leave: no question
+        expect(accepted).toBe(true);
+        expect(Dialog.confirm).not.toHaveBeenCalled();
         expect(c.state.mode).toEqual({ kind: "new" });
         expect(c.state.text).toBe("typed\nlate @Bob");
-        expect(chat.saveDraftText).toHaveBeenLastCalledWith("a", 5, "typed\nlate @Bob");
-        expect(chat.saveDraftMentions).toHaveBeenLastCalledWith("a", 5, BOB);
+        expect(c.mentions).toEqual(BOB);
+        expect(chat.saveDraftText).not.toHaveBeenCalled();
         expect(chat.saveDraftEdit).not.toHaveBeenCalled();
         c.teardown();
+    });
+
+    it("Reprendre over an edit in progress asks first; Keep leaves the edit and the notice", async () => {
+        const chat = fakeChat([msg(10), msg(12)]);
+        // An edit restored from the draft: what it started from is not known, so it counts as typed
+        chat.draft.mockResolvedValue({ text: "", files: [], lost: [], replyTo: null, edit: { target: M10, text: "mine, almost" }, mentions: NONE });
+        let accepted: boolean | null = null;
+        chat.takeResume.mockImplementationOnce(async (_c: string, _ch: number, accept: any) => {
+            accepted = await accept({ target: { messageId: 12, clientUuid: null }, text: "late", mentions: NONE, deleted: false });
+            return null;
+        });
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: false });
+        const c = make(chat);
+        await c.open();
+        expect(accepted).toBe(false);
+        expect(Dialog.confirm).toHaveBeenCalledWith(expect.objectContaining({
+            message: "Abandon the edit in progress?", okButtonTitle: "Abandon", cancelButtonTitle: "Keep",
+        }));
+        expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
+        expect(c.state.text).toBe("mine, almost");
+        expect(chat.saveDraftEdit).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
+    it("Reprendre of a deleted message's text over a changed edit asks nothing and keeps the edit", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        c.onInput({ target: { value: "new one" } } as any);
+        await c.startEdit(M10);
+        c.onInput({ target: { value: "hi, changed" } } as any);
+        const gone = { target: { messageId: 9, clientUuid: null }, text: "late", mentions: NONE, deleted: true };
+        chat.takeResume.mockImplementationOnce(async (_c: string, _ch: number, accept: any) => ((await accept(gone)) ? gone : null));
+        chat.draft.mockResolvedValueOnce({
+            text: "new one\nlate", files: [], lost: [], replyTo: null, edit: { target: M10, text: "hi, changed" }, mentions: NONE,
+        });
+        await c.onResume({ id: "n1" });
+        expect(Dialog.confirm).not.toHaveBeenCalled();
+        // The waiting texts were stored before the service wrote the draft
+        expect(chat.saveDraftEdit).toHaveBeenLastCalledWith("a", 5, { target: M10, text: "hi, changed" });
+        expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
+        expect(c.state.text).toBe("hi, changed");
+        expect(c.state.sending).toBe(false);
+        c.onCancelMode();
+        expect(c.state.text).toBe("new one\nlate");
+        c.teardown();
+    });
+
+    it("leaving a changed edit for a reply asks; Keep records the reply under the edit, Abandon ends it", async () => {
+        const chat = fakeChat([msg(10), theirs()]);
+        const c = make(chat);
+        await c.open();
+        await c.startEdit(M10);
+        c.onInput({ target: { value: "hi, changed" } } as any);
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: false });
+        await c.startReply({ messageId: 11, clientUuid: null });
+        expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
+        expect(c.state.text).toBe("hi, changed");
+        expect(chat.saveDraftReply).toHaveBeenCalledWith("a", 5, { messageId: 11, clientUuid: null });
+        // The reply comes back once the edit ends
+        c.onCancelMode();
+        await vi.waitFor(() => expect(c.state.mode).toEqual({ kind: "reply", target: { messageId: 11, clientUuid: null } }));
+        await c.startEdit(M10);
+        c.onInput({ target: { value: "hi, changed again" } } as any);
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: true });
+        await c.startReply({ messageId: 11, clientUuid: null });
+        expect(c.state.mode).toEqual({ kind: "reply", target: { messageId: 11, clientUuid: null } });
+        expect(chat.saveDraftEdit).toHaveBeenLastCalledWith("a", 5, null);
+        c.teardown();
+    });
+
+    it("an edit left unchanged goes without asking; Edit of another message over a changed one asks", async () => {
+        const chat = fakeChat([msg(10), msg(12), theirs()]);
+        const c = make(chat);
+        await c.open();
+        await c.startEdit(M10);
+        await c.startReply({ messageId: 11, clientUuid: null });
+        expect(Dialog.confirm).not.toHaveBeenCalled();
+        expect(c.state.mode).toEqual({ kind: "reply", target: { messageId: 11, clientUuid: null } });
+        await c.startEdit(M10);
+        c.onInput({ target: { value: "typed into the edit" } } as any);
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: false });
+        await c.startEdit({ messageId: 12, clientUuid: null });
+        expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
+        expect(c.state.text).toBe("typed into the edit");
+        expect(chat.editDraftOf).toHaveBeenCalledTimes(2);
+        c.teardown();
+    });
+
+    it("an edit is stored before its picks, so an empty draft keeps them", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.editDraftOf.mockResolvedValue({ text: "hi @Bob", mentions: BOB });
+        const c = make(chat);
+        await c.open();
+        await c.startEdit(M10);
+        const edit = chat.saveDraftEdit.mock.invocationCallOrder[0];
+        const picks = chat.saveDraftMentions.mock.invocationCallOrder[0];
+        expect(edit).toBeLessThan(picks);
+        c.teardown();
+    });
+
+    it("Edit is refused while a voice message records: its ⏹ would be off", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        c.attachState.voice = "recording";
+        await c.startEdit(M10);
+        expect(c.state.mode).toEqual({ kind: "new" });
+        expect(chat.editDraftOf).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
+    it("an emptied edit locks the composer from the tap, while its files are looked up", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        await c.startEdit(M10);
+        let found!: (m: any) => void;
+        chat.repo.messageOf.mockImplementationOnce(() => new Promise((r) => { found = r; }));
+        c.state.text = "";
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: false });
+        const sending = c.onSend();
+        expect(c.state.sending).toBe(true);
+        const field = { value: "late keys" };
+        c.onInput({ target: field } as any);
+        expect(field.value).toBe("");
+        found(msg(10));
+        await sending;
+        expect(c.state.sending).toBe(false);
+        expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
+        c.teardown();
+    });
+
+    it("the new message's chips are hidden while editing, the attach component kept", () => {
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        expect(source).toMatch(/<div class="chat-thread__attach-slot" t-att-class="\{'chat-thread__attach-slot--editing': state\.mode\.kind === 'edit'\}">\s*<ChatComposerAttachComponent attach="attach"\/>/);
+        const scss = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.scss"), "utf8");
+        expect(scss).toMatch(/\.chat-thread__attach-slot--editing \.chat-attach__chips \{\s*display: none;/);
     });
 
     it("the mode banner shows the quote and ✕; a quote with nothing to reach is out of the tab order", () => {

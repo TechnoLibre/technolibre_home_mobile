@@ -4470,7 +4470,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "with the message's text, keeps the new message's text apart for after, and ➤ queues "
                         + "the edit; an emptied edit of a message without files asks to delete it. A refused "
                         + "edit's « Reprendre » (list or thread) brings its text back in edit mode, or into "
-                        + "the new message when the message was deleted.",
+                        + "the new message when the message was deleted; its text is stored in the draft before "
+                        + "its notice goes. Leaving an edit typed into for a reply or another edit asks first "
+                        + "(Abandon or Keep; a kept edit takes the reply under it); ✕ asks nothing.",
                     fr: "chatLongPress.ts lance une minuterie de 500 ms au pointerdown, arrêtée par un "
                         + "déplacement de plus de 10 px, le relâchement, un pointercancel ou un défilement ; il "
                         + "n'appelle aucun preventDefault, donc la liste défile et le texte se sélectionne comme "
@@ -4493,7 +4495,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "le texte du nouveau message pour après, et ➤ met la modification en file ; une "
                         + "modification vidée d'un message sans fichier demande de le supprimer. « Reprendre » "
                         + "sur une modification refusée (liste ou conversation) ramène son texte en "
-                        + "modification, ou dans le nouveau message quand le message a été supprimé.",
+                        + "modification, ou dans le nouveau message quand le message a été supprimé ; son texte "
+                        + "est enregistré dans le brouillon avant que son avis parte. Quitter une modification "
+                        + "déjà retouchée pour une réponse ou une autre modification demande d'abord (Abandonner "
+                        + "ou Garder ; une modification gardée prend la réponse sous elle) ; ✕ ne demande rien.",
                 },
                 files: [
                     "src/components/chat/chatLongPress.ts",
@@ -5068,7 +5073,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "draft to the server's id, and a dropped conversation or account releases its draft files. "
                         + "The draft also keeps the message the text answers, an edit in progress with its text, "
                         + "and the mention picks (migration 2026102608); a post takes its reply target out with "
-                        + "its text, a queued edit ends the draft's edit.",
+                        + "its text, a queued edit ends the draft's edit; the list reads « Editing… » for an edit "
+                        + "in progress.",
                     fr: "Le texte s'enregistre 500 ms après la dernière frappe, et aussitôt quand l'écran se ferme ou "
                         + "que l'application passe en arrière-plan (table chat_drafts, une ligne par conversation). "
                         + "Chaque fichier préparé devient une ligne chat_attachments à l'état « draft », avec son "
@@ -5087,7 +5093,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "ou un compte retiré libère les fichiers de son brouillon. Le brouillon garde aussi le "
                         + "message auquel le texte répond, une modification en cours avec son texte, et les "
                         + "mentions choisies (migration 2026102608) ; un envoi retire sa cible de réponse avec son "
-                        + "texte, une modification mise en file termine celle du brouillon.",
+                        + "texte, une modification mise en file termine celle du brouillon ; la liste affiche "
+                        + "« Modification en cours » pour une modification en cours.",
                 },
                 demo: { kind: "route", url: "/chat" },
                 files: [
