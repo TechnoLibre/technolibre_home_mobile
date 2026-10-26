@@ -1229,8 +1229,13 @@ export class ChatService {
         return ids.length === 1 ? ids[0] : null;
       }
       case "ir.attachment/delete":
-        await this.repo.deleteAttachments(configId, [Number(p.id)].filter(Number.isInteger));
-        return null;
+      {
+        const id = Number(p.id);
+        if (!Number.isInteger(id)) return undefined;
+        const channelId = (await this.repo.attachmentChannel(configId, id)) ?? null;
+        await this.repo.deleteAttachments(configId, [id]);
+        return channelId;
+      }
       case "mail.message/inbox":
         return this.applyInbox(configId, p, busId, fresh);
       case "mail.message/mark_as_read":

@@ -396,10 +396,11 @@ export class ChatRepository {
     for (const p of d.members) await this.upsertMember(configId, p);
     for (const { attachmentIds: _ids, ...p } of d.messages) await this.upsertMessage(configId, p);
     for (const p of d.partners) await this.upsertPartner(configId, p);
-    for (const p of d.attachments) await this.upsertAttachment(configId, p);
+    // Linking first gives a record without `thread` the channel of the message that lists it
     for (const m of d.messages) {
       if (m.attachmentIds) await this.linkAttachments(configId, m.messageId, m.attachmentIds, m.channelId);
     }
+    for (const p of d.attachments) await this.upsertAttachment(configId, p);
     if (d.deletedAttachmentIds.length > 0) await this.deleteAttachments(configId, d.deletedAttachmentIds);
     for (const id of d.deletedMemberIds) await this.del("chat_members", { id: key(configId, id) });
     for (const id of d.deletedChannelIds) {
@@ -959,7 +960,19 @@ export class ChatRepository {
    * and stored with the sync state, so it follows a renamed account and
    * names nothing about it.
    */
-  async fileDirOf(configId: string): Promise<string> {
+  fileDirOf(configId: string): Promise<string> {
+    let pending = this.fileDirs.get(configId);
+    if (!pending) {
+      pending = this.makeFileDir(configId).finally(() => this.fileDirs.delete(configId));
+      this.fileDirs.set(configId, pending);
+    }
+    return pending;
+  }
+
+  /** In-flight fileDirOf calls, so two concurrent first calls share one id. */
+  private fileDirs = new Map<string, Promise<string>>();
+
+  private async makeFileDir(configId: string): Promise<string> {
     const state = await this.sourceState(configId);
     if (state.fileDir) return state.fileDir;
     const fileDir = uuidv4();
@@ -1043,8 +1056,9 @@ export class ChatRepository {
         state: "posted",
         error: null,
       };
-      await this.del("chat_attachments", { id: key(configId, `l${local.localUuid}`) });
+      // Written before the local row goes: an interruption leaves both, and a rerun merges them again
       await this.put("chat_attachments", this.attachmentRow(merged));
+      await this.del("chat_attachments", { id: key(configId, `l${local.localUuid}`) });
       out.push(merged);
     }
     return out;
@@ -1116,13 +1130,15 @@ export class ChatRepository {
       .sort((a, b) => (used(a) < used(b) ? -1 : used(a) > used(b) ? 1 : 0));
   }
 
-  /** Forgets the cached original, the preview or both of the rows with these keys, and releases the files. */
+  /** Forgets the cached original, the preview or both of the rows with these keys, and releases the files; a row not posted (its file waits to be sent) is left alone. */
   async clearFiles(keys: string[], what: "original" | "preview" | "both"): Promise<void> {
     const released: string[] = [];
     for (const id of keys) {
       const row = await this.row("chat_attachments", id);
       if (!row) continue;
       const a = attachmentFromRow(row);
+      // A file an outbox op still reads is never cleared
+      if (a.state !== "posted") continue;
       if ((what === "original" || what === "both") && a.originalPath) {
         released.push(a.originalPath);
         a.originalPath = null;
@@ -1136,6 +1152,11 @@ export class ChatRepository {
       await this.put("chat_attachments", this.attachmentRow(a));
     }
     await this.release(released);
+  }
+
+  /** The channel a cached server attachment belongs to; undefined when it is not cached. */
+  async attachmentChannel(configId: string, attachmentId: number): Promise<number | undefined> {
+    return (await this.attachmentByKey(configId, `a${attachmentId}`))?.channelId;
   }
 
   /** Drops server attachments by id (the server deleted them), releases and returns their file paths. */

@@ -642,7 +642,10 @@ describe("ChatService", () => {
       "mail.message": [{ id: 700, thread: { id: GROUP, model: "discuss.channel" }, attachment_ids: [1] }],
     })]);
     expect(released).toEqual([["chat/d/thumbs/2"]]);
+    const changes: any[] = [];
+    chat.onChange = (c, ch) => changes.push([c, ch]);
     await chat.applyBus(config, [bus(1003, "ir.attachment/delete", { id: 1 })]);
+    expect(changes).toEqual([[config, GROUP]]);
     expect(released).toEqual([["chat/d/thumbs/2"], ["chat/d/files/1/f1.png"]]);
     expect((await chat.repo.attachmentsOf(config, GROUP, [700], [])).size).toBe(0);
   });

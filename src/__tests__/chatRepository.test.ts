@@ -504,6 +504,28 @@ describe("ChatRepository", () => {
       expect(await repo.cachedRows()).toEqual([]);
     });
 
+    it("clearFiles leaves a queued or uploaded row's file alone", async () => {
+      await repo.putOutgoing([outgoing(A, "l1"), outgoing(A, "l2", { state: "uploaded", attachmentId: 9 })]);
+      await repo.clearFiles([`${A}#ll1`, `${A}#ll2`], "both");
+      const rows = await repo.outgoingOf(A, "post1");
+      expect(rows.map((r) => r.originalPath)).toEqual(["chat/dir/out/l1/photo.jpg", "chat/dir/out/l2/photo.jpg"]);
+      expect(released).toEqual([]);
+    });
+
+    it("an attachment without thread in the delta of its message gets that message's channel", async () => {
+      await repo.applyDelta(A, delta({
+        messages: [{ messageId: 50, channelId: 7, body: "x", attachmentIds: [4] }],
+        attachments: [{ attachmentId: 4, name: "n.png", mimetype: "image/png", size: 3 }],
+      }));
+      expect((await repo.attachmentsOf(A, 7, [50], [])).get("m50")![0]).toMatchObject({ name: "n.png", size: 3 });
+    });
+
+    it("concurrent first fileDirOf calls get one id", async () => {
+      const [x, y] = await Promise.all([repo.fileDirOf(A), repo.fileDirOf(A)]);
+      expect(x).toBe(y);
+      expect((await repo.sourceState(A)).fileDir).toBe(x);
+    });
+
     it("swapChannelId moves the attachment rows to the real channel", async () => {
       await repo.putOutgoing([outgoing(A, "l1", { channelId: -5 })]);
       await repo.swapChannelId(A, -5, 7);
