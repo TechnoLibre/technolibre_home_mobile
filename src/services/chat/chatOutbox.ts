@@ -1311,15 +1311,18 @@ export class ChatOutbox {
    * whose post has not started never reaches the server: its post, its
    * uploads and every action on it are cancelled, its row and its files
    * go (dropPendingMessage), and null is returned. Otherwise the edits and
-   * reactions of the message still waiting are cancelled, and one delete
-   * waits for what still runs on it (an edit, a reaction, its post). A
-   * reaction cancelled with none of its key left running shows again as
-   * the server held it (base), unless one of its ops may have reached the
-   * server (sentAt): base is then no longer where the server stands, and
-   * the reaction keeps its shown state. An edit cancelled after a send that may
-   * have reached the server (sentAt) marks the delete editSent: its
-   * baseBody may be older than the server's body. A second delete returns
-   * the first. Rejects for a message not cached.
+   * reactions and pins of the message still waiting are cancelled, and one
+   * delete waits for what still runs on it (an edit, a reaction, a pin, its
+   * post). A reaction or a pin cancelled with none of its key left running
+   * shows again as the server held it (base; a pin at baseAt), so a refused
+   * delete leaves the message as the server has it; an accepted one comes
+   * back with pinned_at cleared, as Odoo unpins an emptied message. Unless
+   * one of its ops may have reached the server (sentAt): base is then no
+   * longer where the server stands, and it keeps its shown state. An edit
+   * cancelled after a send that may have reached the server (sentAt)
+   * marks the delete editSent: its baseBody may be older than the server's
+   * body. A second delete returns the first. Rejects for a message not
+   * cached.
    */
   async queueDelete(configId: string, channelId: number, target: MessageTarget): Promise<OutboxOp | null> {
     const message = await this.repo.messageOf(configId, target);
@@ -1350,14 +1353,16 @@ export class ChatOutbox {
         dependsOn: running?.id ?? post?.id ?? null,
       });
       await this.showBody(configId, named, "");
-      // The first cancelled op of a reaction's key holds the server's state before any of them (base)
+      // The first cancelled op of a reaction's or a pin's key holds the server's state before any of them (base)
       const shown = new Set<string>();
       for (const o of cancelled) {
         const key = targetKey(o);
-        if (o.kind !== CHAT_REACTION || shown.has(key) || mine.some((r) => r.status === "running" && targetKey(r) === key)) continue;
+        if (o.kind !== CHAT_REACTION && o.kind !== CHAT_PIN) continue;
+        if (shown.has(key) || mine.some((r) => r.status === "running" && targetKey(r) === key)) continue;
         shown.add(key);
-        if (cancelled.some((r) => r.kind === CHAT_REACTION && targetKey(r) === key && r.params.sentAt)) continue;
-        await this.showReaction(configId, named, o.params.content, !!o.params.base);
+        if (cancelled.some((r) => targetKey(r) === key && r.params.sentAt)) continue;
+        if (o.kind === CHAT_REACTION) await this.showReaction(configId, named, o.params.content, !!o.params.base);
+        else if (message.messageId !== null) await this.showPin(configId, message.messageId, o.params.base ? o.params.baseAt ?? null : null);
       }
       return op;
     });

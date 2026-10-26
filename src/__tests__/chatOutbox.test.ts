@@ -43,14 +43,15 @@ interface Call { path: string; params: any }
  * as Odoo does for a channel; it answers it as `parentMessage`, and a
  * search_read answers it as `parent_id` (`[id, name]` or false).
  * `pinDrops` makes the next N set_message_pin calls run on the server and
- * then lose their answer.
+ * then lose their answer; `pinError` and `editError` answer set_message_pin
+ * and /mail/message/update_content (an edit or a delete) with that error.
  */
 function chatOdoo(opts: { module?: boolean } = {}) {
   const messages: Posted[] = [];
   const calls: Call[] = [];
   const state = {
     dropResponses: 0, failBefore: 0, unsent: 0, postError: null as string | null, nextId: 500, elsewhere: new Set<number>(),
-    pinDrops: 0,
+    pinDrops: 0, pinError: null as string | null, editError: null as string | null,
   };
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
@@ -96,10 +97,12 @@ function chatOdoo(opts: { module?: boolean } = {}) {
           .map((m) => ({ id: m.id, body: m.body, parent_id: m.parent ? [m.parent, "m" + m.parent] : false }));
         return ok(rows.slice(0, kwargs.limit ?? rows.length));
       }
+      if (method === "set_message_pin" && state.pinError) return rpcError(state.pinError);
       if (method === "set_message_pin" && state.pinDrops > 0) { state.pinDrops--; throw new TypeError("Failed to fetch"); }
       return ok(method === "search_read" ? [] : true);
     }
     if (path === "/web/session/get_session_info") return ok({ uid: 2, partner_id: 3, is_system: false });
+    if (path === "/mail/message/update_content" && state.editError) return rpcError(state.editError);
     return ok(true);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -1066,6 +1069,97 @@ describe("ChatOutbox", () => {
       expect(await chat.notices([CONFIG])).toEqual([
         expect.objectContaining({ kind: CHAT_PIN, reason: "vanished", message: { messageId: 40, clientUuid: null } }),
       ]);
+    });
+
+    it("a delete over a waiting pin shows the pin's base again, and a refused delete leaves it there", async () => {
+      const odoo = chatOdoo();
+      const BASE_AT = "2026-10-24 08:00:00";
+      chat.isOnline = async () => false;
+      // Not pinned on the server: pinned on the phone, then deleted
+      await chat.queuePin(CONFIG, CHANNEL, SENT, true);
+      expect(await pinnedAt()).not.toBeNull();
+      await chat.queueDelete(CONFIG, CHANNEL, SENT);
+      expect(await pinOps()).toEqual([]);
+      expect(await pinnedAt()).toBeNull();
+      odoo.state.editError = "odoo.exceptions.AccessError";
+      chat.isOnline = async () => true;
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ blocked: 1 });
+      expect((await repo.message(CONFIG, 40))?.body).toBe("<p>Réunion demain</p>");
+      expect(await pinnedAt()).toBeNull();
+      expect(odoo.pins()).toEqual([]);
+      for (const n of await chat.notices([CONFIG])) await chat.dismissNotice(CONFIG, n.id);
+      // Pinned on the server: unpinned on the phone, then deleted: back at its own pin date
+      await repo.applyDelta(CONFIG, {
+        channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], attachments: [], deletedAttachmentIds: [],
+        partners: [], inboxCounter: null, selfPartnerId: null, messages: [{ messageId: 40, pinnedAt: BASE_AT }],
+      });
+      chat.isOnline = async () => false;
+      await chat.queuePin(CONFIG, CHANNEL, SENT, false);
+      expect(await pinnedAt()).toBeNull();
+      await chat.queueDelete(CONFIG, CHANNEL, SENT);
+      expect(await pinnedAt()).toBe(BASE_AT);
+      chat.isOnline = async () => true;
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ blocked: 1 });
+      expect(await pinnedAt()).toBe(BASE_AT);
+    });
+
+    it("a delete over a pin whose answer was lost keeps the pin shown", async () => {
+      const odoo = chatOdoo();
+      odoo.state.pinDrops = 1;
+      await chat.queuePin(CONFIG, CHANNEL, SENT, true);
+      await chat.flush(CREDS);
+      const shown = await pinnedAt();
+      expect(shown).not.toBeNull();
+      // The server may hold the pin: its base is no longer where the server stands
+      chat.isOnline = async () => false;
+      await chat.queueDelete(CONFIG, CHANNEL, SENT);
+      expect(await pinnedAt()).toBe(shown);
+    });
+
+    it("an unpin given up shows the pin again at its own date", async () => {
+      const odoo = chatOdoo();
+      const BASE_AT = "2026-10-24 08:00:00";
+      await repo.applyDelta(CONFIG, {
+        channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], attachments: [], deletedAttachmentIds: [],
+        partners: [], inboxCounter: null, selfPartnerId: null, messages: [{ messageId: 40, pinnedAt: BASE_AT }],
+      });
+      odoo.state.pinError = "odoo.exceptions.AccessError";
+      await chat.queuePin(CONFIG, CHANNEL, SENT, false);
+      expect(await chat.flush(CREDS)).toMatchObject({ blocked: 1 });
+      expect(odoo.pins().map((p) => p.kwargs)).toEqual([{ message_id: 40, pinned: false }]);
+      expect(await pinnedAt()).toBe(BASE_AT);
+      expect(await chat.notices([CONFIG])).toEqual([expect.objectContaining({ kind: CHAT_PIN, reason: "refused" })]);
+    });
+
+    it("a server pinned_at read while a pin waits does not undo it, and becomes its base", async () => {
+      chatOdoo();
+      const SERVER_AT = "2026-10-24 08:00:00";
+      const busDelta = (at: string | null) => ({
+        channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], attachments: [], deletedAttachmentIds: [],
+        partners: [], inboxCounter: null, selfPartnerId: null, messages: [{ messageId: 40, pinnedAt: at }],
+      });
+      chat.isOnline = async () => false;
+      await chat.queuePin(CONFIG, CHANNEL, SENT, true);
+      const shown = await pinnedAt();
+      // An older read says not pinned: the phone's pin stays
+      let delta: any = busDelta(null);
+      await chat.overlayMessages(CONFIG, delta);
+      await repo.applyDelta(CONFIG, delta);
+      expect(await pinnedAt()).toBe(shown);
+      // Pinned in the browser meanwhile: the server's date shows, and the pin's base follows it
+      delta = busDelta(SERVER_AT);
+      await chat.overlayMessages(CONFIG, delta);
+      await repo.applyDelta(CONFIG, delta);
+      expect(await pinnedAt()).toBe(SERVER_AT);
+      expect((await pinOps()).map((o) => [o.params.base, o.params.baseAt])).toEqual([[true, SERVER_AT]]);
+      // An unpin is then laid over the server's pin, and a tap back to pinned is where the server stands: nothing queued
+      await chat.queuePin(CONFIG, CHANNEL, SENT, false);
+      delta = busDelta(SERVER_AT);
+      await chat.overlayMessages(CONFIG, delta);
+      await repo.applyDelta(CONFIG, delta);
+      expect(await pinnedAt()).toBeNull();
+      expect(await chat.queuePin(CONFIG, CHANNEL, SENT, true)).toBeNull();
+      expect(await pinOps()).toEqual([]);
     });
   });
 
