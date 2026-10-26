@@ -302,6 +302,9 @@ describe("syncTestKit", () => {
 			const bytes = Buffer.from([0x89, 0x50, 0, 0xff]);
 			expect(answer).toEqual({ status: 200, size: 4, sha1: createHash("sha1").update(bytes).digest("hex"), mimetype: "image/png" });
 			expect([...files.bytes("chat/d/files/9/x.png")!]).toEqual([...bytes]);
+			// The memory files read a path and its file: URI alike
+			expect(await files.size("chat/d/files/9/x.png")).toBe(4);
+			expect(await files.size(uri)).toBe(4);
 			const gone = await httpc.download({ id: "d2", url: `${base}/gone`, headers: {}, uri: await files.uri("chat/d/thumbs/9") });
 			expect(gone).toEqual({ status: 404, size: 0, sha1: null, mimetype: null });
 			expect(files.bytes("chat/d/thumbs/9")).toBeUndefined();

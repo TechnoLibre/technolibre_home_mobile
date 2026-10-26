@@ -15,8 +15,9 @@ export type MemoryChatFiles = ChatFiles & {
 };
 
 /**
- * ChatFiles held in memory, by relative path. put() also stores bytes
- * under any key (a content: URI, a cache path) for copyFrom to read.
+ * ChatFiles held in memory, by relative path; bytes(), put() and size()
+ * also take the file: URI uri() gives. put() also stores bytes under any
+ * other key (a content: URI, a cache path) for copyFrom to read.
  */
 export function memoryChatFiles(): MemoryChatFiles {
     const store = new Map<string, Uint8Array>();
@@ -27,7 +28,7 @@ export function memoryChatFiles(): MemoryChatFiles {
         put: (pathOrUri, bytes) => void store.set(keyOf(pathOrUri), bytes),
         uri: async (rel) => MEMORY_ROOT + encodeURI(rel),
         webUrl: async (rel) => `http://localhost/_capacitor_file_/memory/files/${encodeURI(rel)}`,
-        size: async (rel) => store.get(rel)?.length ?? null,
+        size: async (pathOrUri) => store.get(keyOf(pathOrUri))?.length ?? null,
         async writeBlob(rel, blob) {
             const bytes = new Uint8Array(await blob.arrayBuffer());
             store.set(rel, bytes);
