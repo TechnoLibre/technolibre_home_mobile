@@ -465,6 +465,19 @@ describe("ChatRepository", () => {
       expect(row).toMatchObject({ attachmentId: 31, state: "posted", messageId: 61 });
     });
 
+    it("adoptOutgoing leaves one row when an interrupted settle left the bus row beside the local one", async () => {
+      await repo.putOutgoing([outgoing(A, "l1", { state: "uploaded", attachmentId: 31 })]);
+      await repo.applyDelta(A, delta({
+        messages: [{ messageId: 60, channelId: 7, body: "x", attachmentIds: [31] }],
+        attachments: [server(31)],
+      }));
+      await repo.setOriginal(A, 31, "chat/dir/out/l1/photo.jpg", 1000);
+      await repo.adoptOutgoing(A, "post1", 60);
+      await repo.adoptOutgoing(A, "post1", 60);
+      expect(await db.rawQuery("SELECT id FROM chat_attachments")).toHaveLength(1);
+      expect(await repo.attachmentBytes(A, 7)).toBe(1000);
+    });
+
     it("deleteOutgoing removes the rows and returns their paths", async () => {
       await repo.putOutgoing([outgoing(A, "l1"), outgoing(A, "l2")]);
       expect(await repo.deleteOutgoing(A, ["l1"])).toEqual(["chat/dir/out/l1/photo.jpg"]);

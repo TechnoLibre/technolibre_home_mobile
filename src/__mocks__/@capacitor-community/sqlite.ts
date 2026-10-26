@@ -124,20 +124,30 @@ class MockDBConnection {
     }
 
     const updateMatch = sql.match(
-      /UPDATE\s+(\w+)\s+SET\s+([\s\S]+?)\s+WHERE\s+([\s\S]+)/i
+      /UPDATE\s+(OR\s+REPLACE\s+)?(\w+)\s+SET\s+([\s\S]+?)\s+WHERE\s+([\s\S]+)/i
     );
     if (updateMatch && values) {
-      const table = updateMatch[1];
-      const setCols = updateMatch[2]
+      const orReplace = !!updateMatch[1];
+      const table = updateMatch[2];
+      const setCols = updateMatch[3]
         .split(",")
         .map((c) => c.trim().split(/\s*=\s*/)[0]);
-      const whereCols = updateMatch[3]
+      const whereCols = updateMatch[4]
         .split(/\s+AND\s+/i)
         .map((c) => c.trim().split(/\s*=\s*/)[0]);
       const whereValues = values.slice(setCols.length);
       const setValues = values.slice(0, setCols.length);
-      const rows = this.tables.get(table) || [];
+      let rows = this.tables.get(table) || [];
       let changes = 0;
+      // OR REPLACE: a row holding the new primary key, other than the updated one, is removed
+      const idAt = setCols.indexOf("id");
+      if (orReplace && idAt >= 0) {
+        const kept = rows.filter(
+          (row) => row.id !== setValues[idAt] || whereCols.every((col, i) => row[col] === whereValues[i])
+        );
+        this.tables.set(table, kept);
+        rows = kept;
+      }
       rows.forEach((row) => {
         const match = whereCols.every(
           (col, i) => row[col] === whereValues[i]

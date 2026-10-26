@@ -955,6 +955,9 @@ export class ChatRepository {
     await this.put("chat_sources", this.sourceRow({ ...base, ...defined(s) }));
   }
 
+  /** In-flight fileDirOf calls, so two concurrent first calls share one id. */
+  private fileDirs = new Map<string, Promise<string>>();
+
   /**
    * The account's directory name under chat/: a random id made on first use
    * and stored with the sync state, so it follows a renamed account and
@@ -968,9 +971,6 @@ export class ChatRepository {
     }
     return pending;
   }
-
-  /** In-flight fileDirOf calls, so two concurrent first calls share one id. */
-  private fileDirs = new Map<string, Promise<string>>();
 
   private async makeFileDir(configId: string): Promise<string> {
     const state = await this.sourceState(configId);
@@ -1056,9 +1056,16 @@ export class ChatRepository {
         state: "posted",
         error: null,
       };
-      // Written before the local row goes: an interruption leaves both, and a rerun merges them again
-      await this.put("chat_attachments", this.attachmentRow(merged));
-      await this.del("chat_attachments", { id: key(configId, `l${local.localUuid}`) });
+      // One statement, so no interruption leaves both rows: the local row takes the `a<id>` key and
+      // REPLACE removes the row the bus wrote under it. The one non-equality statement of this class.
+      const r = this.attachmentRow(merged);
+      await this.db.rawRun(
+        "UPDATE OR REPLACE chat_attachments SET id = ?, message_id = ?, post_client_uuid = ?, state = ?, "
+          + "error = ?, name = ?, mimetype = ?, size = ?, checksum = ?, voice = ?, thumb_path = ?, "
+          + "thumb_bytes = ?, last_opened_at = ? WHERE id = ?",
+        [r.id, r.message_id, null, "posted", null, r.name, r.mimetype, r.size, r.checksum, r.voice, r.thumb_path, r.thumb_bytes,
+          r.last_opened_at, key(configId, `l${local.localUuid}`)],
+      );
       out.push(merged);
     }
     return out;
