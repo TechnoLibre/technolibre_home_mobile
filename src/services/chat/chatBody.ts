@@ -253,4 +253,3 @@ export function attachmentPreview(atts: { name: string; mimetype: string; voice:
     .join(", ");
   return text.length > max ? text.slice(0, Math.max(0, max - 1)).trimEnd() + "…" : text;
 }
-

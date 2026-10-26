@@ -40,7 +40,7 @@ function unescape(html: string): string {
 
 /** A text node as `outerHTML` writes it: `&`, the no-break space, `<` and `>`, quotes left as they are. */
 function serializeText(text: string): string {
-  return text.replaceAll("&", "&amp;").replaceAll(" ", "&nbsp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return text.replaceAll("&", "&amp;").replaceAll("\u00a0", "&nbsp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 function channelText(c: Mentions["channels"][number]): string {
@@ -50,13 +50,15 @@ function channelText(c: Mentions["channels"][number]): string {
 /**
  * The picks whose text is still in the raw text (`getMentionsFromText`,
  * `store_service.js:506-526`): `@name`, `#name` or `#parent > name`; a pick
- * whose text was edited away is dropped. `special` holds « everyone » when
- * `@everyone` is in the text, whoever was picked.
+ * whose text was edited away is dropped. A pick whose id is not an integer
+ * is dropped too, so no id reaches an href, a `data-oe-id` or `partner_ids`
+ * unchecked. `special` holds « everyone » when `@everyone` is in the text,
+ * whoever was picked.
  */
 export function validMentions(text: string, m: Mentions): Mentions & { special: string[] } {
   return {
-    partners: m.partners.filter((p) => text.includes(`@${p.name}`)),
-    channels: m.channels.filter((c) => text.includes(channelText(c))),
+    partners: m.partners.filter((p) => Number.isInteger(p.id) && text.includes(`@${p.name}`)),
+    channels: m.channels.filter((c) => Number.isInteger(c.id) && text.includes(channelText(c))),
     special: SPECIAL.filter((s) => text.includes(`@${s}`)),
   };
 }
@@ -163,7 +165,12 @@ export function linkify(text: string): string {
   return result + escape(text.slice(current));
 }
 
-/** The tags the body holds at this point: `<br/>` and the mention anchors built above, whose text has no `<`. */
+/**
+ * The tags mentionLinks and escapeAndCompact write: `<br/>`, and an anchor
+ * whose text has no `<` (serializeText escapes it). A replacement pattern
+ * such as `$'` inside a name inserts raw body text into an anchor; the
+ * match then differs from the browser's parse, a case left unhandled.
+ */
 const TAG_RE = /<br\/>|<a [^>]*>[^<]*<\/a>/g;
 
 /**
@@ -171,7 +178,7 @@ const TAG_RE = /<br\/>|<a [^>]*>[^<]*<\/a>/g;
  * URLs of its text nodes, and writes every element back through
  * `outerHTML`. The body is built here, so its parts are known: escaped text,
  * `<br/>` (written `<br>`), and anchors, whose `outerHTML` is the text they
- * were built with.
+ * were built with (TAG_RE says where that stops holding).
  */
 function linkifyHtml(body: string): string {
   let out = "";

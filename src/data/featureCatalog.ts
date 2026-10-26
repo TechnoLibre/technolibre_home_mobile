@@ -4485,7 +4485,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/fixtures/composer-golden.json",
                     "src/__tests__/fixtures/PROVENANCE.md",
                 ],
-                tests: ["src/__tests__/chatCompose.test.ts", "src/__tests__/chatBody.test.ts"],
+                tests: ["src/__tests__/chatCompose.test.ts", "src/__tests__/chatBody.test.ts", "src/__tests__/chatBodyNode.test.ts"],
             },
             {
                 id: "chat.people",

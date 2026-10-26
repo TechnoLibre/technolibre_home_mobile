@@ -10,6 +10,13 @@ import { CHAT_NOTE, CHAT_POST, CHAT_READ, CHAT_UPLOAD, ChatOutbox } from "../ser
 import { memoryChatFiles } from "../testing/chatFakes";
 import type { OutgoingFile } from "../models/chat";
 import { chatMarker } from "../services/chat/chatBody";
+import { emojiConversions } from "../services/chat/chatEmoji";
+
+// The real conversions, replaceable per test (a chunk that fails to load)
+vi.mock("../services/chat/chatEmoji", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../services/chat/chatEmoji")>();
+  return { ...mod, emojiConversions: vi.fn(mod.emojiConversions) };
+});
 
 const CREDS: SyncCredentials = { odooUrl: "https://odoo.example.com", username: "alice", password: "pw", database: "db1" };
 const CONFIG = syncConfigIdOf(CREDS);
@@ -194,6 +201,19 @@ describe("ChatOutbox", () => {
     expect(m.body).toBe(html);
     await chat.flush(CREDS);
     expect(odoo.posts()[0].params.post_data.body).toBe(html + chatMarker(m.clientUuid!));
+  });
+
+  it("a post whose emoji chunk fails to load is not stamped as possibly sent", async () => {
+    const odoo = chatOdoo();
+    const m = await chat.queuePost(CONFIG, CHANNEL, "hello :)", false);
+    vi.mocked(emojiConversions).mockRejectedValueOnce(new Error("chunk failed"));
+    await chat.flush(CREDS);
+    expect(odoo.posts()).toHaveLength(0);
+    const [op] = await db.getOutboxOpsForConfig(CONFIG);
+    expect(op.params.createSentAt ?? null).toBeNull();
+    advance(60_000);
+    await chat.flush(CREDS);
+    expect(odoo.posts().map((p) => p.params.post_data.body)).toEqual(["hello 😊" + chatMarker(m.clientUuid!)]);
   });
 
   it("lost response then retry adopts the marked message", async () => {

@@ -5,6 +5,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // A DOMParser for node files and the long tests (--dir long_test/mobile_sync), from this config too
+    setupFiles: [resolve(__dirname, "src/__tests__/setup/domParser.ts")],
     // Exclude whisper.cpp vendor tests -- they need a compiled C++ addon
     // (addon.node) built only for desktop Node.js, not Android. Also exclude
     // the bundled-source duplicates (src/public/, dist/) so vitest does not

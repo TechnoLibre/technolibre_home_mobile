@@ -53,6 +53,16 @@ describe("validMentions", () => {
   });
 });
 
+describe("mention ids", () => {
+  it("skips a pick whose id is not an integer, in the body and in the ids", () => {
+    const bad = { partners: [{ id: '7" onclick="x' as unknown as number, name: "Alice Martin" }],
+      channels: [{ id: 2.5, name: "général-test", parentName: null }] };
+    expect(composeBody("@Alice Martin #général-test", bad, conversions)).toEqual({
+      body: "@Alice Martin #général-test", partnerIds: [], specialMentions: [],
+    });
+  });
+});
+
 describe("partnerIds and specialMentions", () => {
   it("lists the kept partners in pick order and everyone", () => {
     const bob = { id: 9, name: "Bob" };

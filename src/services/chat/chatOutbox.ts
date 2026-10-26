@@ -1426,6 +1426,8 @@ export class ChatOutbox {
       this.changed(op.configId, channelId);
       return;
     }
+    // Built before any stamp: a conversion chunk that fails to load is a plain retry, never a possible send
+    const body = composeBody(text, EMPTY_MENTIONS, await emojiConversions()).body + chatMarker(op.clientUuid);
     const sentAt = await this.quietStamp(creds, op);
 
     let messageId: number | null = null;
@@ -1436,7 +1438,7 @@ export class ChatOutbox {
       if (messageId === null) {
         await this.outbox.setParams(op.id, { createSentAt: this.now().toISOString() });
         const postData: Record<string, any> = {
-          body: composeBody(text, EMPTY_MENTIONS, await emojiConversions()).body + chatMarker(op.clientUuid),
+          body,
           message_type: "comment",
           subtype_xmlid: "mail.mt_comment",
         };
