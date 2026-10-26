@@ -4297,8 +4297,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.settings",
                 label: { en: "Chat settings", fr: "Réglages du clavardage" },
                 description: {
-                    en: "Whether read and typing are sent to the server.",
-                    fr: "Si la lecture et la frappe sont envoyées au serveur.",
+                    en: "Whether read and typing are sent to the server, the attachment cache's purge and limit, and asking before compressing photos.",
+                    fr: "Si la lecture et la frappe sont envoyées au serveur, la purge et la limite du cache des pièces jointes, et la question avant de compresser les photos.",
                 },
                 status: "experimental",
                 demo: NONE_PLUMBING,
@@ -4411,8 +4411,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.attachments",
                 label: { en: "Chat attachments", fr: "Pièces jointes du clavardage" },
                 description: {
-                    en: "Streamed file upload and download with the session, the app's chat file layout and the CSRF token of the upload routes.",
-                    fr: "Envoi et téléchargement de fichiers en flux avec la session, l'arborescence des fichiers du clavardage et le jeton CSRF des routes d'envoi.",
+                    en: "Streamed file upload and download with the session, the app's chat file layout, the CSRF token of the upload routes, and the cache of previews and originals.",
+                    fr: "Envoi et téléchargement de fichiers en flux avec la session, l'arborescence des fichiers du clavardage, le jeton CSRF des routes d'envoi et le cache des aperçus et des originaux.",
                 },
                 status: "experimental",
                 howItWorks: {
@@ -4421,14 +4421,23 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "touches files under the app's chat directory. The CSRF token is read from the login "
                         + "page and kept per session. An expired session reads as 404 on these public routes: "
                         + "the app logs in again, takes a new token and tries once more. Files live under "
-                        + "chat/<random id of the account>/ (out, files, thumbs).",
+                        + "chat/<random id of the account>/ (out, files, thumbs). Previews load two at a time, "
+                        + "the newest first, whatever the network; an original downloads on open, its SHA-1 "
+                        + "checked, and waits for Wi-Fi when « Wi-Fi only » is on unless downloaded anyway. "
+                        + "The purge (off by default) frees the least recently opened originals, then previews; "
+                        + "files waiting to be sent are never touched.",
                     fr: "Un plugin natif OkHttp envoie en flux un formulaire multipart lu d'un fichier et "
                         + "télécharge vers un fichier « .part » renommé une fois complet, donc un fichier n'est "
                         + "jamais entier en mémoire JS ; il ne touche que les fichiers du répertoire de "
                         + "clavardage de l'application. Le jeton CSRF est lu de la page de connexion et gardé par "
                         + "session. Une session expirée se lit comme un 404 sur ces routes publiques : "
                         + "l'application se reconnecte, prend un nouveau jeton et réessaie une fois. Les "
-                        + "fichiers vivent sous chat/<id aléatoire du compte>/ (out, files, thumbs).",
+                        + "fichiers vivent sous chat/<id aléatoire du compte>/ (out, files, thumbs). Les aperçus "
+                        + "se chargent deux à la fois, le plus récent d'abord, quel que soit le réseau ; un "
+                        + "original se télécharge à l'ouverture, son SHA-1 vérifié, et attend le Wi-Fi quand "
+                        + "« Wi-Fi seulement » est actif, sauf téléchargement forcé. La purge (inactive par "
+                        + "défaut) libère les originaux ouverts le moins récemment, puis les aperçus ; les "
+                        + "fichiers en attente d'envoi ne sont jamais touchés.",
                 },
                 demo: NONE_PLUMBING,
                 files: [
@@ -4438,6 +4447,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatFiles.ts",
                     "src/services/chat/chatCsrf.ts",
                     "src/services/chat/chatTransfer.ts",
+                    "src/services/chat/chatAttachmentCache.ts",
                     "src/testing/chatFakes.ts",
                 ],
                 tests: [

@@ -27,19 +27,19 @@ afterEach(() => { delete (globalThis as any).localStorage; });
 describe("OptionsChatComponent", () => {
     it("starts with both options on", () => {
         const { c } = make();
-        expect(c.state.settings).toEqual({ sendRead: true, sendTyping: true });
+        expect(c.state.settings).toMatchObject({ sendRead: true, sendTyping: true });
     });
 
     it("toggles persist in options.chat", () => {
         const { c, store } = make();
         c.onToggle("sendRead", { target: { checked: false } });
-        expect(chatSettings()).toEqual({ sendRead: false, sendTyping: true });
-        expect(JSON.parse(store[CHAT_SETTINGS_KEY])).toEqual({ sendRead: false, sendTyping: true });
+        expect(chatSettings()).toMatchObject({ sendRead: false, sendTyping: true });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY])).toMatchObject({ sendRead: false, sendTyping: true });
         expect(c.state.settings.sendRead).toBe(false);
         c.onToggle("sendTyping", { target: { checked: false } });
-        expect(chatSettings()).toEqual({ sendRead: false, sendTyping: false });
+        expect(chatSettings()).toMatchObject({ sendRead: false, sendTyping: false });
         c.onToggle("sendRead", { target: { checked: true } });
-        expect(chatSettings()).toEqual({ sendRead: true, sendTyping: false });
+        expect(chatSettings()).toMatchObject({ sendRead: true, sendTyping: false });
     });
 });
 

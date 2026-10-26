@@ -10,6 +10,7 @@ import type { OdooRpcClient, SyncCredentials } from "../odoo/odooRpcClient";
 import type { OutboxService } from "../outboxService";
 import { nativeChatHttp } from "../../plugins/chatFilePlugin";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
+import { ChatAttachmentCache } from "./chatAttachmentCache";
 import { ChatCsrf } from "./chatCsrf";
 import { deviceChatFiles, type ChatFiles, type ChatHttp } from "./chatFiles";
 import { ChatModuleLevel, effectiveLevel, levelAtLeast, moduleProbe } from "./chatModule";
@@ -151,6 +152,9 @@ export class ChatService {
   /** Who to write to, channels to join and access groups of a new channel. */
   readonly people: ChatPeople;
 
+  /** The attachments' files on the phone: previews, downloads, space, purge (made by useFileIO). */
+  attachments!: ChatAttachmentCache;
+
   constructor(
     private db: DatabaseService,
     private rpc: OdooRpcClient,
@@ -184,13 +188,20 @@ export class ChatService {
    * The files and the file transport the outbox uploads with (the device's
    * by default; memory files and a fake transport in tests and the test
    * kit), and optionally how Wi-Fi is known. Nothing is subscribed or
-   * sent here: progress events are followed from the first upload.
+   * sent here: progress events are followed from the first upload or
+   * download. The attachment cache is made again over them, and the files
+   * the repository releases are deleted through it.
    */
   useFileIO(io: { files: ChatFiles; http: ChatHttp; onWifi?: () => Promise<boolean> }): void {
     this.queue.files = io.files;
     this.queue.transfer = new ChatTransfer(this.rpc, io.http, io.files, new ChatCsrf(this.rpc, io.http));
     this.queue.setProgressSource((fn) => io.http.onProgress(fn));
     if (io.onWifi) this.queue.onWifi = io.onWifi;
+    this.attachments?.setProgressSource(null);
+    this.attachments = new ChatAttachmentCache(this.repo, io.files, this.queue.transfer, this.queue.onWifi, this.now);
+    this.attachments.opsOf = (configId) => this.db.getOutboxOpsForConfig(configId);
+    this.attachments.setProgressSource((fn) => io.http.onProgress(fn));
+    this.repo.onFilesReleased = (paths) => this.attachments.release(paths);
   }
 
   /** The account's directory name under chat/ (ChatRepository.fileDirOf), where its files are staged. */
@@ -657,6 +668,7 @@ export class ChatService {
   discardCreate(configId: string, channelId: number): Promise<void> {
     return this.serial(configId, async () => {
       await this.queue.discardCreate(configId, channelId);
+      await this.sweep(configId);
       this.changed(configId, null);
     });
   }
@@ -710,6 +722,7 @@ export class ChatService {
   /** Leaves a group or a channel (see ChatOutbox.queueLeave): out of the list at once, its queued texts not sent. */
   async leave(src: ChatSource, channelId: number): Promise<void> {
     await this.queue.queueLeave(src.configId, channelId);
+    await this.sweep(src.configId);
     await this.afterAction(src, channelId);
   }
 
@@ -874,10 +887,22 @@ export class ChatService {
   /**
    * Startup repair of the chat outbox, after OutboxService.recoverInterrupted:
    * a create or join cut between its op and its row is queued, or removed
-   * when its row is missing (ChatOutbox.recoverIncomplete).
+   * when its row is missing (ChatOutbox.recoverIncomplete); then every
+   * account's files nothing needs go (ChatAttachmentCache.sweep).
    */
-  recover(): Promise<number> {
-    return this.queue.recoverIncomplete();
+  async recover(): Promise<number> {
+    const queued = await this.queue.recoverIncomplete();
+    for (const configId of await this.db.getLiveSyncConfigIds()) await this.sweep(configId);
+    return queued;
+  }
+
+  /** Drops the account's files of the phone nothing needs any more; a failure is logged. */
+  private async sweep(configId: string): Promise<void> {
+    try {
+      await this.attachments.sweep(configId);
+    } catch (e: unknown) {
+      console.warn("chat: sweep of unsent files failed", e);
+    }
   }
 
   /**
@@ -996,14 +1021,17 @@ export class ChatService {
     this.changed(configId, null);
   }
 
+  /** The account's ops leave the outbox, then its files, then its rows. */
   private async erase(configId: string): Promise<void> {
     await this.queue.dropAll(configId);
+    await this.attachments.erase(configId);
     await this.repo.dropSource(configId);
   }
 
   /**
    * Flushes the chat outbox of every application; one that fails does not
    * stop the others. force skips the retry delays (not a quiet window).
+   * The originals held for Wi-Fi start then, not waited for.
    */
   async flushAll(opts: { force?: boolean } = {}): Promise<void> {
     for (const app of await this.db.getAllApplications()) {
@@ -1015,6 +1043,7 @@ export class ChatService {
         // Kept in the outbox for the next flush
       }
     }
+    this.attachments.resumeWaiting().catch((e) => console.warn("chat: held downloads did not start", e));
   }
 
   // ─── Realtime ─────────────────────────────────────────────────────────────
@@ -1261,6 +1290,7 @@ export class ChatService {
           for (const id of kept) await this.repo.patchChannel(configId, id, { isMember: false });
         }
         await this.repo.applyDelta(configId, { ...emptyDelta(), deletedChannelIds: ids.filter((id) => !kept.includes(id)) });
+        await this.sweep(configId);
         return ids.length === 1 ? ids[0] : null;
       }
       case "ir.attachment/delete":

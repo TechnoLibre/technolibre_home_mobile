@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS, chatSettings, setChatSettings } from "../services/chat/chatSettings";
+import {
+  CHAT_SETTINGS_KEY, DEFAULT_CACHE_LIMIT_MB, DEFAULT_CHAT_SETTINGS, chatSettings, setChatSettings,
+} from "../services/chat/chatSettings";
 
 function memoryStorage() {
   const items = new Map<string, string>();
@@ -14,14 +16,28 @@ describe("chatSettings", () => {
   beforeEach(() => vi.stubGlobal("localStorage", memoryStorage()));
 
   it("defaults when missing or unreadable", () => {
-    expect(chatSettings()).toEqual({ sendRead: true, sendTyping: true });
+    expect(chatSettings()).toEqual({
+      sendRead: true, sendTyping: true, cachePurge: false, cacheLimitMb: 2048, askCompress: false,
+    });
     localStorage.setItem(CHAT_SETTINGS_KEY, "{bad");
     expect(chatSettings()).toEqual(DEFAULT_CHAT_SETTINGS);
   });
 
   it("round-trips", () => {
-    setChatSettings({ sendRead: false, sendTyping: true });
-    expect(chatSettings()).toEqual({ sendRead: false, sendTyping: true });
+    const settings = { sendRead: false, sendTyping: true, cachePurge: true, cacheLimitMb: 512, askCompress: true };
+    setChatSettings(settings);
+    expect(chatSettings()).toEqual(settings);
     expect(CHAT_SETTINGS_KEY).toBe("options.chat");
+  });
+
+  it("cache settings: purge and compress off unless set, a bad limit reads as the default", () => {
+    localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify({ sendRead: false }));
+    expect(chatSettings()).toMatchObject({ cachePurge: false, cacheLimitMb: DEFAULT_CACHE_LIMIT_MB, askCompress: false });
+    for (const bad of [0, -5, "x", null, "Infinity"]) {
+      localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify({ cacheLimitMb: bad }));
+      expect(chatSettings().cacheLimitMb).toBe(2048);
+    }
+    localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify({ cacheLimitMb: "300" }));
+    expect(chatSettings().cacheLimitMb).toBe(300);
   });
 });

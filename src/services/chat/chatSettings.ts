@@ -1,19 +1,45 @@
 /** localStorage key of the chat settings. */
 export const CHAT_SETTINGS_KEY = "options.chat";
 
+/** Size of the attachment cache the purge keeps under, in MB, unless the user sets another. */
+export const DEFAULT_CACHE_LIMIT_MB = 2048;
+
 /**
  * What the chat tells the server about the user: sendRead marks
  * conversations read and fetched, sendTyping announces typing. Posting a
  * message marks its conversation read whatever sendRead holds.
+ *
+ * The attachment cache: cachePurge lets the purge remove cached files once
+ * the chat's files pass cacheLimitMb (MB); askCompress asks before
+ * sending a photo whether to compress it.
  */
 export interface ChatSettings {
   sendRead: boolean;
   sendTyping: boolean;
+  cachePurge: boolean;
+  cacheLimitMb: number;
+  askCompress: boolean;
 }
 
-export const DEFAULT_CHAT_SETTINGS: ChatSettings = { sendRead: true, sendTyping: true };
+export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
+  sendRead: true,
+  sendTyping: true,
+  cachePurge: false,
+  cacheLimitMb: DEFAULT_CACHE_LIMIT_MB,
+  askCompress: false,
+};
 
-/** The settings stored, or the defaults; a missing key counts as on, unreadable storage as the defaults. */
+/** A limit in MB: a finite number above 0, else the default. */
+function limitOf(value: unknown): number {
+  const mb = value === null || value === undefined ? NaN : Number(value);
+  return Number.isFinite(mb) && mb > 0 ? mb : DEFAULT_CACHE_LIMIT_MB;
+}
+
+/**
+ * The settings stored, or the defaults; unreadable storage counts as the
+ * defaults. A missing sendRead or sendTyping counts as on, a missing
+ * cachePurge or askCompress as off.
+ */
 export function chatSettings(): ChatSettings {
   try {
     const raw = JSON.parse(localStorage.getItem(CHAT_SETTINGS_KEY) ?? "null");
@@ -21,6 +47,9 @@ export function chatSettings(): ChatSettings {
     return {
       sendRead: raw.sendRead !== false,
       sendTyping: raw.sendTyping !== false,
+      cachePurge: raw.cachePurge === true,
+      cacheLimitMb: limitOf(raw.cacheLimitMb),
+      askCompress: raw.askCompress === true,
     };
   } catch {
     return DEFAULT_CHAT_SETTINGS;

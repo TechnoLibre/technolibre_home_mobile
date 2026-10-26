@@ -18,6 +18,9 @@ const flag = (v: boolean): number => (v ? 1 : 0);
 /** The key of a row: `configId#<local key>`, so accounts never share a row. */
 const key = (configId: string, local: string | number): string => `${configId}#${local}`;
 
+/** The key of a server attachment's row, as clearFiles takes it. */
+export const attachmentKey = (configId: string, attachmentId: number): string => key(configId, `a${attachmentId}`);
+
 function defined<T extends object>(p: T): Partial<T> {
   const out: Partial<T> = {};
   for (const k of Object.keys(p) as (keyof T)[]) {
@@ -1113,6 +1116,11 @@ export class ChatRepository {
     return out;
   }
 
+  /** The row of a server attachment (`a<id>`), or null when it is not cached. */
+  async attachment(configId: string, attachmentId: number): Promise<ChatAttachment | null> {
+    return this.attachmentByKey(configId, `a${attachmentId}`);
+  }
+
   /** Records the cached preview of a server attachment. */
   async setPreview(configId: string, attachmentId: number, path: string, bytes: number): Promise<void> {
     await this.patchServer(configId, attachmentId, { thumbPath: path, thumbBytes: bytes });
@@ -1179,6 +1187,37 @@ export class ChatRepository {
   /** The channel a cached server attachment belongs to; undefined when it is not cached. */
   async attachmentChannel(configId: string, attachmentId: number): Promise<number | undefined> {
     return (await this.attachmentByKey(configId, `a${attachmentId}`))?.channelId;
+  }
+
+  /** The account's files of the phone (`l<uuid>` rows: queued, uploaded or refused), in no order. */
+  async outgoingRows(configId: string): Promise<ChatAttachment[]> {
+    const prefix = key(configId, "l");
+    return (await this.rows("chat_attachments", { config_id: configId }))
+      .filter((r) => String(r.id).startsWith(prefix))
+      .map(attachmentFromRow);
+  }
+
+  /** Client uuids of the account's messages without a server id (queued or failed). */
+  async queuedMessageUuids(configId: string): Promise<Set<string>> {
+    return new Set((await this.rows("chat_messages", { config_id: configId }))
+      .filter((r) => r.message_id == null && r.client_uuid)
+      .map((r) => r.client_uuid as string));
+  }
+
+  /**
+   * Forgets the file of rows of the phone by local uuid, the rows kept (a
+   * refused file still named beside its text), and returns the paths
+   * without releasing them, as deleteOutgoing does.
+   */
+  async releaseOutgoing(configId: string, localUuids: string[]): Promise<string[]> {
+    const paths: string[] = [];
+    for (const uuid of localUuids) {
+      const row = await this.attachmentByKey(configId, `l${uuid}`);
+      if (!row?.originalPath) continue;
+      paths.push(row.originalPath);
+      await this.put("chat_attachments", this.attachmentRow({ ...row, originalPath: null, originalBytes: 0 }));
+    }
+    return paths;
   }
 
   /** Drops server attachments by id (the server deleted them), releases and returns their file paths. */
