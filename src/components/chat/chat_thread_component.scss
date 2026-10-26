@@ -116,6 +116,20 @@
 	background: rgba(46, 158, 79, 0.25);
 }
 
+// A notification of the server (a pin notice): a centered line, no bubble
+.chat-thread__bubble--system {
+	align-self: center;
+	max-width: 90%;
+	background: transparent;
+	font-size: 0.85rem;
+	text-align: center;
+	opacity: 0.85;
+}
+
+.chat-thread__pinned {
+	font-size: 0.75rem;
+}
+
 // The message whose menu is open
 .chat-thread__bubble--pressed {
 	outline: 2px solid rgba(46, 158, 79, 0.6);
@@ -176,6 +190,15 @@
 	color: inherit;
 	font-weight: 600;
 	text-decoration: none;
+	cursor: pointer;
+}
+
+// The links of a pin notice: the pinned message and the list of them
+.chat-msg__pin-jump,
+.chat-msg__pin-menu {
+	color: inherit;
+	font-weight: 600;
+	text-decoration: underline;
 	cursor: pointer;
 }
 

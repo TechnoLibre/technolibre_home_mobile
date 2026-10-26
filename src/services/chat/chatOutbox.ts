@@ -139,8 +139,17 @@ export const CHAT_EDIT = "chat.edit";
  */
 export const CHAT_DELETE = "chat.delete";
 
+/**
+ * params { channelId, messageId: number, clientUuid: null, pinned: boolean,
+ * base: boolean, baseAt: string|null }: a sent message pinned in its
+ * channel or not, as a target state (set_message_pin is idempotent). base:
+ * whether the server held it pinned when the first op of the message was
+ * queued; baseAt: its pinned_at then, shown again when the pin is given up.
+ */
+export const CHAT_PIN = "chat.pin";
+
 /** The actions on one message, handled by runMessageAction, each a target state of its message (and content). */
-export const MESSAGE_KINDS = [CHAT_REACTION, CHAT_EDIT, CHAT_DELETE];
+export const MESSAGE_KINDS = [CHAT_REACTION, CHAT_EDIT, CHAT_DELETE, CHAT_PIN];
 
 /** The guarded edit route of the server module (1.3): it writes only over the body whose fingerprint it is given. */
 export const MODULE_EDIT_ROUTE = "/erplibre_mobile_chat/message/update_content";
@@ -1193,6 +1202,34 @@ export class ChatOutbox {
   }
 
   /**
+   * Queues a sent message pinned in its channel (`pinned`) or not, as the
+   * target state of the message (queueAction): the op waiting takes the
+   * new value and keeps its base, and a value equal to its base (where the
+   * server stood) cancels the waiting ops and queues nothing (null).
+   * Shown at once: pinnedAt now, or null. Rejects for a message not cached
+   * or without a server id (Odoo pins only a message it holds).
+   */
+  async queuePin(configId: string, channelId: number, target: MessageTarget, pinned: boolean): Promise<OutboxOp | null> {
+    const message = await this.repo.messageOf(configId, target);
+    if (!message) throw new Error("The message to pin is not cached.");
+    if (message.messageId === null) throw new Error("A message not sent yet takes no pin.");
+    const messageId = message.messageId;
+    const base = { base: !!message.pinnedAt, baseAt: message.pinnedAt ?? null };
+    return this.queueAction(configId, CHAT_PIN, channelId, { messageId, clientUuid: null, pinned, ...base }, {
+      same: (o) => o.params.messageId === messageId,
+      merge: () => ({ pinned }),
+      noop: (merged) => !!merged.pinned === !!merged.base,
+      local: () => this.showPin(configId, messageId, pinned ? odooDate(this.now()) : null),
+    });
+  }
+
+  /** Shows a cached message pinned at `at` (Odoo's date string), or not pinned (null). */
+  private async showPin(configId: string, messageId: number, at: string | null): Promise<void> {
+    if (!(await this.repo.message(configId, messageId))) return;
+    await this.repo.applyDelta(configId, { ...emptyDelta(), messages: [{ messageId, pinnedAt: at }] });
+  }
+
+  /**
    * Queues an edit of the user's own message to `text` with the people
    * and channels picked (`mentions`). A message not sent yet whose post has
    * not started (postStarted) takes the text into its post instead, its
@@ -1485,10 +1522,11 @@ export class ChatOutbox {
    * the message's others; one nobody is left in becomes a deletion. Only
    * the messages whose reactions the delta carries are touched. The
    * bodies first (overlayBodies; `except`: the op whose answer the delta
-   * is).
+   * is), then the pins (overlayPins).
    */
   async overlayMessages(configId: string, delta: StoreDelta, except?: string): Promise<void> {
     await this.overlayBodies(configId, delta, except);
+    await this.overlayPins(configId, delta);
     const carried = new Set([...(delta.reactions ?? []), ...(delta.reactionSets ?? []), ...(delta.deletedReactions ?? [])]
       .map((r) => r.messageId));
     if (carried.size === 0) return;
@@ -1535,6 +1573,50 @@ export class ChatOutbox {
       } else {
         delta.deletedReactions.push({ messageId, content });
         if (set) set.contents = set.contents.filter((c) => c !== content);
+      }
+    }
+  }
+
+  /**
+   * Lays the pins still queued (not given up) over the pinned state a
+   * delta carries, a message's pinned_at or its channel's full pinned list
+   * (pinnedSets), so the server's older state does not undo what the
+   * phone shows until they are sent. Per message the newest op counts:
+   * pinned, the message stays in its channel's list and keeps the
+   * pinnedAt the phone shows unless the delta has one; unpinned, it leaves
+   * the list and pinnedAt is null. The server's state the delta states for
+   * sure becomes the base of the message's ops when none was sent yet.
+   */
+  private async overlayPins(configId: string, delta: StoreDelta): Promise<void> {
+    const sets = new Map((delta.pinnedSets ?? []).map((s) => [s.channelId, s]));
+    const carried = new Map(delta.messages.filter((m) => m.pinnedAt !== undefined).map((m) => [m.messageId, m]));
+    if (sets.size === 0 && carried.size === 0) return;
+    const byMessage = new Map<number, OutboxOp[]>();
+    for (const op of dependencyOrder(await this.db.getOutboxOpsForConfig(configId))) {
+      if (op.kind !== CHAT_PIN || op.status === "blocked" || typeof op.params.messageId !== "number") continue;
+      byMessage.set(op.params.messageId, [...(byMessage.get(op.params.messageId) ?? []), op]);
+    }
+    for (const [messageId, ops] of byMessage) {
+      const m = carried.get(messageId);
+      const set = sets.get(ops[0].params.channelId);
+      if (!m && !set) continue;
+      // What the server holds, when the delta says it: the base of ops none of which was sent yet
+      const at = m ? m.pinnedAt ?? null : set!.messageIds.includes(messageId) ? undefined : null;
+      if (ops.every((o) => o.status !== "running" && !o.params.sentAt)) {
+        const held = at === undefined ? true : at !== null;
+        for (const o of ops) {
+          const baseAt = at === undefined ? (o.params.baseAt ?? null) : at;
+          if (!!o.params.base !== held || (o.params.baseAt ?? null) !== baseAt) await this.outbox.setParams(o.id, { base: held, baseAt });
+        }
+      }
+      const on = !!ops[ops.length - 1].params.pinned;
+      if (m) {
+        if (!on) m.pinnedAt = null;
+        else if (!m.pinnedAt) delete m.pinnedAt;
+      }
+      if (set) {
+        const others = set.messageIds.filter((id) => id !== messageId);
+        set.messageIds = on ? [...others, messageId] : others;
       }
     }
   }
@@ -2814,7 +2896,7 @@ export class ChatOutbox {
    * user is leaving, or left with texts unsent, is dropped. The message is
    * the cached one (messageOf: its server id, else its post's client
    * uuid): one no longer cached or still pending with its post gone is not
-   * sent, given up as "vanished", and so is a reaction on a message
+   * sent, given up as "vanished", and so is a reaction or a pin on a message
    * emptied (isEmptyMessage: deleted in Discuss); an edit or a delete is
    * shown in the cache already, so the server decides for them. One whose
    * post still waits holds the action (a plain error, retried). A row gone
@@ -2843,9 +2925,11 @@ export class ChatOutbox {
         throw new Error(`${act.kind} waits for the post of its message.`);
       }
       const messageId = message?.messageId ?? null;
-      const files = messageId === null || act.kind !== CHAT_REACTION ? 0
+      // A reaction or a pin goes only on a message that still shows: Odoo's pin would take an emptied one
+      const shownOnly = act.kind === CHAT_REACTION || act.kind === CHAT_PIN;
+      const files = messageId === null || !shownOnly ? 0
         : (await this.repo.attachmentsOf(configId, message!.channelId, [messageId], [])).get(`m${messageId}`)?.length ?? 0;
-      if (messageId === null || (act.kind === CHAT_REACTION && isEmptyMessage(message!.body, files))) {
+      if (messageId === null || (shownOnly && isEmptyMessage(message!.body, files))) {
         return this.giveUpMessage(act, "vanished", `The message of ${act.kind} is gone.`);
       }
       // The message id: a notice names the message the server knows. sentAt: from now on the server may hold this
@@ -2934,7 +3018,8 @@ export class ChatOutbox {
    * Sends one action on the message `messageId`; resolves with the
    * server's answer (a Store), or null when there is nothing to apply. A
    * delete is Odoo's: the body, the attachments and the subject emptied; a
-   * message already gone (NotFound) counts as deleted.
+   * message already gone (NotFound) counts as deleted. A pin answers
+   * nothing: set_message_pin returns no record.
    */
   private async sendMessageAction(creds: SyncCredentials, op: OutboxOp, messageId: number): Promise<any> {
     const p = op.params;
@@ -2952,6 +3037,10 @@ export class ChatOutbox {
           if (isVanished(e)) return null;
           throw e;
         }
+      case CHAT_PIN:
+        // Idempotent: a message already in that state is left as it is; its pin notice comes through the bus
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "set_message_pin", [[p.channelId]], { message_id: messageId, pinned: !!p.pinned });
+        return null;
     }
     throw new Error(`No sender for ${op.kind}.`);
   }
@@ -3032,8 +3121,9 @@ export class ChatOutbox {
   }
 
   /**
-   * Gives an action on a message up (giveUp). A reaction no later op of
-   * its key follows is shown again as the server held it (base). An edit
+   * Gives an action on a message up (giveUp). A reaction or a pin no later
+   * op of its key follows is shown again as the server held it (base, a
+   * pin at baseAt). An edit
    * or a delete with no other edit or delete of the message queued shows
    * the message as the server has it: hidden ("") when it vanished, as a
    * re-read that finds no message leaves it; the body it was made against
@@ -3047,11 +3137,14 @@ export class ChatOutbox {
         && (o.kind === CHAT_EDIT || o.kind === CHAT_DELETE) && o.status !== "blocked" && sameTarget(targetOf(o), target));
       if (!later) await this.showBody(op.configId, target, shown);
     }
-    if (op.kind === CHAT_REACTION) {
+    if (op.kind === CHAT_REACTION || op.kind === CHAT_PIN) {
       const key = targetKey(op);
       const later = (await this.db.getOutboxOpsForConfig(op.configId))
         .some((o) => o.id !== op.id && o.status !== "blocked" && targetKey(o) === key);
-      if (!later) await this.showReaction(op.configId, target, op.params.content, !!op.params.base);
+      if (!later && op.kind === CHAT_REACTION) await this.showReaction(op.configId, target, op.params.content, !!op.params.base);
+      if (!later && op.kind === CHAT_PIN && target.messageId !== null) {
+        await this.showPin(op.configId, target.messageId, op.params.base ? op.params.baseAt ?? odooDate(this.now()) : null);
+      }
     }
     return this.giveUp(op, reason, message);
   }

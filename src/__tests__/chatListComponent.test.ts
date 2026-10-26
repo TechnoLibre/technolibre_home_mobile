@@ -654,6 +654,31 @@ describe("ChatListComponent search", () => {
         expect([c.state.server, c.state.serverCount, c.state.serverMore]).toEqual(["done", 5, false]);
     });
 
+    it("an account whose next page is refused shows the server error status", async () => {
+        vi.useFakeTimers();
+        const chat = searching();
+        chat.sources = vi.fn().mockResolvedValue([src("a"), src("b")]);
+        const page = (configId: string, messageId: number) => ({
+            hits: [hit({ configId, messageId, origin: "server" })], joinable: [], people: [], count: 4, more: true, offline: false,
+        });
+        chat.search.server = vi.fn(async (s: any, _t: string, before?: number) => {
+            if (before !== undefined && s.configId === "b") throw new Error("RPC (HTTP 500)");
+            return page(s.configId, before === undefined ? 70 : 50);
+        });
+        const c = make(chat);
+        await c.loadCache();
+        typed(c, "ca");
+        await vi.advanceTimersByTimeAsync(200);
+        expect([c.state.server, c.state.serverCount, c.state.serverMore]).toEqual(["done", 8, true]);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        await c.onSearchMore();
+        warn.mockRestore();
+        // a's page is shown; b's failure is said, and its next page is still offered
+        expect(c.state.results.messages.filter((h: any) => h.messageId === 50).map((h: any) => h.configId)).toEqual(["a"]);
+        expect(c.state.server).toBe("error");
+        expect(c.state.serverMore).toBe(true);
+    });
+
     it("offline the phone's results show with the server's status", async () => {
         vi.useFakeTimers();
         const chat = searching();

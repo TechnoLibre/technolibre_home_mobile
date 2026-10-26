@@ -7,7 +7,7 @@ import { HeadingComponent } from "../heading/heading_component";
 import { Events } from "../../constants/events";
 import { getCurrentLocale, t } from "../../i18n";
 import { bodyPreview, bodyText, isEdited, isEmptyBody, isEmptyMessage, renderBody } from "../../services/chat/chatBody";
-import type { ChatSource } from "../../services/chat/chatService";
+import { unreadPin, type ChatSource } from "../../services/chat/chatService";
 import { displayNameOf } from "../../services/chat/chatNames";
 import { messageKeyOf } from "../../models/chat";
 import type {
@@ -40,6 +40,7 @@ import {
 import { ChatImageViewerComponent } from "./chat_image_viewer_component";
 import { ChatEmojiPickerComponent } from "./chat_emoji_picker_component";
 import { ChatMessageMenuComponent, type MessageCan } from "./chat_message_menu_component";
+import { ChatPinnedComponent, type PinnedItem } from "./chat_pinned_component";
 import { ChatReactionsComponent, ChatReactionWhoComponent, reactionViews, type ReactionView } from "./chat_reactions_component";
 import { LongPress } from "./chatLongPress";
 import { ChatComposerBannerComponent, type ComposerMode } from "./chat_composer_banner_component";
@@ -112,6 +113,10 @@ export interface ThreadRow {
     can: MessageCan;
     /** The message it replies to; null for none. */
     quote: QuoteView | null;
+    /** Pinned in its channel (pinnedAt). */
+    pinned: boolean;
+    /** A notification of the server (`message_type` notification, e.g. a pin notice): a centered line, no menu. */
+    system: boolean;
 }
 
 interface ThreadState {
@@ -151,8 +156,10 @@ interface ThreadState {
     viewer: string | null;
     /** Row key of the message a tap on a quote, or a search hit, scrolled to, for HIGHLIGHT_MS; null otherwise. */
     highlight: string | null;
-    /** Why the search hit the screen was opened at is not shown (not on the phone, offline); "" otherwise. */
+    /** Why the message the screen went to is not shown (not on the phone, offline, failed); "" otherwise (showNotice). */
     notice: string;
+    /** « Messages épinglés » as its panel shows it; null when it is closed. */
+    pinned: { items: PinnedItem[]; offline: boolean } | null;
     /** From the ➤ tap until the post is queued: the text takes no input, 📎, 🎤 and ➤ are off. */
     sending: boolean;
     /** The bubble of a send with files, from the tap until its post is queued; null otherwise. */
@@ -191,6 +198,8 @@ const PREPARING_IMAGES = 3;
 const FLASH_MS = 1500;
 /** How long the original of a tapped quote stays highlighted, in ms. */
 const HIGHLIGHT_MS = 1000;
+/** How long a notice on the message the screen went to stays, unless the user scrolls first, in ms. */
+export const NOTICE_MS = 5000;
 /** The edited mark renderBody adds: it alone does not make a body shown. */
 const EDITED_MARK = /<em class="chat-msg__edited">[^<]*<\/em>/g;
 
@@ -228,8 +237,10 @@ function utcMs(dt: string | null | undefined): number {
  * react and reply on a `comment` message of a conversation the user writes
  * in (writable), never on one whose post failed; edit on the user's own
  * `comment` messages, sent or queued (a failed one is not edited); delete
- * on them too, a failed one included (it is dropped with its files); copy
- * on any message whose text (bodyText) is not blank.
+ * on them too, a failed one included (it is dropped with its files); pin
+ * on a sent one (a server id), anyone's, as Odoo offers it to any partner
+ * of a channel; copy on any message whose text (bodyText) is not blank,
+ * but a notification, which offers nothing.
  */
 export function canOf(m: ChatMessage, own: boolean, writable: boolean, text: string): MessageCan {
     const live = writable && m.messageType === "comment";
@@ -237,15 +248,16 @@ export function canOf(m: ChatMessage, own: boolean, writable: boolean, text: str
     return {
         react: live && !failed,
         reply: live && !failed,
-        copy: text.trim() !== "",
+        copy: m.messageType !== "notification" && text.trim() !== "",
         edit: live && own && !failed,
         delete: live && own,
+        pin: live && !failed && m.messageId !== null,
     };
 }
 
-/** The part of a row's signature its chips, menu and quote add: a change repaints the row. */
+/** The part of a row's signature its chips, menu, pin, kind and quote add: a change repaints the row. */
 function actionsSig(r: ThreadRow): string {
-    const can = [r.can.react, r.can.reply, r.can.copy, r.can.edit, r.can.delete].map(Number).join("");
+    const can = [r.can.react, r.can.reply, r.can.copy, r.can.edit, r.can.delete, r.can.pin, r.pinned, r.system].map(Number).join("");
     const q = r.quote;
     const quote = q ? [q.key ?? "", q.author, q.text, q.state, Number(q.edited)].join(":") : "";
     return can + "|" + r.reactions.map((x) => [x.content, x.count, Number(x.self), x.names.join(",")].join(":")).join(";")
@@ -301,7 +313,7 @@ export class ChatThreadComponent extends EnhancedComponent {
     static components = {
         HeadingComponent, ChatComposerAttachComponent, ChatAttachmentsComponent, ChatImageViewerComponent, ChatEmojiPickerComponent,
         ChatMessageMenuComponent, ChatReactionsComponent, ChatReactionWhoComponent, ChatComposerBannerComponent,
-        ChatSuggestionsComponent,
+        ChatSuggestionsComponent, ChatPinnedComponent,
     };
 
     static template = xml`
@@ -319,6 +331,8 @@ export class ChatThreadComponent extends EnhancedComponent {
           <button role="menuitem" class="chat-thread__menu-item" t-on-click="onInfo" t-esc="t('chat.info')"/>
           <button role="menuitem" class="chat-thread__menu-item" t-on-click="onToggleOnTop"
                   t-esc="state.onTop ? t('chat.on_top_remove') : t('chat.on_top_add')"/>
+          <button role="menuitem" class="chat-thread__menu-item chat-thread__pinned-menu" t-on-click="onPinnedMenu"
+                  t-esc="t('chat.pinned_messages')"/>
           <p t-if="state.historyComplete" class="chat-thread__menu-note" t-esc="t('chat.history_complete')"/>
           <button t-else="" role="menuitem" class="chat-thread__menu-item" t-on-click="onLoadAll">
             <t t-if="state.loadingAll === null" t-esc="t('chat.load_all')"/>
@@ -333,7 +347,7 @@ export class ChatThreadComponent extends EnhancedComponent {
       </div>
       <div class="chat-thread__scroll" t-ref="scroller" t-on-scroll="onScroll">
         <div t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-thread__bubble" t-att-data-key="row.key"
-             t-att-class="{'chat-thread__bubble--own': row.own, 'chat-thread__bubble--pressed': state.actions === row.key, 'chat-thread__bubble--highlight': state.highlight === row.key}"
+             t-att-class="{'chat-thread__bubble--own': row.own and !row.system, 'chat-thread__bubble--system': row.system, 'chat-thread__bubble--pressed': state.actions === row.key, 'chat-thread__bubble--highlight': state.highlight === row.key}"
              t-on-pointerdown="(ev) => this.onPressDown(row, ev)" t-on-pointermove="onPressMove"
              t-on-pointerup="onPressUp" t-on-pointercancel="onPressCancel"
              t-on-contextmenu.prevent="">
@@ -351,6 +365,7 @@ export class ChatThreadComponent extends EnhancedComponent {
           <div class="chat-thread__meta">
             <button t-if="offers(row)" type="button" class="chat-thread__actions" aria-haspopup="dialog"
                     t-att-aria-label="t('chat.message_actions')" t-on-click="() => this.openActions(row.key)">⋯</button>
+            <span t-if="row.pinned" class="chat-thread__pinned" t-att-title="t('chat.pinned')" t-att-aria-label="t('chat.pinned')">📌</span>
             <span t-esc="row.time"/>
             <span t-if="row.meta === 'sent'" t-att-title="t('chat.sent')">✓</span>
             <span t-if="row.meta === 'seen'" t-att-title="t('chat.seen')">✓✓</span>
@@ -416,9 +431,11 @@ export class ChatThreadComponent extends EnhancedComponent {
                   t-on-mousedown.prevent="" t-on-click="() => this.onSend()">➤</button>
         </div>
       </t>
-      <ChatMessageMenuComponent t-if="state.actions" quick="quick()" active="activeOf()" can="menuCan()"
+      <ChatMessageMenuComponent t-if="state.actions" quick="quick()" active="activeOf()" can="menuCan()" pinned="menuPinned()"
                                 onReact.bind="onMenuReact" onMore.bind="onMenuMore" onReply.bind="onMenuReply" onCopy.bind="onMenuCopy"
-                                onEdit.bind="onMenuEdit" onDelete.bind="onMenuDelete" onClose.bind="closeActions"/>
+                                onEdit.bind="onMenuEdit" onDelete.bind="onMenuDelete" onPin.bind="onMenuPin" onClose.bind="closeActions"/>
+      <ChatPinnedComponent t-if="state.pinned" items="state.pinned.items" offline="state.pinned.offline"
+                           onOpen.bind="onPinnedOpen" onClose.bind="closePinned"/>
       <ChatReactionWhoComponent t-if="state.who" reaction="state.who" onClose.bind="closeWho"/>
       <ChatImageViewerComponent t-if="state.viewer" ta="attachments" attKey="state.viewer" onClose.bind="closeViewer"/>
     </div>`;
@@ -542,6 +559,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             viewer: null,
             highlight: null,
             notice: "",
+            pinned: null,
             sending: false,
             preparing: null,
             mode: { kind: "new" },
@@ -619,6 +637,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         if (this._flashTimer !== null) clearTimeout(this._flashTimer);
         this.cancelDeferredScroll();
         if (this._highlightTimer !== null) clearTimeout(this._highlightTimer);
+        if (this._noticeTimer !== null) clearTimeout(this._noticeTimer);
         this.press.cancel();
         if (this.source) this.chatService.typing(this.source, this.channelId, false).catch(() => {});
     }
@@ -946,6 +965,8 @@ export class ChatThreadComponent extends EnhancedComponent {
             reactions: named ? reactionViews(groups.get(messageKeyOf(m)) ?? [], names, self) : [],
             can: canOf(m, own, writable, body.text),
             quote,
+            pinned: !!m.pinnedAt,
+            system: m.messageType === "notification",
         };
     }
 
@@ -1096,7 +1117,10 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     private scrollToBottom(): void {
         const el = this.scroller.el as HTMLElement | null;
-        if (el) el.scrollTop = el.scrollHeight;
+        if (!el) return;
+        // Its scroll event, when it moves, is the screen's, not the user's (onScroll)
+        if (el.scrollTop < el.scrollHeight - el.clientHeight) this._ownScroll = true;
+        el.scrollTop = el.scrollHeight;
     }
 
     /** The bottom of the conversation, read up to its last message. */
@@ -1118,6 +1142,23 @@ export class ChatThreadComponent extends EnhancedComponent {
         });
     }
 
+    /** A scroll scrollToBottom made, whose scroll event is still to come. */
+    private _ownScroll = false;
+    private _noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /** Shows a notice on the message the screen went to, for NOTICE_MS or until the user scrolls. */
+    private showNotice(text: string): void {
+        if (this._noticeTimer !== null) clearTimeout(this._noticeTimer);
+        this.state.notice = text;
+        this._noticeTimer = setTimeout(() => this.clearNotice(), NOTICE_MS);
+    }
+
+    private clearNotice(): void {
+        if (this._noticeTimer !== null) clearTimeout(this._noticeTimer);
+        this._noticeTimer = null;
+        this.state.notice = "";
+    }
+
     /** The scroll queued by the last refresh; a newer one replaces it, a quote jump cancels it. */
     private _deferredScroll: ReturnType<typeof setTimeout> | null = null;
 
@@ -1137,6 +1178,9 @@ export class ChatThreadComponent extends EnhancedComponent {
     async onScroll(): Promise<void> {
         // A press that scrolls the list is no long press
         this.press.cancel();
+        // The user's first scroll takes the notice away; the one scrollToBottom made does not
+        if (this._ownScroll) this._ownScroll = false;
+        else if (this.state.notice) this.clearNotice();
         const el = this.scroller.el as HTMLElement | null;
         if (!el || !this.source) return;
         if (el.scrollTop <= EDGE_PX) await this.loadOlder();
@@ -1357,7 +1401,12 @@ export class ChatThreadComponent extends EnhancedComponent {
     /** What the open menu offers; nothing once its row is gone. */
     menuCan(): MessageCan {
         const row = this.rowAt(this.state.actions);
-        return row ? row.can : { react: false, reply: false, copy: false, edit: false, delete: false };
+        return row ? row.can : { react: false, reply: false, copy: false, edit: false, delete: false, pin: false };
+    }
+
+    /** Whether the open menu's message is pinned: its pin choice reads Désépingler. */
+    menuPinned(): boolean {
+        return this.rowAt(this.state.actions)?.pinned ?? false;
     }
 
     /** The menu's quick bar (quickReactions, from the uses counted on this phone). */
@@ -1442,6 +1491,78 @@ export class ChatThreadComponent extends EnhancedComponent {
             console.warn("chat thread: delete", e);
             this.state.error = t("chat.action_error");
         }
+    }
+
+    /**
+     * Pins the menu's message, or unpins a pinned one, once the user
+     * confirms as the browser asks (ChatService.pin).
+     */
+    async onMenuPin(): Promise<void> {
+        const row = this.rowAt(this.state.actions);
+        const source = this.source;
+        if (!row?.can.pin || !source) return;
+        const on = !row.pinned;
+        let yes = false;
+        try {
+            yes = (await Dialog.confirm({
+                message: t(on ? "chat.pin_confirm" : "chat.unpin_confirm"),
+                okButtonTitle: t(on ? "chat.pin" : "chat.unpin"),
+                cancelButtonTitle: t("chat.cancel"),
+            })).value;
+        } catch (e) {
+            console.warn("chat thread: pin confirmation", e);
+        }
+        if (!yes || this.destroyed) return;
+        try {
+            await this.chatService.pin(source, this.channelId, row.target, on);
+        } catch (e) {
+            console.warn("chat thread: pin", e);
+            this.state.error = t("chat.action_error");
+        }
+    }
+
+    /** « Messages épinglés » in the ⋮ menu. */
+    onPinnedMenu(): Promise<void> {
+        this.state.menu = false;
+        return this.openPinned();
+    }
+
+    /**
+     * Opens the pinned panel once ChatService.pinnedMessages answers (the
+     * server's list online, else the phone's, said so), each message with
+     * its author (« You » for the user), the start of its text (its files
+     * when it has none), its date and whether it is unread (unreadPin). A
+     * failure shows chat.pinned_failed; nothing opens over another sheet.
+     */
+    async openPinned(): Promise<void> {
+        const source = this.source;
+        if (!source || this.state.pinned || this.state.actions !== null || this.state.who || this.state.viewer) return;
+        try {
+            const { messages, offline } = await this.chatService.pinnedMessages(source, this.channelId);
+            if (this.destroyed) return;
+            const seen = this._channel?.seenMessageId ?? null;
+            const items = messages.map((m): PinnedItem => {
+                const id = m.authorPartnerId;
+                const author = (id !== null && this._names.get(id)) || (id !== null && id === this._self ? t("chat.you") : t("chat.someone"));
+                const text = bodyPreview(m.body);
+                return { key: this.keyOf(m), author, snippet: text || t("chat.banner_attachments"), date: formatListTime(m.date), unread: unreadPin(m, seen) };
+            });
+            this.state.pinned = { items, offline };
+        } catch (e) {
+            console.warn("chat thread: pinned messages", e);
+            this.state.error = t("chat.pinned_failed");
+        }
+    }
+
+    /** A message tapped in the pinned panel: the screen goes to it (jumpTo); the panel closes itself. */
+    onPinnedOpen(key: string): void {
+        const id = Number(key.slice(1));
+        if (key.startsWith("m") && Number.isInteger(id)) void this.jumpTo({ messageId: id, clientUuid: null });
+    }
+
+    /** The panel went (its history entry with it). */
+    closePinned(): void {
+        this.state.pinned = null;
     }
 
     /**
@@ -1545,16 +1666,24 @@ export class ChatThreadComponent extends EnhancedComponent {
      * it is paged in first (ChatService.loadUntil, `around` only) when
      * online. Offline, or when the request never left, the notice
      * chat.search_hit_offline shows and the screen opens at the bottom, as
-     * when the message is gone. A queued post settled meanwhile is found
-     * by its server id. Nothing is marked read here unless the screen ends
-     * at the bottom: reading the rest waits for a scroll to it (onScroll).
+     * when the message is gone; another failure of the paging shows
+     * chat.search_hit_failed (showNotice). A queued post settled meanwhile
+     * is found by its server id. While it runs a build neither scrolls to
+     * the bottom nor marks read (`_target`); nothing is marked read here
+     * unless the screen ends at the bottom: reading the rest waits for a
+     * scroll to it (onScroll). A pin notice and the pinned panel go to a
+     * message the same way.
      */
     async jumpTo(target: MessageTarget): Promise<void> {
+        this._target = target;
         try {
             if (await this.reach(target)) return;
         } catch (e) {
-            if (!(e instanceof RequestNotSentError)) console.warn("chat thread: search hit not loaded", e);
-            else this.state.notice = t("chat.search_hit_offline");
+            if (e instanceof RequestNotSentError) this.showNotice(t("chat.search_hit_offline"));
+            else {
+                console.warn("chat thread: search hit not loaded", e);
+                this.showNotice(t("chat.search_hit_failed"));
+            }
         } finally {
             this._target = null;
         }
@@ -1576,7 +1705,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         if (!cached || (this._floor !== null && id < this._floor)) {
             if (this.state.historyComplete || !this.source || this.destroyed) return false;
             if (!(await this.chatService.isOnline())) {
-                this.state.notice = t("chat.search_hit_offline");
+                this.showNotice(t("chat.search_hit_offline"));
                 return false;
             }
             if (!(await this.chatService.loadUntil(this.source, this.channelId, id))) return false;
@@ -1608,12 +1737,24 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     /**
      * A tap in a body, delegated to its anchors that renderBody kept as
-     * chips (`data-oe-model`, `data-oe-id`): a partner mention opens the
-     * direct message with that person (none for the user's own), a channel
-     * link its conversation (openChannel). Other taps go on as they are.
+     * chips: the pinned message a pin notice names (`chat-msg__pin-jump`)
+     * is gone to (jumpTo), its « see all » (`chat-msg__pin-menu`) opens the
+     * pinned panel; with `data-oe-model` and `data-oe-id`, a partner
+     * mention opens the direct message with that person (none for the
+     * user's own), a channel link its conversation (openChannel). Other
+     * taps go on as they are.
      */
     async onBodyClick(ev: Event): Promise<void> {
-        const a = (ev.target as Element | null)?.closest?.("a[data-oe-model][data-oe-id]");
+        const target = ev.target as Element | null;
+        const pin = target?.closest?.("a.chat-msg__pin-jump[data-oe-id], a.chat-msg__pin-menu");
+        if (pin) {
+            ev.preventDefault();
+            if (pin.classList.contains("chat-msg__pin-menu")) return this.openPinned();
+            const id = Number(pin.getAttribute("data-oe-id"));
+            if (Number.isInteger(id) && id > 0) await this.jumpTo({ messageId: id, clientUuid: null });
+            return;
+        }
+        const a = target?.closest?.("a[data-oe-model][data-oe-id]");
         if (!a) return;
         ev.preventDefault();
         const id = Number(a.getAttribute("data-oe-id"));

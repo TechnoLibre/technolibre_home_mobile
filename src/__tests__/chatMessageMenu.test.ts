@@ -17,21 +17,21 @@ function stubStorage(lang = "fr") {
 }
 
 const QUICK = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
-const OWN: MessageCan = { react: true, reply: true, copy: true, edit: true, delete: true };
-const OTHERS: MessageCan = { react: true, reply: true, copy: true, edit: false, delete: false };
+const OWN: MessageCan = { react: true, reply: true, copy: true, edit: true, delete: true, pin: false };
+const OTHERS: MessageCan = { react: true, reply: true, copy: true, edit: false, delete: false, pin: false };
 
 describe("ChatMessageMenuComponent", () => {
     let back: ReturnType<typeof vi.spyOn>;
 
-    async function mounted(can: MessageCan, active: string[] = []) {
+    async function mounted(can: MessageCan, active: string[] = [], pinned = false) {
         stubStorage();
         back = vi.spyOn(window.history, "back").mockImplementation(() => {});
         const host = document.createElement("div");
         document.body.appendChild(host);
         const props = {
-            quick: QUICK, active, can,
+            quick: QUICK, active, can, pinned,
             onReact: vi.fn(), onMore: vi.fn(), onReply: vi.fn(), onCopy: vi.fn(),
-            onEdit: vi.fn(), onDelete: vi.fn(), onClose: vi.fn(),
+            onEdit: vi.fn(), onDelete: vi.fn(), onPin: vi.fn(), onClose: vi.fn(),
         };
         const component = await mount(ChatMessageMenuComponent as any, host, { props, env: {} } as any);
         const app = { destroy: () => (component as any).__owl__.app.destroy() };
@@ -97,8 +97,25 @@ describe("ChatMessageMenuComponent", () => {
         own.app.destroy();
     });
 
+    it("the menu offers Épingler on a sent comment only", async () => {
+        const labels = (h: HTMLElement) => [...h.querySelectorAll(".chat-menu__item")].map((b) => b.textContent);
+        const unpinned = await mounted({ ...OTHERS, pin: true });
+        expect(labels(unpinned.host)).toEqual(["Répondre", "Copier", "Épingler", "Fermer"]);
+        unpinned.host.querySelector<HTMLElement>(".chat-menu__pin")!.click();
+        expect(unpinned.props.onPin).toHaveBeenCalledTimes(1);
+        expect(back).toHaveBeenCalledTimes(1);
+        unpinned.app.destroy();
+        const pinned = await mounted({ ...OWN, pin: true }, [], true);
+        expect(labels(pinned.host)).toEqual(["Répondre", "Copier", "Désépingler", "Modifier", "Supprimer", "Fermer"]);
+        pinned.app.destroy();
+        // A message the thread offers no pin on (pending, failed, another kind)
+        const none = await mounted(OWN, [], true);
+        expect(none.host.querySelector(".chat-menu__pin")).toBeNull();
+        none.app.destroy();
+    });
+
     it("without react, no quick bar; copy alone stays for a notification", async () => {
-        const { host, app } = await mounted({ react: false, reply: false, copy: true, edit: false, delete: false });
+        const { host, app } = await mounted({ react: false, reply: false, copy: true, edit: false, delete: false, pin: false });
         expect(host.querySelector(".chat-menu__quick")).toBeNull();
         expect([...host.querySelectorAll(".chat-menu__item")].map((b) => b.textContent)).toEqual(["Copier", "Fermer"]);
         app.destroy();

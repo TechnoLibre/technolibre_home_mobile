@@ -614,8 +614,9 @@ export class ChatListComponent extends EnhancedComponent {
      * and channels to join not shown yet. An account counts its hits
      * shown: Odoo may answer a page short of SERVER_PAGE while more match,
      * so a next page is offered while a page brings hits and fewer than its
-     * count are shown. The status: « done » once an account has answered,
-     * else « error » when one failed, else « offline ». An answer of an
+     * count are shown. The status: « error » when an account asked failed
+     * (its next page still offered when it had one), else « done » once an
+     * account has answered, else « offline ». An answer of an
      * older query or filter (`gen`) is dropped.
      */
     private async serverPages(gen: number, term: string, asks: { src: ChatSource; before: number | undefined }[]): Promise<void> {
@@ -671,7 +672,7 @@ export class ChatListComponent extends EnhancedComponent {
         this._labels = labels;
         this.state.results = results;
         const pages = [...this._pages.values()];
-        this.state.server = pages.length > 0 ? "done" : failed ? "error" : "offline";
+        this.state.server = failed ? "error" : pages.length > 0 ? "done" : "offline";
         this.state.serverCount = pages.length > 0 ? pages.reduce((sum, p) => sum + (p.count ?? 0), 0) : null;
         this.state.serverMore = pages.some((p) => p.more);
     }

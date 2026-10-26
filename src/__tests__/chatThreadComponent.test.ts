@@ -6,7 +6,7 @@ vi.mock("@capacitor/camera", () => ({ Camera: {} }));
 vi.mock("@capacitor/filesystem", () => ({ Filesystem: {}, Directory: { Data: "DATA", External: "EXTERNAL" } }));
 vi.mock("capacitor-voice-recorder", () => ({ VoiceRecorder: {} }));
 
-import { ChatThreadComponent, THREAD_PAGE, THREAD_WINDOW, typingLine } from "../components/chat/chat_thread_component";
+import { ChatThreadComponent, NOTICE_MS, THREAD_PAGE, THREAD_WINDOW, typingLine } from "../components/chat/chat_thread_component";
 import { EventBus } from "@odoo/owl";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -1383,7 +1383,7 @@ describe("ChatThreadComponent message actions", () => {
         expect(source).toMatch(/<div id="chat-thread" t-on-pointerdown\.capture="onThreadPointer" t-on-click\.capture="onThreadClick">/);
     });
 
-    it("what the menu offers follows Odoo: another's message no edit or delete, a notification copy only", async () => {
+    it("what the menu offers follows Odoo: another's message no edit or delete, a notification nothing", async () => {
         const chat = fakeChat([
             msg(10),
             msg(11, { authorPartnerId: 7 }),
@@ -1395,11 +1395,11 @@ describe("ChatThreadComponent message actions", () => {
         const c = make(chat);
         await c.open();
         expect(c.state.rows.map((r: any) => r.can)).toEqual([
-            { react: true, reply: true, copy: true, edit: true, delete: true },
-            { react: true, reply: true, copy: true, edit: false, delete: false },
-            { react: false, reply: false, copy: true, edit: false, delete: false },
-            { react: true, reply: true, copy: false, edit: true, delete: true },
-            { react: false, reply: false, copy: true, edit: false, delete: true },
+            { react: true, reply: true, copy: true, edit: true, delete: true, pin: true },
+            { react: true, reply: true, copy: true, edit: false, delete: false, pin: true },
+            { react: false, reply: false, copy: false, edit: false, delete: false, pin: false },
+            { react: true, reply: true, copy: false, edit: true, delete: true, pin: true },
+            { react: false, reply: false, copy: true, edit: false, delete: true, pin: false },
         ]);
         expect(c.state.rows[0].target).toEqual({ messageId: 10, clientUuid: null });
         expect(c.state.rows[4].target).toEqual({ messageId: null, clientUuid: "F1" });
@@ -2669,6 +2669,176 @@ describe("ChatThreadComponent open at a search hit", () => {
         expect(el.scrollTop).toBe(5000);
         expect(chat.markRead).toHaveBeenCalledTimes(1);
         expect(c.state.highlight).toBeNull();
+        c.teardown();
+    });
+
+    it("a hit that fails to load for another reason says so and opens at the bottom", async () => {
+        at("?m=20");
+        const chat: any = fakeChat([msg(50), msg(51)], undefined, channel({ oldestLoadedId: 50, lastMessageId: 51 }));
+        chat.isOnline = vi.fn(async () => true);
+        chat.loadUntil = vi.fn(async () => { throw new Error("RPC /discuss/channel/messages (HTTP 500)"); });
+        const c = make(chat);
+        const { el } = scroller([]);
+        c.scroller = { el };
+        localStorage.setItem("app_lang", "fr");
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        await c.open();
+        warn.mockRestore();
+        expect(c.state.notice).toBe("Ce message n'a pas pu être chargé : la conversation s'ouvre à la fin.");
+        expect(el.scrollTop).toBe(5000);
+        expect(chat.markRead).toHaveBeenCalledTimes(1);
+        c.teardown();
+    });
+
+    it("the hit notice goes on the user's first scroll, or after a while", async () => {
+        for (const how of ["scroll", "time"]) {
+            vi.useFakeTimers();
+            at("?m=20");
+            const chat: any = fakeChat([msg(50), msg(51)], undefined, channel({ oldestLoadedId: 50, lastMessageId: 51 }));
+            chat.isOnline = vi.fn(async () => false);
+            chat.loadUntil = vi.fn();
+            const c = make(chat);
+            const { el } = scroller([]);
+            c.scroller = { el };
+            await c.open();
+            expect(c.state.notice).not.toBe("");
+            // The scroll to the bottom the open made is not the user's
+            await c.onScroll();
+            expect(c.state.notice).not.toBe("");
+            if (how === "scroll") {
+                await c.onScroll();
+                expect(c.state.notice).toBe("");
+            } else {
+                await vi.advanceTimersByTimeAsync(NOTICE_MS - 1);
+                expect(c.state.notice).not.toBe("");
+                await vi.advanceTimersByTimeAsync(1);
+                expect(c.state.notice).toBe("");
+            }
+            c.teardown();
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe("ChatThreadComponent pinned messages", () => {
+    afterEach(() => {
+        (Dialog.confirm as any).mockReset?.();
+        (Dialog.confirm as any).mockResolvedValue?.({ value: true });
+        window.history.replaceState({}, "", "/");
+    });
+
+    const PIN_NOTICE = '<div data-oe-type="pin" class="o_mail_notification">'
+        + '<a href="#" data-oe-type="highlight" data-oe-id="10">Alice Roy a épinglé un message dans ce canal.</a> '
+        + '<a href="#" data-oe-type="pin-menu">Voir tous les messages épinglés.</a></div>';
+    const anchors = (row: any) => {
+        const div = document.createElement("div");
+        div.innerHTML = String(row.html);
+        return Array.from(div.querySelectorAll("a"));
+    };
+    const tap = (target: Element) => ({ target, preventDefault: vi.fn() });
+
+    it("a notification message renders as a system line without menu", async () => {
+        const chat = fakeChat([msg(10), msg(11, { messageType: "notification", authorPartnerId: 7, body: PIN_NOTICE })]);
+        const c = make(chat);
+        await c.open();
+        const [comment, notice] = c.state.rows;
+        expect([comment.system, notice.system]).toEqual([false, true]);
+        expect(c.offers(notice)).toBe(false);
+        c.openActions("m11");
+        expect(c.state.actions).toBeNull();
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        expect(source).toMatch(/'chat-thread__bubble--system': row\.system/);
+        c.teardown();
+    });
+
+    it("a tap on the highlight link jumps to the message", async () => {
+        const chat: any = fakeChat([msg(10), msg(11, { messageType: "notification", body: PIN_NOTICE })]);
+        chat.pinnedMessages = vi.fn(async () => ({ messages: [msg(10, { pinnedAt: "2020-01-01 11:00:00" })], offline: false }));
+        const c = make(chat);
+        await c.open();
+        const jump = vi.spyOn(c, "jumpTo").mockResolvedValue(undefined);
+        const [highlight, menu] = anchors(c.state.rows[1]);
+        expect(highlight.className).toBe("chat-msg__pin-jump");
+        expect(highlight.hasAttribute("href")).toBe(false);
+        const ev = tap(highlight);
+        await c.onBodyClick(ev);
+        expect(ev.preventDefault).toHaveBeenCalled();
+        expect(jump).toHaveBeenCalledWith({ messageId: 10, clientUuid: null });
+        // « See all pinned messages » opens the panel
+        await c.onBodyClick(tap(menu));
+        expect(chat.pinnedMessages).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 5);
+        expect(c.state.pinned.items.map((i: any) => i.key)).toEqual(["m10"]);
+        c.teardown();
+    });
+
+    it("the ⋮ menu lists the pinned messages, unread first as the service orders them, and a tap goes to one", async () => {
+        const chat: any = fakeChat([msg(10), msg(12, { authorPartnerId: 7 })], undefined, channel({ seenMessageId: 10 }));
+        chat.pinnedMessages = vi.fn(async () => ({
+            messages: [
+                msg(12, { authorPartnerId: 7, body: "<p>Réunion demain</p>", pinnedAt: "2020-01-01 10:00:00" }),
+                msg(10, { body: "", pinnedAt: "2020-01-01 11:00:00" }),
+            ],
+            offline: true,
+        }));
+        const c = make(chat);
+        await c.open();
+        localStorage.setItem("app_lang", "fr");
+        c.state.menu = true;
+        await c.onPinnedMenu();
+        expect(c.state.menu).toBe(false);
+        expect(c.state.pinned).toEqual({
+            offline: true,
+            items: [
+                { key: "m12", author: "Alice Roy", snippet: "Réunion demain", date: expect.any(String), unread: true },
+                { key: "m10", author: "Vous", snippet: "📎 Pièces jointes", date: expect.any(String), unread: false },
+            ],
+        });
+        const jump = vi.spyOn(c, "jumpTo").mockResolvedValue(undefined);
+        c.onPinnedOpen("m12");
+        expect(jump).toHaveBeenCalledWith({ messageId: 12, clientUuid: null });
+        c.closePinned();
+        expect(c.state.pinned).toBeNull();
+        // A failure to read them says so
+        chat.pinnedMessages.mockRejectedValueOnce(new Error("refused"));
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        await c.onPinnedMenu();
+        warn.mockRestore();
+        expect(c.state.pinned).toBeNull();
+        expect(c.state.error).toBe("Les messages épinglés n'ont pas pu être lus.");
+        c.teardown();
+    });
+
+    it("Épingler and Désépingler ask first, as the browser does", async () => {
+        const chat: any = fakeChat([msg(10), msg(11, { pinnedAt: "2020-01-01 11:00:00" })]);
+        chat.pin = vi.fn(async () => {});
+        const c = make(chat);
+        await c.open();
+        expect(c.state.rows.map((r: any) => r.pinned)).toEqual([false, true]);
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: false });
+        c.openActions("m10");
+        expect(c.menuPinned()).toBe(false);
+        await c.onMenuPin();
+        expect(Dialog.confirm).toHaveBeenCalledWith(expect.objectContaining({ message: "Pin this message to the conversation?", okButtonTitle: "Pin" }));
+        expect(chat.pin).not.toHaveBeenCalled();
+        c.closeActions();
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: true });
+        c.openActions("m11");
+        expect(c.menuPinned()).toBe(true);
+        await c.onMenuPin();
+        expect(Dialog.confirm).toHaveBeenLastCalledWith(expect.objectContaining({ message: "Unpin this message?", okButtonTitle: "Unpin" }));
+        expect(chat.pin).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 5, { messageId: 11, clientUuid: null }, false);
+        c.teardown();
+    });
+
+    it("a pin change repaints the row", async () => {
+        const list = [msg(10)];
+        const c = make(fakeChat(list));
+        await c.open();
+        const before = c.state.rows;
+        list[0] = msg(10, { pinnedAt: "2020-01-01 11:00:00" });
+        await c.refresh();
+        expect(c.state.rows).not.toBe(before);
+        expect(c.state.rows[0].pinned).toBe(true);
         c.teardown();
     });
 });

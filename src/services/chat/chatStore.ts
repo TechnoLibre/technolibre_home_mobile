@@ -42,6 +42,11 @@ export interface StoreDelta {
   /** Messages the server deleted (bus `mail.message/delete`). */
   deletedMessageIds?: number[];
   /**
+   * A channel's full list of pinned messages (/discuss/channel/pinned_messages):
+   * its cached messages not named lose pinnedAt.
+   */
+  pinnedSets?: { channelId: number; messageIds: number[] }[];
+  /**
    * Messages of the inbox, history and starred boxes: those of a record
    * (any model but the channels'), whose thread is known. A partial holds
    * only the keys the source carried.
@@ -521,6 +526,7 @@ export function mergeDeltas(a: StoreDelta, b: StoreDelta): StoreDelta {
     globalMuteUntil: b.globalMuteUntil !== undefined ? b.globalMuteUntil : a.globalMuteUntil,
     ...mergeReactions(a, b),
     deletedMessageIds: union(a.deletedMessageIds ?? [], b.deletedMessageIds ?? []),
+    pinnedSets: mergeBy(a.pinnedSets ?? [], b.pinnedSets ?? [], "channelId"),
     mailbox: mergeBy(a.mailbox ?? [], b.mailbox ?? [], "messageId"),
   };
 }

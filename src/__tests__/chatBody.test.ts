@@ -48,6 +48,19 @@ describe("renderBody", () => {
     expect(thread).toBe('<a class="chat-msg__channel" data-oe-id="4" data-oe-model="discuss.channel">#général-test &gt; sous-fil</a>');
   });
 
+  it("renderBody keeps the pin links as chips", () => {
+    // The notification set_message_pin posts (discuss_channel.py), the user's name invented
+    const body = '<div data-oe-type="pin" class="o_mail_notification">\n'
+      + '<a href="#" data-oe-type="highlight" data-oe-id="42">Alice Martin a épinglé un message dans ce canal.</a>\n'
+      + '<a href="#" data-oe-type="pin-menu">Voir tous les messages épinglés.</a>\n</div>';
+    expect(renderBody(body)).toBe('\n<a class="chat-msg__pin-jump" data-oe-type="highlight" data-oe-id="42">'
+      + 'Alice Martin a épinglé un message dans ce canal.</a>\n'
+      + '<a class="chat-msg__pin-menu" data-oe-type="pin-menu">Voir tous les messages épinglés.</a>\n');
+    // An id that is not digits leaves a plain anchor; an href other than # is kept as any link's
+    expect(renderBody('<a href="#" data-oe-type="highlight" data-oe-id="4 2">x</a>')).toBe("<a>x</a>");
+    expect(renderBody('<a href="javascript:x()" data-oe-type="pin-menu" onclick="y()">x</a>')).toBe('<a class="chat-msg__pin-menu" data-oe-type="pin-menu">x</a>');
+  });
+
   it("refuses a data-oe-model it does not know", () => {
     expect(renderBody('<a href="#" class="o_mail_redirect" data-oe-id="5" data-oe-model="res.users">@x</a>')).toBe("<a>@x</a>");
     expect(renderBody('<a class="o_mail_redirect" data-oe-id="5 or 1" data-oe-model="res.partner">@x</a>')).toBe("<a>@x</a>");

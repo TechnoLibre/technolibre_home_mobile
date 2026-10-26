@@ -113,9 +113,9 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
     /** Extra keys of each record a messages page answers (its `reactions`, say). */
     pageRecord: null as null | ((id: number) => Record<string, any>),
   };
-  const rpcError = (name: string) => ({
+  const rpcError = (name: string, code = 200) => ({
     ok: true, status: 200,
-    text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: 200, message: "Odoo Server Error", data: { name, message: "refused" } } }),
+    text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code, message: "Odoo Server Error", data: { name, message: "refused" } } }),
     headers: { forEach: () => {} },
   } as unknown as Response);
   /** A route the server does not have: Odoo's HTML 404 page, no JSON-RPC envelope. */
@@ -123,7 +123,7 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
     ok: false, status, text: async () => "<!DOCTYPE html><title>404: Not Found</title>", headers: { forEach: () => {} },
   } as unknown as Response);
   const answer = (r: any) => (r && typeof r === "object" && "__status" in r ? notJson(r.__status)
-    : r && typeof r === "object" && "__error" in r ? rpcError(r.__error) : ok(r));
+    : r && typeof r === "object" && "__error" in r ? rpcError(r.__error, r.__code) : ok(r));
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
     headers: { forEach: () => {} },
@@ -2914,6 +2914,26 @@ describe("ChatService", () => {
       expect(r).toMatchObject({ count: 1, more: false, offline: false });
     });
 
+    it("a non-404 error of the module route does not fall back", async () => {
+      await withModule();
+      rows = [row(501, GROUP, "<p>l'eau &amp; co</p>")];
+      count = 1;
+      // A server error
+      odoo.state.onRoute = async (path) => (path === MODULE_SEARCH_ROUTE ? { __status: 500 } : undefined);
+      await expect(chat.search.server(src, TERM)).rejects.toThrow(/500/);
+      expect(odoo.on(MODULE_SEARCH_ROUTE)).toHaveLength(1);
+      // An expired session, then the same error once signed in again
+      let calls = 0;
+      odoo.state.onRoute = async (path) => {
+        if (path !== MODULE_SEARCH_ROUTE) return undefined;
+        return ++calls === 1 ? { __error: "odoo.http.SessionExpiredException", __code: 100 } : { __status: 500 };
+      };
+      await expect(chat.search.server(src, TERM)).rejects.toThrow(/500/);
+      expect(odoo.on(MODULE_SEARCH_ROUTE)).toHaveLength(3);
+      expect(calls).toBe(2);
+      expect(messageReads()).toEqual([]);
+    });
+
     it("the fallback domain escapes like the module", async () => {
       rows = [row(502, GENERAL, "<p>Pas dans le texte</p>", { attachment_ids: [78] }), row(501, GROUP, "<p>l'eau &amp; co</p>")];
       count = 2;
@@ -2993,6 +3013,80 @@ describe("ChatService", () => {
       expect(await chat.loadUntil(src, GROUP, 150)).toBe(false);
       expect(odoo.on("/discuss/channel/messages").map((c) => c.params.around)).toEqual([601, 500, 400, 300, 200]);
       markedNothing();
+    });
+  });
+
+  describe("pinned messages", () => {
+    let odoo: ReturnType<typeof fakeOdoo>;
+    let src: ChatSource;
+    /** What /discuss/channel/pinned_messages answers: a bare Store of the channel's pinned messages. */
+    let pinned: any[];
+    const pinnedMsg = (id: number, at: string) => ({ ...msg(id, GROUP), pinned_at: at });
+    const cache = (id: number, at: string | null) => chat.repo.applyDelta(config, {
+      ...parseStore({ "mail.message": [{ ...msg(id, GROUP), pinned_at: at || false }] }, config, SELF),
+    });
+    const ids = (r: { messages: { messageId: number | null }[] }) => r.messages.map((m) => m.messageId);
+
+    beforeEach(async () => {
+      odoo = fakeOdoo();
+      pinned = [];
+      odoo.state.onRoute = async (path) => (path === "/discuss/channel/pinned_messages" ? { "mail.message": pinned } : undefined);
+      src = await source();
+      await chat.load(src);
+    });
+
+    it("the pinned list drops a message the server no longer lists, not one with a queued pin", async () => {
+      await cache(590, "2026-10-24 08:00:00");
+      await cache(599, "2026-10-24 09:00:00");
+      offline();
+      await chat.pin(src, GROUP, { messageId: 600, clientUuid: null }, true);
+      expect(odoo.kw("set_message_pin")).toEqual([]);
+      online();
+      // Unpinned in the browser meanwhile: 590 is no longer listed; 600's pin has not reached the server
+      pinned = [pinnedMsg(599, "2026-10-24 09:00:00")];
+      const r = await chat.pinnedMessages(src, GROUP);
+      expect(odoo.on("/discuss/channel/pinned_messages").map((c) => c.params)).toEqual([{ channel_id: GROUP }]);
+      expect(r.offline).toBe(false);
+      expect(ids(r)).toEqual([600, 599]);
+      expect((await chat.repo.message(config, 590))?.pinnedAt).toBeNull();
+      expect((await chat.repo.message(config, 600))?.pinnedAt).toBe("2026-10-25 10:00:00");
+      expect((await env.db.getOutboxOpsForConfig(config)).filter((o) => o.kind === "chat.pin")).toHaveLength(1);
+      // Nothing of it marks read
+      expect(odoo.on("/discuss/channel/mark_as_read")).toEqual([]);
+    });
+
+    it("unread pinned messages come first", async () => {
+      // The user has seen up to 598 in the group
+      const floor = (await chat.repo.channel(config, GROUP))?.oldestLoadedId;
+      pinned = [
+        pinnedMsg(590, "2026-10-25 08:00:00"),
+        pinnedMsg(599, "2026-10-24 07:00:00"),
+        { ...pinnedMsg(600, "2026-10-24 09:00:00"), parentMessage: 580 },
+        // A reply's parent comes along, not pinned
+        msg(580, GROUP),
+      ];
+      const r = await chat.pinnedMessages(src, GROUP);
+      expect(ids(r)).toEqual([600, 599, 590]);
+      expect(r.messages[0].pinnedAt).toBe("2026-10-24 09:00:00");
+      // Written: offline the phone answers the same list, said to be the phone's
+      offline();
+      const cached = await chat.pinnedMessages(src, GROUP);
+      expect(cached.offline).toBe(true);
+      expect(ids(cached)).toEqual([600, 599, 590]);
+      expect(odoo.on("/discuss/channel/pinned_messages")).toHaveLength(1);
+      // Below the loaded history: cached for the panel, the history's floor unmoved (the thread hides them, as a reply's parent)
+      expect((await chat.repo.channel(config, GROUP))?.oldestLoadedId).toBe(floor);
+      expect((await chat.repo.channel(config, GROUP))?.historyComplete).toBe(false);
+    });
+
+    it("pin and unpin send set_message_pin on the channel", async () => {
+      await chat.pin(src, GROUP, { messageId: 600, clientUuid: null }, true);
+      await chat.pin(src, GROUP, { messageId: 600, clientUuid: null }, false);
+      expect(odoo.kw("set_message_pin").map((c) => [c.params.args, c.params.kwargs])).toEqual([
+        [[[GROUP]], { message_id: 600, pinned: true }],
+        [[[GROUP]], { message_id: 600, pinned: false }],
+      ]);
+      expect((await chat.repo.message(config, 600))?.pinnedAt).toBeNull();
     });
   });
 

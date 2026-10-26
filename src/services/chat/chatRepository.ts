@@ -558,6 +558,8 @@ export class ChatRepository {
    * does not name, a group replaces its own, a deletion removes one; a group
    * of a message not cached is not stored. A deleted message goes with its
    * reactions and its server files; a deleted channel drops its reactions.
+   * A channel's pinned list (pinnedSets) unpins its cached messages it
+   * does not name, after the messages are written.
    */
   async applyDelta(configId: string, d: StoreDelta, opts: { fromBus?: boolean } = {}): Promise<void> {
     for (const p of d.channels) await this.upsertChannel(configId, p, !!opts.fromBus);
@@ -571,6 +573,7 @@ export class ChatRepository {
     for (const p of d.attachments) await this.upsertAttachment(configId, p);
     await this.applyReactions(configId, d);
     for (const p of d.mailbox ?? []) await this.upsertMailbox(configId, p);
+    for (const set of d.pinnedSets ?? []) await this.keepPinned(configId, set.channelId, set.messageIds);
     if (d.deletedAttachmentIds.length > 0) await this.deleteAttachments(configId, d.deletedAttachmentIds);
     for (const id of d.deletedMessageIds ?? []) await this.deleteMessage(configId, id);
     for (const id of d.deletedMemberIds) await this.del("chat_members", { id: key(configId, id) });
@@ -600,6 +603,14 @@ export class ChatRepository {
       if (opts.fromBus) state.globalMuteAt = this.now();
     }
     if (Object.keys(state).length > 0) await this.setSourceState({ ...state, configId });
+  }
+
+  /** The cached messages of a channel pinned and not among `messageIds` lose pinnedAt. */
+  private async keepPinned(configId: string, channelId: number, messageIds: number[]): Promise<void> {
+    const kept = new Set(messageIds);
+    for (const m of await this.pinnedMessages(configId, channelId)) {
+      if (!kept.has(m.messageId!)) await this.put("chat_messages", this.messageRow({ ...m, pinnedAt: null }));
+    }
   }
 
   /** The reaction parts of a delta, in the order mergeDeltas assumes: sets, groups, deletions. */
@@ -1230,6 +1241,13 @@ export class ChatRepository {
   async setStarred(configId: string, messageId: number, on: boolean): Promise<void> {
     const stored = await this.message(configId, messageId);
     if (stored) await this.put("chat_messages", this.messageRow({ ...stored, starred: on }));
+  }
+
+  /** The cached messages of a channel that carry pinnedAt, in no order; the server's only (a pin needs an id). */
+  async pinnedMessages(configId: string, channelId: number): Promise<ChatMessage[]> {
+    return (await this.rows("chat_messages", { config_id: configId, channel_id: channelId }))
+      .map(messageFromRow)
+      .filter((m) => m.messageId !== null && !!m.pinnedAt);
   }
 
   /** A message the server knows, by its id; null when it is not cached. */

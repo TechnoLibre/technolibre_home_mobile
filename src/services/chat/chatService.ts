@@ -8,7 +8,7 @@ import { syncConfigIdFor } from "../../models/syncConfig";
 import type { DatabaseService } from "../databaseService";
 import { networkService } from "../networkService";
 import type { CapabilityService } from "../odoo/capabilityService";
-import type { OdooRpcClient, SyncCredentials } from "../odoo/odooRpcClient";
+import { RequestNotSentError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
 import type { OutboxService } from "../outboxService";
 import { nativeChatHttp } from "../../plugins/chatFilePlugin";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
@@ -20,7 +20,7 @@ import { ChatCsrf } from "./chatCsrf";
 import { countEmojiUse } from "./chatEmoji";
 import { deviceChatFiles, type ChatFiles, type ChatHttp } from "./chatFiles";
 import { ChatModuleLevel, effectiveLevel, levelAtLeast, moduleProbe } from "./chatModule";
-import { CHAT_EDIT, ChatOutbox, sameTarget, targetOf, type CreateMode } from "./chatOutbox";
+import { CHAT_DELETE, CHAT_EDIT, ChatOutbox, sameTarget, targetOf, type CreateMode } from "./chatOutbox";
 import { ChatMentions } from "./chatMentions";
 import { ChatPeople } from "./chatPeople";
 import { ChatRepository, type ChatDraft } from "./chatRepository";
@@ -91,6 +91,14 @@ const maxDt = (a: string | null, b: string | null | undefined): string | null =>
  * the id it queued under at once (temporary for a new one) and lets the
  * flush run, so a screen opens on it and follows the swap (realIdOf).
  */
+/**
+ * Whether a pinned message is unread: above the channel's seen message
+ * (`seenMessageId`; null, nothing seen yet, makes every message unread).
+ */
+export function unreadPin(m: ChatMessage, seenMessageId: number | null): boolean {
+  return m.messageId !== null && m.messageId > (seenMessageId ?? 0);
+}
+
 export interface QueuedOpts {
   background?: boolean;
 }
@@ -1053,6 +1061,67 @@ export class ChatService {
   async deleteMessage(src: ChatSource, channelId: number, target: MessageTarget): Promise<void> {
     await this.queue.queueDelete(src.configId, channelId, target);
     await this.afterAction(src, channelId);
+  }
+
+  /**
+   * Pins a sent message in its channel, or unpins it (see
+   * ChatOutbox.queuePin): shown at once, sent when online.
+   */
+  async pin(src: ChatSource, channelId: number, target: MessageTarget, on: boolean): Promise<void> {
+    await this.queue.queuePin(src.configId, channelId, target, on);
+    await this.afterAction(src, channelId);
+  }
+
+  /**
+   * The pinned messages of a channel, as « Messages épinglés » lists them.
+   * Online the server's list (/discuss/channel/pinned_messages: a bare
+   * Store, read-only, nothing marked read) is written first, in the
+   * account's queue of server writers, with the pins still queued laid
+   * over it (overlayMessages); the channel's cached messages it does not
+   * name lose pinnedAt (pinnedSets). A message below the loaded history is
+   * cached and the thread does not show it as a row, as a reply's parent.
+   * Offline, or when the request never left, the cache answers alone and
+   * `offline` says so; another failure rejects. Then the cached pinned
+   * messages, those emptied with no file or with a delete queued left out:
+   * the unread ones first (unreadPin), then by pinnedAt, newest first, ties
+   * by id as the browser sorts them.
+   */
+  async pinnedMessages(src: ChatSource, channelId: number): Promise<{ messages: ChatMessage[]; offline: boolean }> {
+    const { configId, creds } = src;
+    let offline = !(await this.isOnline());
+    if (!offline) {
+      try {
+        await this.serial(configId, async () => {
+          const erased = this.erasedSince(configId);
+          const result = await this.rpc.callWithAuth(creds, (sessionId) =>
+            this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/channel/pinned_messages", { channel_id: channelId }));
+          if (erased()) return;
+          const delta = parseStore(result, configId, (await this.repo.sourceState(configId)).selfPartnerId);
+          // A reply's parent comes along in the Store: only the messages pinned are the list
+          const messageIds = delta.messages.filter((m) => m.channelId === channelId && !!m.pinnedAt).map((m) => m.messageId);
+          delta.pinnedSets = [{ channelId, messageIds }];
+          await this.queue.overlayMessages(configId, delta);
+          await this.repo.applyDelta(configId, delta);
+        });
+        this.changed(configId, channelId);
+      } catch (e: unknown) {
+        if (!(e instanceof RequestNotSentError)) throw e;
+        offline = true;
+      }
+    }
+    const pinned = await this.repo.pinnedMessages(configId, channelId);
+    const files = pinned.length
+      ? await this.repo.attachmentsOf(configId, channelId, pinned.map((m) => m.messageId!), [])
+      : new Map<string, ChatAttachment[]>();
+    const deletes = (await this.db.getOutboxOpsForConfig(configId))
+      .filter((o) => o.kind === CHAT_DELETE && o.status !== "blocked")
+      .map(targetOf);
+    const seen = (await this.repo.channel(configId, channelId))?.seenMessageId ?? null;
+    const shown = pinned.filter((m) => !isEmptyMessage(m.body, files.get(messageKeyOf(m))?.length ?? 0)
+      && !deletes.some((d) => sameTarget(d, m)));
+    shown.sort((a, b) => Number(unreadPin(b, seen)) - Number(unreadPin(a, seen))
+      || (a.pinnedAt === b.pinnedAt ? a.messageId! - b.messageId! : a.pinnedAt! < b.pinnedAt! ? 1 : -1));
+    return { messages: shown, offline };
   }
 
   /**

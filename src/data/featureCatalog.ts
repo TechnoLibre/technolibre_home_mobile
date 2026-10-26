@@ -4475,7 +4475,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "native text selection, and « Copy » copies the whole message. "
                         + "The click that ends a long press is swallowed. The menu offers what Odoo's message "
                         + "actions do: react on comment messages, delete on the user's own (a failed one is "
-                        + "dropped), copy on any message with text. A quick emoji the user already put on comes "
+                        + "dropped), copy on any message with text; a notification offers nothing. A quick emoji the user already put on comes "
                         + "off; a pick in the picker opened by « … » only adds, as Odoo's. Copy writes "
                         + "bodyText through navigator.clipboard and shows « Copied » for 1.5 s; delete asks "
                         + "first. A chip tap toggles the user's reaction; a long press lists the partners by "
@@ -4502,7 +4502,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "« Copier » copie le message entier. Le clic qui termine un appui long "
                         + "est avalé. Le menu offre ce qu'offrent les actions de message d'Odoo : réagir sur les "
                         + "messages comment, supprimer les siens (un échoué est abandonné), copier tout message "
-                        + "qui a du texte. Un émoji rapide déjà mis par l'utilisateur s'enlève ; un choix dans "
+                        + "qui a du texte ; une notification n'offre rien. Un émoji rapide déjà mis par l'utilisateur s'enlève ; un choix dans "
                         + "le sélecteur ouvert par « … » ne fait qu'ajouter, comme celui d'Odoo. Copier écrit "
                         + "bodyText par navigator.clipboard et affiche « Copié » 1,5 s ; supprimer demande "
                         + "d'abord. Une touche sur une pastille bascule la réaction de l'utilisateur ; un appui "
@@ -4545,6 +4545,60 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/chatComposerBanner.test.ts",
                     "src/__tests__/chatThreadComponent.test.ts",
                     "src/__tests__/chatListComponent.test.ts",
+                ],
+            },
+            {
+                id: "chat.pins",
+                label: { en: "Pinned messages", fr: "Messages épinglés" },
+                description: {
+                    en: "Pin or unpin a message from its long-press menu, the « Pinned messages » panel from the ⋮ menu, and the pin notices shown as system lines whose links go to the message or the panel.",
+                    fr: "Épingler ou désépingler un message depuis son menu d'appui long, le panneau « Messages épinglés » depuis le menu ⋮, et les avis d'épinglage affichés en lignes système dont les liens mènent au message ou au panneau.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.message-actions", "chat.search"],
+                demo: { kind: "route", url: "/chat" },
+                howItWorks: {
+                    en: "A pin is a target state of the message queued in the outbox (chat.pin): the op waiting "
+                        + "takes the last tap and keeps the server's state when it was queued (base), a tap back "
+                        + "to it sends nothing, and set_message_pin, idempotent, is sent again after a lost answer. "
+                        + "A message emptied or gone meanwhile drops the pin with a notice and shows the base "
+                        + "again. Épingler and Désépingler ask first, as the browser does, on a sent comment of a "
+                        + "conversation the user writes in. The panel reads /discuss/channel/pinned_messages "
+                        + "(read-only, nothing marked read), writes it to the cache with the queued pins laid "
+                        + "over it, unpins the cached messages it no longer lists, and orders the unread first, "
+                        + "then by pin date; offline it shows the phone's list and says so. A tap goes to the "
+                        + "message as a search hit does. Odoo's pin notice is a notification message: a centered "
+                        + "line without menu, its two links kept as chips without href.",
+                    fr: "Un épinglage est un état visé du message mis en file dans la boîte d'envoi (chat.pin) : "
+                        + "l'opération en attente prend la dernière touche et garde l'état du serveur au moment "
+                        + "de la mise en file (base), une touche qui y ramène n'envoie rien, et set_message_pin, "
+                        + "idempotent, est renvoyé après une réponse perdue. Un message vidé ou disparu entre-temps "
+                        + "retire l'épinglage avec un avis et réaffiche la base. Épingler et Désépingler "
+                        + "demandent confirmation, comme le navigateur, sur un commentaire envoyé d'une "
+                        + "conversation où l'on écrit. Le panneau lit /discuss/channel/pinned_messages (en "
+                        + "lecture seule, rien n'est marqué lu), l'écrit dans le cache sous les épinglages en "
+                        + "file, désépingle les messages en cache qu'il ne liste plus, et range les non lus "
+                        + "d'abord, puis par date d'épinglage ; hors ligne il montre la liste du téléphone et "
+                        + "le dit. Une touche mène au message comme un résultat de recherche. L'avis d'épinglage "
+                        + "d'Odoo est un message de notification : une ligne centrée sans menu, ses deux liens "
+                        + "gardés en pastilles sans href.",
+                },
+                files: [
+                    "src/components/chat/chat_pinned_component.ts",
+                    "src/components/chat/chat_pinned_component.scss",
+                    "src/components/chat/chat_message_menu_component.ts",
+                    "src/components/chat/chat_thread_component.ts",
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/chat/chatBody.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatPinned.test.ts",
+                    "src/__tests__/chatOutbox.test.ts",
+                    "src/__tests__/chatService.test.ts",
+                    "src/__tests__/chatBody.test.ts",
+                    "src/__tests__/chatMessageMenu.test.ts",
+                    "src/__tests__/chatThreadComponent.test.ts",
                 ],
             },
             {

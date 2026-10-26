@@ -48,6 +48,18 @@ const CHIPS: { from: string; model: string | null; to: string }[] = [
   { from: "o-discuss-mention", model: null, to: "chat-msg__special" },
 ];
 
+/**
+ * The links of the notification Odoo posts when a message is pinned
+ * (`discuss_channel.py` set_message_pin), by their `data-oe-type`: the
+ * pinned message (`highlight`, its id in `data-oe-id`) and the list of the
+ * channel's pinned messages (`pin-menu`). Their href is "#": the thread's
+ * click delegation acts on the class given.
+ */
+const PIN_LINKS: Record<string, { to: string; id: boolean }> = {
+  highlight: { to: "chat-msg__pin-jump", id: true },
+  "pin-menu": { to: "chat-msg__pin-menu", id: false },
+};
+
 export interface RenderOptions {
   /** The text of the edited mark, « (modifié) »; without it the mark is not shown. */
   editedLabel?: string;
@@ -59,8 +71,10 @@ export interface RenderOptions {
  * The attributes of a kept anchor: an `href` that safeHref keeps (with the
  * target and rel set here; a relative or `#` href is dropped), and, for a
  * chip of CHIPS, its class with `data-oe-id` (digits only) and
- * `data-oe-model` (the chip's own model only). An anchor whose model or id
- * fails stays a plain anchor: no chip class, no `data-oe-*`.
+ * `data-oe-model` (the chip's own model only); a pin link of PIN_LINKS, its
+ * class with `data-oe-type` and, for the message it names, `data-oe-id`
+ * (digits only). An anchor whose model or id fails stays a plain anchor: no
+ * chip class, no `data-oe-*`.
  */
 function copyAnchor(el: Element, copy: Element, opts: RenderOptions): void {
   const href = safeHref(el.getAttribute("href") ?? "");
@@ -68,6 +82,16 @@ function copyAnchor(el: Element, copy: Element, opts: RenderOptions): void {
     copy.setAttribute("href", href);
     copy.setAttribute("target", "_blank");
     copy.setAttribute("rel", "noreferrer noopener");
+  }
+  const type = el.getAttribute("data-oe-type") ?? "";
+  const pin = Object.prototype.hasOwnProperty.call(PIN_LINKS, type) ? PIN_LINKS[type] : null;
+  if (pin) {
+    const pinId = el.getAttribute("data-oe-id") ?? "";
+    if (pin.id && !/^\d+$/.test(pinId)) return;
+    copy.setAttribute("class", pin.to);
+    copy.setAttribute("data-oe-type", type);
+    if (pin.id) copy.setAttribute("data-oe-id", pinId);
+    return;
   }
   const chip = CHIPS.find((c) => el.classList.contains(c.from));
   if (!chip) return;

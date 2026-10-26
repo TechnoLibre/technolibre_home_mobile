@@ -7,7 +7,7 @@ import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS, clientMarker } fro
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
 import {
-  CHAT_NOTE, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_UPLOAD, ChatOutbox, bodyFingerprint, sameTarget, targetKey,
+  CHAT_NOTE, CHAT_PIN, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_UPLOAD, ChatOutbox, bodyFingerprint, sameTarget, targetKey,
 } from "../services/chat/chatOutbox";
 import { memoryChatFiles } from "../testing/chatFakes";
 import type { OutgoingFile } from "../models/chat";
@@ -42,12 +42,15 @@ interface Call { path: string; params: any }
  * the parent is in `elsewhere` (ids the server holds in another channel),
  * as Odoo does for a channel; it answers it as `parentMessage`, and a
  * search_read answers it as `parent_id` (`[id, name]` or false).
+ * `pinDrops` makes the next N set_message_pin calls run on the server and
+ * then lose their answer.
  */
 function chatOdoo(opts: { module?: boolean } = {}) {
   const messages: Posted[] = [];
   const calls: Call[] = [];
   const state = {
     dropResponses: 0, failBefore: 0, unsent: 0, postError: null as string | null, nextId: 500, elsewhere: new Set<number>(),
+    pinDrops: 0,
   };
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
@@ -93,13 +96,18 @@ function chatOdoo(opts: { module?: boolean } = {}) {
           .map((m) => ({ id: m.id, body: m.body, parent_id: m.parent ? [m.parent, "m" + m.parent] : false }));
         return ok(rows.slice(0, kwargs.limit ?? rows.length));
       }
+      if (method === "set_message_pin" && state.pinDrops > 0) { state.pinDrops--; throw new TypeError("Failed to fetch"); }
       return ok(method === "search_read" ? [] : true);
     }
     if (path === "/web/session/get_session_info") return ok({ uid: 2, partner_id: 3, is_system: false });
     return ok(true);
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { messages, calls, state, posts: () => calls.filter((c) => c.path === "/mail/message/post") };
+  return {
+    messages, calls, state,
+    posts: () => calls.filter((c) => c.path === "/mail/message/post"),
+    pins: () => calls.filter((c) => c.path === "/web/dataset/call_kw" && c.params.method === "set_message_pin").map((c) => c.params),
+  };
 }
 
 describe("ChatOutbox", () => {
@@ -980,6 +988,85 @@ describe("ChatOutbox", () => {
     await expect(chat.flush(GONE)).resolves.toMatchObject({ done: 0, failed: 0, blocked: 0 });
     expect(odoo.calls).toHaveLength(0);
     expect(await db.getOutboxOpsForConfig(GONE_CONFIG)).toHaveLength(2);
+  });
+
+  describe("pinned messages", () => {
+    const SENT = { messageId: 40, clientUuid: null };
+    const pinnedAt = async () => (await repo.message(CONFIG, 40))?.pinnedAt ?? null;
+    const pinOps = async () => (await db.getOutboxOpsForConfig(CONFIG)).filter((o) => o.kind === CHAT_PIN);
+
+    beforeEach(async () => {
+      await repo.applyDelta(CONFIG, {
+        channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], attachments: [], deletedAttachmentIds: [],
+        partners: [], inboxCounter: null, selfPartnerId: null,
+        messages: [{ messageId: 40, channelId: CHANNEL, body: "<p>Réunion demain</p>", authorPartnerId: 9, messageType: "comment" }],
+      });
+    });
+
+    it("a pin sends set_message_pin with pinned true", async () => {
+      const odoo = chatOdoo();
+      const op = await chat.queuePin(CONFIG, CHANNEL, SENT, true);
+      expect(op).toMatchObject({ kind: CHAT_PIN, params: { channelId: CHANNEL, messageId: 40, clientUuid: null, pinned: true, base: false } });
+      // Shown at once
+      expect(await pinnedAt()).toBe("2026-10-25 10:00:00");
+      expect(await chat.flush(CREDS)).toMatchObject({ done: 1, failed: 0, blocked: 0 });
+      expect(odoo.pins()).toEqual([{ model: "discuss.channel", method: "set_message_pin", args: [[CHANNEL]], kwargs: { message_id: 40, pinned: true } }]);
+      expect(await pinOps()).toEqual([]);
+      expect(await pinnedAt()).toBe("2026-10-25 10:00:00");
+      // A message not sent yet takes no pin
+      const pending = await chat.queuePost(CONFIG, CHANNEL, "pas encore", true);
+      await expect(chat.queuePin(CONFIG, CHANNEL, { messageId: null, clientUuid: pending.clientUuid }, true)).rejects.toThrow();
+    });
+
+    it("pin then unpin offline sends nothing", async () => {
+      const odoo = chatOdoo();
+      chat.isOnline = async () => false;
+      await chat.queuePin(CONFIG, CHANNEL, SENT, true);
+      expect(await pinnedAt()).not.toBeNull();
+      expect(await chat.queuePin(CONFIG, CHANNEL, SENT, false)).toBeNull();
+      expect(await pinnedAt()).toBeNull();
+      expect(await pinOps()).toEqual([]);
+      chat.isOnline = async () => true;
+      await chat.flush(CREDS, { force: true });
+      expect(odoo.pins()).toEqual([]);
+    });
+
+    it("a dropped pin answer resends the same target", async () => {
+      const odoo = chatOdoo();
+      odoo.state.pinDrops = 1;
+      await chat.queuePin(CONFIG, CHANNEL, SENT, true);
+      expect(await chat.flush(CREDS)).toMatchObject({ failed: 1 });
+      expect((await pinOps()).map((o) => [o.status, !!o.params.sentAt])).toEqual([["failed", true]]);
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
+      expect(odoo.pins().map((p) => p.kwargs)).toEqual([{ message_id: 40, pinned: true }, { message_id: 40, pinned: true }]);
+      expect(await pinOps()).toEqual([]);
+      // After another lost answer, a tap back is still sent: the server may hold the pin
+      odoo.state.pinDrops = 1;
+      await chat.queuePin(CONFIG, CHANNEL, SENT, false);
+      await chat.flush(CREDS);
+      expect(await chat.queuePin(CONFIG, CHANNEL, SENT, true)).not.toBeNull();
+      await chat.flush(CREDS, { force: true });
+      expect(odoo.pins().map((p) => p.kwargs.pinned)).toEqual([true, true, false, true]);
+    });
+
+    it("a pin on a message deleted meanwhile gives the vanished notice and the base back", async () => {
+      const odoo = chatOdoo();
+      chat.isOnline = async () => false;
+      await chat.queuePin(CONFIG, CHANNEL, SENT, true);
+      expect(await pinnedAt()).not.toBeNull();
+      // Deleted in Discuss: the bus empties its body
+      await repo.applyDelta(CONFIG, {
+        channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], attachments: [], deletedAttachmentIds: [],
+        partners: [], inboxCounter: null, selfPartnerId: null, messages: [{ messageId: 40, body: "" }],
+      });
+      chat.isOnline = async () => true;
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ blocked: 1 });
+      expect(odoo.pins()).toEqual([]);
+      expect(await pinnedAt()).toBeNull();
+      expect(await chat.notices([CONFIG])).toEqual([
+        expect.objectContaining({ kind: CHAT_PIN, reason: "vanished", message: { messageId: 40, clientUuid: null } }),
+      ]);
+    });
   });
 
   describe("apart from the note sync", () => {
