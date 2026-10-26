@@ -60,12 +60,12 @@ function fakeChat(ch: any = channel(), opts: { features?: any; global?: string |
     };
 }
 
-function make(chat: any, ops: any[] = []) {
+function make(chat: any, ops: any[] = [], routeId = "5") {
     stubLocale();
     const c = new (ChatInfoComponent as any)();
     c.env = {
         eventBus: new EventBus(),
-        router: { getRouteParams: () => new Map([["source", "a"], ["channelId", "5"]]) },
+        router: { getRouteParams: () => new Map([["source", "a"], ["channelId", routeId]]) },
         databaseService: { getOutboxOpsForConfig: vi.fn().mockResolvedValue(ops) },
     };
     Object.defineProperty(c, "chatService", { value: chat });
@@ -74,8 +74,8 @@ function make(chat: any, ops: any[] = []) {
     return c;
 }
 
-async function opened(chat: any, ops: any[] = []) {
-    const c = make(chat, ops);
+async function opened(chat: any, ops: any[] = [], routeId = "5") {
+    const c = make(chat, ops, routeId);
     await c.open();
     return c;
 }
@@ -311,7 +311,7 @@ describe("ChatInfoComponent", () => {
     it("a conversation being created is managed as the user's, its creator edits it, and it can be given up", async () => {
         const ch = channel({ channelId: -5, createOpId: "op1", isEditable: null });
         const chat = fakeChat(ch);
-        const pending = await opened(chat, [{ id: "op1", kind: "chat.create", status: "pending", params: {} }]);
+        const pending = await opened(chat, [{ id: "op1", kind: "chat.create", status: "pending", params: {} }], "-5");
         expect(pending.state.create).toBe("pending");
         expect(pending.state).toMatchObject({
             canRename: true, canEditDescription: true, canInvite: true, canMute: true, canLeave: true, canCancelCreate: true,
@@ -321,20 +321,42 @@ describe("ChatInfoComponent", () => {
         pending.onEditName();
         pending.onNameInput({ target: { value: "Renamed" } });
         await pending.onSaveName();
-        expect(chat.rename).toHaveBeenCalledWith(expect.anything(), 5, "Renamed");
+        expect(chat.rename).toHaveBeenCalledWith(expect.anything(), -5, "Renamed");
         await pending.onMute(60);
-        expect(chat.mute).toHaveBeenCalledWith(expect.anything(), 5, 60);
+        expect(chat.mute).toHaveBeenCalledWith(expect.anything(), -5, 60);
         const ask = vi.spyOn(window, "confirm").mockReturnValue(true);
         await pending.onLeave();
-        expect(chat.leave).toHaveBeenCalledWith(expect.anything(), 5);
+        expect(chat.leave).toHaveBeenCalledWith(expect.anything(), -5);
         await pending.onCancelCreate();
         expect(ask).toHaveBeenCalledTimes(2);
-        expect(chat.discardCreate).toHaveBeenCalledWith("a", 5);
+        expect(chat.discardCreate).toHaveBeenCalledWith("a", -5);
 
         // On the wire: kept, as the server may be making it
-        const running = await opened(fakeChat(ch), [{ id: "op1", kind: "chat.create", status: "running", params: {} }]);
+        const running = await opened(fakeChat(ch), [{ id: "op1", kind: "chat.create", status: "running", params: {} }], "-5");
         expect(running.state.canCancelCreate).toBe(false);
         expect(running.state.canRename).toBe(true);
+    });
+
+    it("cancel the creation is offered only before the create was sent", async () => {
+        const ch = channel({ channelId: -5, createOpId: "op1", isEditable: null });
+        const sentAt = "2026-10-25T10:00:00.000Z";
+        const op = (status: string, params: any) => [{ id: "op1", kind: "chat.create", status, params }];
+        const unsent = await opened(fakeChat(ch), op("pending", {}), "-5");
+        expect(unsent.state).toMatchObject({ canCancelCreate: true, canLeave: true });
+        // The send may have reached the server: Leave is the action, queued behind the create
+        const sent = await opened(fakeChat(ch), op("pending", { createSentAt: sentAt }), "-5");
+        expect(sent.state).toMatchObject({ canCancelCreate: false, canLeave: true });
+        const amb = await opened(fakeChat(ch), op("blocked", { blockedReason: "ambiguous", createSentAt: sentAt }), "-5");
+        expect(amb.state.canCancelCreate).toBe(true);
+        const refused = await opened(fakeChat(channel({ channelId: -5, createFailed: true })), [], "-5");
+        expect(refused.state).toMatchObject({ create: "failed", canCancelCreate: true });
+    });
+
+    it("a stale createOpId without its op offers no cancel", async () => {
+        const ch = channel({ channelId: -5, createOpId: "gone", isEditable: null });
+        const c = await opened(fakeChat(ch), [{ id: "other", kind: "chat.create", status: "pending", params: {} }], "-5");
+        expect(c.state.create).toBe("pending");
+        expect(c.state.canCancelCreate).toBe(false);
     });
 
     it("a join under way says so and keeps the server's edit right", async () => {

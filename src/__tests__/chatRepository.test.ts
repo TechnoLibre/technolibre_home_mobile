@@ -250,6 +250,15 @@ describe("ChatRepository", () => {
     expect(await repo.channel(B, 7)).toMatchObject({ unreadCounter: 3, unreadCounterBusId: 0, needactionCounter: 3, needactionCounterBusId: 0 });
   });
 
+  it("a temporary id is never one a settled create stored a pair for", async () => {
+    const now = new Date("2026-10-25T10:00:00.000Z");
+    const first = await repo.newTemporaryId(A, now);
+    expect(first).toBe(-now.getTime());
+    await repo.rememberRealId(A, first, 7);
+    expect(await repo.newTemporaryId(A, now)).toBe(first - 1);
+    expect(await repo.newTemporaryId(B, now)).toBe(first);
+  });
+
   it("renameSyncConfigId keeps a pending message and its channel", async () => {
     await repo.applyDelta(A, delta({ channels: [{ channelId: 7, name: "Team" }], partners: [{ configId: A, partnerId: 3, name: "Zoe", imStatus: null }] }));
     await repo.putPending(pending(A, "u1", { outboxOpId: "op-u1" }));

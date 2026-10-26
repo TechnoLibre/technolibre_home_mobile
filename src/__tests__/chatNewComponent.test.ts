@@ -23,6 +23,7 @@ const person = (id: number, name: string) => ({ configId: "a", partnerId: id, na
 function fakeChat(ids: string[]) {
     return {
         sources: vi.fn().mockResolvedValue(ids.map(src)),
+        repo: { sourceState: vi.fn(async () => ({ isInternalUser: true, loadedAt: "2026-10-25T10:00:00.000Z" })) },
         startDirect: vi.fn(async (s: any, id: number) => ({ configId: s.configId, channelId: -id })),
         createGroup: vi.fn(async (s: any) => ({ configId: s.configId, channelId: -50 })),
         createChannel: vi.fn(async (s: any) => ({ configId: s.configId, channelId: 60 })),
@@ -282,6 +283,22 @@ describe("ChatNewComponent fixes", () => {
         c._searchGen++;
         await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS * 2);
         expect(chat.people.searchPeople).not.toHaveBeenCalled();
+    });
+
+    it("new conversation lists only servers where the user is internal", async () => {
+        const chat = fakeChat(["a", "b", "c"]);
+        const states: Record<string, any> = {
+            a: { isInternalUser: false, loadedAt: "2026-10-25T10:00:00.000Z" },
+            // Not read yet: offered, the load decides
+            b: { isInternalUser: false, loadedAt: null },
+            c: { isInternalUser: true, loadedAt: "2026-10-25T10:00:00.000Z" },
+        };
+        chat.repo.sourceState.mockImplementation(async (id: string) => states[id]);
+        const c = await make(chat, { "chat.filter": "a" });
+        expect(c.state.sources.map((s: any) => s.configId)).toEqual(["b", "c"]);
+        expect(c.state.mode).toBe("chips");
+        // The list's filter names a server that is no longer offered
+        expect(c.state.serverId).toBe("b");
     });
 
     it("a failed init offers a retry", async () => {

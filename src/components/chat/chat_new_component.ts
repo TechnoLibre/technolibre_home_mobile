@@ -196,12 +196,18 @@ export class ChatNewComponent extends EnhancedComponent {
         }
     }
 
-    /** Reads the sources from the cache and picks the server: the list's filter, else the last used here, else the first. */
+    /** Reads the sources from the cache, keeps those where the user is internal, and picks the server: the list's filter, else the last used here, else the first. */
     async init(): Promise<void> {
         this.state.initFailed = false;
         this.state.error = "";
         try {
-            this._sources = await this.chatService.sources({ online: false });
+            const all = await this.chatService.sources({ online: false });
+            this._sources = [];
+            for (const s of all) {
+                const st = await this.chatService.repo.sourceState(s.configId);
+                // The list's ＋ rule: a server not read yet is offered, its load decides
+                if (st.isInternalUser || !st.loadedAt) this._sources.push(s);
+            }
         } catch (e) {
             this.fail(e);
             this.state.initFailed = true;

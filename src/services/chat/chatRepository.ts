@@ -501,13 +501,16 @@ export class ChatRepository {
    * A temporary channel id for a conversation created on the phone: the
    * negative of the clock in milliseconds, lowered by one while a cached
    * channel or a cached message of the account already uses it (the
-   * messages of a refused create stay after their channel is gone).
+   * messages of a refused create stay after their channel is gone), or a
+   * settled create stored a pair for it (that pair would name the new
+   * conversation's server id).
    */
   async newTemporaryId(configId: string, now: Date): Promise<number> {
     let id = -Math.max(1, now.getTime());
     for (;;) {
       const used = (await this.rows("chat_channels", { config_id: configId, channel_id: id })).length > 0
-        || (await this.rows("chat_messages", { config_id: configId, channel_id: id })).length > 0;
+        || (await this.rows("chat_messages", { config_id: configId, channel_id: id })).length > 0
+        || (await this.realIdOf(configId, id)) !== null;
       if (!used) return id;
       id--;
     }

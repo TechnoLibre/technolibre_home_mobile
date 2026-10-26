@@ -2361,6 +2361,30 @@ describe("ChatService", () => {
     expect(odoo.on("/mail/message/post")).toHaveLength(1);
   });
 
+  it("a create whose own temp pair exists settles at once from channel info", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    // The group is made on the server, its answer lost: the op fails with its stamp kept
+    server.state.dropNext = 1;
+    const { channelId: tempId } = await chat.createGroup(src, [BOB, 8]);
+    expect(tempId).toBeLessThan(0);
+    const realId = server.channels[0].id;
+    // The app died between the stored pair and the swap
+    await chat.repo.rememberRealId(config, tempId, realId);
+    const calls = createCalls(odoo).length;
+    // Still inside the quiet window: the pair is read, not waited out nor searched
+    advance(60_000);
+    await chat.flushAll({ force: true });
+    expect(createCalls(odoo)).toHaveLength(calls);
+    expect(odoo.on("/discuss/channel/info").map((c) => c.params.channel_id)).toEqual([realId]);
+    expect(await chat.realIdOf(config, tempId)).toBe(realId);
+    expect(await chat.repo.channel(config, realId)).toMatchObject({ createOpId: null });
+    expect(await chat.repo.channel(config, tempId)).toBeNull();
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+  });
+
   it("leaving a conversation whose create failed after a send that may have arrived leaves it once created", async () => {
     const odoo = fakeOdoo();
     const server = createServer(odoo, { now: () => clock });

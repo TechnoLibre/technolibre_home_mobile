@@ -311,7 +311,11 @@ export class ChatInfoComponent extends EnhancedComponent {
         s.title = displayNameOf(channel, members, names, self, getCurrentLocale());
         s.memberCount = Math.max(channel.memberCount ?? 0, members.length);
         s.create = create;
-        s.canCancelCreate = create === "ambiguous" || create === "failed" || (create === "pending" && op?.status !== "running");
+        // Giving up is offered for a create no send may have reached the server with, and for a refused or ambiguous one; a sent create is left instead
+        s.canCancelCreate =
+            create === "ambiguous" ||
+            create === "failed" ||
+            (create === "pending" && !!op && op.status !== "running" && !op.params?.createSentAt);
         s.canRename = usable && (type === "chat" || editable);
         s.showDescription = type !== "chat" && (editable || !!channel.description);
         s.canEditDescription = usable && type !== "chat" && editable;

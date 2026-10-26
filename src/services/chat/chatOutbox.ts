@@ -988,6 +988,16 @@ export class ChatOutbox {
     const { channelId, partnerIds, name, groupId } = op.params;
     const mode = op.params.mode as CreateMode;
     const useModule = !!op.params.useModule;
+    // A pair stored by an earlier settle names the conversation: read it, no window to wait out, no search
+    const own = await this.repo.realIdOf(op.configId, channelId);
+    if (own !== null) {
+      if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the create waits for the network.");
+      const store = await this.rpc.callWithAuth(creds, (sessionId) =>
+        this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/channel/info", { channel_id: own }));
+      if (typeof store?.[CHANNEL_MODEL]?.[0]?.id !== "number") throw new Error("The conversation found cannot be read.");
+      await this.settleCreate(op, own, store);
+      return;
+    }
     const sentAt = await this.quietStamp(creds, op);
 
     let result: any = null;
