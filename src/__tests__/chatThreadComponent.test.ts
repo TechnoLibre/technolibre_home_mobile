@@ -2559,3 +2559,116 @@ describe("ChatThreadComponent mention suggestions", () => {
         expect(source).toMatch(/<ChatComposerAttachComponent attach="attach"\/>\s*<\/div>\s*<ChatSuggestionsComponent t-if="state\.suggestions\.length" items="state\.suggestions" onPick\.bind="onSuggestion"\/>/);
     });
 });
+
+describe("ChatThreadComponent open at a search hit", () => {
+    afterEach(() => {
+        window.history.replaceState({}, "", "/");
+        vi.useRealTimers();
+    });
+
+    /** The route the list opens: the conversation, then `?m=` or `?u=`. */
+    const at = (search: string) => window.history.replaceState({}, "", "/chat/a/5" + search);
+    /** A scroller scrolled to the top of a long history, holding a bubble per key. */
+    const scroller = (keys: string[]) => {
+        const el = document.createElement("div");
+        Object.defineProperty(el, "scrollHeight", { value: 5000, configurable: true });
+        Object.defineProperty(el, "clientHeight", { value: 500, configurable: true });
+        el.scrollTop = 0;
+        const bubbles = new Map<string, any>();
+        for (const k of keys) {
+            const b = document.createElement("div");
+            b.className = "chat-thread__bubble";
+            b.dataset.key = k;
+            (b as any).scrollIntoView = vi.fn();
+            el.appendChild(b);
+            bubbles.set(k, b);
+        }
+        return { el, bubbles };
+    };
+    const keys = (c: any) => c.state.rows.map((r: any) => r.key);
+
+    it("open at a rendered hit highlights it", async () => {
+        for (const [search, key] of [["?m=11", "m11"], ["?u=P1", "uP1"]]) {
+            at(search);
+            const chat: any = fakeChat([msg(10), msg(11), msg(12), msg(null, { clientUuid: "P1" })]);
+            chat.isOnline = vi.fn(async () => true);
+            chat.loadUntil = vi.fn();
+            const c = make(chat);
+            const { el, bubbles } = scroller(["m10", "m11", "m12", "uP1"]);
+            c.scroller = { el };
+            await c.open();
+            expect(bubbles.get(key).scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: "center" }));
+            expect(c.state.highlight).toBe(key);
+            // Neither the first render nor the open scrolls to the bottom, and nothing is marked read away from it
+            await new Promise((r) => setTimeout(r, 20));
+            expect(el.scrollTop).toBe(0);
+            expect(chat.markRead).not.toHaveBeenCalled();
+            expect(chat.loadUntil).not.toHaveBeenCalled();
+            c.teardown();
+        }
+    });
+
+    it("open at a cached hit older than the rendered window grows the window to it", async () => {
+        const list = Array.from({ length: THREAD_WINDOW + 30 }, (_, i) => msg(i + 1));
+        at("?m=5");
+        const chat: any = fakeChat(list, undefined, channel({ historyComplete: true }));
+        chat.repo.messageOf.mockImplementation(async (_c: string, t: any) => list.find((m) => m.messageId === t.messageId) ?? null);
+        chat.isOnline = vi.fn(async () => true);
+        chat.loadUntil = vi.fn();
+        const c = make(chat);
+        const { el, bubbles } = scroller(["m5"]);
+        c.scroller = { el };
+        await c.open();
+        // The messages from the hit up, then a page above it
+        expect(c._window).toBe(THREAD_WINDOW + 26 + THREAD_PAGE);
+        expect(keys(c)[0]).toBe("m1");
+        expect(bubbles.get("m5").scrollIntoView).toHaveBeenCalled();
+        expect(c.state.highlight).toBe("m5");
+        expect(chat.loadUntil).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
+    it("open at an unloaded hit pages with around and marks nothing read", async () => {
+        const list = [msg(50), msg(51), msg(52)];
+        const ch = channel({ oldestLoadedId: 50, lastMessageId: 52 });
+        at("?m=20");
+        const chat: any = fakeChat(list, undefined, ch);
+        chat.repo.messageOf.mockImplementation(async (_c: string, t: any) => list.find((m) => m.messageId === t.messageId) ?? null);
+        chat.isOnline = vi.fn(async () => true);
+        chat.loadUntil = vi.fn(async () => {
+            list.unshift(...Array.from({ length: 30 }, (_, i) => msg(20 + i)));
+            ch.oldestLoadedId = 20;
+            return true;
+        });
+        const c = make(chat);
+        const { el, bubbles } = scroller(["m20"]);
+        c.scroller = { el };
+        await c.open();
+        expect(chat.loadUntil).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 5, 20);
+        expect(keys(c)).toContain("m20");
+        expect(bubbles.get("m20").scrollIntoView).toHaveBeenCalled();
+        expect(c.state.highlight).toBe("m20");
+        expect(c.state.notice).toBe("");
+        expect(chat.markRead).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
+    it("open at a hit offline shows the notice", async () => {
+        at("?m=20");
+        const chat: any = fakeChat([msg(50), msg(51)], undefined, channel({ oldestLoadedId: 50, lastMessageId: 51 }));
+        chat.isOnline = vi.fn(async () => false);
+        chat.loadUntil = vi.fn();
+        const c = make(chat);
+        const { el } = scroller([]);
+        c.scroller = { el };
+        localStorage.setItem("app_lang", "fr");
+        await c.open();
+        expect(chat.loadUntil).not.toHaveBeenCalled();
+        expect(c.state.notice).toBe("Ce message n'est pas encore sur le téléphone : il s'affichera une fois en ligne.");
+        // The usual bottom, read as usual
+        expect(el.scrollTop).toBe(5000);
+        expect(chat.markRead).toHaveBeenCalledTimes(1);
+        expect(c.state.highlight).toBeNull();
+        c.teardown();
+    });
+});

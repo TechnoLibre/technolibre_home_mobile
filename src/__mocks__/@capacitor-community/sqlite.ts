@@ -5,7 +5,8 @@
  * Handles basic CREATE TABLE, INSERT, SELECT, UPDATE, DELETE. A SELECT
  * takes `col = ?`, `col != ?`, `col > ?`, `col < ?` and
  * `col LIKE ? ESCAPE '\'` conditions joined by AND, then an optional
- * `ORDER BY col [ASC|DESC]` and `LIMIT n` or `LIMIT ?`. Anything else (a
+ * `ORDER BY col [ASC|DESC][, col [ASC|DESC]]…` (`rowid` is the row's
+ * place in the table) and `LIMIT n` or `LIMIT ?`. Anything else (a
  * virtual table, a trigger, sqlite_master) is accepted and does nothing.
  */
 
@@ -221,7 +222,7 @@ class MockDBConnection {
       let where = selectMatch[3] ?? "";
       const limitMatch = where.match(/\s*\bLIMIT\s+(\d+|\?)\s*$/i);
       if (limitMatch) where = where.slice(0, limitMatch.index);
-      const orderMatch = where.match(/\s*\bORDER BY\s+(\w+)(?:\s+(ASC|DESC))?\s*$/i);
+      const orderMatch = where.match(/\s*\bORDER BY\s+(\w+(?:\s+(?:ASC|DESC))?(?:\s*,\s*\w+(?:\s+(?:ASC|DESC))?)*)\s*$/i);
       if (orderMatch) where = where.slice(0, orderMatch.index);
       const conds = where.trim()
         ? where
@@ -235,9 +236,22 @@ class MockDBConnection {
         rows = rows.filter((row) => conds.every((c, i) => test(row[c.col], c, values[i])));
       }
       if (orderMatch) {
-        const col = orderMatch[1];
-        const dir = orderMatch[2]?.toUpperCase() === "DESC" ? -1 : 1;
-        rows = [...rows].sort((a, b) => (a[col] < b[col] ? -dir : a[col] > b[col] ? dir : 0));
+        const keys = orderMatch[1].split(",").map((k) => {
+          const [col, dir] = k.trim().split(/\s+/);
+          return { col, dir: dir?.toUpperCase() === "DESC" ? -1 : 1 };
+        });
+        // rowid is the place in the table: a row replaced goes last, as SQLite gives it a new rowid
+        const at = new Map(rows.map((r, i) => [r, i]));
+        const value = (r: Row, col: string) => (col.toLowerCase() === "rowid" ? at.get(r) : r[col]);
+        rows = [...rows].sort((a, b) => {
+          for (const { col, dir } of keys) {
+            const x = value(a, col);
+            const y = value(b, col);
+            if (x < y) return -dir;
+            if (x > y) return dir;
+          }
+          return 0;
+        });
       }
       if (limitMatch) rows = rows.slice(0, Number(limitMatch[1] === "?" ? values?.[conds.length] : limitMatch[1]));
 

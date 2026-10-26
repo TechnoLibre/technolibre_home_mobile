@@ -183,6 +183,7 @@ export class ChatService {
     this.mentions = new ChatMentions(this.repo, rpc, this.people, () => this.isOnline());
     this.search = new ChatSearch(this.repo, this.people, rpc, (configId) => this.features(configId), () => this.isOnline());
     this.search.conversations = (configIds) => this.conversations(configIds);
+    this.search.moduleRefused = (configId) => this.probeModule(configId);
     this.queue = new ChatOutbox(db, rpc, outbox, this.repo, now);
     this.queue.isOnline = () => this.isOnline();
     this.queue.serial = (configId, task) => this.serial(configId, task);
@@ -488,6 +489,28 @@ export class ChatService {
       const channel = await this.repo.channel(src.configId, channelId);
       if (fetched === 0 || !channel || channel.historyComplete) return total;
     }
+  }
+
+  /**
+   * Older pages, CHAT_FULL_PAGE per request (always `around`, see page),
+   * while the loaded history starts above `messageId` and is not
+   * complete; a page that brings nothing stops it. True when the message
+   * is then cached within the loaded history (at or above oldestLoadedId,
+   * or the history complete): a thread can render it. False when the
+   * history no longer holds it (deleted) or the channel is not cached.
+   * Nothing is marked read.
+   */
+  async loadUntil(src: ChatSource, channelId: number, messageId: number): Promise<boolean> {
+    const { configId } = src;
+    const reached = (c: ChatChannel) => c.historyComplete || (c.oldestLoadedId !== null && c.oldestLoadedId <= messageId);
+    for (;;) {
+      const channel = await this.repo.channel(configId, channelId);
+      if (!channel) return false;
+      if (reached(channel)) break;
+      if ((await this.page(src, channelId, CHAT_FULL_PAGE)).fetched === 0) break;
+    }
+    const channel = await this.repo.channel(configId, channelId);
+    return !!channel && reached(channel) && (await this.repo.message(configId, messageId)) !== null;
   }
 
   /**

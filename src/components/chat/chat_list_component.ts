@@ -9,8 +9,10 @@ import { serverChoiceMode, type ChatSource, type ChoiceMode } from "../../servic
 import { displayNameOf } from "../../services/chat/chatNames";
 import { isBold, unreadOf } from "../../services/chat/chatUnread";
 import type { ChatChannel, ChatMailboxItem, ChatMessage, ChatNotice } from "../../models/chat";
-import { isSearchTerm, type SearchHit, type SearchResults } from "../../services/chat/chatSearch";
-import { ChatSearchResultsComponent, conversationLabelKey, partnerLabelKey } from "./chat_search_results_component";
+import { emptyResults, isSearchTerm, mergeHits, type SearchHit, type SearchResults, type ServerResults } from "../../services/chat/chatSearch";
+import {
+    ChatSearchResultsComponent, conversationLabelKey, partnerLabelKey, type ServerSearchState,
+} from "./chat_search_results_component";
 import { CHAT_DELETE, sameTarget, targetOf } from "../../services/chat/chatOutbox";
 import { formatBytes } from "../../utils/formatBytes";
 
@@ -58,6 +60,16 @@ interface NoticeRow {
     resume: number | null;
 }
 
+/** The server pages of one account for the current search: where the next one starts and whether there is one. */
+interface ServerPages {
+    src: ChatSource;
+    /** Smallest server id shown, the `before` of the next page; null before any hit. */
+    before: number | null;
+    shown: number;
+    count: number | null;
+    more: boolean;
+}
+
 interface ChatListState {
     mode: ChoiceMode;
     sources: ListSource[];
@@ -68,6 +80,12 @@ interface ChatListState {
     query: string;
     /** The search's answer while the query is a search term (isSearchTerm), shown in place of the rows; null otherwise. */
     results: SearchResults | null;
+    /** How the servers' part of the search stands. */
+    server: ServerSearchState;
+    /** The servers' matches, summed over the accounts that answered; null when none did. */
+    serverCount: number | null;
+    /** An account that answered may have a next page (« Plus de résultats »). */
+    serverMore: boolean;
     refreshing: boolean;
     /** At least one server lets the user start a conversation (an internal user, or not read yet). */
     canCreate: boolean;
@@ -180,8 +198,8 @@ export class ChatListComponent extends EnhancedComponent {
             <button class="chat-list__dismiss" t-on-click="() => this.onDismissNotice(n)" t-esc="t('chat.dismiss')"/>
           </li>
         </ul>
-        <ChatSearchResultsComponent t-if="state.results" results="state.results" term="searchTerm()" server="'idle'" count="null"
-                                    more="false" labels="searchLabels()" onConversation.bind="onSearchConversation"
+        <ChatSearchResultsComponent t-if="state.results" results="state.results" term="searchTerm()" server="state.server"
+                                    count="state.serverCount" more="state.serverMore" labels="searchLabels()" onConversation.bind="onSearchConversation"
                                     onHit.bind="onHit" onMailbox.bind="onSearchMailbox" onPerson.bind="onSearchPerson"
                                     onJoin.bind="onSearchJoin" onMore.bind="onSearchMore"/>
         <t t-else="">
@@ -227,6 +245,8 @@ export class ChatListComponent extends EnhancedComponent {
     /** The names the results show (ChatSearchResultsComponent `labels`) and the term they answer, set with each answer. */
     private _labels = new Map<string, string>();
     private _term = "";
+    /** The server pages of the current search, by account; only the accounts that answered. */
+    private _pages = new Map<string, ServerPages>();
     private _onChanged = () => {
         if (this._debounce !== null) clearTimeout(this._debounce);
         this._debounce = setTimeout(() => {
@@ -244,6 +264,9 @@ export class ChatListComponent extends EnhancedComponent {
             notices: [],
             query: "",
             results: null,
+            server: "idle",
+            serverCount: null,
+            serverMore: false,
             refreshing: false,
             canCreate: true,
             error: "",
@@ -506,7 +529,8 @@ export class ChatListComponent extends EnhancedComponent {
         this.state.filter = configId;
         this.writeFilter(configId);
         await this.loadCache();
-        if (this.state.results) this.scheduleSearch();
+        // An answer still on its way was asked under the old filter: it is dropped and asked again
+        if (isSearchTerm(this.state.query)) this.scheduleSearch();
     }
 
     onSelectChange(ev: Event): void {
@@ -534,6 +558,7 @@ export class ChatListComponent extends EnhancedComponent {
         const gen = ++this._searchGen;
         if (!isSearchTerm(this.state.query)) {
             this.state.results = null;
+            this.state.server = "idle";
             return;
         }
         this._searchTimer = setTimeout(() => {
@@ -543,10 +568,11 @@ export class ChatListComponent extends EnhancedComponent {
     }
 
     /**
-     * Searches the accounts the filter keeps, then the names the results
-     * show: the server of each account when the list shows servers, the
-     * title of each listed conversation, the cached people. A failure
-     * shows no result.
+     * Searches the accounts the filter keeps on the phone, then the names
+     * the results show: the server of each account when the list shows
+     * servers, the title of each listed conversation, the cached people. A
+     * failure shows no result. The phone's answer shows at once; each
+     * account's server is then asked for its first page (serverPages).
      */
     private async runSearch(gen: number): Promise<void> {
         const term = this.state.query;
@@ -563,12 +589,124 @@ export class ChatListComponent extends EnhancedComponent {
             }
         } catch (e) {
             console.warn("chat list: search failed", e);
-            results = { conversations: [], people: [], joinable: [], messages: [], files: [], mailbox: [] };
+            results = emptyResults();
         }
         if (gen !== this._searchGen) return;
         this._labels = labels;
         this._term = term;
+        this._pages = new Map();
         this.state.results = results;
+        this.state.serverCount = null;
+        this.state.serverMore = false;
+        const sources = (await this.chatService.sources({ online: false })).filter((s) => ids.includes(s.configId));
+        if (gen !== this._searchGen) return;
+        if (sources.length === 0) {
+            this.state.server = "idle";
+            return;
+        }
+        await this.serverPages(gen, term, sources.map((src) => ({ src, before: undefined })));
+    }
+
+    /**
+     * Asks each account's server for a page (ChatSearch.server) side by
+     * side and merges what answers into the shown results: the messages
+     * and the files after the phone's, once each (mergeHits), the people
+     * and channels to join not shown yet. An account counts its hits
+     * shown: Odoo may answer a page short of SERVER_PAGE while more match,
+     * so a next page is offered while a page brings hits and fewer than its
+     * count are shown. The status: « done » once an account has answered,
+     * else « error » when one failed, else « offline ». An answer of an
+     * older query or filter (`gen`) is dropped.
+     */
+    private async serverPages(gen: number, term: string, asks: { src: ChatSource; before: number | undefined }[]): Promise<void> {
+        this.state.server = "loading";
+        this.state.serverMore = false;
+        const answers = await Promise.allSettled(asks.map((a) => this.chatService.search.server(a.src, term, a.before)));
+        if (gen !== this._searchGen || !this.state.results) return;
+        let failed = false;
+        const found: ServerResults[] = [];
+        const answered: string[] = [];
+        answers.forEach((a, i) => {
+            const src = asks[i].src;
+            if (a.status === "rejected") {
+                console.warn("chat list: server search failed", a.reason);
+                failed = true;
+                return;
+            }
+            const r = a.value;
+            if (r.offline) return;
+            found.push(r);
+            answered.push(src.configId);
+            const page = this._pages.get(src.configId) ?? { src, before: null, shown: 0, count: null, more: false };
+            const ids = r.hits.map((h) => h.messageId).filter((v): v is number => v !== null);
+            if (ids.length > 0) page.before = Math.min(page.before ?? Infinity, ...ids);
+            page.shown += r.hits.length;
+            page.count = r.count;
+            page.more = r.hits.length > 0 && page.count !== null && page.shown < page.count;
+            this._pages.set(src.configId, page);
+        });
+        const shown = this.state.results;
+        const hits = found.flatMap((r) => r.hits);
+        const people = [...shown.people];
+        const joinable = [...shown.joinable];
+        answers.forEach((a, i) => {
+            if (a.status !== "fulfilled" || a.value.offline) return;
+            const configId = asks[i].src.configId;
+            for (const partner of a.value.people) {
+                if (!people.some((p) => p.configId === configId && p.partner.partnerId === partner.partnerId)) people.push({ configId, partner });
+            }
+            for (const channel of a.value.joinable) {
+                if (!joinable.some((j) => j.configId === configId && j.channel.channelId === channel.channelId)) joinable.push({ configId, channel });
+            }
+        });
+        const results: SearchResults = {
+            ...shown,
+            people,
+            joinable,
+            messages: mergeHits(shown.messages, hits.filter((h) => h.fileName === null)),
+            files: mergeHits(shown.files, hits.filter((h) => h.fileName !== null)),
+        };
+        const labels = await this.withServerLabels(new Map(this._labels), results, answered);
+        if (gen !== this._searchGen) return;
+        this._labels = labels;
+        this.state.results = results;
+        const pages = [...this._pages.values()];
+        this.state.server = pages.length > 0 ? "done" : failed ? "error" : "offline";
+        this.state.serverCount = pages.length > 0 ? pages.reduce((sum, p) => sum + (p.count ?? 0), 0) : null;
+        this.state.serverMore = pages.some((p) => p.more);
+    }
+
+    /**
+     * The labels with the names the server's answer brought: the people of
+     * the accounts that answered as now cached (the server's authors and
+     * people included), and the title of a conversation of a hit the list
+     * does not show (a hidden direct chat), from the cache. A read that
+     * fails leaves the labels as they were.
+     */
+    private async withServerLabels(labels: Map<string, string>, results: SearchResults, configIds: string[]): Promise<Map<string, string>> {
+        try {
+            for (const id of configIds) {
+                for (const p of await this.chatService.repo.partners(id)) labels.set(partnerLabelKey(id, p.partnerId), p.name);
+            }
+            const missing = [...results.messages, ...results.files].filter((h) => !labels.has(conversationLabelKey(h.configId, h.channelId)));
+            for (const id of new Set(missing.map((h) => h.configId))) {
+                const [channels, partners, membersOf, state] = await Promise.all([
+                    this.chatService.repo.channels(id),
+                    this.chatService.repo.partners(id),
+                    this.chatService.repo.membersBySource(id),
+                    this.chatService.repo.sourceState(id),
+                ]);
+                const byPartner = new Map(partners.map((p) => [p.partnerId, p]));
+                for (const c of channels) {
+                    const k = conversationLabelKey(id, c.channelId);
+                    if (labels.has(k)) continue;
+                    labels.set(k, displayNameOf(c, membersOf.get(c.channelId) ?? [], byPartner, state.selfPartnerId, getCurrentLocale()));
+                }
+            }
+        } catch (e) {
+            console.warn("chat list: search names unreadable", e);
+        }
+        return labels;
     }
 
     searchLabels(): Map<string, string> {
@@ -613,8 +751,14 @@ export class ChatListComponent extends EnhancedComponent {
         await this.fromSearch(configId, (src) => this.chatService.join(src, channelId, name, AT_ONCE));
     }
 
-    /** The server's next page; the phone's search has none. */
-    onSearchMore(): void {}
+    /** « Plus de résultats »: the next page of each account that may have one, below the smallest id it showed. */
+    async onSearchMore(): Promise<void> {
+        const asks = [...this._pages.values()]
+            .filter((p) => p.more)
+            .map((p) => ({ src: p.src, before: p.before ?? undefined }));
+        if (asks.length === 0) return;
+        await this.serverPages(this._searchGen, this._term, asks);
+    }
 
     private async fromSearch(
         configId: string,

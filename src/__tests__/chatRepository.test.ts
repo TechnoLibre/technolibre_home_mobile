@@ -1851,6 +1851,19 @@ describe("ChatRepository search", () => {
     expect(await repo.searchMessages(A, "   ")).toEqual([]);
   });
 
+  it("a failed post takes no place under the limit, and one date orders the last written first", async () => {
+    await repo.applyDelta(A, delta({ messages: [
+      msg(60, "<p>cafe un</p>", "2026-10-26 08:00:00"), msg(61, "<p>cafe deux</p>", "2026-10-26 08:00:00"),
+    ] }));
+    await repo.putPending({
+      configId: A, channelId: 7, messageId: null, clientUuid: "u1", authorPartnerId: 3, body: "<p>cafe refusé</p>",
+      date: "2026-10-26 11:00:00", messageType: "comment", status: "pending", outboxOpId: "op1", writeDate: null,
+    });
+    await repo.markFailed(A, "u1", "refused");
+    expect((await repo.searchMessages(A, "cafe", 1)).map((m) => m.messageId)).toEqual([61]);
+    expect((await repo.searchMessages(A, "cafe")).map((m) => m.messageId)).toEqual([61, 60]);
+  });
+
   it("with the FTS5 index, the words of three characters or more narrow the rows, each its own quoted phrase", async () => {
     vi.spyOn(db, "chatSearchEngine").mockResolvedValue("fts5");
     const raw = vi.spyOn(db, "rawQuery").mockResolvedValue([
@@ -1859,8 +1872,8 @@ describe("ChatRepository search", () => {
     ]);
     expect((await repo.searchMessages(A, 'Café cre"me', 9)).map((m) => m.messageId)).toEqual([60]);
     const [sql, params] = raw.mock.calls[0];
-    expect(sql).toBe("SELECT * FROM chat_messages WHERE rowid IN (SELECT rowid FROM chat_search_fts WHERE chat_search_fts MATCH ?) AND config_id = ? AND search_text LIKE ? ESCAPE '\\' ORDER BY date DESC LIMIT ?");
-    expect(params).toEqual(['"cafe" "cre""me"', A, '%cafe%cre"me%', 9]);
+    expect(sql).toBe("SELECT * FROM chat_messages WHERE rowid IN (SELECT rowid FROM chat_search_fts WHERE chat_search_fts MATCH ?) AND config_id = ? AND status != ? AND search_text LIKE ? ESCAPE '\\' ORDER BY date DESC, rowid DESC LIMIT ?");
+    expect(params).toEqual(['"cafe" "cre""me"', A, "failed", '%cafe%cre"me%', 9]);
     raw.mockClear();
     await repo.searchMessages(A, "ab cd");
     expect(raw.mock.calls[0][0]).not.toContain("MATCH");

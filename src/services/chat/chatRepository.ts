@@ -1191,7 +1191,8 @@ export class ChatRepository {
 
   /**
    * The cached messages of the account whose search_text holds the words
-   * of `term` in order (likePattern), newest first, at most `limit`; a
+   * of `term` in order (likePattern), a failed post left out, newest
+   * first (one date: the row written last first), at most `limit`; a
    * term without a word finds nothing. With the FTS5 index
    * (chatSearchEngine "fts5"), each word of TRIGRAM characters or more is
    * a quoted phrase of the MATCH (inner quotes doubled), all of them
@@ -1210,8 +1211,8 @@ export class ChatRepository {
       const match = indexed.map((w) => '"' + w.replace(/"/g, '""') + '"').join(" ");
       try {
         const rows = await this.db.rawQuery(
-          "SELECT * FROM chat_messages WHERE rowid IN (SELECT rowid FROM chat_search_fts WHERE chat_search_fts MATCH ?) AND config_id = ? AND search_text LIKE ? ESCAPE '\\' ORDER BY date DESC LIMIT ?",
-          [match, configId, pattern, limit],
+          "SELECT * FROM chat_messages WHERE rowid IN (SELECT rowid FROM chat_search_fts WHERE chat_search_fts MATCH ?) AND config_id = ? AND status != ? AND search_text LIKE ? ESCAPE '\\' ORDER BY date DESC, rowid DESC LIMIT ?",
+          [match, configId, "failed", pattern, limit],
         );
         return rows.filter((r) => matchesTerm(r.search_text ?? "", term)).map(messageFromRow);
       } catch (e) {
@@ -1219,8 +1220,8 @@ export class ChatRepository {
       }
     }
     const rows = await this.db.rawQuery(
-      "SELECT * FROM chat_messages WHERE config_id = ? AND search_text LIKE ? ESCAPE '\\' ORDER BY date DESC LIMIT ?",
-      [configId, pattern, limit],
+      "SELECT * FROM chat_messages WHERE config_id = ? AND status != ? AND search_text LIKE ? ESCAPE '\\' ORDER BY date DESC, rowid DESC LIMIT ?",
+      [configId, "failed", pattern, limit],
     );
     return rows.map(messageFromRow);
   }

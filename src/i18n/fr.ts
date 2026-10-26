@@ -1269,4 +1269,5 @@ export const translations: Record<string, string> = {
   "chat.search_server_count_one": "{count} message trouvé sur le serveur",
   "chat.search_server_count_other": "{count} messages trouvés sur le serveur",
   "chat.search_more": "Plus de résultats",
+  "chat.search_hit_offline": "Ce message n'est pas encore sur le téléphone : il s'affichera une fois en ligne.",
 };

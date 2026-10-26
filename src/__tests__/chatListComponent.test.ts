@@ -523,9 +523,10 @@ describe("ChatListComponent search", () => {
 
     function searching(answer: (ids: string[], term: string) => Promise<any> = async () => ({ ...empty(), messages: [hit()] })) {
         const chat: any = fakeChat(["a"], [chan("a", 5, { name: "Team" }), chan("a", 6, { name: "Café" })]);
-        chat.search = { local: vi.fn(answer) };
+        chat.search = { local: vi.fn(answer), server: vi.fn(async () => offlineAnswer()) };
         return chat;
     }
+    const offlineAnswer = () => ({ hits: [], joinable: [], people: [], count: null, more: false, offline: true });
 
     afterEach(() => vi.useRealTimers());
 
@@ -592,5 +593,82 @@ describe("ChatListComponent search", () => {
         c.onSearchMailbox(item);
         c.onSearchMailbox({ ...item, threadModel: "project.task" });
         expect(c.navigate.mock.calls).toEqual([["/chat/a/12"], ["/chat/a/5"], ["/chat/a/5?m=90"]]);
+    });
+
+    it("a filter change while the search runs drops the old filter's answer", async () => {
+        vi.useFakeTimers();
+        let release!: (v: any) => void;
+        const chat = searching((ids) => ids.length === 2
+            ? new Promise((r) => { release = r; })
+            : Promise.resolve({ ...empty(), messages: [hit({ messageId: 61 })] }));
+        chat.sources = vi.fn().mockResolvedValue([src("a"), src("b")]);
+        const c = make(chat);
+        await c.loadCache();
+        typed(c, "ca");
+        await vi.advanceTimersByTimeAsync(200);
+        expect(chat.search.local).toHaveBeenCalledWith(["a", "b"], "ca");
+        // The answer of « all servers » has not come yet: no results shown
+        await c.onFilter("a");
+        await vi.advanceTimersByTimeAsync(200);
+        expect(chat.search.local).toHaveBeenLastCalledWith(["a"], "ca");
+        release({ ...empty(), messages: [hit({ messageId: 60 })] });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(c.state.results.messages.map((h: any) => h.messageId)).toEqual([61]);
+    });
+
+    it("server hits merge with the phone's, once each, and « More results » asks below the smallest server id", async () => {
+        vi.useFakeTimers();
+        const chat = searching(async () => ({ ...empty(), messages: [hit({ messageId: 60, date: "2026-10-26 10:00:00" })] }));
+        const page = (hits: any[], p: any = {}) => ({ hits, joinable: [], people: [], count: 5, more: true, offline: false, ...p });
+        chat.search.server = vi.fn()
+            .mockResolvedValueOnce(page([
+                hit({ messageId: 62, date: "2026-10-26 11:00:00", origin: "server", snippet: "le café" }),
+                hit({ messageId: 60, date: "2026-10-26 10:00:00", origin: "server" }),
+                hit({ messageId: 58, date: "2026-10-26 08:00:00", origin: "server", fileName: "café.pdf", snippet: "café.pdf" }),
+            ], {
+                people: [{ partnerId: 9, name: "Zoé Démo" }],
+                joinable: [{ channelId: 30, name: "#général-test", description: "", memberCount: 3, groupName: "" }],
+            }))
+            .mockResolvedValueOnce(page([hit({ messageId: 40, date: "2026-10-26 07:00:00", origin: "server" })]))
+            .mockResolvedValueOnce(page([]));
+        const c = make(chat);
+        await c.loadCache();
+        typed(c, "ca");
+        await vi.advanceTimersByTimeAsync(200);
+        expect(chat.search.server).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), "ca", undefined);
+        const shown = () => [
+            c.state.results.messages.map((h: any) => [h.messageId, h.origin]),
+            c.state.results.files.map((h: any) => [h.messageId, h.origin]),
+        ];
+        expect(shown()).toEqual([[[62, "server"], [60, "phone"]], [[58, "server"]]]);
+        expect(c.state.results.people.map((p: any) => [p.configId, p.partner.name])).toEqual([["a", "Zoé Démo"]]);
+        expect(c.state.results.joinable.map((j: any) => j.channel.channelId)).toEqual([30]);
+        expect([c.state.server, c.state.serverCount, c.state.serverMore]).toEqual(["done", 5, true]);
+        await c.onSearchMore();
+        expect(chat.search.server).toHaveBeenLastCalledWith(expect.objectContaining({ configId: "a" }), "ca", 58);
+        expect(shown()[0]).toEqual([[62, "server"], [60, "phone"], [40, "server"]]);
+        // Four of five shown: Odoo's page may be short, so more is still offered
+        expect(c.state.serverMore).toBe(true);
+        await c.onSearchMore();
+        expect(chat.search.server).toHaveBeenLastCalledWith(expect.objectContaining({ configId: "a" }), "ca", 40);
+        expect([c.state.server, c.state.serverCount, c.state.serverMore]).toEqual(["done", 5, false]);
+    });
+
+    it("offline the phone's results show with the server's status", async () => {
+        vi.useFakeTimers();
+        const chat = searching();
+        const c = make(chat);
+        await c.loadCache();
+        typed(c, "ca");
+        await vi.advanceTimersByTimeAsync(200);
+        expect(c.state.results.messages).toHaveLength(1);
+        expect([c.state.server, c.state.serverCount, c.state.serverMore]).toEqual(["offline", null, false]);
+        chat.search.server = vi.fn(async () => { throw new Error("refused"); });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        typed(c, "caf");
+        await vi.advanceTimersByTimeAsync(200);
+        warn.mockRestore();
+        expect(c.state.server).toBe("error");
+        expect(c.state.results.messages).toHaveLength(1);
     });
 });

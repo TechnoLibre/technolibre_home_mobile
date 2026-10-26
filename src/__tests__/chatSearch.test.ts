@@ -7,12 +7,16 @@ import { ChatPeople } from "../services/chat/chatPeople";
 import {
   ChatSearch,
   SEARCH_MIN,
+  htmlTerm,
   isSearchTerm,
   likeEscape,
   likePattern,
   markParts,
   matchesTerm,
+  mergeHits,
+  rawTerm,
   snippetOf,
+  type SearchHit,
 } from "../services/chat/chatSearch";
 import { chatMarker } from "../services/chat/chatBody";
 import type { StoreDelta } from "../services/chat/chatStore";
@@ -72,11 +76,35 @@ describe("search terms", () => {
     expect(snippetOf("a".repeat(100), "zz", 10)).toBe("a".repeat(9) + "…");
   });
 
+  it("the server terms escape as the module does: entities in the body only, wildcards everywhere, spaces as %", () => {
+    expect(htmlTerm("l'eau & co")).toBe("l'eau%&amp;%co");
+    expect(rawTerm("l'eau & co")).toBe("l'eau%&%co");
+    expect(htmlTerm('<b> "100%"_\\')).toBe('&lt;b&gt;%"100\\%"\\_\\\\');
+    expect(rawTerm("café crème")).toBe("café%crème");
+  });
+
   it("markParts marks each word of the term, accents and case ignored", () => {
     expect(markParts("Un Café et une crème", "cafe creme")).toEqual([
       { text: "Un ", mark: false }, { text: "Café", mark: true }, { text: " et une ", mark: false }, { text: "crème", mark: true },
     ]);
     expect(markParts("rien", "zz")).toEqual([{ text: "rien", mark: false }]);
+  });
+});
+
+describe("mergeHits", () => {
+  const hit = (configId: string, messageId: number | null, date: string, origin: "phone" | "server", p: Partial<SearchHit> = {}): SearchHit => ({
+    configId, channelId: 7, messageId, clientUuid: messageId === null ? "q1" : null, authorPartnerId: 4, date,
+    snippet: origin, fileName: null, origin, ...p,
+  });
+
+  it("a server hit already on the phone shows once", () => {
+    const merged = mergeHits(
+      [hit(A, 60, "2026-10-26 08:00:00", "phone"), hit(A, null, "2026-10-26 12:00:00", "phone")],
+      [hit(A, 61, "2026-10-26 10:00:00", "server"), hit(A, 60, "2026-10-26 08:00:00", "server"), hit(B, 60, "2026-10-26 09:00:00", "server")],
+    );
+    expect(merged.map((h) => [h.configId, h.messageId, h.origin])).toEqual([
+      [A, null, "phone"], [A, 61, "server"], [B, 60, "server"], [A, 60, "phone"],
+    ]);
   });
 });
 

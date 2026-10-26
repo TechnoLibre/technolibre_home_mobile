@@ -1,16 +1,27 @@
 import { getCurrentLocale } from "../../i18n";
 import type { ChatChannel, ChatMailboxItem, ChatMessage, ChatPartner } from "../../models/chat";
-import type { OdooRpcClient } from "../odoo/odooRpcClient";
+import { RequestNotSentError, type OdooRpcClient } from "../odoo/odooRpcClient";
 import { foldText, searchableText } from "./chatBody";
 import { displayNameOf } from "./chatNames";
 import type { ChatPeople, JoinableChannel } from "./chatPeople";
 import type { ChatRepository } from "./chatRepository";
+import type { ChatSource } from "./chatSources";
+import { parseStore, type StoreDelta } from "./chatStore";
 
 /** The fewest characters, folded and trimmed, a term needs before it is searched. */
 export const SEARCH_MIN = 2;
 
 /** The most people the cache gives for one account. */
 const PEOPLE_MAX = 10;
+
+/** The module's search over the user's member channels (module 1.4). */
+export const MODULE_SEARCH_ROUTE = "/erplibre_mobile_chat/message/search";
+
+/** Messages one server page asks for. */
+export const SERVER_PAGE = 30;
+
+/** The most people and channels to join one server answer adds. */
+const SERVER_NAMES_MAX = 10;
 
 /** The words of a term, folded (foldText), in order: what likePattern joins by `%`. */
 export function termWords(term: string): string[] {
@@ -25,6 +36,25 @@ export function isSearchTerm(term: string): boolean {
 /** Text made literal in a LIKE whose escape is `\`: a backslash before `\`, `%` and `_`. */
 export function likeEscape(text: string): string {
   return text.replace(/[\\%_]/g, (c) => "\\" + c);
+}
+
+/**
+ * A term as Odoo's `ilike` takes it for a name or a subject: `\`, `%` and
+ * `_` made literal (likeEscape), then each space a `%`, as
+ * `_message_fetch` does so the spacing need not be exact.
+ */
+export function rawTerm(term: string): string {
+  return likeEscape(term).replace(/ /g, "%");
+}
+
+/**
+ * A term as Odoo's `ilike` takes it for a stored HTML body: the sanitizer
+ * writes only `&`, `<` and `>` as entities (`&` first, so the entities
+ * made are not written again), then rawTerm. Apostrophes, quotes and
+ * accents stay as typed, as they are stored.
+ */
+export function htmlTerm(term: string): string {
+  return rawTerm(term.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"));
 }
 
 /**
@@ -158,12 +188,67 @@ export function emptyResults(): SearchResults {
 const newestFirst = (a: SearchHit, b: SearchHit): number => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
 
 /**
+ * The hits of the phone and of the server as one list: one hit per
+ * (account, message id), the phone's kept over the server's, a queued post
+ * (no id) always kept; newest first, a stable sort, so hits of one date
+ * keep the phone's then the server's order.
+ */
+export function mergeHits(local: SearchHit[], server: SearchHit[]): SearchHit[] {
+  const seen = new Set(local.filter((h) => h.messageId !== null).map((h) => `${h.configId}#${h.messageId}`));
+  const out = [...local];
+  for (const h of server) {
+    const k = `${h.configId}#${h.messageId}`;
+    if (h.messageId !== null && seen.has(k)) continue;
+    if (h.messageId !== null) seen.add(k);
+    out.push(h);
+  }
+  return out.sort(newestFirst);
+}
+
+/** What one account's server finds for a term: one page of messages, and the names on the first page. */
+export interface ServerResults {
+  /** Newest first; a hit by a file's name has its `fileName`. */
+  hits: SearchHit[];
+  joinable: JoinableChannel[];
+  people: ChatPartner[];
+  /** Every match on the server, whatever the page; null when not asked. */
+  count: number | null;
+  /** The page brought hits and fewer than `count`: a next page (before the smallest id) may hold more. */
+  more: boolean;
+  /** Not asked: no network, or the request never left. */
+  offline: boolean;
+}
+
+/** One server message as the search reads it, from the module's Store or from search_read. */
+interface ServerMessage {
+  messageId: number;
+  channelId: number;
+  body: string;
+  date: string;
+  authorPartnerId: number | null;
+  fileNames: string[];
+}
+
+/** A route the server answered with a plain 404 (no JSON-RPC answer): the module is gone or older. */
+class RouteMissingError extends Error {}
+
+/** A delta carrying only partner records. */
+const partnersOnly = (partners: StoreDelta["partners"], selfPartnerId: number | null): StoreDelta => ({
+  channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], attachments: [],
+  deletedAttachmentIds: [], partners, inboxCounter: null, selfPartnerId,
+});
+
+/**
  * Search over the chat of the phone and of the servers. local() reads the
- * cache only, so it answers offline and never marks anything read.
+ * cache only, so it answers offline; server() asks one account's server
+ * for a page. Neither marks anything read.
  */
 export class ChatSearch {
   /** The conversations of the accounts as the list shows them; ChatService gives its own. */
   conversations: (configIds: string[]) => Promise<ChatChannel[]> = async () => [];
+
+  /** Called when the module's route answers 404, so the module state is probed again; ChatService gives its own. */
+  moduleRefused: (configId: string) => Promise<void> = async () => {};
 
   constructor(
     readonly repo: ChatRepository,
@@ -202,7 +287,6 @@ export class ChatSearch {
       for (const partner of await this.people.searchCached(configId, term, PEOPLE_MAX)) out.people.push({ configId, partner });
       const found = new Set<number>();
       for (const m of await this.repo.searchMessages(configId, term)) {
-        if (m.status === "failed") continue;
         if (m.messageId !== null) found.add(m.messageId);
         out.messages.push(hitOf(m, snippetOf(searchableText(m.body), term), null));
       }
@@ -223,6 +307,178 @@ export class ChatSearch {
     out.files.sort(newestFirst);
     return out;
   }
+
+  /**
+   * One page of the account's server matches for a term, newest first,
+   * `before` bounding it to lower ids. With module 1.4 (serverSearch) the
+   * module's route takes the term as typed and escapes it; a plain 404 of
+   * it probes the module again (moduleRefused) and the search_read below
+   * answers. Without the module: the member channel ids read fresh, then
+   * mail.message of those channels whose body holds htmlTerm or whose
+   * subject or a file name holds rawTerm, with the count of the same
+   * domain (`before` bounds the page, never the count). Only member
+   * channels are searched either way: never a public channel the user is
+   * not in. Neither path marks anything read (no thread route, no
+   * channel history route). A hit is a file hit (`fileName`) when its text
+   * does not hold the term and one of its files' names does.
+   *
+   * The hits stay in memory; only the authors' names are cached
+   * (chat_partners). Odoo drops the rows the user may not read after its
+   * limit, so a page short of SERVER_PAGE is not the end: `more` compares
+   * with the count. The first page (no `before`) also asks the people
+   * (searchPeople) and the public channels to join (joinableChannels);
+   * a failure of those leaves them empty. Offline, or a request that
+   * never left: nothing, `offline` true. Other errors propagate.
+   */
+  async server(src: ChatSource, term: string, before?: number): Promise<ServerResults> {
+    const q = term.trim();
+    const answer = (p: Partial<ServerResults>): ServerResults => ({
+      hits: [], joinable: [], people: [], count: null, more: false, offline: false, ...p,
+    });
+    if (!isSearchTerm(q)) return answer({});
+    if (!(await this.isOnline())) return answer({ offline: true });
+    try {
+      const names = before === undefined ? this.names(src, q) : Promise.resolve({ people: [], joinable: [] });
+      const page = ((await this.features(src.configId)).serverSearch ? await this.viaModule(src, q, before) : null)
+        ?? (await this.viaDomain(src, q, before));
+      const hits = page.messages.map((m) => serverHit(src.configId, m, q));
+      return answer({ ...(await names), hits, count: page.count, more: hits.length > 0 && hits.length < page.count });
+    } catch (e) {
+      if (e instanceof RequestNotSentError) return answer({ offline: true });
+      throw e;
+    }
+  }
+
+  /** The people and the channels to join whose name holds the term; a failure of either leaves it empty. */
+  private async names(src: ChatSource, q: string): Promise<{ people: ChatPartner[]; joinable: JoinableChannel[] }> {
+    const quiet = <T>(what: string, empty: T) => (e: unknown): T => {
+      console.warn(`chat search: ${what} failed`, e);
+      return empty;
+    };
+    const [people, joinable] = await Promise.all([
+      this.people.searchPeople(src, q, SERVER_NAMES_MAX).catch(quiet<ChatPartner[]>("people", [])),
+      this.people.joinableChannels(src, q, SERVER_NAMES_MAX).then((r) => r.channels).catch(quiet<JoinableChannel[]>("channels", [])),
+    ]);
+    return { people, joinable };
+  }
+
+  /** The module's page, or null when its route answers 404 (the module probed again). */
+  private async viaModule(src: ChatSource, q: string, before?: number): Promise<{ messages: ServerMessage[]; count: number } | null> {
+    const { configId, creds } = src;
+    let result: any;
+    try {
+      result = await this.rpc.callWithAuth(creds, async (sessionId) => {
+        try {
+          return await this.rpc.jsonRoute(creds.odooUrl, sessionId, MODULE_SEARCH_ROUTE, {
+            search_term: q, before: before ?? null, limit: SERVER_PAGE,
+          });
+        } catch (e: unknown) {
+          if (Object.getPrototypeOf(e) === Error.prototype && /^HTTP 404\b/.test((e as Error).message)) {
+            throw new RouteMissingError((e as Error).message);
+          }
+          throw e;
+        }
+      });
+    } catch (e) {
+      if (!(e instanceof RouteMissingError)) throw e;
+      try {
+        await this.moduleRefused(configId);
+      } catch (probe) {
+        console.warn("chat search: module probe after a missing search route failed", probe);
+      }
+      return null;
+    }
+    const self = (await this.repo.sourceState(configId)).selfPartnerId;
+    const delta = parseStore(result?.data, configId, self);
+    await this.repo.applyDelta(configId, partnersOnly(delta.partners, self));
+    const fileNames = new Map(delta.attachments.map((a) => [a.attachmentId, a.name ?? ""]));
+    const byId = new Map(delta.messages.map((m) => [m.messageId, m]));
+    const ids: number[] = Array.isArray(result?.messages)
+      ? result.messages.map((v: any) => (typeof v === "number" ? v : v?.id)).filter((v: any) => typeof v === "number")
+      : [];
+    const messages: ServerMessage[] = [];
+    for (const id of ids) {
+      const m = byId.get(id);
+      if (!m || m.channelId === undefined) continue;
+      messages.push({
+        messageId: id, channelId: m.channelId, body: m.body ?? "", date: m.date ?? "", authorPartnerId: m.authorPartnerId ?? null,
+        fileNames: (m.attachmentIds ?? []).map((a) => fileNames.get(a) ?? "").filter(Boolean),
+      });
+    }
+    return { messages, count: Number(result?.count) || 0 };
+  }
+
+  /** The search_read page over the member channels, with its count. */
+  private async viaDomain(src: ChatSource, q: string, before?: number): Promise<{ messages: ServerMessage[]; count: number }> {
+    const { configId, creds } = src;
+    const channels = await this.rpc.searchRead<{ id: number }>(creds, "discuss.channel", [["is_member", "=", true]], ["id"]);
+    const ids = channels.map((c) => c.id);
+    if (ids.length === 0) return { messages: [], count: 0 };
+    const domain: any[] = [
+      ["model", "=", "discuss.channel"],
+      ["res_id", "in", ids],
+      ["message_type", "!=", "user_notification"],
+      "|",
+      "|",
+      ["body", "ilike", htmlTerm(q)],
+      ["subject", "ilike", rawTerm(q)],
+      ["attachment_ids.name", "ilike", rawTerm(q)],
+    ];
+    const [rows, count] = await Promise.all([
+      this.rpc.searchRead<any>(
+        creds,
+        "mail.message",
+        before !== undefined ? [...domain, ["id", "<", before]] : domain,
+        ["id", "body", "date", "author_id", "res_id", "attachment_ids"],
+        { limit: SERVER_PAGE, order: "id desc" },
+      ),
+      this.rpc.callKw<number>(creds, "mail.message", "search_count", [domain]),
+    ]);
+    const self = (await this.repo.sourceState(configId)).selfPartnerId;
+    const authors = rows
+      .filter((r) => Array.isArray(r.author_id) && typeof r.author_id[0] === "number")
+      .map((r) => ({ partnerId: r.author_id[0] as number, name: String(r.author_id[1] ?? "") }));
+    if (authors.length > 0) await this.repo.applyDelta(configId, partnersOnly(authors, self));
+    // The files' names only for the rows their text does not explain
+    const unexplained = rows.filter((r) => !matchesTerm(foldText(searchableText(r.body || "")), q));
+    const fileIds = [...new Set(unexplained.flatMap((r) => (Array.isArray(r.attachment_ids) ? r.attachment_ids : [])))];
+    const names = new Map<number, string>();
+    if (fileIds.length > 0) {
+      for (const a of await this.rpc.searchRead<{ id: number; name: string }>(creds, "ir.attachment", [["id", "in", fileIds]], ["name"])) {
+        names.set(a.id, a.name || "");
+      }
+    }
+    const messages = rows.map((r) => ({
+      messageId: r.id as number,
+      channelId: r.res_id as number,
+      body: r.body || "",
+      date: r.date || "",
+      authorPartnerId: Array.isArray(r.author_id) ? (r.author_id[0] as number) : null,
+      fileNames: (Array.isArray(r.attachment_ids) ? r.attachment_ids : []).map((a: number) => names.get(a) ?? "").filter(Boolean),
+    }));
+    return { messages, count: Number(count) || 0 };
+  }
+}
+
+/**
+ * The hit of a server message: a message hit quoting its text when the
+ * text holds the term (or when no file name does), else a file hit on the
+ * first file whose name holds it.
+ */
+function serverHit(configId: string, m: ServerMessage, term: string): SearchHit {
+  const text = searchableText(m.body);
+  const file = matchesTerm(foldText(text), term) ? undefined : m.fileNames.find((n) => matchesTerm(foldText(n), term));
+  return {
+    configId,
+    channelId: m.channelId,
+    messageId: m.messageId,
+    clientUuid: null,
+    authorPartnerId: m.authorPartnerId,
+    date: m.date,
+    snippet: snippetOf(file ?? text, term),
+    fileName: file ?? null,
+    origin: "server",
+  };
 }
 
 function hitOf(m: ChatMessage, snippet: string, fileName: string | null): SearchHit {

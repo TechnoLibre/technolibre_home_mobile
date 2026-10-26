@@ -22,6 +22,7 @@ import { quickReactions } from "../../services/chat/chatEmoji";
 import { CHAT_DELETE, CHAT_UPLOAD, sameTarget, targetOf } from "../../services/chat/chatOutbox";
 import { DraftText, joinDraftText } from "../../services/chat/chatDraft";
 import { ChatFile } from "../../plugins/chatFilePlugin";
+import { RequestNotSentError } from "../../services/odoo/odooRpcClient";
 import { formatListTime, initialsOf } from "./chat_list_component";
 import {
     ChatComposerAttachComponent,
@@ -148,8 +149,10 @@ interface ThreadState {
     flash: string;
     /** Key of the image the viewer shows; null when it is closed. */
     viewer: string | null;
-    /** Row key of the message a tap on a quote scrolled to, for HIGHLIGHT_MS; null otherwise. */
+    /** Row key of the message a tap on a quote, or a search hit, scrolled to, for HIGHLIGHT_MS; null otherwise. */
     highlight: string | null;
+    /** Why the search hit the screen was opened at is not shown (not on the phone, offline); "" otherwise. */
+    notice: string;
     /** From the ➤ tap until the post is queued: the text takes no input, 📎, 🎤 and ➤ are off. */
     sending: boolean;
     /** The bubble of a send with files, from the tap until its post is queued; null otherwise. */
@@ -375,6 +378,7 @@ export class ChatThreadComponent extends EnhancedComponent {
       </div>
       <p t-if="state.typing" class="chat-thread__typing" t-esc="state.typing"/>
       <p t-if="state.flash" class="chat-thread__flash" role="status" t-esc="state.flash"/>
+      <p t-if="state.notice" class="chat-thread__flash" role="status" t-esc="state.notice"/>
       <p t-if="state.error" class="chat-thread__failed" role="alert" t-esc="state.error"/>
       <t t-if="!state.failedCreate">
         <ul t-if="state.resumes.length" class="chat-thread__resumes" role="alert">
@@ -492,6 +496,12 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _window = THREAD_WINDOW;
     /** Oldest server message id rendered, null when none is. */
     private _oldestShown: number | null = null;
+    /**
+     * The search hit the screen opens at (route `?m=` / `?u=`); null when
+     * it opens at the bottom. Until open() has gone to it, a build neither
+     * scrolls to the bottom nor marks read.
+     */
+    private _target: MessageTarget | null = null;
     /** oldestLoadedId of the conversation while its history is not complete; null otherwise. */
     private _floor: number | null = null;
     private _lastSeen: number | null = null;
@@ -531,6 +541,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             flash: "",
             viewer: null,
             highlight: null,
+            notice: "",
             sending: false,
             preparing: null,
             mode: { kind: "new" },
@@ -541,6 +552,11 @@ export class ChatThreadComponent extends EnhancedComponent {
         const params = this.router.getRouteParams(window.location.pathname, "/chat/:source/:channelId");
         this.configId = params.get("source") ?? "";
         this.channelId = Number(params.get("channelId"));
+        // A search hit: `?m=<message id>`, or `?u=<client uuid>` for a post still queued
+        const query = new URLSearchParams(window.location.search);
+        const m = Number(query.get("m"));
+        const u = query.get("u");
+        this._target = Number.isInteger(m) && m > 0 ? { messageId: m, clientUuid: null } : u ? { messageId: null, clientUuid: u } : null;
         this.attachState = useState(newComposerAttachState());
         document.addEventListener("selectionchange", this._onSelection);
         // Draft calls name the screen's id at call time; the service maps a settled temporary id itself
@@ -609,8 +625,8 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     /**
      * Resolves the source, opens the attachments once it is known (until
-     * then 📎 and 🎤 stay off), shows the cache, scrolls down and marks
-     * read; the draft is read meanwhile and shows when it answers (its read
+     * then 📎 and 🎤 stay off), shows the cache, then goes to the search
+     * hit asked (jumpTo), else scrolls down and marks read; the draft is read meanwhile and shows when it answers (its read
      * waits for a send of this conversation still running elsewhere, which
      * the cached messages never wait for). A « Reprendre » asked in the
      * list for this conversation is taken last, over the draft.
@@ -624,8 +640,9 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.state.serverLabel = this.source?.label ?? "";
         const draft = this.showDraft();
         await this.refresh();
-        this.scrollToBottom();
-        await this.markRead();
+        const target = this._target;
+        if (target) await this.jumpTo(target);
+        else await this.toBottom();
         await draft;
         await this.resumeAsked();
     }
@@ -761,12 +778,12 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.pruneHtml(messages);
         // Prepended history keeps the viewport on the same message; new ones follow the bottom
         if (el) {
-            if (stick) this.scrollToBottomSoon();
+            if (stick && !this._target) this.scrollToBottomSoon();
             else this.keepPosition(before);
             this.fillShortHistory();
         }
         // Rows changed where the user looks (bottom in view, or nothing to scroll): read up to the last one
-        if (!el || stick || el.scrollHeight <= el.clientHeight) void this.markRead();
+        if (!this._target && (!el || stick || el.scrollHeight <= el.clientHeight)) void this.markRead();
     }
 
     /**
@@ -1080,6 +1097,12 @@ export class ChatThreadComponent extends EnhancedComponent {
     private scrollToBottom(): void {
         const el = this.scroller.el as HTMLElement | null;
         if (el) el.scrollTop = el.scrollHeight;
+    }
+
+    /** The bottom of the conversation, read up to its last message. */
+    private async toBottom(): Promise<void> {
+        this.scrollToBottom();
+        await this.markRead();
     }
 
     /** After the DOM patched with the new rows. */
@@ -1496,11 +1519,74 @@ export class ChatThreadComponent extends EnhancedComponent {
         } finally {
             if (grow) this._loadingOlder = false;
         }
-        if (!rendered() || this.destroyed) return;
-        // The refreshes that grew the window queued a re-anchor: it would scroll over the jump
+        if (!this.destroyed) this.scrollToKey(key);
+    }
+
+    /**
+     * Scrolls to the rendered row of `key` and highlights it for
+     * HIGHLIGHT_MS, once its bubble is in the DOM (scrollToQuoted, again
+     * at each patch until it is); the re-anchor the refreshes before it
+     * queued is dropped, as it would scroll over the jump. False, and
+     * nothing done, when no rendered row has that key.
+     */
+    scrollToKey(key: string): boolean {
+        if (!this._rows.some((r) => r.key === key)) return false;
         this.cancelDeferredScroll();
         this._quoted = key;
         this.scrollToQuoted();
+        return true;
+    }
+
+    /**
+     * Opens the screen at a search hit and highlights it (scrollToKey). A
+     * row rendered is scrolled to at once. A message cached within the
+     * loaded history (at or above its floor) is rendered by growing the
+     * window to the server messages from it up plus THREAD_PAGE; one below
+     * it is paged in first (ChatService.loadUntil, `around` only) when
+     * online. Offline, or when the request never left, the notice
+     * chat.search_hit_offline shows and the screen opens at the bottom, as
+     * when the message is gone. A queued post settled meanwhile is found
+     * by its server id. Nothing is marked read here unless the screen ends
+     * at the bottom: reading the rest waits for a scroll to it (onScroll).
+     */
+    async jumpTo(target: MessageTarget): Promise<void> {
+        try {
+            if (await this.reach(target)) return;
+        } catch (e) {
+            if (!(e instanceof RequestNotSentError)) console.warn("chat thread: search hit not loaded", e);
+            else this.state.notice = t("chat.search_hit_offline");
+        } finally {
+            this._target = null;
+        }
+        if (!this.destroyed) await this.toBottom();
+    }
+
+    /** Renders and scrolls to the target (jumpTo); false when it is not shown. */
+    private async reach(target: MessageTarget): Promise<boolean> {
+        const repo = this.chatService.repo;
+        let id = target.messageId;
+        if (id === null) {
+            if (this.scrollToKey("u" + target.clientUuid)) return true;
+            id = (await repo.messageOf(this.configId, target))?.messageId ?? null;
+            if (id === null) return false;
+        }
+        const key = "m" + id;
+        if (this.scrollToKey(key)) return true;
+        const cached = await repo.messageOf(this.configId, { messageId: id, clientUuid: null });
+        if (!cached || (this._floor !== null && id < this._floor)) {
+            if (this.state.historyComplete || !this.source || this.destroyed) return false;
+            if (!(await this.chatService.isOnline())) {
+                this.state.notice = t("chat.search_hit_offline");
+                return false;
+            }
+            if (!(await this.chatService.loadUntil(this.source, this.channelId, id))) return false;
+        }
+        if (this.destroyed) return false;
+        const from = (await this.chatService.messages(this.configId, this.channelId))
+            .filter((m) => m.messageId !== null && m.messageId >= id!).length;
+        this._window = Math.max(this._window, from + THREAD_PAGE);
+        await this.refresh();
+        return !this.destroyed && this.scrollToKey(key);
     }
 
     /** Scrolls to the original a quote tap asked for and highlights it, once its bubble is in the DOM. */

@@ -8,6 +8,7 @@ import {
   CHAT_PAGE, ChatService, PRESENCE_CAP, RELOAD_WINDOW_MS, TYPING_RESEND_MS, TYPING_STOP_MS, type ChatSource,
 } from "../services/chat/chatService";
 import { CHAT_READ, MODULE_EDIT_ROUTE } from "../services/chat/chatOutbox";
+import { MODULE_SEARCH_ROUTE, SERVER_PAGE } from "../services/chat/chatSearch";
 import { composeBody, type Mentions } from "../services/chat/chatCompose";
 import { emojiConversions } from "../services/chat/chatEmoji";
 import { createHash } from "node:crypto";
@@ -2818,6 +2819,181 @@ describe("ChatService", () => {
     expect(await chat.repo.channel(config, realId)).toMatchObject({ isMember: false, leftUnsent: true, createOpId: null });
     expect((await chat.messages(config, realId)).map((m) => m.status)).toEqual(["failed"]);
     expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+  });
+
+  describe("server search", () => {
+    const TERM = "l'eau & co";
+    const HTML = "l'eau%&amp;%co";
+    const RAW = "l'eau%&%co";
+    let odoo: ReturnType<typeof fakeOdoo>;
+    let src: ChatSource;
+    /** The member channels search_read answers, read at each call. */
+    let members: number[];
+    /** The mail.message rows search_read answers and the count search_count answers. */
+    let rows: any[];
+    let count: number;
+
+    const row = (id: number, channelId: number, body: string, p: any = {}) => ({
+      id, body, date: "2026-10-25 09:00:00", author_id: [BOB, "Bob"], res_id: channelId, attachment_ids: [], ...p,
+    });
+    const messageReads = () => odoo.kw("search_read").filter((c) => c.params.model === "mail.message");
+    const memberReads = () => odoo.kw("search_read").filter((c) => c.params.model === "discuss.channel"
+      && c.params.kwargs.domain.some((d: any[]) => d[0] === "is_member" && d[2] === true));
+    const withModule = () => chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.4" });
+    /** No call that marks a message read or done went out, and every history page used `around`. */
+    const markedNothing = () => {
+      expect(odoo.on("/mail/thread/messages")).toEqual([]);
+      expect(odoo.on("/discuss/channel/messages").every((c) => typeof c.params.around === "number")).toBe(true);
+      expect(odoo.on("/discuss/channel/mark_as_read")).toEqual([]);
+      expect(odoo.kw("set_message_done")).toEqual([]);
+      expect(odoo.kw("mark_all_as_read")).toEqual([]);
+    };
+
+    beforeEach(async () => {
+      odoo = fakeOdoo();
+      src = await source();
+      await chat.load(src);
+      members = [GROUP, GENERAL];
+      rows = [];
+      count = 0;
+      odoo.state.onKw = async ({ model, method, kwargs }) => {
+        if (model === "discuss.channel" && method === "search_read" && kwargs.domain.some((d: any[]) => d[0] === "is_member" && d[2] === true)) {
+          return members.map((id) => ({ id }));
+        }
+        if (model === "mail.message" && method === "search_read") return rows;
+        if (model === "mail.message" && method === "search_count") return count;
+        if (model === "res.partner" && method === "im_search") return { "res.partner": [] };
+        return undefined;
+      };
+    });
+
+    it("the module route gets the raw term", async () => {
+      await withModule();
+      odoo.state.onRoute = async (path) => path !== MODULE_SEARCH_ROUTE ? undefined : {
+        count: 2,
+        messages: [501, 500],
+        data: {
+          "mail.message": [
+            msg(501, GROUP, BOB, "<p>Voici l'eau &amp; co ici</p>"),
+            { ...msg(500, GENERAL, SELF, "<p>pièce jointe</p>"), attachment_ids: [77] },
+          ],
+          "ir.attachment": [{ id: 77, name: "L'eau & co.pdf", mimetype: "application/pdf", thread: { id: GENERAL, model: "discuss.channel" } }],
+          "res.partner": [{ id: BOB, name: "Bob Démo" }],
+        },
+      };
+      const r = await chat.search.server(src, ` ${TERM} `);
+      expect(odoo.on(MODULE_SEARCH_ROUTE).map((c) => c.params)).toEqual([{ search_term: TERM, before: null, limit: SERVER_PAGE }]);
+      expect(r.hits).toEqual([
+        { configId: config, channelId: GROUP, messageId: 501, clientUuid: null, authorPartnerId: BOB, date: "2026-10-25 09:00:00",
+          snippet: "Voici l'eau & co ici", fileName: null, origin: "server" },
+        { configId: config, channelId: GENERAL, messageId: 500, clientUuid: null, authorPartnerId: SELF, date: "2026-10-25 09:00:00",
+          snippet: "L'eau & co.pdf", fileName: "L'eau & co.pdf", origin: "server" },
+      ]);
+      expect(r).toMatchObject({ count: 2, more: false, offline: false });
+      expect(messageReads()).toEqual([]);
+      // The hits stay in memory: the cache holds neither message, the author's name is known for the results
+      expect(await chat.repo.message(config, 501)).toBeNull();
+      expect(await chat.repo.message(config, 500)).toBeNull();
+      expect((await chat.repo.partners(config)).find((p) => p.partnerId === BOB)?.name).toBe("Bob Démo");
+      // A next page asks below the id given, without the names again
+      await chat.search.server(src, TERM, 500);
+      expect(odoo.on(MODULE_SEARCH_ROUTE)[1].params).toEqual({ search_term: TERM, before: 500, limit: SERVER_PAGE });
+      expect(odoo.kw("im_search")).toHaveLength(1);
+      markedNothing();
+    });
+
+    it("a 404 of the module route falls back", async () => {
+      await withModule();
+      odoo.state.onRoute = async (path) => (path === MODULE_SEARCH_ROUTE ? { __status: 404 } : undefined);
+      rows = [row(501, GROUP, "<p>l'eau &amp; co</p>")];
+      count = 1;
+      const r = await chat.search.server(src, TERM);
+      expect(odoo.on(MODULE_SEARCH_ROUTE)).toHaveLength(1);
+      expect(messageReads()).toHaveLength(1);
+      expect(r.hits.map((h) => [h.messageId, h.channelId, h.snippet])).toEqual([[501, GROUP, "l'eau & co"]]);
+      expect(r).toMatchObject({ count: 1, more: false, offline: false });
+    });
+
+    it("the fallback domain escapes like the module", async () => {
+      rows = [row(502, GENERAL, "<p>Pas dans le texte</p>", { attachment_ids: [78] }), row(501, GROUP, "<p>l'eau &amp; co</p>")];
+      count = 2;
+      odoo.state.attachments.push({
+        id: 78, name: "l'eau & co.ods", file_size: 10, mimetype: "application/vnd.oasis.opendocument.spreadsheet", checksum: "c78",
+        voice: false, res_model: "discuss.channel", res_id: GENERAL, create_uid: 2, create_date: "2026-10-25 09:00:00", uuid: null,
+      });
+      const r = await chat.search.server(src, TERM);
+      expect(odoo.on(MODULE_SEARCH_ROUTE)).toEqual([]);
+      const domain = [
+        ["model", "=", "discuss.channel"], ["res_id", "in", [GROUP, GENERAL]], ["message_type", "!=", "user_notification"],
+        "|", "|", ["body", "ilike", HTML], ["subject", "ilike", RAW], ["attachment_ids.name", "ilike", RAW],
+      ];
+      expect(messageReads().map((c) => c.params.kwargs)).toEqual([{
+        domain, fields: ["id", "body", "date", "author_id", "res_id", "attachment_ids"], limit: SERVER_PAGE, order: "id desc",
+      }]);
+      expect(odoo.kw("search_count").map((c) => c.params.args)).toEqual([[domain]]);
+      expect(r.hits.map((h) => [h.messageId, h.fileName])).toEqual([[502, "l'eau & co.ods"], [501, null]]);
+      // A next page bounds the read, never the count
+      await chat.search.server(src, TERM, 501);
+      expect(messageReads()[1].params.kwargs.domain).toEqual([...domain, ["id", "<", 501]]);
+      expect(odoo.kw("search_count")[1].params.args).toEqual([domain]);
+      markedNothing();
+    });
+
+    it("the fallback restricts to member channel ids", async () => {
+      rows = [row(501, GROUP, "<p>l'eau &amp; co</p>")];
+      count = 1;
+      await chat.search.server(src, TERM);
+      expect(memberReads().map((c) => c.params.kwargs)).toEqual([{ domain: [["is_member", "=", true]], fields: ["id"] }]);
+      // Read fresh at each search: a channel left on the server since the last load is out at once
+      members = [GENERAL];
+      await chat.search.server(src, TERM);
+      expect(messageReads()[1].params.kwargs.domain[1]).toEqual(["res_id", "in", [GENERAL]]);
+      // A user in no channel finds nothing, and no message is read
+      members = [];
+      const r = await chat.search.server(src, TERM);
+      expect(messageReads()).toHaveLength(2);
+      expect(r).toMatchObject({ hits: [], count: 0, more: false, offline: false });
+    });
+
+    it("a short page with a larger count offers more", async () => {
+      // Odoo filters the rows the user may read after its limit: a page short of SERVER_PAGE is not the end
+      rows = [row(520, GROUP, "<p>l'eau &amp; co 1</p>"), row(510, GROUP, "<p>l'eau &amp; co 2</p>")];
+      count = 40;
+      expect(await chat.search.server(src, TERM)).toMatchObject({ count: 40, more: true });
+      count = 2;
+      expect(await chat.search.server(src, TERM)).toMatchObject({ count: 2, more: false });
+      rows = [];
+      count = 40;
+      expect(await chat.search.server(src, TERM, 510)).toMatchObject({ hits: [], count: 40, more: false });
+    });
+
+    it("offline the server is not asked", async () => {
+      await withModule();
+      const before = odoo.calls.length;
+      offline();
+      expect(await chat.search.server(src, TERM)).toEqual({ hits: [], joinable: [], people: [], count: null, more: false, offline: true });
+      online();
+      expect(odoo.calls.length).toBe(before);
+    });
+
+    it("open at an unloaded hit pages with around and marks nothing read", async () => {
+      // Message 150 was deleted on the server
+      odoo.history[GROUP] = Array.from({ length: 600 }, (_, i) => i + 1).filter((id) => id !== 150);
+      expect(await chat.repo.message(config, 350)).toBeNull();
+      expect(await chat.loadUntil(src, GROUP, 350)).toBe(true);
+      expect(await chat.repo.message(config, 350)).not.toBeNull();
+      // Three pages of CHAT_FULL_PAGE below the last message, each with `around`, then it stops
+      expect(odoo.on("/discuss/channel/messages").map((c) => c.params.around)).toEqual([601, 500, 400]);
+      expect((await chat.repo.channel(config, GROUP))?.oldestLoadedId).toBe(301);
+      markedNothing();
+      // Already loaded: no request
+      expect(await chat.loadUntil(src, GROUP, 400)).toBe(true);
+      expect(odoo.on("/discuss/channel/messages")).toHaveLength(3);
+      // A message the history no longer holds: paged down to it, false
+      expect(await chat.loadUntil(src, GROUP, 150)).toBe(false);
+      expect(odoo.on("/discuss/channel/messages").map((c) => c.params.around)).toEqual([601, 500, 400, 300, 200]);
+      markedNothing();
+    });
   });
 
   describe("reactions", () => {
