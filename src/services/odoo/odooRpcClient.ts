@@ -36,7 +36,16 @@ export interface SessionInfo {
   globalMuteUntil: string | null;
   /** The user is an internal user, not a portal one. */
   isInternalUser: boolean;
+  /**
+   * Largest request body the server accepts, in bytes (`max_file_upload_size`:
+   * the `web.max_file_upload_size` parameter, else 128 MiB). It bounds the
+   * whole request, form fields included.
+   */
+  maxUploadSize: number;
 }
+
+/** Odoo's request size limit when the server sends none (`DEFAULT_MAX_CONTENT_LENGTH`). */
+export const DEFAULT_MAX_UPLOAD_SIZE = 128 * 1024 * 1024;
 
 /** One field of fields_get, with the attributes the app asks for. */
 export interface OdooFieldInfo {
@@ -384,9 +393,13 @@ export class OdooRpcClient {
       internalUserGroupId: Number(store?.internalUserGroupId) || null,
       globalMuteUntil: store?.settings?.mute_until_dt || null,
       isInternalUser: info?.is_internal_user === true,
+      maxUploadSize: Number(info?.max_file_upload_size) > 0 ? Number(info.max_file_upload_size) : DEFAULT_MAX_UPLOAD_SIZE,
     };
-    // A fresh read renews only the account-wide mute, which changes during a session; the rest stays as cached
-    const kept = known && opts.fresh ? { ...known, globalMuteUntil: result.globalMuteUntil } : result;
+    // A fresh read renews only what an administrator or the user changes during a session (the account-wide
+    // mute, the upload limit); the rest stays as cached
+    const kept = known && opts.fresh
+      ? { ...known, globalMuteUntil: result.globalMuteUntil, maxUploadSize: result.maxUploadSize }
+      : result;
     this._sessions.set(key, kept);
     return kept;
   }

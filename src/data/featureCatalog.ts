@@ -4407,6 +4407,47 @@ export const FEATURE_TREE: FeatureNode[] = [
                 tests: ["src/__tests__/chatSocketPlugin.test.ts"],
             },
             {
+                id: "chat.attachments",
+                label: { en: "Chat attachments", fr: "Pièces jointes du clavardage" },
+                description: {
+                    en: "Streamed file upload and download with the session, the app's chat file layout and the CSRF token of the upload routes.",
+                    fr: "Envoi et téléchargement de fichiers en flux avec la session, l'arborescence des fichiers du clavardage et le jeton CSRF des routes d'envoi.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "A native OkHttp plugin streams a multipart upload from a file and a download to a "
+                        + "« .part » file renamed when complete, so a file is never whole in JS memory; it only "
+                        + "touches files under the app's chat directory. The CSRF token is read from the login "
+                        + "page and kept per session. An expired session reads as 404 on these public routes: "
+                        + "the app logs in again, takes a new token and tries once more. Files live under "
+                        + "chat/<random id of the account>/ (out, files, thumbs).",
+                    fr: "Un plugin natif OkHttp envoie en flux un formulaire multipart lu d'un fichier et "
+                        + "télécharge vers un fichier « .part » renommé une fois complet, donc un fichier n'est "
+                        + "jamais entier en mémoire JS ; il ne touche que les fichiers du répertoire de "
+                        + "clavardage de l'application. Le jeton CSRF est lu de la page de connexion et gardé par "
+                        + "session. Une session expirée se lit comme un 404 sur ces routes publiques : "
+                        + "l'application se reconnecte, prend un nouveau jeton et réessaie une fois. Les "
+                        + "fichiers vivent sous chat/<id aléatoire du compte>/ (out, files, thumbs).",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/ChatFileTransfer.java",
+                    "android/app/src/main/java/ca/erplibre/home/ChatFilePlugin.java",
+                    "src/plugins/chatFilePlugin.ts",
+                    "src/services/chat/chatFiles.ts",
+                    "src/services/chat/chatCsrf.ts",
+                    "src/services/chat/chatTransfer.ts",
+                    "src/testing/chatFakes.ts",
+                ],
+                tests: [
+                    "android/app/src/test/java/ca/erplibre/home/ChatFileTransferTest.java",
+                    "src/__tests__/chatFilePlugin.test.ts",
+                    "src/__tests__/chatFiles.test.ts",
+                    "src/__tests__/chatCsrf.test.ts",
+                    "src/__tests__/chatTransfer.test.ts",
+                ],
+            },
+            {
                 id: "chat.outbox",
                 label: { en: "Chat outbox", fr: "Boîte d'envoi du clavardage" },
                 description: {

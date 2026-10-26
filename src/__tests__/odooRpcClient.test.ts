@@ -167,6 +167,7 @@ describe("OdooRpcClient helpers", () => {
       uid: 7, companies: [{ id: 1, name: "Main" }], currentCompany: 1,
       partnerId: 42, isSystem: true, websocketWorkerVersion: "18.0-7",
       internalUserGroupId: null, globalMuteUntil: null, isInternalUser: false,
+      maxUploadSize: 134217728,
     });
     await rpc.sessionInfo(CREDS);
     expect(calls).toHaveLength(1);
@@ -195,6 +196,24 @@ describe("OdooRpcClient helpers", () => {
     expect(await rpc.sessionInfo(CREDS, { fresh: true })).toMatchObject({ globalMuteUntil: mute, partnerId: 42 });
     expect((await rpc.sessionInfo(CREDS)).globalMuteUntil).toBe(mute);
     expect(calls).toHaveLength(2);
+  });
+
+  it("sessionInfo reads max_file_upload_size, else Odoo's 128 MiB default", async () => {
+    server(() => ({ result: { uid: 7, max_file_upload_size: 26214400 } }));
+    expect((await rpc.sessionInfo(CREDS)).maxUploadSize).toBe(26214400);
+    const other = new OdooRpcClient();
+    server(() => ({ result: { uid: 7, max_file_upload_size: "junk" } }));
+    expect((await other.sessionInfo(CREDS)).maxUploadSize).toBe(134217728);
+  });
+
+  it("sessionInfo fresh renews the upload limit with the global mute", async () => {
+    let limit = 26214400;
+    server(() => ({ result: { uid: 7, partner_id: 42, max_file_upload_size: limit } }));
+    expect((await rpc.sessionInfo(CREDS)).maxUploadSize).toBe(26214400);
+    limit = 10485760;
+    expect((await rpc.sessionInfo(CREDS)).maxUploadSize).toBe(26214400);
+    expect((await rpc.sessionInfo(CREDS, { fresh: true })).maxUploadSize).toBe(10485760);
+    expect((await rpc.sessionInfo(CREDS)).maxUploadSize).toBe(10485760);
   });
 
   it("sessionInfo falls back when the server omits the new keys", async () => {
