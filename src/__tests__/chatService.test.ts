@@ -1758,6 +1758,42 @@ describe("ChatService", () => {
     expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
   });
 
+  it("a kill between the stored pair and the swap: the retry settles on the same group, swapped", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    offline();
+    const { channelId: tempId } = await chat.createGroup(src, [BOB, 7]);
+    await chat.send(src, tempId, "queued");
+    online();
+    // The app dies once the pair is stored, before the swap rewrites the rows
+    const swap = vi.spyOn(chat.repo, "swapChannelId").mockRejectedValueOnce(new Error("killed"));
+    await chat.flushAll();
+    expect(server.channels).toHaveLength(1);
+    const realId = server.channels[0].id;
+    expect(await chat.realIdOf(config, tempId)).toBe(realId);
+    expect(await chat.repo.channel(config, tempId)).not.toBeNull();
+    swap.mockRestore();
+    const [create] = (await env.db.getOutboxOpsForConfig(config)).filter((o) => o.kind === "chat.create");
+    expect(create.params.channelId).toBe(tempId);
+    await env.db.updateOutboxOp(create.id, { status: "running", updatedAt: clock.toISOString() });
+    chat.dispose();
+    const rpc = new OdooRpcClient();
+    const outbox = new OutboxService(env.db, () => clock);
+    chat = new ChatService(env.db, rpc, outbox, new CapabilityService(env.db, rpc), () => clock);
+    expect(await outbox.recoverInterrupted()).toBe(1);
+    advance(3 * 60_000 + 1);
+    await chat.flushAll();
+    // The fingerprint search takes the group the pair names, not a second one
+    expect(server.channels).toHaveLength(1);
+    expect(createCalls(odoo)).toHaveLength(1);
+    expect(await chat.repo.channel(config, tempId)).toBeNull();
+    expect(await chat.repo.channel(config, realId)).toMatchObject({ isMember: true, createOpId: null });
+    expect(odoo.on("/mail/message/post").map((c) => c.params.thread_id)).toEqual([realId]);
+    expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+  });
+
   // ─── Lot 2: invite, rename, describe, leave, hide, mute, remove ───────────
 
   const kwOf = (odoo: ReturnType<typeof fakeOdoo>, method: string) =>

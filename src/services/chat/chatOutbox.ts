@@ -1033,7 +1033,8 @@ export class ChatOutbox {
    * later), the name too when the op has one; a group must also have
    * exactly the op's people plus self as members, compared on every hit
    * (no limit before the filter). A conversation another create of this
-   * phone already settled on is never taken again. Two matches block the op
+   * phone already settled on is never taken again; the one this create's
+   * own pair names is. Two matches block the op
    * ("ambiguous", their ids as candidates); one is read through
    * /discuss/channel/info.
    */
@@ -1055,7 +1056,9 @@ export class ChatOutbox {
       creds, CHANNEL_MODEL, domain, ["id", "channel_partner_ids"],
     );
     const adopted = await this.repo.adoptedIds(op.configId);
-    found = found.filter((c) => !adopted.has(c.id));
+    // The one this create already settled on stays its own: a kill came between the pair and the swap
+    const own = await this.repo.realIdOf(op.configId, op.params.channelId);
+    found = found.filter((c) => !adopted.has(c.id) || c.id === own);
     if (mode === "group") {
       const wanted = new Set<number>([...(op.params.partnerIds ?? []), info.partnerId]);
       found = found.filter((c) => {
@@ -1081,10 +1084,13 @@ export class ChatOutbox {
 
   /**
    * Writes a settled create or join in the account's queue of counter
-   * writers (serial): the server's Store first, then the temporary id
-   * swapped for the server's (ChatRepository.swapChannelId, exclusive of a
-   * post being queued) and the pair stored in chat_temp_ids, then `created`. An op no longer stored (its account
-   * erased, the conversation given up meanwhile) writes nothing.
+   * writers (serial): the server's Store first, then the pair stored in
+   * chat_temp_ids, then the temporary id swapped for the server's
+   * (ChatRepository.swapChannelId, exclusive of a post being queued), then
+   * `created`. Stored first, the pair outlives a kill before the swap: the
+   * create's retry finds its own conversation again (findCreated) and
+   * swaps. An op no longer stored (its account erased, the conversation
+   * given up meanwhile) writes nothing.
    */
   private settleCreate(op: OutboxOp, realId: number, result: any): Promise<void> {
     return this.serial(op.configId, async () => {
@@ -1095,8 +1101,9 @@ export class ChatOutbox {
       await this.repo.applyDelta(configId, parseStore(result, configId, self));
       await this.exclusive(configId, async () => {
         const leftUnsent = !!(await this.repo.channel(configId, tempId))?.leftUnsent;
-        await this.repo.swapChannelId(configId, tempId, realId);
+        // Stored before the swap rewrites the op's channelId: a kill between the two still names the pair
         if (tempId !== realId) await this.repo.rememberRealId(configId, tempId, realId);
+        await this.repo.swapChannelId(configId, tempId, realId);
         // The server's row won the swap: what the phone queued since (a name, a mute, a leave) shows again
         const own: StoreDelta = { ...emptyDelta(), channels: [{ channelId: realId }] };
         await this.overlayPending(configId, own);
