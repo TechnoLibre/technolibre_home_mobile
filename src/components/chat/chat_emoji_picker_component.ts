@@ -34,7 +34,7 @@ interface PickerState {
  * The emoji picker: the most used emojis, then Odoo's categories in their
  * order with a tab each, and a search field in the app's language. The data
  * is a chunk of its own, asked on mount behind a spinner. Only the first
- * sections are drawn at once, the others follow one per turn, and each
+ * sections are drawn at once, the others follow one per frame, and each
  * section is `content-visibility: auto` so the browser skips the ones out
  * of view: typing in the composer is never held by the 1455 buttons. The
  * buttons keep the focus where it was (mousedown prevented), so the
@@ -49,7 +49,7 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
         <input class="chat-emoji__search" type="search" t-att-placeholder="t('chat.emoji_search')"
                t-att-aria-label="t('chat.emoji_search')" t-att-value="state.term" t-on-input="onSearch"/>
         <button class="chat-emoji__close" t-att-aria-label="t('chat.emoji_close')"
-                t-on-mousedown.prevent="" t-on-click="() => this.props.onClose()">✕</button>
+                t-on-mousedown.prevent="" t-on-click="() => this.close()">✕</button>
       </div>
       <p t-if="!state.data and !state.failed" class="chat-emoji__status" role="status" t-esc="t('chat.emoji_loading')"/>
       <div t-if="state.failed" class="chat-emoji__status" role="alert">
@@ -86,18 +86,61 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
     state!: PickerState;
     private _list = useRef("sections");
     private _gone = false;
-    private _fill: ReturnType<typeof setTimeout> | null = null;
+    private _fill: number | null = null;
     /** The section a tab asked for, scrolled to once it is drawn. */
     private _scrollTo: string | null = null;
+    /** The picker's history entry is the current one: Android's back closes it, not the conversation. */
+    private _inHistory = false;
+    private _closing = false;
+    private _onPop = () => {
+        if (!this._inHistory) return;
+        this._inHistory = false;
+        this.props.onClose();
+    };
+    private _onKey = (ev: KeyboardEvent) => {
+        if (ev.key === "Escape") this.close();
+    };
+    /** sections() and found() are computed once per input, not once per use in the template. */
+    private _sectionsKey = "";
+    private _sections: EmojiSection[] = [];
+    private _sectionsData: EmojiData | null = null;
+    private _foundKey: [EmojiData | null, string, string] = [null, "", ""];
+    private _found: EmojiEntry[] = [];
 
     setup() {
         this.state = useState<PickerState>({ data: null, failed: false, term: "", filled: 1 });
-        onMounted(() => void this.load());
+        onMounted(() => {
+            window.history.pushState({ ...(window.history.state ?? {}), chatEmoji: true }, "");
+            this._inHistory = true;
+            window.addEventListener("popstate", this._onPop);
+            document.addEventListener("keydown", this._onKey);
+            void this.load();
+        });
         onPatched(() => this.scroll());
         onWillUnmount(() => {
             this._gone = true;
-            if (this._fill) clearTimeout(this._fill);
+            if (this._fill) cancelAnimationFrame(this._fill);
+            window.removeEventListener("popstate", this._onPop);
+            document.removeEventListener("keydown", this._onKey);
+            // Closed without a back: its entry, if still the current one, is gone with it
+            if (this._inHistory && window.history.state?.chatEmoji) window.history.back();
+            this._inHistory = false;
         });
+    }
+
+    /**
+     * ✕ and Escape: goes back over the picker's entry, whose popstate closes
+     * it; a second call before that popstate does nothing, so a double tap
+     * never leaves the conversation.
+     */
+    close(): void {
+        if (this._closing) return;
+        if (this._inHistory) {
+            this._closing = true;
+            window.history.back();
+        } else {
+            this.props.onClose();
+        }
     }
 
     /** Asks the data (the same promise every time); a failure offers a retry. */
@@ -115,14 +158,15 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
         }
     }
 
-    /** Draws one more section on the next turn, until all are drawn. */
+    /** Draws one more section on the next frame, until all are drawn. */
     private fillNext(): void {
         if (this._gone || !this.state.data) return;
         if (this.state.filled >= this.sections().length) return;
-        this._fill = setTimeout(() => {
+        // One frame each: Owl paints on a frame, so a step queued after it lands on the next one
+        this._fill = requestAnimationFrame(() => {
             this.state.filled++;
             this.fillNext();
-        }, 0);
+        });
     }
 
     private lang(): "fr" | "en" {
@@ -139,7 +183,12 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
 
     /** The emojis matching the search field, in data order. */
     found(): EmojiEntry[] {
-        return this.state.data ? searchEmoji(this.state.data, this.state.term, this.lang()) : [];
+        const key: [EmojiData | null, string, string] = [this.state.data, this.state.term, this.lang()];
+        if (this._foundKey.some((v, i) => v !== key[i])) {
+            this._found = key[0] ? searchEmoji(key[0], key[1], key[2] as "fr" | "en") : [];
+            this._foundKey = key;
+        }
+        return this._found;
     }
 
     /** The most used emojis (when there are any) then the categories by sortId; none while searching. */
@@ -147,9 +196,12 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
         const data = this.state.data;
         if (!data || this.searching()) return [];
         const lang = this.lang();
+        const frequent = frequentEmoji(FREQUENT_COUNT);
+        const key = lang + "|" + frequent.join(",");
+        if (this._sectionsKey === key && this._sectionsData === data) return this._sections;
         const byCode = new Map(data.emojis.map((e) => [e.codepoints, e]));
         const out: EmojiSection[] = [];
-        const used = frequentEmoji(FREQUENT_COUNT).map((c) => byCode.get(c)).filter((e): e is EmojiEntry => !!e);
+        const used = frequent.map((c) => byCode.get(c)).filter((e): e is EmojiEntry => !!e);
         if (used.length) out.push({ id: "frequent", title: "🕘", label: t("chat.emoji_frequent"), emojis: used });
         for (const category of [...data.categories].sort((a, b) => a.sortId - b.sortId)) {
             out.push({
@@ -159,11 +211,24 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
                 emojis: data.emojis.filter((e) => e.category === category.name),
             });
         }
+        this._sectionsKey = key;
+        this._sectionsData = data;
+        this._sections = out;
         return out;
     }
 
+    /**
+     * The search field changed. Back to empty, the sections are mounted
+     * again: only the first at once, the others one per turn, never the
+     * whole list in one render.
+     */
     onSearch(ev: Event): void {
+        const was = this.searching();
         this.state.term = (ev.target as HTMLInputElement).value;
+        if (was && !this.searching()) {
+            this.state.filled = 1;
+            this.fillNext();
+        }
     }
 
     /** A tab: draws every section (the one asked may be a late one), then scrolls to it. */

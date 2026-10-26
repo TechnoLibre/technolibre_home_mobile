@@ -959,6 +959,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         const text = this.state.text.trim();
         if (!text && extra.length === 0 && this.attachState.chips.length === 0) return false;
         this.state.sending = true;
+        this.state.emoji = false;
         // A second screen of this conversation reads its draft once this post is queued
         const ended = this.chatService.sendStarted(this.configId, this.channelId);
         let queued = false;

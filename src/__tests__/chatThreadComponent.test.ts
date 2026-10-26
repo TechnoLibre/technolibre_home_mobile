@@ -739,8 +739,10 @@ describe("ChatThreadComponent", () => {
             return msg(null);
         });
         c.state.text = "first";
+        c.state.emoji = true;
         const sending = c.onSend();
         await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+        expect(c.state.emoji).toBe(false);
         c.onEmoji("😀");
         expect(c.state.text).toBe("");
         release();

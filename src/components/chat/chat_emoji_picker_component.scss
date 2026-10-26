@@ -5,6 +5,8 @@
 	flex-direction: column;
 	flex: none;
 	height: 40vh;
+	// Never more than the thread's share, so the messages keep room on a short screen
+	max-height: 45%;
 	min-height: 0;
 	border: 1px solid var(--text-greyed-out);
 	border-radius: 0.6rem;

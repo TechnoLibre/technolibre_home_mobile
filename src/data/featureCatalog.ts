@@ -4475,7 +4475,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/chat/chat_emoji_picker_component.ts",
                     "src/components/chat/chat_emoji_picker_component.scss",
                 ],
-                tests: ["src/__tests__/chatEmoji.test.ts", "src/__tests__/chatEmojiPicker.test.ts"],
+                tests: ["src/__tests__/chatEmoji.test.ts", "src/__tests__/chatEmojiPicker.test.ts", "src/__tests__/chatEmojiPickerMount.test.ts"],
             },
             {
                 id: "chat.compose",
