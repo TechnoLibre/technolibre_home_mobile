@@ -27,6 +27,11 @@ export interface ComposerChip {
 export type VoiceState = "idle" | "starting" | "recording" | "preparing";
 
 export interface ComposerAttachState {
+    /**
+     * start() ran: the conversation's account is known and the recorder's
+     * callbacks are hooked. Until then nothing is picked or recorded.
+     */
+    ready: boolean;
     /** The camera / gallery / file sheet is open. */
     sheet: boolean;
     /** Staged files waiting for the next send, in pick order. */
@@ -77,7 +82,7 @@ const TICK_MS = 250;
 const PHOTO = /^image\/(jpeg|png|hei[cf])$/;
 
 export function newComposerAttachState(): ComposerAttachState {
-    return { sheet: false, chips: [], voice: "idle", remainingMs: 0, limit: null, notices: [], staging: 0 };
+    return { ready: false, sheet: false, chips: [], voice: "idle", remainingMs: 0, limit: null, notices: [], staging: 0 };
 }
 
 /** The line under the sheet's items naming the server's limit; "" while it is unknown. */
@@ -133,10 +138,18 @@ export class ComposerAttach {
 
     constructor(readonly state: ComposerAttachState, readonly deps: ComposerAttachDeps) {}
 
-    /** Hooks the recorder's callbacks to this composer and reads the server's limit. */
+    /**
+     * Hooks the recorder's callbacks to this composer, then opens the
+     * composer to picks and recordings (ready), synchronously, so no
+     * recording can start unhooked; then reads the server's limit. Called
+     * once the conversation's account is known: a voice stopped before it
+     * would have nowhere to go.
+     */
     async start(): Promise<void> {
+        if (this.disposed) return;
         this.deps.recorder.onAutoStop = this.autoStop;
         this.deps.recorder.onBackground = this.background;
+        this.state.ready = true;
         await this.refreshLimit();
     }
 
@@ -146,6 +159,7 @@ export class ComposerAttach {
     }
 
     toggleSheet(): void {
+        if (!this.state.ready) return;
         this.state.sheet = !this.state.sheet;
         if (this.state.sheet) void this.refreshLimit();
     }
@@ -168,6 +182,7 @@ export class ComposerAttach {
      * is) are each named in a notice.
      */
     async pick(input: HTMLInputElement, kind: PickKind): Promise<void> {
+        if (!this.state.ready) return;
         const picking = this.deps.capture.pickFiles(input, kind);
         this.state.sheet = false;
         const picked = await picking;
@@ -240,7 +255,7 @@ export class ComposerAttach {
     /** The mic button: starts a recording when none runs, stops and sends the one running. */
     async mic(): Promise<void> {
         if (this.state.voice === "recording") return this.stopAndSend();
-        if (this.state.voice !== "idle" || this.hasVoiceChip()) return;
+        if (!this.state.ready || this.state.voice !== "idle" || this.hasVoiceChip()) return;
         this.state.notices = [];
         this.state.voice = "starting";
         let answer: VoiceStart;
@@ -321,6 +336,7 @@ export class ComposerAttach {
      */
     async dispose(): Promise<void> {
         this.disposed = true;
+        this.state.ready = false;
         this.endTick();
         const { recorder } = this.deps;
         const owned = recorder.onAutoStop === this.autoStop;
@@ -377,6 +393,10 @@ export function deviceComposerDeps(
  * 📎 and 🎤 buttons sit in the thread's composer row and drive the same
  * ComposerAttach.
  *
+ * The recording line is a live region for its appearance and its end;
+ * the countdown inside it is aria-live="off", so a screen reader does not
+ * read it again at each refresh.
+ *
  * The template reads the state only through this component's own
  * useState proxy (state, and the methods below): a read through the
  * controller's state (the thread's proxy) subscribes the thread alone, and
@@ -412,7 +432,7 @@ export class ChatComposerAttachComponent extends EnhancedComponent {
       </ul>
       <div t-if="state.voice === 'recording'" class="chat-attach__voice" role="status">
         <span class="chat-attach__voice-dot" aria-hidden="true"/>
-        <span class="chat-attach__voice-time" t-esc="timerText()"/>
+        <span class="chat-attach__voice-time" aria-live="off" t-esc="timerText()"/>
         <button class="chat-attach__voice-discard" t-att-aria-label="t('chat.voice_discard')"
                 t-on-click="() => this.attach.discardVoice()">✕</button>
       </div>

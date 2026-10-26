@@ -164,13 +164,13 @@ export class ChatThreadComponent extends EnhancedComponent {
         <ChatComposerAttachComponent attach="attach"/>
         <div class="chat-thread__composer">
           <button class="chat-thread__attach" t-att-aria-label="t('chat.attach')" t-att-aria-expanded="attachState.sheet ? 'true' : 'false'"
-                  t-att-disabled="attachState.voice !== 'idle'" t-on-mousedown.prevent="" t-on-click="() => this.attach.toggleSheet()">📎</button>
+                  t-att-disabled="!attachState.ready or attachState.voice !== 'idle'" t-on-mousedown.prevent="" t-on-click="() => this.attach.toggleSheet()">📎</button>
           <textarea class="chat-thread__input" t-att-rows="state.inputRows" t-att-placeholder="t('chat.compose_placeholder')"
                     t-att-value="state.text" t-on-input="onInput"/>
           <button t-if="!attach.hasVoiceChip()" class="chat-thread__mic"
                   t-att-class="{'chat-thread__mic--on': attachState.voice === 'recording'}"
                   t-att-aria-label="attachState.voice === 'recording' ? t('chat.voice_stop_send') : t('chat.voice_record')"
-                  t-att-disabled="attachState.voice === 'starting' or attachState.voice === 'preparing'"
+                  t-att-disabled="!attachState.ready or attachState.voice === 'starting' or attachState.voice === 'preparing'"
                   t-on-mousedown.prevent="" t-on-click="() => this.attach.mic()">
             <t t-esc="attachState.voice === 'recording' ? '⏹' : '🎤'"/>
           </button>
@@ -250,7 +250,6 @@ export class ChatThreadComponent extends EnhancedComponent {
         onMounted(async () => {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
             await this.open();
-            if (!this.destroyed) await this.attach.start();
         });
         onWillUnmount(() => this.teardown());
     }
@@ -269,11 +268,15 @@ export class ChatThreadComponent extends EnhancedComponent {
         if (this.source) this.chatService.typing(this.source, this.channelId, false).catch(() => {});
     }
 
-    /** Resolves the source, shows the cache, scrolls down and marks read. */
+    /**
+     * Resolves the source, opens the attachments once it is known (until
+     * then 📎 and 🎤 stay off), shows the cache, scrolls down and marks read.
+     */
     async open(): Promise<void> {
         const sources = await this.chatService.sources({ online: false });
         this.source = sources.find((s) => s.configId === this.configId) ?? null;
         if (this.destroyed) return;
+        if (this.source) void this.attach.start();
         this.state.serverLabel = this.source?.label ?? "";
         await this.refresh();
         this.scrollToBottom();

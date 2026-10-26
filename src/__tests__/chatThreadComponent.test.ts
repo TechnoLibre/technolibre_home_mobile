@@ -647,6 +647,31 @@ describe("ChatThreadComponent", () => {
         expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "", [expect.objectContaining({ name: "IMG_1.jpg", size: 10 })]);
     });
 
+    it("the mic and 📎 wait for the conversation's source, the recorder hooked once it is known", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        const a = fakeAttachments(c);
+        expect(c.attachState.ready).toBe(false);
+        await c.open();
+        expect(c.attachState.ready).toBe(true);
+        expect(a.recorder.onAutoStop).not.toBeNull();
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        for (const cls of ["chat-thread__attach", "chat-thread__mic"]) {
+            const tag = source.slice(source.indexOf('class="' + cls + '"'));
+            expect(tag.slice(0, tag.indexOf(">")), cls).toMatch(/t-att-disabled="!attachState.ready or /);
+        }
+    });
+
+    it("a conversation whose source is unknown keeps the mic and 📎 off", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.sources.mockResolvedValue([]);
+        const c = make(chat);
+        const a = fakeAttachments(c);
+        await c.open();
+        expect(c.attachState.ready).toBe(false);
+        expect(a.recorder.onAutoStop).toBeNull();
+    });
+
     it("leaving the screen discards the recording under way", async () => {
         const chat = fakeChat([msg(10)]);
         const c = make(chat);

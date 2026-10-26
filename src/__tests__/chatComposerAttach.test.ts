@@ -119,6 +119,33 @@ afterEach(() => {
 });
 
 describe("ComposerAttach", () => {
+    it("the mic and the sheet do nothing until start, which hooks the recorder first", async () => {
+        const h = harness();
+        expect(h.state.ready).toBe(false);
+        await h.attach.mic();
+        h.attach.toggleSheet();
+        expect(h.recorder.start).not.toHaveBeenCalled();
+        expect(h.state.sheet).toBe(false);
+        const starting = h.attach.start();
+        expect(h.recorder.onAutoStop).not.toBeNull();
+        expect(h.recorder.onBackground).not.toBeNull();
+        expect(h.state.ready).toBe(true);
+        await starting;
+        await h.attach.mic();
+        expect(h.recorder.start).toHaveBeenCalledTimes(1);
+    });
+
+    it("the countdown is not announced at each tick, the recording line is", () => {
+        const source = readFileSync(
+            resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_composer_attach_component.ts"),
+            "utf8",
+        );
+        const line = source.match(/<div t-if="state.voice === 'recording'"[^>]*>/)?.[0] ?? "";
+        expect(line).toContain('role="status"');
+        const time = source.match(/<span class="chat-attach__voice-time"[^>]*>/)?.[0] ?? "";
+        expect(time).toContain('aria-live="off"');
+    });
+
     it("the sheet names the server's limit before anything is sent", async () => {
         const h = harness();
         await h.attach.start();
