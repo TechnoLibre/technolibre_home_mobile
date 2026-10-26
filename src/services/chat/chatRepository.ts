@@ -578,6 +578,7 @@ export class ChatRepository {
       }
       await this.del("chat_members", { config_id: configId, channel_id: id });
       await this.del("chat_reactions", { config_id: configId, channel_id: id });
+      await this.del("chat_on_top", { id: key(configId, id) });
       // Its draft goes with it
       const dropped = (await this.rows("chat_attachments", { config_id: configId, channel_id: id }))
         .filter((r) => r.state !== "queued" && r.state !== "uploaded");
@@ -931,10 +932,10 @@ export class ChatRepository {
     const rows = configId
       ? await this.rows("chat_channels", { config_id: configId })
       : await this.db.rawQuery("SELECT * FROM chat_channels");
-    const onTop = new Set(
-      (configId ? await this.rows("chat_on_top", { config_id: configId }) : await this.db.rawQuery("SELECT * FROM chat_on_top"))
-        .map((r) => r.id as string),
-    );
+    const onTopRows = configId
+      ? await this.rows("chat_on_top", { config_id: configId })
+      : await this.db.rawQuery("SELECT * FROM chat_on_top");
+    const onTop = new Set(onTopRows.map((r) => r.id as string));
     return rows.map((r) => ({ ...channelFromRow(r), onTop: onTop.has(r.id as string) }));
   }
 

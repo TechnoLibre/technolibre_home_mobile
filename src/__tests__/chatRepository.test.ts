@@ -1807,6 +1807,15 @@ describe("ChatRepository conversations on top", () => {
     expect(await db.rawQuery("SELECT id, config_id FROM chat_on_top")).toEqual([{ id: `${carol}#7`, config_id: carol }]);
   });
 
+  it("a channel deleted or left by the server loses its row, and a rejoin is not on top", async () => {
+    await repo.setOnTop(A, 7, true, NOW);
+    await repo.setOnTop(A, 8, true, NOW);
+    await repo.applyDelta(A, delta({ deletedChannelIds: [7, 8] }));
+    expect(await db.rawQuery("SELECT id FROM chat_on_top")).toEqual([]);
+    await repo.applyDelta(A, delta({ channels: [{ channelId: 7, name: "a" }] }));
+    expect(await onTopIds(A)).toEqual([]);
+  });
+
   it("dropping the channel or the source removes the row", async () => {
     await repo.setOnTop(A, 7, true, NOW);
     await repo.setOnTop(A, 8, true, NOW);
