@@ -144,4 +144,18 @@ describe("ChatReactionWhoComponent", () => {
         back.mockRestore();
         (component as any).__owl__.app.destroy();
     });
+
+    it("gives the focus back to the chip that opened it on close", async () => {
+        stubStorage();
+        const chip = document.createElement("button");
+        document.body.appendChild(chip);
+        chip.focus();
+        const host = document.createElement("div");
+        document.body.appendChild(host);
+        const props = { reaction: { content: "👍", count: 1, self: false, names: ["Alice Martin"] }, onClose: vi.fn() };
+        const component = await mount(ChatReactionWhoComponent as any, host, { props, env: {} } as any);
+        expect(document.activeElement).toBe(host.querySelector(".chat-who"));
+        (component as any).__owl__.app.destroy();
+        expect(document.activeElement).toBe(chip);
+    });
 });

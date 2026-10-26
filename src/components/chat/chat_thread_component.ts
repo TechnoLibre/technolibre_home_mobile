@@ -1,4 +1,4 @@
-import { markup, onMounted, onWillUnmount, useRef, useState, xml } from "@odoo/owl";
+import { markup, onMounted, onPatched, onWillUnmount, useRef, useState, xml } from "@odoo/owl";
 import { App } from "@capacitor/app";
 import { Dialog } from "@capacitor/dialog";
 
@@ -573,6 +573,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
             await this.open();
         });
+        onPatched(() => this.scrollToQuoted());
         onWillUnmount(() => this.teardown());
     }
 
@@ -966,7 +967,8 @@ export class ChatThreadComponent extends EnhancedComponent {
      * emptied with no file, or whose delete is queued, reads deleted; one
      * not cached reads deleted when it would be in the loaded history
      * (complete, or at or above floor) or was a queued post (dropped by its
-     * delete), else as never loaded.
+     * delete), else as never loaded. A parent cached below floor is quoted
+     * without a key: no row of the loaded history can show it.
      */
     private quotesOf(
         shown: ChatMessage[],
@@ -994,7 +996,9 @@ export class ChatThreadComponent extends EnhancedComponent {
             }
             const p = parent.message;
             if (deleting(p) || isEmptyMessage(p.body, parent.files ? 1 : 0)) return deleted;
-            return this.quoteOf(p, names, self, texts);
+            const quote = this.quoteOf(p, names, self, texts);
+            const reachable = floor === null || p.messageId === null || p.messageId >= floor;
+            return reachable ? quote : { ...quote, key: null };
         });
         this._quoteText = texts;
         return quotes;
@@ -1428,18 +1432,38 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     private _highlightTimer: ReturnType<typeof setTimeout> | null = null;
 
+    /** The original a quote tap rendered, scrolled to once its bubble is in the DOM (onPatched). */
+    private _quoted: string | null = null;
+
     /**
      * A tap on a quote scrolls its original to the middle of the screen and
-     * highlights it for HIGHLIGHT_MS, when the original is rendered; a
-     * quote with no key (deleted, never loaded) or whose original is not
-     * rendered does nothing.
+     * highlights it for HIGHLIGHT_MS. An original of the loaded history older
+     * than the rendered rows is rendered first: the window grows a page at
+     * a time while the cache holds older rows (cachedOlder), as Odoo's
+     * loadAround brings it in; the scroll waits for its bubble. A quote with
+     * no key (deleted, never loaded, below the loaded history) does nothing.
      */
-    onQuote(row: ThreadRow): void {
+    async onQuote(row: ThreadRow): Promise<void> {
         const key = row.quote?.key ?? null;
-        if (key === null || !this._rows.some((r) => r.key === key)) return;
+        if (key === null) return;
+        const rendered = () => this._rows.some((r) => r.key === key);
+        while (!rendered() && !this.destroyed && (await this.cachedOlder())) {
+            this._window += THREAD_PAGE;
+            await this.refresh();
+        }
+        if (!rendered() || this.destroyed) return;
+        this._quoted = key;
+        this.scrollToQuoted();
+    }
+
+    /** Scrolls to the original a quote tap asked for and highlights it, once its bubble is in the DOM. */
+    private scrollToQuoted(): void {
+        const key = this._quoted;
+        if (key === null) return;
         const el = this.scroller.el as HTMLElement | null;
         const bubble = Array.from(el?.querySelectorAll<HTMLElement>(".chat-thread__bubble") ?? []).find((b) => b.dataset.key === key);
         if (!bubble) return;
+        this._quoted = null;
         bubble.scrollIntoView?.({ block: "center", behavior: "smooth" });
         if (this._highlightTimer !== null) clearTimeout(this._highlightTimer);
         this.state.highlight = key;
@@ -1654,7 +1678,8 @@ export class ChatThreadComponent extends EnhancedComponent {
      * its picks (an empty draft's row exists once the edit is in it), and
      * its typing goes to editText. A message no longer cached shows an
      * error. Refused while a send runs, and while a voice message records
-     * (its ⏹ is off in edit mode).
+     * (its ⏹ is off in edit mode). An open 📎 sheet closes: a file picked
+     * there would go to the new message, out of sight.
      */
     async startEdit(target: MessageTarget): Promise<void> {
         if (this.state.sending || this.destroyed || this.attachState.voice !== "idle") return;
@@ -1680,6 +1705,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         this._editStart = start.text;
         this.state.error = "";
         this.state.banner = null;
+        this.attachState.sheet = false;
         this.state.mode = { kind: "edit", target };
         this.showText(start.text);
         this.editText.set(start.text);

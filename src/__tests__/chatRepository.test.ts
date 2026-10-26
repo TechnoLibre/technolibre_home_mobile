@@ -388,6 +388,24 @@ describe("ChatRepository", () => {
     expect((await repo.lastMessages(A, [chans[1]], new Set([5]))).get(8)?.messageId).toBe(4);
   });
 
+  it("a photo-only last message stands for its conversation with one lookup, no history read", async () => {
+    await repo.applyDelta(A, delta({
+      messages: [
+        { messageId: 4, channelId: 8, body: "<p>four</p>" },
+        { messageId: 5, channelId: 8, body: "", attachmentIds: [61] },
+      ],
+      attachments: [{ attachmentId: 61, channelId: 8, name: "f.png", mimetype: "image/png", size: 1, checksum: "c", voice: false }],
+    }));
+    const read = vi.spyOn(db, "rawQuery");
+    const lasts = await repo.lastMessages(A, [{ channelId: 8, lastMessageId: 5 }] as any[]);
+    expect(lasts.get(8)?.messageId).toBe(5);
+    // Neither the channel's messages nor all its files are read
+    const sql = read.mock.calls.map(([q, args]) => [String(q), args]);
+    expect(sql.filter(([q]) => /FROM chat_messages WHERE config_id = \? AND channel_id = \?/.test(q as string))).toEqual([]);
+    expect(sql.filter(([q]) => /FROM chat_attachments WHERE config_id = \? AND channel_id = \?$/.test(q as string))).toEqual([]);
+    read.mockRestore();
+  });
+
   describe("attachments", () => {
     let released: string[][];
     beforeEach(() => {

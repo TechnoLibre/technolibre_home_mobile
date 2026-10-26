@@ -45,6 +45,13 @@ describe("ChatComposerBannerComponent", () => {
         b.destroy();
     });
 
+    it("a reply to files only names them, without the quote's « Touchez » (the banner is no button)", async () => {
+        const quote = { key: "m10", author: "Alice Martin", text: "Touchez pour voir les pièces jointes", edited: false, state: "attachments" };
+        const b = await mounted({ mode: { kind: "reply", target: TARGET }, quote, onCancel: vi.fn() });
+        expect(b.host.querySelector(".chat-banner__quote")!.textContent).toBe("📎 Pièces jointes");
+        b.destroy();
+    });
+
     it("an edit says so, with or without a quote", async () => {
         const b = await mounted({ mode: { kind: "edit", target: TARGET }, quote: null, onCancel: vi.fn() });
         expect(b.host.querySelector(".chat-banner__title")!.textContent).toBe("Modification du message");

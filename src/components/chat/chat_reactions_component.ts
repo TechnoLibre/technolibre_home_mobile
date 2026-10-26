@@ -5,6 +5,7 @@ import { t } from "../../i18n";
 import type { ChatReaction } from "../../models/chat";
 import { LongPress } from "./chatLongPress";
 import { BackEntry } from "./chatBackEntry";
+import { SheetFocus } from "./chatSheetFocus";
 
 /** One reaction chip: the emoji, how many reacted, whether the user did, and who did by name. */
 export interface ReactionView {
@@ -84,7 +85,8 @@ export class ChatReactionsComponent extends EnhancedComponent {
 
 /**
  * Who reacted with one emoji, a sheet at the bottom of the thread with its
- * own history entry (back closes it, as the message menu).
+ * own history entry (back closes it, as the message menu); the focus
+ * comes back where it was on close (SheetFocus).
  */
 export class ChatReactionWhoComponent extends EnhancedComponent {
     static props = { reaction: Object, onClose: Function };
@@ -106,6 +108,7 @@ export class ChatReactionWhoComponent extends EnhancedComponent {
 
     private panel = useRef("panel");
     private entry!: BackEntry;
+    private focus = new SheetFocus();
     shadeDown = false;
     private _onKey = (ev: KeyboardEvent) => {
         if (ev.key === "Escape") this.close();
@@ -116,11 +119,12 @@ export class ChatReactionWhoComponent extends EnhancedComponent {
         onMounted(() => {
             this.entry.open();
             document.addEventListener("keydown", this._onKey);
-            this.panel.el?.focus();
+            this.focus.take(this.panel.el);
         });
         onWillUnmount(() => {
             document.removeEventListener("keydown", this._onKey);
             this.entry.dispose();
+            this.focus.give(this.panel.el);
         });
     }
 

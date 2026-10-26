@@ -1618,8 +1618,9 @@ describe("ChatThreadComponent edited, deleted and quoted messages", () => {
         const quote = (key: string) => c.state.rows.find((r: any) => r.key === key).quote;
         expect(quote("m20")).toBeNull();
         expect(quote("m21")).toEqual({ key: "m20", author: "Alice Roy", text: "Bonjour à tous", edited: true, state: "text" });
-        expect(quote("m22")).toEqual({ key: "m5", author: "Bob", text: "old", edited: false, state: "text" });
-        expect(quote("m23")).toEqual({ key: "m3", author: "You", text: "mine", edited: false, state: "text" });
+        // Below the loaded history: quoted, not reachable by a tap
+        expect(quote("m22")).toEqual({ key: null, author: "Bob", text: "old", edited: false, state: "text" });
+        expect(quote("m23")).toEqual({ key: null, author: "You", text: "mine", edited: false, state: "text" });
         expect(quote("uP2")).toEqual({ key: "uP1", author: "You", text: "first", edited: false, state: "text" });
         expect(chat.repo.messageOf).toHaveBeenCalledTimes(1);
         c.teardown();
@@ -1692,10 +1693,34 @@ describe("ChatThreadComponent edited, deleted and quoted messages", () => {
         // Never loaded: a neutral quote that cannot be tapped
         expect(c.state.rows[2].quote).toEqual({ key: null, author: "", text: "Original message", edited: false, state: "text" });
         c.onQuote(c.state.rows[2]);
-        // Cached but not rendered: nothing to scroll to
-        expect(c.state.rows[1].quote.key).toBe("m5");
-        c.onQuote(c.state.rows[1]);
+        // Cached below the loaded history: not tappable either
+        expect(c.state.rows[1].quote.key).toBeNull();
+        await c.onQuote(c.state.rows[1]);
         expect(c.state.highlight).toBeNull();
+        c.teardown();
+    });
+
+    it("tap on a quote of an original older than the rendered window renders it, then scrolls to it", async () => {
+        const list = Array.from({ length: THREAD_WINDOW + 5 }, (_, i) => msg(i + 1));
+        list.push(msg(THREAD_WINDOW + 6, { parentId: 1 }));
+        const chat = fakeChat(list, undefined, channel({ historyComplete: true }));
+        chat.repo.messageOf.mockImplementation(async (_c: string, t: any) => t.messageId === 1 ? list[0] : null);
+        const c = make(chat);
+        await c.open();
+        expect(keys(c)).not.toContain("m1");
+        const row = c.state.rows.at(-1);
+        expect(row.quote.key).toBe("m1");
+        const el = document.createElement("div");
+        const original = document.createElement("div");
+        original.className = "chat-thread__bubble";
+        original.dataset.key = "m1";
+        (original as any).scrollIntoView = vi.fn();
+        el.appendChild(original);
+        c.scroller = { el };
+        await c.onQuote(row);
+        expect(keys(c)).toContain("m1");
+        expect((original as any).scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: "center" }));
+        expect(c.state.highlight).toBe("m1");
         c.teardown();
     });
 
@@ -1874,6 +1899,18 @@ describe("ChatThreadComponent composer modes", () => {
         expect(c.state.text).toBe("half a new message");
         expect(chat.saveDraftEdit.mock.calls.slice(1)).toEqual([["a", 5, null]]);
         expect(chat.saveDraftText).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
+    it("Edit closes an open 📎 sheet; the sheet stays out of sight while editing", async () => {
+        const c = make(fakeChat([msg(10)]));
+        await c.open();
+        c.attachState.sheet = true;
+        await c.startEdit(M10);
+        expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
+        expect(c.attachState.sheet).toBe(false);
+        const sheet = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.scss"), "utf8");
+        expect(sheet).toMatch(/\.chat-thread__attach-slot--editing \.chat-attach__chips,\s*\.chat-thread__attach-slot--editing \.chat-attach__sheet \{\s*display: none;/);
         c.teardown();
     });
 
@@ -2162,7 +2199,7 @@ describe("ChatThreadComponent composer modes", () => {
         const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
         expect(source).toMatch(/<div class="chat-thread__attach-slot" t-att-class="\{'chat-thread__attach-slot--editing': state\.mode\.kind === 'edit'\}">\s*<ChatComposerAttachComponent attach="attach"\/>/);
         const scss = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.scss"), "utf8");
-        expect(scss).toMatch(/\.chat-thread__attach-slot--editing \.chat-attach__chips \{\s*display: none;/);
+        expect(scss).toMatch(/\.chat-thread__attach-slot--editing \.chat-attach__chips,\s*\.chat-thread__attach-slot--editing \.chat-attach__sheet \{\s*display: none;/);
     });
 
     it("the mode banner shows the quote and ✕; a quote with nothing to reach is out of the tab order", () => {

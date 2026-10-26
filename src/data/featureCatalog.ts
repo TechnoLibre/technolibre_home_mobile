@@ -4453,7 +4453,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 howItWorks: {
                     en: "chatLongPress.ts runs a 500 ms timer from pointerdown, stopped by a move beyond 10 px, "
                         + "the release, a pointercancel or a scroll; it calls no preventDefault, so the list "
-                        + "scrolls and text is selected as before, and the bubble's contextmenu is prevented. "
+                        + "scrolls. The bubble's contextmenu is prevented: a long press opens the menu, never a "
+                        + "native text selection, and « Copy » copies the whole message. "
                         + "The click that ends a long press is swallowed. The menu offers what Odoo's message "
                         + "actions do: react on comment messages, delete on the user's own (a failed one is "
                         + "dropped), copy on any message with text. A quick emoji the user already put on comes "
@@ -4465,6 +4466,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "it, opens the menu without a long press. Each layer (picker, menu, who reacted, "
                         + "image viewer) takes a history entry (chatBackEntry.ts), so back closes it; a "
                         + "popstate landing on an entry still carrying its mark is a layer above it going back. "
+                        + "The menu and the who-reacted sheet give the focus back on close (chatSheetFocus.ts); "
+                        + "a composer that held it keeps it, its keyboard open. A tap on a quote whose original "
+                        + "is older than the rendered rows renders more of the cached history, then scrolls to it. "
                         + "Reply and Edit put the composer in their mode, with a banner (the quote, ✕) above it, "
                         + "both kept in the draft: a reply posts with its parent; an edit fills the composer "
                         + "with the message's text, keeps the new message's text apart for after, and ➤ queues "
@@ -4475,8 +4479,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(Abandon or Keep; a kept edit takes the reply under it); ✕ asks nothing.",
                     fr: "chatLongPress.ts lance une minuterie de 500 ms au pointerdown, arrêtée par un "
                         + "déplacement de plus de 10 px, le relâchement, un pointercancel ou un défilement ; il "
-                        + "n'appelle aucun preventDefault, donc la liste défile et le texte se sélectionne comme "
-                        + "avant, et le contextmenu de la bulle est empêché. Le clic qui termine un appui long "
+                        + "n'appelle aucun preventDefault, donc la liste défile. Le contextmenu de la bulle est "
+                        + "empêché : un appui long ouvre le menu, jamais une sélection de texte native, et "
+                        + "« Copier » copie le message entier. Le clic qui termine un appui long "
                         + "est avalé. Le menu offre ce qu'offrent les actions de message d'Odoo : réagir sur les "
                         + "messages comment, supprimer les siens (un échoué est abandonné), copier tout message "
                         + "qui a du texte. Un émoji rapide déjà mis par l'utilisateur s'enlève ; un choix dans "
@@ -4489,6 +4494,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "long. Chaque couche (sélecteur, menu, qui a réagi, visionneuse d'images) prend une "
                         + "entrée d'historique (chatBackEntry.ts), donc retour la ferme ; un popstate qui arrive "
                         + "sur une entrée portant encore sa marque est une couche au-dessus qui se referme. "
+                        + "Le menu et la feuille « qui a réagi » rendent le focus à la fermeture "
+                        + "(chatSheetFocus.ts) ; un composeur qui l'avait le garde, clavier ouvert. Toucher une "
+                        + "citation dont l'original est plus ancien que les bulles affichées affiche plus de "
+                        + "l'historique en cache, puis y défile. "
                         + "Répondre et Modifier mettent le composeur dans leur mode, avec un bandeau (la "
                         + "citation, ✕) au-dessus, tous deux gardés dans le brouillon : une réponse part avec "
                         + "son parent ; une modification remplit le composeur du texte du message, met de côté "
@@ -4503,6 +4512,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 files: [
                     "src/components/chat/chatLongPress.ts",
                     "src/components/chat/chatBackEntry.ts",
+                    "src/components/chat/chatSheetFocus.ts",
                     "src/components/chat/chat_message_menu_component.ts",
                     "src/components/chat/chat_message_menu_component.scss",
                     "src/components/chat/chat_composer_banner_component.ts",
@@ -4534,7 +4544,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "in source order. The app imports it on first use, as its own chunk. Uses are counted "
                         + "in localStorage (chat.emoji.frequent, all accounts together); the bar starts from "
                         + "👍 ❤️ 😂 😮 😢 🙏 and an emoji used three times or more takes the slot, from the end, "
-                        + "of one used less. The picker (chat_emoji_picker_component.ts) lists the most used then "
+                        + "of one used less. The picker (chat_emoji_picker_component.ts) lists the most used, read "
+                        + "once per open as Odoo's recentSnapshot so a pick never moves the grid, then "
                         + "the categories, with tabs and a search; its sections are drawn one per turn and skipped "
                         + "by the browser out of view (content-visibility). The composer's 😊 button inserts a pick "
                         + "at the caret and keeps it in the draft.",
@@ -4544,9 +4555,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "dans son propre morceau. Les usages sont comptés dans localStorage "
                         + "(chat.emoji.frequent, tous comptes confondus) ; la barre part de 👍 ❤️ 😂 😮 😢 🙏 et "
                         + "un émoji utilisé trois fois ou plus prend la place, depuis la fin, d'un moins utilisé. Le sélecteur "
-                        + "(chat_emoji_picker_component.ts) liste les plus utilisés puis les catégories, avec onglets "
+                        + "(chat_emoji_picker_component.ts) liste les plus utilisés, lus une fois par ouverture "
+                        + "comme le recentSnapshot d'Odoo pour qu'un choix ne déplace jamais la grille, puis les "
+                        + "catégories, avec onglets "
                         + "et recherche ; ses sections sont dessinées une par tour et ignorées par le navigateur "
-                        + "hors écran (content-visibility). Le bouton 😊 du compositeur insère le choix au curseur "
+                        + "hors écran (content-visibility). Le bouton 😊 du composeur insère le choix au curseur "
                         + "et le garde dans le brouillon.",
                 },
                 files: [
@@ -4564,7 +4577,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 label: { en: "Chat message HTML", fr: "HTML des messages du clavardage" },
                 description: {
                     en: "The message HTML of Odoo 18's browser composer, byte for byte: line breaks, links, emoticons, mentions and channel links; @ and # suggestions in the composer; mention chips and the edited mark shown.",
-                    fr: "Le HTML des messages du compositeur d'Odoo 18 dans le navigateur, octet pour octet : sauts de ligne, liens, émoticônes, mentions et liens de canaux ; suggestions @ et # dans le compositeur ; pastilles de mention et marque de modification affichées.",
+                    fr: "Le HTML des messages du composeur d'Odoo 18 dans le navigateur, octet pour octet : sauts de ligne, liens, émoticônes, mentions et liens de canaux ; suggestions @ et # dans le composeur ; pastilles de mention et marque de modification affichées.",
                 },
                 status: "experimental",
                 demo: NONE_PLUMBING,

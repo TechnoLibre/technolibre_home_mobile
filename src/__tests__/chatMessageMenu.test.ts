@@ -52,6 +52,38 @@ describe("ChatMessageMenuComponent", () => {
         window.history.replaceState({}, "");
     });
 
+    it("takes the focus from the button that opened it and gives it back on close", async () => {
+        const opener = document.createElement("button");
+        document.body.appendChild(opener);
+        opener.focus();
+        const { host, app } = await mounted(OWN);
+        expect(document.activeElement).toBe(host.querySelector(".chat-menu"));
+        app.destroy();
+        expect(document.activeElement).toBe(opener);
+    });
+
+    it("leaves the focus in the composer: its keyboard stays open", async () => {
+        const field = document.createElement("textarea");
+        document.body.appendChild(field);
+        field.focus();
+        const { app } = await mounted(OWN);
+        expect(document.activeElement).toBe(field);
+        app.destroy();
+        expect(document.activeElement).toBe(field);
+    });
+
+    it("a choice that moves the focus (Reply to the composer) keeps it there", async () => {
+        const opener = document.createElement("button");
+        const field = document.createElement("textarea");
+        document.body.append(opener, field);
+        opener.focus();
+        const { host, props, app } = await mounted(OWN);
+        props.onReply.mockImplementation(() => field.focus());
+        host.querySelector<HTMLElement>(".chat-menu__reply")!.click();
+        app.destroy();
+        expect(document.activeElement).toBe(field);
+    });
+
     it("hides Edit and Delete on another's message, offers them on one's own", async () => {
         const others = await mounted(OTHERS);
         const labels = (h: HTMLElement) => [...h.querySelectorAll(".chat-menu__item")].map((b) => b.textContent);

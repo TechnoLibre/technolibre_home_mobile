@@ -1091,8 +1091,10 @@ export class ChatRepository {
   /**
    * The newest non-empty server message of each given channel, as Odoo's
    * `newestPersistentNotEmptyOfAllMessage`: the last one by primary key
-   * (one lookup per channel); only when its body is empty is the channel's
-   * history read for the newest one with text or a file (isEmptyMessage).
+   * (one lookup per channel). One with an empty body is looked up once
+   * more for a file (a photo without a caption stands too); only when it
+   * has none is the channel's history read for the newest one with text
+   * or a file (isEmptyMessage).
    * The messages of `skip` (server ids) count as empty: the ones whose
    * delete is queued. A channel without a known last message, whose last
    * message is not cached, or with no non-empty message cached has no
@@ -1101,7 +1103,9 @@ export class ChatRepository {
   async lastMessages(configId: string, channels: ChatChannel[], skip: Set<number> = new Set()): Promise<Map<number, ChatMessage>> {
     const found = await Promise.all(channels.map(async (c) => {
       const m = c.lastMessageId == null ? null : await this.message(configId, c.lastMessageId);
-      return !m || (!isEmptyBody(m.body) && !skip.has(m.messageId!)) ? m : this.newestNotEmpty(configId, c.channelId, skip);
+      if (!m) return null;
+      if (!skip.has(m.messageId!) && (!isEmptyBody(m.body) || (await this.hasFiles(configId, m.messageId!)))) return m;
+      return this.newestNotEmpty(configId, c.channelId, skip);
     }));
     const out = new Map<number, ChatMessage>();
     channels.forEach((c, i) => {
@@ -1109,6 +1113,12 @@ export class ChatRepository {
       if (m) out.set(c.channelId, m);
     });
     return out;
+  }
+
+  /** Whether a cached server message has a cached file, in one lookup by its id. */
+  private async hasFiles(configId: string, messageId: number): Promise<boolean> {
+    const sql = "SELECT 1 FROM chat_attachments WHERE config_id = ? AND message_id = ? LIMIT 1";
+    return (await this.db.rawQuery(sql, [configId, messageId])).length > 0;
   }
 
   /** The newest server message of a channel with text or a file, outside `skip`; null when none is cached. */

@@ -2,6 +2,7 @@ import { onMounted, onWillUnmount, useRef, xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { BackEntry } from "./chatBackEntry";
+import { SheetFocus } from "./chatSheetFocus";
 
 /**
  * What the menu offers on a message, as Odoo does: react and reply on a
@@ -25,7 +26,8 @@ export interface MessageCan {
  * clipboard asks), then the menu closes over its own history entry, so
  * Android's back closes it too; onClose comes with the popstate. A tap on
  * the shade around the sheet closes it, when the press started there: the
- * release of the long press that opened it does not.
+ * release of the long press that opened it does not. The focus moves to
+ * the sheet and comes back on close (SheetFocus); the composer keeps it.
  */
 export class ChatMessageMenuComponent extends EnhancedComponent {
     static props = {
@@ -66,6 +68,7 @@ export class ChatMessageMenuComponent extends EnhancedComponent {
 
     private panel = useRef("panel");
     private entry!: BackEntry;
+    private focus = new SheetFocus();
     /** The press on the shade started there (not the long press that opened the menu). */
     shadeDown = false;
     private _onKey = (ev: KeyboardEvent) => {
@@ -77,11 +80,12 @@ export class ChatMessageMenuComponent extends EnhancedComponent {
         onMounted(() => {
             this.entry.open();
             document.addEventListener("keydown", this._onKey);
-            this.panel.el?.focus();
+            this.focus.take(this.panel.el);
         });
         onWillUnmount(() => {
             document.removeEventListener("keydown", this._onKey);
             this.entry.dispose();
+            this.focus.give(this.panel.el);
         });
     }
 

@@ -306,8 +306,9 @@
 	opacity: 0.75;
 }
 
-// While editing, the new message's chips wait out of sight; the attach component stays mounted.
-.chat-thread__attach-slot--editing .chat-attach__chips {
+// While editing, the new message's chips and the 📎 sheet wait out of sight; the attach component stays mounted.
+.chat-thread__attach-slot--editing .chat-attach__chips,
+.chat-thread__attach-slot--editing .chat-attach__sheet {
 	display: none;
 }
 
