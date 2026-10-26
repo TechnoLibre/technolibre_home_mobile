@@ -2766,6 +2766,17 @@ describe("ChatService", () => {
       expect((await chat.notices([config]))[0]).toMatchObject({ file: { name: "big.jpg", reason: "too_big", limit: 65546 } });
     });
 
+    it("uploadLimit is the session's limit, null while the session cannot be read", async () => {
+      odoo.state.maxUpload = 2 * 1024 * 1024;
+      await chat.load(src);
+      expect(await chat.uploadLimit(src)).toBe(2 * 1024 * 1024);
+      const rpc = new OdooRpcClient();
+      const offline = new ChatService(env.db, rpc, new OutboxService(env.db, () => clock), new CapabilityService(env.db, rpc), () => clock);
+      vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
+      expect(await offline.uploadLimit(src)).toBeNull();
+      offline.dispose();
+    });
+
     it("a missing file is refused with a notice", async () => {
       const gone = stage("gone.jpg");
       await server.files.remove(gone.path);

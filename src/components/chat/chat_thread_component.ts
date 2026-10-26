@@ -7,8 +7,15 @@ import { getCurrentLocale, t } from "../../i18n";
 import { renderBody } from "../../services/chat/chatBody";
 import type { ChatSource } from "../../services/chat/chatService";
 import { displayNameOf } from "../../services/chat/chatNames";
-import type { ChatChannel, ChatMember, ChatMessage, ChatPartner } from "../../models/chat";
+import type { ChatChannel, ChatMember, ChatMessage, ChatPartner, OutgoingFile } from "../../models/chat";
 import { formatListTime, initialsOf } from "./chat_list_component";
+import {
+    ChatComposerAttachComponent,
+    ComposerAttach,
+    deviceComposerDeps,
+    newComposerAttachState,
+    type ComposerAttachState,
+} from "./chat_composer_attach_component";
 
 /** Quiet period that folds a burst of CHAT_CHANGED into one refresh. */
 const CHANGE_DEBOUNCE_MS = 150;
@@ -105,7 +112,7 @@ export class ChatThreadComponent extends EnhancedComponent {
     state!: ThreadState;
     scroller!: { el: HTMLElement | null };
 
-    static components = { HeadingComponent };
+    static components = { HeadingComponent, ChatComposerAttachComponent };
 
     static template = xml`
     <div id="chat-thread">
@@ -153,13 +160,29 @@ export class ChatThreadComponent extends EnhancedComponent {
       </div>
       <p t-if="state.typing" class="chat-thread__typing" t-esc="state.typing"/>
       <p t-if="state.error" class="chat-thread__failed" role="alert" t-esc="state.error"/>
-      <div t-if="!state.failedCreate" class="chat-thread__composer">
-        <textarea class="chat-thread__input" t-att-rows="state.inputRows" t-att-placeholder="t('chat.compose_placeholder')"
-                  t-att-value="state.text" t-on-input="onInput"/>
-        <button class="chat-thread__send" t-att-aria-label="t('chat.send')" t-on-mousedown.prevent="" t-on-click="onSend">➤</button>
-      </div>
+      <t t-if="!state.failedCreate">
+        <ChatComposerAttachComponent attach="attach"/>
+        <div class="chat-thread__composer">
+          <button class="chat-thread__attach" t-att-aria-label="t('chat.attach')" t-att-aria-expanded="attachState.sheet ? 'true' : 'false'"
+                  t-att-disabled="attachState.voice !== 'idle'" t-on-mousedown.prevent="" t-on-click="() => this.attach.toggleSheet()">📎</button>
+          <textarea class="chat-thread__input" t-att-rows="state.inputRows" t-att-placeholder="t('chat.compose_placeholder')"
+                    t-att-value="state.text" t-on-input="onInput"/>
+          <button t-if="!attach.hasVoiceChip()" class="chat-thread__mic"
+                  t-att-class="{'chat-thread__mic--on': attachState.voice === 'recording'}"
+                  t-att-aria-label="attachState.voice === 'recording' ? t('chat.voice_stop_send') : t('chat.voice_record')"
+                  t-att-disabled="attachState.voice === 'starting' or attachState.voice === 'preparing'"
+                  t-on-mousedown.prevent="" t-on-click="() => this.attach.mic()">
+            <t t-esc="attachState.voice === 'recording' ? '⏹' : '🎤'"/>
+          </button>
+          <button class="chat-thread__send" t-att-aria-label="t('chat.send')" t-att-disabled="attach.busy()"
+                  t-on-mousedown.prevent="" t-on-click="() => this.onSend()">➤</button>
+        </div>
+      </t>
     </div>`;
 
+    /** The composer's picks, chips and voice message (ChatComposerAttachComponent shows them). */
+    attachState!: ComposerAttachState;
+    attach!: ComposerAttach;
     private configId = "";
     private channelId = 0;
     private source: ChatSource | null = null;
@@ -218,16 +241,28 @@ export class ChatThreadComponent extends EnhancedComponent {
         const params = this.router.getRouteParams(window.location.pathname, "/chat/:source/:channelId");
         this.configId = params.get("source") ?? "";
         this.channelId = Number(params.get("channelId"));
+        this.attachState = useState(newComposerAttachState());
+        this.attach = new ComposerAttach(this.attachState, deviceComposerDeps({
+            fileDir: () => this.chatService.fileDirOf(this.configId),
+            uploadLimit: async () => (this.source ? this.chatService.uploadLimit(this.source) : null),
+            send: (extra) => this.onSend(extra),
+        }));
         onMounted(async () => {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
             await this.open();
+            if (!this.destroyed) await this.attach.start();
         });
         onWillUnmount(() => this.teardown());
     }
 
-    /** Detaches the listener and timers and stops the typing notice; open() after it does nothing. */
+    /**
+     * Detaches the listener and timers, stops the typing notice and lets go
+     * of the attachments (a recording under way is discarded, unsent chips
+     * deleted); open() after it does nothing.
+     */
     teardown(): void {
         this.destroyed = true;
+        void this.attach.dispose();
         this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
         if (this._debounce !== null) clearTimeout(this._debounce);
         if (this._typingTimer !== null) clearTimeout(this._typingTimer);
@@ -580,22 +615,28 @@ export class ChatThreadComponent extends EnhancedComponent {
     }
 
     /**
-     * Queues the trimmed text; empty or blank text is never sent. The
-     * composer clears before the first await, so a second tap finds it
-     * empty; a failed send puts the text back and shows the error.
+     * Queues the trimmed text with the chips' files, then extra (the voice
+     * message just recorded); nothing is sent when all are empty, nor while
+     * a voice message is prepared (it would be overtaken). The composer,
+     * text and chips, clears before the first await, so a second tap finds
+     * it empty; the compress question (ComposerAttach.prepare) comes after.
+     * A failed send puts the text back and shows the error; the chips stay
+     * cleared, as the outbox deleted their files.
      */
-    async onSend(): Promise<void> {
+    async onSend(extra: OutgoingFile[] = []): Promise<void> {
+        if (!this.source || this.attach.busy()) return;
         const text = this.state.text.trim();
-        if (!text || !this.source) return;
+        if (!text && extra.length === 0 && this.attachState.chips.length === 0) return;
+        const chips = this.attach.take();
         const raw = this.state.text;
         this.state.text = "";
         this.state.inputRows = 1;
         this.state.error = "";
-        const sending = this.chatService.send(this.source, this.channelId, text);
         // The message ends the typing, as Odoo's composer does on a post
         this.chatService.typing(this.source, this.channelId, false).catch(() => {});
         try {
-            await sending;
+            const files = [...(await this.attach.prepare(chips)), ...extra];
+            await this.chatService.send(this.source, this.channelId, text, files);
         } catch {
             if (!this.state.text) this.state.text = raw;
             this.state.error = t("chat.send_error");

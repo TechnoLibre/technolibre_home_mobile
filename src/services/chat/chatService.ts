@@ -210,6 +210,21 @@ export class ChatService {
     return this.repo.fileDirOf(configId);
   }
 
+  /**
+   * The largest request the account's server takes (its session's
+   * max_file_upload_size, kept for the app's lifetime and renewed by each
+   * load), so the composer names it before sending; null when the session
+   * cannot be read (offline before any load). The outbox checks the limit
+   * again when it sends.
+   */
+  async uploadLimit(src: ChatSource): Promise<number | null> {
+    try {
+      return (await this.rpc.sessionInfo(src.creds)).maxUploadSize;
+    } catch {
+      return null;
+    }
+  }
+
   private changed(configId: string, channelId: number | null): void {
     this.onChange?.(configId, channelId);
   }

@@ -185,3 +185,29 @@
 	background: #2e9e4f;
 	color: #fff;
 }
+
+.chat-thread__send:disabled {
+	opacity: 0.5;
+}
+
+.chat-thread__attach,
+.chat-thread__mic {
+	flex: none;
+	border: none;
+	border-radius: 50%;
+	width: 2.4rem;
+	height: 2.4rem;
+	background: transparent;
+	color: inherit;
+	font-size: 1.2rem;
+}
+
+.chat-thread__attach:disabled,
+.chat-thread__mic:disabled {
+	opacity: 0.4;
+}
+
+.chat-thread__mic--on {
+	background: #c0392b;
+	color: #fff;
+}

@@ -4411,8 +4411,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.attachments",
                 label: { en: "Chat attachments", fr: "Pièces jointes du clavardage" },
                 description: {
-                    en: "Capture from the camera, the gallery or any file, voice messages recorded as MP3, streamed file upload and download with the session, the app's chat file layout, the CSRF token of the upload routes, and the cache of previews and originals.",
-                    fr: "Capture par l'appareil photo, la galerie ou tout fichier, messages vocaux enregistrés en MP3, envoi et téléchargement de fichiers en flux avec la session, l'arborescence des fichiers du clavardage, le jeton CSRF des routes d'envoi et le cache des aperçus et des originaux.",
+                    en: "The composer's 📎 (camera, gallery or any file, the server's limit shown) and 🎤, capture from the camera, the gallery or any file, voice messages recorded as MP3, streamed file upload and download with the session, the app's chat file layout, the CSRF token of the upload routes, and the cache of previews and originals.",
+                    fr: "Le 📎 du composeur (appareil photo, galerie ou fichier, la limite du serveur affichée) et son 🎤, capture par l'appareil photo, la galerie ou tout fichier, messages vocaux enregistrés en MP3, envoi et téléchargement de fichiers en flux avec la session, l'arborescence des fichiers du clavardage, le jeton CSRF des routes d'envoi et le cache des aperçus et des originaux.",
                 },
                 status: "experimental",
                 howItWorks: {
@@ -4432,7 +4432,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "fits a photo to 1920 px at quality 80. A voice message is recorded as AAC, decoded by the "
                         + "web view, then encoded in a worker by lamejs as the MP3 Odoo's browser makes (mono, "
                         + "128 kbit/s, Voice-<date>-<n>.mp3, voice=true); it stops by itself at 60 s, and when the "
-                        + "app goes to the background it stops and stays unsent.",
+                        + "app goes to the background it stops and stays unsent. In the composer, each pick is "
+                        + "staged one after another and shown as a chip (name, size, ✕ deletes the staged file); a "
+                        + "tap on 🎤 starts, the countdown shows the time left, a second tap stops and sends with "
+                        + "the text and the chips, ✕ discards; « ask to compress » asks before sending a camera or "
+                        + "gallery photo. One recorder serves the whole app.",
                     fr: "Un plugin natif OkHttp envoie en flux un formulaire multipart lu d'un fichier et "
                         + "télécharge vers un fichier « .part » renommé une fois complet, donc un fichier n'est "
                         + "jamais entier en mémoire JS ; il ne touche que les fichiers du répertoire de "
@@ -4452,9 +4456,14 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "Un message vocal s'enregistre en AAC, se décode par la vue web, puis lamejs l'encode dans "
                         + "un worker en MP3 comme le fait le navigateur d'Odoo (mono, 128 kbit/s, "
                         + "Voice-<date>-<n>.mp3, voice=true) ; il s'arrête seul à 60 s et, quand l'application passe "
-                        + "en arrière-plan, il s'arrête et reste non envoyé.",
+                        + "en arrière-plan, il s'arrête et reste non envoyé. Dans le composeur, chaque choix est "
+                        + "préparé l'un après l'autre et montré comme une puce (nom, taille, ✕ supprime le fichier "
+                        + "préparé) ; un toucher sur 🎤 démarre, le compte à rebours montre le temps restant, un "
+                        + "second toucher arrête et envoie avec le texte et les puces, ✕ abandonne ; « demander de "
+                        + "compresser » pose la question avant d'envoyer une photo de l'appareil ou de la galerie. "
+                        + "Un seul enregistreur sert toute l'application.",
                 },
-                demo: NONE_PLUMBING,
+                demo: { kind: "route", url: "/chat" },
                 files: [
                     "android/app/src/main/java/ca/erplibre/home/ChatFileTransfer.java",
                     "android/app/src/main/java/ca/erplibre/home/ChatFilePlugin.java",
@@ -4469,6 +4478,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatMp3Worker.ts",
                     "android/app/src/main/java/ca/erplibre/home/ChatImageSize.java",
                     "src/testing/chatFakes.ts",
+                    "src/components/chat/chat_composer_attach_component.ts",
+                    "src/components/chat/chat_composer_attach_component.scss",
+                    "src/utils/formatBytes.ts",
                 ],
                 tests: [
                     "android/app/src/test/java/ca/erplibre/home/ChatFileTransferTest.java",
@@ -4481,6 +4493,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/chatVoice.test.ts",
                     "src/__tests__/chatMp3.test.ts",
                     "android/app/src/test/java/ca/erplibre/home/ChatImageSizeTest.java",
+                    "src/__tests__/chatComposerAttach.test.ts",
+                    "src/__tests__/formatBytes.test.ts",
                 ],
             },
             {

@@ -8,7 +8,7 @@ vi.mock("@capacitor/filesystem", () => ({
 vi.mock("capacitor-voice-recorder", () => ({ VoiceRecorder: {} }));
 
 import { outgoingPath } from "../services/chat/chatFiles";
-import { ChatVoiceRecorder, VOICE_DIR, VOICE_MAX_MS, type VoiceDeps } from "../services/chat/chatVoice";
+import { ChatVoiceRecorder, sharedVoiceRecorder, VOICE_DIR, VOICE_MAX_MS, type VoiceDeps } from "../services/chat/chatVoice";
 import { memoryChatFiles } from "../testing/chatFakes";
 
 const FILE_DIR = "f7Kq2Lm9";
@@ -207,6 +207,40 @@ describe("ChatVoiceRecorder", () => {
         expect(await busy.voice.start()).toBe("unavailable");
         expect(busy.listening()).toBe(false);
         expect(await busy.voice.start()).toBe("unavailable");
+    });
+
+    it("a native recording left by a reloaded page is stopped, deleted, and the start tried once more", async () => {
+        const h = harness();
+        // The plugin still holds a recording the page's state no longer knows
+        let stale = true;
+        h.recorder.startRecording.mockImplementation(async () => {
+            if (stale) throw new Error("ALREADY_RECORDING");
+            return { value: true };
+        });
+        h.recorder.stopRecording.mockImplementationOnce(async () => {
+            stale = false;
+            h.files.put(`${VOICE_DIR}/recording-old.aac`, AAC);
+            return { value: { msDuration: 9000, mimeType: "audio/aac", path: `${VOICE_DIR}/recording-old.aac` } };
+        });
+        expect(await h.voice.start()).toBe("recording");
+        expect(h.recorder.startRecording).toHaveBeenCalledTimes(2);
+        expect(h.recorder.stopRecording).toHaveBeenCalledTimes(1);
+        expect(h.files.bytes(`${VOICE_DIR}/recording-old.aac`)).toBeUndefined();
+    });
+
+    it("a recording still held after one stop and one retry gives unavailable, and the next start tries again", async () => {
+        const h = harness();
+        h.recorder.startRecording.mockRejectedValue(new Error("ALREADY_RECORDING"));
+        expect(await h.voice.start()).toBe("unavailable");
+        expect(h.recorder.startRecording).toHaveBeenCalledTimes(2);
+        expect(h.recorder.stopRecording).toHaveBeenCalledTimes(1);
+        h.recorder.startRecording.mockResolvedValue({ value: true });
+        expect(await h.voice.start()).toBe("recording");
+    });
+
+    it("the app has one recorder", () => {
+        expect(sharedVoiceRecorder()).toBeInstanceOf(ChatVoiceRecorder);
+        expect(sharedVoiceRecorder()).toBe(sharedVoiceRecorder());
     });
 
     it("background keeps the recording unsent", async () => {

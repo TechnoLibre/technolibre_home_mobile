@@ -83,6 +83,12 @@ function followAppState(fn: (active: boolean) => void): () => void {
     return () => void handle.then((h) => h.remove()).catch(() => {});
 }
 
+/** The plugin's refusal to start while it holds a recording (its Messages.ALREADY_RECORDING). */
+function isAlreadyRecording(e: unknown): boolean {
+    const err = e as { message?: unknown; code?: unknown } | null;
+    return err?.message === "ALREADY_RECORDING" || err?.code === "ALREADY_RECORDING";
+}
+
 type State = "idle" | "starting" | "recording" | "halted" | "finishing";
 
 /**
@@ -152,7 +158,7 @@ export class ChatVoiceRecorder {
             if (!granted) return this.giveUp(epoch, "denied");
             await files.removeDir(VOICE_DIR).catch(() => {});
             if (gone()) return "unavailable";
-            await recorder.startRecording({ directory: Directory.Data, subDirectory: VOICE_DIR });
+            await this.startNative(gone);
         } catch {
             return this.giveUp(epoch, "unavailable");
         }
@@ -170,6 +176,28 @@ export class ChatVoiceRecorder {
             if (!active && this.state === "recording") this.haltAndTell(() => this.onBackground);
         });
         return "recording";
+    }
+
+    /**
+     * The plugin's startRecording. A recording the plugin still holds while
+     * this recorder is idle (the web view reloaded mid-recording: the native
+     * side outlives the page) makes it refuse with ALREADY_RECORDING: that
+     * recording is stopped and its file deleted, then the start is tried
+     * once more. Any other refusal, or a second one, propagates.
+     */
+    private async startNative(gone: () => boolean): Promise<void> {
+        const { recorder, files } = this.deps;
+        const options = { directory: Directory.Data, subDirectory: VOICE_DIR };
+        try {
+            await recorder.startRecording(options);
+        } catch (e) {
+            if (!isAlreadyRecording(e)) throw e;
+            await recorder.stopRecording()
+                .then((r) => r.value.path && files.remove(r.value.path))
+                .catch(() => {});
+            if (gone()) throw e;
+            await recorder.startRecording(options);
+        }
     }
 
     /** Time recorded, ms: frozen once the recording has stopped, 0 when there is none. */
@@ -289,4 +317,17 @@ export class ChatVoiceRecorder {
         this.halting = null;
         this.finishing = null;
     }
+}
+
+let shared: ChatVoiceRecorder | null = null;
+
+/**
+ * The app's one recorder, made on first use. Every composer records
+ * through it: a second ChatVoiceRecorder's start() would empty VOICE_DIR
+ * under a recording of the first, and the plugin holds one recording at a
+ * time anyway.
+ */
+export function sharedVoiceRecorder(): ChatVoiceRecorder {
+    shared ??= new ChatVoiceRecorder();
+    return shared;
 }

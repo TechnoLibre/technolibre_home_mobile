@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
 
+vi.mock("@capacitor/app", () => ({ App: { addListener: vi.fn() } }));
+vi.mock("@capacitor/camera", () => ({ Camera: {} }));
+vi.mock("@capacitor/filesystem", () => ({ Filesystem: {}, Directory: { Data: "DATA", External: "EXTERNAL" } }));
+vi.mock("capacitor-voice-recorder", () => ({ VoiceRecorder: {} }));
+
 import { ChatThreadComponent, THREAD_PAGE, THREAD_WINDOW, typingLine } from "../components/chat/chat_thread_component";
 import { EventBus } from "@odoo/owl";
 import { readFileSync } from "node:fs";
@@ -79,6 +84,39 @@ function make(chat: any, ops: any[] = [], channelId = "5") {
     return c;
 }
 
+
+const outFile = (name: string, p: any = {}) => ({
+    localUuid: "lu-" + name, path: "chat/q3Zt8Wn1/out/lu-" + name + "/" + name, name,
+    mimetype: "image/jpeg", size: 1000, voice: false, ...p,
+});
+
+/** The composer's attachments over fakes: a recorder that records until stop gives a voice file. */
+function fakeAttachments(c: any, opts: { askCompress?: boolean } = {}) {
+    const voice = outFile("Voice-2026-10-26-317.mp3", { mimetype: "audio/mpeg", voice: true });
+    const recorder = {
+        onAutoStop: null, onBackground: null,
+        start: vi.fn(async () => "recording"),
+        remainingMs: vi.fn(() => 60000),
+        stop: vi.fn(async () => voice),
+        discard: vi.fn(async () => {}),
+    };
+    const capture = {
+        pickFiles: vi.fn(async () => []),
+        stage: vi.fn(),
+        compress: vi.fn(async (f: any) => ({ ...f, size: 10 })),
+    };
+    const confirm = vi.fn(async () => true);
+    const files = { removeDir: vi.fn(async () => {}) };
+    Object.assign(c.attach.deps, {
+        recorder, capture, confirm, files,
+        fileDir: async () => "q3Zt8Wn1",
+        uploadLimit: async () => 1 << 20,
+        askCompress: () => opts.askCompress ?? false,
+    });
+    const chip = (file: any, origin = "gallery") => c.attachState.chips.push({ key: "k" + file.name, file, origin });
+    return { recorder, capture, confirm, files, voice, chip };
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ChatThreadComponent", () => {
@@ -103,7 +141,7 @@ describe("ChatThreadComponent", () => {
         await c.open();
         c.state.text = "  hello \n";
         await c.onSend();
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "hello");
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "hello", []);
         expect(c.state.text).toBe("");
         expect(c.state.rows.at(-1).meta).toBe("pending");
     });
@@ -142,7 +180,7 @@ describe("ChatThreadComponent", () => {
         expect(chat.messages).toHaveBeenCalledWith("a", 40, expect.anything());
         c.state.text = "next";
         await c.onSend();
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 40, "next");
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 40, "next", []);
     });
 
     it("a screen no longer on the temporary route moves without touching the history", async () => {
@@ -532,5 +570,93 @@ describe("ChatThreadComponent", () => {
         expect(rule(".chat-thread__scroll")).toMatch(/min-height:\s*0/);
         // A height computed from the viewport ignores the navbar and the keyboard
         expect(sheet).not.toMatch(/\d+vh/);
+    });
+
+    it("send with files only takes the chips at once and sends them with no text", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        const a = fakeAttachments(c);
+        await c.open();
+        const photo = outFile("IMG_20261026_101500.jpg");
+        a.chip(photo);
+        const sending = c.onSend();
+        expect(c.attachState.chips).toEqual([]);
+        await sending;
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "", [photo]);
+    });
+
+    it("nothing to send leaves the composer as it is", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        fakeAttachments(c);
+        await c.open();
+        c.state.text = "  ";
+        await c.onSend();
+        expect(chat.send).not.toHaveBeenCalled();
+    });
+
+    it("a refused send puts the text back but not the chips, whose files the outbox deleted", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.send.mockRejectedValueOnce(new Error("disk"));
+        const c = make(chat);
+        const a = fakeAttachments(c);
+        await c.open();
+        a.chip(outFile("a.jpg"));
+        c.state.text = "look";
+        await c.onSend();
+        expect(c.state.text).toBe("look");
+        expect(c.attachState.chips).toEqual([]);
+        expect(c.state.error).toBe("Could not send the message. Try again.");
+    });
+
+    it("the mic's second tap sends the typed text, the chips and the voice message", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        const a = fakeAttachments(c);
+        await c.open();
+        const photo = outFile("a.jpg");
+        a.chip(photo);
+        c.state.text = "listen";
+        await c.attach.mic();
+        expect(chat.send).not.toHaveBeenCalled();
+        await c.attach.mic();
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "listen", [photo, a.voice]);
+        expect(c.state.text).toBe("");
+    });
+
+    it("no send leaves while a voice message is prepared", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        fakeAttachments(c);
+        await c.open();
+        c.attachState.voice = "preparing";
+        c.state.text = "after";
+        await c.onSend();
+        expect(chat.send).not.toHaveBeenCalled();
+        expect(c.state.text).toBe("after");
+    });
+
+    it("compress is asked through the thread's send, and the reduced photo goes", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        const a = fakeAttachments(c, { askCompress: true });
+        await c.open();
+        a.chip(outFile("IMG_1.jpg"), "camera");
+        await c.onSend();
+        expect(a.confirm).toHaveBeenCalledTimes(1);
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "", [expect.objectContaining({ name: "IMG_1.jpg", size: 10 })]);
+    });
+
+    it("leaving the screen discards the recording under way", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        const a = fakeAttachments(c);
+        await c.open();
+        await c.attach.start();
+        await c.attach.mic();
+        c.teardown();
+        await Promise.resolve();
+        expect(a.recorder.discard).toHaveBeenCalledTimes(1);
+        expect(a.recorder.onAutoStop).toBeNull();
     });
 });
