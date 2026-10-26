@@ -1,5 +1,7 @@
+import { v4 as uuidv4 } from "uuid";
 import type { DatabaseService } from "../databaseService";
 import type {
+  ChatAttachment,
   ChatChannel,
   ChatMember,
   ChatMessage,
@@ -128,6 +130,41 @@ function messageFromRow(r: Row): ChatMessage {
   };
 }
 
+function attachmentFromRow(r: Row): ChatAttachment {
+  return {
+    configId: r.config_id,
+    channelId: r.channel_id,
+    messageId: r.message_id ?? null,
+    attachmentId: r.attachment_id ?? null,
+    localUuid: r.local_uuid ?? null,
+    postClientUuid: r.post_client_uuid ?? null,
+    seq: r.seq ?? 0,
+    name: r.name,
+    mimetype: r.mimetype,
+    size: r.size ?? 0,
+    checksum: r.checksum ?? null,
+    voice: bool(r.voice),
+    thumbPath: r.thumb_path ?? null,
+    thumbBytes: r.thumb_bytes ?? 0,
+    originalPath: r.original_path ?? null,
+    originalBytes: r.original_bytes ?? 0,
+    state: r.state,
+    error: r.error ?? null,
+    lastOpenedAt: r.last_opened_at ?? null,
+    createdAt: r.created_at,
+  };
+}
+
+/** The paths of the files an attachment row holds on the phone. */
+function pathsOf(a: ChatAttachment): string[] {
+  return [a.thumbPath, a.originalPath].filter((p): p is string => !!p);
+}
+
+/** Files by `seq`, then by server id: the order they were picked in. */
+function bySeq(a: ChatAttachment, b: ChatAttachment): number {
+  return a.seq - b.seq || (a.attachmentId ?? 0) - (b.attachmentId ?? 0);
+}
+
 function memberFromRow(r: Row): ChatMember {
   return {
     configId: r.config_id,
@@ -158,6 +195,8 @@ function sourceFromRow(r: Row): ChatSourceState {
     globalMuteUntil: r.global_mute_until ?? null,
     globalMuteAt: r.global_mute_at ?? null,
     isInternalUser: bool(r.is_internal_user),
+    fileDir: r.file_dir ?? null,
+    moduleLevel: r.module_level ?? null,
   };
 }
 
@@ -177,7 +216,17 @@ function byThread(a: ChatMessage, b: ChatMessage): number {
  * happen here.
  */
 export class ChatRepository {
+  /**
+   * Called with the file paths of rows this repository dropped, so whoever
+   * owns the files can delete them. A no-op until wired.
+   */
+  onFilesReleased: (paths: string[]) => void | Promise<void> = () => {};
+
   constructor(private db: DatabaseService) {}
+
+  private async release(paths: string[]): Promise<void> {
+    if (paths.length > 0) await this.onFilesReleased(paths);
+  }
 
   private now(): string {
     return new Date().toISOString();
@@ -266,6 +315,34 @@ export class ChatRepository {
     };
   }
 
+  private attachmentRow(a: ChatAttachment): Row {
+    // A file still on its way to a message keeps its local key even once the server gave it an id
+    const local = a.localUuid !== null && a.state !== "posted" ? `l${a.localUuid}` : `a${a.attachmentId}`;
+    return {
+      id: key(a.configId, local),
+      config_id: a.configId,
+      channel_id: a.channelId,
+      message_id: a.messageId,
+      attachment_id: a.attachmentId,
+      local_uuid: a.localUuid,
+      post_client_uuid: a.postClientUuid,
+      seq: a.seq,
+      name: a.name,
+      mimetype: a.mimetype,
+      size: a.size,
+      checksum: a.checksum,
+      voice: flag(a.voice),
+      thumb_path: a.thumbPath,
+      thumb_bytes: a.thumbBytes,
+      original_path: a.originalPath,
+      original_bytes: a.originalBytes,
+      state: a.state,
+      error: a.error,
+      last_opened_at: a.lastOpenedAt,
+      created_at: a.createdAt,
+    };
+  }
+
   private memberRow(m: ChatMember): Row {
     return {
       id: key(m.configId, m.memberId),
@@ -297,6 +374,8 @@ export class ChatRepository {
       global_mute_until: s.globalMuteUntil,
       global_mute_at: s.globalMuteAt,
       is_internal_user: flag(s.isInternalUser),
+      file_dir: s.fileDir,
+      module_level: s.moduleLevel,
     };
   }
 
@@ -307,13 +386,21 @@ export class ChatRepository {
    * post stay, as failed and detached from the outbox, so the text typed is
    * not lost (the conversation screen shows them). Channel counters follow
    * gateCounter; `fromBus` says the delta comes from a bus delivery, where
-   * a counter without its bus id is not taken.
+   * a counter without its bus id is not taken. Attachment rows take the
+   * server's fields only; a message listing attachment ids claims those rows
+   * and releases the ones it no longer lists, and a deleted channel drops its
+   * rows but the files still waiting to be sent.
    */
   async applyDelta(configId: string, d: StoreDelta, opts: { fromBus?: boolean } = {}): Promise<void> {
     for (const p of d.channels) await this.upsertChannel(configId, p, !!opts.fromBus);
     for (const p of d.members) await this.upsertMember(configId, p);
-    for (const p of d.messages) await this.upsertMessage(configId, p);
+    for (const { attachmentIds: _ids, ...p } of d.messages) await this.upsertMessage(configId, p);
     for (const p of d.partners) await this.upsertPartner(configId, p);
+    for (const p of d.attachments) await this.upsertAttachment(configId, p);
+    for (const m of d.messages) {
+      if (m.attachmentIds) await this.linkAttachments(configId, m.messageId, m.attachmentIds, m.channelId);
+    }
+    if (d.deletedAttachmentIds.length > 0) await this.deleteAttachments(configId, d.deletedAttachmentIds);
     for (const id of d.deletedMemberIds) await this.del("chat_members", { id: key(configId, id) });
     for (const id of d.deletedChannelIds) {
       await this.del("chat_channels", { id: key(configId, id) });
@@ -323,6 +410,10 @@ export class ChatRepository {
         else await this.put("chat_messages", this.messageRow({ ...m, status: "failed", outboxOpId: null }));
       }
       await this.del("chat_members", { config_id: configId, channel_id: id });
+      const dropped = (await this.rows("chat_attachments", { config_id: configId, channel_id: id }))
+        .filter((r) => r.state !== "queued" && r.state !== "uploaded");
+      for (const r of dropped) await this.del("chat_attachments", { id: r.id });
+      await this.release(dropped.flatMap((r) => pathsOf(attachmentFromRow(r))));
     }
     const state: Partial<ChatSourceState> = {};
     if (d.inboxCounter !== null) state.inboxCounter = d.inboxCounter;
@@ -387,6 +478,87 @@ export class ChatRepository {
     next.lastMessageId = maxOf(base.lastMessageId, patch.lastMessageId);
     next.oldestLoadedId = minOf(base.oldestLoadedId, patch.oldestLoadedId);
     await this.put("chat_channels", this.channelRow(next));
+  }
+
+  /**
+   * Overlays the server's fields of an attachment (channel, name, type,
+   * size, checksum, voice) on its `a<id>` row; the paths, bytes, state and
+   * last-opened time of local work are never touched. A row never seen needs
+   * a channel, from the record or from `fallbackChannel`; without one it is
+   * not stored.
+   */
+  private async upsertAttachment(
+    configId: string,
+    p: Partial<ChatAttachment> & { attachmentId: number },
+    fallbackChannel?: number,
+  ): Promise<void> {
+    const id = key(configId, `a${p.attachmentId}`);
+    const stored = await this.row("chat_attachments", id);
+    const channelId = p.channelId ?? fallbackChannel;
+    if (!stored && channelId === undefined) return;
+    const base: ChatAttachment = stored
+      ? attachmentFromRow(stored)
+      : {
+          configId,
+          channelId: channelId!,
+          messageId: null,
+          attachmentId: p.attachmentId,
+          localUuid: null,
+          postClientUuid: null,
+          seq: 0,
+          name: "",
+          mimetype: "",
+          size: 0,
+          checksum: null,
+          voice: false,
+          thumbPath: null,
+          thumbBytes: 0,
+          originalPath: null,
+          originalBytes: 0,
+          state: "posted",
+          error: null,
+          lastOpenedAt: null,
+          createdAt: this.now(),
+        };
+    const server = defined({
+      channelId: p.channelId,
+      name: p.name,
+      mimetype: p.mimetype,
+      size: p.size,
+      checksum: p.checksum,
+      voice: p.voice,
+    });
+    await this.put("chat_attachments", this.attachmentRow({ ...base, ...server, configId }));
+  }
+
+  /**
+   * Makes `ids` (in order) the attachments of a message: each row gets the
+   * message id and its position, a row never received is created empty when
+   * the channel is known (its record fills it in later), and a server row of
+   * the message that is not listed any more is dropped with its files.
+   */
+  private async linkAttachments(
+    configId: string,
+    messageId: number,
+    ids: number[],
+    channelId?: number,
+  ): Promise<void> {
+    const channel = channelId ?? (await this.message(configId, messageId))?.channelId;
+    for (const [seq, attachmentId] of ids.entries()) {
+      await this.upsertAttachment(configId, { attachmentId }, channel);
+      const row = await this.row("chat_attachments", key(configId, `a${attachmentId}`));
+      if (!row) continue;
+      await this.put("chat_attachments", {
+        ...row,
+        message_id: messageId,
+        seq,
+        channel_id: channel ?? row.channel_id,
+      });
+    }
+    const dropped = (await this.rows("chat_attachments", { config_id: configId, message_id: messageId }))
+      .filter((r) => String(r.id).startsWith(key(configId, "a")) && !ids.includes(r.attachment_id));
+    for (const r of dropped) await this.del("chat_attachments", { id: r.id });
+    await this.release(dropped.flatMap((r) => pathsOf(attachmentFromRow(r))));
   }
 
   private async upsertMember(configId: string, p: Partial<ChatMember> & { memberId: number }): Promise<void> {
@@ -538,6 +710,10 @@ export class ChatRepository {
       "UPDATE chat_messages SET channel_id = ? WHERE config_id = ? AND channel_id = ?",
       [realId, configId, tempId],
     );
+    await this.db.rawRun(
+      "UPDATE chat_attachments SET channel_id = ? WHERE config_id = ? AND channel_id = ?",
+      [realId, configId, tempId],
+    );
     if ((await this.members(configId, realId)).length > 0) {
       await this.db.rawRun(
         "DELETE FROM chat_members WHERE config_id = ? AND channel_id = ? AND member_id < 0",
@@ -589,6 +765,14 @@ export class ChatRepository {
     for (const t of ["chat_channels", "chat_messages", "chat_members"]) {
       await this.del(t, { config_id: configId, channel_id: channelId });
     }
+    await this.dropAttachmentRows({ config_id: configId, channel_id: channelId });
+  }
+
+  /** Deletes the attachment rows matching `where` and releases their files. */
+  private async dropAttachmentRows(where: Row): Promise<void> {
+    const rows = (await this.rows("chat_attachments", where)).map(attachmentFromRow);
+    await this.del("chat_attachments", where);
+    await this.release(rows.flatMap(pathsOf));
   }
 
   /** Overlays the given keys on a cached channel; nothing happens for an unknown channel. */
@@ -755,6 +939,8 @@ export class ChatRepository {
       globalMuteUntil: null,
       globalMuteAt: null,
       isInternalUser: false,
+      fileDir: null,
+      moduleLevel: null,
     };
   }
 
@@ -768,8 +954,221 @@ export class ChatRepository {
     await this.put("chat_sources", this.sourceRow({ ...base, ...defined(s) }));
   }
 
+  /**
+   * The account's directory name under chat/: a random id made on first use
+   * and stored with the sync state, so it follows a renamed account and
+   * names nothing about it.
+   */
+  async fileDirOf(configId: string): Promise<string> {
+    const state = await this.sourceState(configId);
+    if (state.fileDir) return state.fileDir;
+    const fileDir = uuidv4();
+    await this.setSourceState({ configId, fileDir });
+    return fileDir;
+  }
+
+  private async attachmentByKey(configId: string, local: string): Promise<ChatAttachment | null> {
+    const row = await this.row("chat_attachments", key(configId, local));
+    return row ? attachmentFromRow(row) : null;
+  }
+
+  /** Overlays `patch` on the row of a local file (`l<uuid>`); nothing happens for an unknown one. */
+  private async patchLocal(configId: string, localUuid: string, patch: Partial<ChatAttachment>): Promise<void> {
+    const row = await this.attachmentByKey(configId, `l${localUuid}`);
+    if (!row) return;
+    await this.put("chat_attachments", this.attachmentRow({ ...row, ...defined(patch) }));
+  }
+
+  /** Overlays `patch` on the row of a server attachment (`a<id>`); nothing happens for an unknown one. */
+  private async patchServer(configId: string, attachmentId: number, patch: Partial<ChatAttachment>): Promise<void> {
+    const row = await this.attachmentByKey(configId, `a${attachmentId}`);
+    if (!row) return;
+    await this.put("chat_attachments", this.attachmentRow({ ...row, ...defined(patch) }));
+  }
+
+  /** Stores the files of a post waiting to be sent, each under its local uuid. */
+  async putOutgoing(rows: ChatAttachment[]): Promise<void> {
+    for (const a of rows) await this.put("chat_attachments", this.attachmentRow(a));
+  }
+
+  /** The files of a queued post, in pick order. */
+  async outgoingOf(configId: string, postClientUuid: string): Promise<ChatAttachment[]> {
+    const rows = await this.rows("chat_attachments", { config_id: configId, post_client_uuid: postClientUuid });
+    return rows.map(attachmentFromRow).sort(bySeq);
+  }
+
+  /** The server accepted the file as a pending attachment: it now has an id and its real fields. */
+  async setUploaded(
+    configId: string,
+    localUuid: string,
+    s: { attachmentId: number; checksum: string; size: number; mimetype: string; name: string },
+  ): Promise<void> {
+    await this.patchLocal(configId, localUuid, { ...s, state: "uploaded", error: null });
+  }
+
+  /** The server refused the file; it stays, with the reason, until the user dismisses it. */
+  async setRefused(configId: string, localUuid: string, reason: string): Promise<void> {
+    await this.patchLocal(configId, localUuid, { state: "refused", error: reason });
+  }
+
+  /** Puts a refused file back in the queue to be uploaded again. */
+  async requeueUpload(configId: string, localUuid: string): Promise<void> {
+    await this.patchLocal(configId, localUuid, { state: "queued", error: null });
+  }
+
+  /**
+   * Settles the uploaded files of a post that got its message id: each row
+   * is re-keyed `a<id>`, state posted, no longer tied to the queued post.
+   * A row the bus already wrote for that id (the echo can come first) takes
+   * the phone's paths, bytes and position and keeps the server's fields.
+   * Files not uploaded stay as they are. Returns the settled rows in order.
+   */
+  async adoptOutgoing(configId: string, postClientUuid: string, messageId: number): Promise<ChatAttachment[]> {
+    const out: ChatAttachment[] = [];
+    for (const local of await this.outgoingOf(configId, postClientUuid)) {
+      if (local.attachmentId === null) continue;
+      const bus = await this.attachmentByKey(configId, `a${local.attachmentId}`);
+      const merged: ChatAttachment = {
+        ...local,
+        name: bus?.name || local.name,
+        mimetype: bus?.mimetype || local.mimetype,
+        size: bus?.size || local.size,
+        checksum: bus?.checksum ?? local.checksum,
+        voice: local.voice || !!bus?.voice,
+        thumbPath: bus?.thumbPath ?? local.thumbPath,
+        thumbBytes: bus?.thumbPath ? bus.thumbBytes : local.thumbBytes,
+        lastOpenedAt: bus?.lastOpenedAt ?? local.lastOpenedAt,
+        messageId,
+        postClientUuid: null,
+        state: "posted",
+        error: null,
+      };
+      await this.del("chat_attachments", { id: key(configId, `l${local.localUuid}`) });
+      await this.put("chat_attachments", this.attachmentRow(merged));
+      out.push(merged);
+    }
+    return out;
+  }
+
+  /**
+   * The files of the given messages and queued posts of a channel, in one
+   * read: keys `m<messageId>` for server messages, `u<postClientUuid>` for
+   * posts still queued; each group in pick order, a message without files
+   * has no entry.
+   */
+  async attachmentsOf(
+    configId: string,
+    channelId: number,
+    messageIds: number[],
+    postClientUuids: string[],
+  ): Promise<Map<string, ChatAttachment[]>> {
+    const wantedMessages = new Set(messageIds);
+    const wantedPosts = new Set(postClientUuids);
+    const out = new Map<string, ChatAttachment[]>();
+    const all = (await this.rows("chat_attachments", { config_id: configId, channel_id: channelId }))
+      .map(attachmentFromRow)
+      .sort(bySeq);
+    for (const a of all) {
+      let k: string | null = null;
+      if (a.messageId !== null && wantedMessages.has(a.messageId)) k = `m${a.messageId}`;
+      else if (a.messageId === null && a.postClientUuid && wantedPosts.has(a.postClientUuid)) k = `u${a.postClientUuid}`;
+      if (k) out.set(k, [...(out.get(k) ?? []), a]);
+    }
+    return out;
+  }
+
+  /** Records the cached preview of a server attachment. */
+  async setPreview(configId: string, attachmentId: number, path: string, bytes: number): Promise<void> {
+    await this.patchServer(configId, attachmentId, { thumbPath: path, thumbBytes: bytes });
+  }
+
+  /** Records the cached original of a server attachment. */
+  async setOriginal(configId: string, attachmentId: number, path: string, bytes: number): Promise<void> {
+    await this.patchServer(configId, attachmentId, { originalPath: path, originalBytes: bytes });
+  }
+
+  /** Stamps the time the user last opened an attachment (the purge orders by it). */
+  async touchOpened(configId: string, attachmentId: number, at: string): Promise<void> {
+    await this.patchServer(configId, attachmentId, { lastOpenedAt: at });
+  }
+
+  /** Bytes cached on the phone (previews plus originals), for one channel, one account or all. */
+  async attachmentBytes(configId?: string, channelId?: number): Promise<number> {
+    const where: Row = {};
+    if (configId !== undefined) where.config_id = configId;
+    if (channelId !== undefined) where.channel_id = channelId;
+    const rows = Object.keys(where).length > 0
+      ? await this.rows("chat_attachments", where)
+      : await this.db.rawQuery("SELECT * FROM chat_attachments");
+    return rows.reduce((sum, r) => sum + (r.thumb_bytes ?? 0) + (r.original_bytes ?? 0), 0);
+  }
+
+  /**
+   * The server attachments that hold a cached file, least recently opened
+   * first (`COALESCE(last_opened_at, created_at)`): the purge order. A file
+   * still waiting to be sent is not among them.
+   */
+  async cachedRows(): Promise<ChatAttachment[]> {
+    const used = (a: ChatAttachment) => a.lastOpenedAt ?? a.createdAt;
+    return (await this.db.rawQuery("SELECT * FROM chat_attachments"))
+      .map(attachmentFromRow)
+      .filter((a) => a.state === "posted" && (a.thumbBytes > 0 || a.originalBytes > 0))
+      .sort((a, b) => (used(a) < used(b) ? -1 : used(a) > used(b) ? 1 : 0));
+  }
+
+  /** Forgets the cached original, the preview or both of the rows with these keys, and releases the files. */
+  async clearFiles(keys: string[], what: "original" | "preview" | "both"): Promise<void> {
+    const released: string[] = [];
+    for (const id of keys) {
+      const row = await this.row("chat_attachments", id);
+      if (!row) continue;
+      const a = attachmentFromRow(row);
+      if ((what === "original" || what === "both") && a.originalPath) {
+        released.push(a.originalPath);
+        a.originalPath = null;
+        a.originalBytes = 0;
+      }
+      if ((what === "preview" || what === "both") && a.thumbPath) {
+        released.push(a.thumbPath);
+        a.thumbPath = null;
+        a.thumbBytes = 0;
+      }
+      await this.put("chat_attachments", this.attachmentRow(a));
+    }
+    await this.release(released);
+  }
+
+  /** Drops server attachments by id (the server deleted them), releases and returns their file paths. */
+  async deleteAttachments(configId: string, ids: number[]): Promise<string[]> {
+    const paths: string[] = [];
+    for (const id of ids) {
+      const row = await this.attachmentByKey(configId, `a${id}`);
+      if (!row) continue;
+      paths.push(...pathsOf(row));
+      await this.del("chat_attachments", { id: key(configId, `a${id}`) });
+    }
+    await this.release(paths);
+    return paths;
+  }
+
+  /**
+   * Drops files of the phone by local uuid and returns their paths without
+   * releasing them: the outbox deletes the files it owns itself.
+   */
+  async deleteOutgoing(configId: string, localUuids: string[]): Promise<string[]> {
+    const paths: string[] = [];
+    for (const uuid of localUuids) {
+      const row = await this.attachmentByKey(configId, `l${uuid}`);
+      if (!row) continue;
+      paths.push(...pathsOf(row));
+      await this.del("chat_attachments", { id: key(configId, `l${uuid}`) });
+    }
+    return paths;
+  }
+
   /** Removes every cached row of one account, leaving the others. */
   async dropSource(configId: string): Promise<void> {
+    await this.dropAttachmentRows({ config_id: configId });
     for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_sources"]) {
       await this.del(t, { config_id: configId });
     }

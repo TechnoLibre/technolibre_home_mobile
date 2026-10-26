@@ -114,7 +114,7 @@ describe("ChatOutbox", () => {
     await repo.setSourceState({ configId: CONFIG, selfPartnerId: 3 });
     await repo.applyDelta(CONFIG, {
       channels: [{ channelId: CHANNEL, channelType: "group", name: "Team", unreadCounter: 4, isMember: true, lastMessageId: 40, seenMessageId: 30 }],
-      deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], partners: [], inboxCounter: null, selfPartnerId: null,
+      deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], attachments: [], deletedAttachmentIds: [], partners: [], inboxCounter: null, selfPartnerId: null,
     });
   });
 
@@ -466,7 +466,7 @@ describe("ChatOutbox", () => {
     const odoo = chatOdoo({ module: true });
     await repo.applyDelta(GONE_CONFIG, {
       channels: [{ channelId: CHANNEL, channelType: "group", name: "Team", isMember: true }],
-      deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], partners: [], inboxCounter: null, selfPartnerId: null,
+      deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], attachments: [], deletedAttachmentIds: [], partners: [], inboxCounter: null, selfPartnerId: null,
     });
     await chat.queuePost(GONE_CONFIG, CHANNEL, "orphan", true);
     await chat.queueRead(GONE_CONFIG, CHANNEL, 5, true);

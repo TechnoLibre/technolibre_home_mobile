@@ -48,6 +48,8 @@ const emptyDelta = (): StoreDelta => ({
   members: [],
   deletedMemberIds: [],
   messages: [],
+  attachments: [],
+  deletedAttachmentIds: [],
   partners: [],
   inboxCounter: null,
   selfPartnerId: null,
@@ -1226,6 +1228,9 @@ export class ChatService {
         await this.repo.applyDelta(configId, { ...emptyDelta(), deletedChannelIds: ids.filter((id) => !kept.includes(id)) });
         return ids.length === 1 ? ids[0] : null;
       }
+      case "ir.attachment/delete":
+        await this.repo.deleteAttachments(configId, [Number(p.id)].filter(Number.isInteger));
+        return null;
       case "mail.message/inbox":
         return this.applyInbox(configId, p, busId, fresh);
       case "mail.message/mark_as_read":

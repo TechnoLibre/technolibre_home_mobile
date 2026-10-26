@@ -229,3 +229,46 @@ describe("parseStore lot 2 keys", () => {
     expect(parseStore({}, CFG, SELF).globalMuteUntil).toBeUndefined();
   });
 });
+
+describe("parseStore attachments", () => {
+  const att = (id: number, extra: any = {}) => ({
+    id, checksum: `ck${id}`, filename: `f${id}.png`, mimetype: "image/png", name: `f${id}.png`, size: 100 * id,
+    thread: thread(7), type: "binary", url: `/web/content/${id}`, voice: false, ...extra,
+  });
+
+  it("reads ir.attachment records of a messages page and the ids a message lists", () => {
+    const d = parseStore({
+      "mail.message": [{ id: 50, thread: thread(7), body: "x", attachment_ids: [2, { id: 1 }] }],
+      "ir.attachment": [att(1, { voice: true }), att(2)],
+    }, CFG, SELF);
+    expect(d.messages[0].attachmentIds).toEqual([2, 1]);
+    expect(d.attachments).toEqual([
+      { attachmentId: 1, channelId: 7, checksum: "ck1", mimetype: "image/png", name: "f1.png", size: 100, voice: true },
+      { attachmentId: 2, channelId: 7, checksum: "ck2", mimetype: "image/png", name: "f2.png", size: 200, voice: false },
+    ]);
+  });
+
+  it("reads a post answer, keeps a partial without thread, skips other models and deleted rows", () => {
+    const d = parseStore({
+      "mail.message": [{ id: 51, thread: thread(7), attachment_ids: [] }],
+      "ir.attachment": [
+        { id: 3, name: "only-name" },
+        att(4, { thread: { id: 9, model: "res.partner" } }),
+        { id: 5, _DELETE: true },
+      ],
+    }, CFG, SELF);
+    expect(d.messages[0].attachmentIds).toEqual([]);
+    expect(d.attachments).toEqual([{ attachmentId: 3, name: "only-name" }]);
+    expect(d.deletedAttachmentIds).toEqual([5]);
+  });
+
+  it("mergeDeltas merges attachments by id and unions deleted ids", () => {
+    const a = parseStore({ "ir.attachment": [att(1)] }, CFG, SELF);
+    const b = parseStore({ "ir.attachment": [{ id: 1, name: "z.png" }, att(2)] }, CFG, SELF);
+    b.deletedAttachmentIds = [9];
+    const m = mergeDeltas(a, b);
+    expect(m.attachments.find((x) => x.attachmentId === 1)).toMatchObject({ name: "z.png", checksum: "ck1" });
+    expect(m.attachments).toHaveLength(2);
+    expect(m.deletedAttachmentIds).toEqual([9]);
+  });
+});

@@ -25,6 +25,7 @@ import { addChatTables } from "../services/migrations/addChatTables";
 import { addChatLot2Columns } from "../services/migrations/addChatLot2Columns";
 import { addChatCreateFailed } from "../services/migrations/addChatCreateFailed";
 import { addChatLeftUnsent } from "../services/migrations/addChatLeftUnsent";
+import { addChatAttachments } from "../services/migrations/addChatAttachments";
 
 // Each migration is a thin wrapper that delegates to one DatabaseService
 // method and returns { counts: {} }. The contract under test is that
@@ -55,6 +56,7 @@ const cases: Array<{
     { name: "addChatLot2Columns",       migration: addChatLot2Columns,       method: "addChatLot2Columns" },
     { name: "addChatCreateFailed",      migration: addChatCreateFailed,      method: "addChatLot2Columns" },
     { name: "addChatLeftUnsent",        migration: addChatLeftUnsent,        method: "addChatLeftUnsent" },
+    { name: "addChatAttachments",      migration: addChatAttachments,      method: "addChatAttachments" },
 ];
 
 describe("schema migrations (one-method wrappers)", () => {

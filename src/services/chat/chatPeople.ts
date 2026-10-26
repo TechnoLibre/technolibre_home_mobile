@@ -31,6 +31,8 @@ const partnersDelta = (partners: StoreDelta["partners"], selfPartnerId: number |
   members: [],
   deletedMemberIds: [],
   messages: [],
+  attachments: [],
+  deletedAttachmentIds: [],
   partners,
   inboxCounter: null,
   selfPartnerId,

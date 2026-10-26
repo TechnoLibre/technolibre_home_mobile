@@ -1,4 +1,5 @@
 import type {
+  ChatAttachment,
   ChatChannel,
   ChatMember,
   ChatMessage,
@@ -16,7 +17,10 @@ export interface StoreDelta {
   deletedChannelIds: number[];
   members: (Partial<ChatMember> & { memberId: number })[];
   deletedMemberIds: number[];
-  messages: (Partial<ChatMessage> & { messageId: number })[];
+  /** `attachmentIds`: the files the message lists, in order; kept on the attachment rows, not on the message. */
+  messages: (Partial<ChatMessage> & { messageId: number; attachmentIds?: number[] })[];
+  attachments: (Partial<ChatAttachment> & { attachmentId: number })[];
+  deletedAttachmentIds: number[];
   partners: (Partial<ChatPartner> & { partnerId: number })[];
   inboxCounter: number | null;
   selfPartnerId: number | null;
@@ -86,6 +90,8 @@ export function parseStore(
     members: [],
     deletedMemberIds: [],
     messages: [],
+    attachments: [],
+    deletedAttachmentIds: [],
     partners: [],
     inboxCounter: null,
     selfPartnerId,
@@ -228,7 +234,7 @@ export function parseStore(
     } else if ("model" in m && m.model !== CHANNEL_MODEL) {
       continue;
     }
-    const msg: Partial<ChatMessage> & { messageId: number } = { messageId: m.id };
+    const msg: StoreDelta["messages"][number] = { messageId: m.id };
     if (channelId !== null) {
       msg.channelId = channelId;
       lastByChannel.set(channelId, Math.max(lastByChannel.get(channelId) ?? 0, m.id));
@@ -241,10 +247,34 @@ export function parseStore(
     copy(msg, m, "date", "date");
     copy(msg, m, "message_type", "messageType");
     copy(msg, m, "write_date", "writeDate", (v) => v || null);
+    copy(msg, m, "attachment_ids", "attachmentIds", (v) =>
+      (Array.isArray(v) ? v : []).map((x: any) => relId(x)).filter((x: number | null): x is number => x !== null),
+    );
     delta.messages.push(msg);
   }
   for (const [channelId, last] of lastByChannel) {
     if (channels.has(channelId)) channels.get(channelId)!.lastMessageId = last;
+  }
+
+  // A record with a `thread` of another model is no chat file; one without keeps what the source carried
+  for (const a of res["ir.attachment"] || []) {
+    if (typeof a.id !== "number") continue;
+    if (a._DELETE) {
+      delta.deletedAttachmentIds.push(a.id);
+      continue;
+    }
+    const row: StoreDelta["attachments"][number] = { attachmentId: a.id };
+    if ("thread" in a) {
+      const channelId = channelOfThread(a.thread);
+      if (channelId === null) continue;
+      row.channelId = channelId;
+    }
+    copy(row, a, "checksum", "checksum", (v) => v || null);
+    copy(row, a, "mimetype", "mimetype", (v) => v || "");
+    copy(row, a, "name", "name", (v) => v || "");
+    copy(row, a, "size", "size", (v) => (typeof v === "number" ? v : 0));
+    copy(row, a, "voice", "voice", (v) => !!v);
+    delta.attachments.push(row);
   }
 
   delta.channels = [...channels.values()];
@@ -273,6 +303,8 @@ export function mergeDeltas(a: StoreDelta, b: StoreDelta): StoreDelta {
     members: mergeBy(a.members, b.members, "memberId"),
     deletedMemberIds: union(a.deletedMemberIds, b.deletedMemberIds),
     messages: mergeBy(a.messages, b.messages, "messageId"),
+    attachments: mergeBy(a.attachments, b.attachments, "attachmentId"),
+    deletedAttachmentIds: union(a.deletedAttachmentIds, b.deletedAttachmentIds),
     partners: mergeBy(a.partners, b.partners, "partnerId"),
     inboxCounter: b.inboxCounter ?? a.inboxCounter,
     selfPartnerId: b.selfPartnerId ?? a.selfPartnerId,

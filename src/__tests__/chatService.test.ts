@@ -337,7 +337,7 @@ describe("ChatService", () => {
     expect((await chat.repo.sourceState(src.configId)).globalMuteUntil).toBe("9999-12-31 23:59:59");
     // the bus unmutes after the load started: the session value read is older
     await chat.repo.applyDelta(src.configId, { channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [],
-      messages: [], partners: [], inboxCounter: null, selfPartnerId: null, globalMuteUntil: null }, { fromBus: true });
+      messages: [], attachments: [], deletedAttachmentIds: [], partners: [], inboxCounter: null, selfPartnerId: null, globalMuteUntil: null }, { fromBus: true });
     const after = await chat.repo.sourceState(src.configId);
     expect(after.globalMuteUntil).toBeNull();
     expect(after.globalMuteAt).not.toBeNull();
@@ -625,6 +625,28 @@ describe("ChatService", () => {
     expect(typed()).toEqual([true, true, false, true, false]);
   });
 
+  it("ir.attachment/delete removes the row and releases its paths; mail.record/insert with fewer ids drops the other", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    const released: string[][] = [];
+    chat.repo.onFilesReleased = (paths) => { released.push(paths); };
+    const att = (id: number) => ({ id, name: `f${id}.png`, mimetype: "image/png", size: 5, checksum: `c${id}`, thread: { id: GROUP, model: "discuss.channel" }, voice: false });
+    await chat.applyBus(config, [bus(1001, "mail.record/insert", {
+      "mail.message": [{ id: 700, thread: { id: GROUP, model: "discuss.channel" }, body: "x", attachment_ids: [1, 2] }],
+      "ir.attachment": [att(1), att(2)],
+    })]);
+    await chat.repo.setOriginal(config, 1, "chat/d/files/1/f1.png", 5);
+    await chat.repo.setPreview(config, 2, "chat/d/thumbs/2", 5);
+    expect((await chat.repo.attachmentsOf(config, GROUP, [700], [])).get("m700")).toHaveLength(2);
+    await chat.applyBus(config, [bus(1002, "mail.record/insert", {
+      "mail.message": [{ id: 700, thread: { id: GROUP, model: "discuss.channel" }, attachment_ids: [1] }],
+    })]);
+    expect(released).toEqual([["chat/d/thumbs/2"]]);
+    await chat.applyBus(config, [bus(1003, "ir.attachment/delete", { id: 1 })]);
+    expect(released).toEqual([["chat/d/thumbs/2"], ["chat/d/files/1/f1.png"]]);
+    expect((await chat.repo.attachmentsOf(config, GROUP, [700], [])).size).toBe(0);
+  });
+
   it("bus message of another user raises unread and calls onChange", async () => {
     fakeOdoo();
     await chat.load(await source());
@@ -826,7 +848,7 @@ describe("ChatService", () => {
       await chat.repo.setSourceState({ configId: id, selfPartnerId: SELF });
       await chat.repo.applyDelta(id, {
         channels: [{ channelId: GROUP, channelType: "group", name: "Team", isMember: true }],
-        deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], partners: [], inboxCounter: null, selfPartnerId: null,
+        deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], attachments: [], deletedAttachmentIds: [], partners: [], inboxCounter: null, selfPartnerId: null,
       });
       await chat.queue.queuePost(id, GROUP, "not sent", false);
       await chat.queue.queueRead(id, GROUP, 5, false);

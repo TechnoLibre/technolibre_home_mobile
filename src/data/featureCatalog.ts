@@ -4348,6 +4348,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addChatLot2Columns.ts",
                     "src/services/migrations/addChatCreateFailed.ts",
                     "src/services/migrations/addChatLeftUnsent.ts",
+                    "src/services/migrations/addChatAttachments.ts",
                     "src/services/chat/chatRepository.ts",
                 ],
             },

@@ -5,7 +5,7 @@ import { APP_MIGRATIONS } from "../services/migrations";
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
 import type { StoreDelta } from "../services/chat/chatStore";
-import type { ChatMessage } from "../models/chat";
+import type { ChatAttachment, ChatMessage } from "../models/chat";
 
 const A = "https://odoo.example.com|alice|db1";
 const B = "https://odoo.example.com|bob|db1";
@@ -20,6 +20,8 @@ function delta(p: Partial<StoreDelta> = {}): StoreDelta {
     partners: [],
     inboxCounter: null,
     selfPartnerId: null,
+    attachments: [],
+    deletedAttachmentIds: [],
     ...p,
   };
 }
@@ -37,6 +39,32 @@ function pending(configId: string, uuid: string, over: Partial<ChatMessage> = {}
     status: "pending",
     outboxOpId: "op-" + uuid,
     writeDate: null,
+    ...over,
+  };
+}
+
+function outgoing(configId: string, uuid: string, over: Partial<ChatAttachment> = {}): ChatAttachment {
+  return {
+    configId,
+    channelId: 7,
+    messageId: null,
+    attachmentId: null,
+    localUuid: uuid,
+    postClientUuid: "post1",
+    seq: 0,
+    name: "photo.jpg",
+    mimetype: "image/jpeg",
+    size: 1000,
+    checksum: null,
+    voice: false,
+    thumbPath: null,
+    thumbBytes: 0,
+    originalPath: `chat/dir/out/${uuid}/photo.jpg`,
+    originalBytes: 1000,
+    state: "queued",
+    error: null,
+    lastOpenedAt: null,
+    createdAt: "2026-10-26T10:00:00.000Z",
     ...over,
   };
 }
@@ -320,6 +348,190 @@ describe("ChatRepository", () => {
     expect([...pend.keys()].sort()).toEqual([7, 8]);
     expect(pend.get(7)).toHaveLength(1);
   });
+
+  describe("attachments", () => {
+    let released: string[][];
+    beforeEach(() => {
+      released = [];
+      repo.onFilesReleased = (paths) => { released.push(paths); };
+    });
+
+    const server = (id: number, over: any = {}) => ({
+      attachmentId: id, channelId: 7, name: `f${id}.png`, mimetype: "image/png", size: 10 * id, checksum: `c${id}`, voice: false, ...over,
+    });
+
+    it("fileDirOf creates a random id once and keeps it", async () => {
+      const dir = await repo.fileDirOf(A);
+      expect(dir).toMatch(/^[0-9a-f-]{36}$/);
+      expect(dir).not.toContain("alice");
+      expect(await repo.fileDirOf(A)).toBe(dir);
+      expect(await repo.fileDirOf(B)).not.toBe(dir);
+      expect((await repo.sourceState(A)).fileDir).toBe(dir);
+    });
+
+    it("applyDelta stores server attachments, links them to a message, and keeps local fields", async () => {
+      await repo.applyDelta(A, delta({
+        messages: [{ messageId: 50, channelId: 7, body: "x", attachmentIds: [2, 1] }],
+        attachments: [server(1, { voice: true }), server(2)],
+      }));
+      const map = await repo.attachmentsOf(A, 7, [50], []);
+      expect(map.get("m50")!.map((a) => a.attachmentId)).toEqual([2, 1]);
+      expect(map.get("m50")![1]).toMatchObject({ voice: true, state: "posted", messageId: 50, checksum: "c1" });
+      await repo.setPreview(A, 1, "chat/dir/thumbs/1", 40);
+      await repo.setOriginal(A, 1, "chat/dir/files/1/f1.png", 10);
+      await repo.touchOpened(A, 1, "2026-10-26T11:00:00.000Z");
+      // A later delta overlays the server fields only
+      await repo.applyDelta(A, delta({ attachments: [{ attachmentId: 1, name: "renamed.png" }] }));
+      const row = (await repo.attachmentsOf(A, 7, [50], [])).get("m50")!.find((a) => a.attachmentId === 1)!;
+      expect(row).toMatchObject({
+        name: "renamed.png", thumbPath: "chat/dir/thumbs/1", thumbBytes: 40, originalPath: "chat/dir/files/1/f1.png",
+        originalBytes: 10, lastOpenedAt: "2026-10-26T11:00:00.000Z", state: "posted",
+      });
+    });
+
+    it("a message with fewer attachment ids drops the other row and releases its paths", async () => {
+      await repo.applyDelta(A, delta({
+        messages: [{ messageId: 50, channelId: 7, body: "x", attachmentIds: [1, 2] }],
+        attachments: [server(1), server(2)],
+      }));
+      await repo.setPreview(A, 2, "chat/dir/thumbs/2", 40);
+      await repo.applyDelta(A, delta({ messages: [{ messageId: 50, attachmentIds: [1] }] }));
+      expect((await repo.attachmentsOf(A, 7, [50], [])).get("m50")!.map((a) => a.attachmentId)).toEqual([1]);
+      expect(released).toEqual([["chat/dir/thumbs/2"]]);
+    });
+
+    it("deleteAttachments removes rows and releases their paths", async () => {
+      await repo.applyDelta(A, delta({
+        messages: [{ messageId: 50, channelId: 7, body: "x", attachmentIds: [1] }],
+        attachments: [server(1)],
+      }));
+      await repo.setOriginal(A, 1, "chat/dir/files/1/f1.png", 10);
+      expect(await repo.deleteAttachments(A, [1, 99])).toEqual(["chat/dir/files/1/f1.png"]);
+      expect(released).toEqual([["chat/dir/files/1/f1.png"]]);
+      expect((await repo.attachmentsOf(A, 7, [50], [])).size).toBe(0);
+    });
+
+    it("a deleted channel drops its attachments except queued and uploaded ones", async () => {
+      await repo.applyDelta(A, delta({
+        channels: [{ channelId: 7, name: "T" }],
+        messages: [{ messageId: 50, channelId: 7, body: "x", attachmentIds: [1] }],
+        attachments: [server(1)],
+      }));
+      await repo.setOriginal(A, 1, "chat/dir/files/1/f1.png", 10);
+      await repo.putOutgoing([outgoing(A, "l1"), outgoing(A, "l2", { state: "uploaded", attachmentId: 9 }), outgoing(A, "l3", { state: "refused" })]);
+      await repo.applyDelta(A, delta({ deletedChannelIds: [7] }));
+      expect(await repo.attachmentBytes(A, 7)).toBe(2000);
+      const left = await repo.outgoingOf(A, "post1");
+      expect(left.map((a) => a.localUuid).sort()).toEqual(["l1", "l2"]);
+      expect(released.flat().sort()).toEqual(["chat/dir/files/1/f1.png", "chat/dir/out/l3/photo.jpg"]);
+    });
+
+    it("outgoingOf lists by seq; setUploaded, setRefused and requeueUpload move the state", async () => {
+      await repo.putOutgoing([outgoing(A, "l2", { seq: 1 }), outgoing(A, "l1", { seq: 0 })]);
+      expect((await repo.outgoingOf(A, "post1")).map((a) => a.localUuid)).toEqual(["l1", "l2"]);
+      await repo.setUploaded(A, "l1", { attachmentId: 31, checksum: "ck", size: 999, mimetype: "image/png", name: "p.png" });
+      await repo.setRefused(A, "l2", "too big");
+      const [one, two] = await repo.outgoingOf(A, "post1");
+      expect(one).toMatchObject({ state: "uploaded", attachmentId: 31, checksum: "ck", size: 999, mimetype: "image/png", name: "p.png" });
+      expect(two).toMatchObject({ state: "refused", error: "too big" });
+      await repo.requeueUpload(A, "l2");
+      expect((await repo.outgoingOf(A, "post1"))[1]).toMatchObject({ state: "queued", error: null });
+    });
+
+    it("adoptOutgoing re-keys the rows, merges a row the bus wrote and keeps local paths", async () => {
+      await repo.putOutgoing([outgoing(A, "l1", { state: "uploaded", attachmentId: 31, checksum: "old" })]);
+      // The bus echo arrived first: a server row, no local path
+      await repo.applyDelta(A, delta({
+        messages: [{ messageId: 60, channelId: 7, body: "x", attachmentIds: [31] }],
+        attachments: [server(31, { checksum: "ck" })],
+      }));
+      const adopted = await repo.adoptOutgoing(A, "post1", 60);
+      expect(adopted).toHaveLength(1);
+      expect(adopted[0]).toMatchObject({
+        attachmentId: 31, messageId: 60, state: "posted", checksum: "ck", localUuid: "l1",
+        originalPath: "chat/dir/out/l1/photo.jpg", originalBytes: 1000,
+      });
+      expect(await repo.outgoingOf(A, "post1")).toEqual([]);
+      const rows = await db.rawQuery("SELECT id FROM chat_attachments WHERE config_id = ?", [A]);
+      expect(rows.map((r) => r.id)).toEqual([`${A}#a31`]);
+      expect((await repo.attachmentsOf(A, 7, [60], [])).get("m60")).toHaveLength(1);
+    });
+
+    it("adoptOutgoing without a bus row re-keys alone; attachmentsOf finds queued rows by post uuid", async () => {
+      await repo.putOutgoing([outgoing(A, "l1", { state: "uploaded", attachmentId: 31 })]);
+      expect((await repo.attachmentsOf(A, 7, [], ["post1"])).get("upost1")).toHaveLength(1);
+      await repo.adoptOutgoing(A, "post1", 61);
+      const row = (await repo.attachmentsOf(A, 7, [61], ["post1"])).get("m61")![0];
+      expect(row).toMatchObject({ attachmentId: 31, state: "posted", messageId: 61 });
+    });
+
+    it("deleteOutgoing removes the rows and returns their paths", async () => {
+      await repo.putOutgoing([outgoing(A, "l1"), outgoing(A, "l2")]);
+      expect(await repo.deleteOutgoing(A, ["l1"])).toEqual(["chat/dir/out/l1/photo.jpg"]);
+      expect((await repo.outgoingOf(A, "post1")).map((a) => a.localUuid)).toEqual(["l2"]);
+    });
+
+    it("attachmentBytes sums thumbs and originals per channel and in total; cachedRows orders by last use", async () => {
+      await repo.applyDelta(A, delta({
+        attachments: [server(1), server(2), server(3, { channelId: 8 })],
+      }));
+      await repo.setPreview(A, 1, "t1", 5);
+      await repo.setOriginal(A, 1, "o1", 20);
+      await repo.setOriginal(A, 2, "o2", 30);
+      await repo.setOriginal(A, 3, "o3", 100);
+      await repo.touchOpened(A, 2, "2026-10-20T00:00:00.000Z");
+      expect(await repo.attachmentBytes(A, 7)).toBe(55);
+      expect(await repo.attachmentBytes(A)).toBe(155);
+      await repo.applyDelta(B, delta({ attachments: [server(1)] }));
+      await repo.setOriginal(B, 1, "ob", 1);
+      expect(await repo.attachmentBytes(A)).toBe(155);
+      expect(await repo.attachmentBytes()).toBe(156);
+      // Never opened rows sort by creation; the opened one (2026-10-20) comes first
+      const cached = await repo.cachedRows();
+      expect(cached[0].attachmentId).toBe(2);
+      expect(cached).toHaveLength(4);
+    });
+
+    it("clearFiles empties the chosen files and releases them", async () => {
+      await repo.applyDelta(A, delta({ attachments: [server(1)] }));
+      await repo.setPreview(A, 1, "t1", 5);
+      await repo.setOriginal(A, 1, "o1", 20);
+      await repo.clearFiles([`${A}#a1`], "original");
+      expect(await repo.attachmentBytes(A)).toBe(5);
+      await repo.clearFiles([`${A}#a1`], "both");
+      expect(await repo.attachmentBytes(A)).toBe(0);
+      expect(released.flat()).toEqual(["o1", "t1"]);
+      expect(await repo.cachedRows()).toEqual([]);
+    });
+
+    it("swapChannelId moves the attachment rows to the real channel", async () => {
+      await repo.putOutgoing([outgoing(A, "l1", { channelId: -5 })]);
+      await repo.swapChannelId(A, -5, 7);
+      expect((await repo.outgoingOf(A, "post1"))[0].channelId).toBe(7);
+    });
+
+    it("dropSource removes the attachment rows of that account only", async () => {
+      await repo.applyDelta(A, delta({ attachments: [server(1)] }));
+      await repo.applyDelta(B, delta({ attachments: [server(1)] }));
+      await repo.setOriginal(A, 1, "oa", 3);
+      await repo.dropSource(A);
+      expect(await db.rawQuery("SELECT * FROM chat_attachments WHERE config_id = ?", [A])).toEqual([]);
+      expect(await db.rawQuery("SELECT * FROM chat_attachments WHERE config_id = ?", [B])).toHaveLength(1);
+      expect(released.flat()).toEqual(["oa"]);
+    });
+
+    it("rename keeps the file directory and moves the attachment rows", async () => {
+      const dir = await repo.fileDirOf(A);
+      await repo.putOutgoing([outgoing(A, "l1")]);
+      await repo.applyDelta(A, delta({ attachments: [server(1)] }));
+      await db.renameSyncConfigId(A, B);
+      expect(await repo.fileDirOf(B)).toBe(dir);
+      expect(await repo.outgoingOf(A, "post1")).toEqual([]);
+      expect((await repo.outgoingOf(B, "post1")).map((a) => a.localUuid)).toEqual(["l1"]);
+      const ids = (await db.rawQuery("SELECT id FROM chat_attachments")).map((r) => r.id).sort();
+      expect(ids).toEqual([`${B}#a1`, `${B}#ll1`].sort());
+    });
+  });
 });
 
 describe("ChatRepository lot 2", () => {
@@ -473,6 +685,32 @@ describe("ChatRepository lot 2", () => {
       const by = await repo.membersBySource(A);
       expect(by.get(1)!.map((m) => m.memberId)).toEqual([4, 9]);
       expect(by.get(2)!.map((m) => m.memberId)).toEqual([6]);
+    });
+  });
+  describe("migration 2026102604", () => {
+    const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102604)!;
+    const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+
+    it("a fresh install has the table and the columns", async () => {
+      for (const m of APP_MIGRATIONS) {
+        if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+      }
+      expect(await colsOf("chat_attachments")).toEqual(expect.arrayContaining(["id", "post_client_uuid", "thumb_bytes", "state", "created_at"]));
+      expect(await colsOf("chat_sources")).toEqual(expect.arrayContaining(["file_dir", "module_level"]));
+    });
+
+    it("adds the table and the columns to a database at 2026102603, and a second run changes nothing", async () => {
+      const raw = (db as any).db;
+      await raw.execute("CREATE TABLE IF NOT EXISTS chat_sources (config_id TEXT PRIMARY KEY NOT NULL)");
+      await db.rawRun("INSERT INTO chat_sources (config_id) VALUES (?)", ["a"]);
+      expect(await colsOf("chat_sources")).not.toContain("file_dir");
+      expect(migration().description).toBe("Clavardage : pièces jointes et leur cache");
+      await migration().run(db);
+      await db.rawRun("INSERT INTO chat_attachments (id, config_id, channel_id, name, mimetype, size, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ["a#a1", "a", 1, "n", "m", 1, "posted", "t"]);
+      await migration().run(db);
+      expect(await colsOf("chat_sources")).toEqual(expect.arrayContaining(["file_dir", "module_level"]));
+      expect(await db.rawQuery("SELECT * FROM chat_attachments")).toHaveLength(1);
+      expect(await db.rawQuery("SELECT * FROM chat_sources")).toHaveLength(1);
     });
   });
 });

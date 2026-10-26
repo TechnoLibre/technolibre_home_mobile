@@ -93,6 +93,55 @@ export interface ChatPartner {
   imStatus: string | null;
 }
 
+/**
+ * queued: still on the phone; uploaded: the server holds it as a pending
+ * attachment, the post is not answered yet; posted: part of a message
+ * (also every attachment read from the server); refused: the server
+ * refused the file, kept until the user dismisses it.
+ */
+export type ChatAttachmentState = "queued" | "uploaded" | "posted" | "refused";
+
+/**
+ * One file of a message. Keyed `configId#a<attachmentId>` once the server
+ * has an id, `configId#l<localUuid>` while it only exists on the phone.
+ * Paths are relative to the app data directory; the bytes columns are the
+ * size of the cached file, 0 when absent.
+ */
+export interface ChatAttachment {
+  configId: string;
+  channelId: number;
+  messageId: number | null;
+  attachmentId: number | null;
+  localUuid: string | null;
+  /** Client uuid of the post the file belongs to while that post is queued. */
+  postClientUuid: string | null;
+  /** Position among the files of one message. */
+  seq: number;
+  name: string;
+  mimetype: string;
+  size: number;
+  checksum: string | null;
+  voice: boolean;
+  thumbPath: string | null;
+  thumbBytes: number;
+  originalPath: string | null;
+  originalBytes: number;
+  state: ChatAttachmentState;
+  error: string | null;
+  lastOpenedAt: string | null;
+  createdAt: string;
+}
+
+/** A file picked on the phone, waiting to be uploaded with its post. */
+export interface OutgoingFile {
+  localUuid: string;
+  path: string;
+  name: string;
+  mimetype: string;
+  size: number;
+  voice: boolean;
+}
+
 export type ChatModuleState = "installed" | "outdated" | "available" | "absent" | "unknown";
 
 export interface ChatSourceState {
@@ -114,6 +163,10 @@ export interface ChatSourceState {
   /** ISO time `globalMuteUntil` was last set from the bus; a load that started earlier does not overwrite it. */
   globalMuteAt: string | null;
   isInternalUser: boolean;
+  /** Random id of the account's directory under chat/; never derived from the account. */
+  fileDir: string | null;
+  /** Level of the server module (attachment upload route at "1.2"); null while unknown. */
+  moduleLevel: "1.0" | "1.1" | "1.2" | null;
 }
 
 /**

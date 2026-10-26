@@ -14,7 +14,7 @@ const SRC = { configId: CONFIG, creds: CREDS } as unknown as ChatSource;
 const SELF = 3;
 
 const delta = (p: Partial<StoreDelta>): StoreDelta => ({
-  channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], partners: [],
+  channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], partners: [], attachments: [], deletedAttachmentIds: [],
   inboxCounter: null, selfPartnerId: null, ...p,
 });
 

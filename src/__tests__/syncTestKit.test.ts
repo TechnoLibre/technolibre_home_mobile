@@ -144,6 +144,8 @@ describe("syncTestKit", () => {
 				members: [{ memberId: 1, channelId: 5, partnerId: 3 }, { memberId: 2, channelId: 5, partnerId: 7 }],
 				deletedMemberIds: [],
 				messages: [],
+				attachments: [],
+				deletedAttachmentIds: [],
 				partners: [{ partnerId: 3, name: "Ann" }, { partnerId: 7, name: "Bob" }] as any,
 				inboxCounter: null,
 				selfPartnerId: null,

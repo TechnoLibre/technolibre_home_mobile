@@ -1286,10 +1286,13 @@ export class DatabaseService {
         internal_user_group_id INTEGER,
         global_mute_until      TEXT,
         global_mute_at         TEXT,
-        is_internal_user       INTEGER NOT NULL DEFAULT 0
+        is_internal_user       INTEGER NOT NULL DEFAULT 0,
+        file_dir               TEXT,
+        module_level           TEXT
       )
     `);
     await this.createChatTempIdsTable();
+    await this.createChatAttachmentsTable();
     for (const [table, col] of [
       ["chat_channels", "config_id"],
       ["chat_messages", "config_id, channel_id"],
@@ -1356,6 +1359,64 @@ export class DatabaseService {
   }
 
   /**
+   * Adds the attachments table and the two columns of chat_sources (the
+   * account's random file directory, the server module level) to tables
+   * created before them. Each piece is added only when it is absent, so a
+   * fresh install (createChatTables already has them) and a second run
+   * change nothing.
+   */
+  async addChatAttachments(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(chat_sources)");
+    const names = (existing.values ?? []).map((r: any) => r.name as string);
+    if (names.length > 0) {
+      for (const col of ["file_dir", "module_level"]) {
+        if (!names.includes(col)) await this.db.execute(`ALTER TABLE chat_sources ADD COLUMN ${col} TEXT`);
+      }
+    }
+    await this.createChatAttachmentsTable();
+  }
+
+  /**
+   * One row per file of a message, keyed `configId#a<attachmentId>` or
+   * `configId#l<localUuid>` (see ChatAttachment). The paths and byte
+   * counts describe the files cached on the phone.
+   */
+  private async createChatAttachmentsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_attachments (
+        id               TEXT PRIMARY KEY NOT NULL,
+        config_id        TEXT NOT NULL,
+        channel_id       INTEGER NOT NULL,
+        message_id       INTEGER,
+        attachment_id    INTEGER,
+        local_uuid       TEXT,
+        post_client_uuid TEXT,
+        seq              INTEGER NOT NULL DEFAULT 0,
+        name             TEXT NOT NULL,
+        mimetype         TEXT NOT NULL,
+        size             INTEGER NOT NULL,
+        checksum         TEXT,
+        voice            INTEGER NOT NULL DEFAULT 0,
+        thumb_path       TEXT,
+        thumb_bytes      INTEGER NOT NULL DEFAULT 0,
+        original_path    TEXT,
+        original_bytes   INTEGER NOT NULL DEFAULT 0,
+        state            TEXT NOT NULL,
+        error            TEXT,
+        last_opened_at   TEXT,
+        created_at       TEXT NOT NULL
+      )
+    `);
+    for (const [name, cols] of [
+      ["channel", "config_id, channel_id"],
+      ["message", "config_id, message_id"],
+      ["post", "config_id, post_client_uuid"],
+    ]) {
+      await this.db.execute(`CREATE INDEX IF NOT EXISTS chat_attachments_${name} ON chat_attachments (${cols})`);
+    }
+  }
+
+  /**
    * The server id each conversation created on the phone was given, by its
    * temporary id (row key `configId#<tempId>`): a screen or a route still
    * naming the temporary id finds the conversation, and a fingerprint
@@ -1377,7 +1438,7 @@ export class DatabaseService {
    * column and the `configId#` prefix of the key. A table not created yet is skipped.
    */
   private async renameChatRows(oldId: string, newId: string): Promise<void> {
-    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_sources"]) {
+    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_sources"]) {
       try {
         const keyed = table !== "chat_sources";
         const key = keyed ? "id" : "config_id";

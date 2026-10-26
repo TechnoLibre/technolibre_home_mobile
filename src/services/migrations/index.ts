@@ -28,6 +28,7 @@ import { addChatTables } from "./addChatTables";
 import { addChatLot2Columns } from "./addChatLot2Columns";
 import { addChatCreateFailed } from "./addChatCreateFailed";
 import { addChatLeftUnsent } from "./addChatLeftUnsent";
+import { addChatAttachments } from "./addChatAttachments";
 
 /**
  * The app's database migrations, in version order: runMigrations runs at
@@ -179,5 +180,10 @@ export const APP_MIGRATIONS: Migration[] = [
 		version: 2026102603,
 		description: "Clavardage : conversations quittées avec des messages non envoyés",
 		run: addChatLeftUnsent,
+	},
+	{
+		version: 2026102604,
+		description: "Clavardage : pièces jointes et leur cache",
+		run: addChatAttachments,
 	},
 ];
