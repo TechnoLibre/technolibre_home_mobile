@@ -237,6 +237,53 @@ describe("OutboxService", () => {
       expect(await db.getOutboxOp(op.id)).toMatchObject({ status: "queued", attempts: 0, params: { heldFor: "upload" } });
     });
 
+    it("a row that failed earlier and is then held is due on the next unforced drain", async () => {
+      let mode = "fail";
+      outbox.registerHandler("h", (_c, op) => outbox.attempt(op.id, async () => {
+        if (mode === "fail") throw new Error("down");
+        if (mode === "hold") throw new OutboxHeldError("wait", "wifi");
+      }));
+      const op = await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "h" });
+      await outbox.drain(CREDS, CONFIG);
+      advance(30_000);
+      mode = "hold";
+      await outbox.drain(CREDS, CONFIG);
+      const stored = (await db.getOutboxOp(op.id))!;
+      expect(stored).toMatchObject({ status: "queued", attempts: 1, nextAttemptAt: null, lastError: null });
+      mode = "ok";
+      expect(await outbox.drain(CREDS, CONFIG)).toMatchObject({ done: 1, held: 0 });
+    });
+
+    it("the pre-attempt held path also clears a past retry delay", async () => {
+      const op = await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "h" });
+      await outbox.attempt(op.id, async () => { throw new Error("down"); }).catch(() => {});
+      advance(30_000);
+      outbox.registerHandler("h", async () => { throw new OutboxHeldError("wait", "wifi"); });
+      await outbox.drain(CREDS, CONFIG);
+      expect(await db.getOutboxOp(op.id)).toMatchObject({ nextAttemptAt: null, lastError: null, params: { heldFor: "wifi" } });
+    });
+
+    it("heldFor does not outlive the hold", async () => {
+      let mode = "hold";
+      const until = () => new Date(clock.getTime() + 60_000).toISOString();
+      outbox.registerHandler("h", (_c, op) => outbox.attempt(op.id, async () => {
+        if (mode === "hold") throw new OutboxHeldError("wait", "wifi");
+        if (mode === "later") throw new OutboxRetryLaterError("wait", until());
+        if (mode === "block") throw new OutboxBlockedError("b", "x");
+        throw new Error("down");
+      }));
+      const op = await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "h" });
+      for (const next of ["fail", "later", "block"]) {
+        mode = "hold";
+        await db.updateOutboxOp(op.id, { status: "queued", nextAttemptAt: null, params: {}, updatedAt: clock.toISOString() });
+        await outbox.drain(CREDS, CONFIG);
+        expect((await db.getOutboxOp(op.id))!.params.heldFor).toBe("wifi");
+        mode = next;
+        await outbox.drain(CREDS, CONFIG);
+        expect((await db.getOutboxOp(op.id))!.params).not.toHaveProperty("heldFor");
+      }
+    });
+
     it("a held op is run again by the next drain", async () => {
       let hold = true;
       const ran: string[] = [];

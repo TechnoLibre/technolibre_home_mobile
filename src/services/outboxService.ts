@@ -274,7 +274,7 @@ export class OutboxService {
   private async recordFailure(stored: OutboxOp, op: OutboxOp, e: unknown): Promise<void> {
     const message = e instanceof Error ? e.message : String(e);
     const at = this.now();
-    const params = (await this.db.getOutboxOp(op.id))?.params ?? op.params;
+    const { heldFor: _heldFor, ...params } = (await this.db.getOutboxOp(op.id))?.params ?? op.params;
     if (e instanceof OutboxBlockedError) {
       await this.db.updateOutboxOp(op.id, {
         status: "blocked",
@@ -290,6 +290,8 @@ export class OutboxService {
       await this.db.updateOutboxOp(op.id, {
         status: "queued",
         attempts: stored.attempts,
+        lastError: null,
+        nextAttemptAt: null,
         params: { ...params, heldFor: e.heldFor },
         updatedAt: at.toISOString(),
       });
@@ -310,7 +312,7 @@ export class OutboxService {
     } else {
       nextAttemptAt = new Date(at.getTime() + retryDelayMs(op.attempts)).toISOString();
       await this.db.updateOutboxOp(op.id, {
-        status: "failed", lastError: message, nextAttemptAt, updatedAt: at.toISOString(),
+        status: "failed", lastError: message, nextAttemptAt, params, updatedAt: at.toISOString(),
       });
     }
     this.onRetryScheduled?.(nextAttemptAt);
@@ -373,7 +375,14 @@ export class OutboxService {
           result.held++;
           // A handler that held before attempt() has not recorded it
           const row = await this.db.getOutboxOp(op.id);
-          if (row && row.params.heldFor !== e.heldFor) await this.setParams(op.id, { heldFor: e.heldFor });
+          if (row && (row.params.heldFor !== e.heldFor || row.nextAttemptAt || row.lastError)) {
+            await this.db.updateOutboxOp(op.id, {
+              params: { ...row.params, heldFor: e.heldFor },
+              lastError: null,
+              nextAttemptAt: null,
+              updatedAt: this.now().toISOString(),
+            });
+          }
           continue;
         }
         if (e instanceof OutboxBlockedError) result.blocked++;
