@@ -1271,23 +1271,64 @@ describe("ChatThreadComponent message actions", () => {
         c.teardown();
     });
 
-    it("the click ending a long press is swallowed, a plain tap goes through", async () => {
+    const clickEvent = () => ({ stopPropagation: vi.fn(), preventDefault: vi.fn() });
+
+    it("the click ending a long press chooses nothing, wherever it lands; a plain tap goes through", async () => {
         const c = make(fakeChat([msg(10)]));
         await c.open();
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-        const ev = () => ({ stopPropagation: vi.fn(), preventDefault: vi.fn() });
+        c.onThreadPointer();
         c.onPressDown(c.state.rows[0], press());
         c.onPressUp();
-        const tap = ev();
-        c.onBubbleClick(tap);
+        const tap = clickEvent();
+        c.onThreadClick(tap);
         expect(tap.stopPropagation).not.toHaveBeenCalled();
+        c.onThreadPointer();
         c.onPressDown(c.state.rows[0], press());
         vi.advanceTimersByTime(LONG_PRESS_MS);
         c.onPressUp();
-        const end = ev();
-        c.onBubbleClick(end);
+        expect(c.state.actions).toBe("m10");
+        // Its click lands on the menu opened under the finger (a button of it): taken by the thread first
+        const end = clickEvent();
+        c.onThreadClick(end);
         expect(end.stopPropagation).toHaveBeenCalled();
         expect(end.preventDefault).toHaveBeenCalled();
+        const next = clickEvent();
+        c.onThreadClick(next);
+        expect(next.stopPropagation).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
+    it("a long press whose click never comes leaves the next tap alone, a chip's included", async () => {
+        const c = make(fakeChat([msg(10)]));
+        await c.open();
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        c.onThreadPointer();
+        c.onPressDown(c.state.rows[0], press());
+        vi.advanceTimersByTime(LONG_PRESS_MS);
+        c.onPressCancel();
+        c.closeActions();
+        // A chip's tap: its pointerdown stops before the bubble's, the thread's capture still sees it
+        c.onThreadPointer();
+        const chip = clickEvent();
+        c.onThreadClick(chip);
+        expect(chip.stopPropagation).not.toHaveBeenCalled();
+        expect(chip.preventDefault).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
+    it("the click ending a chip's long press (who reacted) chooses nothing in the sheet", async () => {
+        const c = make(fakeChat([msg(10)]));
+        await c.open();
+        c.onThreadPointer();
+        c.onWho(c.state.rows[0], "👍");
+        const end = clickEvent();
+        c.onThreadClick(end);
+        expect(end.stopPropagation).toHaveBeenCalled();
+        c.onThreadPointer();
+        const tap = clickEvent();
+        c.onThreadClick(tap);
+        expect(tap.stopPropagation).not.toHaveBeenCalled();
         c.teardown();
     });
 
@@ -1297,7 +1338,7 @@ describe("ChatThreadComponent message actions", () => {
         expect(bubble).toMatch(/t-on-pointerdown="\(ev\) => this.onPressDown\(row, ev\)"/);
         expect(bubble).not.toMatch(/t-on-pointerdown\.prevent/);
         expect(bubble).toMatch(/t-on-contextmenu\.prevent=""/);
-        expect(bubble).toMatch(/t-on-click\.capture="onBubbleClick"/);
+        expect(source).toMatch(/<div id="chat-thread" t-on-pointerdown\.capture="onThreadPointer" t-on-click\.capture="onThreadClick">/);
     });
 
     it("what the menu offers follows Odoo: another's message no edit or delete, a notification copy only", async () => {

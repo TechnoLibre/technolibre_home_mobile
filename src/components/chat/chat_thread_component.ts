@@ -300,7 +300,7 @@ export class ChatThreadComponent extends EnhancedComponent {
     };
 
     static template = xml`
-    <div id="chat-thread">
+    <div id="chat-thread" t-on-pointerdown.capture="onThreadPointer" t-on-click.capture="onThreadClick">
       <HeadingComponent title="state.title"/>
       <div class="chat-thread__header">
         <button class="chat-thread__info" t-att-aria-label="t('chat.info')" t-on-click="onInfo">
@@ -329,7 +329,7 @@ export class ChatThreadComponent extends EnhancedComponent {
              t-att-class="{'chat-thread__bubble--own': row.own, 'chat-thread__bubble--pressed': state.actions === row.key, 'chat-thread__bubble--highlight': state.highlight === row.key}"
              t-on-pointerdown="(ev) => this.onPressDown(row, ev)" t-on-pointermove="onPressMove"
              t-on-pointerup="onPressUp" t-on-pointercancel="onPressCancel"
-             t-on-contextmenu.prevent="" t-on-click.capture="onBubbleClick">
+             t-on-contextmenu.prevent="">
           <button t-if="row.quote" type="button" class="chat-thread__quote" t-att-class="'chat-thread__quote--' + row.quote.state"
                   t-att-aria-disabled="row.quote.key ? null : 'true'" t-att-tabindex="row.quote.key ? null : '-1'"
                   t-on-click="() => this.onQuote(row)">
@@ -1205,8 +1205,13 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     // ─── Message actions ──────────────────────────────────────────────────
 
-    /** A long press on a bubble opens its menu. */
-    private press = new LongPress((key) => this.openActions(key));
+    /** A long press on a bubble opens its menu; the click that ends it is swallowed (onThreadClick). */
+    private press = new LongPress((key) => {
+        this.endingClick = true;
+        this.openActions(key);
+    });
+    /** A long press ran out and its click has not come yet: that click is to be swallowed. */
+    private endingClick = false;
     /** « … » was chosen in the menu of this row: the picker opens for it once the menu is gone. */
     private _moreFor: string | null = null;
     private _flashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1233,9 +1238,24 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.press.cancel();
     }
 
-    /** The click that ends a long press reaches neither a link of the body nor a file: the menu took the press. */
-    onBubbleClick(ev: Event): void {
-        if (!this.press.takeFired()) return;
+    /**
+     * A new press anywhere in the thread, a reaction chip's included (the
+     * capture runs before the chip stops its pointerdown): the click of the
+     * last long press is no longer to come, the next click is a tap.
+     */
+    onThreadPointer(): void {
+        this.endingClick = false;
+    }
+
+    /**
+     * The click that ends a long press (a bubble's menu, a chip's who
+     * reacted) chooses nothing, wherever it lands: on the bubble (a link,
+     * a file), on the sheet opened under the finger, or on a button of that
+     * sheet. Swallowed in the capture phase of the thread, before its target.
+     */
+    onThreadClick(ev: Event): void {
+        if (!this.endingClick) return;
+        this.endingClick = false;
         ev.preventDefault();
         ev.stopPropagation();
     }
@@ -1373,6 +1393,8 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     /** A long press on a chip: who reacted with it. */
     onWho(row: ThreadRow, content: string): void {
+        // A chip's long press: its click is still to come
+        this.endingClick = true;
         if (this.state.actions !== null) return;
         this.state.who = row.reactions.find((r) => r.content === content) ?? null;
     }
