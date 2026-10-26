@@ -103,6 +103,11 @@ interface PreparingBubble {
 
 /** Images the web view shows from their staged file in a preparing bubble. */
 const SHOWN_IMAGE = /^image\/(jpeg|png|gif|webp)$/;
+/**
+ * Images a preparing bubble shows at most, the others by name: a staged
+ * photo is the full-size original, and the web view decodes each one shown.
+ */
+const PREPARING_IMAGES = 3;
 
 /** Rows the composer shows for a text, from 1 up to MAX_INPUT_ROWS. */
 function rowsOf(text: string): number {
@@ -218,7 +223,7 @@ export class ChatThreadComponent extends EnhancedComponent {
           <div t-if="state.preparing.text" class="chat-thread__body" t-esc="state.preparing.text"/>
           <ul class="chat-thread__preparing-files">
             <li t-foreach="state.preparing.files" t-as="file" t-key="file.key">
-              <img t-if="file.url" class="chat-thread__preparing-image" t-att-src="file.url" t-att-alt="file.name"/>
+              <img t-if="file.url" class="chat-thread__preparing-image" decoding="async" width="64" height="64" t-att-src="file.url" t-att-alt="file.name"/>
               <span t-else="" t-esc="'📎 ' + file.name"/>
             </li>
           </ul>
@@ -967,9 +972,10 @@ export class ChatThreadComponent extends EnhancedComponent {
     /**
      * Shows the bubble of a send with files (state.preparing): its text,
      * its files by name, « Preparing the photos… » when a photo is among
-     * them, « Preparing the files… » otherwise. An image the web view shows
-     * gets its staged file's address once it is known. Returns the
-     * bubble's number for endPreparing.
+     * them, « Preparing the files… » otherwise. The first PREPARING_IMAGES
+     * images the web view shows get their staged file's address once it is
+     * known, drawn in a 64 px box and decoded off the main thread (decoding
+     * async). Returns the bubble's number for endPreparing.
      */
     private showPreparing(text: string, chips: { key: string; file: OutgoingFile }[]): number {
         const seq = ++this._preparingSeq;
@@ -980,8 +986,9 @@ export class ChatThreadComponent extends EnhancedComponent {
             files: chips.map((c) => ({ key: c.key, name: c.file.name, image: SHOWN_IMAGE.test(c.file.mimetype), url: null })),
         };
         this.scrollToBottomSoon();
+        let shown = 0;
         chips.forEach((c, i) => {
-            if (!SHOWN_IMAGE.test(c.file.mimetype)) return;
+            if (!SHOWN_IMAGE.test(c.file.mimetype) || shown++ >= PREPARING_IMAGES) return;
             this.chatService.queue.files.webUrl(c.file.path).then((url: string) => {
                 if (this._preparingSeq === seq && this.state.preparing) this.state.preparing.files[i].url = url;
             }).catch(() => {});

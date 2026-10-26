@@ -320,13 +320,52 @@ describe("ComposerAttach", () => {
         h.pickNext([file("film.mp4", 3 * 1024 * 1024, "video/mp4"), file("ok.jpg", 10)]);
         const picking = h.attach.pick(h.input, "file");
         await vi.waitFor(() => expect(h.state.chips.map((c) => c.file.name)).toEqual(["film.mp4", "ok.jpg"]));
-        expect(h.capture.stage).toHaveBeenCalledWith(FILE_DIR, expect.any(File), { maxUploadSize: 128 * 1024 * 1024 });
+        expect(h.capture.stage).toHaveBeenCalledWith(FILE_DIR, expect.any(File), { maxUploadSize: Infinity });
         answer(LIMIT);
         await picking;
         expect(h.state.limit).toBe(LIMIT);
         expect(h.state.chips.map((c) => c.file.name)).toEqual(["ok.jpg"]);
         expect(h.state.notices).toEqual(["“film.mp4” is over the server's limit of 2 MB: it cannot be sent."]);
         expect([...h.drafts.values()].map((d) => d.file.name)).toEqual(["ok.jpg"]);
+    });
+
+    it("a pick while the limit is unknown stages without the 128 MiB fallback and the late check refuses with the real limit", async () => {
+        const MiB = 1024 * 1024;
+        const h = harness();
+        let answer!: (limit: number | null) => void;
+        h.attach.deps.uploadLimit = () => new Promise((r) => { answer = r; });
+        /** A file of `size` bytes held by a few: the fakes read only its size. */
+        const big = (name: string, size: number) => Object.defineProperty(file(name, 1, "video/mp4"), "size", { value: size });
+        h.capture.stage.mockImplementation(async (_dir: string, f: File, o: { maxUploadSize: number }) => {
+            if (f.size + 65536 > o.maxUploadSize) return { refused: "too_big", limit: o.maxUploadSize };
+            return { ...stagedOf(h.files, f.name, 1, f.type), size: f.size };
+        });
+        void h.attach.start();
+        h.pickNext([big("film.mp4", 200 * MiB), big("long.mp4", 400 * MiB)]);
+        const picking = h.attach.pick(h.input, "file");
+        await vi.waitFor(() => expect(h.state.chips.map((c) => c.file.name)).toEqual(["film.mp4", "long.mp4"]));
+        expect(h.capture.stage).toHaveBeenCalledWith(FILE_DIR, expect.any(File), { maxUploadSize: Infinity });
+        expect(h.state.notices).toEqual([]);
+        answer(300 * MiB);
+        await picking;
+        expect(h.state.chips.map((c) => c.file.name)).toEqual(["film.mp4"]);
+        expect(h.state.notices).toEqual([`“long.mp4” is over the server's limit of ${formatBytes(300 * MiB, "en")}: it cannot be sent.`]);
+        expect([...h.drafts.values()].map((d) => d.file.name)).toEqual(["film.mp4"]);
+    });
+
+    it("a pick whose limit cannot be read refuses late over Odoo's default of 128 MiB", async () => {
+        const MiB = 1024 * 1024;
+        const h = harness({ limit: null });
+        const big = (name: string, size: number) => Object.defineProperty(file(name, 1, "video/mp4"), "size", { value: size });
+        h.capture.stage.mockImplementation(async (_dir: string, f: File, o: { maxUploadSize: number }) => {
+            if (f.size + 65536 > o.maxUploadSize) return { refused: "too_big", limit: o.maxUploadSize };
+            return { ...stagedOf(h.files, f.name, 1, f.type), size: f.size };
+        });
+        await h.attach.start();
+        h.pickNext([big("film.mp4", 200 * MiB), big("clip.mp4", 100 * MiB)]);
+        await h.attach.pick(h.input, "file");
+        expect(h.state.chips.map((c) => c.file.name)).toEqual(["clip.mp4"]);
+        expect(h.state.notices).toEqual([`“film.mp4” is over the server's limit of ${formatBytes(128 * MiB, "en")}: it cannot be sent.`]);
     });
 
     it("a HEIC that could not be converted is kept with a notice", async () => {

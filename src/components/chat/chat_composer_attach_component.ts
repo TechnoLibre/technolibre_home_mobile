@@ -83,8 +83,8 @@ export interface ComposerAttachDeps {
 }
 
 /**
- * Stage limit while the server's is unknown: Odoo's default. The outbox
- * checks the real one again before uploading.
+ * The limit a pick is held to when the server's cannot be read: Odoo's
+ * default. The outbox checks the real one again before uploading.
  */
 const FALLBACK_LIMIT = 128 * 1024 * 1024;
 
@@ -194,9 +194,10 @@ export class ComposerAttach {
      * is) are each named in a notice. Each staged file is a draft file
      * before its chip shows; one staged after the screen closed stays in
      * the draft without a chip. Staging uses the limit known at the tap
-     * (FALLBACK_LIMIT when none is) and never waits for the server's: read
+     * (none while it is unknown) and never waits for the server's: read
      * meanwhile, a lower one then takes off, with the same notice, the
-     * chips of this pick it rules out.
+     * chips of this pick it rules out; a read that fails holds them to
+     * FALLBACK_LIMIT.
      */
     async pick(input: HTMLInputElement, kind: PickKind): Promise<void> {
         if (!this.state.ready) return;
@@ -206,7 +207,7 @@ export class ComposerAttach {
         if (picked.length === 0 || this.disposed) return;
         this.state.notices = [];
         this.state.staging++;
-        const maxUploadSize = this.state.limit ?? FALLBACK_LIMIT;
+        const maxUploadSize = this.state.limit ?? Infinity;
         const limitRead = this.refreshLimit();
         const lang = getCurrentLocale();
         const mine = new Set<string>();
@@ -236,8 +237,8 @@ export class ComposerAttach {
             this.state.staging--;
         }
         await limitRead;
-        const limit = this.state.limit;
-        if (limit === null || limit >= maxUploadSize) return;
+        const limit = this.state.limit ?? FALLBACK_LIMIT;
+        if (limit >= maxUploadSize) return;
         for (const chip of this.state.chips) {
             if (!mine.has(chip.file.localUuid) || chip.file.size + UPLOAD_SLACK_BYTES <= limit) continue;
             this.notice(t("chat.file_too_big", { name: chip.file.name, limit: formatBytes(limit, lang) }));

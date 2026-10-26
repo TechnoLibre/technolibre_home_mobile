@@ -1165,13 +1165,25 @@ export class ChatService {
   }
 
   /**
-   * Stops the account's running uploads and waits for them to settle,
-   * before its rows move to another config id (an edit of the
-   * application): an upload that ended after the move would write its
-   * result under the old id, and its file would go up again.
+   * Before the account's rows move from one config id to another (an edit
+   * of the application): stops its running uploads, waits for them to
+   * settle, and starts none under either id until resumeUploads. An
+   * upload running across the move would write its result under the id
+   * its rows no longer have, and its file would go up again.
    */
-  async stopUploads(configId: string): Promise<void> {
-    await this.queue.stopAccountUploads(configId);
+  async pauseUploads(oldConfigId: string, newConfigId: string): Promise<void> {
+    await this.queue.pauseUploads([oldConfigId, newConfigId]);
+  }
+
+  /**
+   * Once the rows moved (or the move failed): the uploads may start again,
+   * and the account under its new id is flushed, not awaited, so the
+   * stopped ones and those they held go on.
+   */
+  async resumeUploads(oldConfigId: string, newConfigId: string): Promise<void> {
+    this.queue.resumeUploads([oldConfigId, newConfigId]);
+    const source = await this.sourceOf(newConfigId);
+    if (source) this.queue.flush(source.creds).catch((e) => console.warn("chat: flush after a rename failed", e));
   }
 
   /** The account's ops leave the outbox, then its files, then its rows. */

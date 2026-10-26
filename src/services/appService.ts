@@ -31,6 +31,9 @@ export interface ApplicationsChange {
 const configIdOf = (app: Application): string | null =>
   app.database ? syncConfigIdFor(app.url, app.username, app.database) : null;
 
+/** A hook around renameSyncConfigId, given both config ids. */
+type RenameHook = (oldConfigId: string, newConfigId: string) => Promise<void> | void;
+
 export class AppService {
   private _db: DatabaseService;
   /**
@@ -40,11 +43,18 @@ export class AppService {
   onChanged: ((change: ApplicationsChange) => Promise<void> | void) | null = null;
   /**
    * Awaited before an edit moves the sync rows from one config id to
-   * another (renameSyncConfigId), with both ids: a writer of the old id
-   * (a chat upload) stops first, so nothing writes under it afterwards. A
-   * hook that fails is logged and does not stop the rename.
+   * another (renameSyncConfigId), with both ids: a writer of these rows
+   * (a chat upload) stops and is held until afterRename, so none writes
+   * while they move. A hook that fails is logged and does not stop the
+   * rename.
    */
-  beforeRename: ((oldConfigId: string, newConfigId: string) => Promise<void> | void) | null = null;
+  beforeRename: RenameHook | null = null;
+  /**
+   * Awaited once the rows moved, or the move failed, after beforeRename
+   * ran: the held writers go on under the new id. A hook that fails is
+   * logged and does not fail the edit.
+   */
+  afterRename: RenameHook | null = null;
 
   constructor(db: DatabaseService) {
     this._db = db;
@@ -181,14 +191,7 @@ export class AppService {
       && appToEdit.database === newApp.database) {
       const oldConfigId = syncConfigIdFor(appID.url, appID.username, appToEdit.database);
       const newConfigId = syncConfigIdFor(newApp.url, newApp.username, newApp.database);
-      if (oldConfigId !== newConfigId) {
-        try {
-          await this.beforeRename?.(oldConfigId, newConfigId);
-        } catch (e) {
-          console.warn("[appService] rename hook failed:", e);
-        }
-      }
-      await this._db.renameSyncConfigId(oldConfigId, newConfigId);
+      if (oldConfigId !== newConfigId) await this.renameConfigId(oldConfigId, newConfigId);
     }
     await this._db.refreshAllNoteSyncStatuses();
     const before = configIdOf(appToEdit);
@@ -203,6 +206,23 @@ export class AppService {
       realtimeRelevant: (before !== null || after !== null) && connectionChanged,
     });
     return true;
+  }
+
+  /** Moves the sync rows to the new config id, between beforeRename and afterRename. */
+  private async renameConfigId(oldConfigId: string, newConfigId: string): Promise<void> {
+    const hook = async (fn: RenameHook | null) => {
+      try {
+        await fn?.(oldConfigId, newConfigId);
+      } catch (e) {
+        console.warn("[appService] rename hook failed:", e);
+      }
+    };
+    await hook(this.beforeRename);
+    try {
+      await this._db.renameSyncConfigId(oldConfigId, newConfigId);
+    } finally {
+      await hook(this.afterRename);
+    }
   }
 
   /**

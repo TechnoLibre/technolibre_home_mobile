@@ -229,6 +229,22 @@ describe("AppService with SQLite", () => {
       expect(rename).toHaveBeenCalledTimes(1);
     });
 
+    it("afterRename runs once the sync rows moved, a failed move included, and its failure does not fail the edit", async () => {
+      const app = baseApp({ database: "db1" });
+      await appService.add(app);
+      const seen: any[] = [];
+      const rename = vi.spyOn(db, "renameSyncConfigId");
+      appService.afterRename = async (from, to) => {
+        seen.push([from, to, rename.mock.calls.length]);
+        throw new Error("hook");
+      };
+      await expect(appService.edit({ url: app.url, username: app.username }, { ...app, url: "https://erp.example.com/" })).resolves.toBe(true);
+      expect(seen).toEqual([["https://erp.example.com|admin|db1", "https://erp.example.com/|admin|db1", 1]]);
+      rename.mockRejectedValueOnce(new Error("disk"));
+      await expect(appService.edit({ url: "https://erp.example.com/", username: app.username }, { ...app, url: "https://erp.example.com" })).rejects.toThrow("disk");
+      expect(seen).toHaveLength(2);
+    });
+
     it("a failing listener does not fail the change", async () => {
       appService.onChanged = async () => { throw new Error("listener"); };
       await expect(appService.add(baseApp())).resolves.toBe(true);

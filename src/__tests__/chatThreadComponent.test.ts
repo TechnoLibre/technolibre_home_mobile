@@ -770,6 +770,34 @@ describe("ChatThreadComponent", () => {
         expect(source).toMatch(/class="chat-thread__preparing" role="status" t-esc="state\.preparing\.label"/);
     });
 
+    it("the preparing bubble shows small thumbnails, not full-size originals", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        const a = fakeAttachments(c, { askCompress: true });
+        await c.open();
+        const photos = [1, 2, 3, 4, 5].map((i) => outFile(`IMG_${i}.jpg`));
+        for (const p of photos) a.chip(p, "gallery");
+        let answer!: (yes: boolean) => void;
+        a.confirm.mockImplementation(() => new Promise<boolean>((r) => { answer = r; }));
+        chat.send.mockImplementationOnce(async (_s: any, _ch: number, _t: string, _f: any, opts: any) => {
+            opts.onQueued();
+            return msg(null);
+        });
+        const sending = c.onSend();
+        await vi.waitFor(() => expect(answer).toBeTypeOf("function"));
+        await vi.waitFor(() => expect(c.state.preparing.files[2].url).not.toBeNull());
+        // A staged photo is a full-size original: only the first ones are decoded, the others named
+        expect(c.state.preparing.files.map((f: any) => [f.name, f.url !== null])).toEqual([
+            ["IMG_1.jpg", true], ["IMG_2.jpg", true], ["IMG_3.jpg", true], ["IMG_4.jpg", false], ["IMG_5.jpg", false],
+        ]);
+        answer(true);
+        await sending;
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        const img = source.match(/<img t-if="file\.url" class="chat-thread__preparing-image"[^>]*>/)?.[0] ?? "";
+        expect(img).toMatch(/ decoding="async"/);
+        expect(img).toMatch(/ width="64" height="64"/);
+    });
+
     it("a send of other files says « Preparing the files… »; a text alone shows no such bubble; a refusal takes it away", async () => {
         const chat = fakeChat([msg(10)]);
         const c = make(chat);

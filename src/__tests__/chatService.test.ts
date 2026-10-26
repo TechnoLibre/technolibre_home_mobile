@@ -17,6 +17,8 @@ import { outgoingPath, originalPath } from "../services/chat/chatFiles";
 import { setAttachmentSettings } from "../services/attachmentService";
 import { CREATE_CLOCK_SKEW_MS } from "../services/chat/chatOutbox";
 import { v4 as uuidv4 } from "uuid";
+import { AppService } from "../services/appService";
+import { syncConfigIdFor } from "../models/syncConfig";
 
 const TARGET = { url: "https://odoo.example.com", username: "alice", password: "pw", database: "db1" };
 const SELF = 3;
@@ -2942,18 +2944,23 @@ describe("ChatService", () => {
       expect(await ops()).toEqual([]);
     });
 
-    it("stopUploads stops the account's running upload and resolves once it settled, its send kept in doubt", async () => {
+    it("pauseUploads stops the account's running upload and resolves once it settled, its send kept in doubt", async () => {
       server.state.hold = { nth: 1, when: "after" };
       await chat.send(src, GROUP, "later", [stage("a.jpg")]);
       await vi.waitFor(() => expect(server.uploads()).toHaveLength(1));
-      await chat.stopUploads(config);
+      const renamed = syncConfigIdFor("https://ODOO.example.com", TARGET.username, TARGET.database);
+      await chat.pauseUploads(config, renamed);
       expect(server.http.calls.filter((c) => c.kind === "cancel").map((c) => c.id)).toEqual([server.uploads()[0].id]);
       const [up] = await ops("chat.upload");
       expect(up).toMatchObject({ status: "failed", attempts: 1 });
       expect(up.params.uploadSentAt).toBeTruthy();
       expect(up.params.uploadEndedAt).toBeTruthy();
-      // The retry looks for the attachment the stopped send made: one upload, one attachment
+      // Paused, the lane starts nothing; resumed, the retry looks for the attachment the stopped send made
       advance(3 * 60_000 + 1);
+      await chat.flushAll({ force: true });
+      await idle();
+      expect(odoo.kw("search_read").filter((c) => c.params.model === "ir.attachment")).toHaveLength(0);
+      await chat.resumeUploads(config, renamed);
       await chat.flushAll({ force: true });
       await idle();
       expect(server.uploads()).toHaveLength(1);
@@ -3094,6 +3101,73 @@ describe("ChatService", () => {
       expect(server.uploads()).toHaveLength(2);
       expect(odoo.state.attachments).toHaveLength(2);
       expect(posts().map((p) => [p.params.thread_id, p.params.post_data.attachment_ids])).toEqual([[GROUP, [900]], [GENERAL, [901]]]);
+    });
+
+    it("two same-named photos of different sizes in two conversations, both answers lost, each post keeps its own attachment", async () => {
+      // Odoo's route resizes them: the search after a lost answer leaves the size out
+      server.state.resize = true;
+      server.state.drop = 2;
+      await chat.send(src, GROUP, "one", [stage("x.jpg", 8)]);
+      await chat.send(src, GENERAL, "two", [stage("x.jpg", 6)]);
+      await idle();
+      for (let i = 0; i < 2; i++) {
+        advance(3 * 60_000 + 1);
+        await chat.flushAll({ force: true });
+        await idle();
+      }
+      expect(await ops()).toEqual([]);
+      expect(server.uploads()).toHaveLength(2);
+      expect(odoo.state.attachments.map((a) => [a.id, a.file_size])).toEqual([[900, 4], [901, 3]]);
+      expect(posts().map((p) => [p.params.thread_id, p.params.post_data.attachment_ids])).toEqual([[GROUP, [900]], [GENERAL, [901]]]);
+    });
+
+    it("a rename waits for no upload and no upload writes under the old id", async () => {
+      const apps = new AppService(env.db);
+      apps.beforeRename = (from, to) => chat.pauseUploads(from, to);
+      apps.afterRename = (from, to) => chat.resumeUploads(from, to);
+      // A file of another conversation, failed once and due again while the rename runs
+      server.state.status = 503;
+      await chat.send(src, CHAT, "c", [stage("c.pdf", 3, "application/pdf")]);
+      await idle();
+      expect(await ops("chat.upload")).toEqual([expect.objectContaining({ status: "failed" })]);
+      // A photo on the wire, its attachment made, when the edit starts
+      server.state.hold = { nth: 2, when: "after" };
+      await chat.send(src, GROUP, "a", [stage("a.jpg")]);
+      await vi.waitFor(() => expect(server.uploads()).toHaveLength(2));
+      advance(3 * 60_000 + 1);
+      // An upload that starts now stays on the wire until released
+      server.state.hold = { nth: 3, when: "before" };
+      const renamed = syncConfigIdFor("https://ODOO.example.com", TARGET.username, TARGET.database);
+      let startedInside = -1;
+      const move = (env.db as any).renameChatRows.bind(env.db);
+      vi.spyOn(env.db as any, "renameChatRows").mockImplementation(async (from: any, to: any) => {
+        // The outbox rows moved, the chat rows not yet: a flush meanwhile starts no upload
+        await chat.flushAll({ force: true });
+        await chat.queue.whenIdle();
+        startedInside = server.uploads().length;
+        return move(from, to);
+      });
+      const [app] = await env.db.getAllApplications();
+      let done = false;
+      const editing = apps.edit({ url: app.url, username: app.username }, { ...app, url: "https://ODOO.example.com" })
+        .then(() => { done = true; });
+      await vi.waitFor(() => expect(done).toBe(true));
+      await editing;
+      expect(server.http.calls.filter((c) => c.kind === "cancel").map((c) => c.id)).toEqual([server.uploads()[1].id]);
+      expect(startedInside).toBe(2);
+      // The lane runs again under the new id
+      await vi.waitFor(() => expect(server.uploads()).toHaveLength(3));
+      server.release();
+      await vi.waitFor(async () => expect(posts()).toHaveLength(1));
+      advance(3 * 60_000 + 1);
+      await chat.flushAll({ force: true });
+      await vi.waitFor(async () => expect(posts()).toHaveLength(2));
+      await chat.queue.whenIdle();
+      expect(server.uploads().map((c) => c.file!.name)).toEqual(["c.pdf", "a.jpg", "c.pdf"]);
+      expect(odoo.state.attachments.map((a) => a.name)).toEqual(["a.jpg", "c.pdf"]);
+      expect(posts().map((p) => [p.params.thread_id, p.params.post_data.attachment_ids])).toEqual([[CHAT, [901]], [GROUP, [900]]]);
+      expect(await env.db.getOutboxOpsForConfig(config)).toEqual([]);
+      expect(await env.db.getOutboxOpsForConfig(renamed)).toEqual([]);
     });
 
     it("a queued file whose upload op was lost gets one again and its post goes", async () => {

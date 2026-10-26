@@ -119,6 +119,9 @@ const PENDING_MODEL = "mail.compose.message";
  */
 const RESIZABLE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/bmp", "image/tiff"]);
 
+/** Whether findUploaded looks for the upload's attachment by name alone (a type Odoo's route may resize). */
+const foundByNameAlone = (op: OutboxOp): boolean => RESIZABLE_IMAGE_TYPES.has(String(op.params.mimetype ?? "").toLowerCase());
+
 /** The actions of the user a conversation taken away cancels, and counts in its CHAT_DROPPED notice. */
 const USER_ACTIONS = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE, CHAT_REMOVE]);
 
@@ -257,6 +260,8 @@ export class ChatOutbox {
   private transfers = new Map<string, string>();
   /** Upload ops told to stop before their transfer began: it never starts. */
   private stopped = new Set<string>();
+  /** Config ids whose lane starts no upload (pauseUploads to resumeUploads). */
+  private paused = new Set<string>();
   /** Bytes sent so far, by transfer id. */
   private progress = new Map<string, { localUuid: string; done: number; total: number }>();
   /** Subscribes to the transport's progress events; replaced by setProgressSource. */
@@ -1135,10 +1140,13 @@ export class ChatOutbox {
   /**
    * Starts the account's due upload ops whose dependency is done (see
    * OutboxService.isDue; force skips the retry delays), oldest first, up
-   * to CHAT_UPLOADS_AT_ONCE running at once. Not awaited by flush.
+   * to CHAT_UPLOADS_AT_ONCE running at once; none while the account is
+   * paused (pauseUploads). Not awaited by flush.
    *
-   * Uploads of the same name and size (twins) are ordered, as the search
-   * after a lost answer could find either one's attachment: a running twin
+   * Twins are ordered: uploads the search after a lost answer
+   * (findUploaded) cannot tell apart, as it could find either one's
+   * attachment. Twins have the same name, and the same size unless either
+   * one is looked for by name alone (foundByNameAlone). A running twin
    * holds every other; a twin with no send yet waits while any twin holds
    * a send that may have reached the server (uploadSentAt), so its own
    * attachment never exists while that one is in doubt; among twins in
@@ -1156,12 +1164,14 @@ export class ChatOutbox {
     if (!running) this.lane.set(configId, (running = new Set()));
     const startable = (o: OutboxOp) => !(o.dependsOn && pendingIds.has(o.dependsOn)) && this.outbox.isDue(o, force);
     const twin = (o: OutboxOp, op: OutboxOp) => o.id !== op.id && o.kind === CHAT_UPLOAD
-      && o.params.name === op.params.name && o.params.size === op.params.size;
+      && o.params.name === op.params.name
+      && (o.params.size === op.params.size || foundByNameAlone(o) || foundByNameAlone(op));
     const doubtBefore = (o: OutboxOp, op: OutboxOp) => !!o.params.uploadSentAt
       && (!op.params.uploadSentAt || o.params.uploadSentAt < op.params.uploadSentAt
         || (o.params.uploadSentAt === op.params.uploadSentAt && o.id < op.id));
     const heldByTwin = (op: OutboxOp) => ops.some((o) => twin(o, op) && (running.has(o.id) || doubtBefore(o, op)));
     // No await from here on: two pumps never start the same op or pass the cap
+    if (this.paused.has(configId)) return;
     for (const op of dependencyOrder(ops)) {
       if (running.size >= CHAT_UPLOADS_AT_ONCE) return;
       if (op.kind !== CHAT_UPLOAD || op.noteId !== CHAT_NOTE || running.has(op.id)) continue;
@@ -1312,14 +1322,24 @@ export class ChatOutbox {
   }
 
   /**
-   * Stops the account's running uploads and resolves once its lane
-   * settled: a stopped upload ends failed, its send kept in doubt
-   * (uploadSentAt), so its retry looks for what that send made. Its ops
+   * Pauses the lanes of these config ids: no upload starts under them
+   * until resumeUploads, whoever pumps. Their running uploads stop; the
+   * call resolves once the lanes settled, which waits for no other
+   * upload. A stopped upload ends failed, its send kept in doubt
+   * (uploadSentAt), so its retry looks for what that send made. The ops
    * stay in the outbox.
    */
-  async stopAccountUploads(configId: string): Promise<void> {
-    this.stopUploads((await this.db.getOutboxOpsForConfig(configId)).filter((op) => op.noteId === CHAT_NOTE));
-    await this.whenIdle(configId);
+  async pauseUploads(configIds: string[]): Promise<void> {
+    for (const id of configIds) this.paused.add(id);
+    for (const id of configIds) {
+      this.stopUploads((await this.db.getOutboxOpsForConfig(id)).filter((op) => op.noteId === CHAT_NOTE));
+    }
+    for (const id of configIds) await this.whenIdle(id);
+  }
+
+  /** Lets the lanes of these config ids start uploads again; the next flush starts them. */
+  resumeUploads(configIds: string[]): void {
+    for (const id of configIds) this.paused.delete(id);
   }
 
   /** Removes every chat row of the account from the outbox, posts and reads alike; its uploads stop. */
@@ -1757,10 +1777,11 @@ export class ChatOutbox {
    * route stores them) of the same name created between uploadSentAt −
    * CREATE_CLOCK_SKEW_MS and (uploadEndedAt, or now) + CREATE_CLOCK_SKEW_MS,
    * the oldest first. The size must match too, except for the image types
-   * Odoo's route may resize (RESIZABLE_IMAGE_TYPES): those are stored
+   * Odoo's route may resize (foundByNameAlone): those are stored
    * re-encoded at another size. An attachment another file of this phone
-   * already holds (state "uploaded") is never taken again; two uploads of
-   * one name are never in doubt at once (twins are ordered).
+   * already holds (state "uploaded") is never taken again; two uploads
+   * this search cannot tell apart are never in doubt at once (pumpUploads
+   * orders twins).
    */
   private async findUploaded(
     creds: SyncCredentials,
@@ -1770,7 +1791,6 @@ export class ChatOutbox {
     const taken = await this.repo.uploadedIds(op.configId);
     const sentAt = new Date(op.params.uploadSentAt).getTime();
     const endedAt = op.params.uploadEndedAt ? new Date(op.params.uploadEndedAt).getTime() : this.now().getTime();
-    const resizable = RESIZABLE_IMAGE_TYPES.has(String(op.params.mimetype ?? "").toLowerCase());
     const found = (await this.rpc.searchRead<any>(
       creds,
       "ir.attachment",
@@ -1779,7 +1799,7 @@ export class ChatOutbox {
         ["res_id", "=", 0],
         ["create_uid", "=", uid],
         ["name", "=", op.params.name],
-        ...(resizable ? [] : [["file_size", "=", op.params.size]]),
+        ...(foundByNameAlone(op) ? [] : [["file_size", "=", op.params.size]]),
         ["create_date", ">=", odooDate(new Date(sentAt - CREATE_CLOCK_SKEW_MS))],
         ["create_date", "<=", odooDate(new Date(endedAt + CREATE_CLOCK_SKEW_MS))],
       ],
