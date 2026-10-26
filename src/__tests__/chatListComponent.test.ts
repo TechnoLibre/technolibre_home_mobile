@@ -82,6 +82,27 @@ describe("ChatListComponent", () => {
         expect(chat.conversations).toHaveBeenCalledTimes(2);
     });
 
+    it("a file not sent is named in its notice, with the server's limit when known", async () => {
+        const chat: any = fakeChat(["a"], [chan("a", 5, { name: "Team" })]);
+        const file = (name: string, reason: string, limit: number | null) => ({
+            id: name, configId: "a", kind: "chat.file_refused", channelId: 5, reason: "refused", error: "", count: 1, label: "",
+            file: { name, reason, limit },
+        });
+        chat.notices = vi.fn().mockResolvedValue([
+            file("a.jpg", "too_big", 134217728), file("b.jpg", "too_big", null), file("c.jpg", "missing", null),
+            file("d.jpg", "refused", null), file("e.jpg", "not_found", null),
+        ]);
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.state.notices.map((n: any) => n.text)).toEqual([
+            "Team — file “a.jpg” not sent: over the server's limit of 128 MB.",
+            "Team — file “b.jpg” not sent: the server found it too big.",
+            "Team — file “c.jpg” not sent: it is no longer on the phone.",
+            "Team — file “d.jpg” not sent: refused by the server.",
+            "Team — file “e.jpg” not sent: the server cannot find the conversation.",
+        ]);
+    });
+
     it("an action the outbox gave up on is shown until dismissed", async () => {
         const chat: any = fakeChat(["a", "b"], [chan("a", 5, { name: "Team" })]);
         chat.notices = vi.fn().mockResolvedValue([

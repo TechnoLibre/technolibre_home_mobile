@@ -1024,9 +1024,19 @@ export class ChatRepository {
     await this.patchLocal(configId, localUuid, { state: "refused", error: reason });
   }
 
-  /** Puts a refused file back in the queue to be uploaded again. */
+  /** Server ids of the account's files uploaded and not yet posted ("uploaded" rows). */
+  async uploadedIds(configId: string): Promise<Set<number>> {
+    return new Set((await this.rows("chat_attachments", { config_id: configId, state: "uploaded" }))
+      .map((r) => r.attachment_id as number | null)
+      .filter((id): id is number => typeof id === "number"));
+  }
+
+  /**
+   * Puts a file back in the queue to be uploaded again (refused, or lost by
+   * the server): its server id is forgotten, so no settle adopts it.
+   */
   async requeueUpload(configId: string, localUuid: string): Promise<void> {
-    await this.patchLocal(configId, localUuid, { state: "queued", error: null });
+    await this.patchLocal(configId, localUuid, { state: "queued", error: null, attachmentId: null });
   }
 
   /**

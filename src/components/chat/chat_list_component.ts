@@ -87,6 +87,23 @@ export function initialsOf(title: string): string {
     return (words.slice(0, 2).map((w) => Array.from(w)[0]).join("") || "?").toUpperCase();
 }
 
+/** What a notice of a file not sent says: its name and why, the server's limit in MB when known. */
+function fileNoticeText(file: NonNullable<ChatNotice["file"]>): string {
+    const name = file.name;
+    switch (file.reason) {
+        case "too_big":
+            return file.limit === null
+                ? t("chat.notice_file_too_big_server", { name })
+                : t("chat.notice_file_too_big", { name, limit: Number((file.limit / (1024 * 1024)).toFixed(1)) });
+        case "missing":
+            return t("chat.notice_file_missing", { name });
+        case "not_found":
+            return t("chat.notice_file_not_found", { name });
+        default:
+            return t("chat.notice_file_refused", { name });
+    }
+}
+
 /**
  * The mixed conversation list of every chat source. It renders from the
  * cache first (sources decided offline), then reads each server in the
@@ -314,11 +331,15 @@ export class ChatListComponent extends EnhancedComponent {
      */
     private noticeOf(n: ChatNotice, title: string, serverLabel: string): NoticeRow {
         const name = title || n.label;
-        const text = n.kind === "chat.dropped"
-            ? t(n.count === 1 ? "chat.notice_dropped_one" : "chat.notice_dropped_other", { count: n.count })
-            : t(n.reason === "vanished" ? "chat.notice_vanished" : "chat.notice_refused", {
+        let text: string;
+        if (n.file) text = fileNoticeText(n.file);
+        else if (n.kind === "chat.dropped") {
+            text = t(n.count === 1 ? "chat.notice_dropped_one" : "chat.notice_dropped_other", { count: n.count });
+        } else {
+            text = t(n.reason === "vanished" ? "chat.notice_vanished" : "chat.notice_refused", {
                 action: t("chat.action_" + n.kind.replace(/^chat\./, "")),
             });
+        }
         const line = name ? name + " — " + text : text.charAt(0).toUpperCase() + text.slice(1);
         return { id: n.id, configId: n.configId, serverLabel, text: line };
     }

@@ -189,6 +189,12 @@ export interface ChatNotice {
   count: number;
   /** The conversation's name as cached when the notice was made (chat.dropped); "" otherwise. */
   label: string;
+  /**
+   * A file of a post not sent (chat.file_refused): its name, why, and the
+   * server's size limit in bytes when "too_big" was decided against it
+   * (null after a 413, whose limit is unknown).
+   */
+  file?: { name: string; reason: "too_big" | "missing" | "refused" | "not_found"; limit: number | null };
 }
 
 /** One notification of the Odoo bus: its bus id and the typed message it carries. */

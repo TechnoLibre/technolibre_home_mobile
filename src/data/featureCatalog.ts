@@ -4466,7 +4466,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "when its create settles; posts written into it wait for the create. A lost "
                         + "create is found again by the module's uuid, or else by a fingerprint search "
                         + "(creator, type, name or members, creation date window); two matches hold it. "
-                        + "A refused create stays listed as failed, its texts readable, until dismissed.",
+                        + "A refused create stays listed as failed, its texts readable, until dismissed. "
+                        + "A post's files upload just before it, one op each, two per account at a time "
+                        + "beside the other ops: a long upload holds only its own conversation. A lost "
+                        + "upload answer is found again by the module's uuid, or else by the user's own "
+                        + "pending attachment of that name and size; « Wi-Fi only » holds uploads; a file "
+                        + "refused (too big, missing) leaves with a notice and the post goes without it. "
+                        + "Once posted, the sender's file becomes the conversation's cached copy.",
                     fr: "Un envoi est gardé comme message en attente et ligne de la boîte d'envoi "
                         + "avant toute requête. Avec le module serveur, l'uuid du client voyage dans "
                         + "l'envoi et le serveur répond à une répétition par le message qu'il détient ; "
@@ -4478,7 +4484,14 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "création perdue se retrouve par l'uuid du module, sinon par une recherche "
                         + "d'empreinte (créateur, type, nom ou membres, plage de date de création) ; "
                         + "deux correspondances la retiennent. Une création refusée reste listée en "
-                        + "échec, ses textes lisibles, jusqu'à ce qu'on la retire.",
+                        + "échec, ses textes lisibles, jusqu'à ce qu'on la retire. Les fichiers d'un "
+                        + "envoi partent juste avant lui, une opération chacun, deux par compte à la fois "
+                        + "à côté des autres opérations : un long envoi ne retient que sa conversation. "
+                        + "Une réponse d'envoi perdue se retrouve par l'uuid du module, sinon par la pièce "
+                        + "jointe en attente de l'utilisateur de même nom et taille ; « Wi-Fi seulement » "
+                        + "retient les envois ; un fichier refusé (trop gros, absent) part avec un avis et "
+                        + "le message part sans lui. Une fois envoyé, le fichier de l'expéditeur devient la "
+                        + "copie en cache de la conversation.",
                 },
                 demo: NONE_PLUMBING,
                 files: [

@@ -10,7 +10,13 @@ import {
 import { CHAT_READ } from "../services/chat/chatOutbox";
 import { setChatSettings } from "../services/chat/chatSettings";
 import { parseStore } from "../services/chat/chatStore";
-import type { BusNotification } from "../models/chat";
+import type { BusNotification, OutgoingFile } from "../models/chat";
+import { memoryChatFiles, fakeChatHttp } from "../testing/chatFakes";
+import { MODULE_UPLOAD_ROUTE } from "../services/chat/chatTransfer";
+import { outgoingPath, originalPath } from "../services/chat/chatFiles";
+import { setAttachmentSettings } from "../services/attachmentService";
+import { CREATE_CLOCK_SKEW_MS } from "../services/chat/chatOutbox";
+import { v4 as uuidv4 } from "uuid";
 
 const TARGET = { url: "https://odoo.example.com", username: "alice", password: "pw", database: "db1" };
 const SELF = 3;
@@ -88,6 +94,10 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
     onKw: null as null | ((params: any) => Promise<any>),
     /** Answers a route the fake does not handle itself, same convention as onKw. */
     onRoute: null as null | ((path: string, params: any) => Promise<any>),
+    /** The server's ir.attachment rows (fileServer uploads them); a post links the ids it names. */
+    attachments: [] as ServerFile[],
+    /** max_file_upload_size get_session_info reports; absent when null. */
+    maxUpload: null as number | null,
   };
   const rpcError = (name: string) => ({
     ok: true, status: 200,
@@ -109,6 +119,7 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
       case "/web/session/get_session_info":
         return ok({
           uid: 2, partner_id: SELF, is_system: false, websocket_worker_version: "18.0-7", is_internal_user: true,
+          ...(state.maxUpload !== null ? { max_file_upload_size: state.maxUpload } : {}),
           storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: state.sessionMute } } },
         });
       case "/mail/data": {
@@ -128,7 +139,17 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
         const id = state.nextId++;
         const refusal = state.onPost ? await state.onPost(params, id) : undefined;
         if (refusal && typeof refusal === "object" && "__error" in refusal) return answer(refusal);
-        return ok({ "mail.message": [{ ...msg(id, params.thread_id, SELF, params.post_data.body), date: "2026-10-25 10:00:05" }] });
+        // As _check_attachments_access: one id the server does not hold refuses the whole post
+        const ids: number[] = params.post_data.attachment_ids ?? [];
+        const linked = ids.map((i) => state.attachments.find((a) => a.id === i));
+        if (linked.some((a) => !a)) return rpcError("odoo.exceptions.UserError");
+        for (const a of linked as ServerFile[]) { a.res_model = "discuss.channel"; a.res_id = params.thread_id; }
+        const posted = { ...msg(id, params.thread_id, SELF, params.post_data.body), date: "2026-10-25 10:00:05" };
+        if (ids.length === 0) return ok({ "mail.message": [posted] });
+        return ok({
+          "mail.message": [{ ...posted, attachment_ids: ids }],
+          "ir.attachment": (linked as ServerFile[]).map((a) => attachmentRecord(a)),
+        });
       }
       case "/web/dataset/call_kw": {
         const { method } = params;
@@ -137,6 +158,7 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
           if (r !== undefined) return answer(r);
         }
         if (method === "fields_get") return ok({ body: { type: "html" } });
+        if (params.model === "ir.attachment" && method === "search_read") return ok(searchFiles(state.attachments, params.kwargs));
         if (method === "search_read") return ok([]);
         return ok(true);
       }
@@ -154,6 +176,81 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
   return { calls, history, state, on, kw: (method: string) => on("/web/dataset/call_kw").filter((c) => c.params.method === method) };
 }
 
+
+interface ServerFile {
+  id: number; name: string; file_size: number; mimetype: string; checksum: string; voice: boolean;
+  res_model: string; res_id: number; create_uid: number; create_date: string; uuid: string | null;
+}
+
+/** The ir.attachment record of a Store, as the upload routes and a post answer it. */
+const attachmentRecord = (a: ServerFile) => ({
+  id: a.id, name: a.name, filename: a.name, mimetype: a.mimetype, size: a.file_size, checksum: a.checksum, voice: a.voice,
+  thread: a.res_model === "discuss.channel" ? { id: a.res_id, model: "discuss.channel" } : false,
+});
+
+/** ir.attachment search_read over the fake's rows: "=", ">=" and "in" terms, order "id asc", limit. */
+function searchFiles(rows: ServerFile[], kwargs: any): any[] {
+  const hit = (a: any) => (kwargs.domain as any[][]).every(([field, op, value]) =>
+    op === "=" ? a[field] === value : op === ">=" ? a[field] >= value : op === "in" ? value.includes(a[field]) : false);
+  const found = rows.filter(hit).sort((a, b) => a.id - b.id);
+  return found.slice(0, kwargs.limit ?? found.length).map((a) => ({ ...attachmentRecord(a), file_size: a.file_size }));
+}
+
+/**
+ * The file side of a fake Odoo 18 over fakeOdoo: the CSRF page and the two
+ * upload routes through fakeChatHttp, over memory files. Odoo's route
+ * creates one pending attachment per call; the module's returns the one its
+ * client_uuid already made. `drop` makes the next uploads create their row
+ * and lose the answer; `status` answers the next one with that HTTP status
+ * and creates nothing; `hold` keeps the nth upload call on the wire
+ * ("before" or "after" its row is made) until `release()` or a cancel.
+ */
+function fileServer(odoo: ReturnType<typeof fakeOdoo>, now: () => Date) {
+  const files = memoryChatFiles();
+  const state = {
+    nextId: 900, drop: 0, status: null as number | null,
+    hold: null as null | { nth: number; when: "before" | "after" },
+  };
+  let count = 0;
+  const held = new Map<string, { resolve: () => void; reject: (e: unknown) => void }>();
+  const http = fakeChatHttp({
+    getText: () => ({ status: 200, headers: {}, data: '<input type="hidden" name="csrf_token" value="tok1"/>' }),
+    upload: async (r) => {
+      count++;
+      const hold = state.hold?.nth === count ? state.hold.when : null;
+      const wait = () => new Promise<void>((resolve, reject) => { held.set(r.id, { resolve, reject }); });
+      if (state.status !== null) {
+        const status = state.status;
+        state.status = null;
+        return { status, headers: {}, data: "" };
+      }
+      if (hold === "before") await wait();
+      const uuid = new URL(r.url).pathname === MODULE_UPLOAD_ROUTE ? r.fields.client_uuid : null;
+      let a = uuid ? odoo.state.attachments.find((x) => x.uuid === uuid) : undefined;
+      if (!a) {
+        const bytes = files.bytes(decodeURI(r.file.uri.replace("file:///memory/files/", "")))!;
+        a = {
+          id: state.nextId++, name: r.file.name, file_size: bytes.length, mimetype: r.file.mimetype, checksum: `sha${state.nextId}`,
+          voice: r.fields.voice === "true", res_model: "mail.compose.message", res_id: 0, create_uid: 2,
+          create_date: now().toISOString().slice(0, 19).replace("T", " "), uuid,
+        };
+        odoo.state.attachments.push(a);
+      }
+      if (hold === "after") await wait();
+      if (state.drop > 0) { state.drop--; throw new Error("connection reset"); }
+      return { status: 200, headers: {}, data: JSON.stringify({ data: { "ir.attachment": [attachmentRecord(a)] } }) };
+    },
+    cancel: (id) => {
+      held.get(id)?.reject(Object.assign(new Error("cancelled"), { code: "CANCELLED" }));
+      held.delete(id);
+    },
+  });
+  const release = () => {
+    for (const h of held.values()) h.resolve();
+    held.clear();
+  };
+  return { files, http, state, release, uploads: () => http.calls.filter((c) => c.kind === "upload") };
+}
 
 interface ServerChannel { id: number; type: string; name: string; partners: number[]; uuid: string | null; createDate: string }
 
@@ -2477,5 +2574,341 @@ describe("ChatService", () => {
     expect(await chat.repo.channel(config, realId)).toMatchObject({ isMember: false, leftUnsent: true, createOpId: null });
     expect((await chat.messages(config, realId)).map((m) => m.status)).toEqual(["failed"]);
     expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+  });
+
+  describe("posts with files", () => {
+    let odoo: ReturnType<typeof fakeOdoo>;
+    let server: ReturnType<typeof fileServer>;
+    let src: ChatSource;
+    let fileDir: string;
+    const advance = (ms: number) => { clock = new Date(clock.getTime() + ms); };
+    const odooDate = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
+    /** A file staged in the account's out directory, as the composer leaves it. */
+    const stage = (name: string, size = 3, mimetype = "image/jpeg", voice = false): OutgoingFile => {
+      const localUuid = uuidv4();
+      const path = outgoingPath(fileDir, localUuid, name);
+      server.files.put(path, new Uint8Array(size).fill(7));
+      return { localUuid, path, name, mimetype, size, voice };
+    };
+    const idle = () => chat.queue.whenIdle(config);
+    const posts = () => odoo.on("/mail/message/post");
+    const ops = async (kind?: string) => (await env.db.getOutboxOpsForConfig(config)).filter((o) => !kind || o.kind === kind);
+    const fields = (thread: number) => ({ thread_id: String(thread), thread_model: "discuss.channel", is_pending: "true", csrf_token: "tok1" });
+    const reborn = async () => {
+      chat.dispose();
+      const rpc = new OdooRpcClient();
+      const outbox = new OutboxService(env.db, () => clock);
+      chat = new ChatService(env.db, rpc, outbox, new CapabilityService(env.db, rpc), () => clock);
+      chat.useFileIO({ files: server.files, http: server.http });
+      return outbox;
+    };
+
+    beforeEach(async () => {
+      odoo = fakeOdoo();
+      server = fileServer(odoo, () => clock);
+      chat.useFileIO({ files: server.files, http: server.http });
+      src = await source();
+      await chat.load(src);
+      fileDir = await chat.fileDirOf(config);
+    });
+
+    it("a post with two files uploads them in order then posts their ids", async () => {
+      const a = stage("a.jpg");
+      const b = stage("b.pdf", 5, "application/pdf");
+      const sent = await chat.send(src, GROUP, "two", [a, b]);
+      await idle();
+      expect(server.uploads().map((c) => [new URL(c.url).pathname, c.file!.name, c.file!.mimetype, c.fields])).toEqual([
+        ["/mail/attachment/upload", "a.jpg", "image/jpeg", fields(GROUP)],
+        ["/mail/attachment/upload", "b.pdf", "application/pdf", fields(GROUP)],
+      ]);
+      expect(posts()).toHaveLength(1);
+      expect(posts()[0].params.post_data.attachment_ids).toEqual([900, 901]);
+      expect(posts()[0].params.attachment_tokens).toEqual([false, false]);
+      expect((await chat.messages(config, GROUP)).find((m) => m.clientUuid === sent.clientUuid)).toMatchObject({ status: "sent", messageId: 5000 });
+      expect(await ops()).toEqual([]);
+    });
+
+    it("a text-only post carries no attachment fields", async () => {
+      await chat.send(src, GROUP, "plain");
+      expect(posts()[0].params.post_data).not.toHaveProperty("attachment_ids");
+      expect(posts()[0].params).not.toHaveProperty("attachment_tokens");
+    });
+
+    it("voice sends voice=true", async () => {
+      await chat.send(src, GROUP, "", [stage("Voice-2026-10-26-123.mp3", 4, "audio/mpeg", true)]);
+      await idle();
+      expect(server.uploads()[0].fields).toEqual({ ...fields(GROUP), voice: "true" });
+      expect(posts()[0].params.post_data.attachment_ids).toEqual([900]);
+    });
+
+    it("the module route sends client_uuid", async () => {
+      await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.2" });
+      await chat.send(src, GROUP, "", [stage("a.jpg")]);
+      await idle();
+      const [up] = server.uploads();
+      expect(new URL(up.url).pathname).toBe(MODULE_UPLOAD_ROUTE);
+      expect(up.fields).toEqual({ ...fields(GROUP), client_uuid: expect.any(String) });
+      expect(odoo.state.attachments[0].uuid).toBe(up.fields!.client_uuid);
+    });
+
+    it("lost upload answer with the module adopts the first attachment", async () => {
+      await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.2" });
+      server.state.drop = 1;
+      await chat.send(src, GROUP, "once", [stage("a.jpg")]);
+      await idle();
+      expect(posts()).toHaveLength(0);
+      const [up] = await ops("chat.upload");
+      expect(up).toMatchObject({ status: "failed", attempts: 1 });
+      await chat.flushAll({ force: true });
+      await idle();
+      const sent = server.uploads();
+      expect(sent).toHaveLength(2);
+      expect(sent[1].fields!.client_uuid).toBe(sent[0].fields!.client_uuid);
+      expect(odoo.state.attachments).toHaveLength(1);
+      expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900]]);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("lost upload answer without the module reuses its pending upload", async () => {
+      const sentAt = clock;
+      server.state.drop = 1;
+      await chat.send(src, GROUP, "once", [stage("a.jpg")]);
+      await idle();
+      const [up] = await ops("chat.upload");
+      expect(up.params).toMatchObject({ uploadSentAt: sentAt.toISOString(), uploadEndedAt: sentAt.toISOString() });
+      // Inside the quiet window: neither a search nor a second upload
+      await chat.flushAll({ force: true });
+      await idle();
+      expect(server.uploads()).toHaveLength(1);
+      expect(odoo.kw("search_read").filter((c) => c.params.model === "ir.attachment")).toHaveLength(0);
+      advance(3 * 60_000 + 1);
+      await chat.flushAll({ force: true });
+      await idle();
+      const [search] = odoo.kw("search_read").filter((c) => c.params.model === "ir.attachment");
+      expect(search.params.kwargs).toMatchObject({
+        domain: [
+          ["res_model", "=", "mail.compose.message"],
+          ["res_id", "=", 0],
+          ["create_uid", "=", 2],
+          ["name", "=", "a.jpg"],
+          ["file_size", "=", 3],
+          ["create_date", ">=", odooDate(new Date(sentAt.getTime() - CREATE_CLOCK_SKEW_MS))],
+        ],
+        order: "id asc",
+        limit: 1,
+      });
+      expect(server.uploads()).toHaveLength(1);
+      expect(odoo.state.attachments).toHaveLength(1);
+      expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900]]);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("three files survive a kill during the second upload", async () => {
+      offline();
+      const files = [stage("1.jpg"), stage("2.jpg", 4), stage("3.jpg", 5)];
+      await chat.send(src, GROUP, "three", files);
+      expect(server.uploads()).toHaveLength(0);
+      online();
+      // The second upload reaches the server, then the app dies before its answer
+      server.state.hold = { nth: 2, when: "after" };
+      await chat.flushAll();
+      await vi.waitFor(() => expect(server.uploads()).toHaveLength(2));
+      await vi.waitFor(async () => expect((await ops("chat.upload")).find((o) => o.params.name === "2.jpg")?.status).toBe("running"));
+      const outbox = await reborn();
+      expect(await outbox.recoverInterrupted()).toBe(1);
+      await chat.recover();
+      await chat.flushAll();
+      await idle();
+      expect(server.uploads()).toHaveLength(2);
+      advance(3 * 60_000 + 1);
+      await chat.flushAll();
+      await idle();
+      expect(server.uploads().map((c) => c.file!.name)).toEqual(["1.jpg", "2.jpg", "3.jpg"]);
+      expect(odoo.state.attachments.map((a) => a.name)).toEqual(["1.jpg", "2.jpg", "3.jpg"]);
+      expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900, 901, 902]]);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("413 refuses the file once and the text still goes", async () => {
+      const big = stage("big.jpg", 9);
+      server.state.status = 413;
+      await chat.send(src, GROUP, "text", [big, stage("ok.jpg")]);
+      await idle();
+      const sent = posts();
+      expect(sent).toHaveLength(1);
+      expect(sent[0].params.post_data.attachment_ids).toEqual([900]);
+      const [row] = (await chat.repo.outgoingOf(config, (await chat.messages(config, GROUP)).at(-1)!.clientUuid));
+      expect(row).toMatchObject({ localUuid: big.localUuid, state: "refused", error: "too_big" });
+      expect(await chat.notices([config])).toEqual([expect.objectContaining({
+        kind: "chat.file_refused", channelId: GROUP, file: { name: "big.jpg", reason: "too_big", limit: null },
+      })]);
+      await chat.flushAll({ force: true });
+      advance(3 * 60_000 + 1);
+      await chat.flushAll({ force: true });
+      await idle();
+      expect(server.uploads()).toHaveLength(2);
+      expect(posts()).toHaveLength(1);
+    });
+
+    it("a file over the session limit is refused without a request", async () => {
+      odoo.state.maxUpload = 65536 + 10;
+      await chat.load(src);
+      await chat.send(src, GROUP, "text", [stage("big.jpg", 11)]);
+      await idle();
+      expect(server.http.calls).toEqual([]);
+      expect(posts()).toHaveLength(1);
+      expect(posts()[0].params.post_data).not.toHaveProperty("attachment_ids");
+      expect((await chat.notices([config]))[0]).toMatchObject({ file: { name: "big.jpg", reason: "too_big", limit: 65546 } });
+    });
+
+    it("a missing file is refused with a notice", async () => {
+      const gone = stage("gone.jpg");
+      await server.files.remove(gone.path);
+      await chat.send(src, GROUP, "text", [gone]);
+      await idle();
+      expect(server.uploads()).toHaveLength(0);
+      expect(posts()).toHaveLength(1);
+      const [notice] = await chat.notices([config]);
+      expect(notice).toMatchObject({ kind: "chat.file_refused", file: { name: "gone.jpg", reason: "missing", limit: null } });
+      // Dismissed, the notice takes the refused row with it
+      await chat.dismissNotice(config, notice.id);
+      expect(await chat.notices([config])).toEqual([]);
+      expect(await env.db.rawQuery("SELECT id FROM chat_attachments WHERE config_id = ? AND id LIKE ?", [config, "%#l%"])).toEqual([]);
+    });
+
+    it("a text-less post whose only file is refused fails, nothing posted", async () => {
+      const gone = stage("gone.jpg");
+      await server.files.remove(gone.path);
+      const sent = await chat.send(src, GROUP, "", [gone]);
+      await idle();
+      expect(posts()).toHaveLength(0);
+      expect((await chat.messages(config, GROUP)).find((m) => m.clientUuid === sent.clientUuid)).toMatchObject({ status: "failed", outboxOpId: null });
+      expect(await ops("chat.post")).toEqual([]);
+    });
+
+    it("wifi only holds the upload without attempt or delay; Wi-Fi sends it", async () => {
+      setAttachmentSettings({ wifiOnly: true, maxMb: null });
+      (network as any).__setNetworkStatus({ connected: true, connectionType: "cellular" });
+      await chat.send(src, GROUP, "later", [stage("a.jpg")]);
+      await idle();
+      await chat.flushAll({ force: true });
+      await idle();
+      expect(server.http.calls).toEqual([]);
+      expect(posts()).toHaveLength(0);
+      const [up] = await ops("chat.upload");
+      expect(up).toMatchObject({ status: "queued", attempts: 0, nextAttemptAt: null, lastError: null });
+      expect(up.params.heldFor).toBe("wifi");
+      online();
+      await chat.flushAll();
+      await idle();
+      expect(server.uploads()).toHaveLength(1);
+      expect(posts()).toHaveLength(1);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("a long upload does not hold another conversation's post", async () => {
+      server.state.hold = { nth: 1, when: "before" };
+      await chat.send(src, GROUP, "with file", [stage("a.jpg")]);
+      await vi.waitFor(() => expect(server.uploads()).toHaveLength(1));
+      expect(await chat.queue.pendingUploadCount(config)).toBe(1);
+      await chat.send(src, GENERAL, "other");
+      expect(posts().map((p) => p.params.thread_id)).toEqual([GENERAL]);
+      await chat.send(src, GROUP, "after");
+      expect(posts().map((p) => p.params.thread_id)).toEqual([GENERAL]);
+      server.release();
+      await idle();
+      expect(posts().map((p) => [p.params.thread_id, p.params.post_data.attachment_ids ?? null])).toEqual([
+        [GENERAL, null], [GROUP, [900]], [GROUP, null],
+      ]);
+      expect(await chat.queue.pendingUploadCount(config)).toBe(0);
+    });
+
+    it("upload progress follows the transfer of the file", async () => {
+      server.state.hold = { nth: 1, when: "before" };
+      const a = stage("a.jpg", 10);
+      await chat.send(src, GROUP, "", [a]);
+      await vi.waitFor(() => expect(server.uploads()).toHaveLength(1));
+      expect(chat.queue.uploadProgress(a.localUuid)).toEqual({ done: 0, total: 10 });
+      server.http.emit({ id: server.uploads()[0].id!, done: 4, total: null });
+      expect(chat.queue.uploadProgress(a.localUuid)).toEqual({ done: 4, total: 10 });
+      server.release();
+      await idle();
+      expect(chat.queue.uploadProgress(a.localUuid)).toBeNull();
+    });
+
+    it("a post refused for a vanished attachment re-uploads it once", async () => {
+      let vanish = true;
+      odoo.state.onPost = async () => {
+        // The pending attachment is collected on the server before the post
+        if (vanish) odoo.state.attachments.splice(0, 1);
+        vanish = false;
+      };
+      const sent = await chat.send(src, GROUP, "again", [stage("a.jpg")]);
+      await idle();
+      expect(server.uploads()).toHaveLength(2);
+      expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900], [901]]);
+      expect((await chat.messages(config, GROUP)).find((m) => m.clientUuid === sent.clientUuid)).toMatchObject({ status: "sent" });
+      expect(await ops()).toEqual([]);
+    });
+
+    it("a post refused again after its re-upload is blocked", async () => {
+      odoo.state.onPost = async () => { odoo.state.attachments.length = 0; };
+      const sent = await chat.send(src, GROUP, "again", [stage("a.jpg")]);
+      await idle();
+      expect(server.uploads()).toHaveLength(2);
+      expect(posts()).toHaveLength(2);
+      const [post] = await ops("chat.post");
+      expect(post).toMatchObject({ status: "blocked" });
+      expect((await chat.messages(config, GROUP)).find((m) => m.clientUuid === sent.clientUuid)).toMatchObject({ status: "failed" });
+    });
+
+    it("a settled post's files become the conversation's cache, no download", async () => {
+      const a = stage("a.jpg");
+      await chat.send(src, GROUP, "kept", [a]);
+      await idle();
+      const rows = (await chat.repo.attachmentsOf(config, GROUP, [5000], [])).get("m5000")!;
+      const kept = originalPath(fileDir, 900, "a.jpg");
+      expect(rows).toEqual([expect.objectContaining({
+        attachmentId: 900, messageId: 5000, state: "posted", originalPath: kept, originalBytes: 3,
+      })]);
+      expect(server.files.bytes(kept)).toEqual(new Uint8Array(3).fill(7));
+      expect(server.files.bytes(a.path)).toBeUndefined();
+      expect(server.http.calls.filter((c) => c.kind === "download")).toEqual([]);
+    });
+
+    it("leaving cancels the conversation's uploads", async () => {
+      server.state.hold = { nth: 1, when: "before" };
+      const [a, b] = [stage("a.jpg"), stage("b.jpg")];
+      const sent = await chat.send(src, GROUP, "never", [a, b]);
+      await vi.waitFor(() => expect(server.uploads()).toHaveLength(1));
+      await chat.leave(src, GROUP);
+      await idle();
+      expect(server.http.calls.filter((c) => c.kind === "cancel").map((c) => c.id)).toEqual([server.uploads()[0].id]);
+      expect(server.uploads()).toHaveLength(1);
+      expect(posts()).toHaveLength(0);
+      expect((await chat.repo.outgoingOf(config, sent.clientUuid)).map((r) => [r.localUuid, r.state, r.error])).toEqual([
+        [a.localUuid, "refused", "left"], [b.localUuid, "refused", "left"],
+      ]);
+      expect((await chat.messages(config, GROUP)).find((m) => m.clientUuid === sent.clientUuid)).toMatchObject({ status: "failed" });
+      expect(odoo.kw("action_unfollow")).toHaveLength(1);
+      expect(await chat.notices([config])).toEqual([]);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("a temporary id swap reaches upload ops and rows", async () => {
+      const groups = createServer(odoo, { now: () => clock });
+      offline();
+      const { channelId: tempId } = await chat.createGroup(src, [BOB], "Files");
+      const sent = await chat.send(src, tempId, "to the new group", [stage("a.jpg")]);
+      online();
+      await chat.flushAll();
+      await idle();
+      const realId = groups.channels[0].id;
+      expect(server.uploads()[0].fields).toEqual(fields(realId));
+      expect(posts().map((p) => [p.params.thread_id, p.params.post_data.attachment_ids])).toEqual([[realId, [900]]]);
+      const message = (await chat.messages(config, realId)).find((m) => m.clientUuid === sent.clientUuid)!;
+      expect((await chat.repo.attachmentsOf(config, realId, [message.messageId!], [])).get(`m${message.messageId}`))
+        .toEqual([expect.objectContaining({ attachmentId: 900, channelId: realId })]);
+    });
   });
 });

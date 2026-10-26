@@ -1,12 +1,17 @@
 import type { Application } from "../../models/application";
-import type { BusNotification, ChatChannel, ChatMember, ChatMessage, ChatModuleState, ChatNotice } from "../../models/chat";
+import type {
+  BusNotification, ChatChannel, ChatMember, ChatMessage, ChatModuleState, ChatNotice, OutgoingFile,
+} from "../../models/chat";
 import { syncConfigIdFor } from "../../models/syncConfig";
 import type { DatabaseService } from "../databaseService";
 import { networkService } from "../networkService";
 import type { CapabilityService } from "../odoo/capabilityService";
 import type { OdooRpcClient, SyncCredentials } from "../odoo/odooRpcClient";
 import type { OutboxService } from "../outboxService";
+import { nativeChatHttp } from "../../plugins/chatFilePlugin";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
+import { ChatCsrf } from "./chatCsrf";
+import { deviceChatFiles, type ChatFiles, type ChatHttp } from "./chatFiles";
 import { ChatModuleLevel, effectiveLevel, levelAtLeast, moduleProbe } from "./chatModule";
 import { ChatOutbox, type CreateMode } from "./chatOutbox";
 import { ChatPeople } from "./chatPeople";
@@ -14,6 +19,7 @@ import { ChatRepository } from "./chatRepository";
 import { chatSettings } from "./chatSettings";
 import { CHAT_MAJOR, parseOdooMajor, sourceLabels, type ChatSource } from "./chatSources";
 import { parseStore, type StoreDelta } from "./chatStore";
+import { ChatTransfer } from "./chatTransfer";
 import { sortConversations, totalUnread } from "./chatUnread";
 
 export type { ChatSource } from "./chatSources";
@@ -171,6 +177,25 @@ export class ChatService {
     };
     this.queue.changed = (configId, channelId) => this.changed(configId, channelId);
     this.queue.moduleRefused = (configId) => this.probeModule(configId);
+    this.useFileIO({ files: deviceChatFiles, http: nativeChatHttp() });
+  }
+
+  /**
+   * The files and the file transport the outbox uploads with (the device's
+   * by default; memory files and a fake transport in tests and the test
+   * kit), and optionally how Wi-Fi is known. Nothing is subscribed or
+   * sent here: progress events are followed from the first upload.
+   */
+  useFileIO(io: { files: ChatFiles; http: ChatHttp; onWifi?: () => Promise<boolean> }): void {
+    this.queue.files = io.files;
+    this.queue.transfer = new ChatTransfer(this.rpc, io.http, io.files, new ChatCsrf(this.rpc, io.http));
+    this.queue.setProgressSource((fn) => io.http.onProgress(fn));
+    if (io.onWifi) this.queue.onWifi = io.onWifi;
+  }
+
+  /** The account's directory name under chat/ (ChatRepository.fileDirOf), where its files are staged. */
+  fileDirOf(configId: string): Promise<string> {
+    return this.repo.fileDirOf(configId);
   }
 
   private changed(configId: string, channelId: number | null): void {
@@ -489,16 +514,19 @@ export class ChatService {
   }
 
   /**
-   * Queues the text (stored as a pending message before any request), then,
-   * online, flushes the account's chat outbox at once. Returns the pending
-   * message; a failed flush leaves it queued for the next one.
+   * Queues the text and the files staged for it (under fileDirOf; the text
+   * may be empty when files go), stored as a pending message before any
+   * request, then, online, flushes the account's chat outbox at once: the
+   * files upload in the background and the post follows them. Returns the
+   * pending message; a failed flush leaves it queued for the next one.
    */
-  async send(src: ChatSource, channelId: number, text: string): Promise<ChatMessage> {
+  async send(src: ChatSource, channelId: number, text: string, files: OutgoingFile[] = []): Promise<ChatMessage> {
     const { configId } = src;
     // Module 1.0 already dedupes message posts by uuid; only 1.1 adds channels
     const level = effectiveLevel(await this.repo.sourceState(configId));
     const useModule = this.moduleMode === "auto" && level !== null;
-    const message = await this.queue.queuePost(configId, channelId, text, useModule);
+    const idempotentUpload = files.length > 0 && (await this.features(configId)).idempotentUpload;
+    const message = await this.queue.queuePost(configId, channelId, text, useModule, { files, idempotentUpload });
     this.changed(configId, channelId);
     if (await this.isOnline()) {
       try {

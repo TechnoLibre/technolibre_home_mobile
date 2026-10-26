@@ -6,7 +6,9 @@ import { OutboxService } from "../services/outboxService";
 import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS, clientMarker } from "../services/syncService";
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
-import { CHAT_NOTE, CHAT_POST, CHAT_READ, ChatOutbox } from "../services/chat/chatOutbox";
+import { CHAT_NOTE, CHAT_POST, CHAT_READ, CHAT_UPLOAD, ChatOutbox } from "../services/chat/chatOutbox";
+import { memoryChatFiles } from "../testing/chatFakes";
+import type { OutgoingFile } from "../models/chat";
 import { chatMarker } from "../services/chat/chatBody";
 
 const CREDS: SyncCredentials = { odooUrl: "https://odoo.example.com", username: "alice", password: "pw", database: "db1" };
@@ -385,6 +387,83 @@ describe("ChatOutbox", () => {
     vi.spyOn(repo, "putPending").mockRejectedValueOnce(new Error("disk full"));
     await expect(chat.queuePost(CONFIG, CHANNEL, "hello", true)).rejects.toThrow("disk full");
     expect(await db.getOutboxOpsForConfig(CONFIG)).toHaveLength(0);
+  });
+
+  describe("posts with files", () => {
+    let files: ReturnType<typeof memoryChatFiles>;
+    const file = (uuid: string, name = `${uuid}.jpg`): OutgoingFile => {
+      const path = `chat/dir/out/${uuid}/${name}`;
+      files.put(path, new Uint8Array(3));
+      return { localUuid: uuid, path, name, mimetype: "image/jpeg", size: 3, voice: false };
+    };
+
+    beforeEach(() => {
+      files = memoryChatFiles();
+      chat.files = files;
+    });
+
+    it("queuePost with files chains its uploads between the channel's tail and the post", async () => {
+      chatOdoo();
+      await chat.queuePost(CONFIG, CHANNEL, "first", false);
+      const m = await chat.queuePost(CONFIG, CHANNEL, "", false, { files: [file("l1"), file("l2")], idempotentUpload: true });
+      await chat.queuePost(CONFIG, CHANNEL, "after", false);
+      const ops = await db.getOutboxOpsForConfig(CONFIG);
+      const first = ops.find((o) => o.params.text === "first")!;
+      const post = ops.find((o) => o.clientUuid === m.clientUuid)!;
+      const [up1, up2] = ["l1", "l2"].map((u) => ops.find((o) => o.kind === CHAT_UPLOAD && o.params.localUuid === u)!);
+      expect(up1).toMatchObject({
+        status: "queued", noteId: CHAT_NOTE, dependsOn: first.id,
+        params: { channelId: CHANNEL, localUuid: "l1", path: "chat/dir/out/l1/l1.jpg", name: "l1.jpg", mimetype: "image/jpeg", size: 3, voice: false, useModule: true },
+      });
+      expect(up2.dependsOn).toBe(up1.id);
+      expect(post).toMatchObject({ status: "queued", dependsOn: up2.id, params: { text: "", files: ["l1", "l2"], idempotentUpload: true } });
+      // The tail of the channel is the post, never one of its uploads
+      expect(ops.find((o) => o.params.text === "after")!.dependsOn).toBe(post.id);
+      expect((await repo.outgoingOf(CONFIG, m.clientUuid)).map((r) => [r.localUuid, r.seq, r.state, r.originalPath, r.channelId])).toEqual([
+        ["l1", 0, "queued", "chat/dir/out/l1/l1.jpg", CHANNEL], ["l2", 1, "queued", "chat/dir/out/l2/l2.jpg", CHANNEL],
+      ]);
+      expect(await chat.pendingUploadCount(CONFIG)).toBe(2);
+    });
+
+    it("a conversation that cannot take a post keeps its files refused beside the failed text", async () => {
+      chatOdoo();
+      await repo.patchChannel(CONFIG, CHANNEL, { createFailed: true });
+      const m = await chat.queuePost(CONFIG, CHANNEL, "x", false, { files: [file("l1")] });
+      expect(m.status).toBe("failed");
+      expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+      expect((await repo.outgoingOf(CONFIG, m.clientUuid)).map((r) => [r.state, r.error])).toEqual([["refused", "channel"]]);
+    });
+
+    it("a post with files that cannot be stored leaves no op, row or file behind", async () => {
+      chatOdoo();
+      vi.spyOn(repo, "putPending").mockRejectedValueOnce(new Error("disk full"));
+      const f = file("l1");
+      await expect(chat.queuePost(CONFIG, CHANNEL, "x", false, { files: [f] })).rejects.toThrow("disk full");
+      expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+      expect(await db.rawQuery("SELECT id FROM chat_attachments")).toEqual([]);
+      expect(files.bytes(f.path)).toBeUndefined();
+    });
+
+    it("a post with files cut while being queued is repaired at startup", async () => {
+      chatOdoo();
+      // Cut before the completion: everything written, still incomplete
+      const complete = vi.spyOn(outbox, "complete").mockImplementation(async () => {});
+      const kept = await chat.queuePost(CONFIG, CHANNEL, "kept", false, { files: [file("k1")] });
+      complete.mockRestore();
+      // Cut before the message: the op and its upload stored, a row, no bubble
+      const lost = await outbox.enqueue({ noteId: CHAT_NOTE, configId: CONFIG, kind: CHAT_POST, params: { channelId: 8, text: "lost", files: ["g1"] }, status: "incomplete" });
+      const lostUp = await outbox.enqueue({ noteId: CHAT_NOTE, configId: CONFIG, kind: CHAT_UPLOAD, params: { channelId: 8, localUuid: "g1" }, status: "incomplete" });
+      await db.updateOutboxOp(lost.id, { dependsOn: lostUp.id, updatedAt: clock.toISOString() });
+      const g1 = file("g1");
+      await repo.putOutgoing([{ ...(await repo.outgoingOf(CONFIG, kept.clientUuid))[0], channelId: 8, localUuid: "g1", postClientUuid: lost.clientUuid, originalPath: g1.path }]);
+      const orphan = await outbox.enqueue({ noteId: CHAT_NOTE, configId: CONFIG, kind: CHAT_UPLOAD, params: { channelId: 8, localUuid: "o1" }, status: "incomplete" });
+      expect(await chat.recoverIncomplete()).toBe(1);
+      const ops = await db.getOutboxOpsForConfig(CONFIG);
+      expect(ops.map((o) => [o.kind, o.status]).sort()).toEqual([[CHAT_POST, "queued"], [CHAT_UPLOAD, "queued"]]);
+      expect(ops.some((o) => o.id === orphan.id || o.id === lost.id || o.id === lostUp.id)).toBe(false);
+      expect(await repo.outgoingOf(CONFIG, lost.clientUuid)).toEqual([]);
+      expect(files.bytes(g1.path)).toBeUndefined();
+    });
   });
 
   it("posts of different channels do not wait for each other", async () => {

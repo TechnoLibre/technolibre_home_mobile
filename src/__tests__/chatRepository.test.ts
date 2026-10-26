@@ -436,6 +436,9 @@ describe("ChatRepository", () => {
       expect(two).toMatchObject({ state: "refused", error: "too big" });
       await repo.requeueUpload(A, "l2");
       expect((await repo.outgoingOf(A, "post1"))[1]).toMatchObject({ state: "queued", error: null });
+      // An uploaded file the server lost goes back without its id
+      await repo.requeueUpload(A, "l1");
+      expect((await repo.outgoingOf(A, "post1"))[0]).toMatchObject({ state: "queued", attachmentId: null });
     });
 
     it("adoptOutgoing re-keys the rows, merges a row the bus wrote and keeps local paths", async () => {
