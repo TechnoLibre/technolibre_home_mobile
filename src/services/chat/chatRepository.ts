@@ -1298,6 +1298,15 @@ export class ChatRepository {
     await this.put("chat_drafts", { id, config_id: configId, channel_id: channelId, text, updated_at: this.now() });
   }
 
+  /**
+   * Empties a conversation's draft text when it is still `text` (blanks
+   * around aside): the text a post took. A draft typed on since is left.
+   */
+  async removeDraftText(configId: string, channelId: number, text: string): Promise<void> {
+    const held = (await this.row("chat_drafts", key(configId, channelId)))?.text ?? "";
+    if (held && held.trim() === text.trim()) await this.putDraftText(configId, channelId, "");
+  }
+
   /** Deletes a conversation's empty draft text row once no draft file is left. */
   private async tidyDraft(configId: string, channelId: number): Promise<void> {
     const row = await this.row("chat_drafts", key(configId, channelId));

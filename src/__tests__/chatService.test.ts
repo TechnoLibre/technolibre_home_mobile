@@ -3160,8 +3160,13 @@ describe("ChatService", () => {
         const voice = stage("Voice-2026-10-26-123.mp3", 4, "audio/mpeg", true);
         await chat.keepDraftFile(config, GROUP, a, 0);
         await chat.keepDraftFile(config, GROUP, voice, 1);
-        await chat.saveDraftText(config, GROUP, "two");
-        const sent = await chat.send(src, GROUP, "two", [a, voice], { fromDraft: true });
+        await chat.saveDraftText(config, GROUP, "two ");
+        let queued: string | undefined;
+        const sent = await chat.send(src, GROUP, "two", [a, voice], {
+          draftText: "two ",
+          onQueued: () => { queued = posts().length === 0 ? "before the flush" : "after"; },
+        });
+        expect(queued).toBe("before the flush");
         await idle();
         expect(server.uploads().map((c) => c.file!.name)).toEqual(["a.jpg", "Voice-2026-10-26-123.mp3"]);
         expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900, 901]]);

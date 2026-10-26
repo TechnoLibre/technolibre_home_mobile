@@ -94,17 +94,16 @@ export interface ChatPartner {
 }
 
 /**
- * queued: still on the phone; uploaded: the server holds it as a pending
- * attachment, the post is not answered yet; posted: part of a message
- * (also every attachment read from the server); refused: the server
- * refused the file, kept until the user dismisses it.
+ * draft: kept in a conversation's composer, not sent yet (no post, no
+ * outbox op); queued: given to a post, still on the phone; uploaded: the
+ * server holds it as a pending attachment, the post is not answered yet;
+ * posted: part of a message (also every attachment read from the server);
+ * refused: the server refused the file, kept until the user dismisses it.
  */
-/** "draft": a file kept in a conversation's composer, not sent yet (no post, no outbox op). */
 export type ChatAttachmentState = "draft" | "queued" | "uploaded" | "posted" | "refused";
 
 /** Where a file of the phone was taken: a pick of that kind, or the voice recorder. */
 export type ChatFileOrigin = "camera" | "gallery" | "file" | "voice";
-
 
 /**
  * One file of a message, or of a conversation's draft. Keyed

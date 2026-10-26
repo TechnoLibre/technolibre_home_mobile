@@ -73,8 +73,12 @@ export interface ComposerAttachDeps {
     askCompress: () => boolean;
     /** Asks a yes / no question. */
     confirm: (message: string) => Promise<boolean>;
-    /** Sends the composer: its text, its chips (take()) and these files after them. */
-    send: (extra: OutgoingFile[]) => Promise<void>;
+    /**
+     * Sends the composer: its text, its chips (take()) and these files
+     * after them. false: the send was not taken (another one runs), the
+     * files stay the composer's.
+     */
+    send: (extra: OutgoingFile[]) => Promise<boolean | void>;
 }
 
 /**
@@ -352,13 +356,15 @@ export class ComposerAttach {
     /**
      * Stops the recording and, once its MP3 is ready, keeps it as a draft
      * file and sends it with the composer's text and chips: a refused send
-     * leaves it in the draft.
+     * leaves it in the draft, and a send not taken (another one runs) shows
+     * it as a voice chip.
      */
     private async stopAndSend(): Promise<void> {
         const file = await this.finishRecording();
         if (!file) return;
-        await this.keepDraft(file, this.nextSeq++, "voice");
-        await this.deps.send([file]);
+        const seq = this.nextSeq++;
+        await this.keepDraft(file, seq, "voice");
+        if ((await this.deps.send([file])) === false && !this.disposed) this.addChip(file, "voice", seq);
     }
 
     /** Stops the recording and keeps it as a draft voice file, a chip while the screen is open. */

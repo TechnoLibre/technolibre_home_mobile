@@ -3,12 +3,13 @@ export const DRAFT_SAVE_MS = 500;
 
 /**
  * Two texts of one draft as one, the older first, a line break between:
- * a blank one or the same text twice gives the other alone, so nothing
- * typed is dropped and nothing is doubled.
+ * a blank one gives the other alone, and the same text twice (blanks
+ * around aside) gives the newer alone, so nothing typed is dropped and
+ * nothing is doubled.
  */
 export function joinDraftText(older: string, newer: string): string {
-    if (!newer.trim() || newer === older) return older;
-    if (!older.trim()) return newer;
+    if (!newer.trim()) return older;
+    if (!older.trim() || newer.trim() === older.trim()) return newer;
     return older + "\n" + newer;
 }
 

@@ -180,7 +180,7 @@ describe("ChatThreadComponent", () => {
         await c.open();
         c.state.text = "  hello \n";
         await c.onSend();
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "hello", [], { fromDraft: true });
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "hello", [], expect.objectContaining({ draftText: "  hello \n" }));
         expect(c.state.text).toBe("");
         expect(c.state.rows.at(-1).meta).toBe("pending");
     });
@@ -219,7 +219,7 @@ describe("ChatThreadComponent", () => {
         expect(chat.messages).toHaveBeenCalledWith("a", 40, expect.anything());
         c.state.text = "next";
         await c.onSend();
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 40, "next", [], { fromDraft: true });
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 40, "next", [], expect.objectContaining({ draftText: "next" }));
     });
 
     it("a screen no longer on the temporary route moves without touching the history", async () => {
@@ -621,7 +621,7 @@ describe("ChatThreadComponent", () => {
         const sending = c.onSend();
         expect(c.attachState.chips).toEqual([]);
         await sending;
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "", [photo], { fromDraft: true });
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "", [photo], expect.objectContaining({ draftText: "" }));
     });
 
     it("nothing to send leaves the composer as it is", async () => {
@@ -649,45 +649,77 @@ describe("ChatThreadComponent", () => {
         c.state.text = "look";
         await c.onSend();
         expect(c.state.text).toBe("look");
-        // Stored at the tap, and again once refused (the post may have emptied it before failing)
-        expect(chat.saveDraftText.mock.calls.map((x: any[]) => x[2])).toEqual(["look", "look"]);
+        // Stored at the tap; a post that was not queued never removed it
+        expect(chat.saveDraftText.mock.calls.map((x: any[]) => x[2])).toEqual(["look"]);
         expect(c.attachState.chips.map((x: any) => [x.file.name, x.origin])).toEqual([["a.jpg", "camera"]]);
         expect(c.state.error).toBe("Could not send the message. Try again.");
     });
 
-    it("a refused send joins its text with what was typed meanwhile, in the composer and the draft", async () => {
+    it("the composer is locked from the tap until the post is queued, the compress question included", async () => {
         const chat = fakeChat([msg(10)]);
         const c = make(chat);
+        const a = fakeAttachments(c, { askCompress: true });
         await c.open();
-        chat.send.mockImplementationOnce(async () => {
-            c.onInput({ target: { value: "typed meanwhile" } } as any);
-            throw new Error("disk");
-        });
-        c.state.text = "first";
-        await c.onSend();
-        expect(c.state.text).toBe("first\ntyped meanwhile");
-        expect(c.state.inputRows).toBe(2);
-        expect(chat.saveDraftText.mock.calls.at(-1)).toEqual(["a", 5, "first\ntyped meanwhile"]);
-    });
-
-    it("a send keeps its text in the draft until the post takes it, and keeps what was typed while it ran", async () => {
-        const chat = fakeChat([msg(10)]);
-        const c = make(chat);
-        fakeAttachments(c);
-        await c.open();
-        c.onInput({ target: { value: "sent at once" } } as any);
-        chat.send.mockImplementationOnce(async () => {
-            c.onInput({ target: { value: "next one" } } as any);
+        a.chip(outFile("IMG_1.jpg"), "camera");
+        let duringQuestion: boolean | null = null;
+        a.confirm.mockImplementation(async () => { duringQuestion = c.state.sending; return true; });
+        let afterQueued: boolean | null = null;
+        chat.send.mockImplementationOnce(async (_s: any, _ch: number, _t: string, _f: any, opts: any) => {
+            expect(c.state.sending).toBe(true);
+            opts.onQueued();
+            afterQueued = c.state.sending;
             return msg(null);
         });
+        c.state.text = "look";
         const sending = c.onSend();
-        // Stored before the compress question: a kill there keeps the text
-        expect(chat.saveDraftText.mock.calls).toEqual([["a", 5, "sent at once"]]);
-        expect(c.state.text).toBe("");
+        expect(c.state.sending).toBe(true);
+        // A second tap while it runs sends nothing
+        await c.onSend();
         await sending;
-        // The post empties the draft text itself (fromDraft); the composer never writes ""
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "sent at once", [], { fromDraft: true });
-        expect(chat.saveDraftText.mock.calls.map((x: any[]) => x[2])).toEqual(["sent at once", "next one"]);
+        expect(duringQuestion).toBe(true);
+        expect(afterQueued).toBe(false);
+        expect(chat.send).toHaveBeenCalledTimes(1);
+        expect(c.state.sending).toBe(false);
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        for (const cls of ["chat-thread__input", "chat-thread__attach", "chat-thread__mic", "chat-thread__send"]) {
+            const tag = source.slice(source.indexOf('class="' + cls + '"'));
+            expect(tag.slice(0, tag.indexOf(">")), cls).toMatch(/t-att-disabled="[^"]*state\.sending/);
+        }
+    });
+
+    it("a refused send leaves the composer open again with its text and the draft as it was", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.send.mockRejectedValueOnce(new Error("disk"));
+        const c = make(chat);
+        await c.open();
+        c.state.text = "first\nsecond";
+        await c.onSend();
+        expect(c.state.text).toBe("first\nsecond");
+        expect(c.state.inputRows).toBe(2);
+        expect(c.state.sending).toBe(false);
+        expect(chat.saveDraftText.mock.calls).toEqual([["a", 5, "first\nsecond"]]);
+    });
+
+    it("a send stores its text in the draft at the tap and leaves its removal to the post", async () => {
+        vi.useFakeTimers();
+        try {
+            const chat = fakeChat([msg(10)]);
+            const c = make(chat);
+            fakeAttachments(c);
+            await c.open();
+            c.onInput({ target: { value: "sent at once " } } as any);
+            const sending = c.onSend();
+            // Stored before the compress question: a kill there keeps the text
+            expect(chat.saveDraftText.mock.calls).toEqual([["a", 5, "sent at once "]]);
+            expect(c.state.text).toBe("");
+            await sending;
+            vi.advanceTimersByTime(1000);
+            // The outbox removes exactly that text; the composer never writes ""
+            expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "sent at once", [], expect.objectContaining({ draftText: "sent at once " }));
+            expect(chat.saveDraftText.mock.calls).toEqual([["a", 5, "sent at once "]]);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("text typed before the draft is read joins the stored text instead of replacing it", async () => {
@@ -702,6 +734,19 @@ describe("ChatThreadComponent", () => {
         await opening;
         expect(c.state.text).toBe("stored\ntyped early");
         expect(chat.saveDraftText.mock.calls).toEqual([["a", 5, "stored\ntyped early"]]);
+    });
+
+    it("the stored text typed again before the read, blanks around aside, is not doubled", async () => {
+        const chat = fakeChat([msg(10)]);
+        let answer!: (d: any) => void;
+        chat.draft.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+        const c = make(chat);
+        const opening = c.open();
+        await vi.waitFor(() => expect(chat.draft).toHaveBeenCalled());
+        c.onInput({ target: { value: "hello  " } } as any);
+        answer({ text: "hello", files: [], lost: [] });
+        await opening;
+        expect(c.state.text).toBe("hello  ");
     });
 
     it("opening shows the draft: its text, its files as chips in order, the lost ones named", async () => {
@@ -767,7 +812,7 @@ describe("ChatThreadComponent", () => {
         await c.attach.mic();
         expect(chat.send).not.toHaveBeenCalled();
         await c.attach.mic();
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "listen", [photo, a.voice], { fromDraft: true });
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "listen", [photo, a.voice], expect.objectContaining({ draftText: "listen" }));
         expect(c.state.text).toBe("");
     });
 
@@ -791,7 +836,7 @@ describe("ChatThreadComponent", () => {
         a.chip(outFile("IMG_1.jpg"), "camera");
         await c.onSend();
         expect(a.confirm).toHaveBeenCalledTimes(1);
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "", [expect.objectContaining({ name: "IMG_1.jpg", size: 10 })], { fromDraft: true });
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "", [expect.objectContaining({ name: "IMG_1.jpg", size: 10 })], expect.objectContaining({ draftText: "" }));
     });
 
     it("the mic and 📎 wait for the conversation's source, the recorder hooked once it is known", async () => {

@@ -328,18 +328,19 @@ export class ChatOutbox {
    * rows and the message are written (recoverIncomplete repairs a cut). A
    * post that cannot be queued deletes the other staged files and gives the
    * draft files back to the draft. idempotentUpload sends the files through
-   * the module route (module 1.2). fromDraft says the text is the
-   * conversation's draft text: it is emptied in this same step, once the
-   * message holds it, so a queued post never leaves its text as a draft;
-   * a post refused before its message is stored leaves the draft text as
-   * it was, and one refused after leaves it to the caller to store again.
+   * the module route (module 1.2). draftText is the composer's text as
+   * the draft holds it: kept in the post's params, it is removed from the
+   * draft (ChatRepository.removeDraftText) in this same step once the
+   * message is stored, best-effort (a failure is logged, the post stays);
+   * recoverIncomplete finishes a removal a kill cut. A post not stored
+   * leaves the draft as it was.
    */
   queuePost(
     configId: string,
     channelId: number,
     text: string,
     useModule: boolean,
-    opts: { files?: OutgoingFile[]; idempotentUpload?: boolean; fromDraft?: boolean } = {},
+    opts: { files?: OutgoingFile[]; idempotentUpload?: boolean; draftText?: string } = {},
   ): Promise<ChatMessage> {
     return this.exclusive(configId, async () =>
       this.queuePostNow(configId, (await this.realIdOf(configId, channelId)) ?? channelId, text, useModule, opts));
@@ -396,7 +397,7 @@ export class ChatOutbox {
     channelId: number,
     text: string,
     useModule: boolean,
-    opts: { files?: OutgoingFile[]; idempotentUpload?: boolean; fromDraft?: boolean },
+    opts: { files?: OutgoingFile[]; idempotentUpload?: boolean; draftText?: string },
   ): Promise<ChatMessage> {
     const files = opts.files ?? [];
     const drafts = new Set<string>();
@@ -421,7 +422,7 @@ export class ChatOutbox {
       };
       await this.repo.putPending(failed);
       if (files.length > 0) await this.storeFiles(configId, channelId, failed.clientUuid, files, drafts, "refused");
-      if (opts.fromDraft) await this.repo.putDraftText(configId, channelId, "");
+      await this.releaseDraftText(configId, channelId, opts.draftText);
       return failed;
     }
     const all = await this.db.getOutboxOpsForConfig(configId);
@@ -453,12 +454,15 @@ export class ChatOutbox {
         noteId: CHAT_NOTE,
         configId,
         kind: CHAT_POST,
-        params: incomplete
-          ? {
-            channelId, text, useModule, files: files.map((f) => f.localUuid), idempotentUpload: !!opts.idempotentUpload,
-            ...(drafts.size > 0 ? { drafts: files.filter((f) => drafts.has(f.localUuid)).map((f) => f.localUuid) } : {}),
-          }
-          : { channelId, text, useModule },
+        params: {
+          ...(incomplete
+            ? {
+              channelId, text, useModule, files: files.map((f) => f.localUuid), idempotentUpload: !!opts.idempotentUpload,
+              ...(drafts.size > 0 ? { drafts: files.filter((f) => drafts.has(f.localUuid)).map((f) => f.localUuid) } : {}),
+            }
+            : { channelId, text, useModule }),
+          ...(opts.draftText !== undefined ? { draftText: opts.draftText } : {}),
+        },
         dependsOn: tail,
         ...(incomplete ? { status: "incomplete" as const } : {}),
       });
@@ -483,7 +487,6 @@ export class ChatOutbox {
     try {
       if (incomplete) await this.storeFiles(configId, channelId, op.clientUuid, files, drafts, "queued");
       await this.repo.putPending(message);
-      if (opts.fromDraft) await this.repo.putDraftText(configId, channelId, "");
       // The post last: no drain sends it before its uploads are queued
       for (const up of uploads) await this.outbox.complete(up.id, {});
       if (incomplete) await this.outbox.complete(op.id, {});
@@ -499,7 +502,18 @@ export class ChatOutbox {
       }
       throw e;
     }
+    await this.releaseDraftText(configId, channelId, opts.draftText);
     return message;
+  }
+
+  /** Removes a stored post's text from the draft (removeDraftText); a failure is logged, the post is not touched. */
+  private async releaseDraftText(configId: string, channelId: number, text: unknown): Promise<void> {
+    if (typeof text !== "string") return;
+    try {
+      await this.repo.removeDraftText(configId, channelId, text);
+    } catch (e: unknown) {
+      console.warn("chat: a sent text stays in the draft", e);
+    }
   }
 
   /**
@@ -1014,9 +1028,11 @@ export class ChatOutbox {
    * queued is queued with its uploads when its message was written, else
    * removed with them, its rows and files; the files it took from the
    * conversation's draft go back to the draft instead, with its text
-   * (joinDraftText, ahead of what the draft holds), and a staged file a draft row still names is never
-   * deleted. An incomplete upload no post waits for is removed. Returns how
-   * many were queued.
+   * (joinDraftText, ahead of what the draft holds) unless the draft holds
+   * it already (draftText), and a staged file a draft row still names is never
+   * deleted. An incomplete upload no post waits for is removed. A post
+   * whose message is stored has its draftText removed from the draft (a
+   * kill between the two). Returns how many were queued.
    */
   async recoverIncomplete(): Promise<number> {
     let queued = 0;
@@ -1039,7 +1055,8 @@ export class ChatOutbox {
           const rows = (await this.repo.outgoingOf(configId, post.clientUuid)).map((r) => r.localUuid!);
           await this.repo.backToDraft(configId, rows.filter((u) => drafted.has(u)));
           await this.dropOutgoing(configId, rows.filter((u) => !drafted.has(u)));
-          if (drafted.size > 0 && post.params.text) {
+          // A text the composer sent is still the draft's: only another one is given back
+          if (drafted.size > 0 && post.params.text && typeof post.params.draftText !== "string") {
             // The post's text is older than what the draft holds now
             const channelId: number = post.params.channelId;
             const held = (await this.repo.draftOf(configId, channelId)).text;
@@ -1052,6 +1069,11 @@ export class ChatOutbox {
       for (const up of all.filter((o) => o.kind === CHAT_UPLOAD && o.status === "incomplete" && !kept.has(o.id))) {
         await this.outbox.cancel(up.id);
         await this.removeFiles(await this.notDrafts(configId, [up.params]));
+      }
+      // A post stored with its message whose text a kill left in the draft
+      const stored = await this.repo.queuedMessageUuids(configId);
+      for (const op of await this.db.getOutboxOpsForConfig(configId)) {
+        if (op.kind === CHAT_POST && stored.has(op.clientUuid)) await this.releaseDraftText(configId, op.params.channelId, op.params.draftText);
       }
       for (const op of all) {
         if (op.status !== "incomplete" || (op.kind !== CHAT_CREATE && op.kind !== CHAT_JOIN)) continue;

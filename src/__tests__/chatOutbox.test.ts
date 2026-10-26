@@ -590,13 +590,13 @@ describe("ChatOutbox", () => {
         expect(files.bytes(a.path)).toBeDefined();
       });
 
-      it("a text given back at startup joins the one the draft holds, older first, never twice", async () => {
+      it("a post cut before its message leaves the draft text alone when it came from it, and gives back any other", async () => {
         chatOdoo();
-        const cut = async (text: string, draftText: string) => {
+        const cut = async (text: string, held: string, fromDraft: boolean) => {
           const a = await drafted("j" + text.length);
-          await repo.putDraftText(CONFIG, CHANNEL, draftText);
+          await repo.putDraftText(CONFIG, CHANNEL, held);
           const store = vi.spyOn(repo, "putPending").mockImplementation(() => new Promise(() => {}));
-          void chat.queuePost(CONFIG, CHANNEL, text, false, { files: [a], fromDraft: true });
+          void chat.queuePost(CONFIG, CHANNEL, text, false, { files: [a], ...(fromDraft ? { draftText: text } : {}) });
           await vi.waitFor(() => expect(store).toHaveBeenCalled());
           store.mockRestore();
           chat = new ChatOutbox(db, rpc, outbox, repo, () => clock);
@@ -604,28 +604,61 @@ describe("ChatOutbox", () => {
           await chat.recoverIncomplete();
           return (await repo.draftOf(CONFIG, CHANNEL)).text;
         };
-        // The draft still held the text sent: it is not doubled
-        expect(await cut("first line", "first line")).toBe("first line");
-        await repo.putDraftText(CONFIG, CHANNEL, "");
-        // Typed after the send, before the kill: kept after the text given back
-        expect(await cut("sent before", "typed after")).toBe("sent before\ntyped after");
+        // The draft still holds the text the composer sent: nothing to give back, nothing doubled
+        expect(await cut("sent from the composer", "sent from the composer", true)).toBe("sent from the composer");
+        expect(await cut("sent once", "sent once  ", true)).toBe("sent once  ");
+        // A text that was never the draft's goes back ahead of what the draft holds
+        expect(await cut("sent before", "typed after", false)).toBe("sent before\ntyped after");
       });
 
-      it("a post from the draft empties the draft text in the step that queues it; any other post leaves it", async () => {
+      it("a post from the draft removes exactly its text from the draft once its message is stored", async () => {
         chatOdoo();
         await repo.putDraftText(CONFIG, CHANNEL, "hello");
         vi.spyOn(repo, "putPending").mockRejectedValueOnce(new Error("disk full"));
-        await expect(chat.queuePost(CONFIG, CHANNEL, "hello", false, { fromDraft: true })).rejects.toThrow("disk full");
+        await expect(chat.queuePost(CONFIG, CHANNEL, "hello", false, { draftText: "hello" })).rejects.toThrow("disk full");
         expect((await repo.draftOf(CONFIG, CHANNEL)).text).toBe("hello");
-        await chat.queuePost(CONFIG, CHANNEL, "hello", false, { fromDraft: true });
+        const m = await chat.queuePost(CONFIG, CHANNEL, "hello", false, { draftText: "hello" });
         expect((await repo.draftOf(CONFIG, CHANNEL)).text).toBe("");
-        await repo.putDraftText(CONFIG, CHANNEL, "kept");
-        await chat.queuePost(CONFIG, CHANNEL, "from elsewhere", false);
-        expect((await repo.draftOf(CONFIG, CHANNEL)).text).toBe("kept");
+        expect((await db.getOutboxOpsForConfig(CONFIG)).find((o) => o.clientUuid === m.clientUuid)!.params.draftText).toBe("hello");
+        // A draft that is no longer that text, or a post that did not come from it, leaves the draft
+        await repo.putDraftText(CONFIG, CHANNEL, "hello world");
+        await chat.queuePost(CONFIG, CHANNEL, "hello", false, { draftText: "hello" });
+        await chat.queuePost(CONFIG, CHANNEL, "hello world", false);
+        expect((await repo.draftOf(CONFIG, CHANNEL)).text).toBe("hello world");
         // A conversation that cannot take a post keeps the text in the failed bubble, not in the draft
         await repo.patchChannel(CONFIG, CHANNEL, { createFailed: true });
-        await chat.queuePost(CONFIG, CHANNEL, "kept", false, { fromDraft: true });
+        await chat.queuePost(CONFIG, CHANNEL, "hello world", false, { draftText: "hello world" });
         expect((await repo.draftOf(CONFIG, CHANNEL)).text).toBe("");
+      });
+
+      it("a draft text that cannot be removed is logged and never cancels the post", async () => {
+        chatOdoo();
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        await repo.putDraftText(CONFIG, CHANNEL, "hello");
+        vi.spyOn(repo, "removeDraftText").mockRejectedValueOnce(new Error("disk full"));
+        const m = await chat.queuePost(CONFIG, CHANNEL, "hello", false, { draftText: "hello" });
+        expect(m.status).toBe("pending");
+        expect((await db.getOutboxOpsForConfig(CONFIG)).map((o) => [o.clientUuid, o.status])).toEqual([[m.clientUuid, "queued"]]);
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
+      });
+
+      it("a kill after the message is stored, before the draft text is removed, is finished at startup", async () => {
+        chatOdoo();
+        // A text-only post, then one with a draft file
+        for (const picked of [[], [await drafted("k1")]]) {
+          await repo.putDraftText(CONFIG, CHANNEL, "almost sent");
+          const remove = vi.spyOn(repo, "removeDraftText").mockImplementation(() => new Promise(() => {}));
+          void chat.queuePost(CONFIG, CHANNEL, "almost sent", false, { files: picked, draftText: "almost sent" });
+          await vi.waitFor(() => expect(remove).toHaveBeenCalled());
+          remove.mockRestore();
+          chat = new ChatOutbox(db, rpc, outbox, repo, () => clock);
+          chat.files = files;
+          await chat.recoverIncomplete();
+          expect((await repo.draftOf(CONFIG, CHANNEL)).text).toBe("");
+          // The post itself still goes
+          expect((await repo.pendingMessages(CONFIG)).get(CHANNEL)!.at(-1)!.body).toBe("almost sent");
+        }
       });
 
       it("a conversation that cannot take a post keeps the draft files refused beside the failed text", async () => {

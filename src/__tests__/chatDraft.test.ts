@@ -7,6 +7,7 @@ describe("joinDraftText", () => {
     it("joins two texts older first, never doubling one or keeping a blank", () => {
         expect(joinDraftText("sent before", "typed after")).toBe("sent before\ntyped after");
         expect(joinDraftText("same", "same")).toBe("same");
+        expect(joinDraftText("hello", "hello  ")).toBe("hello  ");
         expect(joinDraftText("", "typed")).toBe("typed");
         expect(joinDraftText("kept", "  ")).toBe("kept");
     });

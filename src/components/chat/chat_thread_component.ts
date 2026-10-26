@@ -83,6 +83,8 @@ interface ThreadState {
     inputRows: number;
     /** Key of the image the viewer shows; null when it is closed. */
     viewer: string | null;
+    /** From the ➤ tap until the post is queued: the text, 📎, 🎤 and ➤ are off. */
+    sending: boolean;
 }
 
 /** Rows the composer shows for a text, from 1 up to MAX_INPUT_ROWS. */
@@ -202,17 +204,17 @@ export class ChatThreadComponent extends EnhancedComponent {
         <ChatComposerAttachComponent attach="attach"/>
         <div class="chat-thread__composer">
           <button class="chat-thread__attach" t-att-aria-label="t('chat.attach')" t-att-aria-expanded="attachState.sheet ? 'true' : 'false'"
-                  t-att-disabled="!attachState.ready or attachState.voice !== 'idle'" t-on-mousedown.prevent="" t-on-click="() => this.attach.toggleSheet()">📎</button>
+                  t-att-disabled="!attachState.ready or attachState.voice !== 'idle' or state.sending" t-on-mousedown.prevent="" t-on-click="() => this.attach.toggleSheet()">📎</button>
           <textarea class="chat-thread__input" t-att-rows="state.inputRows" t-att-placeholder="t('chat.compose_placeholder')"
-                    t-att-value="state.text" t-on-input="onInput"/>
+                    t-att-disabled="state.sending" t-att-value="state.text" t-on-input="onInput"/>
           <button t-if="!attach.hasVoiceChip()" class="chat-thread__mic"
                   t-att-class="{'chat-thread__mic--on': attachState.voice === 'recording'}"
                   t-att-aria-label="attachState.voice === 'recording' ? t('chat.voice_stop_send') : t('chat.voice_record')"
-                  t-att-disabled="!attachState.ready or attachState.voice === 'starting' or attachState.voice === 'preparing'"
+                  t-att-disabled="!attachState.ready or attachState.voice === 'starting' or attachState.voice === 'preparing' or state.sending"
                   t-on-mousedown.prevent="" t-on-click="() => this.attach.mic()">
             <t t-esc="attachState.voice === 'recording' ? '⏹' : '🎤'"/>
           </button>
-          <button class="chat-thread__send" t-att-aria-label="t('chat.send')" t-att-disabled="attach.busy()"
+          <button class="chat-thread__send" t-att-aria-label="t('chat.send')" t-att-disabled="attach.busy() or state.sending"
                   t-on-mousedown.prevent="" t-on-click="() => this.onSend()">➤</button>
         </div>
       </t>
@@ -288,6 +290,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             error: "",
             inputRows: 1,
             viewer: null,
+            sending: false,
         });
         const params = this.router.getRouteParams(window.location.pathname, "/chat/:source/:channelId");
         this.configId = params.get("source") ?? "";
@@ -840,20 +843,23 @@ export class ChatThreadComponent extends EnhancedComponent {
     /**
      * Queues the trimmed text with the chips' files, then extra (the voice
      * message just recorded); nothing is sent when all are empty, nor while
-     * a voice message is prepared (it would be overtaken). The composer,
-     * text and chips, clears before the first await, so a second tap finds
-     * it empty; the text is stored as the draft in that same step, so a
-     * kill during the compress question (ComposerAttach.prepare) that comes
-     * after loses nothing, and the outbox empties the draft text in the
-     * step that queues the post (fromDraft). Text typed while the send runs
-     * is stored again once it is queued. A failed send puts the text back,
-     * joined ahead of what was typed meanwhile, shows the error and shows
-     * again the chips whose files the outbox left in the draft.
+     * a voice message is prepared (it would be overtaken) or another send
+     * runs. The composer, text and chips, clears before the first await, so
+     * a second tap finds it empty, and stays locked (sending) until the post
+     * is queued, the compress question (ComposerAttach.prepare) included:
+     * nothing is typed meanwhile. The text is stored as the draft in that
+     * same first step, so a kill during the question loses nothing, and the
+     * outbox removes exactly that text from the draft once the post is
+     * stored (draftText). A failed send puts the text back (the draft still
+     * holds it), shows the error and shows again the chips whose files the
+     * outbox left in the draft. Returns whether the send was taken: false
+     * leaves extra to the caller.
      */
-    async onSend(extra: OutgoingFile[] = []): Promise<void> {
-        if (!this.source || this.attach.busy()) return;
+    async onSend(extra: OutgoingFile[] = []): Promise<boolean> {
+        if (!this.source || this.attach.busy() || this.state.sending) return false;
         const text = this.state.text.trim();
-        if (!text && extra.length === 0 && this.attachState.chips.length === 0) return;
+        if (!text && extra.length === 0 && this.attachState.chips.length === 0) return false;
+        this.state.sending = true;
         const chips = this.attach.take();
         const raw = this.state.text;
         this.state.text = "";
@@ -864,20 +870,22 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.chatService.typing(this.source, this.channelId, false).catch(() => {});
         try {
             const files = [...(await this.attach.prepare(chips)), ...extra];
-            await this.chatService.send(this.source, this.channelId, text, files, { fromDraft: true });
+            await this.chatService.send(this.source, this.channelId, text, files, {
+                draftText: raw,
+                onQueued: () => { this.state.sending = false; },
+            });
         } catch {
-            const typed = this.state.text;
-            this.state.text = joinDraftText(raw, typed);
-            this.state.inputRows = rowsOf(this.state.text);
-            this.draftText.set(this.state.text);
+            this.state.sending = false;
+            this.state.text = raw;
+            this.state.inputRows = rowsOf(raw);
             this.state.error = t("chat.send_error");
             await this.showDraft(false);
-            return;
+            return true;
         }
-        // The post emptied the draft text: what was typed since is the draft now
-        if (this.state.text.trim()) this.draftText.set(this.state.text);
+        this.state.sending = false;
         await this.refresh();
         this.scrollToBottomSoon();
+        return true;
     }
 
     /** Removes a conversation the server refused, or one left, with its unsent texts, and goes back to the list; a failure stays here with a notice. */

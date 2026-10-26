@@ -88,7 +88,7 @@ function harness(opts: { askCompress?: boolean; limit?: number | null; confirm?:
         }),
         discard: vi.fn(async () => {}),
     };
-    const send = vi.fn(async (_extra: OutgoingFile[]) => {});
+    const send = vi.fn(async (_extra: OutgoingFile[]): Promise<boolean | void> => {});
     const confirm = vi.fn(async (_message: string) => opts.confirm ?? true);
     /** The conversation's draft files, by local uuid, as ChatService keeps them. */
     const drafts = new Map<string, { file: OutgoingFile; seq: number; origin: string | null }>();
@@ -433,6 +433,16 @@ describe("ComposerAttach", () => {
         await h.attach.mic();
         expect(kept).toBe(1);
         expect([...h.drafts.values()][0].file.voice).toBe(true);
+    });
+
+    it("a voice whose send is not taken (another send runs) shows as a voice chip", async () => {
+        const h = harness();
+        await h.attach.start();
+        await h.attach.mic();
+        h.send.mockResolvedValueOnce(false as any);
+        await h.attach.mic();
+        expect(h.state.chips.map((c) => [c.origin, c.seq])).toEqual([["voice", 0]]);
+        expect(h.drafts.size).toBe(1);
     });
 
     it("the voice goes idle before it is sent, so the send is not refused as busy", async () => {
