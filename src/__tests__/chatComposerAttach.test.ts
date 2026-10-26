@@ -353,7 +353,7 @@ describe("ComposerAttach", () => {
         expect([...h.drafts.values()].map((d) => d.file.name)).toEqual(["film.mp4"]);
     });
 
-    it("a pick whose limit cannot be read refuses late over Odoo's default of 128 MiB", async () => {
+    it("a pick whose limit cannot be read keeps its chips, whatever their size: the outbox checks the real limit", async () => {
         const MiB = 1024 * 1024;
         const h = harness({ limit: null });
         const big = (name: string, size: number) => Object.defineProperty(file(name, 1, "video/mp4"), "size", { value: size });
@@ -364,8 +364,10 @@ describe("ComposerAttach", () => {
         await h.attach.start();
         h.pickNext([big("film.mp4", 200 * MiB), big("clip.mp4", 100 * MiB)]);
         await h.attach.pick(h.input, "file");
-        expect(h.state.chips.map((c) => c.file.name)).toEqual(["clip.mp4"]);
-        expect(h.state.notices).toEqual([`“film.mp4” is over the server's limit of ${formatBytes(128 * MiB, "en")}: it cannot be sent.`]);
+        expect(h.capture.stage).toHaveBeenCalledWith(FILE_DIR, expect.any(File), { maxUploadSize: Infinity });
+        expect(h.state.chips.map((c) => c.file.name)).toEqual(["film.mp4", "clip.mp4"]);
+        expect(h.state.notices).toEqual([]);
+        expect([...h.drafts.values()].map((d) => d.file.name)).toEqual(["film.mp4", "clip.mp4"]);
     });
 
     it("a HEIC that could not be converted is kept with a notice", async () => {

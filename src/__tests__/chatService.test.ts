@@ -2944,6 +2944,25 @@ describe("ChatService", () => {
       expect(await ops()).toEqual([]);
     });
 
+    it("two renames that pause one id overlap: the lane stays paused until both resumed", async () => {
+      offline();
+      await chat.send(src, GROUP, "later", [stage("a.jpg")]);
+      online();
+      const first = syncConfigIdFor("https://ODOO.example.com", TARGET.username, TARGET.database);
+      const second = syncConfigIdFor("https://Odoo.Example.com", TARGET.username, TARGET.database);
+      await chat.pauseUploads(config, first);
+      await chat.pauseUploads(config, second);
+      await chat.resumeUploads(config, first);
+      await chat.flushAll({ force: true });
+      await idle();
+      expect(server.uploads()).toHaveLength(0);
+      await chat.resumeUploads(config, second);
+      await chat.flushAll({ force: true });
+      await idle();
+      expect(server.uploads()).toHaveLength(1);
+      expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900]]);
+    });
+
     it("pauseUploads stops the account's running upload and resolves once it settled, its send kept in doubt", async () => {
       server.state.hold = { nth: 1, when: "after" };
       await chat.send(src, GROUP, "later", [stage("a.jpg")]);

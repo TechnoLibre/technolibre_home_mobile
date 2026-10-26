@@ -260,8 +260,11 @@ export class ChatOutbox {
   private transfers = new Map<string, string>();
   /** Upload ops told to stop before their transfer began: it never starts. */
   private stopped = new Set<string>();
-  /** Config ids whose lane starts no upload (pauseUploads to resumeUploads). */
-  private paused = new Set<string>();
+  /**
+   * Config ids whose lane starts no upload, with the number of pauseUploads
+   * not yet resumed: two renames that share an id each keep it paused.
+   */
+  private paused = new Map<string, number>();
   /** Bytes sent so far, by transfer id. */
   private progress = new Map<string, { localUuid: string; done: number; total: number }>();
   /** Subscribes to the transport's progress events; replaced by setProgressSource. */
@@ -1323,23 +1326,30 @@ export class ChatOutbox {
 
   /**
    * Pauses the lanes of these config ids: no upload starts under them
-   * until resumeUploads, whoever pumps. Their running uploads stop; the
+   * until as many resumeUploads named them, whoever pumps. Their running uploads stop; the
    * call resolves once the lanes settled, which waits for no other
    * upload. A stopped upload ends failed, its send kept in doubt
    * (uploadSentAt), so its retry looks for what that send made. The ops
    * stay in the outbox.
    */
   async pauseUploads(configIds: string[]): Promise<void> {
-    for (const id of configIds) this.paused.add(id);
+    for (const id of configIds) this.paused.set(id, (this.paused.get(id) ?? 0) + 1);
     for (const id of configIds) {
       this.stopUploads((await this.db.getOutboxOpsForConfig(id)).filter((op) => op.noteId === CHAT_NOTE));
     }
     for (const id of configIds) await this.whenIdle(id);
   }
 
-  /** Lets the lanes of these config ids start uploads again; the next flush starts them. */
+  /**
+   * Ends one pauseUploads of these config ids: a lane no other pause holds
+   * starts uploads again, at the next flush.
+   */
   resumeUploads(configIds: string[]): void {
-    for (const id of configIds) this.paused.delete(id);
+    for (const id of configIds) {
+      const left = (this.paused.get(id) ?? 0) - 1;
+      if (left > 0) this.paused.set(id, left);
+      else this.paused.delete(id);
+    }
   }
 
   /** Removes every chat row of the account from the outbox, posts and reads alike; its uploads stop. */

@@ -82,12 +82,6 @@ export interface ComposerAttachDeps {
     send: (extra: OutgoingFile[]) => Promise<boolean | void>;
 }
 
-/**
- * The limit a pick is held to when the server's cannot be read: Odoo's
- * default. The outbox checks the real one again before uploading.
- */
-const FALLBACK_LIMIT = 128 * 1024 * 1024;
-
 /** Countdown refresh while recording, ms. */
 const TICK_MS = 250;
 
@@ -196,8 +190,9 @@ export class ComposerAttach {
      * the draft without a chip. Staging uses the limit known at the tap
      * (none while it is unknown) and never waits for the server's: read
      * meanwhile, a lower one then takes off, with the same notice, the
-     * chips of this pick it rules out; a read that fails holds them to
-     * FALLBACK_LIMIT.
+     * chips of this pick it rules out. A limit that cannot be read keeps
+     * the chips: the outbox checks the real one before uploading and
+     * refuses a file over it with its notice.
      */
     async pick(input: HTMLInputElement, kind: PickKind): Promise<void> {
         if (!this.state.ready) return;
@@ -237,8 +232,8 @@ export class ComposerAttach {
             this.state.staging--;
         }
         await limitRead;
-        const limit = this.state.limit ?? FALLBACK_LIMIT;
-        if (limit >= maxUploadSize) return;
+        const limit = this.state.limit;
+        if (limit === null || limit >= maxUploadSize) return;
         for (const chip of this.state.chips) {
             if (!mine.has(chip.file.localUuid) || chip.file.size + UPLOAD_SLACK_BYTES <= limit) continue;
             this.notice(t("chat.file_too_big", { name: chip.file.name, limit: formatBytes(limit, lang) }));
