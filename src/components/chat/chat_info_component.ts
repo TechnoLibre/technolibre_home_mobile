@@ -4,6 +4,7 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { HeadingComponent } from "../heading/heading_component";
 import { Events } from "../../constants/events";
 import { getCurrentLocale, t } from "../../i18n";
+import { formatBytes } from "../../utils/formatBytes";
 import { displayNameOf } from "../../services/chat/chatNames";
 import { MUTE_CHOICES, muteText } from "../../services/chat/chatMute";
 import { CHAT_JOIN } from "../../services/chat/chatOutbox";
@@ -60,6 +61,8 @@ interface InfoState {
     create: CreateState;
     /** The create can still be given up: blocked, refused, or waiting and not on the wire. */
     canCancelCreate: boolean;
+    /** The conversation's files on the phone, as the user reads the size; "" until read. */
+    spaceText: string;
     busy: boolean;
     error: string;
 }
@@ -159,6 +162,11 @@ export class ChatInfoComponent extends EnhancedComponent {
           </div>
         </section>
 
+        <section t-if="state.spaceText" class="chat-info__section">
+          <p class="chat-info__text" t-esc="t('chat.info_space', {size: state.spaceText})"/>
+          <button class="chat-info__btn" t-att-disabled="state.busy" t-on-click="onClearSpace" t-esc="t('chat.info_clear_space')"/>
+        </section>
+
         <section t-if="state.canLeave or state.canHide" class="chat-info__section">
           <button t-if="state.canLeave" class="chat-info__btn chat-info__btn--danger" t-att-disabled="state.busy"
                   t-on-click="onLeave" t-esc="t('chat.info_leave')"/>
@@ -219,6 +227,7 @@ export class ChatInfoComponent extends EnhancedComponent {
             globalMuteLabel: "",
             create: "",
             canCancelCreate: false,
+            spaceText: "",
             busy: false,
             error: "",
         });
@@ -268,6 +277,33 @@ export class ChatInfoComponent extends EnhancedComponent {
         } catch (e) {
             this.fail(e);
         }
+        await this.loadSpace();
+    }
+
+    /** Reads the conversation's files on the phone; a failed read hides the line and nothing else. */
+    private async loadSpace(): Promise<void> {
+        if (!this.state.found) return;
+        try {
+            const bytes = await this.chatService.attachments.space(this.configId, this.channelId);
+            if (!this.destroyed) this.state.spaceText = formatBytes(bytes, getCurrentLocale());
+        } catch (e) {
+            console.warn("chat info: space unreadable", e);
+            if (!this.destroyed) this.state.spaceText = "";
+        }
+    }
+
+    /** After the user confirms, removes this conversation's downloaded files; unsent files stay. */
+    async onClearSpace(): Promise<void> {
+        if (!window.confirm(t("chat.info_clear_space_confirm"))) return;
+        this.state.busy = true;
+        try {
+            await this.chatService.attachments.clear({ configId: this.configId, channelId: this.channelId });
+        } catch (e) {
+            this.fail(e);
+        } finally {
+            this.state.busy = false;
+        }
+        await this.loadSpace();
     }
 
     private async build(): Promise<void> {

@@ -526,25 +526,26 @@ export class ApplicationsComponent extends EnhancedComponent {
         });
     }
 
-    /** Chat posts of the application still in the outbox; 0 when it cannot be told. */
-    private async unsentChatPosts(appID: ApplicationID): Promise<number> {
+    /** Chat posts and files of the application still in the outbox; 0 each when it cannot be told. */
+    private async unsentChat(appID: ApplicationID): Promise<{ posts: number; files: number }> {
         try {
             const app = await this.appService.getMatch(appID);
-            if (!app.database) return 0;
-            return await this.syncService.chat.queue.pendingPostCount(
-                syncConfigIdFor(app.url, app.username, app.database)
-            );
+            if (!app.database) return { posts: 0, files: 0 };
+            const configId = syncConfigIdFor(app.url, app.username, app.database);
+            const queue = this.syncService.chat.queue;
+            return { posts: await queue.pendingPostCount(configId), files: await queue.pendingUploadCount(configId) };
         } catch {
-            return 0;
+            return { posts: 0, files: 0 };
         }
     }
 
     async deleteApplication(appID: ApplicationID) {
-        // The application's chat goes with it: posts still waiting are announced
-        const unsent = await this.unsentChatPosts(appID);
+        // The application's chat goes with it: posts and files still waiting are announced
+        const unsent = await this.unsentChat(appID);
         const deleteConfirmed = confirm(
             this.t("dialog.confirm_delete_app", { url: appID.url, username: appID.username })
-            + (unsent > 0 ? "\n\n" + this.t("dialog.confirm_delete_app_chat", { count: unsent }) : "")
+            + (unsent.posts > 0 ? "\n\n" + this.t("dialog.confirm_delete_app_chat", { count: unsent.posts }) : "")
+            + (unsent.files > 0 ? "\n\n" + this.t("dialog.confirm_delete_app_chat_files", { count: unsent.files }) : "")
         );
 
         if (!deleteConfirmed) {

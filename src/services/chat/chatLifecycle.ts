@@ -8,7 +8,8 @@ import type { ChatService } from "./chatService";
 /**
  * Ties the chat's realtime to the app state and to the application list:
  * the buses run while the app is in the foreground, are stopped when it
- * goes to the background, and the bus of an application that is added,
+ * goes to the background (coming to the foreground, at the launch too, also
+ * lets the attachment cache run its due purge), and the bus of an application that is added,
  * edited or deleted stops and starts again on its own, the others left
  * running. Realtime is native only; off a
  * native platform start() does nothing, while a deleted application's chat
@@ -47,8 +48,10 @@ export class ChatLifecycle {
 
   private follow(isActive: boolean): void {
     this.active = isActive;
-    if (isActive) this.startRealtime();
-    else this.chat.stopRealtime();
+    if (isActive) {
+      this.startRealtime();
+      this.chat.attachments?.maybePurge().catch((e) => console.warn("[chat] cache purge failed:", e));
+    } else this.chat.stopRealtime();
   }
 
   /**

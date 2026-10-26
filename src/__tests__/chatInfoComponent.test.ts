@@ -396,3 +396,38 @@ describe("ChatInfoComponent", () => {
         expect(c.state.found).toBe(false);
     });
 });
+
+describe("ChatInfoComponent attachment space", () => {
+    function withCache(bytes: number) {
+        const chat: any = fakeChat();
+        chat.attachments = { space: vi.fn(async () => bytes), clear: vi.fn().mockResolvedValue(undefined) };
+        return chat;
+    }
+
+    it("shows the space of this conversation, asked with its account", async () => {
+        const chat = withCache(5 * 1024 * 1024);
+        const c = await opened(chat);
+        expect(chat.attachments.space).toHaveBeenCalledWith("a", 5);
+        expect(c.state.spaceText).toBe("5\u00a0MB");
+    });
+
+    it("clearing asks, says unsent files stay, then clears this conversation only", async () => {
+        const chat = withCache(1024);
+        const c = await opened(chat);
+        const ask = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+        await c.onClearSpace();
+        expect(chat.attachments.clear).not.toHaveBeenCalled();
+        await c.onClearSpace();
+        expect(ask.mock.calls[0][0]).toMatch(/not sent/);
+        expect(chat.attachments.clear).toHaveBeenCalledWith({ configId: "a", channelId: 5 });
+    });
+
+    it("a failing space read leaves the screen usable", async () => {
+        const chat = withCache(0);
+        chat.attachments.space = vi.fn().mockRejectedValue(new Error("db"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const c = await opened(chat);
+        expect(c.state.found).toBe(true);
+        expect(c.state.error).toBe("");
+    });
+});

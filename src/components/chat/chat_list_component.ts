@@ -59,6 +59,8 @@ interface ChatListState {
     canCreate: boolean;
     /** Text of the last failed dismissal; "" when none. */
     error: string;
+    /** The chat's files near the cache limit; read at each build, never at a render. */
+    cacheWarn: boolean;
 }
 
 /** Epoch ms of an Odoo "YYYY-MM-DD HH:MM:SS" UTC string; NaN when unreadable. */
@@ -150,6 +152,8 @@ export class ChatListComponent extends EnhancedComponent {
         </select>
         <input class="chat-list__search" type="search" t-att-placeholder="t('chat.search_placeholder')"
                t-att-value="state.query" t-on-input="onQueryInput"/>
+        <button t-if="state.cacheWarn" class="chat-list__cache-warning" role="alert" t-on-click="onCacheWarning"
+                t-esc="'⚠️ ' + t('chat.list_cache_warning')"/>
         <p t-if="state.refreshing" class="chat-list__refreshing" t-esc="t('chat.loading')"/>
         <p t-if="state.error" class="chat-list__failed" role="alert" t-esc="state.error"/>
         <ul t-if="state.notices.length" class="chat-list__notices" role="alert">
@@ -212,6 +216,7 @@ export class ChatListComponent extends EnhancedComponent {
             refreshing: false,
             canCreate: true,
             error: "",
+            cacheWarn: false,
         });
         onMounted(async () => {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
@@ -323,7 +328,9 @@ export class ChatListComponent extends EnhancedComponent {
         const ordered = channels.map((c) => byKey.get(c.configId + ":" + c.channelId)!);
         // A notice waits for the user's eyes: the filter of the rows does not hide it
         const notices = sources.length === 0 ? [] : await this.chatService.notices(sources.map((s) => s.configId));
+        const cacheWarn = await this.cacheWarning();
         if (gen !== this._gen) return;
+        this.state.cacheWarn = cacheWarn;
         this.state.filter = kept;
         this.state.mode = serverChoiceMode(sources.length);
         this.state.sources = withUnread;
@@ -331,6 +338,16 @@ export class ChatListComponent extends EnhancedComponent {
         this.state.rows = ordered;
         this.state.notices = notices.map((n) =>
             this.noticeOf(n, byKey.get(n.configId + ":" + n.channelId)?.title ?? "", labelOf.get(n.configId) ?? ""));
+    }
+
+    /** Whether the chat's files near the cache limit; a failed read counts as no warning. */
+    private async cacheWarning(): Promise<boolean> {
+        try {
+            return await this.chatService.attachments.warning();
+        } catch (e) {
+            console.warn("chat list: cache warning unreadable", e);
+            return false;
+        }
     }
 
     /**
@@ -455,6 +472,11 @@ export class ChatListComponent extends EnhancedComponent {
             this.state.error = t("chat.action_error");
         }
         await this.loadCache();
+    }
+
+    /** Opens Options › Chat, where the files are cleared and the limit is set. */
+    onCacheWarning(): void {
+        this.navigate("/options#chat");
     }
 
     onNew(): void {

@@ -344,3 +344,32 @@ describe("HomeComponent chat badge", () => {
         expect(h.state.chatUnread).toBe(9);
     });
 });
+
+describe("ChatListComponent cache warning", () => {
+    it("is read at each build, not at each render, and opens the options", async () => {
+        const chat: any = fakeChat(["a"], [chan("a", 1)]);
+        chat.attachments = { warning: vi.fn().mockResolvedValue(true) };
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.state.cacheWarn).toBe(true);
+        expect(chat.attachments.warning).toHaveBeenCalledTimes(1);
+        c.visibleRows();
+        c.visibleRows();
+        expect(chat.attachments.warning).toHaveBeenCalledTimes(1);
+        c.navigate = vi.fn();
+        c.onCacheWarning();
+        expect(c.navigate).toHaveBeenCalledWith("/options#chat");
+        chat.attachments.warning.mockResolvedValue(false);
+        await c.loadCache();
+        expect(c.state.cacheWarn).toBe(false);
+    });
+
+    it("a failing read hides the warning", async () => {
+        const chat: any = fakeChat(["a"], [chan("a", 1)]);
+        chat.attachments = { warning: vi.fn().mockRejectedValue(new Error("db")) };
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.state.cacheWarn).toBe(false);
+    });
+});

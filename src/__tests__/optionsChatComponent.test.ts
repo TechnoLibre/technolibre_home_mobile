@@ -22,7 +22,7 @@ function make() {
     return { c, store };
 }
 
-afterEach(() => { delete (globalThis as any).localStorage; });
+afterEach(() => { delete (globalThis as any).localStorage; vi.unstubAllGlobals(); });
 
 describe("OptionsChatComponent", () => {
     it("starts with both options on", () => {
@@ -114,5 +114,72 @@ describe("OptionsChatComponent global mute", () => {
         await c.onMute(15);
         expect(c.state.error).not.toBe("");
         expect(c.state.busy).toBe(false);
+    });
+});
+
+describe("OptionsChatComponent attachment cache", () => {
+    function makeCache(bytes = 0, warning = false) {
+        const store = stubStorage();
+        const c = new (OptionsChatComponent as any)();
+        const attachments = {
+            space: vi.fn(async () => bytes),
+            warning: vi.fn(async () => warning),
+            clear: vi.fn().mockResolvedValue(undefined),
+        };
+        Object.defineProperty(c, "chatService", { value: { attachments } });
+        c.env = { eventBus: new EventBus() };
+        c.setup();
+        return { c, store, attachments };
+    }
+
+    it("defaults: purge off, 2048 MB, no compression question", () => {
+        const { c } = makeCache();
+        expect(c.state.settings).toMatchObject({ cachePurge: false, cacheLimitMb: 2048, askCompress: false });
+    });
+
+    it("shows the total space and the 80 % warning", async () => {
+        const { c, attachments } = makeCache(3 * 1024 * 1024, true);
+        await c.loadCache();
+        expect(attachments.space).toHaveBeenCalledWith();
+        expect(c.state.spaceText).toBe("3\u00a0MB");
+        expect(c.state.cacheWarn).toBe(true);
+    });
+
+    it("the purge switch and the compression question persist", () => {
+        const { c, store } = makeCache();
+        c.onToggle("cachePurge", { target: { checked: true } });
+        c.onToggle("askCompress", { target: { checked: true } });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY])).toMatchObject({ cachePurge: true, askCompress: true });
+        expect(c.state.settings.cachePurge).toBe(true);
+    });
+
+    it("a valid limit is saved on change and the warning is read again", async () => {
+        const { c, store, attachments } = makeCache();
+        await c.onLimitChange({ target: { value: "512" } });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY]).cacheLimitMb).toBe(512);
+        expect(c.state.settings.cacheLimitMb).toBe(512);
+        expect(attachments.warning).toHaveBeenCalled();
+    });
+
+    it("a limit of 0, negative or not a number is refused and the input goes back", async () => {
+        const { c, store } = makeCache();
+        await c.onLimitChange({ target: { value: "512" } });
+        for (const bad of ["0", "-5", "abc", ""]) {
+            const target = { value: bad };
+            await c.onLimitChange({ target });
+            expect(target.value).toBe("512");
+            expect(JSON.parse(store[CHAT_SETTINGS_KEY]).cacheLimitMb).toBe(512);
+        }
+    });
+
+    it("Vider tout asks, says unsent files stay, then clears every account", async () => {
+        const { c, attachments } = makeCache(1024);
+        const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+        await c.onClearAll();
+        expect(attachments.clear).not.toHaveBeenCalled();
+        await c.onClearAll();
+        expect(confirm.mock.calls[0][0]).toMatch(/not sent/);
+        expect(attachments.clear).toHaveBeenCalledWith({});
+        confirm.mockRestore();
     });
 });

@@ -153,6 +153,19 @@
 	font-size: 0.82rem;
 }
 
+.chat-list__cache-warning {
+	display: block;
+	width: 100%;
+	margin: 0.3rem 0;
+	padding: 0.4rem 0.6rem;
+	border: 1px solid #c0392b;
+	border-radius: 0.4rem;
+	background: transparent;
+	color: #c0392b;
+	font-size: 0.82rem;
+	text-align: left;
+}
+
 .chat-list__dismiss {
 	border: 1px solid #c0392b;
 	border-radius: 0.4rem;

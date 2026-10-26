@@ -3,7 +3,8 @@ import { onMounted, onWillUnmount, useState, xml } from "@odoo/owl";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { useFeatureSection } from "../../../utils/featureSection";
 import { Events } from "../../../constants/events";
-import { t } from "../../../i18n";
+import { getCurrentLocale, t } from "../../../i18n";
+import { formatBytes } from "../../../utils/formatBytes";
 import { MUTE_CHOICES, muteText } from "../../../services/chat/chatMute";
 import { serverChoiceMode, type ChatSource, type ChoiceMode } from "../../../services/chat/chatSources";
 import { chatSettings, setChatSettings, ChatSettings } from "../../../services/chat/chatSettings";
@@ -34,6 +35,26 @@ export class OptionsChatComponent extends EnhancedComponent {
           <t t-esc="t('chat.send_typing')"/>
         </label>
         <p class="options-sync__info" t-esc="t('chat.send_typing_hint')" />
+        <label class="options-sync__checkbox-label">
+          <input type="checkbox" t-att-checked="state.settings.askCompress" t-on-change="(ev) => this.onToggle('askCompress', ev)" />
+          <t t-esc="t('chat.ask_compress')"/>
+        </label>
+        <p class="options-sync__info" t-esc="t('chat.ask_compress_hint')" />
+        <h4 t-esc="t('chat.attachment_files')"/>
+        <p class="options-sync__info" t-esc="t('chat.cache_space', {size: state.spaceText})" />
+        <button class="chat-new__chip" t-att-disabled="state.busy" t-on-click="onClearAll" t-esc="t('chat.cache_clear_all')"/>
+        <label class="options-sync__checkbox-label">
+          <input type="checkbox" t-att-checked="state.settings.cachePurge" t-on-change="(ev) => this.onToggle('cachePurge', ev)" />
+          <t t-esc="t('chat.cache_purge')"/>
+        </label>
+        <p class="options-sync__info" t-esc="t('chat.cache_purge_hint')" />
+        <label class="options-sync__checkbox-label">
+          <t t-esc="t('chat.cache_limit')"/>
+          <input type="number" min="1" step="1" inputmode="numeric" class="options-chat__limit"
+                 t-att-value="state.settings.cacheLimitMb" t-on-change="onLimitChange" />
+        </label>
+        <p t-if="state.cacheWarn" class="options-sync__info" role="alert"
+           t-esc="t('chat.cache_warning', {size: state.spaceText, limit: limitText()})" />
         <h4 t-esc="t('chat.global_mute')"/>
         <p t-if="state.mode === 'unavailable'" class="options-sync__info" t-esc="t('chat.unavailable')"/>
         <t t-else="">
@@ -67,6 +88,7 @@ export class OptionsChatComponent extends EnhancedComponent {
     private _onChanged = (ev: Event) => {
         const d = (ev as CustomEvent).detail ?? {};
         if (d.configId === this.state.serverId) void this.refreshMute();
+        void this.loadCache();
     };
 
     setup() {
@@ -80,11 +102,13 @@ export class OptionsChatComponent extends EnhancedComponent {
             muteLabel: "",
             busy: false,
             error: "",
+            spaceText: formatBytes(0, getCurrentLocale()),
+            cacheWarn: false,
         });
         useFeatureSection("chat", () => { this.state.expanded = true; });
         onMounted(async () => {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
-            await this.loadSources();
+            await Promise.all([this.loadSources(), this.loadCache()]);
         });
         onWillUnmount(() => {
             this.destroyed = true;
@@ -160,6 +184,54 @@ export class OptionsChatComponent extends EnhancedComponent {
     private fail(e: unknown): void {
         console.warn("chat options:", e);
         this.state.error = t("chat.action_error");
+    }
+
+    /** Reads the chat's space on the phone and whether it nears the limit. */
+    async loadCache(): Promise<void> {
+        try {
+            const cache = this.chatService.attachments;
+            const [bytes, warn] = await Promise.all([cache.space(), cache.warning()]);
+            if (this.destroyed) return;
+            this.state.spaceText = formatBytes(bytes, getCurrentLocale());
+            this.state.cacheWarn = warn;
+        } catch (e) {
+            console.warn("chat options: cache space unreadable", e);
+        }
+    }
+
+    /** The limit as the user reads it, in the language's unit. */
+    limitText(): string {
+        return formatBytes(this.state.settings.cacheLimitMb * 1024 * 1024, getCurrentLocale());
+    }
+
+    /**
+     * Saves the limit typed in MB when it is a number above 0; anything
+     * else is refused and the input goes back to the limit in force.
+     */
+    async onLimitChange(ev: { target: any }): Promise<void> {
+        const raw = String(ev.target.value ?? "").trim();
+        const mb = raw === "" ? NaN : Number(raw);
+        if (!Number.isFinite(mb) || mb <= 0) {
+            ev.target.value = String(this.state.settings.cacheLimitMb);
+            return;
+        }
+        setChatSettings({ ...chatSettings(), cacheLimitMb: mb });
+        this.state.settings = { ...chatSettings() };
+        await this.loadCache();
+    }
+
+    /** After the user confirms, removes the downloaded files of every conversation; unsent files stay. */
+    async onClearAll(): Promise<void> {
+        if (!window.confirm(t("chat.cache_clear_all_confirm"))) return;
+        this.state.busy = true;
+        try {
+            await this.chatService.attachments.clear({});
+        } catch (e) {
+            this.fail(e);
+        } finally {
+            this.state.busy = false;
+        }
+        await this.loadCache();
     }
 
     /** Stores one setting, then shows what storage holds. */

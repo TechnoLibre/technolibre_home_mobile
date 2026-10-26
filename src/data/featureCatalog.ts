@@ -4558,6 +4558,58 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.attachment-cache",
+                label: { en: "Attachment cache", fr: "Cache des pièces jointes" },
+                description: {
+                    en: "Space used by the chat files, clearing, an optional purge with a limit in MB and a warning near it, and the question asked before compressing photos.",
+                    fr: "Espace pris par les fichiers du clavardage, vidage, purge facultative avec une limite en Mo et un avertissement à l'approche, et la question posée avant de compresser les photos.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Options › Chat shows every chat byte of the phone (files waiting to be sent "
+                        + "included), « Clear all » removes the downloaded files of every conversation, and "
+                        + "the conversation's information screen does the same for one. Files not sent yet "
+                        + "are kept. The purge is off until the user turns it on; its limit is typed in MB "
+                        + "(2048 by default; 0, negative or not a number is refused). On, it runs when the "
+                        + "app comes to the foreground and at most once a day, removing the originals "
+                        + "opened least recently, then the previews, until the files are back under the "
+                        + "limit. At 80 % of the limit the options and the conversation list warn, the list "
+                        + "reading it once per rebuild, not per render. Deleting an application erases its "
+                        + "chat and the confirmation counts the messages and files not sent yet.",
+                    fr: "Options › Chat montre chaque octet du clavardage sur le téléphone (fichiers en "
+                        + "attente d'envoi compris), « Vider tout » retire les fichiers téléchargés de "
+                        + "toutes les conversations, et l'écran d'information d'une conversation fait de "
+                        + "même pour elle seule. Les fichiers pas encore envoyés sont gardés. La purge est "
+                        + "éteinte jusqu'à ce que l'utilisateur l'allume ; sa limite se tape en Mo (2048 "
+                        + "par défaut ; 0, négatif ou pas un nombre est refusé). Allumée, elle passe quand "
+                        + "l'application revient au premier plan et au plus une fois par jour, retirant les "
+                        + "originaux ouverts le moins récemment, puis les aperçus, jusqu'à repasser sous la "
+                        + "limite. À 80 % de la limite, les options et la liste des conversations avertissent, "
+                        + "la liste le lisant à chaque reconstruction, non à chaque rendu. Supprimer une "
+                        + "application efface son clavardage et la confirmation compte les messages et "
+                        + "fichiers pas encore envoyés.",
+                },
+                demo: { kind: "options", sectionId: "chat" },
+                files: [
+                    "src/components/options/chat/options_chat_component.ts",
+                    "src/components/chat/chat_info_component.ts",
+                    "src/components/chat/chat_list_component.ts",
+                    "src/components/chat/chat_list_component.scss",
+                    "src/components/applications/applications_component.ts",
+                    "src/services/chat/chatLifecycle.ts",
+                    "src/services/chat/chatAttachmentCache.ts",
+                    "src/services/chat/chatSettings.ts",
+                ],
+                tests: [
+                    "src/__tests__/optionsChatComponent.test.ts",
+                    "src/__tests__/chatInfoComponent.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                    "src/__tests__/chatLifecycle.test.ts",
+                    "src/__tests__/applicationsDelete.test.ts",
+                    "src/__tests__/chatAttachmentCache.test.ts",
+                ],
+            },
+            {
                 id: "chat.outbox",
                 label: { en: "Chat outbox", fr: "Boîte d'envoi du clavardage" },
                 description: {
