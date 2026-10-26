@@ -33,12 +33,16 @@ export interface ChatRow {
     typeIcon: "👤" | "👥" | "#";
     /** The server refused to create ("create") or join ("join") it, or the user left it with texts unsent ("left"); "" otherwise. */
     failed: "" | "create" | "join" | "left";
+    /** Its create is blocked: a lost answer left several server conversations that may be it. */
+    ambiguous: boolean;
 }
 
 /** An action the outbox gave up on, as the list shows it until dismissed. */
 interface NoticeRow {
     id: string;
     configId: string;
+    /** The server of the notice, shown as the rows show theirs. */
+    serverLabel: string;
     text: string;
 }
 
@@ -51,6 +55,10 @@ interface ChatListState {
     notices: NoticeRow[];
     query: string;
     refreshing: boolean;
+    /** At least one server lets the user start a conversation (an internal user, or not read yet). */
+    canCreate: boolean;
+    /** Text of the last failed dismissal; "" when none. */
+    error: string;
 }
 
 /** Epoch ms of an Odoo "YYYY-MM-DD HH:MM:SS" UTC string; NaN when unreadable. */
@@ -82,7 +90,10 @@ export function initialsOf(title: string): string {
 /**
  * The mixed conversation list of every chat source. It renders from the
  * cache first (sources decided offline), then reads each server in the
- * background and rebuilds on CHAT_CHANGED.
+ * background and rebuilds on CHAT_CHANGED. The notices of every server
+ * show whatever the filter, each with its server. New conversations are
+ * offered as Odoo offers them, to an internal user: the button hides once
+ * every server read says the user is not one.
  */
 export class ChatListComponent extends EnhancedComponent {
     state!: ChatListState;
@@ -92,7 +103,7 @@ export class ChatListComponent extends EnhancedComponent {
     static template = xml`
     <div id="chat-list">
       <HeadingComponent title="t('label.chat')"/>
-      <button t-if="state.mode !== 'unavailable'" class="chat-list__new" t-att-aria-label="t('chat.new')"
+      <button t-if="state.mode !== 'unavailable' and state.canCreate" class="chat-list__new" t-att-aria-label="t('chat.new')"
               t-on-click="onNew">＋</button>
       <div t-if="state.mode === 'unavailable'" class="chat-list__unavailable">
         <p t-esc="t('chat.unavailable')"/>
@@ -123,8 +134,10 @@ export class ChatListComponent extends EnhancedComponent {
         <input class="chat-list__search" type="search" t-att-placeholder="t('chat.search_placeholder')"
                t-att-value="state.query" t-on-input="onQueryInput"/>
         <p t-if="state.refreshing" class="chat-list__refreshing" t-esc="t('chat.loading')"/>
+        <p t-if="state.error" class="chat-list__failed" role="alert" t-esc="state.error"/>
         <ul t-if="state.notices.length" class="chat-list__notices" role="alert">
           <li t-foreach="state.notices" t-as="n" t-key="n.id" class="chat-list__notice">
+            <span t-if="state.mode !== 'none'" class="chat-list__tag" t-esc="n.serverLabel"/>
             <span class="chat-list__failed" t-esc="'⚠️ ' + n.text"/>
             <button class="chat-list__dismiss" t-on-click="() => this.onDismissNotice(n)" t-esc="t('chat.dismiss')"/>
           </li>
@@ -143,6 +156,8 @@ export class ChatListComponent extends EnhancedComponent {
                 <span t-if="state.mode !== 'none'" class="chat-list__tag" t-esc="row.serverLabel"/>
                 <span t-if="row.failed" class="chat-list__failed"
                       t-esc="'⚠️ ' + failedText(row)"/>
+                <span t-if="row.ambiguous" class="chat-list__failed"
+                      t-esc="'⚠️ ' + t('chat.create_ambiguous_short')"/>
                 <span class="chat-list__preview" t-esc="row.preview"/>
                 <span t-if="row.unread > 0" class="chat-list__pill" t-esc="row.unread"/>
                 <button t-if="row.failed" class="chat-list__dismiss" t-on-click.stop="() => this.onDismiss(row)"
@@ -178,6 +193,8 @@ export class ChatListComponent extends EnhancedComponent {
             notices: [],
             query: "",
             refreshing: false,
+            canCreate: true,
+            error: "",
         });
         onMounted(async () => {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
@@ -237,12 +254,16 @@ export class ChatListComponent extends EnhancedComponent {
         const known = new Set(sources.map((s) => s.configId));
         const kept = filter !== null && !known.has(filter) ? null : filter;
         const withUnread: ListSource[] = [];
+        let canCreate = false;
         for (const s of sources) {
             withUnread.push({
                 configId: s.configId,
                 label: s.label,
                 unread: await this.chatService.unreadTotal([s.configId]),
             });
+            const st = await this.chatService.repo.sourceState(s.configId);
+            // Not read yet (no load): offered, the load decides
+            if (st.isInternalUser || !st.loadedAt) canCreate = true;
         }
         const channels =
             sources.length === 0 ? [] : await this.chatService.conversations(kept === null ? undefined : [kept]);
@@ -258,38 +279,48 @@ export class ChatListComponent extends EnhancedComponent {
                 this.chatService.repo.sourceState(id),
             ]);
             const byPartner = new Map(partners.map((p) => [p.partnerId, p]));
+            // Outbox ops matter only to conversations still being created
+            const ops = mine.some((c) => c.createOpId) ? await this.databaseService.getOutboxOpsForConfig(id) : [];
+            const blocked = new Set(ops
+                .filter((o) => o.status === "blocked" && o.params?.blockedReason === "ambiguous")
+                .map((o) => o.id));
             for (const c of mine) {
                 const queued = pendings.get(c.channelId);
                 const last = queued?.[queued.length - 1] ?? lasts.get(c.channelId) ?? null;
                 const title = displayNameOf(c, membersOf.get(c.channelId) ?? [], byPartner, state.selfPartnerId, getCurrentLocale());
-                byKey.set(c.configId + ":" + c.channelId, this.rowOf(c, labelOf.get(id) ?? "", title, last));
+                const row = this.rowOf(c, labelOf.get(id) ?? "", title, last);
+                row.ambiguous = !!c.createOpId && blocked.has(c.createOpId);
+                byKey.set(c.configId + ":" + c.channelId, row);
             }
         }
         // Rows keep the order the service gave
         const ordered = channels.map((c) => byKey.get(c.configId + ":" + c.channelId)!);
-        const notices = sources.length === 0
-            ? []
-            : await this.chatService.notices(kept === null ? sources.map((s) => s.configId) : [kept]);
+        // A notice waits for the user's eyes: the filter of the rows does not hide it
+        const notices = sources.length === 0 ? [] : await this.chatService.notices(sources.map((s) => s.configId));
         if (gen !== this._gen) return;
         this.state.filter = kept;
         this.state.mode = serverChoiceMode(sources.length);
         this.state.sources = withUnread;
+        this.state.canCreate = canCreate;
         this.state.rows = ordered;
-        this.state.notices = notices.map((n) => this.noticeOf(n, byKey.get(n.configId + ":" + n.channelId)?.title ?? ""));
+        this.state.notices = notices.map((n) =>
+            this.noticeOf(n, byKey.get(n.configId + ":" + n.channelId)?.title ?? "", labelOf.get(n.configId) ?? ""));
     }
 
     /**
      * The notice's line: the conversation's title when it is listed (else
-     * the name the notice kept), then what was not done and why.
+     * the name the notice kept), then what was not done and why; without a
+     * name, the line starts with a capital.
      */
-    private noticeOf(n: ChatNotice, title: string): NoticeRow {
+    private noticeOf(n: ChatNotice, title: string, serverLabel: string): NoticeRow {
         const name = title || n.label;
         const text = n.kind === "chat.dropped"
-            ? t("chat.notice_dropped", { count: n.count })
+            ? t(n.count === 1 ? "chat.notice_dropped_one" : "chat.notice_dropped_other", { count: n.count })
             : t(n.reason === "vanished" ? "chat.notice_vanished" : "chat.notice_refused", {
                 action: t("chat.action_" + n.kind.replace(/^chat\./, "")),
             });
-        return { id: n.id, configId: n.configId, text: name ? name + " — " + text : text };
+        const line = name ? name + " — " + text : text.charAt(0).toUpperCase() + text.slice(1);
+        return { id: n.id, configId: n.configId, serverLabel, text: line };
     }
 
     failedText(row: ChatRow): string {
@@ -310,6 +341,7 @@ export class ChatListComponent extends EnhancedComponent {
             bold: isBold(c),
             typeIcon: typeIconOf(c),
             failed: c.createFailed ? (c.channelId < 0 ? "create" : "join") : c.leftUnsent ? "left" : "",
+            ambiguous: false,
         };
     }
 
@@ -360,14 +392,23 @@ export class ChatListComponent extends EnhancedComponent {
         this.navigate("/chat/" + encodeURIComponent(row.configId) + "/" + row.channelId);
     }
 
-    /** Removes a conversation the server refused, or one left, with its unsent texts. */
+    /** Removes a conversation the server refused, or one left, with its unsent texts; a failure shows a notice. */
     async onDismiss(row: ChatRow): Promise<void> {
-        await this.chatService.discardCreate(row.configId, row.channelId);
-        await this.loadCache();
+        await this.dismissing(() => this.chatService.discardCreate(row.configId, row.channelId));
     }
 
     async onDismissNotice(n: NoticeRow): Promise<void> {
-        await this.chatService.dismissNotice(n.configId, n.id);
+        await this.dismissing(() => this.chatService.dismissNotice(n.configId, n.id));
+    }
+
+    private async dismissing(action: () => Promise<void>): Promise<void> {
+        this.state.error = "";
+        try {
+            await action();
+        } catch (e) {
+            console.warn("chat list:", e);
+            this.state.error = t("chat.action_error");
+        }
         await this.loadCache();
     }
 

@@ -179,6 +179,12 @@ describe("ChatThreadComponent", () => {
         await c.onDismiss();
         expect(chat.discardCreate).toHaveBeenCalledWith("a", -7);
         expect(nav).toEqual(["/chat"]);
+        // A dismissal that fails stays here with a notice
+        chat.discardCreate.mockRejectedValueOnce(new Error("db"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        await expect(c.onDismiss()).resolves.toBeUndefined();
+        expect(c.state.error).toBe("Could not do it. Try again.");
+        expect(nav).toEqual(["/chat"]);
         // A refused join reads as such
         const j = make(fakeChat([], [member(1)], channel({ channelId: 30, createFailed: true })), [], "30");
         await j.open();

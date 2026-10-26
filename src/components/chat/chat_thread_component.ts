@@ -605,9 +605,16 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.scrollToBottomSoon();
     }
 
-    /** Removes a conversation the server refused, or one left, with its unsent texts, and goes back to the list. */
+    /** Removes a conversation the server refused, or one left, with its unsent texts, and goes back to the list; a failure stays here with a notice. */
     async onDismiss(): Promise<void> {
-        await this.chatService.discardCreate(this.configId, this.channelId);
+        this.state.error = "";
+        try {
+            await this.chatService.discardCreate(this.configId, this.channelId);
+        } catch (e) {
+            console.warn("chat thread:", e);
+            this.state.error = t("chat.action_error");
+            return;
+        }
         this.navigate("/chat");
     }
 

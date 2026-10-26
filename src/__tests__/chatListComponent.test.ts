@@ -92,12 +92,70 @@ describe("ChatListComponent", () => {
         const c = make(chat);
         await c.loadCache();
         expect(chat.notices).toHaveBeenCalledWith(["a", "b"]);
-        expect(c.state.notices.map((n: any) => n.text)).toEqual([
-            "Team — Renaming: refused by the server.",
-            "Gone — conversation removed — 3 actions cancelled",
+        expect(c.state.notices.map((n: any) => [n.serverLabel, n.text])).toEqual([
+            ["a", "Team — Renaming: refused by the server."],
+            ["b", "Gone — conversation removed — 3 actions cancelled"],
         ]);
         await c.onDismissNotice(c.state.notices[0]);
         expect(chat.dismissNotice).toHaveBeenCalledWith("a", "op1");
+        // Filtered on one server, every server's notices still show
+        await c.onFilter("a");
+        expect(chat.notices).toHaveBeenLastCalledWith(["a", "b"]);
+        expect(c.state.notices).toHaveLength(2);
+    });
+
+    it("a dropped notice says one action or several, capitalised without a name", async () => {
+        const chat: any = fakeChat(["a"], []);
+        chat.notices = vi.fn().mockResolvedValue([
+            { id: "op1", configId: "a", kind: "chat.dropped", channelId: 9, reason: "vanished", error: "", count: 1, label: "" },
+            { id: "op2", configId: "a", kind: "chat.dropped", channelId: 8, reason: "vanished", error: "", count: 2, label: "" },
+        ]);
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.state.notices.map((n: any) => n.text)).toEqual([
+            "Conversation removed — 1 action cancelled",
+            "Conversation removed — 2 actions cancelled",
+        ]);
+    });
+
+    it("a failed dismissal shows a notice and does not reject", async () => {
+        const chat: any = fakeChat(["a"], [chan("a", -7, { createFailed: true })]);
+        chat.discardCreate = vi.fn().mockRejectedValue(new Error("db"));
+        chat.dismissNotice = vi.fn().mockRejectedValue(new Error("db"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const c = make(chat);
+        await c.loadCache();
+        await expect(c.onDismiss(c.state.rows[0])).resolves.toBeUndefined();
+        expect(c.state.error).toBe("Could not do it. Try again.");
+        c.state.error = "";
+        await expect(c.onDismissNotice({ id: "x", configId: "a", serverLabel: "a", text: "" })).resolves.toBeUndefined();
+        expect(c.state.error).toBe("Could not do it. Try again.");
+    });
+
+    it("the new conversation button is offered to an internal user, or before the first read", async () => {
+        const cases: [any, boolean][] = [
+            [{ selfPartnerId: 3, loadedAt: null, isInternalUser: false }, true],
+            [{ selfPartnerId: 3, loadedAt: "2026-10-25T10:00:00Z", isInternalUser: true }, true],
+            [{ selfPartnerId: 3, loadedAt: "2026-10-25T10:00:00Z", isInternalUser: false }, false],
+        ];
+        for (const [st, shown] of cases) {
+            const chat: any = fakeChat(["a"], []);
+            chat.repo.sourceState = vi.fn().mockResolvedValue(st);
+            const c = make(chat);
+            await c.loadCache();
+            expect(c.state.canCreate, JSON.stringify(st)).toBe(shown);
+        }
+    });
+
+    it("a create a lost answer left undecided is marked in its row", async () => {
+        const chat: any = fakeChat(["a"], [chan("a", -4, { createOpId: "op1" }), chan("a", -5, { createOpId: "op2" })]);
+        const c = make(chat);
+        c.env.databaseService = { getOutboxOpsForConfig: vi.fn().mockResolvedValue([
+            { id: "op1", status: "blocked", params: { blockedReason: "ambiguous" } },
+            { id: "op2", status: "pending", params: {} },
+        ]) };
+        await c.loadCache();
+        expect(c.state.rows.map((r: any) => [r.channelId, r.ambiguous])).toEqual([[-4, true], [-5, false]]);
     });
 
     it("rows keep the service order (unread first) and flag bold", async () => {
