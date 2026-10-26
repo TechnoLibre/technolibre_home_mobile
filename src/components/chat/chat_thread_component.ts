@@ -596,6 +596,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         if (this._suggestTimer !== null) clearTimeout(this._suggestTimer);
         document.removeEventListener("selectionchange", this._onSelection);
         if (this._flashTimer !== null) clearTimeout(this._flashTimer);
+        this.cancelDeferredScroll();
         if (this._highlightTimer !== null) clearTimeout(this._highlightTimer);
         this.press.cancel();
         if (this.source) this.chatService.typing(this.source, this.channelId, false).catch(() => {});
@@ -1077,15 +1078,31 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     /** After the DOM patched with the new rows. */
     private scrollToBottomSoon(): void {
-        setTimeout(() => this.scrollToBottom(), 0);
+        this.deferScroll(() => this.scrollToBottom());
     }
 
     /** Re-anchors the scroll after rows were prepended: same distance from the bottom as before. */
     private keepPosition(distanceFromBottom: number): void {
-        setTimeout(() => {
+        this.deferScroll(() => {
             const el = this.scroller.el as HTMLElement | null;
             if (el) el.scrollTop = el.scrollHeight - distanceFromBottom;
+        });
+    }
+
+    /** The scroll queued by the last refresh; a newer one replaces it, a quote jump cancels it. */
+    private _deferredScroll: ReturnType<typeof setTimeout> | null = null;
+
+    private deferScroll(scroll: () => void): void {
+        this.cancelDeferredScroll();
+        this._deferredScroll = setTimeout(() => {
+            this._deferredScroll = null;
+            scroll();
         }, 0);
+    }
+
+    private cancelDeferredScroll(): void {
+        if (this._deferredScroll !== null) clearTimeout(this._deferredScroll);
+        this._deferredScroll = null;
     }
 
     async onScroll(): Promise<void> {
@@ -1447,11 +1464,23 @@ export class ChatThreadComponent extends EnhancedComponent {
         const key = row.quote?.key ?? null;
         if (key === null) return;
         const rendered = () => this._rows.some((r) => r.key === key);
-        while (!rendered() && !this.destroyed && (await this.cachedOlder())) {
-            this._window += THREAD_PAGE;
-            await this.refresh();
+        // Growing the window takes the lock of loadOlder: a second tap, or a scroll to the top, adds no page
+        const grow = !rendered();
+        if (grow) {
+            if (this._loadingOlder) return;
+            this._loadingOlder = true;
+        }
+        try {
+            while (!rendered() && !this.destroyed && (await this.cachedOlder())) {
+                this._window += THREAD_PAGE;
+                await this.refresh();
+            }
+        } finally {
+            if (grow) this._loadingOlder = false;
         }
         if (!rendered() || this.destroyed) return;
+        // The refreshes that grew the window queued a re-anchor: it would scroll over the jump
+        this.cancelDeferredScroll();
         this._quoted = key;
         this.scrollToQuoted();
     }

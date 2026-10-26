@@ -3736,6 +3736,22 @@ describe("ChatService", () => {
       }
     });
 
+    it("an edit works without Array.prototype.findLastIndex", async () => {
+      const original = Array.prototype.findLastIndex;
+      // @ts-expect-error older WebViews lack it
+      delete Array.prototype.findLastIndex;
+      try {
+        server.state.drop = 1;
+        await chat.editMessage(src, GROUP, sent(601), "one", NONE);
+        await chat.editMessage(src, GROUP, sent(601), "two", NONE);
+        const edits = await ops("chat.edit");
+        const first = edits.find((o) => o.params.text === "one")!;
+        expect(edits.find((o) => o.id !== first.id)).toMatchObject({ dependsOn: first.id, params: { text: "two" } });
+      } finally {
+        Array.prototype.findLastIndex = original;
+      }
+    });
+
     it("an edit from the draft ends the draft's edit once queued, before the flush", async () => {
       await chat.saveDraftText(config, GROUP, "kept new text");
       await chat.saveDraftEdit(config, GROUP, { target: sent(601), text: "edited " });
@@ -3833,6 +3849,21 @@ describe("ChatService", () => {
       await chat.flushAll({ force: true });
       expect((await chat.notices()).map((n) => [n.kind, n.reason])).toEqual([["chat.delete", "refused"]]);
       expect(await bodyOf(601)).toBe(`<p>applied${EDITED}</p>`);
+    });
+
+    it("a refused delete does not restore the base of a reaction whose op had sentAt", async () => {
+      offline();
+      await chat.react(src, GROUP, sent(602), "\u{1F44D}", true);
+      // The send may have reached the server: its answer was lost
+      const [reaction] = await ops("chat.reaction");
+      await env.db.updateOutboxOp(reaction.id, { params: { ...reaction.params, sentAt: clock.toISOString() } });
+      odoo.state.onRoute = async () => ({ __error: "odoo.exceptions.AccessError" });
+      await chat.deleteMessage(src, GROUP, sent(602));
+      online();
+      await chat.flushAll({ force: true });
+      expect((await chat.notices()).map((n) => [n.kind, n.reason])).toEqual([["chat.delete", "refused"]]);
+      // The reaction may be on the server: it stays shown as the user left it
+      expect((await chat.reactions(config, GROUP, ["m602"])).get("m602")).toHaveLength(1);
     });
 
     it("a load keeps the optimistic edit and the hidden delete", async () => {

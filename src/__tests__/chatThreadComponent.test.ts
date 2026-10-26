@@ -1724,6 +1724,47 @@ describe("ChatThreadComponent edited, deleted and quoted messages", () => {
         c.teardown();
     });
 
+    it("a quote tap that loads more history ends scrolled to the highlighted original", async () => {
+        const list = Array.from({ length: THREAD_WINDOW + 5 }, (_, i) => msg(i + 1));
+        list.push(msg(THREAD_WINDOW + 6, { parentId: 1 }));
+        const chat = fakeChat(list, undefined, channel({ historyComplete: true }));
+        chat.repo.messageOf.mockImplementation(async (_c: string, t: any) => t.messageId === 1 ? list[0] : null);
+        const c = make(chat);
+        await c.open();
+        const el = document.createElement("div");
+        Object.defineProperty(el, "scrollHeight", { value: 5000, configurable: true });
+        el.scrollTop = 300;
+        const original = document.createElement("div");
+        original.className = "chat-thread__bubble";
+        original.dataset.key = "m1";
+        (original as any).scrollIntoView = vi.fn(() => { el.scrollTop = 42; });
+        el.appendChild(original);
+        c.scroller = { el };
+        await c.onQuote(c.state.rows.at(-1));
+        expect(c.state.highlight).toBe("m1");
+        // The refreshes that loaded the page queued a re-anchor and a bottom scroll: neither may run over the jump
+        await new Promise((r) => setTimeout(r, 20));
+        expect(el.scrollTop).toBe(42);
+        c.teardown();
+    });
+
+    it("two quote taps in a row load the history once", async () => {
+        const list = Array.from({ length: THREAD_WINDOW * 3 }, (_, i) => msg(i + 1));
+        list.push(msg(THREAD_WINDOW * 3 + 1, { parentId: 1 }));
+        const chat = fakeChat(list, undefined, channel({ historyComplete: true }));
+        chat.repo.messageOf.mockImplementation(async (_c: string, t: any) => t.messageId === 1 ? list[0] : null);
+        const c = make(chat);
+        await c.open();
+        const row = c.state.rows.at(-1);
+        const once = make(chat);
+        await once.open();
+        await once.onQuote(once.state.rows.at(-1));
+        await Promise.all([c.onQuote(row), c.onQuote(row)]);
+        expect(c._window).toBe(once._window);
+        c.teardown();
+        once.teardown();
+    });
+
     it("a quote change repaints the row", async () => {
         const list = [msg(5, { body: "<p>one</p>" }), msg(20), msg(21, { parentId: 5 })];
         const c = make(fakeChat(list, undefined, channel({ oldestLoadedId: 20 })));

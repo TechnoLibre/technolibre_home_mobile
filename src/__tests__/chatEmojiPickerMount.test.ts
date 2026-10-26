@@ -32,7 +32,10 @@ describe("ChatEmojiPickerComponent mounted", () => {
 
     const tabs = (host: HTMLElement) => [...host.querySelectorAll(".chat-emoji__tab")].map((e) => e.textContent);
 
-    afterEach(() => { document.body.innerHTML = ""; });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        document.body.innerHTML = "";
+    });
 
     it("first render draws one section; the others follow; labels are in the UI language", async () => {
         const { host, app } = await mounted("fr");
@@ -104,7 +107,6 @@ describe("ChatEmojiPickerComponent mounted", () => {
         await vi.waitFor(() => expect(host.querySelector("input")!.value).toBe("typed"));
         expect(renders.mock.calls.length).toBe(before);
         parent.__owl__.app.destroy();
-        renders.mockRestore();
         const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
         const tag = source.slice(source.indexOf("<ChatEmojiPickerComponent"));
         expect(tag.slice(0, tag.indexOf("/>"))).toMatch(/onPick="onEmojiPick" onClose="onEmojiClose"/);
@@ -153,5 +155,10 @@ describe("ChatEmojiPickerComponent mounted", () => {
         window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
         expect(props.onClose).toHaveBeenCalledTimes(1);
         app.destroy();
+    });
+
+    it("leaves no spy on the prototype and no picker in the document", () => {
+        expect(vi.isMockFunction((ChatEmojiPickerComponent.prototype as any).sections)).toBe(false);
+        expect(document.querySelector(".chat-emoji")).toBeNull();
     });
 });

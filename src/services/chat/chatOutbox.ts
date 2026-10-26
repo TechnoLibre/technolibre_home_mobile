@@ -999,7 +999,8 @@ export class ChatOutbox {
       // In dependency order: the first waits for none of the others, a follow-up comes after the op it waits for
       const queued = dependencyOrder(same).filter((o) => o.status !== "running" && o.status !== "blocked");
       // With sentRuns, the newest op that may have reached the server holds its values: only those after it take the new ones
-      const held = opts.sentRuns ? queued.findLastIndex((o) => !!o.params.sentAt) : -1;
+      let held = -1;
+      if (opts.sentRuns) for (let i = queued.length - 1; i >= 0 && held < 0; i--) if (queued[i].params.sentAt) held = i;
       const waiting = queued.slice(held + 1);
       const running = same.find((o) => o.status === "running") ?? queued[held];
       const sent = waiting.some((o) => !!o.params.sentAt);
@@ -1276,7 +1277,9 @@ export class ChatOutbox {
    * reactions of the message still waiting are cancelled, and one delete
    * waits for what still runs on it (an edit, a reaction, its post). A
    * reaction cancelled with none of its key left running shows again as
-   * the server held it (base). An edit cancelled after a send that may
+   * the server held it (base), unless one of its ops may have reached the
+   * server (sentAt): base is then no longer where the server stands, and
+   * the reaction keeps its shown state. An edit cancelled after a send that may
    * have reached the server (sentAt) marks the delete editSent: its
    * baseBody may be older than the server's body. A second delete returns
    * the first. Rejects for a message not cached.
@@ -1316,6 +1319,7 @@ export class ChatOutbox {
         const key = targetKey(o);
         if (o.kind !== CHAT_REACTION || shown.has(key) || mine.some((r) => r.status === "running" && targetKey(r) === key)) continue;
         shown.add(key);
+        if (cancelled.some((r) => r.kind === CHAT_REACTION && targetKey(r) === key && r.params.sentAt)) continue;
         await this.showReaction(configId, named, o.params.content, !!o.params.base);
       }
       return op;
