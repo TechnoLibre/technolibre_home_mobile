@@ -1325,9 +1325,11 @@ export class DatabaseService {
         is_internal_user       INTEGER NOT NULL DEFAULT 0,
         file_dir               TEXT,
         module_level           TEXT,
-        starred_counter        INTEGER NOT NULL DEFAULT 0
+        starred_counter        INTEGER NOT NULL DEFAULT 0,
+        notification_type      TEXT
       )
     `);
+    await this.createChatMailboxTable();
     await this.createChatTempIdsTable();
     await this.createChatAttachmentsTable();
     await this.createChatDraftsTable();
@@ -1503,6 +1505,51 @@ export class DatabaseService {
       if (!messages.includes(col)) await this.db.execute(`ALTER TABLE chat_messages ADD COLUMN ${col} ${def}`);
     }
     await this.createChatSearchIndex();
+  }
+
+  /**
+   * The mailbox cache: one row per message the inbox, history and starred
+   * boxes show, of any model, keyed `configId#m<messageId>`; the flags say
+   * which boxes hold it and search_text is the folded record name and
+   * body. The IF NOT EXISTS makes it safe to call from the migration and
+   * from createChatTables.
+   */
+  async createChatMailboxTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_mailbox (
+        id                TEXT PRIMARY KEY NOT NULL,
+        config_id         TEXT NOT NULL,
+        message_id        INTEGER NOT NULL,
+        thread_model      TEXT NOT NULL,
+        thread_id         INTEGER NOT NULL,
+        record_name       TEXT NOT NULL DEFAULT '',
+        author_partner_id INTEGER,
+        body              TEXT NOT NULL DEFAULT '',
+        date              TEXT,
+        message_type      TEXT,
+        needaction        INTEGER NOT NULL DEFAULT 0,
+        starred           INTEGER NOT NULL DEFAULT 0,
+        history           INTEGER NOT NULL DEFAULT 0,
+        search_text       TEXT NOT NULL DEFAULT ''
+      )
+    `);
+    await this.db.execute("CREATE INDEX IF NOT EXISTS idx_chat_mailbox_needaction ON chat_mailbox(config_id, needaction)");
+    await this.db.execute("CREATE INDEX IF NOT EXISTS idx_chat_mailbox_starred ON chat_mailbox(config_id, starred)");
+  }
+
+  /**
+   * Creates the mailbox table and adds chat_sources.notification_type to
+   * a table created before it. The column is added only when PRAGMA
+   * table_info does not list it and only to an existing table: a fresh
+   * install (createChatTables already has it), a second run and a
+   * database without chat_sources change nothing more.
+   */
+  async addChatMailbox(): Promise<void> {
+    await this.createChatMailboxTable();
+    const sources = ((await this.db.query("PRAGMA table_info(chat_sources)")).values ?? []).map((r: any) => r.name as string);
+    if (sources.length > 0 && !sources.includes("notification_type")) {
+      await this.db.execute("ALTER TABLE chat_sources ADD COLUMN notification_type TEXT");
+    }
   }
 
   /**
@@ -1703,7 +1750,7 @@ export class DatabaseService {
    * column and the `configId#` prefix of the key. A table not created yet is skipped.
    */
   private async renameChatRows(oldId: string, newId: string): Promise<void> {
-    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_reactions", "chat_sources"]) {
+    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_sources"]) {
       try {
         const keyed = table !== "chat_sources";
         const key = keyed ? "id" : "config_id";

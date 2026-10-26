@@ -1579,3 +1579,148 @@ describe("migration 2026102701", () => {
     expect(await colsOf("chat_sources")).toEqual([]);
   });
 });
+
+describe("migration 2026102702", () => {
+  let db: DatabaseService;
+  const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102702)!;
+  const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+  const MAILBOX_COLS = [
+    "id", "config_id", "message_id", "thread_model", "thread_id", "record_name", "author_partner_id", "body", "date",
+    "message_type", "needaction", "starred", "history", "search_text",
+  ];
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+  });
+
+  it("a fresh install has the table and the column", async () => {
+    for (const m of APP_MIGRATIONS) {
+      if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+    }
+    expect(await colsOf("chat_mailbox")).toEqual(expect.arrayContaining(MAILBOX_COLS));
+    expect(await colsOf("chat_sources")).toContain("notification_type");
+  });
+
+  it("follows 2026102701 and adds the table and the column once, keeping the sources", async () => {
+    const versions = APP_MIGRATIONS.map((m) => m.version);
+    expect(versions[versions.indexOf(2026102702) - 1]).toBe(2026102701);
+    await (db as any).db.execute(`CREATE TABLE IF NOT EXISTS chat_sources (
+      config_id TEXT PRIMARY KEY NOT NULL, self_partner_id INTEGER, last_bus_id INTEGER NOT NULL, bus_seen_at TEXT,
+      ws_version TEXT, is_system INTEGER NOT NULL, module_state TEXT NOT NULL, inbox_counter INTEGER NOT NULL,
+      starred_counter INTEGER NOT NULL DEFAULT 0)`);
+    await db.rawRun("INSERT INTO chat_sources (config_id, last_bus_id, is_system, module_state, inbox_counter) VALUES (?, ?, ?, ?, ?)",
+      ["a", 0, 0, "unknown", 2]);
+    expect(migration().description).toBe("Clavardage : boîte de réception, historique et favoris");
+    await migration().run(db);
+    await migration().run(db);
+    expect(await colsOf("chat_mailbox")).toEqual(expect.arrayContaining(MAILBOX_COLS));
+    expect((await colsOf("chat_sources")).filter((x) => x === "notification_type")).toHaveLength(1);
+    const repo = new ChatRepository(db);
+    expect(await repo.sourceState("a")).toMatchObject({ inboxCounter: 2, notificationType: null });
+  });
+
+  it("a database without chat_sources still gets the mailbox table", async () => {
+    await migration().run(db);
+    expect(await colsOf("chat_mailbox")).toEqual(expect.arrayContaining(MAILBOX_COLS));
+    expect(await colsOf("chat_sources")).toEqual([]);
+  });
+});
+
+describe("ChatRepository mailbox cache", () => {
+  let db: DatabaseService;
+  let repo: ChatRepository;
+  const item = (messageId: number, over: Record<string, any> = {}) => ({
+    messageId,
+    threadModel: "project.task",
+    threadId: 5,
+    recordName: "Tâche démo",
+    authorPartnerId: 8,
+    body: "<p>Café <b>crème</b></p>",
+    date: "2026-10-26 10:00:00",
+    messageType: "comment",
+    needaction: true,
+    ...over,
+  });
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await addChatTables(db);
+    repo = new ChatRepository(db);
+  });
+
+  it("a partial creates a row with defaults and search_text of the record name and the body", async () => {
+    await repo.applyDelta(A, delta({ mailbox: [item(60)] }));
+    expect(await repo.mailboxItem(A, 60)).toEqual({
+      configId: A, messageId: 60, threadModel: "project.task", threadId: 5, recordName: "Tâche démo", authorPartnerId: 8,
+      body: "<p>Café <b>crème</b></p>", date: "2026-10-26 10:00:00", messageType: "comment",
+      needaction: true, starred: false, history: false,
+    });
+    expect((await db.rawQuery("SELECT id, search_text FROM chat_mailbox"))).toEqual([
+      { id: `${A}#m60`, search_text: "tache demo cafe creme" },
+    ]);
+    expect(await repo.mailboxItem(A, 99)).toBeNull();
+  });
+
+  it("a partial never blanks a stored field and search_text follows the stored body", async () => {
+    await repo.applyDelta(A, delta({ mailbox: [item(60)] }));
+    await repo.applyDelta(A, delta({ mailbox: [{ messageId: 60, needaction: false }] }));
+    expect(await repo.mailboxItem(A, 60)).toMatchObject({ body: "<p>Café <b>crème</b></p>", recordName: "Tâche démo", needaction: false });
+    expect((await db.rawQuery("SELECT search_text FROM chat_mailbox"))[0].search_text).toBe("tache demo cafe creme");
+    await repo.applyDelta(A, delta({ mailbox: [{ messageId: 60, body: "<p>Autre</p>" }] }));
+    expect((await db.rawQuery("SELECT search_text FROM chat_mailbox"))[0].search_text).toBe("tache demo autre");
+  });
+
+  it("a partial of an uncached message without its thread is not stored", async () => {
+    await repo.applyDelta(A, delta({ mailbox: [{ messageId: 61, starred: true }] }));
+    expect(await repo.mailboxItem(A, 61)).toBeNull();
+  });
+
+  it("mailboxItems filters on the flag, newest id first, per account", async () => {
+    await repo.applyDelta(A, delta({ mailbox: [
+      item(60), item(62), item(61, { needaction: false, history: true }), item(63, { needaction: false, starred: true }),
+    ] }));
+    await repo.applyDelta(B, delta({ mailbox: [item(70)] }));
+    expect((await repo.mailboxItems(A, "inbox")).map((i) => i.messageId)).toEqual([62, 60]);
+    expect((await repo.mailboxItems(A, "history")).map((i) => i.messageId)).toEqual([61]);
+    expect((await repo.mailboxItems(A, "starred")).map((i) => i.messageId)).toEqual([63]);
+    expect((await repo.mailboxItems(B, "inbox")).map((i) => i.messageId)).toEqual([70]);
+  });
+
+  it("patchMailbox changes the named fields of a cached item only", async () => {
+    await repo.applyDelta(A, delta({ mailbox: [item(60)] }));
+    await repo.patchMailbox(A, 60, { needaction: false, history: true });
+    expect(await repo.mailboxItem(A, 60)).toMatchObject({ needaction: false, history: true, body: "<p>Café <b>crème</b></p>" });
+    await repo.patchMailbox(A, 99, { starred: true });
+    expect(await repo.mailboxItem(A, 99)).toBeNull();
+  });
+
+  it("a deleted message leaves the mailbox", async () => {
+    await repo.applyDelta(A, delta({ mailbox: [item(60), item(61)] }));
+    await repo.applyDelta(A, delta({ deletedMessageIds: [60] }));
+    expect((await repo.mailboxItems(A, "inbox")).map((i) => i.messageId)).toEqual([61]);
+  });
+
+  it("dropSource removes the mailbox of that account only; a rename re-keys it", async () => {
+    await repo.applyDelta(A, delta({ mailbox: [item(60)] }));
+    await repo.applyDelta(B, delta({ mailbox: [item(70)] }));
+    await db.renameSyncConfigId(A, "https://odoo.example.com|alice2|db1");
+    const C = "https://odoo.example.com|alice2|db1";
+    expect(await repo.mailboxItem(A, 60)).toBeNull();
+    expect(await repo.mailboxItem(C, 60)).toMatchObject({ configId: C, messageId: 60 });
+    expect((await db.rawQuery("SELECT id FROM chat_mailbox WHERE config_id = ?", [C])).map((r) => r.id)).toEqual([`${C}#m60`]);
+    await repo.dropSource(C);
+    expect(await repo.mailboxItems(C, "inbox")).toEqual([]);
+    expect((await repo.mailboxItems(B, "inbox")).map((i) => i.messageId)).toEqual([70]);
+  });
+
+  it("the notification type of a source round trips", async () => {
+    await repo.setSourceState({ configId: A, notificationType: "inbox" });
+    expect((await repo.sourceState(A)).notificationType).toBe("inbox");
+    await repo.setSourceState({ configId: A, inboxCounter: 2 });
+    expect((await repo.sourceState(A)).notificationType).toBe("inbox");
+  });
+});

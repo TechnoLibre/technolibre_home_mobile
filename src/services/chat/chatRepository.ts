@@ -3,6 +3,7 @@ import type { DatabaseService } from "../databaseService";
 import type {
   ChatAttachment,
   ChatChannel,
+  ChatMailboxItem,
   ChatMember,
   ChatMessage,
   ChatPartner,
@@ -14,7 +15,7 @@ import type {
 import { messageKeyOf, sameTarget } from "../../models/chat";
 import { EMPTY_MENTIONS, type Mentions } from "./chatCompose";
 import type { StoreDelta } from "./chatStore";
-import { isEmptyBody, isEmptyMessage, searchTextOf } from "./chatBody";
+import { bodyText, foldText, isEmptyBody, isEmptyMessage, searchTextOf } from "./chatBody";
 
 type Row = Record<string, any>;
 
@@ -300,6 +301,24 @@ function sourceFromRow(r: Row): ChatSourceState {
     fileDir: r.file_dir ?? null,
     moduleLevel: r.module_level ?? null,
     starredCounter: r.starred_counter ?? 0,
+    notificationType: r.notification_type === "email" || r.notification_type === "inbox" ? r.notification_type : null,
+  };
+}
+
+function mailboxFromRow(r: Row): ChatMailboxItem {
+  return {
+    configId: r.config_id,
+    messageId: r.message_id,
+    threadModel: r.thread_model,
+    threadId: r.thread_id,
+    recordName: r.record_name ?? "",
+    authorPartnerId: r.author_partner_id ?? null,
+    body: r.body ?? "",
+    date: r.date ?? null,
+    messageType: r.message_type ?? "",
+    needaction: bool(r.needaction),
+    starred: bool(r.starred),
+    history: bool(r.history),
   };
 }
 
@@ -428,6 +447,30 @@ export class ChatRepository {
     };
   }
 
+  /**
+   * The row of a mailbox item. Every write of chat_mailbox goes through
+   * here, so search_text always holds the folded record name and body text
+   * it is written with.
+   */
+  private mailboxRow(i: ChatMailboxItem): Row {
+    return {
+      id: key(i.configId, `m${i.messageId}`),
+      config_id: i.configId,
+      message_id: i.messageId,
+      thread_model: i.threadModel,
+      thread_id: i.threadId,
+      record_name: i.recordName,
+      author_partner_id: i.authorPartnerId,
+      body: i.body,
+      date: i.date,
+      message_type: i.messageType,
+      needaction: flag(i.needaction),
+      starred: flag(i.starred),
+      history: flag(i.history),
+      search_text: foldText(`${i.recordName} ${bodyText(i.body)}`),
+    };
+  }
+
   private attachmentRow(a: ChatAttachment): Row {
     // A file still on its way to a message keeps its local key even once the server gave it an id
     const local = a.localUuid !== null && a.state !== "posted" ? `l${a.localUuid}` : `a${a.attachmentId}`;
@@ -491,6 +534,7 @@ export class ChatRepository {
       file_dir: s.fileDir,
       module_level: s.moduleLevel,
       starred_counter: s.starredCounter,
+      notification_type: s.notificationType,
     };
   }
 
@@ -521,6 +565,7 @@ export class ChatRepository {
     }
     for (const p of d.attachments) await this.upsertAttachment(configId, p);
     await this.applyReactions(configId, d);
+    for (const p of d.mailbox ?? []) await this.upsertMailbox(configId, p);
     if (d.deletedAttachmentIds.length > 0) await this.deleteAttachments(configId, d.deletedAttachmentIds);
     for (const id of d.deletedMessageIds ?? []) await this.deleteMessage(configId, id);
     for (const id of d.deletedMemberIds) await this.del("chat_members", { id: key(configId, id) });
@@ -574,6 +619,7 @@ export class ChatRepository {
    */
   private async deleteMessage(configId: string, messageId: number): Promise<void> {
     await this.del("chat_messages", { id: key(configId, `m${messageId}`) });
+    await this.del("chat_mailbox", { id: key(configId, `m${messageId}`) });
     await this.del("chat_reactions", { config_id: configId, message_key: `m${messageId}` });
     const dropped = (await this.rows("chat_attachments", { config_id: configId, message_id: messageId }))
       .filter((r) => String(r.id).startsWith(key(configId, "a")));
@@ -800,6 +846,55 @@ export class ChatRepository {
     const next: ChatMessage = { ...fresh, ...defined(p), configId };
     if (!base && p.status === undefined) next.status = "sent";
     await this.put("chat_messages", this.messageRow(next));
+  }
+
+  /**
+   * Stores a mailbox partial over the row of the same message: the keys it
+   * carries replace the stored ones, the others stay, so a partial with
+   * only a flag keeps the body. A message not stored yet needs its thread
+   * (the row's NOT NULL columns); without it the partial is dropped.
+   */
+  private async upsertMailbox(configId: string, p: Partial<ChatMailboxItem> & { messageId: number }): Promise<void> {
+    const stored = await this.row("chat_mailbox", key(configId, `m${p.messageId}`));
+    const base: ChatMailboxItem | null = stored ? mailboxFromRow(stored) : null;
+    if (!base && (p.threadModel === undefined || p.threadId === undefined)) return;
+    const fresh: ChatMailboxItem = base ?? {
+      configId,
+      messageId: p.messageId,
+      threadModel: p.threadModel!,
+      threadId: p.threadId!,
+      recordName: "",
+      authorPartnerId: null,
+      body: "",
+      date: null,
+      messageType: "",
+      needaction: false,
+      starred: false,
+      history: false,
+    };
+    await this.put("chat_mailbox", this.mailboxRow({ ...fresh, ...defined(p), configId }));
+  }
+
+  /**
+   * The cached items of a box of the account, newest message id first:
+   * the inbox (needaction), the history (history) or the starred ones.
+   */
+  async mailboxItems(configId: string, box: "inbox" | "history" | "starred"): Promise<ChatMailboxItem[]> {
+    const column = box === "inbox" ? "needaction" : box;
+    const rows = await this.rows("chat_mailbox", { config_id: configId, [column]: 1 });
+    return rows.map(mailboxFromRow).sort((a, b) => b.messageId - a.messageId);
+  }
+
+  /** One cached mailbox item; null when the message is not in the cache. */
+  async mailboxItem(configId: string, messageId: number): Promise<ChatMailboxItem | null> {
+    const row = await this.row("chat_mailbox", key(configId, `m${messageId}`));
+    return row ? mailboxFromRow(row) : null;
+  }
+
+  /** Changes some fields of a cached mailbox item, the others kept; an uncached message is left alone. */
+  async patchMailbox(configId: string, messageId: number, patch: Partial<ChatMailboxItem>): Promise<void> {
+    const { configId: _c, messageId: _m, ...fields } = patch;
+    await this.upsertMailbox(configId, { ...fields, messageId });
   }
 
   /**
@@ -1205,6 +1300,7 @@ export class ChatRepository {
       fileDir: null,
       moduleLevel: null,
       starredCounter: 0,
+      notificationType: null,
     };
   }
 
@@ -1533,7 +1629,7 @@ export class ChatRepository {
   /** Removes every cached row of one account, its drafts included, leaving the others. */
   async dropSource(configId: string): Promise<void> {
     await this.dropAttachmentRows({ config_id: configId });
-    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_drafts", "chat_reactions", "chat_sources"]) {
+    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_sources"]) {
       await this.del(t, { config_id: configId });
     }
   }

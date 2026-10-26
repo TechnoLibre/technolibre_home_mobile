@@ -1,6 +1,7 @@
 import type {
   ChatAttachment,
   ChatChannel,
+  ChatMailboxItem,
   ChatMember,
   ChatMessage,
   ChatPartner,
@@ -40,6 +41,12 @@ export interface StoreDelta {
   deletedReactions?: { messageId: number; content: string }[];
   /** Messages the server deleted (bus `mail.message/delete`). */
   deletedMessageIds?: number[];
+  /**
+   * Messages of the inbox, history and starred boxes: those of a record
+   * (any model but the channels'), whose thread is known. A partial holds
+   * only the keys the source carried.
+   */
+  mailbox?: (Partial<ChatMailboxItem> & { messageId: number })[];
 }
 
 const CHANNEL_MODEL = "discuss.channel";
@@ -117,6 +124,85 @@ function channelOfThread(thread: any): number | null {
 }
 
 /**
+ * The record a message belongs to, from its `thread` (`{id, model}`) or,
+ * without one, its `model` and `res_id`; null for a message with neither.
+ */
+function recordOfMessage(m: any): { model: string; id: number } | null {
+  const thread = m.thread;
+  if (thread && typeof thread === "object") {
+    const id = relId(thread);
+    return typeof thread.model === "string" && id !== null ? { model: thread.model, id } : null;
+  }
+  if (typeof m.model === "string" && m.model && typeof m.res_id === "number") {
+    return { model: m.model, id: m.res_id };
+  }
+  return null;
+}
+
+/** The mailbox partial of a message of a record: the keys the source carried, its thread always. */
+function mailboxPartial(
+  m: any,
+  record: { model: string; id: number },
+  threadNames: Map<string, string>,
+): NonNullable<StoreDelta["mailbox"]>[number] {
+  const out: NonNullable<StoreDelta["mailbox"]>[number] = {
+    messageId: m.id,
+    threadModel: record.model,
+    threadId: record.id,
+  };
+  const name = threadNames.get(`${record.model}#${record.id}`) ?? (typeof m.record_name === "string" ? m.record_name : "");
+  if (name) out.recordName = name;
+  if ("author" in m) out.authorPartnerId = m.author && m.author.type === "partner" ? relId(m.author) : null;
+  copy(out, m, "body", "body", (v) => (v === false || v == null ? "" : String(v)));
+  copy(out, m, "date", "date", (v) => v || null);
+  copy(out, m, "message_type", "messageType");
+  copy(out, m, "needaction", "needaction", (v) => !!v);
+  copy(out, m, "starred", "starred", (v) => !!v);
+  return out;
+}
+
+/**
+ * The mailbox partials of the channel messages a mailbox page carries:
+ * `parseStore` keeps them in `messages`, and the boxes show them too. `ids`
+ * are the page's message ids, `flags` what the box says of them (needaction,
+ * history, starred); a channel's name stands for the record name when the
+ * delta carries it. Messages of records are already partials of the delta.
+ */
+export function mailboxPartialsOf(
+  delta: StoreDelta,
+  ids: number[],
+  flags: Partial<ChatMailboxItem>,
+): StoreDelta["mailbox"] {
+  const wanted = new Set(ids);
+  const names = new Map(delta.channels.map((c) => [c.channelId, c.name]));
+  const out: NonNullable<StoreDelta["mailbox"]> = [];
+  for (const m of delta.messages) {
+    if (!wanted.has(m.messageId) || m.channelId === undefined) continue;
+    const row: NonNullable<StoreDelta["mailbox"]>[number] = {
+      messageId: m.messageId,
+      threadModel: CHANNEL_MODEL,
+      threadId: m.channelId,
+    };
+    const name = names.get(m.channelId);
+    if (name) row.recordName = name;
+    for (const k of ["authorPartnerId", "body", "date", "messageType"] as const) {
+      if (m[k] !== undefined) (row as any)[k] = m[k];
+    }
+    out.push({ ...row, ...flagsOf(flags) });
+  }
+  return out;
+}
+
+/** The flags of a box that carry a value. */
+function flagsOf(flags: Partial<ChatMailboxItem>): Partial<ChatMailboxItem> {
+  const out: Partial<ChatMailboxItem> = {};
+  for (const k of ["needaction", "starred", "history"] as const) {
+    if (flags[k] !== undefined) out[k] = flags[k];
+  }
+  return out;
+}
+
+/**
  * Reads a Store result into partial cache records. `selfPartnerId` is the
  * known partner of the account; when null, `Store.self` supplies it.
  */
@@ -141,6 +227,7 @@ export function parseStore(
     reactions: [],
     reactionSets: [],
     deletedReactions: [],
+    mailbox: [],
   };
 
   if (store.self && store.self.type === "partner" && relId(store.self) !== null) {
@@ -271,10 +358,23 @@ export function parseStore(
     }
   }
 
+  // Record names: the `mail.thread` entries a page lists, by model and id
+  const threadNames = new Map<string, string>();
+  for (const t of res["mail.thread"] || []) {
+    if (t && typeof t.id === "number" && typeof t.model === "string" && typeof t.name === "string" && t.name) {
+      threadNames.set(`${t.model}#${t.id}`, t.name);
+    }
+  }
+
   const lastByChannel = new Map<number, number>();
   for (const m of res["mail.message"] || []) {
     if (typeof m.id !== "number" || m._DELETE) continue;
     let channelId: number | null = null;
+    const record = recordOfMessage(m);
+    if (record && record.model !== CHANNEL_MODEL) {
+      delta.mailbox!.push(mailboxPartial(m, record, threadNames));
+      continue;
+    }
     if ("thread" in m) {
       channelId = channelOfThread(m.thread);
       if (channelId === null) continue;
@@ -421,5 +521,6 @@ export function mergeDeltas(a: StoreDelta, b: StoreDelta): StoreDelta {
     globalMuteUntil: b.globalMuteUntil !== undefined ? b.globalMuteUntil : a.globalMuteUntil,
     ...mergeReactions(a, b),
     deletedMessageIds: union(a.deletedMessageIds ?? [], b.deletedMessageIds ?? []),
+    mailbox: mergeBy(a.mailbox ?? [], b.mailbox ?? [], "messageId"),
   };
 }

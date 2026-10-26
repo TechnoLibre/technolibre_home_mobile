@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseStore, mergeDeltas } from "../services/chat/chatStore";
+import { parseStore, mergeDeltas, mailboxPartialsOf } from "../services/chat/chatStore";
+import { mailboxKindOf, type ChatMailboxItem } from "../models/chat";
 
 const CFG = "cfg1";
 const SELF = 3;
@@ -391,5 +392,73 @@ describe("parseStore pin, star and the starred counter", () => {
     const b = parseStore({ Store: { starred: { counter: 5 } } }, CFG, SELF);
     expect(mergeDeltas(a, b).starredCounter).toBe(5);
     expect(mergeDeltas(b, parseStore({}, CFG, SELF)).starredCounter).toBe(5);
+  });
+});
+
+describe("parseStore mailbox pages", () => {
+  const task = { id: 5, model: "project.task" };
+  const page = {
+    "mail.thread": [{ id: 5, model: "project.task", name: "Tâche démo" }],
+    "discuss.channel": [chan(2, "channel", { name: "général-test" })],
+    "mail.message": [
+      { id: 90, thread: task, body: "<p>Bonjour</p>", date: "2026-10-26 10:00:00", message_type: "comment", needaction: true, starred: false, author: partner(8), record_name: "Tâche démo" },
+      { id: 91, thread: thread(2), body: "<p>@Moi</p>", date: "2026-10-26 10:05:00", message_type: "comment", needaction: true, author: partner(8) },
+      { id: 92, thread: { id: 6, model: "project.task" }, body: "", date: "2026-10-26 10:06:00", message_type: "user_notification", needaction: true, record_name: "Autre tâche" },
+    ],
+  };
+
+  it("keeps the messages of other models as mailbox partials and the channel one in messages", () => {
+    const d = parseStore(page, CFG, SELF);
+    expect(d.mailbox).toEqual([
+      { messageId: 90, threadModel: "project.task", threadId: 5, recordName: "Tâche démo", authorPartnerId: 8, body: "<p>Bonjour</p>", date: "2026-10-26 10:00:00", messageType: "comment", needaction: true, starred: false },
+      { messageId: 92, threadModel: "project.task", threadId: 6, recordName: "Autre tâche", body: "", date: "2026-10-26 10:06:00", messageType: "user_notification", needaction: true },
+    ]);
+    expect(d.messages.map((m) => m.messageId)).toEqual([91]);
+  });
+
+  it("reads model and res_id when the message has no thread, and the record name of the thread entry", () => {
+    const d = parseStore({
+      "mail.thread": [{ id: 7, model: "res.partner", name: "Contact démo" }],
+      "mail.message": [{ id: 93, model: "res.partner", res_id: 7, needaction: false }],
+    }, CFG, SELF);
+    expect(d.mailbox).toEqual([{ messageId: 93, threadModel: "res.partner", threadId: 7, recordName: "Contact démo", needaction: false }]);
+  });
+
+  it("a message with neither thread nor record gives no partial", () => {
+    const d = parseStore({ "mail.message": [{ id: 94, thread: false, body: "x" }] }, CFG, SELF);
+    expect(d.mailbox ?? []).toEqual([]);
+    expect(d.messages).toEqual([]);
+  });
+
+  it("mailboxPartialsOf adds the channel messages of a page with the page flags", () => {
+    const d = parseStore(page, CFG, SELF);
+    const added = mailboxPartialsOf(d, [90, 91], { needaction: true, history: false });
+    expect(added).toEqual([{
+      messageId: 91, threadModel: "discuss.channel", threadId: 2, recordName: "général-test", authorPartnerId: 8,
+      body: "<p>@Moi</p>", date: "2026-10-26 10:05:00", messageType: "comment", needaction: true, history: false,
+    }]);
+    expect(mailboxPartialsOf(d, [90], {})).toEqual([]);
+  });
+
+  it("mergeDeltas merges two mailbox deltas, the later winning per message and never blanking", () => {
+    const a = parseStore(page, CFG, SELF);
+    const b = parseStore({ "mail.message": [{ id: 90, thread: task, needaction: false }] }, CFG, SELF);
+    const m = mergeDeltas(a, b);
+    expect(m.mailbox!.find((x) => x.messageId === 90)).toMatchObject({ body: "<p>Bonjour</p>", needaction: false });
+    expect(m.mailbox!.map((x) => x.messageId)).toEqual([90, 92]);
+    expect(mergeDeltas(b, a).mailbox!.find((x) => x.messageId === 90)!.needaction).toBe(true);
+  });
+});
+
+describe("mailboxKindOf", () => {
+  const base: ChatMailboxItem = {
+    configId: CFG, messageId: 1, threadModel: "project.task", threadId: 5, recordName: "", authorPartnerId: null,
+    body: "", date: null, messageType: "comment", needaction: true, starred: false, history: false,
+  };
+  it("a channel message is a mention, a user notification an assignment, anything else a record message", () => {
+    expect(mailboxKindOf({ ...base, threadModel: "discuss.channel" })).toBe("mention");
+    expect(mailboxKindOf({ ...base, messageType: "user_notification" })).toBe("assignment");
+    expect(mailboxKindOf(base)).toBe("record");
+    expect(mailboxKindOf({ ...base, threadModel: "discuss.channel", messageType: "user_notification" })).toBe("mention");
   });
 });

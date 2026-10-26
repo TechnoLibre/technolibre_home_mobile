@@ -229,6 +229,38 @@ export interface ChatSourceState {
   moduleLevel: "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | null;
   /** How many messages the user starred (`Store.starred.counter`). */
   starredCounter: number;
+  /** Whether Odoo mails the user's notifications or keeps them in the inbox (`notification_type`); null while unknown. */
+  notificationType: "email" | "inbox" | null;
+}
+
+/**
+ * A message of the inbox, history or starred boxes, of any model: the
+ * cached shape of what `/mail/{inbox,history,starred}/messages` return.
+ * `threadModel`/`threadId` name the record (or channel) it belongs to.
+ */
+export interface ChatMailboxItem {
+  configId: string;
+  messageId: number;
+  threadModel: string;
+  threadId: number;
+  recordName: string;
+  authorPartnerId: number | null;
+  body: string;
+  date: string | null;
+  messageType: string;
+  needaction: boolean;
+  starred: boolean;
+  history: boolean;
+}
+
+/** Why an inbox item reached the user: a channel mention, an assignment notice, or a followed record's message. */
+export type MailboxKind = "mention" | "record" | "assignment";
+
+/** The kind of an inbox item (`mail/controllers/thread.py` notifies a channel by mention, a user notification by assignment). */
+export function mailboxKindOf(i: ChatMailboxItem): MailboxKind {
+  if (i.threadModel === "discuss.channel") return "mention";
+  if (i.messageType === "user_notification") return "assignment";
+  return "record";
 }
 
 /**
