@@ -32,6 +32,8 @@ export interface ChatRow {
     time: string;
     unread: number;
     bold: boolean;
+    /** Kept on top of the list by the user. */
+    onTop: boolean;
     typeIcon: "👤" | "👥" | "#";
     /** The server refused to create ("create") or join ("join") it, or the user left it with texts unsent ("left"); "" otherwise. */
     failed: "" | "create" | "join" | "left";
@@ -177,6 +179,7 @@ export class ChatListComponent extends EnhancedComponent {
             <span class="chat-list__avatar" aria-hidden="true" t-esc="avatarOf(row)"/>
             <span class="chat-list__body">
               <span class="chat-list__top">
+                <span t-if="row.onTop" class="chat-list__on-top" role="img" t-att-aria-label="t('chat.on_top')">📌</span>
                 <span class="chat-list__title" t-esc="row.title"/>
                 <span class="chat-list__time" t-esc="row.time"/>
               </span>
@@ -440,6 +443,7 @@ export class ChatListComponent extends EnhancedComponent {
             time: formatListTime(last?.date ?? c.lastInterestDt),
             unread: unreadOf(c),
             bold: isBold(c),
+            onTop: c.onTop === true,
             typeIcon: typeIconOf(c),
             failed: c.createFailed ? (c.channelId < 0 ? "create" : "join") : c.leftUnsent ? "left" : "",
             ambiguous: false,

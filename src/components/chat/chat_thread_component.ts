@@ -124,6 +124,8 @@ interface ThreadState {
     /** Messages added so far by "load all"; null when it is not running. */
     loadingAll: number | null;
     historyComplete: boolean;
+    /** The conversation is kept on top of the list. */
+    onTop: boolean;
     found: boolean;
     /**
      * The server refused to create ("create") or join ("join") the
@@ -312,6 +314,8 @@ export class ChatThreadComponent extends EnhancedComponent {
         <button class="chat-thread__menu-btn" t-att-aria-label="t('nav.options')" t-on-click="onToggleMenu">⋮</button>
         <div t-if="state.menu" class="chat-thread__menu" role="menu">
           <button role="menuitem" class="chat-thread__menu-item" t-on-click="onInfo" t-esc="t('chat.info')"/>
+          <button role="menuitem" class="chat-thread__menu-item" t-on-click="onToggleOnTop"
+                  t-esc="state.onTop ? t('chat.on_top_remove') : t('chat.on_top_add')"/>
           <p t-if="state.historyComplete" class="chat-thread__menu-note" t-esc="t('chat.history_complete')"/>
           <button t-else="" role="menuitem" class="chat-thread__menu-item" t-on-click="onLoadAll">
             <t t-if="state.loadingAll === null" t-esc="t('chat.load_all')"/>
@@ -515,6 +519,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             menu: false,
             loadingAll: null,
             historyComplete: false,
+            onTop: false,
             found: true,
             failedCreate: "",
             error: "",
@@ -728,6 +733,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         }
         this._lastSeen = channel.lastMessageId;
         this.state.historyComplete = channel.historyComplete;
+        this.state.onTop = channel.onTop === true;
         if (JSON.stringify(resumes) !== JSON.stringify(this.state.resumes)) this.state.resumes = resumes;
         this.fillHeader(channel, partners, members, st.selfPartnerId);
         this._members = members;
@@ -1214,6 +1220,18 @@ export class ChatThreadComponent extends EnhancedComponent {
     onInfo(): void {
         this.state.menu = false;
         this.navigate("/chat/" + encodeURIComponent(this.configId) + "/" + this.channelId + "/info");
+    }
+
+    /** Keeps the conversation on top of the list, or lets it go back to its place. */
+    async onToggleOnTop(): Promise<void> {
+        this.state.menu = false;
+        const on = !this.state.onTop;
+        try {
+            await this.chatService.setOnTop(this.configId, this.channelId, on);
+            this.state.onTop = on;
+        } catch (e) {
+            console.warn("chat thread: on top not kept", e);
+        }
     }
 
     async onLoadAll(): Promise<void> {

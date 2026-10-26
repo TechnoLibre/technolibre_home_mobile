@@ -57,6 +57,12 @@ export interface ChatChannel {
    * member, listed with those texts as not sent until the user dismisses it.
    */
   leftUnsent: boolean;
+  /**
+   * Kept on top of the list, a choice local to the phone (not Odoo's
+   * is_pinned, which means shown in the sidebar). Filled by the repository's
+   * reads from chat_on_top; absent on a channel built elsewhere.
+   */
+  onTop?: boolean;
 }
 
 /** sent: known to the server; pending: queued in the outbox; failed: the outbox gave up. */

@@ -422,6 +422,29 @@ describe("ChatThreadComponent", () => {
         expect(c.state.loadingAll).toBeNull();
     });
 
+    it("the menu pins and unpins the conversation", async () => {
+        const chat: any = fakeChat([msg(10)]);
+        chat.setOnTop = vi.fn(async () => {});
+        const c = make(chat);
+        await c.open();
+        expect(c.state.onTop).toBe(false);
+        c.state.menu = true;
+        await c.onToggleOnTop();
+        expect(chat.setOnTop).toHaveBeenLastCalledWith("a", 5, true);
+        expect(c.state.onTop).toBe(true);
+        expect(c.state.menu).toBe(false);
+        await c.onToggleOnTop();
+        expect(chat.setOnTop).toHaveBeenLastCalledWith("a", 5, false);
+        expect(c.state.onTop).toBe(false);
+    });
+
+    it("a conversation kept on top is read as such when it opens", async () => {
+        const chat: any = fakeChat([msg(10)], undefined, channel({ onTop: true }));
+        const c = make(chat);
+        await c.open();
+        expect(c.state.onTop).toBe(true);
+    });
+
     it("markRead fires once for many bottom scrolls, again after a new message", async () => {
         const chat = fakeChat([msg(10)]);
         const ch = channel();

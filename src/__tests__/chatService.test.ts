@@ -1171,6 +1171,25 @@ describe("ChatService", () => {
     expect((await chat.repo.channel(config, GENERAL))!.needactionCounter).toBe(2);
   });
 
+  it("the list follows the order setting, and setOnTop rebuilds it", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    const changes: any[] = [];
+    chat.onChange = (c, ch) => changes.push([c, ch]);
+    const base = (await chat.conversations()).map((c) => c.channelId);
+    expect(base).toEqual([GENERAL, CHAT, GROUP, MUTED, QUIET]);
+    await chat.setOnTop(config, QUIET, true);
+    expect(changes).toEqual([[config, QUIET]]);
+    // on_top_first (default): the kept conversation leads even though read
+    expect((await chat.conversations()).map((c) => c.channelId)).toEqual([QUIET, GENERAL, CHAT, GROUP, MUTED]);
+    setChatSettings({ sendRead: true, sendTyping: true, listOrder: "unread_first" } as any);
+    // unread_first: every counted unread conversation (MUTED counts) before the read one kept on top
+    const ids = (await chat.conversations()).map((c) => c.channelId);
+    expect(ids).toEqual([GENERAL, CHAT, GROUP, MUTED, QUIET]);
+    await chat.setOnTop(config, QUIET, false);
+    expect((await chat.conversations()).map((c) => c.channelId)).toEqual([GENERAL, CHAT, GROUP, MUTED, QUIET]);
+  });
+
   it("bus leave, delete, fetched, presence and joined", async () => {
     const odoo = fakeOdoo();
     await chat.load(await source());

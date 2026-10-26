@@ -5,6 +5,12 @@ export const CHAT_SETTINGS_KEY = "options.chat";
 export const DEFAULT_CACHE_LIMIT_MB = 2048;
 
 /**
+ * The order of the conversation list: the ones kept on top first, or the
+ * ones with a counted unread first.
+ */
+export type ListOrder = "on_top_first" | "unread_first";
+
+/**
  * What the chat tells the server about the user: sendRead marks
  * conversations read and fetched, sendTyping announces typing. Posting a
  * message marks its conversation read whatever sendRead holds.
@@ -19,6 +25,7 @@ export interface ChatSettings {
   cachePurge: boolean;
   cacheLimitMb: number;
   askCompress: boolean;
+  listOrder: ListOrder;
 }
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
@@ -27,6 +34,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   cachePurge: false,
   cacheLimitMb: DEFAULT_CACHE_LIMIT_MB,
   askCompress: false,
+  listOrder: "on_top_first",
 };
 
 /** A limit in MB: a finite number above 0, else the default. */
@@ -50,6 +58,7 @@ export function chatSettings(): ChatSettings {
       cachePurge: raw.cachePurge === true,
       cacheLimitMb: limitOf(raw.cacheLimitMb),
       askCompress: raw.askCompress === true,
+      listOrder: raw.listOrder === "unread_first" ? "unread_first" : "on_top_first",
     };
   } catch {
     return DEFAULT_CHAT_SETTINGS;

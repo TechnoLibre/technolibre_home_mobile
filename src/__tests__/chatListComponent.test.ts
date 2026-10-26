@@ -261,6 +261,16 @@ describe("ChatListComponent", () => {
         expect(c.state.rows[1].bold).toBe(false);
     });
 
+    it("a conversation kept on top shows the mark, the others do not", async () => {
+        const chat = fakeChat(["a"], [chan("a", 1, { onTop: true }), chan("a", 2)]);
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.state.rows.map((r: any) => r.onTop)).toEqual([true, false]);
+        const tpl = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../components/chat/chat_list_component.ts"), "utf8");
+        expect(tpl).toContain('class="chat-list__on-top"');
+        expect(tpl).toContain("t('chat.on_top')");
+    });
+
     it("chip filter keeps one server", async () => {
         const chat = fakeChat(["a", "b"], [chan("a", 1), chan("b", 2)]);
         const c = make(chat);

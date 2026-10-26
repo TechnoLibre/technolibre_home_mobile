@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { EventBus } from "@odoo/owl";
 
 import { OptionsChatComponent } from "../components/options/chat/options_chat_component";
+import { Events } from "../constants/events";
 import { chatSettings, CHAT_SETTINGS_KEY } from "../services/chat/chatSettings";
 
 function stubStorage() {
@@ -40,6 +41,28 @@ describe("OptionsChatComponent", () => {
         expect(chatSettings()).toMatchObject({ sendRead: false, sendTyping: false });
         c.onToggle("sendRead", { target: { checked: true } });
         expect(chatSettings()).toMatchObject({ sendRead: true, sendTyping: false });
+    });
+});
+
+describe("OptionsChatComponent list order", () => {
+    it("offers the two orders, saves the choice and asks the list to rebuild", () => {
+        stubStorage();
+        const c = new (OptionsChatComponent as any)();
+        const bus = new EventBus();
+        const seen: any[] = [];
+        bus.addEventListener(Events.CHAT_CHANGED, (ev: any) => seen.push(ev.detail));
+        c.env = { eventBus: bus };
+        c.setup();
+        expect(c.listOrders.map((o: any) => [o.value, o.label])).toEqual([
+            ["on_top_first", "chat.list_order_on_top"], ["unread_first", "chat.list_order_unread"],
+        ]);
+        expect(c.state.settings.listOrder).toBe("on_top_first");
+        c.onListOrder("unread_first");
+        expect(chatSettings().listOrder).toBe("unread_first");
+        expect(c.state.settings.listOrder).toBe("unread_first");
+        expect(seen).toHaveLength(1);
+        c.onListOrder("unread_first");
+        expect(seen).toHaveLength(1);
     });
 });
 

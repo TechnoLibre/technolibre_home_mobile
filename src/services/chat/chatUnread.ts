@@ -1,4 +1,5 @@
 import type { ChatChannel } from "../../models/chat";
+import type { ListOrder } from "./chatSettings";
 
 /** Epoch milliseconds of an Odoo "YYYY-MM-DD HH:MM:SS" UTC string ("muted forever" is year 9999). */
 function utcMs(odooDt: string): number {
@@ -48,14 +49,23 @@ export function totalUnread(
 }
 
 /**
- * Conversations with a counted unread first, each group by last_interest_dt
- * descending (none last). Returns a new array; ties keep their input order.
+ * Sorts the list. Inside every group the rule is a counted unread first,
+ * then last_interest_dt descending (none last). `on_top_first`: the
+ * conversations kept on top, then the others. `unread_first`: the counted
+ * unread ones (on top or not), then the read ones kept on top, then the
+ * other read ones. Returns a new array; ties keep their input order.
  */
-export function sortConversations(channels: ChatChannel[]): ChatChannel[] {
+export function sortConversations(channels: ChatChannel[], order: ListOrder = "on_top_first"): ChatChannel[] {
   const key = (c: ChatChannel) => c.lastInterestDt ?? "";
+  const unread = (c: ChatChannel) => (unreadOf(c) > 0 ? 0 : 1);
+  const top = (c: ChatChannel) => (c.onTop ? 0 : 1);
+  const group = (c: ChatChannel) => (order === "unread_first" ? (unread(c) === 0 ? 0 : 1 + top(c)) : top(c));
   return [...channels].sort((a, b) => {
-    const ua = unreadOf(a) > 0 ? 0 : 1;
-    const ub = unreadOf(b) > 0 ? 0 : 1;
+    const ga = group(a);
+    const gb = group(b);
+    if (ga !== gb) return ga - gb;
+    const ua = unread(a);
+    const ub = unread(b);
     if (ua !== ub) return ua - ub;
     return key(a) < key(b) ? 1 : key(a) > key(b) ? -1 : 0;
   });

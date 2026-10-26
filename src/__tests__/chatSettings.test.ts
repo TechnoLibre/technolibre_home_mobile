@@ -18,13 +18,14 @@ describe("chatSettings", () => {
   it("defaults when missing or unreadable", () => {
     expect(chatSettings()).toEqual({
       sendRead: true, sendTyping: true, cachePurge: false, cacheLimitMb: 2048, askCompress: false,
+      listOrder: "on_top_first",
     });
     localStorage.setItem(CHAT_SETTINGS_KEY, "{bad");
     expect(chatSettings()).toEqual(DEFAULT_CHAT_SETTINGS);
   });
 
   it("round-trips", () => {
-    const settings = { sendRead: false, sendTyping: true, cachePurge: true, cacheLimitMb: 512, askCompress: true };
+    const settings = { sendRead: false, sendTyping: true, cachePurge: true, cacheLimitMb: 512, askCompress: true, listOrder: "unread_first" as const };
     setChatSettings(settings);
     expect(chatSettings()).toEqual(settings);
     expect(CHAT_SETTINGS_KEY).toBe("options.chat");
@@ -39,5 +40,14 @@ describe("chatSettings", () => {
     }
     localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify({ cacheLimitMb: "300" }));
     expect(chatSettings().cacheLimitMb).toBe(300);
+  });
+
+  it("a stored unknown order reads as on_top_first", () => {
+    for (const bad of ["pinned", 3, null, ""]) {
+      localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify({ listOrder: bad }));
+      expect(chatSettings().listOrder).toBe("on_top_first");
+    }
+    localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify({ listOrder: "unread_first" }));
+    expect(chatSettings().listOrder).toBe("unread_first");
   });
 });

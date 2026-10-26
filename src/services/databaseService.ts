@@ -1330,6 +1330,7 @@ export class DatabaseService {
       )
     `);
     await this.createChatMailboxTable();
+    await this.createChatOnTopTable();
     await this.createChatTempIdsTable();
     await this.createChatAttachmentsTable();
     await this.createChatDraftsTable();
@@ -1553,6 +1554,28 @@ export class DatabaseService {
   }
 
   /**
+   * The conversations kept on top of the list: one row per conversation,
+   * keyed `configId#channelId`, with the moment it was put there. Local to
+   * the phone, never sent to the server.
+   */
+  async createChatOnTopTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_on_top (
+        id         TEXT PRIMARY KEY NOT NULL,
+        config_id  TEXT NOT NULL,
+        channel_id INTEGER NOT NULL,
+        since      TEXT NOT NULL
+      )
+    `);
+    await this.db.execute("CREATE INDEX IF NOT EXISTS idx_chat_on_top_config ON chat_on_top(config_id)");
+  }
+
+  /** Creates the on-top table; a second run changes nothing. */
+  async addChatOnTop(): Promise<void> {
+    await this.createChatOnTopTable();
+  }
+
+  /**
    * Gives search_text (searchTextOf of the body) to the cached messages
    * that have a body and an empty search_text: the rows cached before the
    * column existed. Reads SEARCH_FILL_ROUND rows per query, in id order
@@ -1750,7 +1773,7 @@ export class DatabaseService {
    * column and the `configId#` prefix of the key. A table not created yet is skipped.
    */
   private async renameChatRows(oldId: string, newId: string): Promise<void> {
-    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_sources"]) {
+    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_on_top", "chat_sources"]) {
       try {
         const keyed = table !== "chat_sources";
         const key = keyed ? "id" : "config_id";

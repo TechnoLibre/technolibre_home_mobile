@@ -7,7 +7,7 @@ import { getCurrentLocale, t } from "../../../i18n";
 import { formatBytes } from "../../../utils/formatBytes";
 import { MUTE_CHOICES, muteText } from "../../../services/chat/chatMute";
 import { serverChoiceMode, type ChatSource, type ChoiceMode } from "../../../services/chat/chatSources";
-import { chatSettings, setChatSettings, ChatSettings } from "../../../services/chat/chatSettings";
+import { chatSettings, setChatSettings, ChatSettings, type ListOrder } from "../../../services/chat/chatSettings";
 
 /** Delay that folds a burst of CHAT_CHANGED into one read of the cache space. */
 const CACHE_REFRESH_MS = 1000;
@@ -45,6 +45,13 @@ export class OptionsChatComponent extends EnhancedComponent {
           <t t-esc="t('chat.ask_compress')"/>
         </label>
         <p class="options-sync__info" t-esc="t('chat.ask_compress_hint')" />
+        <h4 t-esc="t('chat.list_order')"/>
+        <div class="chat-new__chips" role="radiogroup" t-att-aria-label="t('chat.list_order')">
+          <button t-foreach="listOrders" t-as="o" t-key="o.value" class="chat-new__chip" role="radio"
+                  t-att-aria-checked="state.settings.listOrder === o.value ? 'true' : 'false'"
+                  t-att-class="{'chat-new__chip--on': state.settings.listOrder === o.value}"
+                  t-on-click="() => this.onListOrder(o.value)" t-esc="t(o.label)"/>
+        </div>
         <h4 t-esc="t('chat.attachment_files')"/>
         <p class="options-sync__info" t-esc="t('chat.cache_space', {size: state.spaceText})" />
         <button class="chat-new__chip" t-att-disabled="state.busy" t-on-click="onClearAll" t-esc="t('chat.cache_clear_all')"/>
@@ -88,6 +95,10 @@ export class OptionsChatComponent extends EnhancedComponent {
   `;
 
     muteChoices = MUTE_CHOICES;
+    listOrders: { value: ListOrder; label: string }[] = [
+        { value: "on_top_first", label: "chat.list_order_on_top" },
+        { value: "unread_first", label: "chat.list_order_unread" },
+    ];
     private _sources: ChatSource[] = [];
     private destroyed = false;
     private _cacheTimer: ReturnType<typeof setTimeout> | null = null;
@@ -251,6 +262,14 @@ export class OptionsChatComponent extends EnhancedComponent {
             this.state.busy = false;
         }
         await this.loadCache();
+    }
+
+    /** Stores the order of the conversation list and tells the list to rebuild. */
+    onListOrder(listOrder: ListOrder): void {
+        if (chatSettings().listOrder === listOrder) return;
+        setChatSettings({ ...chatSettings(), listOrder });
+        this.state.settings = { ...chatSettings() };
+        this.eventBus.trigger(Events.CHAT_CHANGED, { configId: null, channelId: null });
     }
 
     /** Stores one setting, then shows what storage holds. */

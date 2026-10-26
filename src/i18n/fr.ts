@@ -1247,4 +1247,10 @@ export const translations: Record<string, string> = {
   "chat.edit_abandon": "Abandonner",
   "chat.edit_keep": "Garder",
   "chat.draft_editing": "Modification en cours",
+  "chat.list_order": "Ordre de la liste",
+  "chat.list_order_on_top": "Épinglées d'abord",
+  "chat.list_order_unread": "Non lues d'abord",
+  "chat.on_top_add": "Épingler la conversation",
+  "chat.on_top_remove": "Désépingler la conversation",
+  "chat.on_top": "Épinglée",
 };

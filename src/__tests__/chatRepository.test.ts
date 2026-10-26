@@ -1724,3 +1724,96 @@ describe("ChatRepository mailbox cache", () => {
     expect((await repo.sourceState(A)).notificationType).toBe("inbox");
   });
 });
+
+describe("migration 2026102703", () => {
+  let db: DatabaseService;
+  const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102703)!;
+  const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+  const ON_TOP_COLS = ["id", "config_id", "channel_id", "since"];
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+  });
+
+  it("follows 2026102702 and creates the table once, keeping its rows", async () => {
+    const versions = APP_MIGRATIONS.map((m) => m.version);
+    expect(versions[versions.indexOf(2026102703) - 1]).toBe(2026102702);
+    expect(migration().description).toBe("Clavardage : conversations épinglées en haut de la liste");
+    await migration().run(db);
+    expect(await colsOf("chat_on_top")).toEqual(ON_TOP_COLS);
+    await db.rawRun("INSERT INTO chat_on_top (id, config_id, channel_id, since) VALUES (?, ?, ?, ?)", ["a#1", "a", 1, "2026-10-26T10:00:00.000Z"]);
+    await migration().run(db);
+    expect(await db.rawQuery("SELECT id FROM chat_on_top")).toEqual([{ id: "a#1" }]);
+  });
+
+  it("a fresh install has the table", async () => {
+    for (const m of APP_MIGRATIONS) {
+      if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+    }
+    expect(await colsOf("chat_on_top")).toEqual(ON_TOP_COLS);
+  });
+});
+
+describe("ChatRepository conversations on top", () => {
+  let db: DatabaseService;
+  let repo: ChatRepository;
+  const NOW = new Date("2026-10-26T10:00:00.000Z");
+  const onTopIds = async (cfg: string) => (await repo.channels(cfg)).filter((c) => c.onTop).map((c) => c.channelId);
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await addChatTables(db);
+    await APP_MIGRATIONS.find((m) => m.version === 2026102703)!.run(db);
+    repo = new ChatRepository(db);
+    await repo.applyDelta(A, delta({ channels: [{ channelId: 7, name: "a" }, { channelId: 8, name: "b" }] }));
+    await repo.applyDelta(B, delta({ channels: [{ channelId: 7, name: "c" }] }));
+  });
+
+  it("setOnTop marks and unmarks one conversation of one account, repeating is harmless", async () => {
+    expect(await onTopIds(A)).toEqual([]);
+    await repo.setOnTop(A, 7, true, NOW);
+    await repo.setOnTop(A, 7, true, NOW);
+    expect(await onTopIds(A)).toEqual([7]);
+    expect(await onTopIds(B)).toEqual([]);
+    expect((await repo.channel(A, 7))?.onTop).toBe(true);
+    expect((await repo.channel(A, 8))?.onTop).toBeFalsy();
+    expect(await db.rawQuery("SELECT since FROM chat_on_top")).toEqual([{ since: NOW.toISOString() }]);
+    await repo.setOnTop(A, 7, false, NOW);
+    expect(await onTopIds(A)).toEqual([]);
+  });
+
+  it("channels() without an account marks each account's own rows", async () => {
+    await repo.setOnTop(B, 7, true, NOW);
+    const all = await repo.channels();
+    expect(all.filter((c) => c.onTop).map((c) => c.configId)).toEqual([B]);
+  });
+
+  it("an on-top conversation created offline stays on top after its id swap", async () => {
+    await repo.applyDelta(A, delta({ channels: [{ channelId: -5, name: "new" }] }));
+    await repo.setOnTop(A, -5, true, NOW);
+    await repo.swapChannelId(A, -5, 12);
+    expect(await db.rawQuery("SELECT id, channel_id FROM chat_on_top")).toEqual([{ id: `${A}#12`, channel_id: 12 }]);
+  });
+
+  it("a rename of the account keeps it on top", async () => {
+    await repo.setOnTop(A, 7, true, NOW);
+    const carol = "https://odoo.example.com|carol|db1";
+    await db.renameSyncConfigId(A, carol);
+    expect(await onTopIds(carol)).toEqual([7]);
+    expect(await db.rawQuery("SELECT id, config_id FROM chat_on_top")).toEqual([{ id: `${carol}#7`, config_id: carol }]);
+  });
+
+  it("dropping the channel or the source removes the row", async () => {
+    await repo.setOnTop(A, 7, true, NOW);
+    await repo.setOnTop(A, 8, true, NOW);
+    await repo.setOnTop(B, 7, true, NOW);
+    await repo.dropChannel(A, 7);
+    expect(await onTopIds(A)).toEqual([8]);
+    await repo.dropSource(A);
+    expect(await db.rawQuery("SELECT config_id FROM chat_on_top")).toEqual([{ config_id: B }]);
+  });
+});

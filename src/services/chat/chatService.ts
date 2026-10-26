@@ -431,7 +431,7 @@ export class ChatService {
     for (const id of await this.configIds(configIds)) {
       all.push(...(await this.repo.channels(id)).filter(shown));
     }
-    return sortConversations(all);
+    return sortConversations(all, chatSettings().listOrder);
   }
 
   /**
@@ -943,6 +943,15 @@ export class ChatService {
   async mute(src: ChatSource, channelId: number, minutes: number | false): Promise<void> {
     await this.queue.queueMute(src.configId, channelId, this.muteUntil(minutes));
     await this.afterAction(src, channelId);
+  }
+
+  /**
+   * Keeps a conversation on top of the list, or not. Local to the phone:
+   * nothing is sent to the server. Rebuilds the list.
+   */
+  async setOnTop(configId: string, channelId: number, on: boolean): Promise<void> {
+    await this.repo.setOnTop(configId, channelId, on, this.now());
+    this.changed(configId, channelId);
   }
 
   /** Mutes every conversation of the account for `minutes`, as mute(). */

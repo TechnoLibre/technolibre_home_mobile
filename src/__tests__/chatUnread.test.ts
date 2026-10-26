@@ -86,4 +86,26 @@ describe("sortConversations", () => {
     const ids = sortConversations([c, e, a, d, b]).map((x) => x.channelId);
     expect(ids).toEqual([2, 1, 4, 3, 5]);
   });
+
+  const a = ch({ channelId: 1, unreadCounter: 1, lastInterestDt: "2026-01-01 10:00:00" });
+  const b = ch({ channelId: 2, unreadCounter: 1, lastInterestDt: "2026-01-01 11:00:00", onTop: true });
+  const c = ch({ channelId: 3, lastInterestDt: "2026-01-01 09:00:00", onTop: true });
+  const d = ch({ channelId: 4, lastInterestDt: "2026-01-01 12:00:00" });
+  const e = ch({ channelId: 5, lastInterestDt: "2026-01-01 08:00:00", onTop: true });
+
+  it("on_top_first puts an on-top read conversation before an unread one", () => {
+    const ids = sortConversations([a, d, c], "on_top_first").map((x) => x.channelId);
+    expect(ids).toEqual([3, 1, 4]);
+  });
+
+  it("on_top_first is the default and keeps unread then date inside each group", () => {
+    const all = [a, b, c, d, e];
+    expect(sortConversations(all).map((x) => x.channelId)).toEqual([2, 3, 5, 1, 4]);
+    expect(sortConversations(all, "on_top_first").map((x) => x.channelId)).toEqual([2, 3, 5, 1, 4]);
+  });
+
+  it("unread_first puts unread ones first, then on-top read ones, then the other read ones", () => {
+    const ids = sortConversations([d, e, a, c, b], "unread_first").map((x) => x.channelId);
+    expect(ids).toEqual([2, 1, 3, 5, 4]);
+  });
 });

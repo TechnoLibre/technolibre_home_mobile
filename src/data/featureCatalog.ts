@@ -4340,6 +4340,22 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.on-top",
+                label: { en: "Conversations on top", fr: "Conversations en haut de la liste" },
+                description: {
+                    en: "Conversations kept on top of the list, local to the phone, and the list order setting (pinned first or unread first).",
+                    fr: "Conversations gardées en haut de la liste, propres au téléphone, et le réglage de l'ordre de la liste (épinglées d'abord ou non lues d'abord).",
+                },
+                status: "experimental",
+                dependsOn: ["chat.settings", "chat.unread"],
+                demo: { kind: "options", sectionId: "chat" },
+                files: [
+                    "src/services/migrations/addChatOnTop.ts",
+                    "src/services/chat/chatUnread.ts",
+                    "src/services/chat/chatSettings.ts",
+                ],
+            },
+            {
                 id: "chat.options",
                 label: { en: "Chat options", fr: "Options du clavardage" },
                 description: {

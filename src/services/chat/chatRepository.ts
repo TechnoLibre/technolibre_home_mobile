@@ -931,12 +931,31 @@ export class ChatRepository {
     const rows = configId
       ? await this.rows("chat_channels", { config_id: configId })
       : await this.db.rawQuery("SELECT * FROM chat_channels");
-    return rows.map(channelFromRow);
+    const onTop = new Set(
+      (configId ? await this.rows("chat_on_top", { config_id: configId }) : await this.db.rawQuery("SELECT * FROM chat_on_top"))
+        .map((r) => r.id as string),
+    );
+    return rows.map((r) => ({ ...channelFromRow(r), onTop: onTop.has(r.id as string) }));
   }
 
   async channel(configId: string, channelId: number): Promise<ChatChannel | null> {
     const row = await this.row("chat_channels", key(configId, channelId));
-    return row ? channelFromRow(row) : null;
+    if (!row) return null;
+    return { ...channelFromRow(row), onTop: (await this.row("chat_on_top", key(configId, channelId))) !== null };
+  }
+
+  /**
+   * Keeps a conversation on top of the list, or not. Repeating the same
+   * choice changes nothing; `now` stamps the row when it is added.
+   */
+  async setOnTop(configId: string, channelId: number, on: boolean, now: Date): Promise<void> {
+    const id = key(configId, channelId);
+    if (!on) {
+      await this.del("chat_on_top", { id });
+      return;
+    }
+    if (await this.row("chat_on_top", id)) return;
+    await this.put("chat_on_top", { id, config_id: configId, channel_id: channelId, since: now.toISOString() });
   }
 
   /**
@@ -989,6 +1008,7 @@ export class ChatRepository {
       [realId, configId, tempId],
     );
     await this.moveDraftText(configId, tempId, realId);
+    await this.moveOnTop(configId, tempId, realId);
     if ((await this.members(configId, realId)).length > 0) {
       await this.db.rawRun(
         "DELETE FROM chat_members WHERE config_id = ? AND channel_id = ? AND member_id < 0",
@@ -1017,6 +1037,14 @@ export class ChatRepository {
     }
   }
 
+  /** Moves the on-top row of a temporary id to the server id; the earlier row of the server id is replaced. */
+  private async moveOnTop(configId: string, tempId: number, realId: number): Promise<void> {
+    const row = await this.row("chat_on_top", key(configId, tempId));
+    if (!row) return;
+    await this.del("chat_on_top", { id: key(configId, tempId) });
+    await this.put("chat_on_top", { ...row, id: key(configId, realId), channel_id: realId });
+  }
+
   /** Records the server id a create gave to a temporary id (see chat_temp_ids). */
   async rememberRealId(configId: string, tempId: number, realId: number): Promise<void> {
     await this.put("chat_temp_ids", { id: key(configId, tempId), config_id: configId, temp_id: tempId, real_id: realId });
@@ -1037,7 +1065,7 @@ export class ChatRepository {
    * sent and its draft included: the user dismissed it.
    */
   async dropChannel(configId: string, channelId: number): Promise<void> {
-    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_drafts", "chat_reactions"]) {
+    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_drafts", "chat_reactions", "chat_on_top"]) {
       await this.del(t, { config_id: configId, channel_id: channelId });
     }
     await this.dropAttachmentRows({ config_id: configId, channel_id: channelId });
@@ -1629,7 +1657,7 @@ export class ChatRepository {
   /** Removes every cached row of one account, its drafts included, leaving the others. */
   async dropSource(configId: string): Promise<void> {
     await this.dropAttachmentRows({ config_id: configId });
-    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_sources"]) {
+    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_on_top", "chat_sources"]) {
       await this.del(t, { config_id: configId });
     }
   }
