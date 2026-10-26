@@ -229,8 +229,9 @@ export class ChatService {
    * Reads the account from the server: the session (self partner, system
    * right, websocket version), then /mail/data with the member channels and
    * their last message, then the account-wide mute, then the server module
-   * state. A cached conversation the server no longer lists (left or hidden
-   * meanwhile) is dropped, unless it is pinned locally, still being created
+   * state. A chat or a group comes with all its members: a cached member
+   * it does not carry (gone meanwhile) is dropped. A cached conversation the
+   * server no longer lists (left or hidden meanwhile) is dropped, unless it is pinned locally, still being created
    * (createOpId), refused and not dismissed yet (createFailed) or still
    * holds a post waiting to go; a direct message, which
    * /mail/data leaves out while hidden, is kept with its history and marked
@@ -276,9 +277,17 @@ export class ChatService {
     if (muteIsStale) delete delta.globalMuteUntil;
     else delta.globalMuteUntil = mute;
     const lastOf = new Map(delta.channels.map((c) => [c.channelId, c.lastMessageId]));
+    const typeOf = new Map(delta.channels.map((c) => [c.channelId, c.channelType]));
+    const carried = new Set(delta.members.map((m) => m.memberId));
     const gaps: number[] = [];
     for (const c of await this.repo.channels(configId)) {
       const cached = await this.repo.messages(configId, c.channelId);
+      // Odoo sends every member of a chat or a group: a cached one it left out is no longer there
+      if (lastOf.has(c.channelId) && ["chat", "group"].includes(typeOf.get(c.channelId) ?? c.channelType)) {
+        for (const m of await this.repo.members(configId, c.channelId)) {
+          if (m.memberId > 0 && !carried.has(m.memberId)) delta.deletedMemberIds.push(m.memberId);
+        }
+      }
       if (!lastOf.has(c.channelId)) {
         if (c.localPinned || c.createOpId !== null || c.createFailed || cached.some((m) => m.messageId === null)) continue;
         // A direct message is never left, only hidden: it stays cached with its history, unpinned
@@ -687,8 +696,11 @@ export class ChatService {
    * member ids sent as known) page after page, until the cache holds the
    * count the server gives or a page brings nobody new; each page is cached
    * with that count (memberCount), and the placeholder members of a
-   * conversation created offline (negative ids) give way. Offline, for a conversation only the
-   * phone knows, or when a page fails, the cached members are returned.
+   * conversation created offline (negative ids) give way. When the cache
+   * then holds more than that count, the members are read again from none
+   * known and the ones the server no longer returns are dropped
+   * (reconcileMembers). Offline, for a conversation only the phone knows,
+   * or when a page fails, the cached members are returned.
    * Queued behind the account's other server writers.
    */
   async members(src: ChatSource, channelId: number): Promise<ChatMember[]> {
@@ -727,8 +739,44 @@ export class ChatService {
       await this.repo.applyDelta(configId, delta);
       this.changed(configId, channelId);
       const count = (await this.repo.channel(configId, channelId))?.memberCount ?? null;
-      if (fresh === 0 || count === null || known.length + fresh >= count) return;
+      if (fresh === 0 || count === null || known.length + fresh >= count) {
+        if (count !== null && known.length + fresh > count) await this.reconcileMembers(src, channelId, erased);
+        return;
+      }
     }
+  }
+
+  /**
+   * Reads the members of a channel again from none known, page after
+   * page, until a page brings nobody new or the server's count is read,
+   * then drops the cached members it did not return: the cache held more
+   * than the server counts, so some left. A failed page drops nothing.
+   */
+  private async reconcileMembers(src: ChatSource, channelId: number, erased: () => boolean): Promise<void> {
+    const { configId, creds } = src;
+    const seen = new Set<number>();
+    for (;;) {
+      const result = await this.rpc.callWithAuth(creds, (sessionId) =>
+        this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/channel/members", {
+          channel_id: channelId,
+          known_member_ids: [...seen].sort((a, b) => a - b),
+        }));
+      if (erased()) return;
+      const delta = parseStore(result, configId, await this.selfOf(configId));
+      delta.members = delta.members.filter((m) => m.channelId === channelId);
+      delta.channels = delta.channels.filter((c) => c.channelId === channelId).map((c) => ({
+        channelId, ...(c.memberCount !== undefined ? { memberCount: c.memberCount } : {}),
+      }));
+      const page = delta.members.filter((m) => !seen.has(m.memberId));
+      for (const m of page) seen.add(m.memberId);
+      await this.repo.applyDelta(configId, delta);
+      const count = (await this.repo.channel(configId, channelId))?.memberCount ?? null;
+      if (page.length === 0 || count === null || seen.size >= count) break;
+    }
+    const stale = (await this.repo.members(configId, channelId)).map((m) => m.memberId).filter((id) => id > 0 && !seen.has(id));
+    if (stale.length === 0) return;
+    await this.repo.applyDelta(configId, { ...emptyDelta(), deletedMemberIds: stale });
+    this.changed(configId, channelId);
   }
 
   /**

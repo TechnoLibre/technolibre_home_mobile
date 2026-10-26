@@ -2083,6 +2083,57 @@ describe("ChatService", () => {
     expect(odoo.on("/discuss/channel/members")).toHaveLength(2);
   });
 
+  it("a load drops the cached members of a chat or a group it no longer carries, never a channel's", async () => {
+    fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    const memberIds = async (channelId: number) => (await chat.repo.members(config, channelId)).map((m) => m.memberId).sort();
+    const before = { group: await memberIds(GROUP), general: await memberIds(GENERAL) };
+    // Someone who left the group meanwhile, a channel member read by a members page, a placeholder
+    await chat.repo.applyDelta(config, { ...parseStore({}, config, SELF), members: [
+      { memberId: 999, channelId: GROUP, partnerId: 7 },
+      { memberId: 998, channelId: GENERAL, partnerId: 8 },
+      { memberId: -3, channelId: GROUP, partnerId: 9 },
+    ] });
+    await chat.load(src);
+    expect(await memberIds(GROUP)).toEqual([-3, ...before.group]);
+    expect(await memberIds(GENERAL)).toEqual([...before.general, 998].sort());
+  });
+
+  it("members read again from none known when the cache holds more than the server counts", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    const all = [104, 201, 202, 203];
+    odoo.state.onRoute = async (path, params) => {
+      if (path !== "/discuss/channel/members") return undefined;
+      const page = all.filter((id) => !params.known_member_ids.includes(id)).slice(0, 2);
+      return {
+        "discuss.channel": [{ id: params.channel_id, memberCount: all.length }],
+        "discuss.channel.member": page.map((id) => ({
+          id, thread: { id: params.channel_id, model: "discuss.channel" }, persona: { id: id === 104 ? SELF : id - 100, type: "partner" },
+        })),
+      };
+    };
+    // Every server member cached, and one who left since
+    await chat.repo.applyDelta(config, { ...parseStore({}, config, SELF), members: [201, 202, 203, 299].map((id) => ({
+      memberId: id, channelId: GENERAL, partnerId: id - 100,
+    })) });
+    const members = await chat.members(src, GENERAL);
+    expect(members.map((m) => m.memberId).sort()).toEqual(all);
+    expect(odoo.on("/discuss/channel/members").map((c) => c.params.known_member_ids)).toEqual([
+      [104, 201, 202, 203, 299], [], [104, 201],
+    ]);
+
+    // A re-read page that fails drops nothing
+    await chat.repo.applyDelta(config, { ...parseStore({}, config, SELF), members: [{ memberId: 298, channelId: GENERAL, partnerId: 198 }] });
+    let calls = 0;
+    const answer = odoo.state.onRoute;
+    odoo.state.onRoute = async (path, params) => (path === "/discuss/channel/members" && calls++ === 1
+      ? { __error: "odoo.exceptions.AccessError" } : answer(path, params));
+    expect((await chat.members(src, GENERAL)).map((m) => m.memberId).sort()).toEqual([...all, 298]);
+  });
+
   it("a value queued after the in-flight op failed is the one the server ends on", async () => {
     const odoo = fakeOdoo();
     const src = await source();
