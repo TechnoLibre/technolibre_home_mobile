@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { AppService } from "../services/appService";
 import { DatabaseService } from "../services/databaseService";
 import { Application } from "../models/application";
@@ -206,6 +206,27 @@ describe("AppService with SQLite", () => {
         ["https://erp.example.com|admin|db1", true],
       ]);
       expect(changes.every((c) => c.previousConfigId === undefined)).toBe(true);
+    });
+
+    it("beforeRename runs before the sync rows move to the new config id, only when the id changes", async () => {
+      const app = baseApp({ database: "db1" });
+      await appService.add(app);
+      const seen: any[] = [];
+      const rename = vi.spyOn(db, "renameSyncConfigId");
+      appService.beforeRename = async (from, to) => { seen.push([from, to, rename.mock.calls.length]); };
+      const id = { url: app.url, username: app.username };
+      await appService.edit(id, { ...app, url: "https://erp.example.com/" });
+      await appService.edit({ url: "https://erp.example.com/", username: app.username }, { ...app, url: "https://erp.example.com/", password: "x" });
+      expect(seen).toEqual([["https://erp.example.com|admin|db1", "https://erp.example.com/|admin|db1", 0]]);
+    });
+
+    it("a failing beforeRename does not stop the rename", async () => {
+      const app = baseApp({ database: "db1" });
+      await appService.add(app);
+      appService.beforeRename = async () => { throw new Error("hook"); };
+      const rename = vi.spyOn(db, "renameSyncConfigId");
+      await expect(appService.edit({ url: app.url, username: app.username }, { ...app, url: "https://erp.example.com/" })).resolves.toBe(true);
+      expect(rename).toHaveBeenCalledTimes(1);
     });
 
     it("a failing listener does not fail the change", async () => {

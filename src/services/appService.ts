@@ -38,6 +38,13 @@ export class AppService {
    * listener that fails is logged and does not fail the change.
    */
   onChanged: ((change: ApplicationsChange) => Promise<void> | void) | null = null;
+  /**
+   * Awaited before an edit moves the sync rows from one config id to
+   * another (renameSyncConfigId), with both ids: a writer of the old id
+   * (a chat upload) stops first, so nothing writes under it afterwards. A
+   * hook that fails is logged and does not stop the rename.
+   */
+  beforeRename: ((oldConfigId: string, newConfigId: string) => Promise<void> | void) | null = null;
 
   constructor(db: DatabaseService) {
     this._db = db;
@@ -172,10 +179,16 @@ export class AppService {
     // push creates new records.
     if (appID.username === newApp.username && sameServerUrl(appID.url, newApp.url)
       && appToEdit.database === newApp.database) {
-      await this._db.renameSyncConfigId(
-        syncConfigIdFor(appID.url, appID.username, appToEdit.database),
-        syncConfigIdFor(newApp.url, newApp.username, newApp.database)
-      );
+      const oldConfigId = syncConfigIdFor(appID.url, appID.username, appToEdit.database);
+      const newConfigId = syncConfigIdFor(newApp.url, newApp.username, newApp.database);
+      if (oldConfigId !== newConfigId) {
+        try {
+          await this.beforeRename?.(oldConfigId, newConfigId);
+        } catch (e) {
+          console.warn("[appService] rename hook failed:", e);
+        }
+      }
+      await this._db.renameSyncConfigId(oldConfigId, newConfigId);
     }
     await this._db.refreshAllNoteSyncStatuses();
     const before = configIdOf(appToEdit);

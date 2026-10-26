@@ -1164,6 +1164,16 @@ export class ChatService {
     this.changed(configId, null);
   }
 
+  /**
+   * Stops the account's running uploads and waits for them to settle,
+   * before its rows move to another config id (an edit of the
+   * application): an upload that ended after the move would write its
+   * result under the old id, and its file would go up again.
+   */
+  async stopUploads(configId: string): Promise<void> {
+    await this.queue.stopAccountUploads(configId);
+  }
+
   /** The account's ops leave the outbox, then its files, then its rows. */
   private async erase(configId: string): Promise<void> {
     await this.queue.dropAll(configId);

@@ -1311,6 +1311,17 @@ export class ChatOutbox {
     }
   }
 
+  /**
+   * Stops the account's running uploads and resolves once its lane
+   * settled: a stopped upload ends failed, its send kept in doubt
+   * (uploadSentAt), so its retry looks for what that send made. Its ops
+   * stay in the outbox.
+   */
+  async stopAccountUploads(configId: string): Promise<void> {
+    this.stopUploads((await this.db.getOutboxOpsForConfig(configId)).filter((op) => op.noteId === CHAT_NOTE));
+    await this.whenIdle(configId);
+  }
+
   /** Removes every chat row of the account from the outbox, posts and reads alike; its uploads stop. */
   async dropAll(configId: string): Promise<void> {
     const mine = (await this.db.getOutboxOpsForConfig(configId)).filter((op) => op.noteId === CHAT_NOTE);

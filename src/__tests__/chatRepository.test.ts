@@ -481,6 +481,25 @@ describe("ChatRepository", () => {
       expect(await repo.attachmentBytes(A, 7)).toBe(1000);
     });
 
+    it("setUploaded writes only a row still queued: a file refused meanwhile stays refused", async () => {
+      await repo.putOutgoing([outgoing(A, "l1"), outgoing(A, "l2")]);
+      await repo.setRefused(A, "l1", "left");
+      await repo.setUploaded(A, "l1", { attachmentId: 31, checksum: "ck", size: 999, mimetype: "image/png", name: "p.png" });
+      await repo.setUploaded(A, "l2", { attachmentId: 32, checksum: "ck2", size: 998, mimetype: "image/png", name: "q.png" });
+      const [one, two] = await repo.outgoingOf(A, "post1");
+      expect(one).toMatchObject({ state: "refused", error: "left", attachmentId: null, name: "photo.jpg" });
+      expect(two).toMatchObject({ state: "uploaded", attachmentId: 32, checksum: "ck2", size: 998, name: "q.png" });
+    });
+
+    it("deleteOutgoing and releaseOutgoing leave a row that is a draft again", async () => {
+      await repo.putOutgoing([outgoing(A, "l1"), outgoing(A, "l2")]);
+      await repo.backToDraft(A, ["l1"]);
+      expect(await repo.deleteOutgoing(A, ["l1", "l2"])).toEqual(["chat/dir/out/l2/photo.jpg"]);
+      expect(await repo.releaseOutgoing(A, ["l1"])).toEqual([]);
+      expect(await repo.outgoingFile(A, "l1")).toMatchObject({ state: "draft", originalPath: "chat/dir/out/l1/photo.jpg" });
+      expect(await repo.outgoingFile(A, "l2")).toBeNull();
+    });
+
     it("deleteOutgoing removes the rows and returns their paths", async () => {
       await repo.putOutgoing([outgoing(A, "l1"), outgoing(A, "l2")]);
       expect(await repo.deleteOutgoing(A, ["l1"])).toEqual(["chat/dir/out/l1/photo.jpg"]);

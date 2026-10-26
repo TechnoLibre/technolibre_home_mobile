@@ -2942,6 +2942,25 @@ describe("ChatService", () => {
       expect(await ops()).toEqual([]);
     });
 
+    it("stopUploads stops the account's running upload and resolves once it settled, its send kept in doubt", async () => {
+      server.state.hold = { nth: 1, when: "after" };
+      await chat.send(src, GROUP, "later", [stage("a.jpg")]);
+      await vi.waitFor(() => expect(server.uploads()).toHaveLength(1));
+      await chat.stopUploads(config);
+      expect(server.http.calls.filter((c) => c.kind === "cancel").map((c) => c.id)).toEqual([server.uploads()[0].id]);
+      const [up] = await ops("chat.upload");
+      expect(up).toMatchObject({ status: "failed", attempts: 1 });
+      expect(up.params.uploadSentAt).toBeTruthy();
+      expect(up.params.uploadEndedAt).toBeTruthy();
+      // The retry looks for the attachment the stopped send made: one upload, one attachment
+      advance(3 * 60_000 + 1);
+      await chat.flushAll({ force: true });
+      await idle();
+      expect(server.uploads()).toHaveLength(1);
+      expect(odoo.state.attachments).toHaveLength(1);
+      expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900]]);
+    });
+
     it("a module route gone falls back on Odoo's route, one post with the file", async () => {
       await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.2" });
       server.state.notFound = "module";

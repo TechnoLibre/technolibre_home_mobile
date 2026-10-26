@@ -1020,13 +1020,21 @@ export class ChatRepository {
     return rows.map(attachmentFromRow).sort(bySeq);
   }
 
-  /** The server accepted the file as a pending attachment: it now has an id and its real fields. */
+  /**
+   * The server accepted the file as a pending attachment: it now has an id
+   * and its real fields. Only a row still "queued" is written, in one
+   * statement: a row refused meanwhile (a leave) keeps its refusal.
+   */
   async setUploaded(
     configId: string,
     localUuid: string,
     s: { attachmentId: number; checksum: string; size: number; mimetype: string; name: string },
   ): Promise<void> {
-    await this.patchLocal(configId, localUuid, { ...s, state: "uploaded", error: null });
+    await this.db.rawRun(
+      "UPDATE chat_attachments SET state = ?, error = ?, attachment_id = ?, checksum = ?, size = ?, mimetype = ?, name = ? "
+        + "WHERE id = ? AND state = ?",
+      ["uploaded", null, s.attachmentId, s.checksum, s.size, s.mimetype, s.name, key(configId, `l${localUuid}`), "queued"],
+    );
   }
 
   /** The server refused the file; it stays, with the reason, until the user dismisses it. */
@@ -1225,13 +1233,14 @@ export class ChatRepository {
   /**
    * Forgets the file of rows of the phone by local uuid, the rows kept (a
    * refused file still named beside its text), and returns the paths
-   * without releasing them, as deleteOutgoing does.
+   * without releasing them, as deleteOutgoing does. A row that is a draft
+   * when it is read (a rejected send gave it back) keeps its file.
    */
   async releaseOutgoing(configId: string, localUuids: string[]): Promise<string[]> {
     const paths: string[] = [];
     for (const uuid of localUuids) {
       const row = await this.attachmentByKey(configId, `l${uuid}`);
-      if (!row?.originalPath) continue;
+      if (!row?.originalPath || row.state === "draft") continue;
       paths.push(row.originalPath);
       await this.put("chat_attachments", this.attachmentRow({ ...row, originalPath: null, originalBytes: 0 }));
     }
@@ -1253,13 +1262,15 @@ export class ChatRepository {
 
   /**
    * Drops files of the phone by local uuid and returns their paths without
-   * releasing them: the outbox deletes the files it owns itself.
+   * releasing them: the outbox deletes the files it owns itself. A row that
+   * is a draft when it is read stays with its file: a draft file is dropped
+   * only by removeDraftFile.
    */
   async deleteOutgoing(configId: string, localUuids: string[]): Promise<string[]> {
     const paths: string[] = [];
     for (const uuid of localUuids) {
       const row = await this.attachmentByKey(configId, `l${uuid}`);
-      if (!row) continue;
+      if (!row || row.state === "draft") continue;
       paths.push(...pathsOf(row));
       await this.del("chat_attachments", { id: key(configId, `l${uuid}`) });
     }
