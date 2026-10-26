@@ -45,6 +45,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   offered an upgrade (to a system user), and removal needs it. The thread
   and info screens now load their styles, and a guard checks that every
   sheet reachable from the entry is covered.
+- **Chat, lot 3: files and voice** — a message carries photos, files and
+  voice messages. The composer takes a camera shot (the original, kept), a
+  gallery pick or any file; a HEIC photo becomes a JPEG, and a photo can be
+  compressed (1920 px, JPEG quality 80) when the user asks. A voice message
+  is recorded with a tap to start and a tap to stop (60 seconds at most) and
+  encoded as MP3, mono, 128 kbit/s. The text and the files of a conversation
+  are kept as a draft per conversation, across restarts. The files go to the
+  server one by one, streamed, in a queue lane of their own; a transfer whose
+  answer was lost is not made twice (with the server module 1.2, which
+  recognises the upload by its identifier, or, without it, by a search before
+  the retry), a file over the server's limit is refused with a notice, and
+  files wait for Wi-Fi when the option asks. The thread shows previews, the
+  viewer opens a photo, the player plays a voice message, and « open with »
+  hands a file to another app. Options › Chat sets the compression question,
+  the cache space, a purge of the oldest-opened files (off by default, 2048
+  MB, warned at 80 %) and clears the cache. The app bundles the MP3 encoder
+  @breezystack/lamejs, licensed LGPL-3.0: Options › Third-party licenses
+  names it, links its source and reproduces the licence text.
 - **Sync test entry points** — `src/testing/syncTestKit.ts` (versioned by
   `HARNESS_API`) sets the sync code up for ERPLibre's integration tests
   against real Odoo servers; a development build also exposes
@@ -471,6 +489,28 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   proposer sa mise à jour (à un utilisateur système), et le retrait en a
   besoin. Les écrans de fil et de fiche chargent désormais leurs styles, et
   une garde vérifie que chaque feuille atteinte depuis l'entrée est couverte.
+- **Clavardage, lot 3 : fichiers et voix** — un message porte des photos,
+  des fichiers et des messages vocaux. La zone de saisie prend une photo de
+  l'appareil (l'original, conservé), un choix dans la galerie ou n'importe
+  quel fichier ; une photo HEIC devient un JPEG, et une photo peut être
+  compressée (1920 px, JPEG à 80) quand l'utilisateur le demande. Un message
+  vocal s'enregistre d'un appui pour commencer et d'un appui pour finir (60
+  secondes au plus) et s'encode en MP3, mono, 128 kbit/s. Le texte et les
+  fichiers d'une conversation sont gardés en brouillon par conversation, d'un
+  redémarrage à l'autre. Les fichiers partent un à un vers le serveur, en
+  flux, dans une voie de la file qui leur est propre ; un transfert dont la
+  réponse s'est perdue n'est pas fait deux fois (avec le module serveur 1.2,
+  qui reconnaît le téléversement par son identifiant, ou, sans lui, par une
+  recherche avant le renvoi), un fichier au-delà de la limite du serveur est
+  refusé avec un avis, et les fichiers attendent le Wi-Fi quand l'option le
+  demande. Le fil montre des aperçus, la visionneuse ouvre une photo, le
+  lecteur joue un message vocal, et « ouvrir avec » confie un fichier à une
+  autre app. Options › Clavardage règle la question de compression, l'espace
+  du cache, un nettoyage des fichiers ouverts le moins récemment (désactivé
+  par défaut, 2048 Mo, avertissement à 80 %) et vide le cache. L'app embarque
+  l'encodeur MP3 @breezystack/lamejs, sous licence LGPL-3.0 : Options ›
+  Licences tierces le nomme, lie son code source et reproduit le texte de la
+  licence.
 - **Points d'entrée des tests de synchro** — `src/testing/syncTestKit.ts`
   (versionné par `HARNESS_API`) prépare le code de synchro pour les tests
   d'intégration d'ERPLibre contre de vrais Odoo ; une construction de

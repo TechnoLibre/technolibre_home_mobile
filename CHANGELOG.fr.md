@@ -42,6 +42,28 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   proposer sa mise à jour (à un utilisateur système), et le retrait en a
   besoin. Les écrans de fil et de fiche chargent désormais leurs styles, et
   une garde vérifie que chaque feuille atteinte depuis l'entrée est couverte.
+- **Clavardage, lot 3 : fichiers et voix** — un message porte des photos,
+  des fichiers et des messages vocaux. La zone de saisie prend une photo de
+  l'appareil (l'original, conservé), un choix dans la galerie ou n'importe
+  quel fichier ; une photo HEIC devient un JPEG, et une photo peut être
+  compressée (1920 px, JPEG à 80) quand l'utilisateur le demande. Un message
+  vocal s'enregistre d'un appui pour commencer et d'un appui pour finir (60
+  secondes au plus) et s'encode en MP3, mono, 128 kbit/s. Le texte et les
+  fichiers d'une conversation sont gardés en brouillon par conversation, d'un
+  redémarrage à l'autre. Les fichiers partent un à un vers le serveur, en
+  flux, dans une voie de la file qui leur est propre ; un transfert dont la
+  réponse s'est perdue n'est pas fait deux fois (avec le module serveur 1.2,
+  qui reconnaît le téléversement par son identifiant, ou, sans lui, par une
+  recherche avant le renvoi), un fichier au-delà de la limite du serveur est
+  refusé avec un avis, et les fichiers attendent le Wi-Fi quand l'option le
+  demande. Le fil montre des aperçus, la visionneuse ouvre une photo, le
+  lecteur joue un message vocal, et « ouvrir avec » confie un fichier à une
+  autre app. Options › Clavardage règle la question de compression, l'espace
+  du cache, un nettoyage des fichiers ouverts le moins récemment (désactivé
+  par défaut, 2048 Mo, avertissement à 80 %) et vide le cache. L'app embarque
+  l'encodeur MP3 @breezystack/lamejs, sous licence LGPL-3.0 : Options ›
+  Licences tierces le nomme, lie son code source et reproduit le texte de la
+  licence.
 - **Points d'entrée des tests de synchro** — `src/testing/syncTestKit.ts`
   (versionné par `HARNESS_API`) prépare le code de synchro pour les tests
   d'intégration d'ERPLibre contre de vrais Odoo ; une construction de
