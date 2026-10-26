@@ -472,10 +472,13 @@ describe("ChatImageViewerComponent", () => {
         const back = vi.spyOn(window.history, "back").mockImplementation(() => {
             window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
         });
+        const before = window.location.pathname;
         const { v, onClose } = viewer(h);
         v.onOpened();
         expect(push).toHaveBeenCalledTimes(1);
-        expect(window.location.pathname).toBe(window.location.pathname);
+        // Same URL: the entry is the viewer's, the route does not move
+        expect(window.location.pathname).toBe(before);
+        expect(window.history.state?.chatViewer).toBe(true);
         window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
         expect(onClose).toHaveBeenCalledTimes(1);
         v.onClosing();
@@ -491,6 +494,65 @@ describe("ChatImageViewerComponent", () => {
         expect(second.onClose).toHaveBeenCalledTimes(1);
         push.mockRestore();
         back.mockRestore();
+    });
+
+    it("a double tap on ✕ goes back once", async () => {
+        stubLocale();
+        const h = harness();
+        await h.ta.load(new Map([["m1", [att(1, { thumbPath: "chat/d/thumbs/1" })]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        let pops = 0;
+        const back = vi.spyOn(window.history, "back").mockImplementation(() => {
+            pops += 1;
+            // The popstate comes later, as in a browser
+            setTimeout(() => window.dispatchEvent(new PopStateEvent("popstate", { state: null })), 0);
+        });
+        const { v, onClose } = viewer(h);
+        v.onOpened();
+        v.onClose();
+        v.onClose();
+        await new Promise((r) => setTimeout(r, 5));
+        expect(pops).toBe(1);
+        expect(onClose).toHaveBeenCalledTimes(1);
+        v.onClosing();
+        back.mockRestore();
+    });
+
+    it("a viewer removed with its entry still current drops its mark from it", async () => {
+        stubLocale();
+        const h = harness();
+        await h.ta.load(new Map([["m1", [att(1, { thumbPath: "chat/d/thumbs/1" })]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        window.history.replaceState({ kept: 1 }, "");
+        const { v } = viewer(h);
+        v.onOpened();
+        expect(window.history.state).toEqual({ kept: 1, chatViewer: true });
+        v.onClosing();
+        expect(window.history.state).toEqual({ kept: 1 });
+        // Removed after the screen moved on: the new entry is left alone
+        const w = viewer(h);
+        w.v.onOpened();
+        window.history.pushState({ route: "next" }, "");
+        w.v.onClosing();
+        expect(window.history.state).toEqual({ route: "next" });
+    });
+
+    it("the poll runs only while the original is asked or held", async () => {
+        stubLocale();
+        vi.useFakeTimers();
+        const h = harness();
+        await h.ta.load(new Map([["m1", [att(1, { thumbPath: "chat/d/thumbs/1" })]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        const { v } = viewer(h);
+        const views = vi.spyOn(h.ta, "view");
+        v.onOpened();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(v.state.stage).toBe("ready");
+        views.mockClear();
+        await vi.advanceTimersByTimeAsync(PROGRESS_POLL_MS * 4);
+        expect(views).not.toHaveBeenCalled();
+        h.cache.open.mockResolvedValueOnce({ kind: "waiting_wifi" });
+        await v.load();
+        await vi.advanceTimersByTimeAsync(PROGRESS_POLL_MS);
+        expect(views).toHaveBeenCalled();
+        v.onClosing();
     });
 
     it("an original gone from the server says so and keeps the preview", async () => {

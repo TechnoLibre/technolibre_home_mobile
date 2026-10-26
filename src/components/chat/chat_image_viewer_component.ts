@@ -49,6 +49,8 @@ export class ChatImageViewerComponent extends EnhancedComponent {
     private _closed = false;
     /** The viewer's history entry is the current one. */
     private _inHistory = false;
+    /** ✕ went back over the entry: its popstate is on its way, a second ✕ waits for it. */
+    private _closing = false;
     private _onPop = () => {
         if (!this._inHistory) return;
         this._inHistory = false;
@@ -65,21 +67,31 @@ export class ChatImageViewerComponent extends EnhancedComponent {
         onWillUnmount(() => this.onClosing());
     }
 
-    /** Shown: takes a history entry, follows the file and asks its original. */
+    /** Shown: takes a history entry and asks its original. */
     onOpened(): void {
         window.history.pushState({ ...(window.history.state ?? {}), chatViewer: true }, "");
         this._inHistory = true;
         window.addEventListener("popstate", this._onPop);
-        this.startPoll();
         void this.load();
     }
 
-    /** Gone from the screen: stops following; its history entry is left to whoever moved the screen. */
+    /**
+     * Gone from the screen: stops following. Removed while its entry is
+     * still the current one (the thread went away without a back), the
+     * entry loses its mark, so no later back is taken for the viewer's; an
+     * entry the screen moved to is left alone.
+     */
     onClosing(): void {
         this._closed = true;
-        this._inHistory = false;
         window.removeEventListener("popstate", this._onPop);
         this.stopPoll();
+        const current = window.history.state;
+        if (this._inHistory && current?.chatViewer) {
+            const rest = { ...current };
+            delete rest.chatViewer;
+            window.history.replaceState(rest, "");
+        }
+        this._inHistory = false;
     }
 
     get ta(): ThreadAttachments {
@@ -99,6 +111,7 @@ export class ChatImageViewerComponent extends EnhancedComponent {
     async load(anyNetwork = false): Promise<void> {
         this.state.stage = "loading";
         this.state.progress = null;
+        this.startPoll();
         const r = await this.ta.open(this.props.attKey, anyNetwork ? { anyNetwork: true } : {});
         if (this._closed) return;
         if (r.kind === "ready") {
@@ -107,22 +120,34 @@ export class ChatImageViewerComponent extends EnhancedComponent {
         } else {
             this.state.stage = r.kind;
         }
+        // Only a hold still has something to wait for
+        if (this.state.stage !== "waiting_wifi") this.stopPoll();
     }
 
     onAnyway(): Promise<void> {
         return this.load(true);
     }
 
-    /** ✕: back over the viewer's entry (popstate closes it), or closes at once without one. */
+    /**
+     * ✕: back over the viewer's entry (popstate closes it), or closes at
+     * once without one; a ✕ while that back is on its way does nothing, so
+     * a double tap never leaves the conversation.
+     */
     onClose(): void {
-        if (this._inHistory) window.history.back();
-        else this.props.onClose();
+        if (this._closing) return;
+        if (this._inHistory) {
+            this._closing = true;
+            window.history.back();
+        } else {
+            this.props.onClose();
+        }
     }
 
     /**
-     * From memory only, every PROGRESS_POLL_MS: the percent while loading;
-     * while held, a hold that ended (the cache took the file on Wi-Fi)
-     * asks the original again, which joins that download.
+     * From memory only, every PROGRESS_POLL_MS while the original is asked
+     * or held: the percent while loading; while held, a hold that ended
+     * (the cache took the file on Wi-Fi) asks the original again, which
+     * joins that download.
      */
     private startPoll(): void {
         this.stopPoll();
