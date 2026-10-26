@@ -1,6 +1,7 @@
 import type { Application } from "../../models/application";
 import type {
-  BusNotification, ChatAttachment, ChatChannel, ChatFileOrigin, ChatMember, ChatMessage, ChatModuleState, ChatNotice, OutgoingFile,
+  BusNotification, ChatAttachment, ChatChannel, ChatFileOrigin, ChatMember, ChatMessage, ChatModuleState, ChatNotice,
+  ChatReaction, MessageTarget, OutgoingFile,
 } from "../../models/chat";
 import { syncConfigIdFor } from "../../models/syncConfig";
 import type { DatabaseService } from "../databaseService";
@@ -12,6 +13,7 @@ import { nativeChatHttp } from "../../plugins/chatFilePlugin";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
 import { ChatAttachmentCache } from "./chatAttachmentCache";
 import { ChatCsrf } from "./chatCsrf";
+import { countEmojiUse } from "./chatEmoji";
 import { deviceChatFiles, type ChatFiles, type ChatHttp } from "./chatFiles";
 import { ChatModuleLevel, effectiveLevel, levelAtLeast, moduleProbe } from "./chatModule";
 import { ChatOutbox, type CreateMode } from "./chatOutbox";
@@ -519,6 +521,8 @@ export class ChatService {
       page.includes(m) || (parents.has(m.messageId) && m.channelId === channelId));
     let added = 0;
     for (const m of page) if (!(await this.repo.message(configId, m.messageId))) added++;
+    // The user's reactions still to be sent win over the server's older groups
+    await this.queue.overlayMessages(configId, delta);
     await this.repo.applyDelta(configId, delta);
     const ids = page.map((m) => m.messageId);
     const patch: Partial<ChatChannel> = {};
@@ -922,6 +926,22 @@ export class ChatService {
     }
     await this.queue.queueRemove(src.configId, channelId, partnerId);
     await this.afterAction(src, channelId);
+  }
+
+  /**
+   * Turns the user's own reaction `content` on a message on or off (see
+   * ChatOutbox.queueReaction): shown at once, sent when online. An emoji
+   * put on counts toward the most used (countEmojiUse).
+   */
+  async react(src: ChatSource, channelId: number, target: MessageTarget, content: string, on: boolean): Promise<void> {
+    await this.queue.queueReaction(src.configId, channelId, target, content, on);
+    if (on) countEmojiUse(content);
+    await this.afterAction(src, channelId);
+  }
+
+  /** The cached reaction groups of the given message keys (messageKeyOf) of a channel, each list in the server's order. */
+  async reactions(configId: string, channelId: number, keys: string[]): Promise<Map<string, ChatReaction[]>> {
+    return this.repo.reactionsOf(configId, channelId, keys);
   }
 
   /**
@@ -1530,6 +1550,8 @@ export class ChatService {
       if (c.channelType !== undefined || cached) kept.push(c);
     }
     delta.channels = kept;
+    // The user's reactions still to be sent win over the server's older groups
+    await this.queue.overlayMessages(configId, delta);
     await this.repo.applyDelta(configId, delta, { fromBus: true });
     return delta;
   }

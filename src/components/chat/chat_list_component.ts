@@ -374,7 +374,8 @@ export class ChatListComponent extends EnhancedComponent {
         else if (n.kind === "chat.dropped") {
             text = t(n.count === 1 ? "chat.notice_dropped_one" : "chat.notice_dropped_other", { count: n.count });
         } else {
-            text = t(n.reason === "vanished" ? "chat.notice_vanished" : "chat.notice_refused", {
+            const vanished = n.message ? "chat.notice_message_vanished" : "chat.notice_vanished";
+            text = t(n.reason === "vanished" ? vanished : "chat.notice_refused", {
                 action: t("chat.action_" + n.kind.replace(/^chat\./, "")),
             });
         }

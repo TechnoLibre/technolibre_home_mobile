@@ -1,4 +1,8 @@
-import type { ChannelType, ChatAttachment, ChatMessage, ChatNotice, OutgoingFile } from "../../models/chat";
+import {
+  messageKeyOf,
+  type ChannelType, type ChatAttachment, type ChatMessage, type ChatNotice, type ChatReaction, type MessageTarget,
+  type OutgoingFile,
+} from "../../models/chat";
 import { attachmentSettings, deviceAttachmentIO } from "../attachmentService";
 import type { DatabaseService, OutboxOp } from "../databaseService";
 import { networkService } from "../networkService";
@@ -26,7 +30,7 @@ import {
 } from "./chatTransfer";
 import { syncConfigIdFor } from "../../models/syncConfig";
 import { CREATE_QUIET_WINDOW_MS, clientMarker } from "../outboxMarker";
-import { bodyHasMarker, chatMarker } from "./chatBody";
+import { bodyHasMarker, chatMarker, isEmptyMessage } from "./chatBody";
 import { EMPTY_MENTIONS, composeBody } from "./chatCompose";
 import { emojiConversions } from "./chatEmoji";
 import { effectiveLevel, levelAtLeast } from "./chatModule";
@@ -98,13 +102,27 @@ export const CHAT_REMOVE = "chat.remove";
  */
 export const CHAT_DROPPED = "chat.dropped";
 
+/**
+ * params { channelId, messageId: number|null, clientUuid: string|null,
+ * content, action: "add"|"remove", base: boolean }: the user's own
+ * reaction `content` (the exact string the server stores) on one message,
+ * as a target state. The message is named by its server id, or while it is
+ * pending by the client uuid of its post (sameTarget); base: whether the
+ * server held that reaction of the user when the first op of the key was
+ * queued.
+ */
+export const CHAT_REACTION = "chat.reaction";
+
+/** The actions on one message, handled by runMessageAction, each a target state of its message (and content). */
+export const MESSAGE_KINDS = [CHAT_REACTION];
+
 /** The actions handled by runAction, each a target state of one conversation (or of the account). */
 const ACTION_KINDS = [
   CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_LEAVE, CHAT_HIDE, CHAT_MUTE, CHAT_GLOBAL_MUTE, CHAT_REMOVE,
 ];
 
 /** The kinds whose blocked rows are notices. */
-const NOTICE_KINDS = [...ACTION_KINDS, CHAT_DROPPED, CHAT_FILE_REFUSED];
+const NOTICE_KINDS = [...ACTION_KINDS, ...MESSAGE_KINDS, CHAT_DROPPED, CHAT_FILE_REFUSED];
 
 /** The kinds drain leaves to the upload lane (pumpUploads). */
 const LANE_KINDS = new Set([CHAT_UPLOAD]);
@@ -125,7 +143,7 @@ const RESIZABLE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/bmp", "
 const foundByNameAlone = (op: OutboxOp): boolean => RESIZABLE_IMAGE_TYPES.has(String(op.params.mimetype ?? "").toLowerCase());
 
 /** The actions of the user a conversation taken away cancels, and counts in its CHAT_DROPPED notice. */
-const USER_ACTIONS = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE, CHAT_REMOVE]);
+const USER_ACTIONS = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE, CHAT_REMOVE, ...MESSAGE_KINDS]);
 
 /**
  * Calls only the server module defines: a server whose module is older or
@@ -136,6 +154,20 @@ const MODULE_ONLY = new Set([CHAT_REMOVE]);
 
 /** The actions Odoo would make the user a member for (the mute route joins a non-member): sent only for a member. */
 const MEMBER_ONLY = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE]);
+
+/** Options of ChatOutbox.queueAction (see there). */
+interface QueueActionOpts {
+  /** Narrows the key past kind and conversation (the person removed, the message and emoji). */
+  same?: (o: OutboxOp) => boolean;
+  /** The params written into an op waiting, from its stored ones; the new params by default. */
+  merge?: (stored: Record<string, any>) => Record<string, any>;
+  /** Shows the action on the phone, with the conversation's id as queued. */
+  local?: (channelId: number | null) => Promise<void>;
+  /** The op a new one waits for when no op of the key runs, before the conversation's create. */
+  after?: string | null;
+  /** Whether merged params leave the server as it stood: nothing is sent. */
+  noop?: (merged: Record<string, any>) => boolean;
+}
 
 /** Odoo's "muted until I turn it back on", as mute_until_dt carries it. */
 export const MUTE_FOREVER_DT = "9999-12-31 23:59:59";
@@ -177,6 +209,45 @@ const REFUSED_ERRORS = new Set([
 ]);
 
 const isRefused = (e: unknown): boolean => e instanceof OdooRpcError && e.odooName !== null && REFUSED_ERRORS.has(e.odooName);
+
+/** The refusals of an action on a message that mean the message is gone (or no longer the user's to reach). */
+const VANISHED_ERRORS = new Set(["werkzeug.exceptions.NotFound", "odoo.exceptions.MissingError"]);
+
+const isVanished = (e: unknown): boolean => e instanceof OdooRpcError && e.odooName !== null && VANISHED_ERRORS.has(e.odooName);
+
+/** Whether two targets name one message: by the client uuid of its post when both have one, else by server id. */
+export function sameTarget(a: MessageTarget, b: MessageTarget): boolean {
+  if (a.clientUuid && b.clientUuid) return a.clientUuid === b.clientUuid;
+  return a.messageId != null && a.messageId === b.messageId;
+}
+
+/**
+ * The key an action is queued under: its kind, conversation, person
+ * removed, message (the client uuid of its post when it has one, else its
+ * id) and content. Ops of one key are one action, a later one superseding
+ * an earlier.
+ */
+export function targetKey(op: Pick<OutboxOp, "kind" | "params">): string {
+  const p = op.params;
+  const message = p.clientUuid ? `u${p.clientUuid}` : p.messageId != null ? `m${p.messageId}` : "";
+  return JSON.stringify([op.kind, p.channelId ?? null, p.partnerId ?? null, message, p.content ?? null]);
+}
+
+/**
+ * A reaction group with the user's own reaction in (`on`) or out: the
+ * count and the partners follow, the user put first. Unchanged when it
+ * already is; null when nobody is left.
+ */
+function ownReaction<G extends { count: number; selfReacted: boolean; partnerIds: number[] }>(
+  g: G,
+  on: boolean,
+  self: number | null,
+): G | null {
+  if (g.selfReacted === on) return g.count > 0 ? g : null;
+  const others = g.partnerIds.filter((id) => id !== self);
+  const count = Math.max(0, g.count + (on ? 1 : -1));
+  return count > 0 ? { ...g, selfReacted: on, count, partnerIds: on && self !== null ? [self, ...others] : others } : null;
+}
 
 /** Odoo's "YYYY-MM-DD HH:MM:SS" UTC string for a date. */
 const odooDate = (d: Date): string => d.toISOString().slice(0, 19).replace("T", " ");
@@ -286,6 +357,7 @@ export class ChatOutbox {
     outbox.registerHandler(CHAT_JOIN, (creds, op) => this.runJoin(creds, op));
     outbox.registerHandler(CHAT_UPLOAD, (creds, op) => this.runUpload(creds, op));
     for (const kind of ACTION_KINDS) outbox.registerHandler(kind, (creds, op) => this.runAction(creds, op));
+    for (const kind of MESSAGE_KINDS) outbox.registerHandler(kind, (creds, op) => this.runMessageAction(creds, op));
   }
 
   /**
@@ -442,10 +514,10 @@ export class ChatOutbox {
       return failed;
     }
     const all = await this.db.getOutboxOpsForConfig(configId);
-    // The tail of the channel's chain: the unfinished post no other op waits for
+    // The tail of the channel's chain: the unfinished post no other post or upload waits for (an action on its message may)
     const previous = all
       .filter((o) => o.kind === CHAT_POST && o.params.channelId === channelId)
-      .filter((c) => !all.some((o) => o.dependsOn === c.id))
+      .filter((c) => !all.some((o) => o.dependsOn === c.id && (o.kind === CHAT_POST || o.kind === CHAT_UPLOAD)))
       .at(-1);
     const createOpId = channel?.createOpId ?? null;
     const creating = createOpId !== null && all.some((o) => o.id === createOpId) ? createOpId : null;
@@ -736,16 +808,33 @@ export class ChatOutbox {
    * is given up between the lookup and the write. An op the outbox gave up on
    * (blocked, a notice) is replaced. A conversation still being created or
    * joined holds the op until that op is done; the swap then moves it to the
-   * server's id. Runs under exclusive(), with the id the create settled on
-   * when it did.
+   * server's id. `after` (the post of a message not sent yet) holds a new op
+   * the same way, when no op of the key runs. With `noop` and no op of the
+   * key running, a value that leaves the server as it stood (`noop` of the
+   * merged params) cancels the waiting ops and queues nothing: null. Runs
+   * under exclusive(), with the id the create settled on when it did.
    */
   private queueAction(
     configId: string,
     kind: string,
     channelId: number | null,
     params: Record<string, any>,
-    opts: { same?: (o: OutboxOp) => boolean; merge?: (stored: Record<string, any>) => Record<string, any>; local?: (channelId: number | null) => Promise<void> } = {},
-  ): Promise<OutboxOp> {
+    opts?: QueueActionOpts & { noop?: undefined },
+  ): Promise<OutboxOp>;
+  private queueAction(
+    configId: string,
+    kind: string,
+    channelId: number | null,
+    params: Record<string, any>,
+    opts: QueueActionOpts,
+  ): Promise<OutboxOp | null>;
+  private queueAction(
+    configId: string,
+    kind: string,
+    channelId: number | null,
+    params: Record<string, any>,
+    opts: QueueActionOpts = {},
+  ): Promise<OutboxOp | null> {
     return this.exclusive(configId, async () => {
       const id = channelId === null ? null : ((await this.realIdOf(configId, channelId)) ?? channelId);
       const all = await this.db.getOutboxOpsForConfig(configId);
@@ -753,22 +842,48 @@ export class ChatOutbox {
       for (const o of same) if (o.status === "blocked") await this.outbox.cancel(o.id);
       const values = { ...(id === null ? {} : { channelId: id }), ...params };
       const waiting = same.filter((o) => o.status !== "running" && o.status !== "blocked");
-      let op: OutboxOp;
+      const running = same.find((o) => o.status === "running");
+      let op: OutboxOp | null;
       if (waiting.length > 0) {
         for (const w of waiting) await this.outbox.setParams(w.id, opts.merge ? opts.merge(w.params) : params);
         // The newest may have started, finished or been given up between the lookup and the write
         const now = await this.db.getOutboxOp(waiting[waiting.length - 1].id);
-        if (now && now.status !== "running" && now.status !== "blocked") op = now;
-        else op = await this.outbox.enqueue({ noteId: CHAT_NOTE, configId, kind, params: values, dependsOn: now?.id ?? null });
+        if (now && now.status !== "running" && now.status !== "blocked") {
+          op = !running && opts.noop?.(now.params) ? await this.cancelWaiting(waiting, now.params) : now;
+        } else {
+          op = await this.outbox.enqueue({ noteId: CHAT_NOTE, configId, kind, params: values, dependsOn: now?.id ?? null });
+        }
+      } else if (!running && opts.noop?.(values)) {
+        op = null;
       } else {
-        const running = same.find((o) => o.status === "running");
         const createOpId = id === null ? null : ((await this.repo.channel(configId, id))?.createOpId ?? null);
         const creating = createOpId !== null && all.some((o) => o.id === createOpId) ? createOpId : null;
-        op = await this.outbox.enqueue({ noteId: CHAT_NOTE, configId, kind, params: values, dependsOn: running?.id ?? creating });
+        op = await this.outbox.enqueue({
+          noteId: CHAT_NOTE, configId, kind, params: values, dependsOn: running?.id ?? opts.after ?? creating,
+        });
       }
       await opts.local?.(id);
       return op;
     });
+  }
+
+  /**
+   * Cancels the waiting ops of a key whose value leaves the server as it
+   * stood. One that started meanwhile holds the merged value or an older
+   * one: a follow-up with `merged` goes behind it, so the server still ends
+   * where it stood, and is returned; otherwise null.
+   */
+  private async cancelWaiting(waiting: OutboxOp[], merged: Record<string, any>): Promise<OutboxOp | null> {
+    let started: OutboxOp | null = null;
+    for (const w of waiting) {
+      const now = await this.db.getOutboxOp(w.id);
+      if (!now) continue;
+      if (now.status === "running") started = now;
+      else await this.outbox.cancel(w.id);
+    }
+    if (!started) return null;
+    const { blockedReason: _reason, candidates: _candidates, ...params } = merged;
+    return this.outbox.enqueue({ noteId: CHAT_NOTE, configId: started.configId, kind: started.kind, params, dependsOn: started.id });
   }
 
   /** The cached conversation an action names, refused (Error) unless the user is a member of it. */
@@ -853,6 +968,66 @@ export class ChatOutbox {
   }
 
   /**
+   * Queues the user's own reaction `content` on a message, on or off, as
+   * the target state of (message, content) (queueAction): the op waiting
+   * takes the new action and keeps its base, and a value equal to its base
+   * (where the server stood) cancels the waiting ops and queues nothing
+   * (null). Shown at once (showReaction). The message is taken as the
+   * cache holds it (messageOf): one not sent yet is named by its post's
+   * client uuid and its op waits for that post. Rejects for a message not
+   * cached.
+   */
+  async queueReaction(
+    configId: string,
+    channelId: number,
+    target: MessageTarget,
+    content: string,
+    on: boolean,
+  ): Promise<OutboxOp | null> {
+    const message = await this.repo.messageOf(configId, target);
+    if (!message) throw new Error("The message of the reaction is not cached.");
+    const named: MessageTarget = { messageId: message.messageId, clientUuid: message.clientUuid };
+    const action = on ? "add" : "remove";
+    const key = messageKeyOf(message);
+    const group = (await this.repo.reactionsOf(configId, message.channelId, [key])).get(key)?.find((g) => g.content === content);
+    return this.queueAction(configId, CHAT_REACTION, channelId, { ...named, content, action, base: !!group?.selfReacted }, {
+      same: (o) => o.params.content === content && sameTarget(o.params as MessageTarget, named),
+      merge: (stored) => ({ action, messageId: stored.messageId ?? named.messageId }),
+      after: message.messageId === null ? message.outboxOpId : null,
+      noop: (merged) => (merged.action === "add") === !!merged.base,
+      local: () => this.showReaction(configId, named, content, on),
+    });
+  }
+
+  /**
+   * Shows the user's own reaction in or out of the cached group of a
+   * message (ownReaction); a new group goes after the message's others.
+   * The message is read again: a settle may have moved its key.
+   */
+  private async showReaction(configId: string, target: MessageTarget, content: string, on: boolean): Promise<void> {
+    const message = await this.repo.messageOf(configId, target);
+    if (!message) return;
+    const key = messageKeyOf(message);
+    const groups = (await this.repo.reactionsOf(configId, message.channelId, [key])).get(key) ?? [];
+    const stored = groups.find((g) => g.content === content);
+    const empty: ChatReaction = {
+      configId,
+      channelId: message.channelId,
+      messageKey: key,
+      messageId: message.messageId,
+      content,
+      count: 0,
+      selfReacted: false,
+      partnerIds: [],
+      guestCount: 0,
+      sequence: Math.max(0, ...groups.map((g) => g.sequence)) + 1,
+    };
+    const next = ownReaction(stored ?? empty, on, (await this.repo.sourceState(configId)).selfPartnerId);
+    if (next) await this.repo.putReaction(next);
+    else if (stored) await this.repo.dropReaction(configId, key, content);
+  }
+
+  /**
    * Leaves a conversation. On the phone at once: it is no longer a member,
    * so the list stops showing it; every other chat row of it waiting in the
    * outbox (posts, reads, actions) is cancelled, and the texts of its posts
@@ -922,9 +1097,11 @@ export class ChatOutbox {
    * read, so the server's older values do not undo what the phone shows
    * until the action is sent: a name or label, a description, a mute, a
    * hidden direct message, a conversation left, the account's mute. Only
-   * conversations the delta carries are touched.
+   * conversations the delta carries are touched. Then the reactions
+   * (overlayMessages).
    */
   async overlayPending(configId: string, delta: StoreDelta): Promise<void> {
+    await this.overlayMessages(configId, delta);
     const byId = new Map(delta.channels.map((c) => [c.channelId, c]));
     for (const op of await this.db.getOutboxOpsForConfig(configId)) {
       if (op.noteId !== CHAT_NOTE || op.status === "blocked") continue;
@@ -942,6 +1119,59 @@ export class ChatOutbox {
       else if (op.kind === CHAT_MUTE) c.muteUntilDt = muteDt(op.params.until ?? null);
       else if (op.kind === CHAT_HIDE) c.isPinned = false;
       else if (op.kind === CHAT_LEAVE) c.isMember = false;
+    }
+  }
+
+  /**
+   * Lays the reactions still queued (not given up) over the reaction
+   * groups a delta carries (a load, a history page, the bus, an answer), so
+   * the server's older groups do not undo what the phone shows until they
+   * are sent. Per key the newest op counts: its group in the delta gains
+   * or loses the user (ownReaction); a group the user is put into and the
+   * delta's full set (reactionSets) or deletion leaves out is added, after
+   * the message's others; one nobody is left in becomes a deletion. Only
+   * the messages whose reactions the delta carries are touched.
+   */
+  async overlayMessages(configId: string, delta: StoreDelta): Promise<void> {
+    const carried = new Set([...(delta.reactions ?? []), ...(delta.reactionSets ?? []), ...(delta.deletedReactions ?? [])]
+      .map((r) => r.messageId));
+    if (carried.size === 0) return;
+    // In dependency order: a follow-up comes after the op it waits for
+    const newest = new Map<string, OutboxOp>();
+    for (const op of dependencyOrder(await this.db.getOutboxOpsForConfig(configId))) {
+      if (op.kind === CHAT_REACTION && op.status !== "blocked") newest.set(targetKey(op), op);
+    }
+    if (newest.size === 0) return;
+    const self = delta.selfPartnerId ?? (await this.repo.sourceState(configId)).selfPartnerId;
+    const groups = (delta.reactions ??= []);
+    for (const op of newest.values()) {
+      const { content } = op.params;
+      const messageId: number | null = op.params.messageId
+        ?? (op.params.clientUuid ? (await this.repo.messageByClientUuid(configId, op.params.clientUuid))?.messageId ?? null : null);
+      if (messageId === null || !carried.has(messageId)) continue;
+      const on = op.params.action === "add";
+      const set = delta.reactionSets?.find((r) => r.messageId === messageId);
+      const named = (r: { messageId: number; content: string }) => r.messageId === messageId && r.content === content;
+      const at = groups.findIndex(named);
+      if (at < 0 && (!on || (!set && !delta.deletedReactions?.some(named)))) continue;
+      const next = ownReaction(at >= 0 ? groups[at] : {
+        messageId,
+        content,
+        count: 0,
+        selfReacted: false,
+        partnerIds: [],
+        guestCount: 0,
+        sequence: Math.max(0, ...groups.filter((g) => g.messageId === messageId).map((g) => g.sequence)) + 1,
+      }, on, self);
+      if (at >= 0) groups.splice(at, 1);
+      delta.deletedReactions = (delta.deletedReactions ?? []).filter((r) => !named(r));
+      if (next) {
+        groups.push(next);
+        if (set && !set.contents.includes(content)) set.contents.push(content);
+      } else {
+        delta.deletedReactions.push({ messageId, content });
+        if (set) set.contents = set.contents.filter((c) => c !== content);
+      }
     }
   }
 
@@ -965,7 +1195,8 @@ export class ChatOutbox {
           });
           continue;
         }
-        const reason = o.params.blockedReason === "vanished" ? "vanished" : "refused";
+        const blocked = o.params.blockedReason;
+        const reason = blocked === "vanished" || blocked === "changed" ? blocked : "refused";
         out.push({
           id: o.id,
           configId,
@@ -975,6 +1206,9 @@ export class ChatOutbox {
           error: reason === "refused" ? (o.lastError ?? "") : "",
           count: o.params.count ?? 1,
           label: o.params.label ?? "",
+          ...(MESSAGE_KINDS.includes(o.kind)
+            ? { message: { messageId: o.params.messageId ?? null, clientUuid: o.params.clientUuid ?? null } }
+            : {}),
         });
       }
     }
@@ -1294,8 +1528,8 @@ export class ChatOutbox {
    * bus): their rows leave the outbox as dropChannels does. When the user
    * still had actions waiting for one (USER_ACTIONS, queued or given up as
    * notices), one notice per conversation (CHAT_DROPPED, blocked) says how
-   * many were cancelled (one per kind, per person for a removal, whatever
-   * the number of ops), its count added to the one such a notice already
+   * many were cancelled (one per targetKey, whatever the number of ops),
+   * its count added to the one such a notice already
    * held; it stays until dismissed.
    */
   async dropTaken(configId: string, channelIds: number[]): Promise<void> {
@@ -1303,9 +1537,9 @@ export class ChatOutbox {
     for (const channelId of channelIds) {
       const mine = ops.filter((o) => o.noteId === CHAT_NOTE && o.params.channelId === channelId);
       this.stopUploads(mine);
-      // One action per kind (per person for a removal), however many ops of it wait: a follow-up behind a running one, a notice
-      const actions = new Set(mine.filter((o) => USER_ACTIONS.has(o.kind))
-        .map((o) => (o.kind === CHAT_REMOVE ? `${o.kind}#${o.params.partnerId}` : o.kind)));
+      // One action per key (per person for a removal, per message and emoji for a reaction), however many ops of it
+      // wait: a follow-up behind a running one, a notice
+      const actions = new Set(mine.filter((o) => USER_ACTIONS.has(o.kind)).map(targetKey));
       const count = actions.size + mine.reduce((n, o) => n + (o.kind === CHAT_DROPPED ? (o.params.count ?? 0) : 0), 0);
       for (const o of mine) await this.outbox.cancel(o.id);
       if (count === 0) continue;
@@ -2125,15 +2359,99 @@ export class ChatOutbox {
   }
 
   /**
-   * Gives an action up: blocked with its reason, as a notice, unless a
-   * later op of the same action and conversation (or person removed) is
-   * queued, which supersedes it, or the conversation is being left: then
-   * it simply leaves the outbox.
+   * Sends one action on a message with the params stored when it starts.
+   * Offline it waits (RequestNotSentError); an action of a conversation the
+   * user is leaving, or left with texts unsent, is dropped. The message is
+   * the cached one (messageOf: its server id, else its post's client
+   * uuid): one no longer cached, emptied (isEmptyMessage: deleted in
+   * Discuss) or still pending with its post gone is not sent, given up as
+   * "vanished"; one whose post still waits holds the action (a plain
+   * error, retried). The server's NotFound or MissingError gives it up as
+   * "vanished", another refusal as "refused" (giveUpMessage). The answer's
+   * Store is applied with the reactions still queued laid over it
+   * (overlayMessages), in the account's queue of server writers (serial).
    */
-  private async giveUp(op: OutboxOp, reason: "vanished" | "refused", message: string): Promise<void> {
-    const later = (await this.db.getOutboxOpsForConfig(op.configId)).some((o) =>
-      o.id !== op.id && o.kind === op.kind && o.params.channelId === op.params.channelId
-      && o.params.partnerId === op.params.partnerId);
+  private runMessageAction(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, async (running) => {
+      const act: OutboxOp = { ...running, params: (await this.db.getOutboxOp(running.id))?.params ?? running.params };
+      if (!(await this.isOnline())) throw new RequestNotSentError(`Offline: ${act.kind} waits for the network.`);
+      const { configId } = act;
+      const channelId: number = act.params.channelId;
+      if (await this.leaving(configId, channelId)) return;
+      const message = await this.repo.messageOf(configId, {
+        messageId: act.params.messageId ?? null,
+        clientUuid: act.params.clientUuid ?? null,
+      });
+      if (message && message.messageId === null && message.outboxOpId && (await this.db.getOutboxOp(message.outboxOpId))) {
+        throw new Error(`${act.kind} waits for the post of its message.`);
+      }
+      const messageId = message?.messageId ?? null;
+      const files = messageId === null ? 0
+        : (await this.repo.attachmentsOf(configId, message!.channelId, [messageId], [])).get(`m${messageId}`)?.length ?? 0;
+      if (messageId === null || isEmptyMessage(message!.body, files)) {
+        return this.giveUpMessage(act, "vanished", `The message of ${act.kind} is gone.`);
+      }
+      // Named by its post until now: its notice, if any, names the message the server knows
+      if (act.params.messageId !== messageId) await this.outbox.setParams(act.id, { messageId });
+      let result: any;
+      try {
+        result = await this.sendMessageAction(creds, act, messageId);
+      } catch (e: unknown) {
+        if (isVanished(e)) return this.giveUpMessage(act, "vanished", (e as Error).message);
+        if (!isRefused(e)) throw e;
+        return this.giveUpMessage(act, "refused", (e as Error).message);
+      }
+      await this.serial(configId, async () => {
+        // Its account erased while the request was on the wire: nothing is written
+        if (!(await this.db.getOutboxOp(act.id))) return;
+        const delta = parseStore(result, configId, (await this.repo.sourceState(configId)).selfPartnerId);
+        await this.overlayMessages(configId, delta);
+        await this.repo.applyDelta(configId, delta);
+      });
+      this.changed(configId, channelId);
+    });
+  }
+
+  /** Sends one action on the message `messageId`; resolves with the server's answer (a Store). */
+  private async sendMessageAction(creds: SyncCredentials, op: OutboxOp, messageId: number): Promise<any> {
+    const p = op.params;
+    switch (op.kind) {
+      case CHAT_REACTION:
+        return this.rpc.callWithAuth(creds, (sessionId) =>
+          this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/message/reaction", {
+            message_id: messageId,
+            content: p.content,
+            action: p.action,
+          }));
+    }
+    throw new Error(`No sender for ${op.kind}.`);
+  }
+
+  /**
+   * Gives an action on a message up (giveUp). A reaction no later op of
+   * its key follows is shown again as the server held it (base).
+   */
+  private async giveUpMessage(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
+    if (op.kind === CHAT_REACTION) {
+      const key = targetKey(op);
+      const later = (await this.db.getOutboxOpsForConfig(op.configId)).some((o) => o.id !== op.id && targetKey(o) === key);
+      if (!later) {
+        const target = { messageId: op.params.messageId ?? null, clientUuid: op.params.clientUuid ?? null };
+        await this.showReaction(op.configId, target, op.params.content, !!op.params.base);
+      }
+    }
+    return this.giveUp(op, reason, message);
+  }
+
+  /**
+   * Gives an action up: blocked with its reason, as a notice, unless a
+   * later op of its key (targetKey: the same action, conversation, person
+   * removed, message and content) is queued, which supersedes it, or the
+   * conversation is being left: then it simply leaves the outbox.
+   */
+  private async giveUp(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
+    const key = targetKey(op);
+    const later = (await this.db.getOutboxOpsForConfig(op.configId)).some((o) => o.id !== op.id && targetKey(o) === key);
     this.changed(op.configId, op.params.channelId ?? null);
     if (later) return;
     // An action of a conversation being left goes with it: a blocked one would hold the leave back

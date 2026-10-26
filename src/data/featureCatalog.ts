@@ -4402,25 +4402,39 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "on a message is its full set (groups it does not name go); DELETE, as one object or a list, "
                         + "removes a group. Groups live in chat_reactions keyed by the message's m<id>, or u<uuid> "
                         + "while it is queued, and move to m<id> when the post settles. A message the server deletes "
-                        + "(bus mail.message/delete) leaves with its reactions and its files.",
+                        + "(bus mail.message/delete) leaves with its reactions and its files. The user's own "
+                        + "reaction is queued as a target state per (message, emoji): add and remove are explicit, a "
+                        + "later tap rewrites the op waiting, and one that brings the server back where it stood "
+                        + "sends nothing. A reaction on a message not sent yet waits for its post and names it by "
+                        + "its client uuid. Until sent, the reaction is laid over what a load, a history page or "
+                        + "the bus brings; a message gone or emptied drops it with a notice.",
                     fr: "Les MessageReactions du Store donnent un groupe par (message, émoji) : le nombre, les "
                         + "partenaires dans l'ordre du serveur, les invités comptés, et si l'utilisateur en est. Une "
                         + "liste simple de réactions sur un message en est l'ensemble complet (les groupes qu'elle ne "
                         + "nomme pas partent) ; DELETE, objet seul ou liste, retire un groupe. Les groupes vivent dans "
                         + "chat_reactions sous la clé m<id> du message, ou u<uuid> tant qu'il est en file, et passent à "
                         + "m<id> quand l'envoi aboutit. Un message que le serveur supprime (bus mail.message/delete) "
-                        + "part avec ses réactions et ses fichiers.",
+                        + "part avec ses réactions et ses fichiers. La réaction de l'utilisateur est mise en file "
+                        + "comme état visé par (message, émoji) : ajout et retrait sont explicites, une touche "
+                        + "suivante réécrit l'opération en attente, et celle qui ramène le serveur où il en était "
+                        + "n'envoie rien. Une réaction à un message pas encore envoyé attend son envoi et le nomme "
+                        + "par son uuid client. Tant qu'elle n'est pas envoyée, elle recouvre ce qu'apportent un "
+                        + "chargement, une page d'historique ou le bus ; un message disparu ou vidé la retire avec "
+                        + "un avis.",
                 },
                 files: [
                     "src/services/chat/chatStore.ts",
                     "src/services/chat/chatRepository.ts",
                     "src/services/chat/chatService.ts",
+                    "src/services/chat/chatOutbox.ts",
                     "src/services/migrations/addChatActions.ts",
                 ],
                 tests: [
                     "src/__tests__/chatStore.test.ts",
                     "src/__tests__/chatRepository.test.ts",
                     "src/__tests__/chatService.test.ts",
+                    "src/__tests__/chatOutbox.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
                 ],
             },
             {

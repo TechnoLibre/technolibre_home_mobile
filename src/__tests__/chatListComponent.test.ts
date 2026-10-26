@@ -152,6 +152,21 @@ describe("ChatListComponent", () => {
         expect(c.state.notices).toHaveLength(2);
     });
 
+    it("a reaction's notice says the message no longer exists, or that the server refused it", async () => {
+        const chat: any = fakeChat(["a"], [chan("a", 5, { name: "Team" })]);
+        const message = { messageId: 9, clientUuid: null };
+        chat.notices = vi.fn().mockResolvedValue([
+            { id: "op1", configId: "a", kind: "chat.reaction", channelId: 5, reason: "vanished", error: "", count: 1, label: "", message },
+            { id: "op2", configId: "a", kind: "chat.reaction", channelId: 5, reason: "refused", error: "no", count: 1, label: "", message },
+        ]);
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.state.notices.map((n: any) => n.text)).toEqual([
+            "Team — Reaction: not sent, the message no longer exists.",
+            "Team — Reaction: refused by the server.",
+        ]);
+    });
+
     it("a dropped notice says one action or several, capitalised without a name", async () => {
         const chat: any = fakeChat(["a"], []);
         chat.notices = vi.fn().mockResolvedValue([

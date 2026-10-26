@@ -6,7 +6,9 @@ import { OutboxService } from "../services/outboxService";
 import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS, clientMarker } from "../services/syncService";
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
-import { CHAT_NOTE, CHAT_POST, CHAT_READ, CHAT_UPLOAD, ChatOutbox } from "../services/chat/chatOutbox";
+import {
+  CHAT_NOTE, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_UPLOAD, ChatOutbox, sameTarget, targetKey,
+} from "../services/chat/chatOutbox";
 import { memoryChatFiles } from "../testing/chatFakes";
 import type { OutgoingFile } from "../models/chat";
 import { chatMarker } from "../services/chat/chatBody";
@@ -130,6 +132,24 @@ describe("ChatOutbox", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   const advance = (ms: number) => { clock = new Date(clock.getTime() + ms); };
+
+  it("sameTarget names one message by its client uuid when both have one, else by its id", () => {
+    expect(sameTarget({ messageId: 5, clientUuid: "u1" }, { messageId: null, clientUuid: "u1" })).toBe(true);
+    expect(sameTarget({ messageId: 5, clientUuid: "u1" }, { messageId: 5, clientUuid: "u2" })).toBe(false);
+    expect(sameTarget({ messageId: 5, clientUuid: null }, { messageId: 5, clientUuid: "u1" })).toBe(true);
+    expect(sameTarget({ messageId: 5, clientUuid: null }, { messageId: 6, clientUuid: null })).toBe(false);
+    expect(sameTarget({ messageId: null, clientUuid: null }, { messageId: null, clientUuid: null })).toBe(false);
+  });
+
+  it("targetKey tells apart two messages, two emoji and two people removed", () => {
+    const op = (params: Record<string, any>, kind = CHAT_REACTION) => ({ kind, params }) as any;
+    const r = { channelId: 7, messageId: 5, clientUuid: null, content: "x" };
+    expect(targetKey(op(r))).toBe(targetKey(op({ ...r, action: "remove" })));
+    expect(targetKey(op(r))).not.toBe(targetKey(op({ ...r, messageId: 6 })));
+    expect(targetKey(op(r))).not.toBe(targetKey(op({ ...r, content: "y" })));
+    expect(targetKey(op({ channelId: 7, partnerId: 1 }, "chat.remove"))).not.toBe(targetKey(op({ channelId: 7, partnerId: 2 }, "chat.remove")));
+    expect(targetKey(op({ channelId: 7, name: "a" }, "chat.rename"))).toBe(targetKey(op({ channelId: 7, name: "b" }, "chat.rename")));
+  });
 
   it("queuePost stores the op and a pending message before any request", async () => {
     const odoo = chatOdoo();

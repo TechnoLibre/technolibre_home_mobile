@@ -102,6 +102,8 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
     maxUpload: null as number | null,
     /** Reply parents by message id: a page record gets `parentMessage`, the parent record follows (as Odoo). */
     parents: {} as Record<number, number>,
+    /** Extra keys of each record a messages page answers (its `reactions`, say). */
+    pageRecord: null as null | ((id: number) => Record<string, any>),
   };
   const rpcError = (name: string) => ({
     ok: true, status: 200,
@@ -139,6 +141,7 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
         const page = [...above, ...below].sort((a, b) => b - a);
         const records: any[] = page.map((i) => ({
           ...msg(i, params.channel_id), ...(i in state.parents ? { parentMessage: state.parents[i] } : {}),
+          ...(state.pageRecord ? state.pageRecord(i) : {}),
         }));
         for (const i of page) {
           const parent = state.parents[i];
@@ -345,6 +348,49 @@ function createServer(odoo: ReturnType<typeof fakeOdoo>, opts: { module?: boolea
     return undefined;
   };
   return { channels, state, store, make };
+}
+
+interface ServerReaction { messageId: number; content: string; partnerId: number }
+
+/**
+ * The reaction side of a fake Odoo 18 over fakeOdoo's onRoute:
+ * /mail/message/reaction adds only when absent and removes only when
+ * present (mail_message.py _message_reaction), then answers the full group
+ * of (message, content) as mail_message.py:920-933 does, a lone DELETE
+ * object once nobody is left. `rows` are the server's reactions; a message
+ * in `missing` answers NotFound; `drop` applies the next calls then loses
+ * their answer; while `hold` is set, a call waits on the server for it.
+ */
+function reactionServer(odoo: ReturnType<typeof fakeOdoo>) {
+  const state = {
+    rows: [] as ServerReaction[],
+    missing: new Set<number>(),
+    drop: 0,
+    hold: null as null | Promise<void>,
+  };
+  const previous = odoo.state.onRoute;
+  odoo.state.onRoute = async (path, params) => {
+    if (path !== "/mail/message/reaction") return previous?.(path, params);
+    const { message_id: messageId, content, action } = params;
+    if (state.missing.has(messageId)) return { __error: "werkzeug.exceptions.NotFound" };
+    if (state.hold) await state.hold;
+    const ofGroup = (r: ServerReaction) => r.messageId === messageId && r.content === content;
+    const own = state.rows.find((r) => ofGroup(r) && r.partnerId === SELF);
+    if (action === "add" && !own) state.rows.push({ messageId, content, partnerId: SELF });
+    if (action === "remove" && own) state.rows.splice(state.rows.indexOf(own), 1);
+    if (state.drop > 0) { state.drop--; throw new TypeError("Failed to fetch"); }
+    const group = state.rows.filter(ofGroup);
+    if (group.length === 0) return { "mail.message": [{ id: messageId, reactions: [["DELETE", { message: messageId, content }]] }] };
+    return {
+      "mail.message": [{ id: messageId, reactions: [["ADD", [{ message: messageId, content }]]] }],
+      MessageReactions: [{
+        content, count: group.length, sequence: 1, message: messageId,
+        personas: group.map((r) => ({ id: r.partnerId, type: "partner" })),
+      }],
+      "res.partner": group.map((r) => ({ id: r.partnerId, name: r.partnerId === SELF ? "Alice" : `P${r.partnerId}` })),
+    };
+  };
+  return { state, calls: () => odoo.on("/mail/message/reaction").map((c) => c.params) };
 }
 
 const offline = () => (network as any).__setNetworkStatus({ connected: false, connectionType: "none" });
@@ -2641,6 +2687,251 @@ describe("ChatService", () => {
     expect(await chat.repo.channel(config, realId)).toMatchObject({ isMember: false, leftUnsent: true, createOpId: null });
     expect((await chat.messages(config, realId)).map((m) => m.status)).toEqual(["failed"]);
     expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
+  });
+
+  describe("reactions", () => {
+    let odoo: ReturnType<typeof fakeOdoo>;
+    let server: ReturnType<typeof reactionServer>;
+    let src: ChatSource;
+    const THUMBS = "\u{1F44D}";
+    const HEART = "\u2764\uFE0F";
+    const sent = (messageId: number) => ({ messageId, clientUuid: null });
+    const groupOf = async (channelId: number, key: string, content: string) =>
+      (await chat.reactions(config, channelId, [key])).get(key)?.find((r) => r.content === content) ?? null;
+    const reactionOps = async () => (await env.db.getOutboxOpsForConfig(config)).filter((o) => o.kind === "chat.reaction");
+    /** Message 600 of the group as /mail/data sends it, with `reactions` its full set and `groups` its MessageReactions. */
+    const serverReactions = (contents: string[], groups: any[]) => {
+      const data = odoo.state.data;
+      data["mail.message"].find((m: any) => m.id === 600).reactions = contents.map((content) => ({ message: 600, content }));
+      data.MessageReactions = groups;
+    };
+
+    beforeEach(async () => {
+      odoo = fakeOdoo();
+      server = reactionServer(odoo);
+      src = await source();
+      await chat.load(src);
+    });
+
+    it("a reaction sends action add with the exact content", async () => {
+      await chat.react(src, GROUP, sent(600), HEART, true);
+      expect(server.calls()).toEqual([{ message_id: 600, content: "\u2764\uFE0F", action: "add" }]);
+      expect(server.state.rows).toEqual([{ messageId: 600, content: HEART, partnerId: SELF }]);
+      expect(await groupOf(GROUP, "m600", HEART)).toMatchObject({ count: 1, selfReacted: true, partnerIds: [SELF] });
+      expect(await reactionOps()).toEqual([]);
+      // Counted for the quick bar; a removal is not
+      await chat.react(src, GROUP, sent(600), HEART, false);
+      expect(JSON.parse(localStorage.getItem("chat.emoji.frequent")!)).toEqual({ [HEART]: 1 });
+      expect(server.calls().map((c) => c.action)).toEqual(["add", "remove"]);
+      expect(await groupOf(GROUP, "m600", HEART)).toBeNull();
+    });
+
+    it("add then remove offline sends nothing", async () => {
+      offline();
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toMatchObject({ count: 1, selfReacted: true });
+      await chat.react(src, GROUP, sent(600), THUMBS, false);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toBeNull();
+      expect(await reactionOps()).toEqual([]);
+      online();
+      await chat.flushAll();
+      expect(server.calls()).toEqual([]);
+    });
+
+    it("remove then add of a server reaction sends nothing", async () => {
+      serverReactions([THUMBS], [{
+        content: THUMBS, count: 2, sequence: 5, message: 600,
+        personas: [{ id: BOB, type: "partner" }, { id: SELF, type: "partner" }],
+      }]);
+      server.state.rows = [{ messageId: 600, content: THUMBS, partnerId: BOB }, { messageId: 600, content: THUMBS, partnerId: SELF }];
+      await chat.load(src);
+      offline();
+      await chat.react(src, GROUP, sent(600), THUMBS, false);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toMatchObject({ count: 1, selfReacted: false, partnerIds: [BOB] });
+      expect((await reactionOps()).map((o) => o.params)).toEqual([expect.objectContaining({ action: "remove", base: true })]);
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toMatchObject({ count: 2, selfReacted: true });
+      expect(await reactionOps()).toEqual([]);
+      online();
+      await chat.flushAll();
+      expect(server.calls()).toEqual([]);
+    });
+
+    it("add, remove, add offline sends one add", async () => {
+      offline();
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      await chat.react(src, GROUP, sent(600), THUMBS, false);
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      expect((await reactionOps()).map((o) => o.params)).toEqual([expect.objectContaining({ action: "add", base: false })]);
+      online();
+      await chat.flushAll();
+      expect(server.calls()).toEqual([{ message_id: 600, content: THUMBS, action: "add" }]);
+      expect(server.state.rows).toHaveLength(1);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toMatchObject({ count: 1, selfReacted: true });
+    });
+
+    it("a reaction while one runs queues a follow-up", async () => {
+      let release!: () => void;
+      server.state.hold = new Promise<void>((r) => { release = r; });
+      const first = chat.react(src, GROUP, sent(600), THUMBS, true);
+      await vi.waitFor(() => expect(server.calls()).toHaveLength(1));
+      await chat.react(src, GROUP, sent(600), THUMBS, false);
+      const ops = await reactionOps();
+      const sending = ops.find((o) => o.status === "running")!;
+      expect(sending.params.action).toBe("add");
+      expect(ops.filter((o) => o !== sending).map((o) => [o.status, o.params.action, o.dependsOn])).toEqual([["queued", "remove", sending.id]]);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toBeNull();
+      server.state.hold = null;
+      release();
+      await first;
+      // The answer of the add does not show the reaction the follow-up removes
+      expect(await groupOf(GROUP, "m600", THUMBS)).toBeNull();
+      await chat.flushAll();
+      expect(server.calls().map((c) => c.action)).toEqual(["add", "remove"]);
+      expect(server.state.rows).toEqual([]);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toBeNull();
+      expect(await reactionOps()).toEqual([]);
+    });
+
+    it("a dropped reaction answer leaves one reaction", async () => {
+      server.state.drop = 1;
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      expect(server.state.rows).toHaveLength(1);
+      expect((await reactionOps()).map((o) => o.status)).toEqual(["failed"]);
+      await chat.flushAll({ force: true });
+      expect(server.calls().map((c) => c.action)).toEqual(["add", "add"]);
+      expect(server.state.rows).toEqual([{ messageId: 600, content: THUMBS, partnerId: SELF }]);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toMatchObject({ count: 1, selfReacted: true });
+      expect(await reactionOps()).toEqual([]);
+    });
+
+    it("a reaction on a message deleted meanwhile is dropped with a notice", async () => {
+      const thread = { id: GROUP, model: "discuss.channel" };
+      await chat.applyBus(config, [bus(1001, "mail.record/insert", { "mail.message": [msg(599, GROUP)] })]);
+      offline();
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      await chat.react(src, GROUP, sent(599), THUMBS, true);
+      // Deleted in the browser: emptied (Odoo's delete), or unlinked
+      await chat.applyBus(config, [
+        bus(1002, "mail.record/insert", { "mail.message": [{ id: 600, thread, body: '<span class="o-mail-Message-edited"></span>' }] }),
+        bus(1003, "mail.message/delete", { message_ids: [599] }),
+      ]);
+      online();
+      await chat.flushAll();
+      expect(server.calls()).toEqual([]);
+      expect((await chat.notices()).sort((a, b) => a.message!.messageId! - b.message!.messageId!)).toEqual([
+        expect.objectContaining({ kind: "chat.reaction", channelId: GROUP, reason: "vanished", message: { messageId: 599, clientUuid: null } }),
+        expect.objectContaining({ kind: "chat.reaction", channelId: GROUP, reason: "vanished", message: { messageId: 600, clientUuid: null } }),
+      ]);
+    });
+
+    it("NotFound gives the vanished notice", async () => {
+      server.state.missing.add(600);
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      expect(server.calls()).toHaveLength(1);
+      expect(await chat.notices()).toEqual([
+        expect.objectContaining({ kind: "chat.reaction", channelId: GROUP, reason: "vanished", message: { messageId: 600, clientUuid: null } }),
+      ]);
+      // Not shown as done
+      expect(await groupOf(GROUP, "m600", THUMBS)).toBeNull();
+      // A refusal is the refused notice
+      odoo.state.onRoute = async () => ({ __error: "odoo.exceptions.AccessError" });
+      await chat.react(src, GROUP, sent(600), HEART, true);
+      expect((await chat.notices()).map((n) => [n.reason, n.error]).sort())
+        .toEqual([["refused", expect.stringContaining("refused")], ["vanished", ""]]);
+      expect(await groupOf(GROUP, "m600", HEART)).toBeNull();
+    });
+
+    it("notices of two messages' reactions do not supersede each other", async () => {
+      await chat.applyBus(config, [bus(1001, "mail.record/insert", { "mail.message": [msg(599, GROUP)] })]);
+      server.state.missing = new Set([599, 600]);
+      offline();
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      await chat.react(src, GROUP, sent(599), THUMBS, true);
+      online();
+      await chat.flushAll();
+      expect((await chat.notices()).map((n) => n.message?.messageId).sort()).toEqual([599, 600]);
+    });
+
+    it("a reaction on a pending message waits for its post and sends its server id", async () => {
+      offline();
+      const pending = await chat.send(src, GROUP, "hello");
+      await chat.react(src, GROUP, { messageId: null, clientUuid: pending.clientUuid }, THUMBS, true);
+      await chat.send(src, GROUP, "after");
+      const ops = await env.db.getOutboxOpsForConfig(config);
+      const post = ops.find((o) => o.kind === "chat.post" && o.params.text === "hello")!;
+      const [reaction] = await reactionOps();
+      expect(reaction.dependsOn).toBe(post.id);
+      expect(reaction.params).toMatchObject({ channelId: GROUP, messageId: null, clientUuid: pending.clientUuid, action: "add", base: false });
+      // The channel's posts still wait for each other
+      expect(ops.find((o) => o.kind === "chat.post" && o.params.text === "after")!.dependsOn).toBe(post.id);
+      expect(await groupOf(GROUP, `u${pending.clientUuid}`, THUMBS)).toMatchObject({ count: 1, selfReacted: true });
+      online();
+      await chat.flushAll();
+      const sentId = (await chat.repo.messageByClientUuid(config, pending.clientUuid!))!.messageId!;
+      expect(sentId).toEqual(expect.any(Number));
+      expect(server.calls()).toEqual([{ message_id: sentId, content: THUMBS, action: "add" }]);
+      const paths = odoo.calls.map((c) => c.path);
+      expect(paths.indexOf("/mail/message/reaction")).toBeGreaterThan(paths.indexOf("/mail/message/post"));
+      expect(await groupOf(GROUP, `m${sentId}`, THUMBS)).toMatchObject({ count: 1, selfReacted: true });
+      expect(await env.db.getOutboxOpsForConfig(config)).toEqual([]);
+    });
+
+    it("a reaction on a pending message survives a restart", async () => {
+      offline();
+      const pending = await chat.send(src, GROUP, "hello");
+      await chat.react(src, GROUP, { messageId: null, clientUuid: pending.clientUuid }, THUMBS, true);
+      // The app is killed: a new service over the same database, then the network is back
+      chat.dispose();
+      const rpc = new OdooRpcClient();
+      chat = new ChatService(env.db, rpc, new OutboxService(env.db, () => clock), new CapabilityService(env.db, rpc), () => clock);
+      await chat.recover();
+      online();
+      await chat.flushAll();
+      const sentId = (await chat.repo.messageByClientUuid(config, pending.clientUuid!))!.messageId!;
+      expect(odoo.on("/mail/message/post")).toHaveLength(1);
+      expect(server.calls()).toEqual([{ message_id: sentId, content: THUMBS, action: "add" }]);
+      expect(await groupOf(GROUP, `m${sentId}`, THUMBS)).toMatchObject({ count: 1, selfReacted: true });
+    });
+
+    it("a load between the tap and the send keeps the optimistic reaction", async () => {
+      // The server has Bob's and the user's heart, and no thumbs
+      serverReactions([HEART], [{
+        content: HEART, count: 2, sequence: 5, message: 600,
+        personas: [{ id: BOB, type: "partner" }, { id: SELF, type: "partner" }],
+      }]);
+      server.state.rows = [{ messageId: 600, content: HEART, partnerId: BOB }, { messageId: 600, content: HEART, partnerId: SELF }];
+      await chat.load(src);
+      offline();
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      await chat.react(src, GROUP, sent(600), HEART, false);
+      await chat.load(src);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toMatchObject({ count: 1, selfReacted: true, partnerIds: [SELF] });
+      expect(await groupOf(GROUP, "m600", HEART)).toMatchObject({ count: 1, selfReacted: false, partnerIds: [BOB] });
+      // A bus record carrying the server's set keeps them too
+      await chat.applyBus(config, [bus(1001, "mail.record/insert", {
+        "mail.message": [{ id: 600, reactions: [{ message: 600, content: HEART }] }],
+        MessageReactions: [{ content: HEART, count: 2, sequence: 5, message: 600,
+          personas: [{ id: BOB, type: "partner" }, { id: SELF, type: "partner" }] }],
+      })]);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toMatchObject({ count: 1, selfReacted: true });
+      expect(await groupOf(GROUP, "m600", HEART)).toMatchObject({ count: 1, selfReacted: false });
+      online();
+      await chat.flushAll();
+      // Two keys, sent in either order
+      expect(server.calls().map((c) => [c.content, c.action]).sort()).toEqual([[THUMBS, "add"], [HEART, "remove"]].sort());
+      expect(await groupOf(GROUP, "m600", HEART)).toMatchObject({ count: 1, selfReacted: false, partnerIds: [BOB] });
+    });
+
+    it("a history page keeps the optimistic reaction", async () => {
+      await chat.loadOlder(src, CHAT);
+      offline();
+      await chat.react(src, CHAT, sent(80), THUMBS, true);
+      // The next page answers the messages above it too, each with its full set: none
+      odoo.state.pageRecord = () => ({ reactions: [] });
+      await chat.loadOlder(src, CHAT);
+      expect(await groupOf(CHAT, "m80", THUMBS)).toMatchObject({ count: 1, selfReacted: true });
+    });
   });
 
   describe("posts with files", () => {

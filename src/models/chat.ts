@@ -230,7 +230,12 @@ export interface ChatNotice {
   /** The outbox kind of the action (chat.rename, chat.mute, ...). */
   kind: string;
   channelId: number | null;
-  reason: "refused" | "vanished";
+  /**
+   * "refused": by the server; "vanished": the conversation, or the
+   * message acted on, is gone; "changed": the message changed on the
+   * server since the action was queued.
+   */
+  reason: "refused" | "vanished" | "changed";
   /** The server's message for a refusal; "" otherwise. */
   error: string;
   /** Actions it stands for: those a conversation taken away cancelled (chat.dropped), else 1. */
@@ -243,6 +248,8 @@ export interface ChatNotice {
    * (null after a 413, whose limit is unknown).
    */
   file?: { name: string; reason: "too_big" | "missing" | "refused" | "not_found"; limit: number | null };
+  /** The message an action on a message names (a reaction, ...), as its op stored it. */
+  message?: MessageTarget;
 }
 
 /** One notification of the Odoo bus: its bus id and the typed message it carries. */
