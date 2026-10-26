@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@aparajita/capacitor-biometric-auth": "^10.0.0",
+    "@breezystack/lamejs": "1.2.7",
     "@capacitor-community/sqlite": "^8.0.0",
     "@capacitor-community/video-recorder": "^7.5.0",
     "@capacitor/android": "^8.0.0",

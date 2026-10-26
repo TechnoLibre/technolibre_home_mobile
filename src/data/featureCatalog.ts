@@ -4411,8 +4411,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.attachments",
                 label: { en: "Chat attachments", fr: "Pièces jointes du clavardage" },
                 description: {
-                    en: "Capture from the camera, the gallery or any file, streamed file upload and download with the session, the app's chat file layout, the CSRF token of the upload routes, and the cache of previews and originals.",
-                    fr: "Capture par l'appareil photo, la galerie ou tout fichier, envoi et téléchargement de fichiers en flux avec la session, l'arborescence des fichiers du clavardage, le jeton CSRF des routes d'envoi et le cache des aperçus et des originaux.",
+                    en: "Capture from the camera, the gallery or any file, voice messages recorded as MP3, streamed file upload and download with the session, the app's chat file layout, the CSRF token of the upload routes, and the cache of previews and originals.",
+                    fr: "Capture par l'appareil photo, la galerie ou tout fichier, messages vocaux enregistrés en MP3, envoi et téléchargement de fichiers en flux avec la session, l'arborescence des fichiers du clavardage, le jeton CSRF des routes d'envoi et le cache des aperçus et des originaux.",
                 },
                 status: "experimental",
                 howItWorks: {
@@ -4429,7 +4429,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "input: its camera chooser hands over the camera app's file untouched, named "
                         + "IMG_<date>.jpg; each pick is copied by chunks under out/<uuid>/, refused first when "
                         + "over the server's limit. A HEIC becomes a JPEG (quality 92) on the phone; « compress » "
-                        + "fits a photo to 1920 px at quality 80.",
+                        + "fits a photo to 1920 px at quality 80. A voice message is recorded as AAC, decoded by the "
+                        + "web view, then encoded in a worker by lamejs as the MP3 Odoo's browser makes (mono, "
+                        + "128 kbit/s, Voice-<date>-<n>.mp3, voice=true); it stops by itself at 60 s, and when the "
+                        + "app goes to the background it stops and stays unsent.",
                     fr: "Un plugin natif OkHttp envoie en flux un formulaire multipart lu d'un fichier et "
                         + "télécharge vers un fichier « .part » renommé une fois complet, donc un fichier n'est "
                         + "jamais entier en mémoire JS ; il ne touche que les fichiers du répertoire de "
@@ -4445,7 +4448,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "fichier de la vue web : son sélecteur d'appareil photo remet le fichier de l'application "
                         + "photo intact, nommé IMG_<date>.jpg ; chaque choix est copié par morceaux sous "
                         + "out/<uuid>/, refusé d'abord s'il dépasse la limite du serveur. Un HEIC devient un JPEG "
-                        + "(qualité 92) sur le téléphone ; « compresser » ramène une photo à 1920 px en qualité 80.",
+                        + "(qualité 92) sur le téléphone ; « compresser » ramène une photo à 1920 px en qualité 80. "
+                        + "Un message vocal s'enregistre en AAC, se décode par la vue web, puis lamejs l'encode dans "
+                        + "un worker en MP3 comme le fait le navigateur d'Odoo (mono, 128 kbit/s, "
+                        + "Voice-<date>-<n>.mp3, voice=true) ; il s'arrête seul à 60 s et, quand l'application passe "
+                        + "en arrière-plan, il s'arrête et reste non envoyé.",
                 },
                 demo: NONE_PLUMBING,
                 files: [
@@ -4457,6 +4464,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatTransfer.ts",
                     "src/services/chat/chatAttachmentCache.ts",
                     "src/services/chat/chatCapture.ts",
+                    "src/services/chat/chatVoice.ts",
+                    "src/services/chat/chatMp3.ts",
+                    "src/services/chat/chatMp3Worker.ts",
                     "android/app/src/main/java/ca/erplibre/home/ChatImageSize.java",
                     "src/testing/chatFakes.ts",
                 ],
@@ -4468,6 +4478,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/chatTransfer.test.ts",
                     "src/__tests__/chatAttachmentCache.test.ts",
                     "src/__tests__/chatCapture.test.ts",
+                    "src/__tests__/chatVoice.test.ts",
+                    "src/__tests__/chatMp3.test.ts",
                     "android/app/src/test/java/ca/erplibre/home/ChatImageSizeTest.java",
                 ],
             },
