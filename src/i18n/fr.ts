@@ -1108,6 +1108,7 @@ export const translations: Record<string, string> = {
   "chat.leave_confirm_group": "Quitter le groupe {name} ? Vous ne recevrez plus ses messages.",
   "chat.leave_confirm_channel": "Quitter le canal {name} ? Vous pourrez le rejoindre s'il est public.",
   "chat.info_creating": "Cette conversation est en cours de création.",
+  "chat.info_joining": "Votre adhésion à ce canal est en cours.",
   "chat.info_ambiguous": "Le serveur l'a peut-être déjà créée. Annulez la création pour recommencer.",
   "chat.info_create_failed": "Le serveur a refusé de la créer.",
   "chat.info_cancel_create": "Annuler la création",

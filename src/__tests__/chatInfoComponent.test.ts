@@ -308,17 +308,48 @@ describe("ChatInfoComponent", () => {
         expect(c.navigate).toHaveBeenCalledWith("/chat/a%7Cu/-4");
     });
 
-    it("a conversation being created shows its state and no management; an ambiguous one can be given up", async () => {
-        const ch = channel({ channelId: 5, createOpId: "op1" });
-        const pending = await opened(fakeChat(ch), [{ id: "op1", status: "pending", params: {} }]);
-        expect(pending.state.create).toBe("pending");
-        expect(pending.state.canLeave).toBe(false);
-        expect(pending.state.canMute).toBe(false);
-        expect(pending.state.canInvite).toBe(false);
-
+    it("a conversation being created is managed as the user's, its creator edits it, and it can be given up", async () => {
+        const ch = channel({ channelId: -5, createOpId: "op1", isEditable: null });
         const chat = fakeChat(ch);
-        const amb = await opened(chat, [{ id: "op1", status: "blocked", params: { blockedReason: "ambiguous" } }]);
+        const pending = await opened(chat, [{ id: "op1", kind: "chat.create", status: "pending", params: {} }]);
+        expect(pending.state.create).toBe("pending");
+        expect(pending.state).toMatchObject({
+            canRename: true, canEditDescription: true, canInvite: true, canMute: true, canLeave: true, canCancelCreate: true,
+        });
+        // Removing someone waits for a conversation the server knows
+        expect(pending.state.members.every((m: any) => !m.canRemove)).toBe(true);
+        pending.onEditName();
+        pending.onNameInput({ target: { value: "Renamed" } });
+        await pending.onSaveName();
+        expect(chat.rename).toHaveBeenCalledWith(expect.anything(), 5, "Renamed");
+        await pending.onMute(60);
+        expect(chat.mute).toHaveBeenCalledWith(expect.anything(), 5, 60);
+        const ask = vi.spyOn(window, "confirm").mockReturnValue(true);
+        await pending.onLeave();
+        expect(chat.leave).toHaveBeenCalledWith(expect.anything(), 5);
+        await pending.onCancelCreate();
+        expect(ask).toHaveBeenCalledTimes(2);
+        expect(chat.discardCreate).toHaveBeenCalledWith("a", 5);
+
+        // On the wire: kept, as the server may be making it
+        const running = await opened(fakeChat(ch), [{ id: "op1", kind: "chat.create", status: "running", params: {} }]);
+        expect(running.state.canCancelCreate).toBe(false);
+        expect(running.state.canRename).toBe(true);
+    });
+
+    it("a join under way says so and keeps the server's edit right", async () => {
+        const ch = channel({ channelType: "channel", createOpId: "op2", isEditable: null });
+        const c = await opened(fakeChat(ch), [{ id: "op2", kind: "chat.join", status: "pending", params: {} }]);
+        expect(c.state.create).toBe("joining");
+        expect(c.state).toMatchObject({ canRename: false, canMute: true, canLeave: true, canCancelCreate: false });
+    });
+
+    it("an ambiguous create is not managed and can be given up", async () => {
+        const ch = channel({ channelId: 5, createOpId: "op1" });
+        const chat = fakeChat(ch);
+        const amb = await opened(chat, [{ id: "op1", kind: "chat.create", status: "blocked", params: { blockedReason: "ambiguous" } }]);
         expect(amb.state.create).toBe("ambiguous");
+        expect(amb.state).toMatchObject({ canLeave: false, canMute: false, canInvite: false, canRename: false, canCancelCreate: true });
         const ask = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
         await amb.onCancelCreate();
         expect(chat.discardCreate).not.toHaveBeenCalled();

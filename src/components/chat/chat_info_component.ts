@@ -6,6 +6,7 @@ import { Events } from "../../constants/events";
 import { getCurrentLocale, t } from "../../i18n";
 import { displayNameOf } from "../../services/chat/chatNames";
 import { MUTE_CHOICES, muteText } from "../../services/chat/chatMute";
+import { CHAT_JOIN } from "../../services/chat/chatOutbox";
 import type { ChatSource } from "../../services/chat/chatSources";
 import type { ChatChannel, ChatMember, ChatPartner } from "../../models/chat";
 import { SEARCH_DEBOUNCE_MS } from "./chat_new_component";
@@ -15,7 +16,12 @@ export { MUTE_CHOICES };
 /** Quiet period that folds a burst of CHAT_CHANGED into one refresh. */
 const CHANGE_DEBOUNCE_MS = 150;
 
-type CreateState = "" | "pending" | "ambiguous" | "failed";
+/**
+ * Where the conversation stands with the server: known (""), still being
+ * created ("pending") or joined ("joining"), a create a lost answer left
+ * undecided ("ambiguous"), or one the server refused ("failed").
+ */
+type CreateState = "" | "pending" | "joining" | "ambiguous" | "failed";
 
 interface InfoMember {
     partnerId: number;
@@ -52,6 +58,8 @@ interface InfoState {
     muteLabel: string;
     globalMuteLabel: string;
     create: CreateState;
+    /** The create can still be given up: blocked, refused, or waiting and not on the wire. */
+    canCancelCreate: boolean;
     busy: boolean;
     error: string;
 }
@@ -61,9 +69,13 @@ interface InfoState {
  * (renamed as Odoo allows per type), the description, the members with
  * their presence, and the actions the conversation and the user's rights
  * offer: invite, remove (a system user on a server with module 1.1), mute,
- * leave or hide. A conversation still being created shows that state, and a
- * blocked one can be given up. It renders from the cache and refreshes on
- * CHAT_CHANGED; every service call that fails shows a notice.
+ * leave or hide. A conversation still being created or joined shows that
+ * state and is managed as one the user is a member of: what is changed
+ * meanwhile is queued behind the create and moves to the server's id with
+ * it. Its creator may rename it and change its description; a create not on
+ * the wire, blocked or refused can be given up. It renders from the cache
+ * and refreshes on CHAT_CHANGED; every service call that fails shows a
+ * notice.
  */
 export class ChatInfoComponent extends EnhancedComponent {
     state!: InfoState;
@@ -89,9 +101,10 @@ export class ChatInfoComponent extends EnhancedComponent {
 
         <section t-if="state.create" class="chat-info__section chat-info__create" role="status">
           <p t-if="state.create === 'pending'" t-esc="t('chat.info_creating')"/>
+          <p t-if="state.create === 'joining'" t-esc="t('chat.info_joining')"/>
           <p t-if="state.create === 'ambiguous'" t-esc="t('chat.info_ambiguous')"/>
           <p t-if="state.create === 'failed'" t-esc="t('chat.info_create_failed')"/>
-          <button t-if="state.create !== 'pending'" class="chat-info__btn chat-info__btn--danger"
+          <button t-if="state.canCancelCreate" class="chat-info__btn chat-info__btn--danger"
                   t-att-disabled="state.busy" t-on-click="onCancelCreate" t-esc="t('chat.info_cancel_create')"/>
         </section>
 
@@ -205,6 +218,7 @@ export class ChatInfoComponent extends EnhancedComponent {
             muteLabel: "",
             globalMuteLabel: "",
             create: "",
+            canCancelCreate: false,
             busy: false,
             error: "",
         });
@@ -285,15 +299,19 @@ export class ChatInfoComponent extends EnhancedComponent {
         const self = st.selfPartnerId;
         const type = channel.channelType;
         const now = new Date();
-        const create = this.createState(channel, ops);
-        const usable = channel.isMember && create === "";
-        const editable = channel.isEditable === true;
+        const op = channel.createOpId ? ops.find((o) => o.id === channel.createOpId) : undefined;
+        const create = this.createState(channel, op);
+        // A conversation on its way to the server is the user's already: its actions wait for the create
+        const usable = channel.isMember && (create === "" || create === "pending" || create === "joining");
+        // The server makes the creator of a group or channel able to edit it
+        const editable = channel.isEditable === true || (channel.isEditable === null && create === "pending");
         const s = this.state;
         s.found = true;
         s.channelType = type;
         s.title = displayNameOf(channel, members, names, self, getCurrentLocale());
         s.memberCount = Math.max(channel.memberCount ?? 0, members.length);
         s.create = create;
+        s.canCancelCreate = create === "ambiguous" || create === "failed" || (create === "pending" && op?.status !== "running");
         s.canRename = usable && (type === "chat" || editable);
         s.showDescription = type !== "chat" && (editable || !!channel.description);
         s.canEditDescription = usable && type !== "chat" && editable;
@@ -303,7 +321,7 @@ export class ChatInfoComponent extends EnhancedComponent {
             name: names.get(m.partnerId)?.name || "?",
             presence: this.presenceOf(names.get(m.partnerId)?.imStatus),
             isSelf: m.partnerId === self,
-            canRemove: usable && features.canRemoveMembers && type !== "chat" && m.partnerId !== self,
+            canRemove: create === "" && usable && features.canRemoveMembers && type !== "chat" && m.partnerId !== self,
         }));
         s.canInvite = usable;
         s.canLeave =
@@ -327,11 +345,11 @@ export class ChatInfoComponent extends EnhancedComponent {
 
     private createState(
         channel: ChatChannel,
-        ops: { id: string; status?: string; params?: Record<string, any> }[],
+        op: { kind?: string; status?: string; params?: Record<string, any> } | undefined,
     ): CreateState {
         if (channel.createFailed) return "failed";
         if (!channel.createOpId) return "";
-        const op = ops.find((o) => o.id === channel.createOpId);
+        if (op?.kind === CHAT_JOIN) return "joining";
         return op?.status === "blocked" && op.params?.blockedReason === "ambiguous" ? "ambiguous" : "pending";
     }
 
@@ -520,7 +538,7 @@ export class ChatInfoComponent extends EnhancedComponent {
         if (await this.run(() => this.chatService.hide(src, this.channelId))) this.navigate("/chat");
     }
 
-    /** Gives up a conversation whose creation is blocked or refused, after the user confirms. */
+    /** Gives up a conversation whose creation waits, is blocked or refused, after the user confirms. */
     async onCancelCreate(): Promise<void> {
         if (!window.confirm(t("chat.cancel_create_confirm"))) return;
         if (await this.run(() => this.chatService.discardCreate(this.configId, this.channelId))) this.navigate("/chat");
