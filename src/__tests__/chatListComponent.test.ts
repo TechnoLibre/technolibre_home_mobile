@@ -52,7 +52,7 @@ function fakeChat(ids: string[], channels: any[], unread: Record<string, number>
 function make(chat: any) {
     stubLocale();
     const c = new (ChatListComponent as any)();
-    c.env = { chatService: { ...chat }, eventBus: new EventBus() };
+    c.env = { chatService: { ...chat }, eventBus: new EventBus(), databaseService: { getOutboxOpsForConfig: vi.fn().mockResolvedValue([]) } };
     Object.defineProperty(c, "chatService", { value: chat });
     c.setup();
     return c;
@@ -290,6 +290,27 @@ describe("ChatListComponent", () => {
         expect(c.state.rows[0].title).toBe("Alice Roy");
         expect(c.state.rows[0].typeIcon).toBe("👤");
         expect(c.state.rows[0].preview).toBe("⏳ hello");
+    });
+
+    it("the list skips an emptied last message", async () => {
+        const chat = fakeChat(["a"], [chan("a", 1, { name: "Team", lastMessageId: 41 }), chan("a", 2, { name: "Pair" })]);
+        // Their delete is queued: the bodies are emptied at once, the photo of 41 stays until the server answers
+        const photo = { messageId: 41, clientUuid: null, messageType: "comment", status: "sent", body: "", date: "2020-01-01 09:00:00" };
+        chat.repo.lastMessages.mockImplementation(async (_c: string, chans: any[], skip?: Set<number>) => skip
+            ? new Map([[1, { messageId: 40, clientUuid: null, messageType: "comment", status: "sent", body: "<p>older</p>", date: "2020-01-01 08:00:00" }]])
+            : new Map<number, any>([[1, photo], [2, { messageId: 50, clientUuid: null, messageType: "comment", status: "sent", body: "<p>sent</p>", date: "2020-01-01 09:00:00" }]]));
+        chat.repo.pendingMessages.mockResolvedValue(new Map([[2, [
+            { messageId: null, clientUuid: "Q1", messageType: "comment", status: "pending", body: "", date: "2020-01-01 10:00:00" },
+        ]]]));
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([["m41", [{ name: "IMG_1.jpg", mimetype: "image/jpeg", voice: false }]]]));
+        const c = make(chat);
+        c.env.databaseService.getOutboxOpsForConfig.mockResolvedValue([
+            { id: "d1", kind: "chat.delete", status: "pending", params: { channelId: 1, messageId: 41, clientUuid: null } },
+            { id: "d2", kind: "chat.delete", status: "running", params: { channelId: 2, messageId: null, clientUuid: "Q1" } },
+        ]);
+        await c.loadCache();
+        expect(c.state.rows.map((r: any) => r.preview)).toEqual(["older", "sent"]);
+        expect(chat.repo.lastMessages).toHaveBeenLastCalledWith("a", [expect.objectContaining({ channelId: 1 })], new Set([41]));
     });
 
     it("a message with only files previews them by icon and name", async () => {

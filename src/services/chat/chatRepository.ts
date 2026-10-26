@@ -13,6 +13,7 @@ import type {
 } from "../../models/chat";
 import { messageKeyOf } from "../../models/chat";
 import type { StoreDelta } from "./chatStore";
+import { isEmptyBody, isEmptyMessage } from "./chatBody";
 
 type Row = Record<string, any>;
 
@@ -1042,20 +1043,37 @@ export class ChatRepository {
   }
 
   /**
-   * The last server message of each given channel, by primary key (one
-   * lookup per channel, no history scan). A channel without a known last
-   * message, or whose last message is not cached, has no entry.
+   * The newest non-empty server message of each given channel, as Odoo's
+   * `newestPersistentNotEmptyOfAllMessage`: the last one by primary key
+   * (one lookup per channel); only when its body is empty is the channel's
+   * history read for the newest one with text or a file (isEmptyMessage).
+   * The messages of `skip` (server ids) count as empty: the ones whose
+   * delete is queued. A channel without a known last message, whose last
+   * message is not cached, or with no non-empty message cached has no
+   * entry.
    */
-  async lastMessages(configId: string, channels: ChatChannel[]): Promise<Map<number, ChatMessage>> {
-    const found = await Promise.all(
-      channels.map(async (c) => (c.lastMessageId == null ? null : await this.message(configId, c.lastMessageId))),
-    );
+  async lastMessages(configId: string, channels: ChatChannel[], skip: Set<number> = new Set()): Promise<Map<number, ChatMessage>> {
+    const found = await Promise.all(channels.map(async (c) => {
+      const m = c.lastMessageId == null ? null : await this.message(configId, c.lastMessageId);
+      return !m || (!isEmptyBody(m.body) && !skip.has(m.messageId!)) ? m : this.newestNotEmpty(configId, c.channelId, skip);
+    }));
     const out = new Map<number, ChatMessage>();
     channels.forEach((c, i) => {
       const m = found[i];
       if (m) out.set(c.channelId, m);
     });
     return out;
+  }
+
+  /** The newest server message of a channel with text or a file, outside `skip`; null when none is cached. */
+  private async newestNotEmpty(configId: string, channelId: number, skip: Set<number>): Promise<ChatMessage | null> {
+    const [rows, files] = await Promise.all([
+      this.rows("chat_messages", { config_id: configId, channel_id: channelId }),
+      this.rows("chat_attachments", { config_id: configId, channel_id: channelId }),
+    ]);
+    const withFiles = new Set(files.map((r) => r.message_id).filter((id) => id != null));
+    const sent = rows.map(messageFromRow).filter((m) => m.messageId !== null).sort((a, b) => b.messageId! - a.messageId!);
+    return sent.find((m) => !skip.has(m.messageId!) && !isEmptyMessage(m.body, withFiles.has(m.messageId) ? 1 : 0)) ?? null;
   }
 
   /** The queued messages of an account grouped by channel, each group oldest first. */

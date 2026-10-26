@@ -4965,11 +4965,14 @@ export const FEATURE_TREE: FeatureNode[] = [
                 howItWorks: {
                     en: "The list renders from the cache with the sources decided offline, then each server is "
                         + "read in the background and the list is rebuilt when the chat cache changes. With one "
-                        + "server no choice is shown, with two to four chips, with five or more a dropdown.",
+                        + "server no choice is shown, with two to four chips, with five or more a dropdown. A "
+                        + "row previews the newest message with text or a file, as Odoo's: an emptied one, or one "
+                        + "whose delete is queued, is skipped.",
                     fr: "La liste s'affiche depuis le cache, les sources étant décidées hors ligne, puis chaque "
                         + "serveur est lu en arrière-plan et la liste est refaite quand le cache change. Avec un "
                         + "serveur aucun choix n'est montré, avec deux à quatre des pastilles, avec cinq ou plus "
-                        + "une liste déroulante.",
+                        + "une liste déroulante. Une ligne montre le plus récent message avec du texte ou un "
+                        + "fichier, comme Odoo : un message vidé, ou dont la suppression est en file, est sauté.",
                 },
                 demo: { kind: "route", url: "/chat" },
                 files: [
@@ -4982,8 +4985,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.thread",
                 label: { en: "Conversation screen", fr: "Écran de conversation" },
                 description: {
-                    en: "Bubbles with read marks, pending and failed posts with retry, typing line, history paging and composer.",
-                    fr: "Bulles avec accusés de lecture, envois en attente ou échoués avec réessai, ligne « écrit… », historique paginé et zone de saisie.",
+                    en: "Bubbles with read marks, « (edited) », reply quotes and mention links, pending and failed posts with retry, typing line, history paging and composer.",
+                    fr: "Bulles avec accusés de lecture, « (modifié) », citations de réponse et liens de mention, envois en attente ou échoués avec réessai, ligne « écrit… », historique paginé et zone de saisie.",
                 },
                 status: "experimental",
                 howItWorks: {
@@ -4991,12 +4994,24 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "changes. Bodies go through the whitelisting renderer; scrolling to the top renders more "
                         + "from the cache, then pages the history in from the server. Reaching the bottom, or a new "
                         + "message with the bottom in view, marks the conversation read; every send is queued in "
-                        + "the outbox first.",
+                        + "the outbox first. As the browser, a message emptied with no file left, or whose delete "
+                        + "is queued, is hidden, and an edited one ends with « (edited) ». A reply quotes its "
+                        + "parent (author, start of the text, or the files, or « Original message was deleted »), "
+                        + "read from the cache even below the loaded history, which never shows it as a row; a tap "
+                        + "scrolls to the original when it is rendered. A tap on a mention opens the direct "
+                        + "message, on a channel link the conversation, after a join confirmation for a channel "
+                        + "the user is not a member of.",
                     fr: "L'écran affiche les 100 messages les plus récents du cache et se rafraîchit quand sa "
                         + "conversation change. Les corps passent par le rendu à liste blanche; remonter en haut "
                         + "en affiche davantage depuis le cache, puis charge l'historique du serveur. Atteindre le "
                         + "bas, ou un nouveau message avec le bas visible, marque la conversation lue; chaque envoi "
-                        + "passe d'abord par la file.",
+                        + "passe d'abord par la file. Comme le navigateur, un message vidé sans fichier restant, ou "
+                        + "dont la suppression est en file, est masqué, et un message modifié finit par "
+                        + "« (modifié) ». Une réponse cite son parent (auteur, début du texte, ou les fichiers, ou "
+                        + "« Message d'origine supprimé »), lu du cache même sous l'historique chargé, qui ne le "
+                        + "montre jamais en ligne; toucher la citation fait défiler jusqu'à l'original s'il est "
+                        + "affiché. Toucher une mention ouvre le message direct, un lien de canal la conversation, "
+                        + "après confirmation pour rejoindre un canal dont l'utilisateur n'est pas membre.",
                 },
                 demo: {
                     kind: "none",

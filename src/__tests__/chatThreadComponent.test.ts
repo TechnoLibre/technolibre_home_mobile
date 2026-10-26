@@ -67,6 +67,8 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
         reactions: vi.fn(async (_c: string, _ch: number, _keys: string[]): Promise<Map<string, any[]>> => new Map()),
         react: vi.fn(async () => {}),
         deleteMessage: vi.fn(async () => {}),
+        startDirect: vi.fn(async (_s: any, _p: number, _o?: any) => ({ configId: "a", channelId: 40 })),
+        join: vi.fn(async (_s: any, id: number, _n?: string, _o?: any) => ({ configId: "a", channelId: id })),
         queue: {
             flush: vi.fn().mockResolvedValue(undefined),
             files: {
@@ -86,7 +88,8 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
         },
         repo: {
             attachmentsOf: vi.fn(async (): Promise<Map<string, any[]>> => new Map()),
-            channel: vi.fn(async () => ch),
+            channel: vi.fn(async (_c?: string, _id?: number): Promise<any> => ch),
+            messageOf: vi.fn(async (_c: string, _t: any): Promise<any> => null),
             members: vi.fn(async () => members),
             partners: vi.fn().mockResolvedValue([
                 { partnerId: 7, name: "Alice Roy", imStatus: "online" },
@@ -1438,6 +1441,7 @@ describe("ChatThreadComponent message actions", () => {
 
     it("each bubble has a focusable « Message actions » control that opens its menu without a long press", async () => {
         const chat = fakeChat([msg(10), msg(12, { messageType: "notification", body: "" })]);
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([["m12", [fileRow(32)]]]));
         const c = make(chat);
         await c.open();
         expect(c.state.rows.map((r: any) => c.offers(r))).toEqual([true, false]);
@@ -1458,6 +1462,225 @@ describe("ChatThreadComponent message actions", () => {
         await c.refresh();
         expect(c.state.rows).not.toBe(before);
         expect(c.state.rows[0].reactions).toHaveLength(1);
+        c.teardown();
+    });
+});
+
+describe("ChatThreadComponent edited, deleted and quoted messages", () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        (Dialog.confirm as any).mockReset?.();
+        (Dialog.confirm as any).mockResolvedValue?.({ value: true });
+    });
+
+    const EDITED = '<span class="o-mail-Message-edited"></span>';
+    const keys = (c: any) => c.state.rows.map((r: any) => r.key);
+    /** The rendered body of a row as DOM, for a tap on one of its anchors. */
+    const bodyOf = (row: any) => {
+        const div = document.createElement("div");
+        div.innerHTML = String(row.html);
+        return div;
+    };
+    const tap = (target: Element) => ({ target, preventDefault: vi.fn() });
+
+    it("an edited message shows « (modifié) »", async () => {
+        const c = make(fakeChat([msg(10, { body: "<p>hi</p>" + EDITED }), msg(11)]));
+        localStorage.setItem("app_lang", "fr");
+        await c.open();
+        expect(String(c.state.rows[0].html)).toBe('<p>hi</p><em class="chat-msg__edited"> (modifié)</em>');
+        expect(String(c.state.rows[1].html)).not.toContain("chat-msg__edited");
+        c.teardown();
+    });
+
+    it("a deleted message is hidden", async () => {
+        const chat = fakeChat([
+            msg(10), msg(11, { body: "" }), msg(12, { body: "<p></p>" + EDITED }), msg(13, { body: "" }), msg(14, { body: EDITED }),
+        ]);
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([["m13", [fileRow(31)]], ["m14", [fileRow(32)]]]));
+        const c = make(chat);
+        await c.open();
+        // An emptied body with a file stays, as the browser's; an edited mark alone shows no text bubble
+        expect(keys(c)).toEqual(["m10", "m13", "m14"]);
+        expect(c.state.rows[2].hasBody).toBe(false);
+        c.teardown();
+    });
+
+    it("a queued delete hides the row at once", async () => {
+        const chat = fakeChat([
+            msg(10), msg(11, { body: "" }), msg(12, { body: "" }),
+            msg(null, { clientUuid: "P1", body: "", outboxOpId: "post1" }),
+        ]);
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([
+            ["m11", [fileRow(31)]], ["m12", [fileRow(32)]], ["uP1", [fileRow(null, { localUuid: "l1", postClientUuid: "P1" })]],
+        ]));
+        const ops = [
+            { id: "post1", kind: "chat.post", status: "running", dependsOn: null, params: {} },
+            { id: "d1", kind: "chat.delete", status: "pending", dependsOn: null, params: { channelId: 5, messageId: 11, clientUuid: null } },
+            { id: "d2", kind: "chat.delete", status: "pending", dependsOn: "post1", params: { channelId: 5, messageId: null, clientUuid: "P1" } },
+            // Refused: the server's body is shown again
+            { id: "d3", kind: "chat.delete", status: "blocked", dependsOn: null, params: { channelId: 5, messageId: 12, clientUuid: null } },
+        ];
+        const c = make(chat, ops);
+        await c.open();
+        expect(keys(c)).toEqual(["m10", "m12"]);
+        c.teardown();
+    });
+
+    it("quote of a parent with text", async () => {
+        const list = [
+            msg(5, { authorPartnerId: 8, body: "<p>old</p>" }),
+            msg(20, { authorPartnerId: 7, body: "<p>Bonjour <b>à tous</b></p>" + EDITED }),
+            msg(21, { parentId: 20 }),
+            msg(22, { parentId: 5 }),
+            msg(23, { parentId: 3 }),
+            msg(null, { clientUuid: "P1", body: "<p>first</p>", outboxOpId: "o1" }),
+            msg(null, { clientUuid: "P2", parentClientUuid: "P1", outboxOpId: "o2" }),
+        ];
+        const chat = fakeChat(list, undefined, channel({ oldestLoadedId: 20 }));
+        chat.repo.messageOf.mockImplementation(async (_c: string, t: any) => t.messageId === 3 ? msg(3, { authorPartnerId: 1, body: "<p>mine</p>" }) : null);
+        const c = make(chat);
+        await c.open();
+        // The parent cached below the loaded history is quoted, never shown as a row
+        expect(keys(c)).toEqual(["m20", "m21", "m22", "m23", "uP1", "uP2"]);
+        const quote = (key: string) => c.state.rows.find((r: any) => r.key === key).quote;
+        expect(quote("m20")).toBeNull();
+        expect(quote("m21")).toEqual({ key: "m20", author: "Alice Roy", text: "Bonjour à tous", edited: true, state: "text" });
+        expect(quote("m22")).toEqual({ key: "m5", author: "Bob", text: "old", edited: false, state: "text" });
+        expect(quote("m23")).toEqual({ key: "m3", author: "You", text: "mine", edited: false, state: "text" });
+        expect(quote("uP2")).toEqual({ key: "uP1", author: "You", text: "first", edited: false, state: "text" });
+        expect(chat.repo.messageOf).toHaveBeenCalledTimes(1);
+        c.teardown();
+    });
+
+    it("quote of an emptied parent", async () => {
+        const list = [
+            msg(10, { body: "" }),
+            msg(11, { parentId: 10 }),
+            msg(12, { body: "" }),
+            msg(13, { parentId: 12 }),
+            msg(14, { parentId: 4 }),
+            msg(null, { clientUuid: "P2", parentClientUuid: "GONE", outboxOpId: "o2" }),
+        ];
+        const chat = fakeChat(list, undefined, channel({ historyComplete: true }));
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([["m12", [fileRow(32)]]]));
+        const ops = [
+            { id: "o2", kind: "chat.post", status: "pending", dependsOn: null, params: {} },
+            { id: "d1", kind: "chat.delete", status: "pending", dependsOn: null, params: { channelId: 5, messageId: 12, clientUuid: null } },
+        ];
+        const c = make(chat, ops);
+        localStorage.setItem("app_lang", "fr");
+        await c.open();
+        const deleted = { key: null, author: "", text: "Message d'origine supprimé", edited: false, state: "deleted" };
+        // Emptied, emptied by a queued delete (its file still there), removed from a complete history, a queued parent dropped
+        expect(c.state.rows.map((r: any) => r.quote)).toEqual([deleted, deleted, deleted, deleted]);
+        c.teardown();
+    });
+
+    it("quote of attachments only", async () => {
+        const chat = fakeChat([msg(10, { authorPartnerId: 7, body: "<p></p>" }), msg(11, { parentId: 10 })]);
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([["m10", [fileRow(31)]]]));
+        const c = make(chat);
+        await c.open();
+        expect(c.state.rows[1].quote).toEqual({
+            key: "m10", author: "Alice Roy", text: "Tap to see the attachments", edited: false, state: "attachments",
+        });
+        c.teardown();
+    });
+
+    it("tap on a quote scrolls to its row", async () => {
+        const c = make(fakeChat([msg(10), msg(11, { parentId: 10 })]));
+        await c.open();
+        const el = document.createElement("div");
+        const bubbles = ["m10", "m11"].map((k) => {
+            const b = document.createElement("div");
+            b.className = "chat-thread__bubble";
+            b.dataset.key = k;
+            (b as any).scrollIntoView = vi.fn();
+            el.appendChild(b);
+            return b;
+        });
+        c.scroller = { el };
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        c.onQuote(c.state.rows[1]);
+        expect((bubbles[0] as any).scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: "center" }));
+        expect((bubbles[1] as any).scrollIntoView).not.toHaveBeenCalled();
+        expect(c.state.highlight).toBe("m10");
+        vi.advanceTimersByTime(1000);
+        expect(c.state.highlight).toBeNull();
+        c.teardown();
+    });
+
+    it("tap on a quote of an unloaded parent", async () => {
+        const list = [msg(5), msg(20), msg(21, { parentId: 5 }), msg(22, { parentId: 3 })];
+        const c = make(fakeChat(list, undefined, channel({ oldestLoadedId: 20 })));
+        await c.open();
+        const el = document.createElement("div");
+        c.scroller = { el };
+        // Never loaded: a neutral quote that cannot be tapped
+        expect(c.state.rows[2].quote).toEqual({ key: null, author: "", text: "Original message", edited: false, state: "text" });
+        c.onQuote(c.state.rows[2]);
+        // Cached but not rendered: nothing to scroll to
+        expect(c.state.rows[1].quote.key).toBe("m5");
+        c.onQuote(c.state.rows[1]);
+        expect(c.state.highlight).toBeNull();
+        c.teardown();
+    });
+
+    it("a quote change repaints the row", async () => {
+        const list = [msg(5, { body: "<p>one</p>" }), msg(20), msg(21, { parentId: 5 })];
+        const c = make(fakeChat(list, undefined, channel({ oldestLoadedId: 20 })));
+        await c.open();
+        const before = c.state.rows;
+        list[0] = msg(5, { body: "<p>two</p>" + EDITED });
+        await c.refresh();
+        expect(c.state.rows).not.toBe(before);
+        expect(c.state.rows[1].quote).toMatchObject({ text: "two", edited: true });
+        c.teardown();
+    });
+
+    it("a mention tap opens the direct message", async () => {
+        const mention = (id: number, name: string) =>
+            `<a href="/odoo/res.partner/${id}" class="o_mail_redirect" data-oe-id="${id}" data-oe-model="res.partner" target="_blank">@${name}</a>`;
+        const chat = fakeChat([msg(10, { body: "<p>" + mention(7, "Alice Roy") + " " + mention(1, "Me") + "</p>" })]);
+        const c = make(chat);
+        c.navigate = vi.fn();
+        await c.open();
+        const body = bodyOf(c.state.rows[0]);
+        const [alice, me] = Array.from(body.querySelectorAll("a"));
+        expect(me.className).toBe("chat-msg__mention chat-msg__mention--self");
+        await c.onBodyClick(tap(me));
+        expect(chat.startDirect).not.toHaveBeenCalled();
+        const ev = tap(alice);
+        await c.onBodyClick(ev);
+        expect(ev.preventDefault).toHaveBeenCalled();
+        expect(chat.startDirect).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 7, { background: true });
+        expect(c.navigate).toHaveBeenCalledWith("/chat/a/40");
+        // Plain text of the body opens nothing
+        await c.onBodyClick(tap(body.querySelector("p")!));
+        expect(chat.startDirect).toHaveBeenCalledTimes(1);
+        c.teardown();
+    });
+
+    it("a channel link of a non-member asks to join", async () => {
+        const link = (id: number, name: string) =>
+            `<a href="/odoo/discuss.channel/${id}" class="o_channel_redirect" data-oe-id="${id}" data-oe-model="discuss.channel">#${name}</a>`;
+        const chat = fakeChat([msg(10, { body: "<p>" + link(9, "général-test") + " " + link(6, "équipe-test") + "</p>" })]);
+        chat.repo.channel.mockImplementation(async (_c?: string, id?: number) =>
+            id === 6 ? channel({ channelId: 6, channelType: "channel", isMember: true }) : id === 9 ? null : channel());
+        const c = make(chat);
+        c.navigate = vi.fn();
+        await c.open();
+        const [other, member] = Array.from(bodyOf(c.state.rows[0]).querySelectorAll("a"));
+        await c.onBodyClick(tap(member));
+        expect(Dialog.confirm).not.toHaveBeenCalled();
+        expect(c.navigate).toHaveBeenLastCalledWith("/chat/a/6");
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: false });
+        await c.onBodyClick(tap(other));
+        expect(Dialog.confirm).toHaveBeenCalledWith(expect.objectContaining({ message: "Join the channel #général-test?" }));
+        expect(chat.join).not.toHaveBeenCalled();
+        await c.onBodyClick(tap(other));
+        expect(chat.join).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 9, "général-test", { background: true });
+        expect(c.navigate).toHaveBeenLastCalledWith("/chat/a/9");
         c.teardown();
     });
 });

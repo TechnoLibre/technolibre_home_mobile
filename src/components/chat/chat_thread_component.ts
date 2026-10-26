@@ -6,7 +6,7 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { HeadingComponent } from "../heading/heading_component";
 import { Events } from "../../constants/events";
 import { getCurrentLocale, t } from "../../i18n";
-import { bodyText, renderBody } from "../../services/chat/chatBody";
+import { bodyPreview, bodyText, isEdited, isEmptyBody, isEmptyMessage, renderBody } from "../../services/chat/chatBody";
 import type { ChatSource } from "../../services/chat/chatService";
 import { displayNameOf } from "../../services/chat/chatNames";
 import { messageKeyOf } from "../../models/chat";
@@ -14,7 +14,7 @@ import type {
     ChatAttachment, ChatChannel, ChatMember, ChatMessage, ChatPartner, ChatReaction, MessageTarget, OutgoingFile,
 } from "../../models/chat";
 import { quickReactions } from "../../services/chat/chatEmoji";
-import { CHAT_UPLOAD } from "../../services/chat/chatOutbox";
+import { CHAT_DELETE, CHAT_UPLOAD, sameTarget, targetOf } from "../../services/chat/chatOutbox";
 import { DraftText, joinDraftText } from "../../services/chat/chatDraft";
 import { ChatFile } from "../../plugins/chatFilePlugin";
 import { formatListTime, initialsOf } from "./chat_list_component";
@@ -53,8 +53,28 @@ export const THREAD_PAGE = 50;
 type MetaKind =
     | "none" | "sent" | "seen" | "pending" | "waiting" | "waiting_create" | "waiting_wifi" | "ambiguous" | "failed" | "left";
 
-/** The outbox ops a build reads, for the pending rows' marks. */
+/** The outbox ops a build reads, for the pending rows' marks and the deletes still queued. */
 type RowOp = { id: string; kind?: string; dependsOn: string | null; status?: string; params?: Record<string, any> };
+
+/**
+ * The message a reply quotes, as Odoo's `MessageInReply` shows it: its
+ * author and the start of its text (bodyPreview) with the edited mark,
+ * « Tap to see the attachments » when it has files only (state
+ * "attachments"), « Original message was deleted » once emptied or
+ * removed (state "deleted"), « Original message » with no author when it
+ * was never loaded. `key` is the row key of the original, which a tap
+ * scrolls to while it is rendered; null when there is nothing to reach.
+ */
+export interface QuoteView {
+    key: string | null;
+    author: string;
+    text: string;
+    edited: boolean;
+    state: "text" | "attachments" | "deleted";
+}
+
+/** A replied-to message found in the cache, with whether it has files. */
+type Parent = { message: ChatMessage; files: boolean };
 
 export interface ThreadRow {
     key: string;
@@ -75,6 +95,8 @@ export interface ThreadRow {
     reactions: ReactionView[];
     /** What its long-press menu offers. */
     can: MessageCan;
+    /** The message it replies to; null for none. */
+    quote: QuoteView | null;
 }
 
 interface ThreadState {
@@ -110,6 +132,8 @@ interface ThreadState {
     flash: string;
     /** Key of the image the viewer shows; null when it is closed. */
     viewer: string | null;
+    /** Row key of the message a tap on a quote scrolled to, for HIGHLIGHT_MS; null otherwise. */
+    highlight: string | null;
     /** From the ➤ tap until the post is queued: the text takes no input, 📎, 🎤 and ➤ are off. */
     sending: boolean;
     /** The bubble of a send with files, from the tap until its post is queued; null otherwise. */
@@ -138,6 +162,10 @@ const PREPARING_IMAGES = 3;
 
 /** How long « Copied » (or the copy's refusal) stays shown, in ms. */
 const FLASH_MS = 1500;
+/** How long the original of a tapped quote stays highlighted, in ms. */
+const HIGHLIGHT_MS = 1000;
+/** The edited mark renderBody adds: it alone does not make a body shown. */
+const EDITED_MARK = /<em class="chat-msg__edited">[^<]*<\/em>/g;
 
 /** Rows the composer shows for a text, from 1 up to MAX_INPUT_ROWS. */
 function rowsOf(text: string): number {
@@ -183,10 +211,13 @@ export function canOf(m: ChatMessage, own: boolean, writable: boolean, text: str
     };
 }
 
-/** The part of a row's signature its chips and menu add: a change repaints the row. */
+/** The part of a row's signature its chips, menu and quote add: a change repaints the row. */
 function actionsSig(r: ThreadRow): string {
     const can = [r.can.react, r.can.reply, r.can.copy, r.can.edit, r.can.delete].map(Number).join("");
-    return can + "|" + r.reactions.map((x) => [x.content, x.count, Number(x.self), x.names.join(",")].join(":")).join(";");
+    const q = r.quote;
+    const quote = q ? [q.key ?? "", q.author, q.text, q.state, Number(q.edited)].join(":") : "";
+    return can + "|" + r.reactions.map((x) => [x.content, x.count, Number(x.self), x.names.join(",")].join(":")).join(";")
+        + "|" + quote;
 }
 
 /**
@@ -259,12 +290,18 @@ export class ChatThreadComponent extends EnhancedComponent {
         <button class="chat-thread__dismiss" t-on-click="onDismiss" t-esc="t('chat.dismiss')"/>
       </div>
       <div class="chat-thread__scroll" t-ref="scroller" t-on-scroll="onScroll">
-        <div t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-thread__bubble"
-             t-att-class="{'chat-thread__bubble--own': row.own, 'chat-thread__bubble--pressed': state.actions === row.key}"
+        <div t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-thread__bubble" t-att-data-key="row.key"
+             t-att-class="{'chat-thread__bubble--own': row.own, 'chat-thread__bubble--pressed': state.actions === row.key, 'chat-thread__bubble--highlight': state.highlight === row.key}"
              t-on-pointerdown="(ev) => this.onPressDown(row, ev)" t-on-pointermove="onPressMove"
              t-on-pointerup="onPressUp" t-on-pointercancel="onPressCancel"
              t-on-contextmenu.prevent="" t-on-click.capture="onBubbleClick">
-          <div t-if="row.hasBody" class="chat-thread__body"><t t-out="row.html"/></div>
+          <button t-if="row.quote" type="button" class="chat-thread__quote" t-att-class="'chat-thread__quote--' + row.quote.state"
+                  t-att-aria-disabled="row.quote.key ? null : 'true'" t-on-click="() => this.onQuote(row)">
+            <b t-if="row.quote.author" class="chat-thread__quote-author" t-esc="row.quote.author"/>
+            <span class="chat-thread__quote-text" t-esc="row.quote.text"/>
+            <em t-if="row.quote.edited" class="chat-msg__edited" t-esc="' ' + t('chat.edited')"/>
+          </button>
+          <div t-if="row.hasBody" class="chat-thread__body" t-on-click="onBodyClick"><t t-out="row.html"/></div>
           <ChatAttachmentsComponent t-if="row.attachments.length" row="row" ta="attachments" onImage.bind="openImage"/>
           <ChatReactionsComponent t-if="row.reactions.length" reactions="row.reactions"
                                   onToggle="(content) => this.onChip(row, content)" onWho="(content) => this.onWho(row, content)"/>
@@ -370,6 +407,8 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _window = THREAD_WINDOW;
     /** Oldest server message id rendered, null when none is. */
     private _oldestShown: number | null = null;
+    /** oldestLoadedId of the conversation while its history is not complete; null otherwise. */
+    private _floor: number | null = null;
     private _lastSeen: number | null = null;
     private _onChanged = (ev: Event) => {
         const d = (ev as CustomEvent).detail ?? {};
@@ -405,6 +444,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             who: null,
             flash: "",
             viewer: null,
+            highlight: null,
             sending: false,
             preparing: null,
         });
@@ -458,6 +498,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         if (this._debounce !== null) clearTimeout(this._debounce);
         if (this._typingTimer !== null) clearTimeout(this._typingTimer);
         if (this._flashTimer !== null) clearTimeout(this._flashTimer);
+        if (this._highlightTimer !== null) clearTimeout(this._highlightTimer);
         this.press.cancel();
         if (this.source) this.chatService.typing(this.source, this.channelId, false).catch(() => {});
     }
@@ -527,28 +568,45 @@ export class ChatThreadComponent extends EnhancedComponent {
             this._metaBase.clear();
             this._sig = "";
             this._messages = new Map(kept.map((m) => [this.keyOf(m), m]));
-            this._rows = kept.map((m) => this.rowOf(m, null, [], self, [], new Map()));
+            this._rows = kept.map((m) => this.rowOf(m, null, [], self, [], new Map(), new Map(), null));
             this._base = this._rows.map(() => "");
             this.state.rows = this._rows;
             this.attachments.watch();
             return;
         }
-        const [messages, members, partners, st] = await Promise.all([
+        const [cachedMessages, members, partners, st] = await Promise.all([
             this.chatService.messages(this.configId, this.channelId, { limit: this._window }),
             repo.members(this.configId, this.channelId),
             repo.partners(this.configId),
             repo.sourceState(this.configId),
         ]);
-        // Outbox ops matter only to pending rows, once per build
-        const ops: RowOp[] = messages.some((m) => m.status === "pending")
-            ? await this.databaseService.getOutboxOpsForConfig(this.configId)
-            : [];
-        const keys = messages.filter((m) => m.messageId !== null || m.clientUuid).map(messageKeyOf);
-        const [groups] = await Promise.all([
+        // The loaded history is contiguous from oldestLoadedId up: a reply's parent cached below it is quoted, not shown
+        const floor = channel.historyComplete ? null : channel.oldestLoadedId ?? null;
+        const loaded = (m: ChatMessage) => m.messageId === null || floor === null || m.messageId >= floor;
+        const inRange = cachedMessages.filter(loaded);
+        this._floor = floor;
+        // Outbox ops matter to pending rows and to emptied ones (a delete queued empties its body at once), once per build
+        const opsRead = cachedMessages.some((m) => m.status === "pending" || isEmptyBody(m.body));
+        const ops: RowOp[] = opsRead ? await this.databaseService.getOutboxOpsForConfig(this.configId) : [];
+        const keys = inRange.filter((m) => m.messageId !== null || m.clientUuid).map(messageKeyOf);
+        const [groups, , outside] = await Promise.all([
             keys.length ? this.chatService.reactions(this.configId, this.channelId, keys) : new Map<string, ChatReaction[]>(),
-            this.loadAttachments(messages, ops),
+            this.loadAttachments(cachedMessages, ops),
+            this.parentsOutside(cachedMessages),
         ]);
         if (this.destroyed) return;
+        // A parent read outside the window may be emptied by a delete the ops of this build did not cover
+        const extraOps: RowOp[] = !opsRead && [...outside.values()].some((p) => isEmptyBody(p.message.body))
+            ? await this.databaseService.getOutboxOpsForConfig(this.configId)
+            : [];
+        if (this.destroyed) return;
+        const deletes = [...ops, ...extraOps]
+            .filter((o) => o.kind === CHAT_DELETE && o.status !== "blocked")
+            .map((o) => targetOf(o as { params: Record<string, any> }));
+        const deleting = (m: ChatMessage) => deletes.some((d) => sameTarget(d, m));
+        // Hidden as the browser hides them: emptied with no file left (isEmptyMessage; the files are counted for an empty body only), or with a delete queued
+        const messages = inRange.filter((m) => !deleting(m)
+            && !(isEmptyBody(m.body) && isEmptyMessage(m.body, this.attachments.views(this.keyOf(m)).length)));
         const names = new Map(partners.map((p) => [p.partnerId, p.name]));
         const self = st.selfPartnerId;
         this.state.found = true;
@@ -570,7 +628,8 @@ export class ChatThreadComponent extends EnhancedComponent {
         const stick = !el || this.atBottom(el);
         const before = el ? el.scrollHeight - el.scrollTop : 0;
         this._metaBase.clear();
-        const rows = messages.map((m) => this.rowOf(m, channel!, members, self, ops, groups, names));
+        const quotes = this.quotesOf(messages, cachedMessages, outside, deleting, names, self, floor, channel.historyComplete);
+        const rows = messages.map((m, i) => this.rowOf(m, channel!, members, self, ops, groups, names, quotes[i]));
         // A change of members or typing alone leaves the rows, and the DOM, untouched
         const base = rows.map((r, i) => [r.key, r.time, r.opId, this.htmlKey(messages[i]), actionsSig(r)].join("|"));
         const sig = this.sigOf(base, rows);
@@ -581,7 +640,8 @@ export class ChatThreadComponent extends EnhancedComponent {
         this._rows = rows;
         this._messages = new Map(messages.map((m) => [this.keyOf(m), m]));
         this.state.rows = rows;
-        this._oldestShown = messages.find((m) => m.messageId !== null)?.messageId ?? null;
+        // Hidden ones count: the next page starts below the oldest message of the window, shown or not
+        this._oldestShown = inRange.find((m) => m.messageId !== null)?.messageId ?? null;
         this.pruneHtml(messages);
         // Prepended history keeps the viewport on the same message; new ones follow the bottom
         if (el) {
@@ -709,6 +769,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         ops: RowOp[],
         groups: Map<string, ChatReaction[]>,
         names: Map<number, string>,
+        quote: QuoteView | null,
     ): ThreadRow {
         const own = self !== null && m.authorPartnerId === self;
         const key = this.keyOf(m);
@@ -735,7 +796,7 @@ export class ChatThreadComponent extends EnhancedComponent {
                 meta = seen ? "seen" : "sent";
             }
         }
-        const body = this.htmlOf(m);
+        const body = this.htmlOf(m, self);
         const named = m.messageId !== null || !!m.clientUuid;
         const writable = named && channel !== null && !channel.createFailed && !channel.leftUnsent;
         return {
@@ -751,7 +812,91 @@ export class ChatThreadComponent extends EnhancedComponent {
             target: { messageId: m.messageId, clientUuid: m.clientUuid },
             reactions: named ? reactionViews(groups.get(messageKeyOf(m)) ?? [], names, self) : [],
             can: canOf(m, own, writable, body.text),
+            quote,
         };
+    }
+
+    /**
+     * The cached parents of the replies that are not among the messages
+     * read (older than the window, or below the loaded history), by `m<id>`
+     * or `u<clientUuid>` as the reply names them, each with whether it has
+     * files; one lookup per parent, one files read for all.
+     */
+    private async parentsOutside(messages: ChatMessage[]): Promise<Map<string, Parent>> {
+        const ids = new Set(messages.map((m) => m.messageId).filter((id) => id !== null));
+        const uuids = new Set(messages.map((m) => m.clientUuid).filter((u) => !!u));
+        const wanted = new Map<string, MessageTarget>();
+        for (const m of messages) {
+            if (m.parentId != null && !ids.has(m.parentId)) wanted.set("m" + m.parentId, { messageId: m.parentId, clientUuid: null });
+            else if (m.parentId == null && m.parentClientUuid && !uuids.has(m.parentClientUuid)) {
+                wanted.set("u" + m.parentClientUuid, { messageId: null, clientUuid: m.parentClientUuid });
+            }
+        }
+        const out = new Map<string, Parent>();
+        if (wanted.size === 0) return out;
+        const repo = this.chatService.repo;
+        const found = await Promise.all([...wanted.values()].map((target) => repo.messageOf(this.configId, target)));
+        const hits = [...wanted.keys()].map((k, i) => [k, found[i]] as const).filter((x): x is readonly [string, ChatMessage] => !!x[1]);
+        if (hits.length === 0) return out;
+        const files = await repo.attachmentsOf(
+            this.configId,
+            this.channelId,
+            hits.filter(([, p]) => p.messageId !== null).map(([, p]) => p.messageId!),
+            hits.filter(([, p]) => p.messageId === null && p.clientUuid).map(([, p]) => p.clientUuid!),
+        );
+        for (const [k, p] of hits) out.set(k, { message: p, files: (files.get(messageKeyOf(p))?.length ?? 0) > 0 });
+        return out;
+    }
+
+    /** Text and edited mark of quoted bodies, by htmlKey: bodyPreview runs once per parent version. */
+    private _quoteText = new Map<string, { text: string; edited: boolean }>();
+
+    /**
+     * The quote of each shown message (null for one that replies to
+     * nothing). The parent is looked up among all the messages read,
+     * hidden ones included, then among `outside` (parentsOutside). A parent
+     * emptied with no file, or whose delete is queued, reads deleted; one
+     * not cached reads deleted when it would be in the loaded history
+     * (complete, or at or above floor) or was a queued post (dropped by its
+     * delete), else as never loaded.
+     */
+    private quotesOf(
+        shown: ChatMessage[],
+        all: ChatMessage[],
+        outside: Map<string, Parent>,
+        deleting: (m: ChatMessage) => boolean,
+        names: Map<number, string>,
+        self: number | null,
+        floor: number | null,
+        complete: boolean,
+    ): (QuoteView | null)[] {
+        const byId = new Map(all.filter((m) => m.messageId !== null).map((m) => [m.messageId!, m]));
+        const byUuid = new Map(all.filter((m) => !!m.clientUuid).map((m) => [m.clientUuid!, m]));
+        const texts = new Map<string, { text: string; edited: boolean }>();
+        const deleted: QuoteView = { key: null, author: "", text: t("chat.quote_deleted"), edited: false, state: "deleted" };
+        const quotes = shown.map((m): QuoteView | null => {
+            if (m.parentId == null && !m.parentClientUuid) return null;
+            const local = m.parentId != null ? byId.get(m.parentId) : byUuid.get(m.parentClientUuid!);
+            const parent: Parent | undefined = local
+                ? { message: local, files: this.attachments.views(this.keyOf(local)).length > 0 }
+                : outside.get(m.parentId != null ? "m" + m.parentId : "u" + m.parentClientUuid);
+            if (!parent) {
+                const removed = m.parentId == null || complete || (floor !== null && m.parentId >= floor);
+                return removed ? deleted : { key: null, author: "", text: t("chat.quote_unknown"), edited: false, state: "text" };
+            }
+            const p = parent.message;
+            if (deleting(p) || isEmptyMessage(p.body, parent.files ? 1 : 0)) return deleted;
+            const id = p.authorPartnerId;
+            const author = (id !== null && names.get(id)) || (id !== null && id === self ? t("chat.you") : t("chat.someone"));
+            const key = this.keyOf(p);
+            if (isEmptyBody(p.body)) return { key, author, text: t("chat.quote_attachments"), edited: false, state: "attachments" };
+            const k = this.htmlKey(p);
+            const cached = texts.get(k) ?? this._quoteText.get(k) ?? { text: bodyPreview(p.body), edited: isEdited(p.body) };
+            texts.set(k, cached);
+            return { key, author, text: cached.text, edited: cached.edited, state: "text" };
+        });
+        this._quoteText = texts;
+        return quotes;
     }
 
     /**
@@ -772,12 +917,17 @@ export class ChatThreadComponent extends EnhancedComponent {
         return false;
     }
 
-    private htmlOf(m: ChatMessage): { html: unknown; shows: boolean; text: string } {
+    /**
+     * The rendered body of a message (renderBody: the edited mark as
+     * « (edited) », a mention of the user marked), whether it shows
+     * anything besides that mark, and its text; cached per message version.
+     */
+    private htmlOf(m: ChatMessage, self: number | null): { html: unknown; shows: boolean; text: string } {
         const k = this.htmlKey(m);
         let body = this._html.get(k);
         if (body === undefined) {
-            const html = renderBody(m.body);
-            body = { html: markup(html), shows: shows(html), text: bodyText(m.body) };
+            const html = renderBody(m.body, { editedLabel: t("chat.edited"), selfPartnerId: self });
+            body = { html: markup(html), shows: shows(html.replace(EDITED_MARK, "")), text: bodyText(m.body) };
             this._html.set(k, body);
         }
         return body;
@@ -850,14 +1000,18 @@ export class ChatThreadComponent extends EnhancedComponent {
         }
     }
 
-    /** Whether the cache holds a server message older than the oldest one rendered. */
+    /**
+     * Whether the cache holds a server message older than the oldest one
+     * rendered, within the loaded history (a parent cached below it is not
+     * history to render).
+     */
     private async cachedOlder(): Promise<boolean> {
         if (this._oldestShown === null) return false;
         const older = await this.chatService.messages(this.configId, this.channelId, {
             beforeId: this._oldestShown,
             limit: 1,
         });
-        return older.length > 0;
+        return older.length > 0 && (this._floor === null || older[0].messageId! >= this._floor);
     }
 
     /**
@@ -1121,6 +1275,86 @@ export class ChatThreadComponent extends EnhancedComponent {
             console.warn("chat thread: reaction", e);
             this.state.error = t("chat.action_error");
         }
+    }
+
+    // ─── Quotes and links ─────────────────────────────────────────────────
+
+    private _highlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /**
+     * A tap on a quote scrolls its original to the middle of the screen and
+     * highlights it for HIGHLIGHT_MS, when the original is rendered; a
+     * quote with no key (deleted, never loaded) or whose original is not
+     * rendered does nothing.
+     */
+    onQuote(row: ThreadRow): void {
+        const key = row.quote?.key ?? null;
+        if (key === null || !this._rows.some((r) => r.key === key)) return;
+        const el = this.scroller.el as HTMLElement | null;
+        const bubble = Array.from(el?.querySelectorAll<HTMLElement>(".chat-thread__bubble") ?? []).find((b) => b.dataset.key === key);
+        if (!bubble) return;
+        bubble.scrollIntoView?.({ block: "center", behavior: "smooth" });
+        if (this._highlightTimer !== null) clearTimeout(this._highlightTimer);
+        this.state.highlight = key;
+        this._highlightTimer = setTimeout(() => {
+            this._highlightTimer = null;
+            this.state.highlight = null;
+        }, HIGHLIGHT_MS);
+    }
+
+    /**
+     * A tap in a body, delegated to its anchors that renderBody kept as
+     * chips (`data-oe-model`, `data-oe-id`): a partner mention opens the
+     * direct message with that person (none for the user's own), a channel
+     * link its conversation (openChannel). Other taps go on as they are.
+     */
+    async onBodyClick(ev: Event): Promise<void> {
+        const a = (ev.target as Element | null)?.closest?.("a[data-oe-model][data-oe-id]");
+        if (!a) return;
+        ev.preventDefault();
+        const id = Number(a.getAttribute("data-oe-id"));
+        const model = a.getAttribute("data-oe-model");
+        const source = this.source;
+        if (!source || !Number.isInteger(id)) return;
+        try {
+            if (model === "res.partner") {
+                if (id === this._self) return;
+                this.openConversation(await this.chatService.startDirect(source, id, { background: true }));
+            } else if (model === "discuss.channel") {
+                await this.openChannel(source, id, (a.textContent ?? "").replace(/^#/, ""));
+            }
+        } catch (e) {
+            console.warn("chat thread: link", e);
+            this.state.error = t("chat.action_error");
+        }
+    }
+
+    /**
+     * A channel link: the conversation when the user is a member of it in
+     * the cache, else, once the user confirms, it is joined (ChatService.join,
+     * queued when offline) and opened. A link to this conversation does nothing.
+     */
+    private async openChannel(source: ChatSource, id: number, label: string): Promise<void> {
+        if (id === this.channelId) return;
+        const cached = await this.chatService.repo.channel(this.configId, id);
+        if (cached?.isMember) {
+            this.openConversation({ configId: this.configId, channelId: id });
+            return;
+        }
+        // A sub-channel's link reads « #Parent > Name »: the confirmation shows it whole, the cached row takes its own name
+        const name = cached?.name || label.split(" > ").pop() || label;
+        const { value } = await Dialog.confirm({
+            message: t("chat.join_confirm", { name: "#" + (cached?.name || label) }),
+            okButtonTitle: t("chat.join"),
+            cancelButtonTitle: t("chat.cancel"),
+        });
+        if (!value || this.destroyed) return;
+        this.openConversation(await this.chatService.join(source, id, name, { background: true }));
+    }
+
+    private openConversation(r: { configId: string; channelId: number }): void {
+        if (this.destroyed) return;
+        this.navigate("/chat/" + encodeURIComponent(r.configId) + "/" + r.channelId);
     }
 
     private showFlash(text: string): void {

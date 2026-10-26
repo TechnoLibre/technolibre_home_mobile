@@ -1227,4 +1227,10 @@ export const translations: Record<string, string> = {
   "chat.guest": "Guest",
   "chat.you": "You",
   "chat.someone": "Someone",
+  "chat.edited": "(edited)",
+  "chat.quote_attachments": "Tap to see the attachments",
+  "chat.quote_deleted": "Original message was deleted",
+  "chat.quote_unknown": "Original message",
+  "chat.join_confirm": "Join the channel {name}?",
+  "chat.join": "Join",
 };

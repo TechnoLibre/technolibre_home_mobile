@@ -363,6 +363,31 @@ describe("ChatRepository", () => {
     expect(pend.get(7)).toHaveLength(1);
   });
 
+  it("the list skips an emptied last message", async () => {
+    const edited = '<span class="o-mail-Message-edited"></span>';
+    await repo.applyDelta(A, delta({
+      messages: [
+        { messageId: 1, channelId: 7, body: "<p>one</p>" },
+        { messageId: 2, channelId: 7, body: "" },
+        { messageId: 3, channelId: 7, body: "<p></p>" + edited },
+        { messageId: 4, channelId: 8, body: "<p>four</p>" },
+        { messageId: 5, channelId: 8, body: "", attachmentIds: [61] },
+        { messageId: 6, channelId: 9, body: "" },
+      ],
+      attachments: [{ attachmentId: 61, channelId: 8, name: "f.png", mimetype: "image/png", size: 1, checksum: "c", voice: false }],
+    }));
+    const chans = [
+      { channelId: 7, lastMessageId: 3 }, { channelId: 8, lastMessageId: 5 }, { channelId: 9, lastMessageId: 6 },
+    ] as any[];
+    const lasts = await repo.lastMessages(A, chans);
+    // The newest one with text or files stands for the conversation; none at all leaves no entry
+    expect(lasts.get(7)?.messageId).toBe(1);
+    expect(lasts.get(8)?.messageId).toBe(5);
+    expect(lasts.has(9)).toBe(false);
+    // A message whose delete is queued counts as empty, its file still cached
+    expect((await repo.lastMessages(A, [chans[1]], new Set([5]))).get(8)?.messageId).toBe(4);
+  });
+
   describe("attachments", () => {
     let released: string[][];
     beforeEach(() => {

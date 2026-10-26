@@ -4,11 +4,12 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { HeadingComponent } from "../heading/heading_component";
 import { Events } from "../../constants/events";
 import { getCurrentLocale, t } from "../../i18n";
-import { attachmentPreview, bodyPreview, draftPreview } from "../../services/chat/chatBody";
+import { attachmentPreview, bodyPreview, draftPreview, isEmptyBody } from "../../services/chat/chatBody";
 import { serverChoiceMode, type ChoiceMode } from "../../services/chat/chatSources";
 import { displayNameOf } from "../../services/chat/chatNames";
 import { isBold, unreadOf } from "../../services/chat/chatUnread";
 import type { ChatChannel, ChatMessage, ChatNotice } from "../../models/chat";
+import { CHAT_DELETE, sameTarget, targetOf } from "../../services/chat/chatOutbox";
 import { formatBytes } from "../../utils/formatBytes";
 
 const FILTER_KEY = "chat.filter";
@@ -305,15 +306,34 @@ export class ChatListComponent extends EnhancedComponent {
                 this.chatService.draftSummaries(id),
             ]);
             const byPartner = new Map(partners.map((p) => [p.partnerId, p]));
-            // Outbox ops matter only to conversations still being created
-            const ops = mine.some((c) => c.createOpId) ? await this.databaseService.getOutboxOpsForConfig(id) : [];
+            // Outbox ops matter to conversations still being created, and to a last message emptied (its delete may be queued)
+            const emptied = mine.some((c) => isEmptyBody(lasts.get(c.channelId)?.body ?? "-")
+                || (pendings.get(c.channelId) ?? []).some((m) => isEmptyBody(m.body)));
+            const ops = mine.some((c) => c.createOpId) || emptied ? await this.databaseService.getOutboxOpsForConfig(id) : [];
+            // A message whose delete is queued is hidden at once, its files still there until the server answers
+            const deletes = ops.filter((o) => o.kind === CHAT_DELETE && o.status !== "blocked").map(targetOf);
+            const deleting = (m: ChatMessage): boolean => deletes.some((d) => sameTarget(d, m));
+            const gone = mine.filter((c) => {
+                const m = lasts.get(c.channelId);
+                return !!m && deleting(m);
+            });
+            if (gone.length > 0) {
+                const skip = new Set(deletes.map((d) => d.messageId).filter((v): v is number => v !== null));
+                const again = await this.chatService.repo.lastMessages(id, gone, skip);
+                for (const c of gone) {
+                    const m = again.get(c.channelId);
+                    if (m) lasts.set(c.channelId, m);
+                    else lasts.delete(c.channelId);
+                }
+            }
             const blocked = new Set(ops
                 .filter((o) => o.status === "blocked" && o.params?.blockedReason === "ambiguous")
                 .map((o) => o.id));
             // The files of last messages without text are read side by side, after the rows
             const filesLines: Promise<void>[] = [];
             for (const c of mine) {
-                const queued = pendings.get(c.channelId);
+                // A queued post whose delete waits for its post is skipped, as a sent one is
+                const queued = pendings.get(c.channelId)?.filter((m) => !deleting(m));
                 const last = queued?.[queued.length - 1] ?? lasts.get(c.channelId) ?? null;
                 const title = displayNameOf(c, membersOf.get(c.channelId) ?? [], byPartner, state.selfPartnerId, getCurrentLocale());
                 const text = last ? bodyPreview(last.body, PREVIEW_MAX) : "";
