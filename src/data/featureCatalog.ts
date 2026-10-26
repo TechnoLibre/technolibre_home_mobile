@@ -4460,9 +4460,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "off; a pick in the picker opened by « … » only adds, as Odoo's. Copy writes "
                         + "bodyText through navigator.clipboard and shows « Copied » for 1.5 s; delete asks "
                         + "first. A chip tap toggles the user's reaction; a long press lists the partners by "
-                        + "cached name and one « Guest » per guest. Each sheet takes a history entry "
-                        + "(chatBackEntry.ts), so back closes it; a popstate onto an entry still carrying its "
-                        + "mark is a sheet above it going back.",
+                        + "cached name (the user by theirs, else « You ») and one « Guest » per guest. A "
+                        + "« Message actions » button on each bubble, out of sight until the keyboard focuses "
+                        + "it, opens the menu without a long press. Each layer (picker, menu, who reacted, "
+                        + "image viewer) takes a history entry (chatBackEntry.ts), so back closes it; a "
+                        + "popstate landing on an entry still carrying its mark is a layer above it going back.",
                     fr: "chatLongPress.ts lance une minuterie de 500 ms au pointerdown, arrêtée par un "
                         + "déplacement de plus de 10 px, le relâchement, un pointercancel ou un défilement ; il "
                         + "n'appelle aucun preventDefault, donc la liste défile et le texte se sélectionne comme "
@@ -4473,10 +4475,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "le sélecteur ouvert par « … » ne fait qu'ajouter, comme celui d'Odoo. Copier écrit "
                         + "bodyText par navigator.clipboard et affiche « Copié » 1,5 s ; supprimer demande "
                         + "d'abord. Une touche sur une pastille bascule la réaction de l'utilisateur ; un appui "
-                        + "long liste les partenaires par leur nom en cache et un « Invité » par invité. Chaque "
-                        + "feuille prend une entrée d'historique (chatBackEntry.ts), donc retour la ferme ; un "
-                        + "popstate vers une entrée qui porte encore sa marque est une feuille au-dessus qui se "
-                        + "referme.",
+                        + "long liste les partenaires par leur nom en cache (l'utilisateur par le sien, sinon "
+                        + "« Vous ») et un « Invité » par invité. Un bouton « Actions du message » sur chaque "
+                        + "bulle, hors de vue tant que le clavier ne le sélectionne pas, ouvre le menu sans appui "
+                        + "long. Chaque couche (sélecteur, menu, qui a réagi, visionneuse d'images) prend une "
+                        + "entrée d'historique (chatBackEntry.ts), donc retour la ferme ; un popstate qui arrive "
+                        + "sur une entrée portant encore sa marque est une couche au-dessus qui se referme.",
                 },
                 files: [
                     "src/components/chat/chatLongPress.ts",
@@ -4487,6 +4491,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
                 tests: [
                     "src/__tests__/chatLongPress.test.ts",
+                    "src/__tests__/chatBackEntry.test.ts",
                     "src/__tests__/chatMessageMenu.test.ts",
                     "src/__tests__/chatThreadComponent.test.ts",
                 ],

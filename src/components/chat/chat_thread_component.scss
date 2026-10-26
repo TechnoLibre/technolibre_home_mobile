@@ -186,6 +186,29 @@
 	font-size: 0.7rem;
 }
 
+// The way to a message's menu without a long press: out of sight but read by
+// a screen reader, shown when the keyboard focuses it.
+.chat-thread__actions {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: inherit;
+	white-space: nowrap;
+
+	&:focus-visible {
+		position: static;
+		width: auto;
+		height: auto;
+		clip-path: none;
+		padding: 0 0.3rem;
+	}
+}
+
 .chat-thread__flash {
 	align-self: center;
 	margin: 0;

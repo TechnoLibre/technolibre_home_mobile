@@ -1427,6 +1427,27 @@ describe("ChatThreadComponent message actions", () => {
         c.teardown();
     });
 
+    it("the user's own reaction names them even when the partners cache does not", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.reactions.mockResolvedValue(new Map([["m10", [reaction("👍", { count: 2, selfReacted: true, partnerIds: [1, 7] })]]]));
+        const c = make(chat);
+        await c.open();
+        expect(c.state.rows[0].reactions[0].names).toEqual(["You", "Alice Roy"]);
+        c.teardown();
+    });
+
+    it("each bubble has a focusable « Message actions » control that opens its menu without a long press", async () => {
+        const chat = fakeChat([msg(10), msg(12, { messageType: "notification", body: "" })]);
+        const c = make(chat);
+        await c.open();
+        expect(c.state.rows.map((r: any) => c.offers(r))).toEqual([true, false]);
+        c.openActions("m10");
+        expect(c.state.actions).toBe("m10");
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        expect(source).toMatch(/<button t-if="offers\(row\)" type="button" class="chat-thread__actions" aria-haspopup="dialog"\s+t-att-aria-label="t\('chat.message_actions'\)" t-on-click="\(\) => this.openActions\(row.key\)"/);
+        c.teardown();
+    });
+
     it("a reaction change repaints the row", async () => {
         const chat = fakeChat([msg(10)]);
         const c = make(chat);

@@ -3,6 +3,7 @@ import { onMounted, onWillUnmount, useState, xml } from "@odoo/owl";
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { t } from "../../i18n";
 import { PROGRESS_POLL_MS, type ThreadAttachments } from "./chat_attachments_component";
+import { BackEntry } from "./chatBackEntry";
 
 /** loading: the original is asked (downloading, or read from the phone); the other stages as OpenResult. */
 type ViewerStage = "loading" | "waiting_wifi" | "ready" | "gone" | "failed";
@@ -22,8 +23,9 @@ interface ViewerState {
  * itself once the hold ends (the cache took the file on Wi-Fi). Closing
  * leaves a download running: the original lands in the cache.
  *
- * The viewer holds its own history entry (same URL), so Android's back
- * closes it rather than the conversation; ✕ goes back over that entry.
+ * The viewer holds its own history entry (BackEntry, mark chatViewer), so
+ * Android's back closes it rather than the conversation; ✕ goes back over
+ * that entry.
  */
 export class ChatImageViewerComponent extends EnhancedComponent {
     static props = { ta: Object, attKey: String, onClose: Function };
@@ -47,15 +49,7 @@ export class ChatImageViewerComponent extends EnhancedComponent {
     state!: ViewerState;
     private _poll: ReturnType<typeof setInterval> | null = null;
     private _closed = false;
-    /** The viewer's history entry is the current one. */
-    private _inHistory = false;
-    /** ✕ went back over the entry: its popstate is on its way, a second ✕ waits for it. */
-    private _closing = false;
-    private _onPop = () => {
-        if (!this._inHistory) return;
-        this._inHistory = false;
-        this.props.onClose();
-    };
+    private entry!: BackEntry;
 
     setup() {
         this.state = useState<ViewerState>({
@@ -63,15 +57,14 @@ export class ChatImageViewerComponent extends EnhancedComponent {
             stage: "loading",
             progress: null,
         });
+        this.entry = new BackEntry("chatViewer", () => this.props.onClose());
         onMounted(() => this.onOpened());
         onWillUnmount(() => this.onClosing());
     }
 
     /** Shown: takes a history entry and asks its original. */
     onOpened(): void {
-        window.history.pushState({ ...(window.history.state ?? {}), chatViewer: true }, "");
-        this._inHistory = true;
-        window.addEventListener("popstate", this._onPop);
+        this.entry.open();
         void this.load();
     }
 
@@ -79,19 +72,12 @@ export class ChatImageViewerComponent extends EnhancedComponent {
      * Gone from the screen: stops following. Removed while its entry is
      * still the current one (the thread went away without a back), the
      * entry loses its mark, so no later back is taken for the viewer's; an
-     * entry the screen moved to is left alone.
+     * entry the screen moved to is left alone (BackEntry.dispose).
      */
     onClosing(): void {
         this._closed = true;
-        window.removeEventListener("popstate", this._onPop);
         this.stopPoll();
-        const current = window.history.state;
-        if (this._inHistory && current?.chatViewer) {
-            const rest = { ...current };
-            delete rest.chatViewer;
-            window.history.replaceState(rest, "");
-        }
-        this._inHistory = false;
+        this.entry.dispose();
     }
 
     get ta(): ThreadAttachments {
@@ -134,13 +120,7 @@ export class ChatImageViewerComponent extends EnhancedComponent {
      * a double tap never leaves the conversation.
      */
     onClose(): void {
-        if (this._closing) return;
-        if (this._inHistory) {
-            this._closing = true;
-            window.history.back();
-        } else {
-            this.props.onClose();
-        }
+        this.entry.close();
     }
 
     /**

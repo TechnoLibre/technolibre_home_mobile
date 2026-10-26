@@ -47,6 +47,19 @@ describe("reactionViews", () => {
     });
 });
 
+describe("reactionViews and the user", () => {
+    it("names the user by the cached name, else « Vous », and puts them in when the group says they reacted", () => {
+        stubStorage();
+        const names = new Map([[7, "Alice Martin"]]);
+        expect(reactionViews([
+            group("👍", { count: 2, selfReacted: true, partnerIds: [1, 7] }),
+            group("😂", { count: 2, selfReacted: true, partnerIds: [7] }),
+        ], names, 1).map((v) => v.names)).toEqual([["Vous", "Alice Martin"], ["Vous", "Alice Martin"]]);
+        expect(reactionViews([group("👍", { selfReacted: true, partnerIds: [1] })], new Map([[1, "Moi Test"]]), 1)[0].names)
+            .toEqual(["Moi Test"]);
+    });
+});
+
 describe("ChatReactionsComponent", () => {
     async function mounted(reactions: ReactionView[]) {
         stubStorage();
@@ -126,7 +139,7 @@ describe("ChatReactionWhoComponent", () => {
         host.querySelector<HTMLElement>(".chat-menu__close")!.click();
         expect(back).toHaveBeenCalledTimes(1);
         window.history.replaceState({}, "");
-        window.dispatchEvent(new PopStateEvent("popstate"));
+        window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
         expect(props.onClose).toHaveBeenCalledTimes(1);
         back.mockRestore();
         (component as any).__owl__.app.destroy();

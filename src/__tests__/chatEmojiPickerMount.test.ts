@@ -74,20 +74,29 @@ describe("ChatEmojiPickerComponent mounted", () => {
         expect(props.onClose).not.toHaveBeenCalled();
         // The browser lands on the entry under the picker's
         window.history.replaceState({}, "");
-        window.dispatchEvent(new PopStateEvent("popstate"));
+        window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
         expect(props.onClose).toHaveBeenCalledTimes(1);
         back.mockRestore();
         app.destroy();
     });
 
+    it("removed without a back (a send, a reaction picked), it goes back over its entry once", async () => {
+        const { app } = await mounted();
+        const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+        expect(window.history.state?.chatEmoji).toBe(true);
+        app.destroy();
+        expect(back).toHaveBeenCalledTimes(1);
+        back.mockRestore();
+    });
+
     it("a back from a sheet opened above it leaves it open", async () => {
         const { props, app } = await mounted();
-        // A sheet above it goes back: the entry now current is the picker's own, mark included
+        // A sheet above it goes back: the entry it lands on is the picker's own, mark included
         expect(window.history.state?.chatEmoji).toBe(true);
-        window.dispatchEvent(new PopStateEvent("popstate"));
+        window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
         expect(props.onClose).not.toHaveBeenCalled();
         window.history.replaceState({}, "");
-        window.dispatchEvent(new PopStateEvent("popstate"));
+        window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
         expect(props.onClose).toHaveBeenCalledTimes(1);
         app.destroy();
     });

@@ -496,6 +496,19 @@ describe("ChatImageViewerComponent", () => {
         back.mockRestore();
     });
 
+    it("a back landing on the viewer's own entry (a layer above it closing) leaves it open", async () => {
+        stubLocale();
+        const h = harness();
+        await h.ta.load(new Map([["m1", [att(1, { thumbPath: "chat/d/thumbs/1" })]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        const { v, onClose } = viewer(h);
+        v.onOpened();
+        window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
+        expect(onClose).not.toHaveBeenCalled();
+        window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+        expect(onClose).toHaveBeenCalledTimes(1);
+        v.onClosing();
+    });
+
     it("a double tap on ✕ goes back once", async () => {
         stubLocale();
         const h = harness();

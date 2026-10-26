@@ -1225,5 +1225,6 @@ export const translations: Record<string, string> = {
   "chat.reaction_chip_self": "{emoji} : {count}, dont vous",
   "chat.reaction_who": "Qui a réagi avec {emoji}",
   "chat.guest": "Invité",
+  "chat.you": "Vous",
   "chat.someone": "Quelqu'un",
 };

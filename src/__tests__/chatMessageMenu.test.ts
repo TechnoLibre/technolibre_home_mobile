@@ -43,7 +43,7 @@ describe("ChatMessageMenuComponent", () => {
         const rest = { ...(window.history.state ?? {}) };
         delete rest.chatMenu;
         window.history.replaceState(rest, "");
-        window.dispatchEvent(new PopStateEvent("popstate"));
+        window.dispatchEvent(new PopStateEvent("popstate", { state: rest }));
     }
 
     afterEach(() => {
@@ -121,8 +121,8 @@ describe("ChatMessageMenuComponent", () => {
 
     it("Android's back closes it; a back from a sheet above it does not", async () => {
         const { props, app } = await mounted(OWN);
-        // A sheet above the menu goes back: the entry still carries the menu's mark
-        window.dispatchEvent(new PopStateEvent("popstate"));
+        // A sheet above the menu goes back: the entry it lands on carries the menu's mark
+        window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
         expect(props.onClose).not.toHaveBeenCalled();
         popped();
         expect(props.onClose).toHaveBeenCalledTimes(1);

@@ -9,6 +9,7 @@ import {
     searchEmoji,
 } from "../../services/chat/chatEmoji";
 import type { EmojiData, EmojiEntry } from "../../services/chat/chatEmoji";
+import { BackEntry } from "./chatBackEntry";
 
 /** Most used emojis the first section lists (Odoo's picker shows 42). */
 const FREQUENT_COUNT = 42;
@@ -89,15 +90,8 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
     private _fill: number | null = null;
     /** The section a tab asked for, scrolled to once it is drawn. */
     private _scrollTo: string | null = null;
-    /** The picker's history entry is the current one: Android's back closes it, not the conversation. */
-    private _inHistory = false;
-    private _closing = false;
-    /** A popstate onto an entry still marked chatEmoji is a sheet above the picker going back: the picker stays. */
-    private _onPop = () => {
-        if (!this._inHistory || window.history.state?.chatEmoji) return;
-        this._inHistory = false;
-        this.props.onClose();
-    };
+    /** The picker's history entry (mark chatEmoji): Android's back closes it, not the conversation. */
+    private entry!: BackEntry;
     private _onKey = (ev: KeyboardEvent) => {
         if (ev.key === "Escape") this.close();
     };
@@ -110,10 +104,9 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
 
     setup() {
         this.state = useState<PickerState>({ data: null, failed: false, term: "", filled: 1 });
+        this.entry = new BackEntry("chatEmoji", () => this.props.onClose());
         onMounted(() => {
-            window.history.pushState({ ...(window.history.state ?? {}), chatEmoji: true }, "");
-            this._inHistory = true;
-            window.addEventListener("popstate", this._onPop);
+            this.entry.open();
             document.addEventListener("keydown", this._onKey);
             void this.load();
         });
@@ -121,27 +114,15 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
         onWillUnmount(() => {
             this._gone = true;
             if (this._fill) cancelAnimationFrame(this._fill);
-            window.removeEventListener("popstate", this._onPop);
             document.removeEventListener("keydown", this._onKey);
-            // Closed without a back: its entry, if still the current one, is gone with it
-            if (this._inHistory && window.history.state?.chatEmoji) window.history.back();
-            this._inHistory = false;
+            // Closed without a back (a send, a reaction picked): its entry, if still the current one, is gone with it
+            this.entry.dispose({ goBack: true });
         });
     }
 
-    /**
-     * ✕ and Escape: goes back over the picker's entry, whose popstate closes
-     * it; a second call before that popstate does nothing, so a double tap
-     * never leaves the conversation.
-     */
+    /** ✕ and Escape: back over the picker's entry, whose popstate closes it (BackEntry.close, once per close). */
     close(): void {
-        if (this._closing) return;
-        if (this._inHistory) {
-            this._closing = true;
-            window.history.back();
-        } else {
-            this.props.onClose();
-        }
+        this.entry.close();
     }
 
     /** Asks the data (the same promise every time); a failure offers a retry. */

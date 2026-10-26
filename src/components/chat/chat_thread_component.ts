@@ -269,6 +269,8 @@ export class ChatThreadComponent extends EnhancedComponent {
           <ChatReactionsComponent t-if="row.reactions.length" reactions="row.reactions"
                                   onToggle="(content) => this.onChip(row, content)" onWho="(content) => this.onWho(row, content)"/>
           <div class="chat-thread__meta">
+            <button t-if="offers(row)" type="button" class="chat-thread__actions" aria-haspopup="dialog"
+                    t-att-aria-label="t('chat.message_actions')" t-on-click="() => this.openActions(row.key)">⋯</button>
             <span t-esc="row.time"/>
             <span t-if="row.meta === 'sent'" t-att-title="t('chat.sent')">✓</span>
             <span t-if="row.meta === 'seen'" t-att-title="t('chat.seen')">✓✓</span>
@@ -747,7 +749,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             attachments: this.attachments.views(key),
             messageKey: messageKeyOf(m),
             target: { messageId: m.messageId, clientUuid: m.clientUuid },
-            reactions: named ? reactionViews(groups.get(messageKeyOf(m)) ?? [], names) : [],
+            reactions: named ? reactionViews(groups.get(messageKeyOf(m)) ?? [], names, self) : [],
             can: canOf(m, own, writable, body.text),
         };
     }
@@ -972,11 +974,20 @@ export class ChatThreadComponent extends EnhancedComponent {
         return key === null ? undefined : this._rows.find((r) => r.key === key);
     }
 
+    /**
+     * Whether the menu offers anything on a row. Such a row also has a
+     * « Message actions » button (shown on keyboard focus, always read by a
+     * screen reader), the way to the menu without a long press.
+     */
+    offers(row: ThreadRow): boolean {
+        return Object.values(this.canIn(row)).some(Boolean);
+    }
+
     /** Opens the menu of a row, unless another sheet is open or the menu would offer nothing. */
     openActions(key: string): void {
         const row = this.rowAt(key);
         if (!row || this.state.actions !== null || this.state.who || this.state.viewer) return;
-        if (!Object.values(this.canIn(row)).some(Boolean)) return;
+        if (!this.offers(row)) return;
         this.state.menu = false;
         this.state.actions = key;
     }

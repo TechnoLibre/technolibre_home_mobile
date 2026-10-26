@@ -16,19 +16,22 @@ export interface ReactionView {
 
 /**
  * The chips of a message's reaction groups, in the server's order: the
- * partners by their cached name (« Someone » for one never named), then
- * one « Guest » per guest, who are only counted.
+ * partners by their cached name, then one « Guest » per guest, who are only
+ * counted. The user (self, the account's partner) is always named: by the
+ * cached name, else « You », and put first when the group says they
+ * reacted without listing them. « Someone » is a partner never named.
  */
-export function reactionViews(groups: ChatReaction[], names: Map<number, string>): ReactionView[] {
-    return groups.map((g) => ({
-        content: g.content,
-        count: g.count,
-        self: g.selfReacted,
-        names: [
-            ...g.partnerIds.map((id) => names.get(id) || t("chat.someone")),
-            ...Array.from({ length: g.guestCount }, () => t("chat.guest")),
-        ],
-    }));
+export function reactionViews(groups: ChatReaction[], names: Map<number, string>, self: number | null = null): ReactionView[] {
+    const nameOf = (id: number) => names.get(id) || t(id === self ? "chat.you" : "chat.someone");
+    return groups.map((g) => {
+        const ids = g.selfReacted && self !== null && !g.partnerIds.includes(self) ? [self, ...g.partnerIds] : g.partnerIds;
+        return {
+            content: g.content,
+            count: g.count,
+            self: g.selfReacted,
+            names: [...ids.map(nameOf), ...Array.from({ length: g.guestCount }, () => t("chat.guest"))],
+        };
+    });
 }
 
 /** What a chip's label reads: the emoji, the count, and whether the user is among them. */
