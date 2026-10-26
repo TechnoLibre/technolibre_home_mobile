@@ -317,10 +317,10 @@ export class ChatListComponent extends EnhancedComponent {
                 const row = this.rowOf(c, labelOf.get(id) ?? "", title, last, text);
                 row.ambiguous = !!c.createOpId && blocked.has(c.createOpId);
                 byKey.set(c.configId + ":" + c.channelId, row);
-                // A draft stands in the last message's place; the time, unread and order stay the conversation's
+                // A draft stands in the last message's place, after the mark of one still on its way; the time, unread and order stay the conversation's
                 const draft = drafts.get(c.channelId);
                 if (draft) {
-                    row.preview = draftPreview(draft.text, draft.files, PREVIEW_MAX);
+                    row.preview = (last?.status === "pending" ? "⏳ " : "") + draftPreview(draft.text, draft.files, PREVIEW_MAX);
                     continue;
                 }
                 if (!text && last && last.messageType === "comment") {

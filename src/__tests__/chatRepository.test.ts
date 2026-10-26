@@ -605,6 +605,17 @@ describe("ChatRepository", () => {
       expect(await db.rawQuery("SELECT id, text FROM chat_drafts")).toEqual([{ id: `${A}#7`, text: "" }]);
     });
 
+    it("a draft file keeps its origin, through its post and back to the draft", async () => {
+      await repo.putDraftFile(draftFile(A, "d1", { origin: "camera" }));
+      await repo.putDraftFile(draftFile(A, "d2", { seq: 1 }));
+      expect((await repo.draftOf(A, 7)).files.map((f) => [f.localUuid, f.origin])).toEqual([["d1", "camera"], ["d2", null]]);
+      const f = { localUuid: "d1", path: "chat/dir/out/d1/photo.jpg", name: "photo.jpg", mimetype: "image/jpeg", size: 1000, voice: false };
+      await repo.queueDrafts(A, 7, "post9", [{ file: f, seq: 0 }], "queued");
+      expect((await repo.outgoingFile(A, "d1"))!.origin).toBe("camera");
+      await repo.backToDraft(A, ["d1"]);
+      expect((await repo.draftOf(A, 7)).files[0]).toMatchObject({ localUuid: "d1", origin: "camera" });
+    });
+
     it("putDraftFile never turns a file already queued back into a draft", async () => {
       await repo.putOutgoing([outgoing(A, "q1")]);
       await repo.putDraftFile(draftFile(A, "q1"));
@@ -885,6 +896,36 @@ describe("ChatRepository lot 2", () => {
       expect(await colsOf("chat_sources")).toEqual(expect.arrayContaining(["file_dir", "module_level"]));
       expect(await db.rawQuery("SELECT * FROM chat_attachments")).toHaveLength(1);
       expect(await db.rawQuery("SELECT * FROM chat_sources")).toHaveLength(1);
+    });
+  });
+
+  describe("migration 2026102606", () => {
+    const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102606)!;
+    const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+
+    it("a fresh install has the origin column", async () => {
+      for (const m of APP_MIGRATIONS) {
+        if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+      }
+      expect(await colsOf("chat_attachments")).toContain("origin");
+    });
+
+    it("adds the origin column to a database at 2026102605, and a second run changes nothing", async () => {
+      // chat_attachments as migration 2026102604 created it, before the origin column
+      const raw = (db as any).db;
+      await raw.execute("CREATE TABLE IF NOT EXISTS chat_attachments (id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL, state TEXT NOT NULL)");
+      await db.rawRun("INSERT INTO chat_attachments (id, config_id, state) VALUES (?, ?, ?)", ["a#ld1", "a", "draft"]);
+      expect(await colsOf("chat_attachments")).not.toContain("origin");
+      expect(migration().description).toBe("Clavardage : origine des fichiers du brouillon");
+      await migration().run(db);
+      await migration().run(db);
+      expect((await colsOf("chat_attachments")).filter((c) => c === "origin")).toHaveLength(1);
+      expect(await db.rawQuery("SELECT * FROM chat_attachments")).toEqual([{ id: "a#ld1", config_id: "a", state: "draft", origin: null }]);
+    });
+
+    it("a database without the chat tables is left as it is", async () => {
+      await migration().run(db);
+      expect(await colsOf("chat_attachments")).toEqual([]);
     });
   });
 

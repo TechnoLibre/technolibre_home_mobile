@@ -14,6 +14,7 @@ import {
 import {
   deviceChatFiles, originalPath as originalFilePath, removeChatFile, type ChatFiles, type TransferProgress,
 } from "./chatFiles";
+import { joinDraftText } from "./chatDraft";
 import {
   ChatFileTooBigError,
   ChatTransferCancelledError,
@@ -327,14 +328,18 @@ export class ChatOutbox {
    * rows and the message are written (recoverIncomplete repairs a cut). A
    * post that cannot be queued deletes the other staged files and gives the
    * draft files back to the draft. idempotentUpload sends the files through
-   * the module route (module 1.2).
+   * the module route (module 1.2). fromDraft says the text is the
+   * conversation's draft text: it is emptied in this same step, once the
+   * message holds it, so a queued post never leaves its text as a draft;
+   * a post refused before its message is stored leaves the draft text as
+   * it was, and one refused after leaves it to the caller to store again.
    */
   queuePost(
     configId: string,
     channelId: number,
     text: string,
     useModule: boolean,
-    opts: { files?: OutgoingFile[]; idempotentUpload?: boolean } = {},
+    opts: { files?: OutgoingFile[]; idempotentUpload?: boolean; fromDraft?: boolean } = {},
   ): Promise<ChatMessage> {
     return this.exclusive(configId, async () =>
       this.queuePostNow(configId, (await this.realIdOf(configId, channelId)) ?? channelId, text, useModule, opts));
@@ -391,7 +396,7 @@ export class ChatOutbox {
     channelId: number,
     text: string,
     useModule: boolean,
-    opts: { files?: OutgoingFile[]; idempotentUpload?: boolean },
+    opts: { files?: OutgoingFile[]; idempotentUpload?: boolean; fromDraft?: boolean },
   ): Promise<ChatMessage> {
     const files = opts.files ?? [];
     const drafts = new Set<string>();
@@ -416,6 +421,7 @@ export class ChatOutbox {
       };
       await this.repo.putPending(failed);
       if (files.length > 0) await this.storeFiles(configId, channelId, failed.clientUuid, files, drafts, "refused");
+      if (opts.fromDraft) await this.repo.putDraftText(configId, channelId, "");
       return failed;
     }
     const all = await this.db.getOutboxOpsForConfig(configId);
@@ -477,6 +483,7 @@ export class ChatOutbox {
     try {
       if (incomplete) await this.storeFiles(configId, channelId, op.clientUuid, files, drafts, "queued");
       await this.repo.putPending(message);
+      if (opts.fromDraft) await this.repo.putDraftText(configId, channelId, "");
       // The post last: no drain sends it before its uploads are queued
       for (const up of uploads) await this.outbox.complete(up.id, {});
       if (incomplete) await this.outbox.complete(op.id, {});
@@ -1006,8 +1013,8 @@ export class ChatOutbox {
    * queued; without it, it is removed. A post with files cut while being
    * queued is queued with its uploads when its message was written, else
    * removed with them, its rows and files; the files it took from the
-   * conversation's draft go back to the draft instead, with its text when
-   * the draft has none, and a staged file a draft row still names is never
+   * conversation's draft go back to the draft instead, with its text
+   * (joinDraftText, ahead of what the draft holds), and a staged file a draft row still names is never
    * deleted. An incomplete upload no post waits for is removed. Returns how
    * many were queued.
    */
@@ -1033,8 +1040,10 @@ export class ChatOutbox {
           await this.repo.backToDraft(configId, rows.filter((u) => drafted.has(u)));
           await this.dropOutgoing(configId, rows.filter((u) => !drafted.has(u)));
           if (drafted.size > 0 && post.params.text) {
+            // The post's text is older than what the draft holds now
             const channelId: number = post.params.channelId;
-            if (!(await this.repo.draftOf(configId, channelId)).text) await this.repo.putDraftText(configId, channelId, post.params.text);
+            const held = (await this.repo.draftOf(configId, channelId)).text;
+            await this.repo.putDraftText(configId, channelId, joinDraftText(post.params.text, held));
           }
           // Cut before its rows: the uploads' params still name the staged files
           await this.removeFiles(await this.notDrafts(configId, chain.map((up) => up.params)));

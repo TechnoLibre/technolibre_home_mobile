@@ -91,9 +91,9 @@ function harness(opts: { askCompress?: boolean; limit?: number | null; confirm?:
     const send = vi.fn(async (_extra: OutgoingFile[]) => {});
     const confirm = vi.fn(async (_message: string) => opts.confirm ?? true);
     /** The conversation's draft files, by local uuid, as ChatService keeps them. */
-    const drafts = new Map<string, { file: OutgoingFile; seq: number }>();
+    const drafts = new Map<string, { file: OutgoingFile; seq: number; origin: string | null }>();
     const draft = {
-        keep: vi.fn(async (f: OutgoingFile, seq: number) => { drafts.set(f.localUuid, { file: f, seq }); }),
+        keep: vi.fn(async (f: OutgoingFile, seq: number, origin: string | null) => { drafts.set(f.localUuid, { file: f, seq, origin }); }),
         drop: vi.fn(async (f: OutgoingFile) => {
             drafts.delete(f.localUuid);
             await files.removeDir(f.path.slice(0, f.path.lastIndexOf("/")));
@@ -239,52 +239,68 @@ describe("ComposerAttach", () => {
         const h = harness();
         await h.attach.start();
         const shownAtKeep: number[] = [];
-        h.draft.keep.mockImplementation(async (f: OutgoingFile, seq: number) => {
+        h.draft.keep.mockImplementation(async (f: OutgoingFile, seq: number, origin: string | null) => {
             shownAtKeep.push(h.state.chips.length);
-            h.drafts.set(f.localUuid, { file: f, seq });
+            h.drafts.set(f.localUuid, { file: f, seq, origin });
         });
         h.pickNext([file("a.jpg", 10), file("b.jpg", 20)]);
         await h.attach.pick(h.input, "camera");
         expect(shownAtKeep).toEqual([0, 1]);
         expect(h.state.chips.map((c) => [c.file.name, c.seq])).toEqual([["a.jpg", 0], ["b.jpg", 1]]);
-        expect([...h.drafts.values()].map((d) => [d.file.name, d.seq])).toEqual([["a.jpg", 0], ["b.jpg", 1]]);
+        expect([...h.drafts.values()].map((d) => [d.file.name, d.seq, d.origin])).toEqual([["a.jpg", 0, "camera"], ["b.jpg", 1, "camera"]]);
     });
 
-    it("restore shows the draft's files in order ahead of new picks, a known origin kept, the lost ones named", async () => {
+    it("restore shows the draft's files in order ahead of new picks, each with its stored origin, the lost ones named", async () => {
         const h = harness();
         await h.attach.start();
         h.pickNext([file("new.jpg", 10)]);
         await h.attach.pick(h.input, "gallery");
         const photo = stagedOf(h.files, "IMG_20261026_101500.jpg", 10, "image/jpeg");
         const voice = { ...stagedOf(h.files, "Voice-2026-10-26-77.mp3", 10, "audio/mpeg"), voice: true };
-        h.attach.restore([{ file: voice, seq: 7 }, { file: photo, seq: 3 }], ["gone.pdf"],
-            [{ key: "old", file: photo, origin: "camera", seq: 3 }]);
+        const scan = stagedOf(h.files, "scan.pdf", 10, "application/pdf");
+        h.attach.restore([
+            { file: voice, seq: 7, origin: null }, { file: photo, seq: 3, origin: "camera" }, { file: scan, seq: 5, origin: null },
+        ], ["gone.pdf"]);
         expect(h.state.chips.map((c) => [c.file.name, c.origin, c.seq])).toEqual([
-            ["IMG_20261026_101500.jpg", "camera", 3], ["Voice-2026-10-26-77.mp3", "voice", 7], ["new.jpg", "gallery", 0],
+            ["IMG_20261026_101500.jpg", "camera", 3], ["scan.pdf", "file", 5], ["Voice-2026-10-26-77.mp3", "voice", 7],
+            ["new.jpg", "gallery", 8],
         ]);
         expect(h.state.notices).toEqual(["“gone.pdf” was no longer on the phone: it was taken out of the draft."]);
-        // Shown once, whatever the restores; the next file takes the position after the draft's
-        h.attach.restore([{ file: photo, seq: 3 }]);
-        expect(h.state.chips).toHaveLength(3);
+        // Shown once, whatever the restores; the next file takes the position after them all
+        h.attach.restore([{ file: photo, seq: 3, origin: "camera" }]);
+        expect(h.state.chips).toHaveLength(4);
         h.pickNext([file("next.jpg", 10)]);
         await h.attach.pick(h.input, "file");
-        expect(h.state.chips.at(-1)!.seq).toBe(8);
+        expect(h.state.chips.at(-1)!.seq).toBe(9);
     });
 
-    it("a draft photo shown again in this app run keeps its camera origin; after a restart it counts as a file", async () => {
+    it("a chip picked before the draft is read moves after the draft's files and keeps that position", async () => {
+        const h = harness();
+        await h.attach.start();
+        h.pickNext([file("early.jpg", 10)]);
+        await h.attach.pick(h.input, "gallery");
+        const early = h.state.chips[0].file;
+        const kept = stagedOf(h.files, "kept.jpg", 10, "image/jpeg");
+        h.attach.restore([{ file: kept, seq: 0, origin: "camera" }]);
+        expect(h.state.chips.map((c) => [c.file.name, c.seq])).toEqual([["kept.jpg", 0], ["early.jpg", 1]]);
+        expect(h.drafts.get(early.localUuid)).toMatchObject({ seq: 1, origin: "gallery" });
+    });
+
+    it("a draft camera photo restored after a restart is still offered compression", async () => {
         const first = harness();
         await first.attach.start();
         first.pickNext([file("IMG_1.jpg", 10)]);
         await first.attach.pick(first.input, "camera");
         await first.attach.dispose();
+        // Only what the draft row stores crosses the restart
         const [kept] = [...first.drafts.values()];
-        const again = harness();
+        const again = harness({ askCompress: true, confirm: true });
         await again.attach.start();
-        again.attach.restore([kept]);
+        again.attach.restore([{ file: kept.file, seq: kept.seq, origin: kept.origin as any }]);
         expect(again.state.chips.map((c) => c.origin)).toEqual(["camera"]);
-        const other = stagedOf(again.files, "IMG_2.jpg", 10, "image/jpeg");
-        again.attach.restore([{ file: other, seq: 5 }]);
-        expect(again.state.chips.map((c) => c.origin)).toEqual(["file", "camera"]);
+        await again.attach.prepare(again.attach.take());
+        expect(again.confirm).toHaveBeenCalledTimes(1);
+        expect(again.capture.compress).toHaveBeenCalledTimes(1);
     });
 
     it("a file over the limit is refused with the limit named, the others still staged", async () => {
@@ -375,7 +391,9 @@ describe("ComposerAttach", () => {
         expect(yes.capture.compress).toHaveBeenCalledTimes(1);
         expect(sent.map((f) => [f.name, f.size])).toEqual([["shot.jpg", 100], ["notes.pdf", 10]]);
         // The draft row names the reduced photo, for a send that is refused
-        expect([...yes.drafts.values()].map((d) => [d.file.name, d.file.size, d.seq])).toEqual([["shot.jpg", 100, 0], ["notes.pdf", 10, 1]]);
+        expect([...yes.drafts.values()].map((d) => [d.file.name, d.file.size, d.seq, d.origin])).toEqual([
+            ["shot.jpg", 100, 0, "gallery"], ["notes.pdf", 10, 1, "file"],
+        ]);
 
         const no = harness({ askCompress: true, confirm: false });
         await no.attach.start();
@@ -507,8 +525,8 @@ describe("ComposerAttach", () => {
         await h.attach.dispose();
         expect(h.recorder.discard).not.toHaveBeenCalled();
         expect(h.recorder.stop).toHaveBeenCalledWith(FILE_DIR);
-        expect([...h.drafts.values()].map((d) => [d.file.name, d.file.voice, d.seq])).toEqual([
-            ["a.jpg", false, 0], ["Voice-2026-10-26-4821.mp3", true, 1],
+        expect([...h.drafts.values()].map((d) => [d.file.name, d.file.voice, d.seq, d.origin])).toEqual([
+            ["a.jpg", false, 0, "camera"], ["Voice-2026-10-26-4821.mp3", true, 1, "voice"],
         ]);
         expect(h.files.bytes(path)).toBeDefined();
         expect(h.draft.drop).not.toHaveBeenCalled();

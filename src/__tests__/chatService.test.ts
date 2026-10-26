@@ -3118,14 +3118,14 @@ describe("ChatService", () => {
         const a = stage("IMG_20261026_101500.jpg");
         const b = stage("notes.pdf", 5, "application/pdf");
         await chat.saveDraftText(config, GROUP, "half a sentence");
-        await chat.keepDraftFile(config, GROUP, b, 1);
-        await chat.keepDraftFile(config, GROUP, a, 0);
+        await chat.keepDraftFile(config, GROUP, b, 1, "file");
+        await chat.keepDraftFile(config, GROUP, a, 0, "camera");
         await reborn();
         await chat.recover();
         const draft = await chat.draft(config, GROUP);
         expect(draft.text).toBe("half a sentence");
-        expect(draft.files.map((f) => [f.localUuid, f.name, f.size, f.originalPath])).toEqual([
-          [a.localUuid, a.name, 3, a.path], [b.localUuid, b.name, 5, b.path],
+        expect(draft.files.map((f) => [f.localUuid, f.name, f.size, f.originalPath, f.origin])).toEqual([
+          [a.localUuid, a.name, 3, a.path, "camera"], [b.localUuid, b.name, 5, b.path, "file"],
         ]);
         expect(draft.lost).toEqual([]);
         expect(server.files.bytes(a.path)).toBeDefined();
@@ -3160,7 +3160,8 @@ describe("ChatService", () => {
         const voice = stage("Voice-2026-10-26-123.mp3", 4, "audio/mpeg", true);
         await chat.keepDraftFile(config, GROUP, a, 0);
         await chat.keepDraftFile(config, GROUP, voice, 1);
-        const sent = await chat.send(src, GROUP, "two", [a, voice]);
+        await chat.saveDraftText(config, GROUP, "two");
+        const sent = await chat.send(src, GROUP, "two", [a, voice], { fromDraft: true });
         await idle();
         expect(server.uploads().map((c) => c.file!.name)).toEqual(["a.jpg", "Voice-2026-10-26-123.mp3"]);
         expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900, 901]]);

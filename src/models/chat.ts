@@ -102,6 +102,10 @@ export interface ChatPartner {
 /** "draft": a file kept in a conversation's composer, not sent yet (no post, no outbox op). */
 export type ChatAttachmentState = "draft" | "queued" | "uploaded" | "posted" | "refused";
 
+/** Where a file of the phone was taken: a pick of that kind, or the voice recorder. */
+export type ChatFileOrigin = "camera" | "gallery" | "file" | "voice";
+
+
 /**
  * One file of a message, or of a conversation's draft. Keyed
  * `configId#a<attachmentId>` once the server has an id,
@@ -132,6 +136,11 @@ export interface ChatAttachment {
   error: string | null;
   lastOpenedAt: string | null;
   createdAt: string;
+  /**
+   * Where a file of the composer was taken (a camera or gallery photo is
+   * offered compression at send); null for a server file or when unknown.
+   */
+  origin?: ChatFileOrigin | null;
 }
 
 /** A file picked on the phone, waiting to be uploaded with its post. */

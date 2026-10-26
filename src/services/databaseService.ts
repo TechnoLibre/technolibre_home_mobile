@@ -1387,6 +1387,20 @@ export class DatabaseService {
   }
 
   /**
+   * Adds chat_attachments.origin (where a draft file was taken) to a table
+   * created before it, when PRAGMA table_info does not list it; a fresh
+   * install (the table already has it), a second run and a database
+   * without the chat tables change nothing.
+   */
+  async addChatDraftOrigin(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(chat_attachments)");
+    const names = (existing.values ?? []).map((r: any) => r.name as string);
+    if (names.length > 0 && !names.includes("origin")) {
+      await this.db.execute("ALTER TABLE chat_attachments ADD COLUMN origin TEXT");
+    }
+  }
+
+  /**
    * The text typed in a conversation's composer and not sent yet, one row
    * per conversation keyed `configId#channelId`. Its files are the
    * conversation's chat_attachments rows in the "draft" state.
@@ -1432,7 +1446,8 @@ export class DatabaseService {
         state            TEXT NOT NULL,
         error            TEXT,
         last_opened_at   TEXT,
-        created_at       TEXT NOT NULL
+        created_at       TEXT NOT NULL,
+        origin           TEXT
       )
     `);
     for (const [name, cols] of [

@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DRAFT_SAVE_MS, DraftText } from "../services/chat/chatDraft";
+import { DRAFT_SAVE_MS, DraftText, joinDraftText } from "../services/chat/chatDraft";
 
 afterEach(() => vi.useRealTimers());
+
+describe("joinDraftText", () => {
+    it("joins two texts older first, never doubling one or keeping a blank", () => {
+        expect(joinDraftText("sent before", "typed after")).toBe("sent before\ntyped after");
+        expect(joinDraftText("same", "same")).toBe("same");
+        expect(joinDraftText("", "typed")).toBe("typed");
+        expect(joinDraftText("kept", "  ")).toBe("kept");
+    });
+});
 
 describe("DraftText", () => {
     const harness = () => {

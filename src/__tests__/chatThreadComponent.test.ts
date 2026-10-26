@@ -141,10 +141,11 @@ function fakeAttachments(c: any, opts: { askCompress?: boolean } = {}) {
 }
 
 /** A draft row of chat_attachments for a staged file, as ChatService.draft gives it. */
-const draftRow = (f: any, seq: number) => ({
+const draftRow = (f: any, seq: number, origin: string | null = null) => ({
     configId: "a", channelId: 5, messageId: null, attachmentId: null, localUuid: f.localUuid, postClientUuid: null,
     seq, name: f.name, mimetype: f.mimetype, size: f.size, checksum: null, voice: f.voice, thumbPath: null, thumbBytes: 0,
     originalPath: f.path, originalBytes: f.size, state: "draft", error: null, lastOpenedAt: null, createdAt: "2026-10-26T10:00:00Z",
+    origin,
 });
 
 /** A row of chat_attachments as ChatRepository.attachmentsOf gives it. */
@@ -179,7 +180,7 @@ describe("ChatThreadComponent", () => {
         await c.open();
         c.state.text = "  hello \n";
         await c.onSend();
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "hello", []);
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "hello", [], { fromDraft: true });
         expect(c.state.text).toBe("");
         expect(c.state.rows.at(-1).meta).toBe("pending");
     });
@@ -218,7 +219,7 @@ describe("ChatThreadComponent", () => {
         expect(chat.messages).toHaveBeenCalledWith("a", 40, expect.anything());
         c.state.text = "next";
         await c.onSend();
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 40, "next", []);
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 40, "next", [], { fromDraft: true });
     });
 
     it("a screen no longer on the temporary route moves without touching the history", async () => {
@@ -620,7 +621,7 @@ describe("ChatThreadComponent", () => {
         const sending = c.onSend();
         expect(c.attachState.chips).toEqual([]);
         await sending;
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "", [photo]);
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "", [photo], { fromDraft: true });
     });
 
     it("nothing to send leaves the composer as it is", async () => {
@@ -644,33 +645,70 @@ describe("ChatThreadComponent", () => {
         a.chip(kept, "camera");
         a.chip(given);
         // The outbox left a.jpg in the draft; b.jpg is no longer one
-        chat.draft.mockResolvedValueOnce({ text: "", files: [draftRow(kept, 0)], lost: [] });
+        chat.draft.mockResolvedValueOnce({ text: "look", files: [draftRow(kept, 0, "camera")], lost: [] });
         c.state.text = "look";
         await c.onSend();
         expect(c.state.text).toBe("look");
-        expect(chat.saveDraftText.mock.calls.map((x: any[]) => x[2])).toEqual(["", "look"]);
+        // Stored at the tap, and again once refused (the post may have emptied it before failing)
+        expect(chat.saveDraftText.mock.calls.map((x: any[]) => x[2])).toEqual(["look", "look"]);
         expect(c.attachState.chips.map((x: any) => [x.file.name, x.origin])).toEqual([["a.jpg", "camera"]]);
         expect(c.state.error).toBe("Could not send the message. Try again.");
     });
 
-    it("a send empties the draft text before its first await", async () => {
+    it("a refused send joins its text with what was typed meanwhile, in the composer and the draft", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        chat.send.mockImplementationOnce(async () => {
+            c.onInput({ target: { value: "typed meanwhile" } } as any);
+            throw new Error("disk");
+        });
+        c.state.text = "first";
+        await c.onSend();
+        expect(c.state.text).toBe("first\ntyped meanwhile");
+        expect(c.state.inputRows).toBe(2);
+        expect(chat.saveDraftText.mock.calls.at(-1)).toEqual(["a", 5, "first\ntyped meanwhile"]);
+    });
+
+    it("a send keeps its text in the draft until the post takes it, and keeps what was typed while it ran", async () => {
         const chat = fakeChat([msg(10)]);
         const c = make(chat);
         fakeAttachments(c);
         await c.open();
         c.onInput({ target: { value: "sent at once" } } as any);
+        chat.send.mockImplementationOnce(async () => {
+            c.onInput({ target: { value: "next one" } } as any);
+            return msg(null);
+        });
         const sending = c.onSend();
-        expect(chat.saveDraftText).toHaveBeenCalledWith("a", 5, "");
+        // Stored before the compress question: a kill there keeps the text
+        expect(chat.saveDraftText.mock.calls).toEqual([["a", 5, "sent at once"]]);
+        expect(c.state.text).toBe("");
         await sending;
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "sent at once", []);
-        expect(chat.saveDraftText.mock.calls.map((x: any[]) => x[2])).toEqual([""]);
+        // The post empties the draft text itself (fromDraft); the composer never writes ""
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "sent at once", [], { fromDraft: true });
+        expect(chat.saveDraftText.mock.calls.map((x: any[]) => x[2])).toEqual(["sent at once", "next one"]);
+    });
+
+    it("text typed before the draft is read joins the stored text instead of replacing it", async () => {
+        const chat = fakeChat([msg(10)]);
+        let answer!: (d: any) => void;
+        chat.draft.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+        const c = make(chat);
+        const opening = c.open();
+        await vi.waitFor(() => expect(chat.draft).toHaveBeenCalled());
+        c.onInput({ target: { value: "typed early" } } as any);
+        answer({ text: "stored", files: [], lost: [] });
+        await opening;
+        expect(c.state.text).toBe("stored\ntyped early");
+        expect(chat.saveDraftText.mock.calls).toEqual([["a", 5, "stored\ntyped early"]]);
     });
 
     it("opening shows the draft: its text, its files as chips in order, the lost ones named", async () => {
         const chat = fakeChat([msg(10)]);
         const photo = outFile("IMG_20261026_101500.jpg");
         const voice = outFile("Voice-2026-10-26-9.mp3", { mimetype: "audio/mpeg", voice: true });
-        chat.draft.mockResolvedValue({ text: "line one\nline two", files: [draftRow(photo, 0), draftRow(voice, 1)], lost: ["gone.pdf"] });
+        chat.draft.mockResolvedValue({ text: "line one\nline two", files: [draftRow(photo, 0, "camera"), draftRow(voice, 1)], lost: ["gone.pdf"] });
         const c = make(chat);
         fakeAttachments(c);
         await c.open();
@@ -678,7 +716,7 @@ describe("ChatThreadComponent", () => {
         expect(c.state.text).toBe("line one\nline two");
         expect(c.state.inputRows).toBe(2);
         expect(c.attachState.chips.map((x: any) => [x.file.name, x.file.path, x.origin, x.seq])).toEqual([
-            [photo.name, photo.path, "file", 0], [voice.name, voice.path, "voice", 1],
+            [photo.name, photo.path, "camera", 0], [voice.name, voice.path, "voice", 1],
         ]);
         expect(c.attach.hasVoiceChip()).toBe(true);
         expect(c.attachState.notices).toEqual(["“gone.pdf” was no longer on the phone: it was taken out of the draft."]);
@@ -712,9 +750,9 @@ describe("ChatThreadComponent", () => {
         const c = make(chat);
         await c.open();
         const f = outFile("a.jpg");
-        await c.attach.deps.draft.keep(f, 3);
+        await c.attach.deps.draft.keep(f, 3, "camera");
         await c.attach.deps.draft.drop(f);
-        expect(chat.keepDraftFile).toHaveBeenCalledWith("a", 5, f, 3);
+        expect(chat.keepDraftFile).toHaveBeenCalledWith("a", 5, f, 3, "camera");
         expect(chat.dropDraftFile).toHaveBeenCalledWith("a", f);
     });
 
@@ -729,7 +767,7 @@ describe("ChatThreadComponent", () => {
         await c.attach.mic();
         expect(chat.send).not.toHaveBeenCalled();
         await c.attach.mic();
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "listen", [photo, a.voice]);
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "listen", [photo, a.voice], { fromDraft: true });
         expect(c.state.text).toBe("");
     });
 
@@ -753,7 +791,7 @@ describe("ChatThreadComponent", () => {
         a.chip(outFile("IMG_1.jpg"), "camera");
         await c.onSend();
         expect(a.confirm).toHaveBeenCalledTimes(1);
-        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "", [expect.objectContaining({ name: "IMG_1.jpg", size: 10 })]);
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "", [expect.objectContaining({ name: "IMG_1.jpg", size: 10 })], { fromDraft: true });
     });
 
     it("the mic and 📎 wait for the conversation's source, the recorder hooked once it is known", async () => {
@@ -789,7 +827,7 @@ describe("ChatThreadComponent", () => {
         await c.attach.start();
         await c.attach.mic();
         c.teardown();
-        await vi.waitFor(() => expect(chat.keepDraftFile).toHaveBeenCalledWith("a", 5, a.voice, 0));
+        await vi.waitFor(() => expect(chat.keepDraftFile).toHaveBeenCalledWith("a", 5, a.voice, 0, "voice"));
         expect(a.recorder.discard).not.toHaveBeenCalled();
         expect(chat.send).not.toHaveBeenCalled();
         expect(a.recorder.onAutoStop).toBeNull();

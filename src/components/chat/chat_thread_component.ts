@@ -10,7 +10,7 @@ import type { ChatSource } from "../../services/chat/chatService";
 import { displayNameOf } from "../../services/chat/chatNames";
 import type { ChatAttachment, ChatChannel, ChatMember, ChatMessage, ChatPartner, OutgoingFile } from "../../models/chat";
 import { CHAT_UPLOAD } from "../../services/chat/chatOutbox";
-import { DraftText } from "../../services/chat/chatDraft";
+import { DraftText, joinDraftText } from "../../services/chat/chatDraft";
 import { ChatFile } from "../../plugins/chatFilePlugin";
 import { formatListTime, initialsOf } from "./chat_list_component";
 import {
@@ -19,7 +19,6 @@ import {
     deviceComposerDeps,
     newComposerAttachState,
     type ComposerAttachState,
-    type ComposerChip,
 } from "./chat_composer_attach_component";
 import {
     ChatAttachmentsComponent,
@@ -300,7 +299,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             uploadLimit: async () => (this.source ? this.chatService.uploadLimit(this.source) : null),
             send: (extra) => this.onSend(extra),
             draft: {
-                keep: (file, seq) => this.chatService.keepDraftFile(this.configId, this.channelId, file, seq),
+                keep: (file, seq, origin) => this.chatService.keepDraftFile(this.configId, this.channelId, file, seq, origin),
                 drop: (file) => this.chatService.dropDraftFile(this.configId, file),
             },
         }));
@@ -797,13 +796,13 @@ export class ChatThreadComponent extends EnhancedComponent {
     // ─── Composer ─────────────────────────────────────────────────────────
 
     /**
-     * The conversation's draft into the composer: its text when nothing
-     * was typed yet (and withText), its files as chips
-     * (ComposerAttach.restore; `known` are the chips a refused send took,
-     * whose origin they keep). A draft that cannot be read leaves the
+     * The conversation's draft into the composer: with withText, its text,
+     * joined ahead of what was typed before the read answered (and stored
+     * so joined); its files as chips with their stored origin
+     * (ComposerAttach.restore). A draft that cannot be read leaves the
      * composer as it is.
      */
-    private async showDraft(known: ComposerChip[] = [], withText = true): Promise<void> {
+    private async showDraft(withText = true): Promise<void> {
         let draft: { text: string; files: ChatAttachment[]; lost: string[] };
         try {
             draft = await this.chatService.draft(this.configId, this.channelId);
@@ -812,14 +811,20 @@ export class ChatThreadComponent extends EnhancedComponent {
             return;
         }
         if (this.destroyed) return;
-        if (withText && !this.state.text && draft.text) {
-            this.state.text = draft.text;
-            this.state.inputRows = rowsOf(draft.text);
+        if (withText && draft.text) {
+            const typed = this.state.text;
+            const joined = joinDraftText(draft.text, typed);
+            if (joined !== typed) {
+                this.state.text = joined;
+                this.state.inputRows = rowsOf(joined);
+                if (typed) this.draftText.set(joined);
+            }
         }
         this.attach.restore(draft.files.map((a) => ({
             file: { localUuid: a.localUuid!, path: a.originalPath!, name: a.name, mimetype: a.mimetype, size: a.size, voice: a.voice },
             seq: a.seq,
-        })), draft.lost, known);
+            origin: a.origin ?? null,
+        })), draft.lost);
     }
 
     onInput(ev: Event): void {
@@ -837,10 +842,13 @@ export class ChatThreadComponent extends EnhancedComponent {
      * message just recorded); nothing is sent when all are empty, nor while
      * a voice message is prepared (it would be overtaken). The composer,
      * text and chips, clears before the first await, so a second tap finds
-     * it empty, and the draft text is emptied in that same step; the
-     * compress question (ComposerAttach.prepare) comes after. A failed send
-     * puts the text back, in the draft too, shows the error and shows again
-     * the chips whose files the outbox left in the draft.
+     * it empty; the text is stored as the draft in that same step, so a
+     * kill during the compress question (ComposerAttach.prepare) that comes
+     * after loses nothing, and the outbox empties the draft text in the
+     * step that queues the post (fromDraft). Text typed while the send runs
+     * is stored again once it is queued. A failed send puts the text back,
+     * joined ahead of what was typed meanwhile, shows the error and shows
+     * again the chips whose files the outbox left in the draft.
      */
     async onSend(extra: OutgoingFile[] = []): Promise<void> {
         if (!this.source || this.attach.busy()) return;
@@ -850,23 +858,24 @@ export class ChatThreadComponent extends EnhancedComponent {
         const raw = this.state.text;
         this.state.text = "";
         this.state.inputRows = 1;
-        this.draftText.set("");
+        this.draftText.set(raw);
         this.state.error = "";
         // The message ends the typing, as Odoo's composer does on a post
         this.chatService.typing(this.source, this.channelId, false).catch(() => {});
         try {
             const files = [...(await this.attach.prepare(chips)), ...extra];
-            await this.chatService.send(this.source, this.channelId, text, files);
+            await this.chatService.send(this.source, this.channelId, text, files, { fromDraft: true });
         } catch {
-            if (!this.state.text) {
-                this.state.text = raw;
-                this.state.inputRows = rowsOf(raw);
-                this.draftText.set(raw);
-            }
+            const typed = this.state.text;
+            this.state.text = joinDraftText(raw, typed);
+            this.state.inputRows = rowsOf(this.state.text);
+            this.draftText.set(this.state.text);
             this.state.error = t("chat.send_error");
-            await this.showDraft(chips, false);
+            await this.showDraft(false);
             return;
         }
+        // The post emptied the draft text: what was typed since is the draft now
+        if (this.state.text.trim()) this.draftText.set(this.state.text);
         await this.refresh();
         this.scrollToBottomSoon();
     }

@@ -2,6 +2,17 @@
 export const DRAFT_SAVE_MS = 500;
 
 /**
+ * Two texts of one draft as one, the older first, a line break between:
+ * a blank one or the same text twice gives the other alone, so nothing
+ * typed is dropped and nothing is doubled.
+ */
+export function joinDraftText(older: string, newer: string): string {
+    if (!newer.trim() || newer === older) return older;
+    if (!older.trim()) return newer;
+    return older + "\n" + newer;
+}
+
+/**
  * The text of one composer, kept as its conversation's draft. typed()
  * stores it DRAFT_SAVE_MS after the last change; flush() stores a change
  * still waiting at once (the screen closes, the app goes to the

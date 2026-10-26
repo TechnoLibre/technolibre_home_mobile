@@ -55,8 +55,8 @@ export type ComposerRecorder = Pick<
 
 /** The conversation's draft files, as the composer keeps them (ChatService.keepDraftFile, dropDraftFile). */
 export interface ComposerDraft {
-    /** Stores a staged file as a draft file at chip position seq (a reduced photo replaces its own). */
-    keep: (file: OutgoingFile, seq: number) => Promise<void>;
+    /** Stores a staged file as a draft file at chip position seq, with its origin (a reduced photo replaces its own). */
+    keep: (file: OutgoingFile, seq: number, origin: ChipOrigin) => Promise<void>;
     /** Removes a draft file and deletes its staged file. */
     drop: (file: OutgoingFile) => Promise<void>;
 }
@@ -110,14 +110,6 @@ function isRefusal(r: OutgoingFile | StageRefusal): r is StageRefusal {
 }
 
 let chipSeq = 0;
-
-/**
- * Where each draft file shown as a chip came from, by local uuid, for the
- * app's lifetime: a conversation opened again shows its photos as camera
- * or gallery ones (the compress question). Its draft row does not say; a
- * file restored after a restart counts as « any file », a voice as voice.
- */
-const draftOrigins = new Map<string, ChipOrigin>();
 
 /**
  * The attachments of one composer: the files picked (camera, gallery, any
@@ -224,7 +216,7 @@ export class ComposerAttach {
                     continue;
                 }
                 const seq = this.nextSeq++;
-                await this.keepDraft(staged, seq);
+                await this.keepDraft(staged, seq, kind);
                 // The screen closed meanwhile: the file waits in the draft for the next visit
                 if (this.disposed) continue;
                 if (/^image\/hei[cf]/.test(staged.mimetype)) this.notice(t("chat.heic_kept", { name: staged.name }));
@@ -238,7 +230,6 @@ export class ComposerAttach {
     /** Takes the chip off, out of the draft, and deletes its staged file. */
     async remove(chip: ComposerChip): Promise<void> {
         this.state.chips = this.state.chips.filter((c) => c.key !== chip.key);
-        draftOrigins.delete(chip.file.localUuid);
         await this.deps.draft.drop(chip.file).catch((e) => console.warn("chat: draft file not removed", e));
     }
 
@@ -253,28 +244,36 @@ export class ComposerAttach {
         const chips = this.state.chips;
         this.state.chips = [];
         this.state.notices = [];
-        for (const c of chips) draftOrigins.delete(c.file.localUuid);
         return chips;
     }
 
     /**
      * Shows the conversation's draft files (ChatService.draft) as chips,
-     * in their order, ahead of the chips picked since; one already shown is
-     * skipped. A chip of `known` (taken by a send that was refused) gives
-     * its origin back. Each name in `lost` (a draft file whose staged copy
-     * is gone) is told in a notice.
+     * in their order and with the origin their row stores (« any file »,
+     * or voice, when it stores none), ahead of the chips picked since; one
+     * already shown is skipped. A chip shown before them with a position
+     * not after theirs (picked before the draft was read) takes the next
+     * positions, its draft row with it: no two files share a position, and
+     * the order shown is the order kept. Each name in `lost` (a
+     * draft file whose staged copy is gone) is told in a notice.
      */
-    restore(files: { file: OutgoingFile; seq: number }[], lost: string[] = [], known: ComposerChip[] = []): void {
+    restore(files: { file: OutgoingFile; seq: number; origin: ChipOrigin | null }[], lost: string[] = []): void {
         if (this.disposed) return;
         const shown = new Set(this.state.chips.map((c) => c.file.localUuid));
-        const origins = new Map(known.map((c) => [c.file.localUuid, c.origin]));
         const back = files
             .filter(({ file }) => !shown.has(file.localUuid))
             .sort((a, b) => a.seq - b.seq)
-            .map(({ file, seq }) => this.chipOf(
-                file, file.voice ? "voice" : origins.get(file.localUuid) ?? draftOrigins.get(file.localUuid) ?? "file", seq));
+            .map(({ file, seq, origin }) => this.chipOf(file, origin ?? (file.voice ? "voice" : "file"), seq));
         for (const { seq } of files) this.nextSeq = Math.max(this.nextSeq, seq + 1);
-        if (back.length > 0) this.state.chips = [...back, ...this.state.chips];
+        if (back.length > 0) {
+            const last = back[back.length - 1].seq;
+            for (const chip of this.state.chips) {
+                if (chip.seq > last) continue;
+                chip.seq = this.nextSeq++;
+                void this.keepDraft(chip.file, chip.seq, chip.origin);
+            }
+            this.state.chips = [...back, ...this.state.chips];
+        }
         for (const name of lost) this.notice(t("chat.draft_file_lost", { name }));
     }
 
@@ -297,7 +296,7 @@ export class ComposerAttach {
             }
             const reduced = await this.deps.capture.compress(chip.file);
             // The draft row follows the file it now names, for a send that is refused
-            if (reduced !== chip.file) await this.keepDraft(reduced, chip.seq);
+            if (reduced !== chip.file) await this.keepDraft(reduced, chip.seq, chip.origin);
             files.push(reduced);
         }
         return files;
@@ -358,7 +357,7 @@ export class ComposerAttach {
     private async stopAndSend(): Promise<void> {
         const file = await this.finishRecording();
         if (!file) return;
-        await this.keepDraft(file, this.nextSeq++);
+        await this.keepDraft(file, this.nextSeq++, "voice");
         await this.deps.send([file]);
     }
 
@@ -367,13 +366,13 @@ export class ComposerAttach {
         const file = await this.finishRecording();
         if (!file) return;
         const seq = this.nextSeq++;
-        await this.keepDraft(file, seq);
+        await this.keepDraft(file, seq, "voice");
         if (!this.disposed) this.addChip(file, "voice", seq);
     }
 
     /** deps.draft.keep, a failure logged: the chip still shows and the file still goes with the next send. */
-    private async keepDraft(file: OutgoingFile, seq: number): Promise<void> {
-        await this.deps.draft.keep(file, seq).catch((e) => console.warn("chat: draft file not kept", e));
+    private async keepDraft(file: OutgoingFile, seq: number, origin: ChipOrigin): Promise<void> {
+        await this.deps.draft.keep(file, seq, origin).catch((e) => console.warn("chat: draft file not kept", e));
     }
 
     /** The recording as its MP3 staged file, "preparing" meanwhile; null with a notice when it fails. */
@@ -414,7 +413,6 @@ export class ComposerAttach {
     }
 
     private chipOf(file: OutgoingFile, origin: ChipOrigin, seq: number): ComposerChip {
-        draftOrigins.set(file.localUuid, origin);
         return { key: "c" + ++chipSeq, file, origin, seq };
     }
 

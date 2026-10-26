@@ -261,9 +261,13 @@ describe("ChatListComponent", () => {
             [2, { messageId: 41, clientUuid: null, messageType: "comment", status: "sent", body: "", date: "2020-01-01 09:00:00" }],
             [3, { messageId: 42, clientUuid: null, messageType: "comment", status: "sent", body: "<p>words</p>", date: "2020-01-01 09:00:00" }],
         ]));
+        chat.repo.pendingMessages.mockResolvedValue(new Map([[3, [{
+            messageId: null, clientUuid: "P3", messageType: "comment", status: "pending", body: "<p>on its way</p>", date: "2020-01-01 10:00:00",
+        }]]]));
         chat.draftSummaries.mockResolvedValue(new Map([
             [1, { text: "see you\n  at " + "noon ".repeat(20), files: 1 }],
             [2, { text: "", files: 2 }],
+            [3, { text: "and one more", files: 0 }],
         ]));
         const c = make(chat);
         await c.loadCache();
@@ -273,7 +277,8 @@ describe("ChatListComponent", () => {
         expect(team.preview.endsWith("…")).toBe(true);
         expect(team.preview.length).toBe("Draft: ".length + 80);
         expect(pair.preview).toBe("Draft: 📎 2");
-        expect(other.preview).toBe("words");
+        // A last message still on its way keeps its mark before the draft
+        expect(other.preview).toBe("⏳ Draft: and one more");
         expect(c.state.rows.map((r: any) => [r.title, r.unread])).toEqual([["Team", 2], ["Pair", 0], ["Other", 0]]);
         // The draft stands for the files of a text-less last message: none are read
         expect(chat.repo.attachmentsOf).not.toHaveBeenCalled();

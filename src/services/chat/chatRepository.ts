@@ -156,6 +156,7 @@ function attachmentFromRow(r: Row): ChatAttachment {
     error: r.error ?? null,
     lastOpenedAt: r.last_opened_at ?? null,
     createdAt: r.created_at,
+    origin: r.origin ?? null,
   };
 }
 
@@ -344,6 +345,7 @@ export class ChatRepository {
       error: a.error,
       last_opened_at: a.lastOpenedAt,
       created_at: a.createdAt,
+      origin: a.origin ?? null,
     };
   }
 

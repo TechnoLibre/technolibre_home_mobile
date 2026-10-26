@@ -1,6 +1,6 @@
 import type { Application } from "../../models/application";
 import type {
-  BusNotification, ChatAttachment, ChatChannel, ChatMember, ChatMessage, ChatModuleState, ChatNotice, OutgoingFile,
+  BusNotification, ChatAttachment, ChatChannel, ChatFileOrigin, ChatMember, ChatMessage, ChatModuleState, ChatNotice, OutgoingFile,
 } from "../../models/chat";
 import { syncConfigIdFor } from "../../models/syncConfig";
 import type { DatabaseService } from "../databaseService";
@@ -546,14 +546,22 @@ export class ChatService {
    * request, then, online, flushes the account's chat outbox at once: the
    * files upload in the background and the post follows them. Returns the
    * pending message; a failed flush leaves it queued for the next one.
+   * fromDraft: the text is the conversation's draft text, emptied with the
+   * post (ChatOutbox.queuePost).
    */
-  async send(src: ChatSource, channelId: number, text: string, files: OutgoingFile[] = []): Promise<ChatMessage> {
+  async send(
+    src: ChatSource,
+    channelId: number,
+    text: string,
+    files: OutgoingFile[] = [],
+    opts: { fromDraft?: boolean } = {},
+  ): Promise<ChatMessage> {
     const { configId } = src;
     // Module 1.0 already dedupes message posts by uuid; only 1.1 adds channels
     const level = effectiveLevel(await this.repo.sourceState(configId));
     const useModule = this.moduleMode === "auto" && level !== null;
     const idempotentUpload = files.length > 0 && (await this.features(configId)).idempotentUpload;
-    const message = await this.queue.queuePost(configId, channelId, text, useModule, { files, idempotentUpload });
+    const message = await this.queue.queuePost(configId, channelId, text, useModule, { files, idempotentUpload, fromDraft: opts.fromDraft });
     this.changed(configId, channelId);
     if (await this.isOnline()) {
       try {
@@ -596,8 +604,14 @@ export class ChatService {
     return this.queue.draftTask(configId, channelId, (id) => this.repo.putDraftText(configId, id, text));
   }
 
-  /** Keeps a file staged in a conversation's composer as a draft file at chip position `seq`. */
-  keepDraftFile(configId: string, channelId: number, file: OutgoingFile, seq: number): Promise<void> {
+  /** Keeps a file staged in a conversation's composer as a draft file at chip position `seq`, with where it was taken. */
+  keepDraftFile(
+    configId: string,
+    channelId: number,
+    file: OutgoingFile,
+    seq: number,
+    origin: ChatFileOrigin | null = null,
+  ): Promise<void> {
     return this.queue.draftTask(configId, channelId, (id) => this.repo.putDraftFile({
       configId,
       channelId: id,
@@ -619,6 +633,7 @@ export class ChatService {
       error: null,
       lastOpenedAt: null,
       createdAt: this.now().toISOString(),
+      origin,
     }));
   }
 
