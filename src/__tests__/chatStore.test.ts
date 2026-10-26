@@ -272,3 +272,97 @@ describe("parseStore attachments", () => {
     expect(m.deletedAttachmentIds).toEqual([9]);
   });
 });
+
+describe("parseStore reactions, parents and recipients", () => {
+  const guest = (id: number) => ({ id, type: "guest" });
+
+  it("reads a messages page with two reaction groups and a parent", () => {
+    const d = parseStore({
+      "mail.message": [
+        {
+          id: 60, thread: thread(7), body: "<p>re</p>", parentMessage: 55,
+          reactions: [{ message: 60, content: "👍" }, { message: 60, content: "❤️" }],
+          recipients: [partner(8), partner(9)],
+        },
+        { id: 55, thread: thread(7), body: "<p>origin</p>", reactions: [] },
+      ],
+      MessageReactions: [
+        { content: "👍", count: 2, sequence: 4, message: 60, personas: [partner(8), partner(SELF)] },
+        { content: "❤️", count: 2, sequence: 9, message: 60, personas: [guest(2), partner(8)] },
+      ],
+    }, CFG, SELF);
+    expect(d.messages[0]).toMatchObject({ messageId: 60, parentId: 55, recipientIds: [8, 9] });
+    expect(d.messages[1]).not.toHaveProperty("parentId");
+    expect(d.reactions).toEqual([
+      { messageId: 60, content: "👍", count: 2, selfReacted: true, partnerIds: [8, SELF], guestCount: 0, sequence: 4 },
+      { messageId: 60, content: "❤️", count: 2, selfReacted: false, partnerIds: [8], guestCount: 1, sequence: 9 },
+    ]);
+    expect(d.reactionSets).toEqual([
+      { messageId: 60, contents: ["👍", "❤️"] },
+      { messageId: 55, contents: [] },
+    ]);
+    expect(d.deletedReactions).toEqual([]);
+  });
+
+  it("parentMessage false gives a null parent", () => {
+    const d = parseStore({ "mail.message": [{ id: 61, thread: thread(7), parentMessage: false }] }, CFG, SELF);
+    expect(d.messages[0].parentId).toBeNull();
+  });
+
+  it("reads the bus ADD group without a full set", () => {
+    const d = parseStore({
+      "mail.message": [{ id: 60, reactions: [["ADD", [{ message: 60, content: "😂" }]]] }],
+      MessageReactions: [{ content: "😂", count: 1, sequence: 12, message: 60, personas: [partner(8)] }],
+      "res.partner": [{ id: 8, name: "Alice Martin" }],
+    }, CFG, SELF);
+    expect(d.reactions).toEqual([
+      { messageId: 60, content: "😂", count: 1, selfReacted: false, partnerIds: [8], guestCount: 0, sequence: 12 },
+    ]);
+    expect(d.reactionSets).toEqual([]);
+    expect(d.deletedReactions).toEqual([]);
+  });
+
+  it("reads DELETE as one object and as a list", () => {
+    const one = parseStore({
+      "mail.message": [{ id: 60, reactions: [["DELETE", { message: 60, content: "👍" }]] }],
+    }, CFG, SELF);
+    expect(one.deletedReactions).toEqual([{ messageId: 60, content: "👍" }]);
+    const list = parseStore({
+      "mail.message": [{ id: 60, reactions: [["DELETE", [{ message: 60, content: "👍" }, { message: 60, content: "🙏" }]]] }],
+    }, CFG, SELF);
+    expect(list.deletedReactions).toEqual([{ messageId: 60, content: "👍" }, { messageId: 60, content: "🙏" }]);
+    expect(list.reactionSets).toEqual([]);
+  });
+
+  it("mergeDeltas applies a later set, delete or group over an earlier one", () => {
+    const group = (content: string, count = 1) => ({
+      content, count, sequence: 1, message: 60, personas: [partner(8)],
+    });
+    const a = parseStore({ "mail.message": [{ id: 60, reactions: [["ADD", []]] }], MessageReactions: [group("👍"), group("❤️")] }, CFG, SELF);
+    const b = parseStore({
+      "mail.message": [{ id: 60, reactions: [["DELETE", { message: 60, content: "❤️" }]] }],
+      MessageReactions: [],
+    }, CFG, SELF);
+    const ab = mergeDeltas(a, b);
+    expect(ab.reactions!.map((r) => r.content)).toEqual(["👍"]);
+    expect(ab.deletedReactions).toEqual([{ messageId: 60, content: "❤️" }]);
+    // A group added after its delete exists again
+    const c = parseStore({ MessageReactions: [group("❤️", 2)] }, CFG, SELF);
+    const abc = mergeDeltas(ab, c);
+    expect(abc.reactions!.map((r) => [r.content, r.count])).toEqual([["👍", 1], ["❤️", 2]]);
+    expect(abc.deletedReactions).toEqual([]);
+    // A later full set drops the earlier groups it does not name
+    const d = parseStore({ "mail.message": [{ id: 60, reactions: [{ message: 60, content: "❤️" }] }] }, CFG, SELF);
+    const abcd = mergeDeltas(abc, d);
+    expect(abcd.reactions!.map((r) => r.content)).toEqual(["❤️"]);
+    expect(abcd.reactionSets).toEqual([{ messageId: 60, contents: ["❤️"] }]);
+  });
+
+  it("mergeDeltas unions deleted message ids", () => {
+    const a = parseStore({}, CFG, SELF);
+    a.deletedMessageIds = [1];
+    const b = parseStore({}, CFG, SELF);
+    b.deletedMessageIds = [2, 1];
+    expect(mergeDeltas(a, b).deletedMessageIds).toEqual([1, 2]);
+  });
+});

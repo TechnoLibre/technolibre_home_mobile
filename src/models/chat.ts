@@ -72,6 +72,44 @@ export interface ChatMessage {
   status: ChatMessageStatus;
   outboxOpId: string | null;
   writeDate: string | null;
+  /** Server id of the message this one replies to; null for none (or a parent the server dropped). */
+  parentId?: number | null;
+  /** Client uuid of the replied-to message while it is still queued (no server id yet). */
+  parentClientUuid?: string | null;
+  /** The partners the message mentions (`recipients`), in the server's order. */
+  recipientIds?: number[];
+}
+
+/** A message as an action names it: by server id once it has one, else by the client uuid of its post. */
+export interface MessageTarget {
+  messageId: number | null;
+  clientUuid: string | null;
+}
+
+/** The local key of a message among its account's rows: `m<id>` once the server has it, `u<clientUuid>` before. */
+export function messageKeyOf(m: { messageId: number | null; clientUuid: string | null }): string {
+  return m.messageId !== null ? `m${m.messageId}` : `u${m.clientUuid}`;
+}
+
+/**
+ * One reaction group of a message: an emoji (`content`, the exact string
+ * the server stores) with how many reacted, whether the user did, and the
+ * partners who did in the server's order (guests only counted). Keyed by
+ * `messageKey` (see messageKeyOf), so a reaction to a queued message
+ * exists before its message has an id. `sequence` orders the groups of a
+ * message (the server's lowest reaction id of the group).
+ */
+export interface ChatReaction {
+  configId: string;
+  channelId: number;
+  messageKey: string;
+  messageId: number | null;
+  content: string;
+  count: number;
+  selfReacted: boolean;
+  partnerIds: number[];
+  guestCount: number;
+  sequence: number;
 }
 
 export interface ChatMember {

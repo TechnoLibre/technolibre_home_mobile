@@ -975,3 +975,238 @@ describe("ChatRepository lot 2", () => {
     });
   });
 });
+
+describe("ChatRepository reactions, parents and recipients", () => {
+  let db: DatabaseService;
+  let repo: ChatRepository;
+  let released: string[][];
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await addChatTables(db);
+    repo = new ChatRepository(db);
+    released = [];
+    repo.onFilesReleased = (paths) => { released.push(paths); };
+  });
+
+  const group = (messageId: number, content: string, over: any = {}) => ({
+    messageId, content, count: 1, selfReacted: false, partnerIds: [8], guestCount: 0, sequence: 1, ...over,
+  });
+  const reaction = (configId: string, messageKey: string, content: string, over: any = {}) => ({
+    configId, channelId: 7, messageKey, messageId: null, content, count: 1, selfReacted: true,
+    partnerIds: [3], guestCount: 0, sequence: 0, ...over,
+  });
+  const contentsOf = async (configId: string, k: string, channelId = 7) =>
+    ((await repo.reactionsOf(configId, channelId, [k])).get(k) ?? []).map((r) => r.content);
+
+  it("a message row round trips its parent and recipients; defaults when absent", async () => {
+    await repo.applyDelta(A, delta({ messages: [
+      { messageId: 60, channelId: 7, body: "re", parentId: 55, recipientIds: [8, 9] },
+      { messageId: 61, channelId: 7, body: "plain" },
+    ] }));
+    expect(await repo.message(A, 60)).toMatchObject({ parentId: 55, parentClientUuid: null, recipientIds: [8, 9] });
+    expect(await repo.message(A, 61)).toMatchObject({ parentId: null, parentClientUuid: null, recipientIds: [] });
+    await repo.putPending(pending(A, "u1", { parentClientUuid: "u0" }));
+    expect(await repo.messageByClientUuid(A, "u1")).toMatchObject({ parentClientUuid: "u0", parentId: null });
+    // A parent the server dropped is cleared
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 60, parentId: null }] }));
+    expect((await repo.message(A, 60))!.parentId).toBeNull();
+  });
+
+  it("a settle keeps the queued recipients over an echo row that has none", async () => {
+    await repo.putPending(pending(A, "u1", { recipientIds: [8] }));
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 42, channelId: 7, body: "hello" }] }));
+    await repo.settlePending(A, "u1", 42);
+    expect((await repo.message(A, 42))!.recipientIds).toEqual([8]);
+  });
+
+  it("applyDelta stores groups by sequence on cached messages only", async () => {
+    await repo.applyDelta(A, delta({
+      messages: [{ messageId: 60, channelId: 7, body: "x" }],
+      reactions: [group(60, "❤️", { sequence: 9, guestCount: 1 }), group(60, "👍", { sequence: 4, selfReacted: true, partnerIds: [8, 3], count: 2 }), group(99, "👍")],
+    }));
+    const map = await repo.reactionsOf(A, 7, ["m60", "m99"]);
+    expect([...map.keys()]).toEqual(["m60"]);
+    expect(map.get("m60")).toEqual([
+      { configId: A, channelId: 7, messageKey: "m60", messageId: 60, content: "👍", count: 2, selfReacted: true, partnerIds: [8, 3], guestCount: 0, sequence: 4 },
+      { configId: A, channelId: 7, messageKey: "m60", messageId: 60, content: "❤️", count: 1, selfReacted: false, partnerIds: [8], guestCount: 1, sequence: 9 },
+    ]);
+    // A later group replaces its own (message, content) only
+    await repo.applyDelta(A, delta({ reactions: [group(60, "👍", { count: 3, sequence: 4 })] }));
+    expect((await repo.reactionsOf(A, 7, ["m60"])).get("m60")!.map((r) => [r.content, r.count])).toEqual([["👍", 3], ["❤️", 1]]);
+  });
+
+  it("a delete removes one group; a plain reactions list removes a cached group it does not name", async () => {
+    await repo.applyDelta(A, delta({
+      messages: [{ messageId: 60, channelId: 7, body: "x" }],
+      reactions: [group(60, "👍", { sequence: 1 }), group(60, "❤️", { sequence: 2 }), group(60, "😂", { sequence: 3 })],
+    }));
+    await repo.applyDelta(A, delta({ deletedReactions: [{ messageId: 60, content: "❤️" }] }));
+    expect(await contentsOf(A, "m60")).toEqual(["👍", "😂"]);
+    await repo.applyDelta(A, delta({ reactionSets: [{ messageId: 60, contents: ["😂"] }] }));
+    expect(await contentsOf(A, "m60")).toEqual(["😂"]);
+    await repo.applyDelta(A, delta({ reactionSets: [{ messageId: 60, contents: [] }] }));
+    expect(await contentsOf(A, "m60")).toEqual([]);
+  });
+
+  it("putReaction and dropReaction write one group; reactionsOf keeps the accounts apart", async () => {
+    await repo.putReaction(reaction(A, "uu1", "👍"));
+    await repo.putReaction(reaction(B, "uu1", "🙏"));
+    expect(await contentsOf(A, "uu1")).toEqual(["👍"]);
+    await repo.dropReaction(A, "uu1", "👍");
+    expect(await contentsOf(A, "uu1")).toEqual([]);
+    expect(await contentsOf(B, "uu1")).toEqual(["🙏"]);
+  });
+
+  it("settlePending moves a pending reaction to the server id", async () => {
+    await repo.putPending(pending(A, "u1"));
+    await repo.putReaction(reaction(A, "uu1", "👍"));
+    await repo.settlePending(A, "u1", 42);
+    expect(await contentsOf(A, "uu1")).toEqual([]);
+    expect((await repo.reactionsOf(A, 7, ["m42"])).get("m42")).toEqual([
+      reaction(A, "m42", "👍", { messageId: 42 }),
+    ]);
+  });
+
+  it("a bus echo carrying the client uuid moves a pending reaction too", async () => {
+    await repo.putPending(pending(A, "u1"));
+    await repo.putReaction(reaction(A, "uu1", "👍"));
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 42, clientUuid: "u1", channelId: 7 }] }));
+    expect(await contentsOf(A, "uu1")).toEqual([]);
+    expect(await contentsOf(A, "m42")).toEqual(["👍"]);
+  });
+
+  it("messageByClientUuid and messageOf find a queued then a settled message", async () => {
+    await repo.putPending(pending(A, "u1"));
+    expect(await repo.messageOf(A, { messageId: null, clientUuid: "u1" })).toMatchObject({ messageId: null, clientUuid: "u1" });
+    await repo.settlePending(A, "u1", 42);
+    expect(await repo.messageByClientUuid(A, "u1")).toMatchObject({ messageId: 42, clientUuid: "u1" });
+    expect(await repo.messageOf(A, { messageId: 42, clientUuid: null })).toMatchObject({ messageId: 42 });
+    // By id first; a target whose id is not cached falls back to its client uuid
+    expect(await repo.messageOf(A, { messageId: 99, clientUuid: "u1" })).toMatchObject({ messageId: 42 });
+    expect(await repo.messageOf(A, { messageId: 99, clientUuid: null })).toBeNull();
+    expect(await repo.messageByClientUuid(A, "nope")).toBeNull();
+    expect(await repo.messageByClientUuid(B, "u1")).toBeNull();
+  });
+
+  it("dropQueued removes the queued row and its reactions only", async () => {
+    await repo.putPending(pending(A, "u1"));
+    await repo.putPending(pending(A, "u2"));
+    await repo.putReaction(reaction(A, "uu1", "👍"));
+    await repo.putReaction(reaction(A, "uu2", "👍"));
+    await repo.dropQueued(A, "u1");
+    expect(await repo.messageByClientUuid(A, "u1")).toBeNull();
+    expect(await contentsOf(A, "uu1")).toEqual([]);
+    expect(await repo.messageByClientUuid(A, "u2")).not.toBeNull();
+    expect(await contentsOf(A, "uu2")).toEqual(["👍"]);
+  });
+
+  it("a deleted message drops its row, its reactions and its files; drafts and outgoing rows stay", async () => {
+    await repo.applyDelta(A, delta({
+      messages: [{ messageId: 60, channelId: 7, body: "x", attachmentIds: [1] }, { messageId: 61, channelId: 7, body: "y" }],
+      attachments: [{ attachmentId: 1, channelId: 7, name: "f1.png", mimetype: "image/png", size: 10 }],
+      reactions: [group(60, "👍"), group(61, "👍")],
+    }));
+    await repo.setOriginal(A, 1, "chat/dir/files/1/f1.png", 10);
+    await repo.putOutgoing([outgoing(A, "l1")]);
+    await repo.putDraftFile(outgoing(A, "d1", { postClientUuid: null, state: "draft", originalPath: "chat/dir/draft/d1.jpg" }));
+    await repo.applyDelta(A, delta({ deletedMessageIds: [60, 99] }));
+    expect(await repo.message(A, 60)).toBeNull();
+    expect(await repo.message(A, 61)).not.toBeNull();
+    expect(await contentsOf(A, "m60")).toEqual([]);
+    expect(await contentsOf(A, "m61")).toEqual(["👍"]);
+    expect(await repo.attachment(A, 1)).toBeNull();
+    expect(released).toEqual([["chat/dir/files/1/f1.png"]]);
+    expect(await repo.outgoingFile(A, "l1")).not.toBeNull();
+    expect((await repo.draftOf(A, 7)).files.map((f) => f.localUuid)).toEqual(["d1"]);
+  });
+
+  it("swapChannelId, dropChannel, a deleted channel and dropSource cover the reactions", async () => {
+    await repo.putPending(pending(A, "u1", { channelId: -5 }));
+    await repo.putReaction(reaction(A, "uu1", "👍", { channelId: -5 }));
+    await repo.swapChannelId(A, -5, 7);
+    expect(await contentsOf(A, "uu1", 7)).toEqual(["👍"]);
+    expect(await contentsOf(A, "uu1", -5)).toEqual([]);
+
+    await repo.dropChannel(A, 7);
+    expect(await contentsOf(A, "uu1", 7)).toEqual([]);
+
+    await repo.applyDelta(A, delta({
+      channels: [{ channelId: 8, name: "T" }],
+      messages: [{ messageId: 60, channelId: 8, body: "x" }],
+      reactions: [group(60, "👍")],
+    }));
+    await repo.applyDelta(A, delta({ deletedChannelIds: [8] }));
+    expect(await contentsOf(A, "m60", 8)).toEqual([]);
+
+    for (const c of [A, B]) await repo.putReaction(reaction(c, "uu2", "🙏"));
+    await repo.dropSource(A);
+    expect(await contentsOf(A, "uu2")).toEqual([]);
+    expect(await contentsOf(B, "uu2")).toEqual(["🙏"]);
+  });
+
+  it("renameSyncConfigId moves the reactions with the account", async () => {
+    await repo.putReaction(reaction(A, "uu1", "👍"));
+    await db.renameSyncConfigId(A, B);
+    expect(await contentsOf(A, "uu1")).toEqual([]);
+    expect((await repo.reactionsOf(B, 7, ["uu1"])).get("uu1")).toEqual([reaction(B, "uu1", "👍")]);
+    expect((await db.rawQuery("SELECT id FROM chat_reactions")).map((r) => r.id)).toEqual([`${B}#uu1#👍`]);
+  });
+});
+
+describe("migration 2026102607", () => {
+  let db: DatabaseService;
+  const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102607)!;
+  const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+  const REACTIONS = ["id", "config_id", "channel_id", "message_key", "message_id", "content", "count", "self_reacted",
+    "partner_ids", "guest_count", "sequence"];
+  const MESSAGE_COLS = ["parent_id", "parent_client_uuid", "recipient_ids"];
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+  });
+
+  it("a fresh install has the table and the columns", async () => {
+    for (const m of APP_MIGRATIONS) {
+      if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+    }
+    expect(await colsOf("chat_reactions")).toEqual(REACTIONS);
+    expect(await colsOf("chat_messages")).toEqual(expect.arrayContaining(MESSAGE_COLS));
+  });
+
+  it("adds the table and the columns to a database at 2026102606, and a second run changes nothing", async () => {
+    // chat_messages as migration 2026102501 created it
+    await (db as any).db.execute(`CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL, channel_id INTEGER NOT NULL, message_id INTEGER,
+      client_uuid TEXT, author_partner_id INTEGER, body TEXT NOT NULL, date TEXT NOT NULL, message_type TEXT NOT NULL,
+      status TEXT NOT NULL, outbox_op_id TEXT, write_date TEXT)`);
+    await db.rawRun(
+      "INSERT INTO chat_messages (id, config_id, channel_id, message_id, body, date, message_type, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ["a#m1", "a", 7, 1, "x", "d", "comment", "sent"],
+    );
+    expect(await colsOf("chat_reactions")).toEqual([]);
+    expect(migration().description).toBe("Clavardage : réactions, réponses et destinataires des messages");
+    await migration().run(db);
+    await db.rawRun(
+      "INSERT INTO chat_reactions (id, config_id, channel_id, message_key, message_id, content, count, self_reacted, partner_ids, sequence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ["a#m1#👍", "a", 7, "m1", 1, "👍", 1, 0, "[8]", 3],
+    );
+    await migration().run(db);
+    expect(await colsOf("chat_reactions")).toEqual(REACTIONS);
+    for (const c of MESSAGE_COLS) expect((await colsOf("chat_messages")).filter((x) => x === c)).toHaveLength(1);
+    expect(await db.rawQuery("SELECT * FROM chat_reactions")).toHaveLength(1);
+    expect(await db.rawQuery("SELECT parent_id, parent_client_uuid, recipient_ids FROM chat_messages"))
+      .toEqual([{ parent_id: null, parent_client_uuid: null, recipient_ids: null }]);
+    const repo = new ChatRepository(db);
+    expect(await repo.message("a", 1)).toMatchObject({ parentId: null, recipientIds: [] });
+  });
+
+  it("a database without the chat tables gets no message columns", async () => {
+    await migration().run(db);
+    expect(await colsOf("chat_messages")).toEqual([]);
+  });
+});

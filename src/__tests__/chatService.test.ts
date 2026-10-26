@@ -100,6 +100,8 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
     attachments: [] as ServerFile[],
     /** max_file_upload_size get_session_info reports; absent when null. */
     maxUpload: null as number | null,
+    /** Reply parents by message id: a page record gets `parentMessage`, the parent record follows (as Odoo). */
+    parents: {} as Record<number, number>,
   };
   const rpcError = (name: string) => ({
     ok: true, status: 200,
@@ -135,7 +137,14 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
         const below = ids.filter((i) => i <= params.around).slice(0, half);
         const above = ids.filter((i) => i > params.around).reverse().slice(0, half);
         const page = [...above, ...below].sort((a, b) => b - a);
-        return ok({ data: { "mail.message": page.map((i) => msg(i, params.channel_id)) }, messages: page });
+        const records: any[] = page.map((i) => ({
+          ...msg(i, params.channel_id), ...(i in state.parents ? { parentMessage: state.parents[i] } : {}),
+        }));
+        for (const i of page) {
+          const parent = state.parents[i];
+          if (parent !== undefined && !records.some((r) => r.id === parent)) records.push(msg(parent, params.channel_id));
+        }
+        return ok({ data: { "mail.message": records }, messages: page });
       }
       case "/mail/message/post": {
         const id = state.nextId++;
@@ -480,6 +489,17 @@ describe("ChatService", () => {
     expect((await chat.repo.channel(config, CHAT))).toMatchObject({ oldestLoadedId: 21, historyComplete: false });
   });
 
+  it("a page counts its own messages only: a reply's older parent is cached, not loaded", async () => {
+    const odoo = fakeOdoo();
+    odoo.state.parents[60] = 5;
+    const src = await source();
+    await chat.load(src);
+    expect(await chat.loadOlder(src, CHAT)).toBe(CHAT_PAGE - 1);
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ oldestLoadedId: 81 - CHAT_PAGE, historyComplete: false });
+    expect(await chat.repo.message(config, 60)).toMatchObject({ parentId: 5 });
+    expect(await chat.repo.message(config, 5)).toMatchObject({ channelId: CHAT, body: "<p>m5</p>" });
+  });
+
   it("loadOlder marks history complete", async () => {
     const odoo = fakeOdoo();
     odoo.history[CHAT] = Array.from({ length: 40 }, (_, i) => i + 41);
@@ -791,6 +811,39 @@ describe("ChatService", () => {
     expect(changes).toEqual([[config, GROUP]]);
     expect(released).toEqual([["chat/d/thumbs/2"], ["chat/d/files/1/f1.png"]]);
     expect((await chat.repo.attachmentsOf(config, GROUP, [700], [])).size).toBe(0);
+  });
+
+  it("mail.message/delete drops the message, its reactions and its files; another message stays", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    const released: string[][] = [];
+    chat.repo.onFilesReleased = (paths) => { released.push(paths); };
+    const thread = { id: GROUP, model: "discuss.channel" };
+    await chat.applyBus(config, [bus(1001, "mail.record/insert", {
+      "mail.message": [
+        { id: 700, thread, body: "x", attachment_ids: [1], reactions: [["ADD", [{ message: 700, content: "👍" }]]] },
+        { id: 701, thread, body: "y", reactions: [{ message: 701, content: "👍" }] },
+      ],
+      MessageReactions: [
+        { content: "👍", count: 1, sequence: 1, message: 700, personas: [{ id: BOB, type: "partner" }] },
+        { content: "👍", count: 1, sequence: 2, message: 701, personas: [{ id: SELF, type: "partner" }] },
+      ],
+      "ir.attachment": [{ id: 1, name: "f1.png", mimetype: "image/png", size: 5, checksum: "c1", thread, voice: false }],
+    })]);
+    await chat.repo.setOriginal(config, 1, "chat/d/files/1/f1.png", 5);
+    expect((await chat.repo.reactionsOf(config, GROUP, ["m701"])).get("m701")![0]).toMatchObject({ selfReacted: true });
+    const changes: any[] = [];
+    chat.onChange = (c, ch) => changes.push([c, ch]);
+    await chat.applyBus(config, [bus(1002, "mail.message/delete", { message_ids: [700] })]);
+    expect(changes).toEqual([[config, GROUP]]);
+    expect(await chat.repo.message(config, 700)).toBeNull();
+    expect(await chat.repo.message(config, 701)).not.toBeNull();
+    expect([...(await chat.repo.reactionsOf(config, GROUP, ["m700", "m701"])).keys()]).toEqual(["m701"]);
+    expect(await chat.repo.attachment(config, 1)).toBeNull();
+    expect(released).toEqual([["chat/d/files/1/f1.png"]]);
+    // A message not cached changes nothing
+    await chat.applyBus(config, [bus(1003, "mail.message/delete", { message_ids: [999] })]);
+    expect(changes).toHaveLength(1);
   });
 
   it("bus message of another user raises unread and calls onChange", async () => {

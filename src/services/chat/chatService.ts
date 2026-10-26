@@ -477,7 +477,9 @@ export class ChatService {
    * last known one + 1 when none is loaded). The request always uses
    * `around`: without it Odoo marks the fetched messages done, which clears
    * mentions. `around` also returns up to `size` newer messages; only the
-   * ones at or below it are this page. Fewer than `size` means the start of
+   * ones at or below it, among those the answer's `messages` names, are this
+   * page; the parents of its replies are cached without counting or moving
+   * oldestLoadedId. Fewer than `size` means the start of
    * the history is reached. Returns the messages of the page (fetched) and
    * those of them not cached before (added). Queued behind the account's
    * other server writers (see the class).
@@ -507,11 +509,18 @@ export class ChatService {
     if (erased()) return { fetched: 0, added: 0 };
     const self = (await this.repo.sourceState(configId)).selfPartnerId;
     const delta = parseStore(result?.data, configId, self);
-    delta.messages = delta.messages.filter((m) => m.messageId <= around && m.channelId === channelId);
+    const named = Array.isArray(result?.messages)
+      ? new Set(result.messages.map((v: any) => (typeof v === "number" ? v : v?.id)))
+      : null;
+    const page = delta.messages.filter((m) =>
+      m.messageId <= around && m.channelId === channelId && (named === null || named.has(m.messageId)));
+    const parents = new Set(page.map((m) => m.parentId).filter((id): id is number => typeof id === "number"));
+    delta.messages = delta.messages.filter((m) =>
+      page.includes(m) || (parents.has(m.messageId) && m.channelId === channelId));
     let added = 0;
-    for (const m of delta.messages) if (!(await this.repo.message(configId, m.messageId))) added++;
+    for (const m of page) if (!(await this.repo.message(configId, m.messageId))) added++;
     await this.repo.applyDelta(configId, delta);
-    const ids = delta.messages.map((m) => m.messageId);
+    const ids = page.map((m) => m.messageId);
     const patch: Partial<ChatChannel> = {};
     if (ids.length > 0) patch.oldestLoadedId = Math.min(...ids, channel.oldestLoadedId ?? Infinity);
     if (ids.length < size) patch.historyComplete = true;
@@ -1457,6 +1466,18 @@ export class ChatService {
         await this.repo.applyDelta(configId, { ...emptyDelta(), deletedChannelIds: ids.filter((id) => !kept.includes(id)) });
         await this.sweep(configId);
         return ids.length === 1 ? ids[0] : null;
+      }
+      case "mail.message/delete": {
+        // mail.message.unlink sends it to the partners it notified; a delete in Discuss is an emptying edit instead
+        const ids: number[] = (Array.isArray(p.message_ids) ? p.message_ids : []).map(Number).filter(Number.isInteger);
+        const channels = new Set<number>();
+        for (const id of ids) {
+          const cached = await this.repo.message(configId, id);
+          if (cached) channels.add(cached.channelId);
+        }
+        if (channels.size === 0) return undefined;
+        await this.repo.applyDelta(configId, { ...emptyDelta(), deletedMessageIds: ids });
+        return channels.size === 1 ? [...channels][0] : null;
       }
       case "ir.attachment/delete":
       {

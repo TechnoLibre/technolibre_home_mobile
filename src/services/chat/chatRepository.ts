@@ -6,9 +6,12 @@ import type {
   ChatMember,
   ChatMessage,
   ChatPartner,
+  ChatReaction,
   ChatSourceState,
+  MessageTarget,
   OutgoingFile,
 } from "../../models/chat";
+import { messageKeyOf } from "../../models/chat";
 import type { StoreDelta } from "./chatStore";
 
 type Row = Record<string, any>;
@@ -30,14 +33,25 @@ function defined<T extends object>(p: T): Partial<T> {
   return out;
 }
 
-/** The keys of a row that carry a value: not null, "" or 0 (a column the source never filled). */
+/** The keys of a row that carry a value: not null, "", 0 or [] (a column the source never filled). */
 function meaningful<T extends object>(p: T): Partial<T> {
   const out: Partial<T> = {};
   for (const k of Object.keys(p) as (keyof T)[]) {
     const v = p[k];
-    if (v !== undefined && v !== null && v !== "" && v !== 0) out[k] = v;
+    if (v !== undefined && v !== null && v !== "" && v !== 0 && !(Array.isArray(v) && v.length === 0)) out[k] = v;
   }
   return out;
+}
+
+/** A JSON list of ids from a column; [] for null or a value that is not one. */
+function idList(v: any): number[] {
+  if (typeof v !== "string") return [];
+  try {
+    const out = JSON.parse(v);
+    return Array.isArray(out) ? out.filter((x) => typeof x === "number") : [];
+  } catch {
+    return [];
+  }
 }
 
 function maxOf(a: number | null | undefined, b: number | null | undefined): number | null {
@@ -131,6 +145,40 @@ function messageFromRow(r: Row): ChatMessage {
     status: r.status,
     outboxOpId: r.outbox_op_id ?? null,
     writeDate: r.write_date ?? null,
+    parentId: r.parent_id ?? null,
+    parentClientUuid: r.parent_client_uuid ?? null,
+    recipientIds: idList(r.recipient_ids),
+  };
+}
+
+function reactionFromRow(r: Row): ChatReaction {
+  return {
+    configId: r.config_id,
+    channelId: r.channel_id,
+    messageKey: r.message_key,
+    messageId: r.message_id ?? null,
+    content: r.content,
+    count: r.count,
+    selfReacted: bool(r.self_reacted),
+    partnerIds: idList(r.partner_ids),
+    guestCount: r.guest_count ?? 0,
+    sequence: r.sequence,
+  };
+}
+
+function reactionRow(r: ChatReaction): Row {
+  return {
+    id: key(r.configId, `${r.messageKey}#${r.content}`),
+    config_id: r.configId,
+    channel_id: r.channelId,
+    message_key: r.messageKey,
+    message_id: r.messageId,
+    content: r.content,
+    count: r.count,
+    self_reacted: flag(r.selfReacted),
+    partner_ids: JSON.stringify(r.partnerIds),
+    guest_count: r.guestCount,
+    sequence: r.sequence,
   };
 }
 
@@ -304,9 +352,8 @@ export class ChatRepository {
   }
 
   private messageRow(m: ChatMessage): Row {
-    const local = m.messageId !== null ? `m${m.messageId}` : `u${m.clientUuid}`;
     return {
-      id: key(m.configId, local),
+      id: key(m.configId, messageKeyOf(m)),
       config_id: m.configId,
       channel_id: m.channelId,
       message_id: m.messageId,
@@ -318,6 +365,9 @@ export class ChatRepository {
       status: m.status,
       outbox_op_id: m.outboxOpId,
       write_date: m.writeDate,
+      parent_id: m.parentId ?? null,
+      parent_client_uuid: m.parentClientUuid ?? null,
+      recipient_ids: JSON.stringify(m.recipientIds ?? []),
     };
   }
 
@@ -397,6 +447,10 @@ export class ChatRepository {
    * server's fields only; a message listing attachment ids claims those rows
    * and releases the ones it no longer lists, and a deleted channel drops its
    * rows (its draft included) but the files still waiting to be sent.
+   * Reactions follow the messages: a full set drops the message's groups it
+   * does not name, a group replaces its own, a deletion removes one; a group
+   * of a message not cached is not stored. A deleted message goes with its
+   * reactions and its server files; a deleted channel drops its reactions.
    */
   async applyDelta(configId: string, d: StoreDelta, opts: { fromBus?: boolean } = {}): Promise<void> {
     for (const p of d.channels) await this.upsertChannel(configId, p, !!opts.fromBus);
@@ -408,7 +462,9 @@ export class ChatRepository {
       if (m.attachmentIds) await this.linkAttachments(configId, m.messageId, m.attachmentIds, m.channelId);
     }
     for (const p of d.attachments) await this.upsertAttachment(configId, p);
+    await this.applyReactions(configId, d);
     if (d.deletedAttachmentIds.length > 0) await this.deleteAttachments(configId, d.deletedAttachmentIds);
+    for (const id of d.deletedMessageIds ?? []) await this.deleteMessage(configId, id);
     for (const id of d.deletedMemberIds) await this.del("chat_members", { id: key(configId, id) });
     for (const id of d.deletedChannelIds) {
       await this.del("chat_channels", { id: key(configId, id) });
@@ -418,6 +474,7 @@ export class ChatRepository {
         else await this.put("chat_messages", this.messageRow({ ...m, status: "failed", outboxOpId: null }));
       }
       await this.del("chat_members", { config_id: configId, channel_id: id });
+      await this.del("chat_reactions", { config_id: configId, channel_id: id });
       // Its draft goes with it
       const dropped = (await this.rows("chat_attachments", { config_id: configId, channel_id: id }))
         .filter((r) => r.state !== "queued" && r.state !== "uploaded");
@@ -433,6 +490,48 @@ export class ChatRepository {
       if (opts.fromBus) state.globalMuteAt = this.now();
     }
     if (Object.keys(state).length > 0) await this.setSourceState({ ...state, configId });
+  }
+
+  /** The reaction parts of a delta, in the order mergeDeltas assumes: sets, groups, deletions. */
+  private async applyReactions(configId: string, d: StoreDelta): Promise<void> {
+    for (const set of d.reactionSets ?? []) {
+      const kept = new Set(set.contents);
+      for (const r of await this.rows("chat_reactions", { config_id: configId, message_key: `m${set.messageId}` })) {
+        if (!kept.has(r.content)) await this.del("chat_reactions", { id: r.id });
+      }
+    }
+    for (const g of d.reactions ?? []) {
+      const message = await this.message(configId, g.messageId);
+      if (!message) continue;
+      await this.putReaction({ ...g, configId, channelId: message.channelId, messageKey: `m${g.messageId}` });
+    }
+    for (const r of d.deletedReactions ?? []) await this.dropReaction(configId, `m${r.messageId}`, r.content);
+  }
+
+  /**
+   * Drops a message the server deleted: its row, its reactions and the
+   * server files it lists, those files released. Files of the phone (draft
+   * or given to a post) are keyed `l<uuid>` and never match.
+   */
+  private async deleteMessage(configId: string, messageId: number): Promise<void> {
+    await this.del("chat_messages", { id: key(configId, `m${messageId}`) });
+    await this.del("chat_reactions", { config_id: configId, message_key: `m${messageId}` });
+    const dropped = (await this.rows("chat_attachments", { config_id: configId, message_id: messageId }))
+      .filter((r) => String(r.id).startsWith(key(configId, "a")));
+    for (const r of dropped) await this.del("chat_attachments", { id: r.id });
+    await this.release(dropped.flatMap((r) => pathsOf(attachmentFromRow(r))));
+  }
+
+  /**
+   * Moves the reactions of a queued message (`u<clientUuid>`) to its server
+   * key (`m<messageId>`). The moved group replaces one the server already
+   * wrote under that key: it holds what the user did and has not sent yet.
+   */
+  private async rekeyReactions(configId: string, clientUuid: string, messageId: number): Promise<void> {
+    for (const r of await this.rows("chat_reactions", { config_id: configId, message_key: `u${clientUuid}` })) {
+      await this.del("chat_reactions", { id: r.id });
+      await this.putReaction({ ...reactionFromRow(r), messageKey: `m${messageId}`, messageId });
+    }
   }
 
   private async upsertChannel(
@@ -617,6 +716,7 @@ export class ChatRepository {
         const merged = this.mergeSettled(messageFromRow(queued), base, p, configId, p.messageId, p.clientUuid);
         await this.del("chat_messages", { id: queued.id });
         await this.put("chat_messages", this.messageRow(merged));
+        await this.rekeyReactions(configId, p.clientUuid, p.messageId);
         return;
       }
     }
@@ -634,6 +734,9 @@ export class ChatRepository {
       status: "sent",
       outboxOpId: null,
       writeDate: null,
+      parentId: null,
+      parentClientUuid: null,
+      recipientIds: [],
     };
     const next: ChatMessage = { ...fresh, ...defined(p), configId };
     if (!base && p.status === undefined) next.status = "sent";
@@ -700,7 +803,7 @@ export class ChatRepository {
 
   /**
    * Moves a conversation created under a temporary id to the id the server
-   * gave it: its messages, its files and its draft, its members, and the channelId of every outbox
+   * gave it: its messages, their reactions, its files and its draft, its members, and the channelId of every outbox
    * row of the account that still names the temporary id. The server's row
    * (written by the create answer or by the bus before it) wins for every
    * server field; without one the temporary row is re-keyed. Placeholder
@@ -722,6 +825,10 @@ export class ChatRepository {
     );
     await this.db.rawRun(
       "UPDATE chat_attachments SET channel_id = ? WHERE config_id = ? AND channel_id = ?",
+      [realId, configId, tempId],
+    );
+    await this.db.rawRun(
+      "UPDATE chat_reactions SET channel_id = ? WHERE config_id = ? AND channel_id = ?",
       [realId, configId, tempId],
     );
     await this.moveDraftText(configId, tempId, realId);
@@ -773,7 +880,7 @@ export class ChatRepository {
    * sent and its draft included: the user dismissed it.
    */
   async dropChannel(configId: string, channelId: number): Promise<void> {
-    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_drafts"]) {
+    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_drafts", "chat_reactions"]) {
       await this.del(t, { config_id: configId, channel_id: channelId });
     }
     await this.dropAttachmentRows({ config_id: configId, channel_id: channelId });
@@ -841,6 +948,7 @@ export class ChatRepository {
     );
     if (queued) await this.del("chat_messages", { id: queuedId });
     await this.put("chat_messages", this.messageRow(merged));
+    await this.rekeyReactions(configId, clientUuid, messageId);
   }
 
   /** Turns every queued message of a channel into a failed one, detached from the outbox. */
@@ -879,6 +987,55 @@ export class ChatRepository {
   async message(configId: string, messageId: number): Promise<ChatMessage | null> {
     const row = await this.row("chat_messages", key(configId, `m${messageId}`));
     return row ? messageFromRow(row) : null;
+  }
+
+  /**
+   * A message by the client uuid of its post: the queued row, or the sent
+   * row a settle left (it keeps the uuid); the sent one when both exist.
+   * Null when neither is cached.
+   */
+  async messageByClientUuid(configId: string, clientUuid: string): Promise<ChatMessage | null> {
+    const found = (await this.rows("chat_messages", { config_id: configId, client_uuid: clientUuid })).map(messageFromRow);
+    return found.find((m) => m.messageId !== null) ?? found[0] ?? null;
+  }
+
+  /** The message an action names: by server id, else (no id, or one not cached) by client uuid. */
+  async messageOf(configId: string, target: MessageTarget): Promise<ChatMessage | null> {
+    const byId = target.messageId !== null ? await this.message(configId, target.messageId) : null;
+    if (byId || target.clientUuid === null) return byId;
+    return this.messageByClientUuid(configId, target.clientUuid);
+  }
+
+  /** Removes a queued message (`u<clientUuid>`) and its reactions; its outbox op and files are the caller's. */
+  async dropQueued(configId: string, clientUuid: string): Promise<void> {
+    await this.del("chat_messages", { id: key(configId, `u${clientUuid}`) });
+    await this.del("chat_reactions", { config_id: configId, message_key: `u${clientUuid}` });
+  }
+
+  /**
+   * The reaction groups of the given message keys (see messageKeyOf) of a
+   * channel, in one read; each list by `sequence`, a key without a group
+   * has no entry.
+   */
+  async reactionsOf(configId: string, channelId: number, keys: string[]): Promise<Map<string, ChatReaction[]>> {
+    const wanted = new Set(keys);
+    const out = new Map<string, ChatReaction[]>();
+    const all = (await this.rows("chat_reactions", { config_id: configId, channel_id: channelId }))
+      .map(reactionFromRow)
+      .filter((r) => wanted.has(r.messageKey))
+      .sort((a, b) => a.sequence - b.sequence);
+    for (const r of all) out.set(r.messageKey, [...(out.get(r.messageKey) ?? []), r]);
+    return out;
+  }
+
+  /** Writes one reaction group, replacing the stored one of its (message key, content). */
+  async putReaction(r: ChatReaction): Promise<void> {
+    await this.put("chat_reactions", reactionRow(r));
+  }
+
+  /** Removes one reaction group of a message key; nothing happens when it is absent. */
+  async dropReaction(configId: string, messageKey: string, content: string): Promise<void> {
+    await this.del("chat_reactions", { id: key(configId, `${messageKey}#${content}`) });
   }
 
   /**
@@ -1280,7 +1437,7 @@ export class ChatRepository {
   /** Removes every cached row of one account, its drafts included, leaving the others. */
   async dropSource(configId: string): Promise<void> {
     await this.dropAttachmentRows({ config_id: configId });
-    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_drafts", "chat_sources"]) {
+    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_drafts", "chat_reactions", "chat_sources"]) {
       await this.del(t, { config_id: configId });
     }
   }

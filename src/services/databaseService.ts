@@ -1242,7 +1242,10 @@ export class DatabaseService {
         message_type      TEXT NOT NULL,
         status            TEXT NOT NULL,
         outbox_op_id      TEXT,
-        write_date        TEXT
+        write_date        TEXT,
+        parent_id         INTEGER,
+        parent_client_uuid TEXT,
+        recipient_ids     TEXT
       )
     `);
     await this.db.execute(
@@ -1294,6 +1297,7 @@ export class DatabaseService {
     await this.createChatTempIdsTable();
     await this.createChatAttachmentsTable();
     await this.createChatDraftsTable();
+    await this.createChatReactionsTable();
     for (const [table, col] of [
       ["chat_channels", "config_id"],
       ["chat_messages", "config_id, channel_id"],
@@ -1401,6 +1405,50 @@ export class DatabaseService {
   }
 
   /**
+   * Adds the reactions table and the reply and mention columns of
+   * chat_messages (parent_id, parent_client_uuid, recipient_ids) to tables
+   * created before them. A column is added only when PRAGMA table_info
+   * does not list it, and only to an existing chat_messages; the table is
+   * CREATE TABLE IF NOT EXISTS. A fresh install (createChatTables already
+   * has them) and a second run change nothing.
+   */
+  async addChatActions(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(chat_messages)");
+    const names = (existing.values ?? []).map((r: any) => r.name as string);
+    if (names.length > 0) {
+      for (const [col, def] of [["parent_id", "INTEGER"], ["parent_client_uuid", "TEXT"], ["recipient_ids", "TEXT"]]) {
+        if (!names.includes(col)) await this.db.execute(`ALTER TABLE chat_messages ADD COLUMN ${col} ${def}`);
+      }
+    }
+    await this.createChatReactionsTable();
+  }
+
+  /**
+   * One row per reaction group of a message, keyed
+   * `configId#<messageKey>#<content>`: `message_key` is `m<messageId>`, or
+   * `u<clientUuid>` for a message still queued. `partner_ids` is a JSON
+   * list in the server's order; guests are only counted.
+   */
+  private async createChatReactionsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_reactions (
+        id           TEXT PRIMARY KEY NOT NULL,
+        config_id    TEXT NOT NULL,
+        channel_id   INTEGER NOT NULL,
+        message_key  TEXT NOT NULL,
+        message_id   INTEGER,
+        content      TEXT NOT NULL,
+        count        INTEGER NOT NULL,
+        self_reacted INTEGER NOT NULL,
+        partner_ids  TEXT NOT NULL,
+        guest_count  INTEGER NOT NULL DEFAULT 0,
+        sequence     INTEGER NOT NULL
+      )
+    `);
+    await this.db.execute("CREATE INDEX IF NOT EXISTS chat_reactions_channel ON chat_reactions (config_id, channel_id)");
+  }
+
+  /**
    * The text typed in a conversation's composer and not sent yet, one row
    * per conversation keyed `configId#channelId`. Its files are the
    * conversation's chat_attachments rows in the "draft" state.
@@ -1481,7 +1529,7 @@ export class DatabaseService {
    * column and the `configId#` prefix of the key. A table not created yet is skipped.
    */
   private async renameChatRows(oldId: string, newId: string): Promise<void> {
-    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_sources"]) {
+    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_reactions", "chat_sources"]) {
       try {
         const keyed = table !== "chat_sources";
         const key = keyed ? "id" : "config_id";

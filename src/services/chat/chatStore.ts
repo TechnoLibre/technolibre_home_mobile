@@ -4,7 +4,11 @@ import type {
   ChatMember,
   ChatMessage,
   ChatPartner,
+  ChatReaction,
 } from "../../models/chat";
+
+/** A reaction group as the server sends it: the full group of one (message, content). */
+export type ReactionGroup = Omit<ChatReaction, "configId" | "channelId" | "messageKey"> & { messageId: number };
 
 /**
  * Normalized partial cache records read from an Odoo 18 Discuss "Store"
@@ -26,6 +30,14 @@ export interface StoreDelta {
   selfPartnerId: number | null;
   /** The account-wide mute end when the Store carries `settings`: a date, or null when unmuted. */
   globalMuteUntil?: string | null;
+  /** Reaction groups (`MessageReactions`), each replacing the stored group of its (message, content). */
+  reactions?: ReactionGroup[];
+  /** A message's full list of reaction contents (a plain `reactions` list): its groups not named go. */
+  reactionSets?: { messageId: number; contents: string[] }[];
+  /** Groups whose last reaction was removed (`["DELETE", ...]` on a message's `reactions`). */
+  deletedReactions?: { messageId: number; content: string }[];
+  /** Messages the server deleted (bus `mail.message/delete`). */
+  deletedMessageIds?: number[];
 }
 
 const CHANNEL_MODEL = "discuss.channel";
@@ -63,6 +75,35 @@ function commandIds(v: any, mode: string): number[] {
   return out;
 }
 
+/** `{message, content}` of a reaction relation value; null when either is missing. */
+function reactionRef(v: any): { messageId: number; content: string } | null {
+  const messageId = v && typeof v === "object" ? relId(v.message) : null;
+  return messageId !== null && typeof v.content === "string" ? { messageId, content: v.content } : null;
+}
+
+/**
+ * Reads a message's `reactions` value: a plain list is the message's full
+ * set of contents, `["DELETE", x]` removes groups (`x` one `{message,
+ * content}` or a list of them), `["ADD", ...]` names groups whose records
+ * come in `MessageReactions`.
+ */
+function readReactions(messageId: number, v: any, delta: StoreDelta): void {
+  if (!Array.isArray(v)) return;
+  const commands = v.filter((x) => Array.isArray(x) && typeof x[0] === "string");
+  if (commands.length === 0) {
+    const contents = v.map(reactionRef).filter((r): r is NonNullable<typeof r> => r !== null).map((r) => r.content);
+    delta.reactionSets!.push({ messageId, contents });
+    return;
+  }
+  for (const [mode, refs] of commands) {
+    if (mode !== "DELETE") continue;
+    for (const ref of Array.isArray(refs) ? refs : [refs]) {
+      const r = reactionRef(ref);
+      if (r) delta.deletedReactions!.push(r);
+    }
+  }
+}
+
 /** The persona of a member as a partner id; null for a guest or a missing persona. */
 function personaPartnerId(persona: any): number | null {
   return persona && persona.type === "partner" ? relId(persona) : null;
@@ -95,6 +136,9 @@ export function parseStore(
     partners: [],
     inboxCounter: null,
     selfPartnerId,
+    reactions: [],
+    reactionSets: [],
+    deletedReactions: [],
   };
 
   if (store.self && store.self.type === "partner" && relId(store.self) !== null) {
@@ -250,7 +294,32 @@ export function parseStore(
     copy(msg, m, "attachment_ids", "attachmentIds", (v) =>
       (Array.isArray(v) ? v : []).map((x: any) => relId(x)).filter((x: number | null): x is number => x !== null),
     );
+    copy(msg, m, "parentMessage", "parentId", (v) => relId(v));
+    copy(msg, m, "recipients", "recipientIds", (v) =>
+      (Array.isArray(v) ? v : []).map(personaPartnerId).filter((x: number | null): x is number => x !== null),
+    );
+    if ("reactions" in m) readReactions(m.id, m.reactions, delta);
     delta.messages.push(msg);
+  }
+
+  // Reaction groups (mail_message_reaction.py _to_store): personas are guests then partners
+  for (const g of res.MessageReactions || []) {
+    const ref = reactionRef(g);
+    if (!ref) continue;
+    if (g._DELETE) {
+      delta.deletedReactions!.push(ref);
+      continue;
+    }
+    const personas: any[] = Array.isArray(g.personas) ? g.personas : [];
+    const partnerIds = personas.map(personaPartnerId).filter((x): x is number => x !== null);
+    delta.reactions!.push({
+      ...ref,
+      count: typeof g.count === "number" ? g.count : personas.length,
+      selfReacted: self !== null && partnerIds.includes(self),
+      partnerIds,
+      guestCount: personas.filter((x) => x && x.type === "guest").length,
+      sequence: typeof g.sequence === "number" ? g.sequence : 0,
+    });
   }
   for (const [channelId, last] of lastByChannel) {
     if (channels.has(channelId)) channels.get(channelId)!.lastMessageId = last;
@@ -295,6 +364,39 @@ function union(a: number[], b: number[]): number[] {
   return [...new Set([...a, ...b])];
 }
 
+const reactionKey = (r: { messageId: number; content: string }): string => `${r.messageId}#${r.content}`;
+
+/**
+ * The reaction parts of `a` then `b` as one delta, applied by applyDelta as
+ * sets, then groups, then deletions. A set of `b` drops the groups of `a` it
+ * does not name; a group of `b` cancels a deletion of `a` and a deletion
+ * of `b` an earlier group, so the groups and the deletions never share a
+ * (message, content).
+ */
+function mergeReactions(
+  a: StoreDelta,
+  b: StoreDelta,
+): Pick<StoreDelta, "reactions" | "reactionSets" | "deletedReactions"> {
+  const laterSets = new Map((b.reactionSets ?? []).map((s) => [s.messageId, new Set(s.contents)]));
+  const laterGroups = new Set((b.reactions ?? []).map(reactionKey));
+  const laterDeleted = new Set((b.deletedReactions ?? []).map(reactionKey));
+  const named = (r: { messageId: number; content: string }) => laterSets.get(r.messageId)?.has(r.content) ?? true;
+  const groups = new Map<string, ReactionGroup>();
+  for (const r of a.reactions ?? []) {
+    if (named(r) && !laterDeleted.has(reactionKey(r))) groups.set(reactionKey(r), r);
+  }
+  for (const r of b.reactions ?? []) groups.set(reactionKey(r), r);
+  const deleted = new Map<string, { messageId: number; content: string }>();
+  for (const r of [...(a.deletedReactions ?? []), ...(b.deletedReactions ?? [])]) {
+    if (!laterGroups.has(reactionKey(r))) deleted.set(reactionKey(r), r);
+  }
+  return {
+    reactions: [...groups.values()],
+    reactionSets: mergeBy(a.reactionSets ?? [], b.reactionSets ?? [], "messageId"),
+    deletedReactions: [...deleted.values()],
+  };
+}
+
 /** Combines two deltas as if `b` was applied after `a`. */
 export function mergeDeltas(a: StoreDelta, b: StoreDelta): StoreDelta {
   return {
@@ -309,5 +411,7 @@ export function mergeDeltas(a: StoreDelta, b: StoreDelta): StoreDelta {
     inboxCounter: b.inboxCounter ?? a.inboxCounter,
     selfPartnerId: b.selfPartnerId ?? a.selfPartnerId,
     globalMuteUntil: b.globalMuteUntil !== undefined ? b.globalMuteUntil : a.globalMuteUntil,
+    ...mergeReactions(a, b),
+    deletedMessageIds: union(a.deletedMessageIds ?? [], b.deletedMessageIds ?? []),
   };
 }

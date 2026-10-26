@@ -4376,7 +4376,45 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addChatCreateFailed.ts",
                     "src/services/migrations/addChatLeftUnsent.ts",
                     "src/services/migrations/addChatAttachments.ts",
+                    "src/services/migrations/addChatActions.ts",
                     "src/services/chat/chatRepository.ts",
+                ],
+            },
+            {
+                id: "chat.reactions",
+                label: { en: "Message reactions", fr: "Réactions aux messages" },
+                description: {
+                    en: "Reaction groups, reply parents and mentioned partners of the messages, read from the server and cached per account.",
+                    fr: "Groupes de réactions, messages d'origine des réponses et partenaires mentionnés, lus du serveur et gardés en cache par compte.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.store", "chat.cache"],
+                demo: NONE_PLUMBING,
+                howItWorks: {
+                    en: "The Store's MessageReactions give one group per (message, emoji): count, partners in the "
+                        + "server's order, guests counted, and whether the user is among them. A plain reactions list "
+                        + "on a message is its full set (groups it does not name go); DELETE, as one object or a list, "
+                        + "removes a group. Groups live in chat_reactions keyed by the message's m<id>, or u<uuid> "
+                        + "while it is queued, and move to m<id> when the post settles. A message the server deletes "
+                        + "(bus mail.message/delete) leaves with its reactions and its files.",
+                    fr: "Les MessageReactions du Store donnent un groupe par (message, émoji) : le nombre, les "
+                        + "partenaires dans l'ordre du serveur, les invités comptés, et si l'utilisateur en est. Une "
+                        + "liste simple de réactions sur un message en est l'ensemble complet (les groupes qu'elle ne "
+                        + "nomme pas partent) ; DELETE, objet seul ou liste, retire un groupe. Les groupes vivent dans "
+                        + "chat_reactions sous la clé m<id> du message, ou u<uuid> tant qu'il est en file, et passent à "
+                        + "m<id> quand l'envoi aboutit. Un message que le serveur supprime (bus mail.message/delete) "
+                        + "part avec ses réactions et ses fichiers.",
+                },
+                files: [
+                    "src/services/chat/chatStore.ts",
+                    "src/services/chat/chatRepository.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/migrations/addChatActions.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatStore.test.ts",
+                    "src/__tests__/chatRepository.test.ts",
+                    "src/__tests__/chatService.test.ts",
                 ],
             },
             {
