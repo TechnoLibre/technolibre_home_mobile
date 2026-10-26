@@ -33,6 +33,8 @@ export const translations: Record<string, string> = {
   "options.licenses_intro": "The app bundles the libraries below. Their licenses are reproduced as shipped.",
   "options.licenses_use": "{name} is bundled under the {license} license: it encodes the MP3 of chat voice messages. It is linked as a separate module of the app, and its source is available at the address below.",
   "options.licenses_source": "Source:",
+  "options.licenses_authors": "Notice from the authors",
+  "options.licenses_base": "Show or hide the {name} text",
   "options.sms_gateway": "SMS gateway",
 
   // Language picker

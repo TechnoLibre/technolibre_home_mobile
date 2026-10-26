@@ -2,6 +2,8 @@ import { useState, xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import lamejsLicense from "../../../assets/licenses/breezystack-lamejs.LICENSE.txt?raw";
+import lgplText from "../../../assets/licenses/LGPL-3.0.txt?raw";
+import gplText from "../../../assets/licenses/GPL-3.0.txt?raw";
 
 /** One bundled third-party library whose licence asks to be named in the app. */
 export interface ThirdPartyNotice {
@@ -10,8 +12,12 @@ export interface ThirdPartyNotice {
     license: string;
     /** Where the library's source can be read. */
     sourceUrl: string;
-    /** The licence text the package ships, bundled as an asset. */
+    /** The notice from the library's authors, as the package ships it. */
+    authorsNotice: string;
+    /** The full licence text, and the text of the licence it builds on. */
     licenseText: string;
+    baseLicenseName: string;
+    baseLicenseText: string;
 }
 
 /**
@@ -26,7 +32,10 @@ export const THIRD_PARTY_NOTICES: ThirdPartyNotice[] = [
         version: "1.2.7",
         license: "LGPL-3.0",
         sourceUrl: "https://github.com/shijinyu/lamejs",
-        licenseText: lamejsLicense,
+        authorsNotice: lamejsLicense,
+        licenseText: lgplText,
+        baseLicenseName: "GPL-3.0",
+        baseLicenseText: gplText,
     },
 ];
 
@@ -55,18 +64,28 @@ export class OptionsLicensesComponent extends EnhancedComponent {
             <a t-att-href="notice.sourceUrl" target="_blank" rel="noreferrer noopener"
                t-esc="t('options.licenses_source') + ' ' + notice.sourceUrl"/>
           </p>
+          <h5 t-esc="t('options.licenses_authors')"/>
+          <pre class="options-licenses__text" t-esc="notice.authorsNotice"/>
+          <h5 t-esc="notice.license"/>
           <pre class="options-licenses__text" t-esc="notice.licenseText"/>
+          <button class="chat-new__chip" t-att-aria-expanded="state.base ? 'true' : 'false'"
+                  t-on-click="toggleBase" t-esc="t('options.licenses_base', {name: notice.baseLicenseName})"/>
+          <pre t-if="state.base" class="options-licenses__text" t-esc="notice.baseLicenseText"/>
         </t>
       </div>
     </li>
   `;
 
     setup() {
-        this.state = useState({ expanded: false });
+        this.state = useState({ expanded: false, base: false });
     }
 
     get notices(): ThirdPartyNotice[] {
         return THIRD_PARTY_NOTICES;
+    }
+
+    toggleBase(): void {
+        this.state.base = !this.state.base;
     }
 
     toggleExpanded(): void {

@@ -32,8 +32,18 @@ describe("OptionsLicensesComponent", () => {
 
     it("carries the licence text the package ships", () => {
         const lame = THIRD_PARTY_NOTICES[0];
-        expect(lame.licenseText).toContain("LGPL");
-        expect(lame.licenseText.length).toBeGreaterThan(100);
+        expect(lame.authorsNotice).toContain("LGPL");
+        expect(lame.licenseText).toContain("GNU LESSER GENERAL PUBLIC LICENSE");
+        expect(lame.licenseText).toContain("Version 3, 29 June 2007");
+        expect(lame.baseLicenseText).toContain("GNU GENERAL PUBLIC LICENSE");
+        expect(lame.baseLicenseText).toContain("Version 3, 29 June 2007");
+    });
+
+    it("shows the GPL text only on request", () => {
+        const c = make();
+        expect(c.state.base).toBe(false);
+        c.toggleBase();
+        expect(c.state.base).toBe(true);
     });
 
     it("lists the version the app depends on", () => {
@@ -45,7 +55,7 @@ describe("OptionsLicensesComponent", () => {
     it("has its strings in both languages", async () => {
         const en = (await import("../i18n/en")).translations;
         const fr = (await import("../i18n/fr")).translations;
-        for (const key of ["options.licenses", "options.licenses_intro", "options.licenses_use", "options.licenses_source"]) {
+        for (const key of ["options.licenses", "options.licenses_intro", "options.licenses_use", "options.licenses_source", "options.licenses_authors", "options.licenses_base"]) {
             expect(en[key]).toBeTruthy();
             expect(fr[key]).toBeTruthy();
         }

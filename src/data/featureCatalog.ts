@@ -3680,6 +3680,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/options/licenses/options_licenses_component.ts",
                     "src/components/options/licenses/options_licenses_component.scss",
                     "src/assets/licenses/breezystack-lamejs.LICENSE.txt",
+                    "src/assets/licenses/LGPL-3.0.txt",
+                    "src/assets/licenses/GPL-3.0.txt",
                 ],
             },
             {

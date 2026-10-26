@@ -33,6 +33,8 @@ export const translations: Record<string, string> = {
   "options.licenses_intro": "L'application embarque les bibliothèques ci-dessous. Leurs licences sont reproduites telles que livrées.",
   "options.licenses_use": "{name} est embarquée sous la licence {license} : elle encode le MP3 des messages vocaux du clavardage. Elle est liée comme module séparé de l'application, et son code source est disponible à l'adresse ci-dessous.",
   "options.licenses_source": "Source :",
+  "options.licenses_authors": "Mention des auteurs",
+  "options.licenses_base": "Afficher ou masquer le texte de la {name}",
   "options.sms_gateway": "Passerelle SMS",
 
   // Language picker
