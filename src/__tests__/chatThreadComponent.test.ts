@@ -642,6 +642,9 @@ describe("ChatThreadComponent", () => {
         expect(rule("#chat-thread")).toMatch(/min-height:\s*0/);
         expect(rule(".chat-thread__scroll")).toMatch(/flex:\s*1 1 0/);
         expect(rule(".chat-thread__scroll")).toMatch(/min-height:\s*0/);
+        // The bubble holds its out-of-sight ⋯ button: positioned against #chat-thread instead, the buttons of a
+        // long history overflow the cell, which then scrolls under the keyboard and leaves a band below the composer
+        expect(rule(".chat-thread__bubble")).toMatch(/position:\s*relative/);
         // A height computed from the viewport ignores the navbar and the keyboard
         expect(sheet).not.toMatch(/\d+vh/);
     });
@@ -1317,6 +1320,22 @@ describe("ChatThreadComponent message actions", () => {
         c.teardown();
     });
 
+    it("a long press cancelled after it ran out swallows nothing: no click of it is to come", async () => {
+        const c = make(fakeChat([msg(10)]));
+        await c.open();
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        c.onThreadPointer();
+        c.onPressDown(c.state.rows[0], press());
+        vi.advanceTimersByTime(LONG_PRESS_MS);
+        c.onPressCancel();
+        // A keyboard or screen reader click comes with no pointerdown before it
+        const click = clickEvent();
+        c.onThreadClick(click);
+        expect(click.stopPropagation).not.toHaveBeenCalled();
+        expect(click.preventDefault).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
     it("the click ending a chip's long press (who reacted) chooses nothing in the sheet", async () => {
         const c = make(fakeChat([msg(10)]));
         await c.open();
@@ -1332,7 +1351,7 @@ describe("ChatThreadComponent message actions", () => {
         c.teardown();
     });
 
-    it("the bubble keeps scrolling and selection: no preventDefault on its press, its contextmenu prevented", () => {
+    it("the bubble keeps scrolling: no preventDefault on its press, its contextmenu prevented", () => {
         const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
         const bubble = source.slice(source.indexOf('class="chat-thread__bubble"'), source.indexOf('<div t-if="row.hasBody"'));
         expect(bubble).toMatch(/t-on-pointerdown="\(ev\) => this.onPressDown\(row, ev\)"/);

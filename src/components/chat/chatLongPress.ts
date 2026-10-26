@@ -15,8 +15,8 @@ export interface LongPressOptions {
  * onLong with the pressed key once it runs out; a move beyond the slop, the
  * end of the press (up) or a scroll (cancel) stops it first. It reads
  * coordinates only and calls no preventDefault, so the press still scrolls
- * the list and selects text; the caller prevents the element's contextmenu
- * so the system menu does not open over it. takeFired tells the click that
+ * the list; the caller prevents the element's contextmenu so the system
+ * menu does not open over it. takeFired tells the click that
  * follows a long press (to be swallowed) from a plain tap.
  */
 export class LongPress {

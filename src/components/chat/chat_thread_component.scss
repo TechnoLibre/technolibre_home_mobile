@@ -99,6 +99,10 @@
 }
 
 .chat-thread__bubble {
+	// Holds its out-of-sight ⋯ button: positioned against #chat-thread, the
+	// buttons of a long history overflow the cell, which then scrolls when
+	// the keyboard opens and leaves a band below the composer
+	position: relative;
 	align-self: flex-start;
 	max-width: 80%;
 	padding: 0.4rem 0.6rem;

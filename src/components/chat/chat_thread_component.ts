@@ -1218,8 +1218,9 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     /**
      * A press starts on a bubble (touch, pen or the main mouse button). It
-     * calls no preventDefault, so the list still scrolls and the text is
-     * still selected; the bubble's contextmenu is prevented in the template.
+     * calls no preventDefault, so the list still scrolls; the bubble's
+     * contextmenu is prevented in the template, so a long press opens the
+     * message's menu, whose Copy gives the whole text, and no system menu.
      */
     onPressDown(row: ThreadRow, ev: PointerEvent): void {
         if (ev.button > 0) return;
@@ -1234,8 +1235,10 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.press.up();
     }
 
+    /** The press was taken by the system (pointercancel): no click of it is to come, the next one is a tap. */
     onPressCancel(): void {
         this.press.cancel();
+        this.endingClick = false;
     }
 
     /**
