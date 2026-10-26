@@ -20,8 +20,19 @@ import type { ChatService } from "../services/chat/chatService";
 import { displayNameOf } from "../services/chat/chatNames";
 import type { BusTransport } from "../services/chat/chatBus";
 import type { AttachmentIO } from "../services/attachmentService";
+import type { OutgoingFile } from "../models/chat";
+import { ChatCapture, type StageRefusal } from "../services/chat/chatCapture";
+import type { ChatHttp, HttpAnswer, TransferProgress } from "../services/chat/chatFiles";
+import { outgoingPath } from "../services/chat/chatFiles";
+import { encodeMp3, voiceName } from "../services/chat/chatMp3";
+import type { ChatSource } from "../services/chat/chatSources";
+import { CHAT_FILE_CANCELLED, CHAT_FILE_UNSENT, transportError } from "../plugins/chatFilePlugin";
+import { memoryChatFiles, type MemoryChatFiles } from "./chatFakes";
 
-export const HARNESS_API = 2;
+export { memoryChatFiles };
+export type { MemoryChatFiles };
+
+export const HARNESS_API = 3;
 
 /** Migrations that read what an older install left (secure storage, video files): none on a new database. */
 const SKIPPED_MIGRATIONS = new Set([2026031801, 2026032401]);
@@ -43,17 +54,21 @@ export interface SyncEnv {
 	/** Per target, in the order given: its credentials and its sync config id. */
 	creds: SyncCredentials[];
 	configIds: string[];
+	/** The chat's files (Directory.Data in memory), which nodeChatHttp uploads from and downloads into. */
+	chatFiles: MemoryChatFiles;
 }
 
 /**
  * A new app database, migrated as the app migrates it, with one application
  * per target, and the sync service over it. Nothing is read from a server
  * until a sync runs. chatModule "ignore" makes chat posts take the marker
- * path even where the server module is installed.
+ * path and uploads Odoo's own route even where the server module is
+ * installed. The chat's files live in chatFiles (new and empty when not
+ * given) and cross the network through nodeChatHttp over them.
  */
 export async function createSyncEnv(
 	targets: SyncTarget[],
-	opts: { chatModule?: "auto" | "ignore" } = {},
+	opts: { chatModule?: "auto" | "ignore"; chatFiles?: MemoryChatFiles } = {},
 ): Promise<SyncEnv> {
 	const db = new DatabaseService();
 	await db.initialize();
@@ -70,6 +85,8 @@ export async function createSyncEnv(
 	}
 	const sync = new SyncService(db);
 	sync.chat.moduleMode = opts.chatModule ?? "auto";
+	const chatFiles = opts.chatFiles ?? memoryChatFiles();
+	sync.chat.useFileIO({ files: chatFiles, http: nodeChatHttp(chatFiles) });
 	return {
 		db,
 		sync,
@@ -77,20 +94,22 @@ export async function createSyncEnv(
 		notes: new NoteService(new EventBus(), db),
 		creds,
 		configIds: creds.map(syncConfigIdOf),
+		chatFiles,
 	};
 }
 
 /**
  * The app killed and started again over env's database: a new sync service
- * (the chat's module mode carried over), then the startup repair the app
- * runs (OutboxService.recoverInterrupted, ChatService.recover). The stored
- * sessions and the network state stay as they were; the old chat service is
- * disposed (its bus and typing timers stop).
+ * (the chat's module mode and files carried over), then the startup repair
+ * the app runs (OutboxService.recoverInterrupted, ChatService.recover). The
+ * stored sessions and the network state stay as they were; the old chat
+ * service is disposed (its bus and typing timers stop).
  */
 export async function restartSyncEnv(env: SyncEnv): Promise<SyncEnv> {
 	env.chat.dispose();
 	const sync = new SyncService(env.db);
 	sync.chat.moduleMode = env.chat.moduleMode;
+	sync.chat.useFileIO({ files: env.chatFiles, http: nodeChatHttp(env.chatFiles) });
 	await sync.outbox.recoverInterrupted();
 	await sync.chat.recover();
 	return { ...env, sync, chat: sync.chat, notes: new NoteService(new EventBus(), env.db) };
@@ -102,7 +121,17 @@ export async function restartSyncEnv(env: SyncEnv): Promise<SyncEnv> {
  * flushes. resetMocks() turns it back on.
  */
 export function setOnline(connected: boolean): void {
-	(network as any).__setNetworkStatus({ connected, connectionType: connected ? "wifi" : "none" });
+	setNetwork({ connected, wifi: connected });
+}
+
+/**
+ * The device's network, with its kind: wifi false while connected is a
+ * mobile network, where « Wi-Fi only » holds the chat's uploads and
+ * originals back. Like setOnline, it flushes nothing.
+ */
+export function setNetwork(state: { connected: boolean; wifi: boolean }): void {
+	const connectionType = !state.connected ? "none" : state.wifi ? "wifi" : "cellular";
+	(network as any).__setNetworkStatus({ connected: state.connected, connectionType });
 }
 
 /**
@@ -139,19 +168,26 @@ export function installLocalStorage(options: { allowHttp?: boolean } = {}): Stor
 
 /**
  * Files of a note as the device would give them: files maps a path to its
- * content (a string, sent as UTF-8), a path absent is a file not found; wifi
- * says whether the device is on Wi-Fi, and can be changed on the result.
+ * content (bytes as they are, a string as UTF-8), a path absent is a file
+ * not found; wifi says whether the device is on Wi-Fi, and can be changed
+ * on the result.
  */
-export function memoryAttachmentIO(options: { files?: Record<string, string>; wifi?: boolean } = {}): AttachmentIO & { wifi: boolean } {
+export function memoryAttachmentIO(
+	options: { files?: Record<string, Buffer | Uint8Array | string>; wifi?: boolean } = {},
+): AttachmentIO & { wifi: boolean } {
 	const files = options.files ?? {};
+	const bytesOf = (path: string) => {
+		const content = files[path];
+		return typeof content === "string" ? Buffer.from(content, "utf8") : Buffer.from(content);
+	};
 	return {
 		wifi: options.wifi ?? true,
 		async size(path: string) {
-			return path in files ? Buffer.byteLength(files[path], "utf8") : null;
+			return path in files ? bytesOf(path).length : null;
 		},
 		async read(path: string) {
 			if (!(path in files)) throw new Error(`File not found: ${path}`);
-			return Buffer.from(files[path], "utf8").toString("base64");
+			return bytesOf(path).toString("base64");
 		},
 		async onWifi() {
 			return this.wifi;
@@ -188,4 +224,138 @@ export function nodeTransport(): BusTransport {
 		onClose: () => {},
 	};
 	return transport;
+}
+
+/** Errors of Node's fetch whose request never left: no connection was made. */
+const NOT_SENT = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
+
+/**
+ * ChatHttp over Node's fetch, as the native ChatFile plugin behaves: no
+ * redirect followed (a 3xx is an answer), headers by lowercase name (the
+ * first Set-Cookie only), uploads as multipart/form-data (the fields in order,
+ * then "ufile" read from files), downloads written into files whole with
+ * their SHA-1 and Content-Type. A request refused before any connection
+ * rejects with code UNSENT, one stopped by cancel(id) with code CANCELLED
+ * (both typed by transportError); any other failure, a connection cut
+ * after the request went included, is a plain Error. Each transfer sends
+ * one progress event, once its bytes have all moved.
+ */
+export function nodeChatHttp(files: MemoryChatFiles): ChatHttp {
+	const running = new Map<string, AbortController>();
+	const listeners = new Set<(p: TransferProgress) => void>();
+	const progress = (id: string, done: number) => {
+		for (const fn of listeners) fn({ id, done, total: done });
+	};
+	const failure = (e: unknown, abort: AbortController): unknown => {
+		const message = e instanceof Error ? e.message : String(e);
+		const cause = (e as { cause?: { code?: string } } | null)?.cause?.code;
+		if (abort.signal.aborted) return transportError(Object.assign(new Error(message), { code: CHAT_FILE_CANCELLED }));
+		if (cause && NOT_SENT.has(cause)) return transportError(Object.assign(new Error(`${message}: ${cause}`), { code: CHAT_FILE_UNSENT }));
+		return e;
+	};
+	async function exchange<T>(id: string | null, url: string, init: RequestInit, read: (r: Response) => Promise<T>): Promise<T> {
+		const abort = new AbortController();
+		if (id) running.set(id, abort);
+		try {
+			const response = await fetch(url, { ...init, redirect: "manual", signal: abort.signal });
+			return await read(response);
+		} catch (e) {
+			throw failure(e, abort);
+		} finally {
+			if (id && running.get(id) === abort) running.delete(id);
+		}
+	}
+	const headersOf = (response: Response) => {
+		const out: Record<string, string> = {};
+		response.headers.forEach((value, name) => {
+			out[name.toLowerCase()] = value;
+		});
+		const cookie = response.headers.getSetCookie?.()[0];
+		if (cookie) out["set-cookie"] = cookie;
+		return out;
+	};
+	const text = async (response: Response): Promise<HttpAnswer> =>
+		({ status: response.status, headers: headersOf(response), data: await response.text() });
+	return {
+		getText: (url, headers) => exchange(null, url, { headers }, text),
+		async upload(r) {
+			const bytes = files.bytes(r.file.uri);
+			if (!bytes) {
+				throw transportError(Object.assign(new Error(`File does not exist: ${r.file.uri}`), { code: CHAT_FILE_UNSENT }));
+			}
+			const form = new FormData();
+			for (const [name, value] of Object.entries(r.fields)) form.append(name, value);
+			form.append("ufile", new Blob([bytes], { type: r.file.mimetype }), r.file.name);
+			const answer = await exchange(r.id, r.url, { method: "POST", headers: r.headers, body: form }, text);
+			progress(r.id, bytes.length);
+			return answer;
+		},
+		download: (r) => exchange(r.id, r.url, { headers: r.headers }, async (response) => {
+			if (response.status < 200 || response.status >= 300) {
+				await response.arrayBuffer();
+				return { status: response.status, size: 0, sha1: null, mimetype: null };
+			}
+			const bytes = new Uint8Array(await response.arrayBuffer());
+			files.put(r.uri, bytes);
+			progress(r.id, bytes.length);
+			const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", bytes));
+			const type = response.headers.get("content-type");
+			return {
+				status: response.status,
+				size: bytes.length,
+				sha1: Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join(""),
+				mimetype: type ? type.split(";")[0].trim().toLowerCase() : null,
+			};
+		}),
+		async cancel(id) {
+			running.get(id)?.abort();
+		},
+		onProgress(fn) {
+			listeners.add(fn);
+			return () => void listeners.delete(fn);
+		},
+	};
+}
+
+/** The stage limit the composer takes while the server's is unknown: Odoo's default. */
+const DEFAULT_STAGE_LIMIT = 128 * 1024 * 1024;
+
+/**
+ * A picked file staged as the composer stages it once the picker answered
+ * (ChatCapture.stage under the account's file directory, against the
+ * server's upload limit as the session gives it): the OutgoingFile to send,
+ * or the refusal of a file over the limit, nothing written. Images are
+ * not converted (that is the phone's ChatFile.toJpeg).
+ */
+export async function stageChatFile(
+	env: SyncEnv,
+	src: ChatSource,
+	file: { name: string; bytes: Uint8Array; mimetype?: string },
+): Promise<OutgoingFile | StageRefusal> {
+	const capture = new ChatCapture({
+		files: env.chatFiles,
+		images: { toJpeg: () => Promise.reject(new Error("no image conversion in the test kit")) },
+		removeCaptureTemp: async () => {},
+		sweepCaptureTemps: async () => {},
+	});
+	const picked = new File([file.bytes], file.name, { type: file.mimetype ?? "" });
+	const limit = (await env.chat.uploadLimit(src)) ?? DEFAULT_STAGE_LIMIT;
+	return capture.stage(await env.chat.fileDirOf(src.configId), picked, { maxUploadSize: limit });
+}
+
+/**
+ * A voice message as the recorder leaves it: seconds of a 440 Hz tone at
+ * 44100 Hz encoded by the app's MP3 encoder (mono, 128 kbit/s), staged
+ * under out/ with the recorder's name, mimetype audio/mpeg, voice true.
+ */
+export async function stageChatVoice(env: SyncEnv, configId: string, seconds = 1): Promise<OutgoingFile> {
+	const rate = 44100;
+	const samples = new Float32Array(Math.round(seconds * rate));
+	for (let i = 0; i < samples.length; i++) samples[i] = 0.3 * Math.sin((2 * Math.PI * 440 * i) / rate);
+	const mp3 = encodeMp3(samples, rate);
+	const localUuid = crypto.randomUUID();
+	const name = voiceName(new Date());
+	const path = outgoingPath(await env.chat.fileDirOf(configId), localUuid, name);
+	env.chatFiles.put(path, mp3);
+	return { localUuid, path, name, mimetype: "audio/mpeg", size: mp3.length, voice: true };
 }

@@ -9,6 +9,8 @@
  * caller must follow; the ERPLibre runner refuses an API it does not know.
  */
 import type { EventBus } from "@odoo/owl";
+import { Capacitor } from "@capacitor/core";
+import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Events } from "../constants/events";
 import type { Note } from "../models/note";
 import { syncConfigIdFor } from "../models/syncConfig";
@@ -17,8 +19,13 @@ import type { DatabaseService } from "../services/databaseService";
 import type { NoteService } from "../services/note/noteService";
 import type { NotificationService } from "../services/notificationService";
 import { SyncService } from "../services/syncService";
+import { ChatCapture } from "../services/chat/chatCapture";
+import type { ChatAttachment } from "../models/chat";
 
-export const DEVICE_HOOK_API = 3;
+export const DEVICE_HOOK_API = 4;
+
+/** The stage limit the composer takes while the server's is unknown: Odoo's default. */
+const DEFAULT_STAGE_LIMIT = 128 * 1024 * 1024;
 
 /** The services of app.ts the hook uses. */
 export interface DeviceHookEnv {
@@ -111,6 +118,39 @@ export function deviceTestHook(env: DeviceHookEnv) {
 		/** The cached messages of the channel, oldest first. */
 		chatMessages(configId: string, channelId: number) {
 			return env.syncService.chat.messages(configId, channelId);
+		},
+		/**
+		 * Sends the file at path (relative to Directory.Data, put there by
+		 * the test) as the composer does once the picker answered: read as
+		 * the web view's File, staged by ChatCapture.stage against the
+		 * server's limit, then sent alone through ChatService.send. Returns
+		 * the pending message's clientUuid; a file over the limit throws.
+		 */
+		async chatSendFile(configId: string, channelId: number, path: string, name: string, mimetype: string): Promise<string> {
+			const chat = env.syncService.chat;
+			const src = await chatSourceOf(env, configId);
+			const { uri } = await Filesystem.getUri({ path, directory: Directory.Data });
+			const blob = await (await fetch(Capacitor.convertFileSrc(uri))).blob();
+			const file = new File([blob], name, { type: mimetype });
+			const limit = (await chat.uploadLimit(src)) ?? DEFAULT_STAGE_LIMIT;
+			const staged = await new ChatCapture().stage(await chat.fileDirOf(configId), file, { maxUploadSize: limit });
+			if ("refused" in staged) throw new Error(`${name} refused: over the ${staged.limit}-byte limit`);
+			const message = await chat.send(src, channelId, "", [staged]);
+			return message.clientUuid as string;
+		},
+		/** The attachment rows of the channel's cached messages and queued posts, oldest message first. */
+		async chatAttachments(configId: string, channelId: number): Promise<ChatAttachment[]> {
+			const chat = env.syncService.chat;
+			const messages = await chat.messages(configId, channelId);
+			const ids = messages.map((m) => m.messageId).filter((id): id is number => typeof id === "number");
+			const uuids = messages.map((m) => m.clientUuid).filter((u): u is string => !!u);
+			const groups = await chat.repo.attachmentsOf(configId, channelId, ids, uuids);
+			return messages.flatMap((m) =>
+				[...(groups.get(`m${m.messageId}`) ?? []), ...(m.clientUuid ? groups.get(`u${m.clientUuid}`) ?? [] : [])]);
+		},
+		/** Bytes the chat's files take on the phone: the account's, or every account's. */
+		chatSpace(configId?: string): Promise<number> {
+			return env.syncService.chat.attachments.space(configId);
 		},
 		note(id: string) {
 			return env.databaseService.getNoteById(id);

@@ -6,20 +6,25 @@ import type {
 /** Where memoryChatFiles pretends Directory.Data is. */
 const MEMORY_ROOT = "file:///memory/files/";
 
+/** memoryChatFiles' ChatFiles, with direct access to the bytes it holds. */
+export type MemoryChatFiles = ChatFiles & {
+    /** The bytes at a relative path or at the file: URI uri() gave for it. */
+    bytes(pathOrUri: string): Uint8Array | undefined;
+    /** Stores bytes at a relative path, at a file: URI of uri(), or under any other key. */
+    put(pathOrUri: string, bytes: Uint8Array): void;
+};
+
 /**
  * ChatFiles held in memory, by relative path. put() also stores bytes
  * under any key (a content: URI, a cache path) for copyFrom to read.
  */
-export function memoryChatFiles(): ChatFiles & {
-    bytes(rel: string): Uint8Array | undefined;
-    put(rel: string, bytes: Uint8Array): void;
-} {
+export function memoryChatFiles(): MemoryChatFiles {
     const store = new Map<string, Uint8Array>();
     const keyOf = (pathOrUri: string) =>
         pathOrUri.startsWith(MEMORY_ROOT) ? decodeURI(pathOrUri.slice(MEMORY_ROOT.length)) : pathOrUri;
     return {
-        bytes: (rel) => store.get(rel),
-        put: (rel, bytes) => void store.set(rel, bytes),
+        bytes: (pathOrUri) => store.get(keyOf(pathOrUri)),
+        put: (pathOrUri, bytes) => void store.set(keyOf(pathOrUri), bytes),
         uri: async (rel) => MEMORY_ROOT + encodeURI(rel),
         webUrl: async (rel) => `http://localhost/_capacitor_file_/memory/files/${encodeURI(rel)}`,
         size: async (rel) => store.get(rel)?.length ?? null,
