@@ -3,6 +3,9 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 
 import { ChatThreadComponent, THREAD_PAGE, THREAD_WINDOW, typingLine } from "../components/chat/chat_thread_component";
 import { EventBus } from "@odoo/owl";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Events } from "../constants/events";
 
 function stubLocale() {
@@ -512,5 +515,16 @@ describe("ChatThreadComponent", () => {
         ch.lastMessageId = 20;
         await c.refresh();
         expect(c._noMore).toBe(false);
+    });
+
+    it("the layout takes the router cell: the messages flex between header and composer, no viewport height", () => {
+        const sheet = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.scss"), "utf8");
+        const rule = (sel: string) => sheet.match(new RegExp(sel.replace(".", "\\.") + "\\s*\\{([^}]*)\\}"))?.[1] ?? "";
+        expect(rule("#chat-thread")).toMatch(/height:\s*100%/);
+        expect(rule("#chat-thread")).toMatch(/min-height:\s*0/);
+        expect(rule(".chat-thread__scroll")).toMatch(/flex:\s*1 1 0/);
+        expect(rule(".chat-thread__scroll")).toMatch(/min-height:\s*0/);
+        // A height computed from the viewport ignores the navbar and the keyboard
+        expect(sheet).not.toMatch(/\d+vh/);
     });
 });
