@@ -19,6 +19,7 @@ import { MODULE_UPLOAD_ROUTE } from "../services/chat/chatTransfer";
 import { outgoingPath, originalPath } from "../services/chat/chatFiles";
 import { setAttachmentSettings } from "../services/attachmentService";
 import { CREATE_CLOCK_SKEW_MS } from "../services/chat/chatOutbox";
+import { CREATE_QUIET_WINDOW_MS } from "../services/outboxMarker";
 import { v4 as uuidv4 } from "uuid";
 import { AppService } from "../services/appService";
 import { syncConfigIdFor } from "../models/syncConfig";
@@ -88,7 +89,10 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
   const history: Record<number, number[]> = { [CHAT]: Array.from({ length: 80 }, (_, i) => i + 1) };
   const state = {
     nextId: 5000,
-    /** Runs while a post is on the server; a `{__error: name}` it returns answers a JSON-RPC error. */
+    /**
+     * Runs while a post is on the server; a `{__error: name}` it returns answers a JSON-RPC error, a
+     * `{__id, __body}` answers that message instead of a new one (the module's uuid dedupe).
+     */
     onPost: null as null | ((params: any, id: number) => Promise<any>),
     /** While set, /mail/data holds its answer until the promise settles. */
     hold: null as null | Promise<void>,
@@ -160,6 +164,9 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
       case "/mail/message/post": {
         const id = state.nextId++;
         const refusal = state.onPost ? await state.onPost(params, id) : undefined;
+        if (refusal && typeof refusal === "object" && "__id" in refusal) {
+          return ok({ "mail.message": [{ ...msg(refusal.__id, params.thread_id, SELF, refusal.__body), date: "2026-10-25 10:00:05" }] });
+        }
         if (refusal && typeof refusal === "object" && "__error" in refusal) return answer(refusal);
         // As _check_attachments_access: one id the server does not hold refuses the whole post
         const ids: number[] = params.post_data.attachment_ids ?? [];
@@ -415,21 +422,28 @@ function reactionServer(odoo: ReturnType<typeof fakeOdoo>) {
  * `module` the guarded route compares the sha256 of the stored body with
  * `expected_fingerprint` and answers erplibre_conflict without writing;
  * without it that route answers Odoo's HTML 404. `bodies` are the server's
- * messages (a search_read of mail.message by id reads them); a message in
- * `missing` answers NotFound; `drop` applies the next calls then loses
- * their answer; while `hold` is set, a call waits on the server for it.
+ * messages, `files` their attachment ids (a message with files is not
+ * empty); a search_read of mail.message by id reads both, one by body
+ * (the marker search of a retried post) the user's messages holding the
+ * text. A message in `missing` answers NotFound; `drop` applies the next
+ * calls then loses their answer; while `hold` is set, a call waits on the
+ * server for it.
  */
 function editServer(odoo: ReturnType<typeof fakeOdoo>) {
   const state = {
     bodies: new Map<number, string>(),
+    files: new Map<number, number[]>(),
     missing: new Set<number>(),
     module: false,
     drop: 0,
     hold: null as null | Promise<void>,
   };
-  const empty = (b: string) => !b || b.replace('<span class="o-mail-Message-edited"></span>', "").replace(/<\/?p>|\s/g, "") === "";
+  const emptyBody = (b: string) => !b || b.replace('<span class="o-mail-Message-edited"></span>', "").replace(/<\/?p>|\s/g, "") === "";
+  const empty = (id: number) => emptyBody(state.bodies.get(id)!) && (state.files.get(id) ?? []).length === 0;
   const store = (id: number) => ({
-    "mail.message": [{ id, body: state.bodies.get(id), thread: { id: GROUP, model: "discuss.channel" }, attachment_ids: [] }],
+    "mail.message": [{
+      id, body: state.bodies.get(id), thread: { id: GROUP, model: "discuss.channel" }, attachment_ids: state.files.get(id) ?? [],
+    }],
   });
   const previousRoute = odoo.state.onRoute;
   odoo.state.onRoute = async (path, params) => {
@@ -441,30 +455,37 @@ function editServer(odoo: ReturnType<typeof fakeOdoo>) {
     const old = state.bodies.get(id)!;
     if (path === MODULE_EDIT_ROUTE) {
       const fingerprint = createHash("sha256").update(old, "utf8").digest("hex");
-      if (fingerprint !== params.expected_fingerprint || (empty(old) && params.body)) {
-        return { erplibre_conflict: empty(old) ? "deleted" : "changed", ...store(id) };
+      if (fingerprint !== params.expected_fingerprint || (empty(id) && params.body)) {
+        return { erplibre_conflict: empty(id) ? "deleted" : "changed", ...store(id) };
       }
     }
+    const wasEmpty = empty(id);
+    if (Array.isArray(params.attachment_ids) && params.attachment_ids.length === 0) state.files.delete(id);
     state.bodies.set(id, params.body
       ? `<p>${params.body}<span class="o-mail-Message-edited"></span></p>`
-      : empty(old) ? "" : '<span class="o-mail-Message-edited"></span>');
+      : wasEmpty ? "" : '<span class="o-mail-Message-edited"></span>');
     if (state.drop > 0) { state.drop--; throw new TypeError("Failed to fetch"); }
     return store(id);
   };
   const previousKw = odoo.state.onKw;
   odoo.state.onKw = async (params) => {
-    const byId = params.model === "mail.message" && params.method === "search_read"
-      ? params.kwargs.domain.find((d: any[]) => d[0] === "id" && d[1] === "=") : undefined;
-    if (!byId) return previousKw?.(params);
-    const id: number = byId[2];
-    return state.bodies.has(id) ? [{ id, body: state.bodies.get(id) || false }] : [];
+    const domain: any[][] = params.model === "mail.message" && params.method === "search_read" ? params.kwargs.domain : [];
+    const byId = domain.find((d) => d[0] === "id" && d[1] === "=");
+    const byBody = domain.find((d) => d[0] === "body" && d[1] === "ilike");
+    if (byId) {
+      const id: number = byId[2];
+      return state.bodies.has(id) ? [{ id, body: state.bodies.get(id) || false, attachment_ids: state.files.get(id) ?? [] }] : [];
+    }
+    if (byBody) return [...state.bodies].filter(([, b]) => b.includes(byBody[2])).map(([id, body]) => ({ id, body }));
+    return previousKw?.(params);
   };
   return {
     state,
     /** The edit calls, either route, in order. */
     edits: () => odoo.calls.filter((c) => c.path === "/mail/message/update_content" || c.path === MODULE_EDIT_ROUTE),
     /** The re-reads of a message body by id. */
-    reads: () => odoo.kw("search_read").filter((c) => c.params.model === "mail.message" && c.params.kwargs.fields?.join() === "body"),
+    reads: () => odoo.kw("search_read").filter((c) => c.params.model === "mail.message"
+      && c.params.kwargs.domain.some((d: any[]) => d[0] === "id")),
   };
 }
 
@@ -3182,15 +3203,125 @@ describe("ChatService", () => {
       expect(await ops()).toEqual([]);
     });
 
-    it("an edit back to the server's text writes nothing", async () => {
-      offline();
-      await chat.editMessage(src, GROUP, sent(601), "x", NONE);
-      await chat.editMessage(src, GROUP, sent(601), "hello", NONE);
-      online();
-      await chat.flushAll();
-      expect(server.edits()).toEqual([]);
-      expect(await bodyOf(601)).toBe(HELLO);
+    it("an edit back to the server's text writes nothing, both paths", async () => {
+      for (const guarded of [false, true]) {
+        if (guarded) await withModule();
+        offline();
+        await chat.editMessage(src, GROUP, sent(601), "x", NONE);
+        await chat.editMessage(src, GROUP, sent(601), "hello", NONE);
+        // Nothing left to send: the base shows again
+        expect(await ops()).toEqual([]);
+        expect(await bodyOf(601)).toBe(HELLO);
+        online();
+        await chat.flushAll();
+        expect(server.edits()).toEqual([]);
+      }
+    });
+
+    it("a caption added to a photo-only message without the module is written", async () => {
+      await chat.applyBus(config, [bus(1001, "mail.record/insert", { "mail.message": [{ ...msg(603, GROUP, SELF, ""), attachment_ids: [77] }] })]);
+      server.state.bodies.set(603, "");
+      server.state.files.set(603, [77]);
+      await chat.editMessage(src, GROUP, sent(603), "a caption", NONE);
+      expect(server.edits().map((c) => c.params)).toEqual([expect.objectContaining({ message_id: 603, body: "a caption", attachment_ids: null })]);
+      expect(server.state.bodies.get(603)).toBe(`<p>a caption${EDITED}</p>`);
+      expect(server.state.files.get(603)).toEqual([77]);
+      expect(await chat.notices()).toEqual([]);
+    });
+
+    it("an edit while its post runs survives the post's lost answer", async () => {
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      odoo.state.onPost = async (params, id) => {
+        server.state.bodies.set(id, params.post_data.body);
+        await held;
+        throw new TypeError("Failed to fetch");
+      };
+      const sending = chat.send(src, GROUP, "helo");
+      await vi.waitFor(() => expect(odoo.on("/mail/message/post")).toHaveLength(1));
+      const pending = (await chat.messages(config, GROUP)).find((m) => m.messageId === null)!;
+      await chat.editMessage(src, GROUP, { messageId: null, clientUuid: pending.clientUuid }, "hello", NONE);
+      release();
+      await sending;
+      // The retry finds the post by its marker and settles it with the body the server holds
+      clock = new Date(clock.getTime() + CREATE_QUIET_WINDOW_MS + 1000);
+      odoo.state.onPost = null;
+      await chat.flushAll({ force: true });
+      await chat.flushAll({ force: true });
+      expect(odoo.on("/mail/message/post")).toHaveLength(1);
+      expect(server.state.bodies.get(5000)).toBe(`<p>hello${EDITED}</p>`);
+      expect(await chat.notices()).toEqual([]);
       expect(await ops()).toEqual([]);
+    });
+
+    it("a post found again after a lost answer settles on the server's body", async () => {
+      odoo.state.onPost = async (params, id) => {
+        server.state.bodies.set(id, `<p>${params.post_data.body}</p>`);
+        throw new TypeError("Failed to fetch");
+      };
+      await chat.send(src, GROUP, "found again");
+      clock = new Date(clock.getTime() + CREATE_QUIET_WINDOW_MS + 1000);
+      odoo.state.onPost = null;
+      await chat.flushAll({ force: true });
+      expect(odoo.on("/mail/message/post")).toHaveLength(1);
+      expect(await bodyOf(5000)).toBe(server.state.bodies.get(5000));
+    });
+
+    it("a browser edit before the post's retried settle refuses the edit", async () => {
+      await chat.repo.setSourceState({ configId: config, moduleState: "outdated", moduleLevel: "1.0" });
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      odoo.state.onPost = async (params, id) => {
+        server.state.bodies.set(id, params.post_data.body);
+        await held;
+        // Echoed by the bus, then the answer is lost
+        await chat.applyBus(config, [bus(1001, "discuss.channel/new_message", {
+          id: params.thread_id, temporary_id: params.context.temporary_id,
+          data: { "mail.message": [msg(id, params.thread_id, SELF, params.post_data.body)] },
+        })]);
+        throw new TypeError("Failed to fetch");
+      };
+      const sending = chat.send(src, GROUP, "helo");
+      await vi.waitFor(() => expect(odoo.on("/mail/message/post")).toHaveLength(1));
+      const pending = (await chat.messages(config, GROUP)).find((m) => m.messageId === null)!;
+      await chat.editMessage(src, GROUP, { messageId: null, clientUuid: pending.clientUuid }, "hello", NONE);
+      release();
+      await sending;
+      // Edited in the browser: the body loses the post's marker, and its record reaches the phone
+      server.state.bodies.set(5000, `<p>browser${EDITED}</p>`);
+      await chat.applyBus(config, [bus(1002, "mail.record/insert", { "mail.message": [
+        { id: 5000, body: `<p>browser${EDITED}</p>`, thread: { id: GROUP, model: "discuss.channel" } },
+      ] })]);
+      expect((await ops("chat.edit"))[0].params.baseBody).toBeNull();
+      // The retried post finds no marker; the module answers the message it holds
+      clock = new Date(clock.getTime() + CREATE_QUIET_WINDOW_MS + 1000);
+      odoo.state.onPost = async () => ({ __id: 5000, __body: server.state.bodies.get(5000) });
+      await chat.flushAll({ force: true });
+      await chat.flushAll({ force: true });
+      expect(server.edits()).toEqual([]);
+      expect(server.state.bodies.get(5000)).toBe(`<p>browser${EDITED}</p>`);
+      expect((await chat.notices()).map((n) => [n.kind, n.reason, n.edit?.text])).toEqual([["chat.edit", "changed", "hello"]]);
+    });
+
+    it("a refused running edit takes its waiting follow-up into one notice", async () => {
+      await withModule();
+      let release!: () => void;
+      server.state.hold = new Promise<void>((r) => { release = r; });
+      const first = chat.editMessage(src, GROUP, sent(601), "one", NONE);
+      await vi.waitFor(() => expect(server.edits()).toHaveLength(1));
+      await chat.editMessage(src, GROUP, sent(601), "two", BOB_PICK);
+      // The browser edits while the first is on the wire
+      server.state.bodies.set(601, `<p>browser${EDITED}</p>`);
+      server.state.hold = null;
+      release();
+      await first;
+      await chat.flushAll();
+      expect(server.edits()).toHaveLength(1);
+      expect(await ops("chat.edit")).toEqual([expect.objectContaining({ status: "blocked" })]);
+      expect((await chat.notices()).map((n) => n.edit)).toEqual([
+        { target: { messageId: 601, clientUuid: null }, text: "two", mentions: BOB_PICK, deleted: false },
+      ]);
+      expect(await bodyOf(601)).toBe(`<p>browser${EDITED}</p>`);
     });
 
     it("two offline edits send the last text once", async () => {
@@ -3490,8 +3621,8 @@ describe("ChatService", () => {
         kind: "chat.edit", reason: "vanished", message: { messageId: 601, clientUuid: null },
       })]);
       expect((await chat.notices())[0].edit).toBeUndefined();
-      // The cache goes back to the body the server held
-      expect(await bodyOf(601)).toBe(HELLO);
+      // Gone for the server: hidden, as a re-read that finds no message leaves it
+      expect(await bodyOf(601)).toBe("");
     });
 
     it("a refused delete shows the message again", async () => {

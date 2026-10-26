@@ -18,7 +18,7 @@ import { ChatCsrf } from "./chatCsrf";
 import { countEmojiUse } from "./chatEmoji";
 import { deviceChatFiles, type ChatFiles, type ChatHttp } from "./chatFiles";
 import { ChatModuleLevel, effectiveLevel, levelAtLeast, moduleProbe } from "./chatModule";
-import { CHAT_EDIT, ChatOutbox, sameTarget, type CreateMode } from "./chatOutbox";
+import { CHAT_EDIT, ChatOutbox, sameTarget, targetOf, type CreateMode } from "./chatOutbox";
 import { ChatPeople } from "./chatPeople";
 import { ChatRepository } from "./chatRepository";
 import { chatSettings } from "./chatSettings";
@@ -978,7 +978,7 @@ export class ChatService {
     const named: MessageTarget = { messageId: message.messageId, clientUuid: message.clientUuid };
     const ops = await this.db.getOutboxOpsForConfig(configId);
     const post = message.messageId === null && message.outboxOpId ? ops.find((o) => o.id === message.outboxOpId) : undefined;
-    const edits = ops.filter((o) => o.kind === CHAT_EDIT && o.status !== "blocked" && sameTarget(o.params as MessageTarget, named));
+    const edits = ops.filter((o) => o.kind === CHAT_EDIT && o.status !== "blocked" && sameTarget(targetOf(o), named));
     // The waiting one holds the newest text; a running one the text it sends
     const edit = edits.find((o) => o.status !== "running") ?? edits[0];
     const queued = edit ?? post;

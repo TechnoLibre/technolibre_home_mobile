@@ -30,7 +30,7 @@ import {
 } from "./chatTransfer";
 import { syncConfigIdFor } from "../../models/syncConfig";
 import { CREATE_QUIET_WINDOW_MS, clientMarker } from "../outboxMarker";
-import { bodyHasMarker, bodyText, chatMarker, isEmptyBody, isEmptyMessage, withEditedMark } from "./chatBody";
+import { bodyHasMarker, bodyText, chatMarker, isEmptyMessage, withEditedMark } from "./chatBody";
 import { EMPTY_MENTIONS, composeBody, type Mentions } from "./chatCompose";
 import { emojiConversions } from "./chatEmoji";
 import { effectiveLevel, levelAtLeast } from "./chatModule";
@@ -168,6 +168,25 @@ class EditConflictError extends Error {
   }
 }
 
+/**
+ * The server's body an edit or a delete of `message` is made against: the
+ * one the first edit queued on it keeps (`mine`: the ops naming it), else
+ * the cached body; null for a message without a server id yet.
+ */
+function baseBodyOf(message: ChatMessage, mine: OutboxOp[]): string | null {
+  const first = dependencyOrder(mine.filter((o) => o.kind === CHAT_EDIT))[0];
+  if (first) return first.params.baseBody ?? null;
+  return message.messageId === null ? null : message.body;
+}
+
+/**
+ * Whether `body` is still the body the post of an edit's message sent: it
+ * carries that post's marker, which a browser edit, rebuilding the body
+ * from its text, drops. An edit of a message the phone did not post has
+ * no client uuid and takes any body.
+ */
+const postBody = (op: OutboxOp, body: string): boolean => !op.params.clientUuid || bodyHasMarker(body, op.params.clientUuid);
+
 /** Whether a post may be on the server already: running, or sent once without the proof that nothing left (createSentAt). */
 const postStarted = (op: OutboxOp): boolean => op.status === "running" || !!op.params.createSentAt;
 
@@ -274,6 +293,11 @@ const isVanished = (e: unknown): boolean => e instanceof OdooRpcError && e.odooN
 export function sameTarget(a: MessageTarget, b: MessageTarget): boolean {
   if (a.clientUuid && b.clientUuid) return a.clientUuid === b.clientUuid;
   return a.messageId != null && a.messageId === b.messageId;
+}
+
+/** The message an action on a message names, from its params (MESSAGE_KINDS). */
+export function targetOf(op: Pick<OutboxOp, "params">): MessageTarget {
+  return { messageId: op.params.messageId ?? null, clientUuid: op.params.clientUuid ?? null };
 }
 
 /**
@@ -1061,7 +1085,7 @@ export class ChatOutbox {
     const key = messageKeyOf(message);
     const group = (await this.repo.reactionsOf(configId, message.channelId, [key])).get(key)?.find((g) => g.content === content);
     return this.queueAction(configId, CHAT_REACTION, channelId, { ...named, content, action, base: !!group?.selfReacted }, {
-      same: (o) => o.params.content === content && sameTarget(o.params as MessageTarget, named),
+      same: (o) => o.params.content === content && sameTarget(targetOf(o), named),
       merge: (stored) => ({ action, messageId: stored.messageId ?? named.messageId }),
       after: message.messageId === null ? message.outboxOpId : null,
       noop: (merged) => (merged.action === "add") === !!merged.base,
@@ -1105,9 +1129,11 @@ export class ChatOutbox {
    * for that post go. Otherwise a text equal to the shown one (bodyText,
    * the browser's own check) queues nothing (null), and one edit waits per
    * message (queueAction): the last text wins, the first op's baseBody is
-   * kept (a follow-up behind a running edit takes that op's), and an edit
-   * of a message whose post still runs waits for it. Shown at once with
-   * the edited span the server adds. Rejects for a message not cached,
+   * kept (baseBodyOf: a follow-up behind a running edit takes that op's),
+   * and an edit of a message whose post still runs waits for it. Waiting
+   * edits that end on the base's text (noop: none running or sent) are
+   * cancelled and the base shows again. Otherwise shown at once with the
+   * edited span the server adds. Rejects for a message not cached,
    * failed, or being deleted.
    */
   async queueEdit(
@@ -1122,18 +1148,24 @@ export class ChatOutbox {
     if (message.status === "failed") throw new Error("A message not sent takes no edit.");
     const named: MessageTarget = { messageId: message.messageId, clientUuid: message.clientUuid };
     const mine = (await this.db.getOutboxOpsForConfig(configId))
-      .filter((o) => o.status !== "blocked" && sameTarget(o.params as MessageTarget, named));
+      .filter((o) => o.status !== "blocked" && sameTarget(targetOf(o), named));
     if (mine.some((o) => o.kind === CHAT_DELETE)) throw new Error("A message being deleted takes no edit.");
     const body = composeBody(text, mentions, await emojiConversions()).body;
     if (message.messageId === null && (await this.foldIntoPost(message, text, mentions, body, mine))) return null;
     if (bodyText(message.body) === text) return null;
-    const first = dependencyOrder(mine.filter((o) => o.kind === CHAT_EDIT))[0];
-    const baseBody: string | null = first ? (first.params.baseBody ?? null) : message.messageId === null ? null : message.body;
+    const baseBody = baseBodyOf(message, mine);
     return this.queueAction(configId, CHAT_EDIT, channelId, { ...named, text, mentions, baseBody }, {
-      same: (o) => sameTarget(o.params as MessageTarget, named),
+      same: (o) => sameTarget(targetOf(o), named),
       merge: (stored) => ({ text, mentions, messageId: stored.messageId ?? named.messageId }),
       after: message.messageId === null ? message.outboxOpId : null,
-      local: () => this.showBody(configId, named, withEditedMark(body)),
+      noop: (merged) => typeof merged.baseBody === "string" && bodyText(merged.baseBody) === merged.text,
+      local: async () => {
+        // Nothing left to send (a text back to the base): the base shows again
+        const left = (await this.db.getOutboxOpsForConfig(configId))
+          .some((o) => o.kind === CHAT_EDIT && o.status !== "blocked" && sameTarget(targetOf(o), named));
+        if (left) await this.showBody(configId, named, withEditedMark(body));
+        else if (typeof baseBody === "string") await this.showBody(configId, named, baseBody);
+      },
     });
   }
 
@@ -1184,11 +1216,10 @@ export class ChatOutbox {
         return null;
       }
       const mine = all.filter((o) => MESSAGE_KINDS.includes(o.kind) && o.status !== "blocked"
-        && sameTarget(o.params as MessageTarget, named));
+        && sameTarget(targetOf(o), named));
       const queued = mine.find((o) => o.kind === CHAT_DELETE);
       if (queued) return queued;
-      const edit = dependencyOrder(mine.filter((o) => o.kind === CHAT_EDIT))[0];
-      const baseBody: string | null = edit ? (edit.params.baseBody ?? null) : message.messageId === null ? null : message.body;
+      const baseBody = baseBodyOf(message, mine);
       const running = mine.find((o) => o.status === "running");
       for (const o of mine) if (o.status !== "running") await this.outbox.cancel(o.id);
       const op = await this.outbox.enqueue({
@@ -1418,8 +1449,8 @@ export class ChatOutbox {
    * phone shows until they are sent: per message a queued delete shows "",
    * else the newest edit its text (editedBody). An edit whose baseBody is
    * still unknown (queued while its post ran) takes the delta's body as
-   * its base; a known base never moves, so a browser edit read meanwhile
-   * still refuses it. `except` is left out: the op whose own answer this
+   * its base while that body is still the post's (postBody); a known base
+   * never moves, so a browser edit read meanwhile still refuses it. `except` is left out: the op whose own answer this
    * is.
    */
   private async overlayBodies(configId: string, delta: StoreDelta, except?: string): Promise<void> {
@@ -1433,7 +1464,9 @@ export class ChatOutbox {
         ?? (op.params.clientUuid ? (await this.repo.messageByClientUuid(configId, op.params.clientUuid))?.messageId ?? null : null);
       const m = messageId === null ? undefined : carried.get(messageId);
       if (!m || shown.get(messageId!)?.kind === CHAT_DELETE) continue;
-      if (op.kind === CHAT_EDIT && op.params.baseBody == null) await this.outbox.setParams(op.id, { baseBody: m.body });
+      if (op.kind === CHAT_EDIT && op.params.baseBody == null && postBody(op, m.body!)) {
+        await this.outbox.setParams(op.id, { baseBody: m.body });
+      }
       shown.set(messageId!, op);
     }
     for (const [messageId, op] of shown) {
@@ -1473,12 +1506,12 @@ export class ChatOutbox {
           count: o.params.count ?? 1,
           label: o.params.label ?? "",
           ...(MESSAGE_KINDS.includes(o.kind)
-            ? { message: { messageId: o.params.messageId ?? null, clientUuid: o.params.clientUuid ?? null } }
+            ? { message: targetOf(o) }
             : {}),
           ...(o.kind === CHAT_EDIT && reason === "changed"
             ? {
               edit: {
-                target: { messageId: o.params.messageId ?? null, clientUuid: o.params.clientUuid ?? null },
+                target: targetOf(o),
                 text: o.params.text ?? "",
                 mentions: o.params.mentions ?? EMPTY_MENTIONS,
                 deleted: o.params.conflict === "deleted",
@@ -1944,7 +1977,12 @@ export class ChatOutbox {
     let result: any = null;
     try {
       if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the post waits for the network.");
-      if (op.attempts > 1) messageId = await this.findSent(creds, op);
+      const found = op.attempts > 1 ? await this.findSent(creds, op) : null;
+      if (found) {
+        messageId = found.id;
+        // The body the server holds, so the message settles on it and not on the pending one
+        result = { "mail.message": [{ id: found.id, body: found.body, thread: { id: channelId, model: CHANNEL_MODEL } }] };
+      }
       if (messageId === null) {
         await this.outbox.setParams(op.id, { createSentAt: this.now().toISOString() });
         const postData: Record<string, any> = {
@@ -2049,12 +2087,12 @@ export class ChatOutbox {
   }
 
   /**
-   * The id of the user's own message in the channel that carries this op's
-   * marker comment exactly, or null. The search is by author and the hit is
+   * The id and body of the user's own message in the channel that carries
+   * this op's marker comment exactly, or null. The search is by author and the hit is
    * checked on the whole comment, so another member's message that quotes
    * the uuid is never taken for the post. Two hits block the op.
    */
-  private async findSent(creds: SyncCredentials, op: OutboxOp): Promise<number | null> {
+  private async findSent(creds: SyncCredentials, op: OutboxOp): Promise<{ id: number; body: string } | null> {
     const partnerId = (await this.rpc.sessionInfo(creds)).partnerId;
     if (!partnerId) throw new Error("The author partner of the session is unknown.");
     const found = (await this.rpc.searchRead<{ id: number; body: string }>(
@@ -2078,7 +2116,7 @@ export class ChatOutbox {
         op.id,
       );
     }
-    return found.length === 1 ? found[0].id : null;
+    return found.length === 1 ? { id: found[0].id, body: found[0].body ?? "" } : null;
   }
 
   /**
@@ -2680,10 +2718,7 @@ export class ChatOutbox {
       const { configId } = act;
       const channelId: number = act.params.channelId;
       if (await this.leaving(configId, channelId)) return;
-      const message = await this.repo.messageOf(configId, {
-        messageId: act.params.messageId ?? null,
-        clientUuid: act.params.clientUuid ?? null,
-      });
+      const message = await this.repo.messageOf(configId, targetOf(act));
       if (message && message.messageId === null && message.outboxOpId && (await this.db.getOutboxOp(message.outboxOpId))) {
         throw new Error(`${act.kind} waits for the post of its message.`);
       }
@@ -2707,8 +2742,10 @@ export class ChatOutbox {
           throw e;
         }
         if (e instanceof EditConflictError) {
+          // The follow-ups go first: the server's body is written with nothing of theirs laid over it
+          const latest = await this.takeFollowUps(act);
           await this.serial(configId, () => this.applyConflict(act, messageId, e));
-          await this.outbox.setParams(act.id, { conflict: e.conflict });
+          await this.outbox.setParams(act.id, { conflict: e.conflict, ...latest });
           return this.giveUpMessage(act, "changed", e.message);
         }
         if (isVanished(e)) return this.giveUpMessage(act, "vanished", (e as Error).message);
@@ -2721,7 +2758,7 @@ export class ChatOutbox {
         const delta = parseStore(result, configId, (await this.repo.sourceState(configId)).selfPartnerId);
         const answered = delta.messages.find((m) => m.messageId === messageId)?.body;
         if (act.kind === CHAT_EDIT && answered !== undefined) {
-          await this.rebaseEdits(act, { messageId, clientUuid: act.params.clientUuid ?? null }, answered);
+          await this.rebaseEdits(act, { ...targetOf(act), messageId }, answered);
         }
         await this.overlayMessages(configId, delta, act.id);
         await this.repo.applyDelta(configId, delta);
@@ -2730,11 +2767,25 @@ export class ChatOutbox {
     });
   }
 
+  /**
+   * The edits of `op`'s message waiting behind it, refused with it: they
+   * were made against the same body. They leave the outbox, and the newest
+   * text and picks are returned for `op` to keep, so one notice holds the
+   * text the user wrote last; {} when none waits.
+   */
+  private async takeFollowUps(op: OutboxOp): Promise<{ text?: string; mentions?: Mentions }> {
+    const waiting = dependencyOrder(await this.db.getOutboxOpsForConfig(op.configId)).filter((o) => o.id !== op.id
+      && o.kind === CHAT_EDIT && o.status !== "running" && o.status !== "blocked" && sameTarget(targetOf(o), targetOf(op)));
+    for (const o of waiting) await this.outbox.cancel(o.id);
+    const last = waiting.at(-1);
+    return last ? { text: last.params.text, mentions: last.params.mentions ?? EMPTY_MENTIONS } : {};
+  }
+
   /** The edits of `target` still to be sent after `op` are made against `body`, the server's answer to it. */
   private async rebaseEdits(op: OutboxOp, target: MessageTarget, body: string): Promise<void> {
     for (const o of await this.db.getOutboxOpsForConfig(op.configId)) {
       if (o.id === op.id || o.kind !== CHAT_EDIT || o.status === "running" || o.status === "blocked") continue;
-      if (sameTarget(o.params as MessageTarget, target)) await this.outbox.setParams(o.id, { baseBody: body });
+      if (sameTarget(targetOf(o), target)) await this.outbox.setParams(o.id, { baseBody: body });
     }
   }
 
@@ -2784,11 +2835,13 @@ export class ChatOutbox {
    * Sends an edit as the browser does (D5): the composer's HTML
    * (composeBody), its partner ids, `attachment_ids: null` (the
    * attachments stay). The body it is made against is baseBody, else (its
-   * post's answer never read) the server's body read now. With editGuard
+   * post's answer never read) the server's body read now, taken only while
+   * it is still the post's (postBody: otherwise "changed"). With editGuard
    * the module's route writes only when the server's body still has that
    * body's fingerprint; it answers erplibre_conflict with the message
-   * otherwise. Without it the body is re-read just before Odoo's route,
-   * and an emptied or missing message, or another body, is the conflict.
+   * otherwise. Without it the body and the attachments are re-read just
+   * before Odoo's route: a missing or empty message (isEmptyMessage: no
+   * text and no file) is "deleted", another body "changed".
    * A server body that reads as the text this edit sends (the edited span
    * and the paragraph aside: bodyText) is this edit already written, an
    * answer lost, or nothing to change: done, without a write. Any other
@@ -2801,69 +2854,72 @@ export class ChatOutbox {
     const composed = composeBody(p.text ?? "", p.mentions ?? EMPTY_MENTIONS, await emojiConversions());
     const sends = bodyText(composed.body);
     const values = { message_id: messageId, body: composed.body, attachment_ids: null, partner_ids: composed.partnerIds };
-    const reread = async (): Promise<string | null> => {
-      const rows = await this.rpc.searchRead<{ id: number; body: string | false }>(
-        creds, "mail.message", [["id", "=", messageId]], ["body"]);
-      return rows.length > 0 ? (rows[0].body || "") : null;
-    };
+    const guarded = await this.editGuard(op.configId);
     let baseBody: string | null = p.baseBody ?? null;
-    if (await this.editGuard(op.configId)) {
-      if (baseBody === null) {
-        baseBody = (await reread()) ?? "";
-        await this.outbox.setParams(op.id, { baseBody });
+    if (!guarded || baseBody === null) {
+      const rows = await this.rpc.searchRead<{ id: number; body: string | false; attachment_ids: number[] }>(
+        creds, "mail.message", [["id", "=", messageId]], ["body", "attachment_ids"]);
+      const server = rows.length > 0 ? (rows[0].body || "") : null;
+      if (server !== null && bodyText(server) === sends) return { "mail.message": [{ id: messageId, body: server }] };
+      if (server === null || isEmptyMessage(server, (rows[0].attachment_ids ?? []).length)) {
+        throw new EditConflictError("deleted", null, server);
       }
-      const expected = await bodyFingerprint(baseBody);
-      const result = await this.rpc.callWithAuth(creds, async (sessionId) => {
-        try {
-          return await this.rpc.jsonRoute(creds.odooUrl, sessionId, MODULE_EDIT_ROUTE, { ...values, expected_fingerprint: expected });
-        } catch (e: unknown) {
-          if (Object.getPrototypeOf(e) === Error.prototype && /^HTTP 404\b/.test((e as Error).message)) {
-            throw new RouteMissingError((e as Error).message);
-          }
-          throw e;
-        }
-      }).catch(async (e: unknown) => {
-        if (!(e instanceof RouteMissingError)) throw e;
-        try {
-          await this.moduleRefused(op.configId);
-        } catch (probe) {
-          console.warn("chat: module probe after a missing edit route failed", probe);
-        }
-        throw new Error(`The guarded edit route is missing on ${creds.odooUrl}: ${e.message}`);
-      });
-      if (!result?.erplibre_conflict) return result;
-      const server = parseStore(result, op.configId, null).messages.find((m) => m.messageId === messageId)?.body ?? "";
-      if (bodyText(server) === sends) return result;
-      throw new EditConflictError(result.erplibre_conflict === "deleted" ? "deleted" : "changed", result, null);
+      if (baseBody === null) {
+        // The post's answer never read: the body read now is the base only while it is still the post's
+        if (!postBody(op, server)) throw new EditConflictError("changed", null, server);
+        baseBody = server;
+        await this.outbox.setParams(op.id, { baseBody });
+      } else if (server !== baseBody) {
+        throw new EditConflictError("changed", null, server);
+      }
+      if (!guarded) return this.rpc.callWithAuth(creds, (sessionId) => this.rpc.jsonRoute(creds.odooUrl, sessionId, ODOO_EDIT_ROUTE, values));
     }
-    const server = await reread();
-    if (server !== null && bodyText(server) === sends) return { "mail.message": [{ id: messageId, body: server }] };
-    if (server === null || isEmptyBody(server)) throw new EditConflictError("deleted", null, server);
-    if (baseBody !== null && server !== baseBody) throw new EditConflictError("changed", null, server);
-    return this.rpc.callWithAuth(creds, (sessionId) => this.rpc.jsonRoute(creds.odooUrl, sessionId, ODOO_EDIT_ROUTE, values));
+    const expected = await bodyFingerprint(baseBody);
+    const result = await this.rpc.callWithAuth(creds, async (sessionId) => {
+      try {
+        return await this.rpc.jsonRoute(creds.odooUrl, sessionId, MODULE_EDIT_ROUTE, { ...values, expected_fingerprint: expected });
+      } catch (e: unknown) {
+        if (Object.getPrototypeOf(e) === Error.prototype && /^HTTP 404\b/.test((e as Error).message)) {
+          throw new RouteMissingError((e as Error).message);
+        }
+        throw e;
+      }
+    }).catch(async (e: unknown) => {
+      if (!(e instanceof RouteMissingError)) throw e;
+      try {
+        await this.moduleRefused(op.configId);
+      } catch (probe) {
+        console.warn("chat: module probe after a missing edit route failed", probe);
+      }
+      throw new Error(`The guarded edit route is missing on ${creds.odooUrl}: ${e.message}`);
+    });
+    if (!result?.erplibre_conflict) return result;
+    const server = parseStore(result, op.configId, null).messages.find((m) => m.messageId === messageId)?.body ?? "";
+    if (bodyText(server) === sends) return result;
+    throw new EditConflictError(result.erplibre_conflict === "deleted" ? "deleted" : "changed", result, null);
   }
+
 
   /**
    * Gives an action on a message up (giveUp). A reaction no later op of
    * its key follows is shown again as the server held it (base). An edit
-   * or a delete refused or vanished, with no other edit or delete of the
-   * message queued, shows the message again with the body it was made
-   * against (baseBody); a conflict wrote the server's body already.
+   * or a delete with no other edit or delete of the message queued shows
+   * the message as the server has it: hidden ("") when it vanished, as a
+   * re-read that finds no message leaves it; the body it was made against
+   * (baseBody) when refused; a conflict wrote the server's body already.
    */
   private async giveUpMessage(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
-    if ((op.kind === CHAT_EDIT || op.kind === CHAT_DELETE) && reason !== "changed" && typeof op.params.baseBody === "string") {
-      const target = { messageId: op.params.messageId ?? null, clientUuid: op.params.clientUuid ?? null };
+    const target = targetOf(op);
+    const shown = reason === "vanished" ? "" : reason === "refused" ? op.params.baseBody : undefined;
+    if ((op.kind === CHAT_EDIT || op.kind === CHAT_DELETE) && typeof shown === "string") {
       const later = (await this.db.getOutboxOpsForConfig(op.configId)).some((o) => o.id !== op.id
-        && (o.kind === CHAT_EDIT || o.kind === CHAT_DELETE) && o.status !== "blocked" && sameTarget(o.params as MessageTarget, target));
-      if (!later) await this.showBody(op.configId, target, op.params.baseBody);
+        && (o.kind === CHAT_EDIT || o.kind === CHAT_DELETE) && o.status !== "blocked" && sameTarget(targetOf(o), target));
+      if (!later) await this.showBody(op.configId, target, shown);
     }
     if (op.kind === CHAT_REACTION) {
       const key = targetKey(op);
       const later = (await this.db.getOutboxOpsForConfig(op.configId)).some((o) => o.id !== op.id && targetKey(o) === key);
-      if (!later) {
-        const target = { messageId: op.params.messageId ?? null, clientUuid: op.params.clientUuid ?? null };
-        await this.showReaction(op.configId, target, op.params.content, !!op.params.base);
-      }
+      if (!later) await this.showReaction(op.configId, target, op.params.content, !!op.params.base);
     }
     return this.giveUp(op, reason, message);
   }
