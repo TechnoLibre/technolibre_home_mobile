@@ -3391,7 +3391,12 @@ describe("ChatService", () => {
       const target = { messageId: null, clientUuid: pending.clientUuid };
       await chat.react(src, GROUP, target, "\u{1F44D}", true);
       expect((await ops()).map((o) => o.kind).sort()).toEqual(["chat.post", "chat.reaction", "chat.upload"]);
+      const outbox = (chat.queue as any).outbox as OutboxService;
+      const kinds = new Map((await ops()).map((o) => [o.id, o.kind]));
+      const cancelled = vi.spyOn(outbox, "cancel");
       await chat.deleteMessage(src, GROUP, target);
+      // The post goes last: an action cut off before it never runs against a row without its post
+      expect(cancelled.mock.calls.map(([id]) => kinds.get(id)).at(-1)).toBe("chat.post");
       expect(await ops()).toEqual([]);
       expect(await chat.repo.messageByClientUuid(config, pending.clientUuid!)).toBeNull();
       expect(await chat.repo.outgoingOf(config, pending.clientUuid!)).toEqual([]);
@@ -3647,6 +3652,24 @@ describe("ChatService", () => {
       expect(await chat.notices()).toEqual([]);
     });
 
+    it("takeResume of a message deleted since its refusal joins the new message's text", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "late", NONE);
+      server.state.bodies.set(601, `<p>browser${EDITED}</p>`);
+      online();
+      await chat.flushAll();
+      const [notice] = await chat.notices();
+      expect(notice.edit).toMatchObject({ text: "late", deleted: false });
+      // Deleted afterwards: the emptied row stays cached
+      await chat.deleteMessage(src, GROUP, sent(601));
+      expect(await bodyOf(601)).toBe(EDITED);
+      chat.requestResume(config, notice.id);
+      const asked: any[] = [];
+      await chat.takeResume(config, GROUP, async (e) => { asked.push(e); return true; });
+      expect(asked).toEqual([expect.objectContaining({ text: "late", deleted: true })]);
+      expect(await chat.draft(config, GROUP)).toMatchObject({ text: "late", edit: null });
+    });
+
     it("takeResume asks first; a refusal keeps the notice and forgets the request", async () => {
       offline();
       await chat.editMessage(src, GROUP, sent(601), "late", NONE);
@@ -3675,6 +3698,42 @@ describe("ChatService", () => {
       expect(server.state.bodies.get(601)).toBe(`<p>made again${EDITED}</p>`);
       // The refused text stays available, its « Reprendre » with it
       expect((await chat.notices()).map((n) => [n.id, n.edit?.text])).toEqual([[refused.id, "late"]]);
+    });
+
+    it("a second refused edit of a message is a notice of its own", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "late", NONE);
+      server.state.bodies.set(601, `<p>browser${EDITED}</p>`);
+      online();
+      await chat.flushAll();
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "second", NONE);
+      server.state.bodies.set(601, `<p>browser again${EDITED}</p>`);
+      online();
+      await chat.flushAll();
+      // Both refused texts stay available, the newest with its own « Reprendre »
+      const texts = (await chat.notices()).map((n) => `${n.reason} ${n.edit?.text}`).sort();
+      expect(texts).toEqual(["changed late", "changed second"]);
+      expect((await ops("chat.edit")).map((o) => `${o.status} ${o.params.text}`).sort()).toEqual(["blocked late", "blocked second"]);
+    });
+
+    it("an edit after a lost edit answer is sent, both paths", async () => {
+      for (const guarded of [false, true]) {
+        if (guarded) await withModule();
+        const [one, two] = guarded ? ["g1", "g2"] : ["one", "two"];
+        server.state.drop = 1;
+        await chat.editMessage(src, GROUP, sent(601), one, NONE);
+        await chat.editMessage(src, GROUP, sent(601), two, NONE);
+        // The first keeps its text, which may be on the server already: the second waits behind it
+        const edits = await ops("chat.edit");
+        const first = edits.find((o) => o.params.text === one)!;
+        expect(edits.find((o) => o.id !== first.id)).toMatchObject({ dependsOn: first.id, params: { text: two } });
+        await chat.flushAll({ force: true });
+        expect(server.state.bodies.get(601)).toBe(`<p>${two}${EDITED}</p>`);
+        expect(await chat.notices()).toEqual([]);
+        expect(await ops()).toEqual([]);
+        expect(await bodyOf(601)).toBe(`<p>${two}${EDITED}</p>`);
+      }
     });
 
     it("an edit from the draft ends the draft's edit once queued, before the flush", async () => {
@@ -3750,6 +3809,30 @@ describe("ChatService", () => {
       await chat.deleteMessage(src, GROUP, sent(602));
       expect((await chat.notices()).map((n) => [n.kind, n.reason])).toEqual([["chat.delete", "refused"]]);
       expect(await bodyOf(602)).toBe("<p>bye</p>");
+    });
+
+    it("a refused delete shows the message without the reactions it cancelled", async () => {
+      offline();
+      await chat.react(src, GROUP, sent(602), "\u{1F44D}", true);
+      expect((await chat.reactions(config, GROUP, ["m602"])).get("m602")).toHaveLength(1);
+      await chat.deleteMessage(src, GROUP, sent(602));
+      odoo.state.onRoute = async () => ({ __error: "odoo.exceptions.AccessError" });
+      online();
+      await chat.flushAll();
+      expect((await chat.notices()).map((n) => [n.kind, n.reason])).toEqual([["chat.delete", "refused"]]);
+      expect(await bodyOf(602)).toBe("<p>bye</p>");
+      expect((await chat.reactions(config, GROUP, ["m602"])).get("m602") ?? []).toEqual([]);
+    });
+
+    it("a refused delete over an edit whose answer was lost shows the server's body", async () => {
+      server.state.drop = 1;
+      await chat.editMessage(src, GROUP, sent(601), "applied", NONE);
+      expect(server.state.bodies.get(601)).toBe(`<p>applied${EDITED}</p>`);
+      odoo.state.onRoute = async () => ({ __error: "odoo.exceptions.AccessError" });
+      await chat.deleteMessage(src, GROUP, sent(601));
+      await chat.flushAll({ force: true });
+      expect((await chat.notices()).map((n) => [n.kind, n.reason])).toEqual([["chat.delete", "refused"]]);
+      expect(await bodyOf(601)).toBe(`<p>applied${EDITED}</p>`);
     });
 
     it("a load keeps the optimistic edit and the hidden delete", async () => {

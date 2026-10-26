@@ -3,6 +3,7 @@ import type {
   BusNotification, ChatAttachment, ChatChannel, ChatFileOrigin, ChatMember, ChatMessage, ChatModuleState, ChatNotice,
   ChatReaction, MessageTarget, OutgoingFile,
 } from "../../models/chat";
+import { messageKeyOf } from "../../models/chat";
 import { syncConfigIdFor } from "../../models/syncConfig";
 import type { DatabaseService } from "../databaseService";
 import { networkService } from "../networkService";
@@ -12,7 +13,7 @@ import type { OutboxService } from "../outboxService";
 import { nativeChatHttp } from "../../plugins/chatFilePlugin";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
 import { ChatAttachmentCache } from "./chatAttachmentCache";
-import { bodyText, mentionAnchors } from "./chatBody";
+import { bodyText, isEmptyMessage, mentionAnchors } from "./chatBody";
 import { EMPTY_MENTIONS, joinMentions, type Mentions } from "./chatCompose";
 import { joinDraftText } from "./chatDraft";
 import { ChatCsrf } from "./chatCsrf";
@@ -1058,7 +1059,9 @@ export class ChatService {
    * request. The text is stored in the draft before the notice goes, so it
    * is never only in memory: a message still cached and not deleted gets
    * it as the draft's edit (in place of the draft's own), a deleted or gone
-   * one joins it to the new message's text (joinDraftText); the picks
+   * one (also one emptied since the refusal: isEmptyMessage, `deleted`
+   * then given to `accept` as true) joins it to the new message's text
+   * (joinDraftText); the picks
    * join the draft's. A store that fails keeps the notice (the error is
    * thrown). The screen reads the draft again (draft()).
    */
@@ -1076,11 +1079,11 @@ export class ChatService {
     }
     if (notice.channelId !== channelId) return null;
     this.resumes.delete(configId);
-    const edit = notice.edit;
+    const edit = { ...notice.edit, deleted: notice.edit.deleted || !(await this.editable(configId, notice.edit.target)) };
     if (accept && !(await accept(edit))) return null;
     await this.queue.draftTask(configId, channelId, async (id) => {
       const draft = await this.repo.draftOf(configId, id);
-      const live = !edit.deleted && !!(await this.repo.messageOf(configId, edit.target));
+      const live = !edit.deleted && (await this.editable(configId, edit.target));
       if (live) await this.repo.putDraftEdit(configId, id, { target: edit.target, text: edit.text });
       else await this.repo.putDraftText(configId, id, joinDraftText(draft.text, edit.text));
       await this.repo.putDraftMentions(configId, id, joinMentions(draft.mentions, edit.mentions));
@@ -1088,6 +1091,16 @@ export class ChatService {
     const taken = await this.queue.takeRefusedEdit(configId, noticeId);
     this.changed(configId, channelId);
     return taken;
+  }
+
+  /** Whether the message a target names is cached and not emptied (isEmptyMessage: deleted in Discuss). */
+  private async editable(configId: string, target: MessageTarget): Promise<boolean> {
+    const message = await this.repo.messageOf(configId, target);
+    if (!message) return false;
+    const key = messageKeyOf(message);
+    const files = (await this.repo.attachmentsOf(configId, message.channelId,
+      message.messageId === null ? [] : [message.messageId], message.clientUuid ? [message.clientUuid] : [])).get(key) ?? [];
+    return !isEmptyMessage(message.body, files.length);
   }
 
   /** The cached reaction groups of the given message keys (messageKeyOf) of a channel, each list in the server's order. */

@@ -255,6 +255,8 @@ interface QueueActionOpts {
   after?: string | null;
   /** Whether merged params leave the server as it stood: nothing is sent. */
   noop?: (merged: Record<string, any>) => boolean;
+  /** Whether an op whose send may have reached the server (params.sentAt) keeps its values, as a running one. */
+  sentRuns?: boolean;
 }
 
 /** Odoo's "muted until I turn it back on", as mute_until_dt carries it. */
@@ -958,7 +960,10 @@ export class ChatOutbox {
    * before any of them) cancels the waiting ops and queues nothing: null.
    * An op whose send may have reached the server (params.sentAt, stamped
    * by runMessageAction) counts as running there: it is kept with the new
-   * value, a resend being idempotent. An edit refused because the message
+   * value, a resend being idempotent. With `sentRuns` (an edit, made
+   * against a body its own first send may have replaced) it keeps its
+   * value instead and the new one waits behind it, as behind a running
+   * op. An edit refused because the message
    * changed (isRefusedEdit) is not replaced: its notice keeps the refused
    * text. Runs under exclusive(), with the id the create settled on when it
    * did.
@@ -992,8 +997,11 @@ export class ChatOutbox {
       for (const o of same) if (o.status === "blocked" && !isRefusedEdit(o)) await this.outbox.cancel(o.id);
       const values = { ...(id === null ? {} : { channelId: id }), ...params };
       // In dependency order: the first waits for none of the others, a follow-up comes after the op it waits for
-      const waiting = dependencyOrder(same).filter((o) => o.status !== "running" && o.status !== "blocked");
-      const running = same.find((o) => o.status === "running");
+      const queued = dependencyOrder(same).filter((o) => o.status !== "running" && o.status !== "blocked");
+      // With sentRuns, the newest op that may have reached the server holds its values: only those after it take the new ones
+      const held = opts.sentRuns ? queued.findLastIndex((o) => !!o.params.sentAt) : -1;
+      const waiting = queued.slice(held + 1);
+      const running = same.find((o) => o.status === "running") ?? queued[held];
       const sent = waiting.some((o) => !!o.params.sentAt);
       let op: OutboxOp | null;
       if (waiting.length > 0) {
@@ -1192,7 +1200,10 @@ export class ChatOutbox {
    * the browser's own check) queues nothing (null), and one edit waits per
    * message (queueAction): the last text wins, the first op's baseBody is
    * kept (baseBodyOf: a follow-up behind a running edit takes that op's),
-   * and an edit of a message whose post still runs waits for it. Waiting
+   * and an edit of a message whose post still runs waits for it. An edit
+   * that may have reached the server (sentAt: its answer lost) keeps its
+   * text: the new one follows it, its base moved to the server's answer
+   * once the replay is done (rebaseEdits). Waiting
    * edits that end on the base's text (noop: none running or sent) are
    * cancelled and the base shows again. Otherwise shown at once with the
    * edited span the server adds. Rejects for a message not cached,
@@ -1221,6 +1232,7 @@ export class ChatOutbox {
       merge: (stored) => ({ text, mentions, messageId: stored.messageId ?? named.messageId }),
       after: message.messageId === null ? message.outboxOpId : null,
       noop: (merged) => typeof merged.baseBody === "string" && bodyText(merged.baseBody) === merged.text,
+      sentRuns: true,
       local: async () => {
         // Nothing left to send (a text back to the base): the base shows again
         const left = (await this.db.getOutboxOpsForConfig(configId))
@@ -1263,7 +1275,11 @@ export class ChatOutbox {
    * go (dropPendingMessage), and null is returned. Otherwise the edits and
    * reactions of the message still waiting are cancelled, and one delete
    * waits for what still runs on it (an edit, a reaction, its post). A
-   * second delete returns the first. Rejects for a message not cached.
+   * reaction cancelled with none of its key left running shows again as
+   * the server held it (base). An edit cancelled after a send that may
+   * have reached the server (sentAt) marks the delete editSent: its
+   * baseBody may be older than the server's body. A second delete returns
+   * the first. Rejects for a message not cached.
    */
   async queueDelete(configId: string, channelId: number, target: MessageTarget): Promise<OutboxOp | null> {
     const message = await this.repo.messageOf(configId, target);
@@ -1283,15 +1299,25 @@ export class ChatOutbox {
       if (queued) return queued;
       const baseBody = baseBodyOf(message, mine);
       const running = mine.find((o) => o.status === "running");
-      for (const o of mine) if (o.status !== "running") await this.outbox.cancel(o.id);
+      const cancelled = dependencyOrder(mine.filter((o) => o.status !== "running"));
+      for (const o of cancelled) await this.outbox.cancel(o.id);
+      const editSent = cancelled.some((o) => o.kind === CHAT_EDIT && !!o.params.sentAt);
       const op = await this.outbox.enqueue({
         noteId: CHAT_NOTE,
         configId,
         kind: CHAT_DELETE,
-        params: { channelId: id, ...named, baseBody },
+        params: { channelId: id, ...named, baseBody, ...(editSent ? { editSent } : {}) },
         dependsOn: running?.id ?? post?.id ?? null,
       });
       await this.showBody(configId, named, "");
+      // The first cancelled op of a reaction's key holds the server's state before any of them (base)
+      const shown = new Set<string>();
+      for (const o of cancelled) {
+        const key = targetKey(o);
+        if (o.kind !== CHAT_REACTION || shown.has(key) || mine.some((r) => r.status === "running" && targetKey(r) === key)) continue;
+        shown.add(key);
+        await this.showReaction(configId, named, o.params.content, !!o.params.base);
+      }
       return op;
     });
   }
@@ -1301,7 +1327,10 @@ export class ChatOutbox {
    * the posts of its conversation: its post, the uploads and refused-file
    * notices of its files, and every action on it (any state) leave the
    * outbox, an upload on the wire is stopped, and the row, its reactions,
-   * its file rows and their files go.
+   * its file rows and their files go. The actions go first, the uploads
+   * next and the post last: cut off midway, what is left is a pending
+   * message whose post still runs, never an action or an upload without
+   * its post.
    */
   private async dropPendingMessage(configId: string, message: ChatMessage, all: OutboxOp[]): Promise<void> {
     const uuid = message.clientUuid!;
@@ -1311,7 +1340,8 @@ export class ChatOutbox {
       || ((o.kind === CHAT_UPLOAD || o.kind === CHAT_FILE_REFUSED) && files.has(o.params.localUuid))
       || (MESSAGE_KINDS.includes(o.kind) && o.params.clientUuid === uuid)));
     this.stopUploads(mine);
-    for (const o of mine) await this.outbox.cancel(o.id);
+    const rank = (o: OutboxOp) => (o.id === message.outboxOpId ? 2 : MESSAGE_KINDS.includes(o.kind) ? 0 : 1);
+    for (const o of [...mine].sort((a, b) => rank(a) - rank(b))) await this.outbox.cancel(o.id);
     await this.repo.dropQueued(configId, uuid);
     await this.dropOutgoing(configId, [...files]);
   }
@@ -2836,6 +2866,11 @@ export class ChatOutbox {
         }
         if (isVanished(e)) return this.giveUpMessage(act, "vanished", (e as Error).message);
         if (!isRefused(e)) throw e;
+        if (act.kind === CHAT_DELETE && act.params.editSent) {
+          // An edit it cancelled may have been written: the message shows again as the server holds it
+          const body = await this.serverBody(creds, messageId).catch(() => null);
+          if (body !== null) return this.giveUpMessage({ ...act, params: { ...act.params, baseBody: body } }, "refused", (e as Error).message);
+        }
         return this.giveUpMessage(act, "refused", (e as Error).message);
       }
       await this.serial(configId, async () => {
@@ -2915,6 +2950,13 @@ export class ChatOutbox {
         }
     }
     throw new Error(`No sender for ${op.kind}.`);
+  }
+
+  /** The body the server holds for a message: "" when emptied, null when it is gone. */
+  private async serverBody(creds: SyncCredentials, messageId: number): Promise<string | null> {
+    const rows = await this.rpc.searchRead<{ id: number; body: string | false }>(
+      creds, "mail.message", [["id", "=", messageId]], ["body"]);
+    return rows.length > 0 ? (rows[0].body || "") : null;
   }
 
   /**
@@ -3003,7 +3045,8 @@ export class ChatOutbox {
     }
     if (op.kind === CHAT_REACTION) {
       const key = targetKey(op);
-      const later = (await this.db.getOutboxOpsForConfig(op.configId)).some((o) => o.id !== op.id && targetKey(o) === key);
+      const later = (await this.db.getOutboxOpsForConfig(op.configId))
+        .some((o) => o.id !== op.id && o.status !== "blocked" && targetKey(o) === key);
       if (!later) await this.showReaction(op.configId, target, op.params.content, !!op.params.base);
     }
     return this.giveUp(op, reason, message);
@@ -3013,11 +3056,14 @@ export class ChatOutbox {
    * Gives an action up: blocked with its reason, as a notice, unless a
    * later op of its key (targetKey: the same action, conversation, person
    * removed, message and content) is queued, which supersedes it, or the
-   * conversation is being left: then it simply leaves the outbox.
+   * conversation is being left: then it simply leaves the outbox. A notice
+   * of the key (blocked, e.g. a refused edit kept for « Reprendre »)
+   * supersedes nothing: this op becomes a notice of its own.
    */
   private async giveUp(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
     const key = targetKey(op);
-    const later = (await this.db.getOutboxOpsForConfig(op.configId)).some((o) => o.id !== op.id && targetKey(o) === key);
+    const later = (await this.db.getOutboxOpsForConfig(op.configId))
+      .some((o) => o.id !== op.id && o.status !== "blocked" && targetKey(o) === key);
     this.changed(op.configId, op.params.channelId ?? null);
     if (later) return;
     // An action of a conversation being left goes with it: a blocked one would hold the leave back
