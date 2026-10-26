@@ -12,11 +12,13 @@ import type { OutboxService } from "../outboxService";
 import { nativeChatHttp } from "../../plugins/chatFilePlugin";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
 import { ChatAttachmentCache } from "./chatAttachmentCache";
+import { bodyText, mentionAnchors } from "./chatBody";
+import { EMPTY_MENTIONS, type Mentions } from "./chatCompose";
 import { ChatCsrf } from "./chatCsrf";
 import { countEmojiUse } from "./chatEmoji";
 import { deviceChatFiles, type ChatFiles, type ChatHttp } from "./chatFiles";
 import { ChatModuleLevel, effectiveLevel, levelAtLeast, moduleProbe } from "./chatModule";
-import { ChatOutbox, type CreateMode } from "./chatOutbox";
+import { CHAT_EDIT, ChatOutbox, sameTarget, type CreateMode } from "./chatOutbox";
 import { ChatPeople } from "./chatPeople";
 import { ChatRepository } from "./chatRepository";
 import { chatSettings } from "./chatSettings";
@@ -183,6 +185,7 @@ export class ChatService {
     };
     this.queue.changed = (configId, channelId) => this.changed(configId, channelId);
     this.queue.moduleRefused = (configId) => this.probeModule(configId);
+    this.queue.editGuard = async (configId) => (await this.features(configId)).guardedEdit;
     this.useFileIO({ files: deviceChatFiles, http: nativeChatHttp() });
   }
 
@@ -937,6 +940,89 @@ export class ChatService {
     await this.queue.queueReaction(src.configId, channelId, target, content, on);
     if (on) countEmojiUse(content);
     await this.afterAction(src, channelId);
+  }
+
+  /**
+   * Edits the user's own message to `text` with the people and channels
+   * picked (see ChatOutbox.queueEdit): shown at once, sent when online; a
+   * message not sent yet takes the text into its post. An edit the server's
+   * newer body refuses is a notice keeping the text (takeResume).
+   */
+  async editMessage(src: ChatSource, channelId: number, target: MessageTarget, text: string, mentions: Mentions): Promise<void> {
+    await this.queue.queueEdit(src.configId, channelId, target, text, mentions);
+    await this.afterAction(src, channelId);
+  }
+
+  /**
+   * Deletes the user's own message as Odoo does, its body and files
+   * emptied (see ChatOutbox.queueDelete): hidden at once; a message not
+   * sent yet is simply dropped with its files.
+   */
+  async deleteMessage(src: ChatSource, channelId: number, target: MessageTarget): Promise<void> {
+    await this.queue.queueDelete(src.configId, channelId, target);
+    await this.afterAction(src, channelId);
+  }
+
+  /**
+   * The text and picks the composer starts from to edit a message, null
+   * when it is not cached. A message not sent yet, or one whose edit still
+   * waits, gives the text and picks queued. A sent one gives its body as
+   * the browser reads it back (bodyText); the partners are its recipients
+   * by their cached names, as the browser's `message.recipients`, and the
+   * channels the ones its body links by their cached names (a channel not
+   * cached stays plain text).
+   */
+  async editDraftOf(configId: string, _channelId: number, target: MessageTarget): Promise<{ text: string; mentions: Mentions } | null> {
+    const message = await this.repo.messageOf(configId, target);
+    if (!message) return null;
+    const named: MessageTarget = { messageId: message.messageId, clientUuid: message.clientUuid };
+    const ops = await this.db.getOutboxOpsForConfig(configId);
+    const post = message.messageId === null && message.outboxOpId ? ops.find((o) => o.id === message.outboxOpId) : undefined;
+    const edits = ops.filter((o) => o.kind === CHAT_EDIT && o.status !== "blocked" && sameTarget(o.params as MessageTarget, named));
+    // The waiting one holds the newest text; a running one the text it sends
+    const edit = edits.find((o) => o.status !== "running") ?? edits[0];
+    const queued = edit ?? post;
+    if (queued) return { text: queued.params.text ?? "", mentions: queued.params.mentions ?? EMPTY_MENTIONS };
+    const names = new Map((await this.repo.partners(configId)).map((p) => [p.partnerId, p.name]));
+    const partners = (message.recipientIds ?? [])
+      .filter((id) => !!names.get(id))
+      .map((id) => ({ id, name: names.get(id)! }));
+    const channels: Mentions["channels"] = [];
+    for (const id of mentionAnchors(message.body).channels) {
+      const c = await this.repo.channel(configId, id);
+      if (!c?.name) continue;
+      const parent = c.parentChannelId ? await this.repo.channel(configId, c.parentChannelId) : null;
+      channels.push({ id, name: c.name, parentName: parent?.name || null });
+    }
+    return { text: bodyText(message.body), mentions: { partners, channels } };
+  }
+
+  /** Per account, the refused-edit notice whose « Reprendre » was tapped in the list, for its thread to take (takeResume). */
+  private resumes = new Map<string, string>();
+
+  /** Remembers that « Reprendre » was tapped on a refused-edit notice; the thread of its conversation then takes it. */
+  requestResume(configId: string, noticeId: string): void {
+    this.resumes.set(configId, noticeId);
+  }
+
+  /**
+   * The refused edit whose « Reprendre » was asked (requestResume), when
+   * it belongs to this conversation: returned once, its notice dismissed;
+   * null otherwise.
+   */
+  async takeResume(configId: string, channelId: number): Promise<ChatNotice["edit"] | null> {
+    const noticeId = this.resumes.get(configId);
+    if (!noticeId) return null;
+    const notice = (await this.queue.notices([configId])).find((n) => n.id === noticeId);
+    if (!notice?.edit) {
+      this.resumes.delete(configId);
+      return null;
+    }
+    if (notice.channelId !== channelId) return null;
+    this.resumes.delete(configId);
+    const edit = await this.queue.takeRefusedEdit(configId, noticeId);
+    this.changed(configId, channelId);
+    return edit;
   }
 
   /** The cached reaction groups of the given message keys (messageKeyOf) of a channel, each list in the server's order. */

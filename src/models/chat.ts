@@ -4,6 +4,8 @@
  * "YYYY-MM-DD HH:MM:SS" UTC strings, kept as given.
  */
 
+import type { Mentions } from "../services/chat/chatCompose";
+
 export type ChannelType = "chat" | "group" | "channel";
 
 export interface ChatChannel {
@@ -233,7 +235,8 @@ export interface ChatNotice {
   /**
    * "refused": by the server; "vanished": the conversation, or the
    * message acted on, is gone; "changed": the message changed on the
-   * server since the action was queued.
+   * server since the action was queued (an edit, refused rather than
+   * written over the newer body).
    */
   reason: "refused" | "vanished" | "changed";
   /** The server's message for a refusal; "" otherwise. */
@@ -250,6 +253,12 @@ export interface ChatNotice {
   file?: { name: string; reason: "too_big" | "missing" | "refused" | "not_found"; limit: number | null };
   /** The message an action on a message names (a reaction, ...), as its op stored it. */
   message?: MessageTarget;
+  /**
+   * An edit refused as "changed" (chat.edit): its message, the text and
+   * picks it would have written, and whether the message was deleted
+   * meanwhile (« Reprendre » then makes the text a new message).
+   */
+  edit?: { target: MessageTarget; text: string; mentions: Mentions; deleted: boolean };
 }
 
 /** One notification of the Odoo bus: its bus id and the typed message it carries. */

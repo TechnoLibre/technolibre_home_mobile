@@ -7,12 +7,13 @@ import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS, clientMarker } fro
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
 import {
-  CHAT_NOTE, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_UPLOAD, ChatOutbox, sameTarget, targetKey,
+  CHAT_NOTE, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_UPLOAD, ChatOutbox, bodyFingerprint, sameTarget, targetKey,
 } from "../services/chat/chatOutbox";
 import { memoryChatFiles } from "../testing/chatFakes";
 import type { OutgoingFile } from "../models/chat";
 import { chatMarker } from "../services/chat/chatBody";
 import { emojiConversions } from "../services/chat/chatEmoji";
+import { createHash } from "node:crypto";
 
 // The real conversions, replaceable per test (a chunk that fails to load)
 vi.mock("../services/chat/chatEmoji", async (importOriginal) => {
@@ -139,6 +140,11 @@ describe("ChatOutbox", () => {
     expect(sameTarget({ messageId: 5, clientUuid: null }, { messageId: 5, clientUuid: "u1" })).toBe(true);
     expect(sameTarget({ messageId: 5, clientUuid: null }, { messageId: 6, clientUuid: null })).toBe(false);
     expect(sameTarget({ messageId: null, clientUuid: null }, { messageId: null, clientUuid: null })).toBe(false);
+  });
+
+  it("bodyFingerprint is the sha256 hex of the body's UTF-8, the empty body hashed as \"\"", async () => {
+    expect(await bodyFingerprint("")).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    expect(await bodyFingerprint("<p>café 👍</p>")).toBe(createHash("sha256").update("<p>café 👍</p>", "utf8").digest("hex"));
   });
 
   it("targetKey tells apart two messages, two emoji and two people removed", () => {

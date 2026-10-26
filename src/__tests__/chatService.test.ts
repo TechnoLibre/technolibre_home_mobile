@@ -7,7 +7,10 @@ import { CapabilityService } from "../services/odoo/capabilityService";
 import {
   CHAT_PAGE, ChatService, PRESENCE_CAP, RELOAD_WINDOW_MS, TYPING_RESEND_MS, TYPING_STOP_MS, type ChatSource,
 } from "../services/chat/chatService";
-import { CHAT_READ } from "../services/chat/chatOutbox";
+import { CHAT_READ, MODULE_EDIT_ROUTE } from "../services/chat/chatOutbox";
+import { composeBody, type Mentions } from "../services/chat/chatCompose";
+import { emojiConversions } from "../services/chat/chatEmoji";
+import { createHash } from "node:crypto";
 import { setChatSettings } from "../services/chat/chatSettings";
 import { parseStore } from "../services/chat/chatStore";
 import type { BusNotification, OutgoingFile } from "../models/chat";
@@ -110,7 +113,12 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
     text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: 200, message: "Odoo Server Error", data: { name, message: "refused" } } }),
     headers: { forEach: () => {} },
   } as unknown as Response);
-  const answer = (r: any) => (r && typeof r === "object" && "__error" in r ? rpcError(r.__error) : ok(r));
+  /** A route the server does not have: Odoo's HTML 404 page, no JSON-RPC envelope. */
+  const notJson = (status: number) => ({
+    ok: false, status, text: async () => "<!DOCTYPE html><title>404: Not Found</title>", headers: { forEach: () => {} },
+  } as unknown as Response);
+  const answer = (r: any) => (r && typeof r === "object" && "__status" in r ? notJson(r.__status)
+    : r && typeof r === "object" && "__error" in r ? rpcError(r.__error) : ok(r));
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
     headers: { forEach: () => {} },
@@ -397,6 +405,67 @@ function reactionServer(odoo: ReturnType<typeof fakeOdoo>) {
     };
   };
   return { state, calls: () => odoo.on("/mail/message/reaction").map((c) => c.params) };
+}
+
+/**
+ * The edit side of a fake Odoo 18 over fakeOdoo's hooks. Odoo's
+ * /mail/message/update_content writes the body with the edited span inside
+ * the paragraph of a text body, a lone span for a message it empties, ""
+ * for one already empty (mail_thread.py _message_update_content). With
+ * `module` the guarded route compares the sha256 of the stored body with
+ * `expected_fingerprint` and answers erplibre_conflict without writing;
+ * without it that route answers Odoo's HTML 404. `bodies` are the server's
+ * messages (a search_read of mail.message by id reads them); a message in
+ * `missing` answers NotFound; `drop` applies the next calls then loses
+ * their answer; while `hold` is set, a call waits on the server for it.
+ */
+function editServer(odoo: ReturnType<typeof fakeOdoo>) {
+  const state = {
+    bodies: new Map<number, string>(),
+    missing: new Set<number>(),
+    module: false,
+    drop: 0,
+    hold: null as null | Promise<void>,
+  };
+  const empty = (b: string) => !b || b.replace('<span class="o-mail-Message-edited"></span>', "").replace(/<\/?p>|\s/g, "") === "";
+  const store = (id: number) => ({
+    "mail.message": [{ id, body: state.bodies.get(id), thread: { id: GROUP, model: "discuss.channel" }, attachment_ids: [] }],
+  });
+  const previousRoute = odoo.state.onRoute;
+  odoo.state.onRoute = async (path, params) => {
+    if (path !== "/mail/message/update_content" && path !== MODULE_EDIT_ROUTE) return previousRoute?.(path, params);
+    if (path === MODULE_EDIT_ROUTE && !state.module) return { __status: 404 };
+    const id: number = params.message_id;
+    if (!state.bodies.has(id) || state.missing.has(id)) return { __error: "werkzeug.exceptions.NotFound" };
+    if (state.hold) await state.hold;
+    const old = state.bodies.get(id)!;
+    if (path === MODULE_EDIT_ROUTE) {
+      const fingerprint = createHash("sha256").update(old, "utf8").digest("hex");
+      if (fingerprint !== params.expected_fingerprint || (empty(old) && params.body)) {
+        return { erplibre_conflict: empty(old) ? "deleted" : "changed", ...store(id) };
+      }
+    }
+    state.bodies.set(id, params.body
+      ? `<p>${params.body}<span class="o-mail-Message-edited"></span></p>`
+      : empty(old) ? "" : '<span class="o-mail-Message-edited"></span>');
+    if (state.drop > 0) { state.drop--; throw new TypeError("Failed to fetch"); }
+    return store(id);
+  };
+  const previousKw = odoo.state.onKw;
+  odoo.state.onKw = async (params) => {
+    const byId = params.model === "mail.message" && params.method === "search_read"
+      ? params.kwargs.domain.find((d: any[]) => d[0] === "id" && d[1] === "=") : undefined;
+    if (!byId) return previousKw?.(params);
+    const id: number = byId[2];
+    return state.bodies.has(id) ? [{ id, body: state.bodies.get(id) || false }] : [];
+  };
+  return {
+    state,
+    /** The edit calls, either route, in order. */
+    edits: () => odoo.calls.filter((c) => c.path === "/mail/message/update_content" || c.path === MODULE_EDIT_ROUTE),
+    /** The re-reads of a message body by id. */
+    reads: () => odoo.kw("search_read").filter((c) => c.params.model === "mail.message" && c.params.kwargs.fields?.join() === "body"),
+  };
 }
 
 const offline = () => (network as any).__setNetworkStatus({ connected: false, connectionType: "none" });
@@ -2902,6 +2971,26 @@ describe("ChatService", () => {
       expect(await groupOf(GROUP, `u${failed.clientUuid}`, THUMBS)).toBeNull();
     });
 
+    it("a tap back is never taken for a no-op over an op sent during the tap", async () => {
+      offline();
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      const [op] = await reactionOps();
+      const update = env.db.updateOutboxOp.bind(env.db);
+      let ran = false;
+      vi.spyOn(env.db, "updateOutboxOp").mockImplementation(async (id, patch) => {
+        await update(id, patch);
+        // The op runs, is sent and fails between the tap's lookup and its cancel
+        if (id === op.id && patch.params?.action === "remove" && !ran) {
+          ran = true;
+          await update(id, { status: "failed", params: { ...patch.params, sentAt: clock.toISOString() } });
+        }
+      });
+      await chat.react(src, GROUP, sent(600), THUMBS, false);
+      const after = await reactionOps();
+      expect(after.find((o) => o.id === op.id)).toBeDefined();
+      expect(after.filter((o) => o.id !== op.id).map((o) => [o.dependsOn, o.params.action])).toEqual([[op.id, "remove"]]);
+    });
+
     it("a reaction cancelled as it starts is not sent", async () => {
       offline();
       await chat.react(src, GROUP, sent(600), THUMBS, true);
@@ -3043,6 +3132,407 @@ describe("ChatService", () => {
       odoo.state.pageRecord = () => ({ reactions: [] });
       await chat.loadOlder(src, CHAT);
       expect(await groupOf(CHAT, "m80", THUMBS)).toMatchObject({ count: 1, selfReacted: true });
+    });
+  });
+
+  describe("edit and delete", () => {
+    let odoo: ReturnType<typeof fakeOdoo>;
+    let server: ReturnType<typeof editServer>;
+    let src: ChatSource;
+    const HELLO = "<p>hello</p>";
+    const EDITED = '<span class="o-mail-Message-edited"></span>';
+    const BOB_PICK: Mentions = { partners: [{ id: BOB, name: "Bob" }], channels: [] };
+    const NONE: Mentions = { partners: [], channels: [] };
+    const sent = (messageId: number) => ({ messageId, clientUuid: null });
+    const bodyOf = async (messageId: number) => (await chat.repo.message(config, messageId))?.body;
+    const ops = async (kind?: string) => (await env.db.getOutboxOpsForConfig(config)).filter((o) => !kind || o.kind === kind);
+    const browserHtml = async (text: string, m: Mentions) => composeBody(text, m, await emojiConversions()).body;
+    const withModule = async () => {
+      server.state.module = true;
+      await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.3" });
+    };
+
+    beforeEach(async () => {
+      odoo = fakeOdoo();
+      server = editServer(odoo);
+      // Two messages of the user in the group, as the server holds them
+      odoo.state.data["mail.message"].push(msg(601, GROUP, SELF, HELLO), msg(602, GROUP, SELF, "<p>bye</p>"));
+      server.state.bodies.set(601, HELLO).set(602, "<p>bye</p>");
+      src = await source();
+      await chat.load(src);
+    });
+
+    it("an edit sends attachment_ids null and the browser HTML", async () => {
+      const text = "hi @Bob\nsee www.example.com";
+      await chat.editMessage(src, GROUP, sent(601), text, BOB_PICK);
+      const body = await browserHtml(text, BOB_PICK);
+      expect(body).toContain('data-oe-id="4"');
+      expect(body).toContain("<br>");
+      expect(server.edits().map((c) => [c.path, c.params])).toEqual([["/mail/message/update_content", {
+        message_id: 601, body, attachment_ids: null, partner_ids: [BOB],
+      }]]);
+      // Re-read just before the write, without the module
+      expect(server.reads()).toHaveLength(1);
+      expect(await bodyOf(601)).toBe(`<p>${body}${EDITED}</p>`);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("an edit to the text it already has sends nothing", async () => {
+      expect(await chat.queue.queueEdit(config, GROUP, sent(601), "hello", NONE)).toBeNull();
+      expect(await ops()).toEqual([]);
+    });
+
+    it("an edit back to the server's text writes nothing", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "x", NONE);
+      await chat.editMessage(src, GROUP, sent(601), "hello", NONE);
+      online();
+      await chat.flushAll();
+      expect(server.edits()).toEqual([]);
+      expect(await bodyOf(601)).toBe(HELLO);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("two offline edits send the last text once", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "one", NONE);
+      await chat.editMessage(src, GROUP, sent(601), "two", NONE);
+      expect((await ops("chat.edit")).map((o) => o.params)).toEqual([
+        expect.objectContaining({ channelId: GROUP, messageId: 601, clientUuid: null, text: "two", baseBody: HELLO }),
+      ]);
+      expect(await bodyOf(601)).toBe(`two${EDITED}`);
+      online();
+      await chat.flushAll();
+      expect(server.edits().map((c) => c.params.body)).toEqual(["two"]);
+      expect(await bodyOf(601)).toBe(`<p>two${EDITED}</p>`);
+    });
+
+    it("edit of a pending post rewrites it", async () => {
+      offline();
+      const pending = await chat.send(src, GROUP, "helo");
+      await chat.editMessage(src, GROUP, { messageId: null, clientUuid: pending.clientUuid }, "hello @Bob", BOB_PICK);
+      expect(await ops("chat.edit")).toEqual([]);
+      expect((await ops("chat.post")).map((o) => o.params)).toEqual([
+        expect.objectContaining({ text: "hello @Bob", mentions: BOB_PICK }),
+      ]);
+      expect((await chat.repo.messageByClientUuid(config, pending.clientUuid!))!.body).toBe(await browserHtml("hello @Bob", BOB_PICK));
+      online();
+      await chat.flushAll();
+      expect(odoo.on("/mail/message/post")).toHaveLength(1);
+      expect(odoo.on("/mail/message/post")[0].params.post_data.body).toMatch(/^hello /);
+      expect(server.edits()).toEqual([]);
+    });
+
+    it("delete of a pending post cancels it and its uploads", async () => {
+      const files = fileServer(odoo, () => clock);
+      chat.useFileIO({ files: files.files, http: files.http });
+      const fileDir = await chat.fileDirOf(config);
+      const localUuid = uuidv4();
+      const path = outgoingPath(fileDir, localUuid, "a.jpg");
+      files.files.put(path, new Uint8Array(3).fill(7));
+      offline();
+      const pending = await chat.send(src, GROUP, "with a file", [
+        { localUuid, path, name: "a.jpg", mimetype: "image/jpeg", size: 3, voice: false },
+      ]);
+      const target = { messageId: null, clientUuid: pending.clientUuid };
+      await chat.react(src, GROUP, target, "\u{1F44D}", true);
+      expect((await ops()).map((o) => o.kind).sort()).toEqual(["chat.post", "chat.reaction", "chat.upload"]);
+      await chat.deleteMessage(src, GROUP, target);
+      expect(await ops()).toEqual([]);
+      expect(await chat.repo.messageByClientUuid(config, pending.clientUuid!)).toBeNull();
+      expect(await chat.repo.outgoingOf(config, pending.clientUuid!)).toEqual([]);
+      expect(files.files.bytes(path)).toBeUndefined();
+      expect(await chat.reactions(config, GROUP, [`u${pending.clientUuid}`])).toEqual(new Map());
+      online();
+      await chat.flushAll();
+      await chat.queue.whenIdle(config);
+      expect(odoo.on("/mail/message/post")).toEqual([]);
+      expect(files.uploads()).toEqual([]);
+      expect(server.edits()).toEqual([]);
+    });
+
+    it("delete of a running post waits and then deletes", async () => {
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      odoo.state.onPost = async (params, id) => {
+        server.state.bodies.set(id, params.post_data.body);
+        await held;
+      };
+      const sending = chat.send(src, GROUP, "soon gone");
+      await vi.waitFor(() => expect(odoo.on("/mail/message/post")).toHaveLength(1));
+      const pending = (await chat.messages(config, GROUP)).find((m) => m.messageId === null)!;
+      const post = (await ops("chat.post"))[0];
+      const deleting = chat.deleteMessage(src, GROUP, { messageId: null, clientUuid: pending.clientUuid });
+      await vi.waitFor(async () => expect((await ops("chat.delete")).map((o) => o.dependsOn)).toEqual([post.id]));
+      release();
+      await sending;
+      await deleting;
+      await chat.flushAll();
+      expect(server.edits().map((c) => c.params)).toEqual([
+        { message_id: 5000, body: "", attachment_ids: [], attachment_tokens: [], subject: "" },
+      ]);
+      expect(server.state.bodies.get(5000)).toBe(EDITED);
+      expect(await bodyOf(5000)).toBe(EDITED);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("an edit while its post runs waits for it and is made against the post's answer", async () => {
+      let releasePost!: () => void;
+      const posting = new Promise<void>((r) => { releasePost = r; });
+      odoo.state.onPost = async (params, id) => {
+        server.state.bodies.set(id, params.post_data.body);
+        await posting;
+      };
+      const sending = chat.send(src, GROUP, "helo");
+      await vi.waitFor(() => expect(odoo.on("/mail/message/post")).toHaveLength(1));
+      const pending = (await chat.messages(config, GROUP)).find((m) => m.messageId === null)!;
+      const post = (await ops("chat.post"))[0];
+      await chat.editMessage(src, GROUP, { messageId: null, clientUuid: pending.clientUuid }, "hello", NONE);
+      expect((await ops("chat.edit")).map((o) => [o.dependsOn, o.params.baseBody])).toEqual([[post.id, null]]);
+      releasePost();
+      await sending;
+      // Settled: the bubble still shows the edit, which is made against the body the post's answer gave
+      expect(server.edits()).toEqual([]);
+      expect((await ops("chat.edit"))[0].params.baseBody).toBe(server.state.bodies.get(5000));
+      expect(await bodyOf(5000)).toBe(`hello${EDITED}`);
+      await chat.flushAll();
+      expect(server.state.bodies.get(5000)).toBe(`<p>hello${EDITED}</p>`);
+      expect(await chat.notices()).toEqual([]);
+    });
+
+    it("a delete cancels the waiting edit of the message", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "changed my mind", NONE);
+      await chat.react(src, GROUP, sent(601), "\u{1F44D}", true);
+      await chat.deleteMessage(src, GROUP, sent(601));
+      expect((await ops()).map((o) => o.kind)).toEqual(["chat.delete"]);
+      expect(await bodyOf(601)).toBe("");
+      // An edit of a message being deleted is refused
+      await expect(chat.queue.queueEdit(config, GROUP, sent(601), "again", NONE)).rejects.toThrow();
+      online();
+      await chat.flushAll();
+      expect(server.edits().map((c) => c.params.body)).toEqual([""]);
+      expect(odoo.on("/mail/message/reaction")).toEqual([]);
+      expect(server.state.bodies.get(601)).toBe(EDITED);
+    });
+
+    it("the module path sends the fingerprint of the base body", async () => {
+      await withModule();
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "guarded", NONE);
+      online();
+      await chat.flushAll();
+      expect(server.edits().map((c) => [c.path, c.params])).toEqual([[MODULE_EDIT_ROUTE, {
+        message_id: 601,
+        body: "guarded",
+        expected_fingerprint: createHash("sha256").update(HELLO, "utf8").digest("hex"),
+        attachment_ids: null,
+        partner_ids: [],
+      }]]);
+      expect(server.reads()).toEqual([]);
+      expect(await bodyOf(601)).toBe(`<p>guarded${EDITED}</p>`);
+    });
+
+    it("a module conflict refuses the edit with its text", async () => {
+      await withModule();
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "late @Bob", BOB_PICK);
+      // Edited in the browser meanwhile
+      server.state.bodies.set(601, `<p>browser${EDITED}</p>`);
+      online();
+      await chat.flushAll();
+      expect(server.edits()).toHaveLength(1);
+      expect(server.state.bodies.get(601)).toBe(`<p>browser${EDITED}</p>`);
+      expect(await bodyOf(601)).toBe(`<p>browser${EDITED}</p>`);
+      expect(await chat.notices()).toEqual([expect.objectContaining({
+        kind: "chat.edit", channelId: GROUP, reason: "changed",
+        message: { messageId: 601, clientUuid: null },
+        edit: { target: { messageId: 601, clientUuid: null }, text: "late @Bob", mentions: BOB_PICK, deleted: false },
+      })]);
+    });
+
+    it("a module conflict on a deleted message refuses as deleted", async () => {
+      await withModule();
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "late", NONE);
+      server.state.bodies.set(601, EDITED);
+      online();
+      await chat.flushAll();
+      expect(server.state.bodies.get(601)).toBe(EDITED);
+      expect((await chat.notices())[0].edit).toMatchObject({ text: "late", deleted: true });
+    });
+
+    it("a re-read that finds another body refuses the edit", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "late", NONE);
+      server.state.bodies.set(601, `<p>browser${EDITED}</p>`);
+      online();
+      await chat.flushAll();
+      expect(server.reads()).toHaveLength(1);
+      expect(server.edits()).toEqual([]);
+      expect(await bodyOf(601)).toBe(`<p>browser${EDITED}</p>`);
+      expect(await chat.notices()).toEqual([expect.objectContaining({
+        kind: "chat.edit", reason: "changed", edit: expect.objectContaining({ text: "late", deleted: false }),
+      })]);
+    });
+
+    it("a re-read that finds no message refuses as deleted", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "late", NONE);
+      server.state.bodies.delete(601);
+      online();
+      await chat.flushAll();
+      expect(server.edits()).toEqual([]);
+      expect((await chat.notices())[0]).toMatchObject({ kind: "chat.edit", reason: "changed", edit: { text: "late", deleted: true } });
+      expect(await bodyOf(601)).toBe("");
+    });
+
+    it("an edit replayed after a lost answer counts as done, both paths", async () => {
+      for (const guarded of [false, true]) {
+        if (guarded) await withModule();
+        const text = guarded ? "replayed guarded" : "replayed";
+        server.state.drop = 1;
+        await chat.editMessage(src, GROUP, sent(601), text, NONE);
+        expect(server.state.bodies.get(601)).toBe(`<p>${text}${EDITED}</p>`);
+        expect((await ops("chat.edit")).map((o) => o.status)).toEqual(["failed"]);
+        await chat.flushAll({ force: true });
+        expect(await chat.notices()).toEqual([]);
+        expect(await ops()).toEqual([]);
+        expect(await bodyOf(601)).toBe(`<p>${text}${EDITED}</p>`);
+      }
+      // Without the module the replay only re-read; with it the guarded route answered the conflict
+      expect(server.edits().map((c) => c.path)).toEqual([
+        "/mail/message/update_content", MODULE_EDIT_ROUTE, MODULE_EDIT_ROUTE,
+      ]);
+    });
+
+    it("a delete replayed after a lost answer counts as done", async () => {
+      server.state.drop = 1;
+      await chat.deleteMessage(src, GROUP, sent(601));
+      await chat.flushAll({ force: true });
+      expect(server.edits()).toHaveLength(2);
+      expect(server.state.bodies.get(601)).toBe("");
+      expect(await chat.notices()).toEqual([]);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("the module route answering 404 probes the module and the retry re-reads", async () => {
+      await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.3" });
+      await chat.editMessage(src, GROUP, sent(601), "older module", NONE);
+      // The probe found no module 1.3: the retry takes Odoo's route after a re-read
+      expect((await chat.features(config)).guardedEdit).toBe(false);
+      await chat.flushAll({ force: true });
+      expect(server.edits().map((c) => c.path)).toEqual([MODULE_EDIT_ROUTE, "/mail/message/update_content"]);
+      expect(server.state.bodies.get(601)).toBe(`<p>older module${EDITED}</p>`);
+      expect(await chat.notices()).toEqual([]);
+    });
+
+    it("takeRefusedEdit gives the text back once", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "late", NONE);
+      server.state.bodies.set(601, `<p>browser${EDITED}</p>`);
+      online();
+      await chat.flushAll();
+      const [notice] = await chat.notices();
+      const edit = { target: { messageId: 601, clientUuid: null }, text: "late", mentions: NONE, deleted: false };
+      // Through « Reprendre »: asked in the list, taken by the thread of its conversation only
+      chat.requestResume(config, notice.id);
+      expect(await chat.takeResume(config, CHAT)).toBeNull();
+      expect(await chat.takeResume(config, GROUP)).toEqual(edit);
+      expect(await chat.takeResume(config, GROUP)).toBeNull();
+      expect(await chat.notices()).toEqual([]);
+      expect(await chat.queue.takeRefusedEdit(config, notice.id)).toBeNull();
+    });
+
+    it("takeRefusedEdit returns the edit and dismisses its notice", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "late", NONE);
+      server.state.bodies.delete(601);
+      online();
+      await chat.flushAll();
+      const [notice] = await chat.notices();
+      expect(await chat.queue.takeRefusedEdit(config, notice.id)).toMatchObject({ text: "late", deleted: true });
+      expect(await chat.queue.takeRefusedEdit(config, notice.id)).toBeNull();
+      expect(await chat.notices()).toEqual([]);
+    });
+
+    it("an answered edit rebases the next one", async () => {
+      let release!: () => void;
+      server.state.hold = new Promise<void>((r) => { release = r; });
+      const first = chat.editMessage(src, GROUP, sent(601), "one", NONE);
+      await vi.waitFor(() => expect(server.edits()).toHaveLength(1));
+      await chat.editMessage(src, GROUP, sent(601), "two", NONE);
+      const follow = (await ops("chat.edit")).find((o) => o.status !== "running")!;
+      expect(follow.params).toMatchObject({ text: "two", baseBody: HELLO });
+      server.state.hold = null;
+      release();
+      await first;
+      expect((await env.db.getOutboxOp(follow.id))!.params.baseBody).toBe(`<p>one${EDITED}</p>`);
+      await chat.flushAll();
+      expect(server.edits().map((c) => c.params.body)).toEqual(["one", "two"]);
+      expect(server.state.bodies.get(601)).toBe(`<p>two${EDITED}</p>`);
+      expect(await chat.notices()).toEqual([]);
+    });
+
+    it("delete NotFound counts as done", async () => {
+      server.state.missing.add(601);
+      await chat.deleteMessage(src, GROUP, sent(601));
+      expect(server.edits()).toHaveLength(1);
+      expect(await chat.notices()).toEqual([]);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("edit NotFound is vanished", async () => {
+      server.state.missing.add(601);
+      await chat.editMessage(src, GROUP, sent(601), "nobody home", NONE);
+      expect(server.edits()).toHaveLength(1);
+      expect(await chat.notices()).toEqual([expect.objectContaining({
+        kind: "chat.edit", reason: "vanished", message: { messageId: 601, clientUuid: null },
+      })]);
+      expect((await chat.notices())[0].edit).toBeUndefined();
+      // The cache goes back to the body the server held
+      expect(await bodyOf(601)).toBe(HELLO);
+    });
+
+    it("a refused delete shows the message again", async () => {
+      odoo.state.onRoute = async () => ({ __error: "odoo.exceptions.AccessError" });
+      await chat.deleteMessage(src, GROUP, sent(602));
+      expect((await chat.notices()).map((n) => [n.kind, n.reason])).toEqual([["chat.delete", "refused"]]);
+      expect(await bodyOf(602)).toBe("<p>bye</p>");
+    });
+
+    it("a load keeps the optimistic edit and the hidden delete", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "new text", NONE);
+      await chat.deleteMessage(src, GROUP, sent(602));
+      await chat.load(src);
+      expect(await bodyOf(601)).toBe(`new text${EDITED}`);
+      expect(await bodyOf(602)).toBe("");
+      // A bus record of the server's body keeps them too
+      await chat.applyBus(config, [bus(1001, "mail.record/insert", { "mail.message": [
+        { id: 601, body: HELLO, thread: { id: GROUP, model: "discuss.channel" } },
+        { id: 602, body: "<p>bye</p>", thread: { id: GROUP, model: "discuss.channel" } },
+      ] })]);
+      expect(await bodyOf(601)).toBe(`new text${EDITED}`);
+      expect(await bodyOf(602)).toBe("");
+      // The base stays the body first read: a load never moves it
+      expect((await ops("chat.edit"))[0].params.baseBody).toBe(HELLO);
+    });
+
+    it("editDraftOf gives the post's text, or the sent body's text with its mentions", async () => {
+      const body = await browserHtml("hi @Bob", BOB_PICK);
+      server.state.bodies.set(601, body);
+      await chat.applyBus(config, [bus(1001, "mail.record/insert", { "mail.message": [{
+        id: 601, body: `<p>${body}${EDITED}</p>`, thread: { id: GROUP, model: "discuss.channel" },
+        recipients: [{ id: BOB, type: "partner" }],
+      }] })]);
+      expect(await chat.editDraftOf(config, GROUP, sent(601))).toEqual({ text: "hi @Bob", mentions: BOB_PICK });
+      offline();
+      const pending = await chat.send(src, GROUP, "draft @Bob");
+      await chat.editMessage(src, GROUP, { messageId: null, clientUuid: pending.clientUuid }, "draft @Bob!", BOB_PICK);
+      expect(await chat.editDraftOf(config, GROUP, { messageId: null, clientUuid: pending.clientUuid }))
+        .toEqual({ text: "draft @Bob!", mentions: BOB_PICK });
+      expect(await chat.editDraftOf(config, GROUP, sent(999))).toBeNull();
     });
   });
 

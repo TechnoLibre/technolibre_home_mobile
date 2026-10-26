@@ -167,6 +167,24 @@ describe("ChatListComponent", () => {
         ]);
     });
 
+    it("a refused edit says the message changed or was deleted; a delete names its action", async () => {
+        const chat: any = fakeChat(["a"], [chan("a", 5, { name: "Team" })]);
+        const message = { messageId: 9, clientUuid: null };
+        const edit = (deleted: boolean) => ({ target: message, text: "late", mentions: { partners: [], channels: [] }, deleted });
+        chat.notices = vi.fn().mockResolvedValue([
+            { id: "op1", configId: "a", kind: "chat.edit", channelId: 5, reason: "changed", error: "", count: 1, label: "", message, edit: edit(false) },
+            { id: "op2", configId: "a", kind: "chat.edit", channelId: 5, reason: "changed", error: "", count: 1, label: "", message, edit: edit(true) },
+            { id: "op3", configId: "a", kind: "chat.delete", channelId: 5, reason: "refused", error: "no", count: 1, label: "", message },
+        ]);
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.state.notices.map((n: any) => n.text)).toEqual([
+            "Team — Edit not sent: the message changed meanwhile.",
+            "Team — Edit not sent: the message was deleted meanwhile.",
+            "Team — Delete: refused by the server.",
+        ]);
+    });
+
     it("a dropped notice says one action or several, capitalised without a name", async () => {
         const chat: any = fakeChat(["a"], []);
         chat.notices = vi.fn().mockResolvedValue([

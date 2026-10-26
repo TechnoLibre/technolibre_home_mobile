@@ -373,6 +373,8 @@ export class ChatListComponent extends EnhancedComponent {
         if (n.file) text = fileNoticeText(n.file);
         else if (n.kind === "chat.dropped") {
             text = t(n.count === 1 ? "chat.notice_dropped_one" : "chat.notice_dropped_other", { count: n.count });
+        } else if (n.edit) {
+            text = t(n.edit.deleted ? "chat.notice_edit_deleted" : "chat.notice_edit_changed");
         } else {
             const vanished = n.message ? "chat.notice_message_vanished" : "chat.notice_vanished";
             text = t(n.reason === "vanished" ? vanished : "chat.notice_refused", {

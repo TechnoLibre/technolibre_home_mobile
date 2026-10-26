@@ -4783,7 +4783,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "upload answer is found again by the module's uuid, or else by the user's own "
                         + "pending attachment of that name and size; « Wi-Fi only » holds uploads; a file "
                         + "refused (too big, missing) leaves with a notice and the post goes without it. "
-                        + "Once posted, the sender's file becomes the conversation's cached copy.",
+                        + "Once posted, the sender's file becomes the conversation's cached copy. "
+                        + "An edit or a delete of one's own message shows at once; an edit of a message "
+                        + "not sent yet rewrites its post, a delete of it cancels the post and its files. "
+                        + "An edit is made against the body read when it was queued: the module 1.3 "
+                        + "writes only over that body's fingerprint, without it the body is read again "
+                        + "just before; a newer body refuses the edit and its notice keeps the text "
+                        + "for « Resume ».",
                     fr: "Un envoi est gardé comme message en attente et ligne de la boîte d'envoi "
                         + "avant toute requête. Avec le module serveur, l'uuid du client voyage dans "
                         + "l'envoi et le serveur répond à une répétition par le message qu'il détient ; "
@@ -4802,7 +4808,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "jointe en attente de l'utilisateur de même nom et taille ; « Wi-Fi seulement » "
                         + "retient les envois ; un fichier refusé (trop gros, absent) part avec un avis et "
                         + "le message part sans lui. Une fois envoyé, le fichier de l'expéditeur devient la "
-                        + "copie en cache de la conversation.",
+                        + "copie en cache de la conversation. Une modification ou une suppression de "
+                        + "son propre message s'affiche tout de suite ; modifier un message pas encore "
+                        + "envoyé réécrit son envoi, le supprimer annule l'envoi et ses fichiers. Une "
+                        + "modification vaut contre le corps lu à sa mise en file : le module 1.3 n'écrit "
+                        + "que sur l'empreinte de ce corps, sans lui le corps est relu juste avant ; un "
+                        + "corps plus récent refuse la modification et son avis garde le texte pour "
+                        + "« Reprendre ».",
                 },
                 demo: NONE_PLUMBING,
                 files: [
