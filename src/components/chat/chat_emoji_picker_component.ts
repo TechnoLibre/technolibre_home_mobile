@@ -41,7 +41,7 @@ interface PickerState {
  * composer's keyboard stays open.
  */
 export class ChatEmojiPickerComponent extends EnhancedComponent {
-    static props = { onPick: Function, onClose: Function };
+    static props = { onPick: Function, onClose: Function, countUse: { type: Boolean, optional: true } };
 
     static template = xml`
     <div class="chat-emoji" role="dialog" t-att-aria-label="t('chat.emoji')">
@@ -92,8 +92,9 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
     /** The picker's history entry is the current one: Android's back closes it, not the conversation. */
     private _inHistory = false;
     private _closing = false;
+    /** A popstate onto an entry still marked chatEmoji is a sheet above the picker going back: the picker stays. */
     private _onPop = () => {
-        if (!this._inHistory) return;
+        if (!this._inHistory || window.history.state?.chatEmoji) return;
         this._inHistory = false;
         this.props.onClose();
     };
@@ -249,9 +250,13 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
         list.scrollTop = target.offsetTop - list.offsetTop;
     }
 
-    /** Counts the use, then gives the emoji to the composer; the picker stays open for more. */
+    /**
+     * Counts the use (unless countUse is false: a reaction counts its own),
+     * then gives the emoji to the caller; typing into the composer, the
+     * picker stays open for more.
+     */
     pick(codepoints: string): void {
-        countEmojiUse(codepoints);
+        if (this.props.countUse !== false) countEmojiUse(codepoints);
         this.props.onPick(codepoints);
     }
 }

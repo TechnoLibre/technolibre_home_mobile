@@ -4428,6 +4428,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatService.ts",
                     "src/services/chat/chatOutbox.ts",
                     "src/services/migrations/addChatActions.ts",
+                    "src/components/chat/chat_reactions_component.ts",
+                    "src/components/chat/chat_reactions_component.scss",
                 ],
                 tests: [
                     "src/__tests__/chatStore.test.ts",
@@ -4435,6 +4437,58 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/chatService.test.ts",
                     "src/__tests__/chatOutbox.test.ts",
                     "src/__tests__/chatListComponent.test.ts",
+                    "src/__tests__/chatReactionsComponent.test.ts",
+                ],
+            },
+            {
+                id: "chat.message-actions",
+                label: { en: "Message actions", fr: "Actions sur un message" },
+                description: {
+                    en: "A long press on a message opens its menu: six emojis in one touch and « … » for the picker, copy and delete; reaction chips under the message toggle and tell who reacted.",
+                    fr: "Un appui long sur un message ouvre son menu : six émojis d'une touche et « … » pour le sélecteur, copier et supprimer ; les pastilles de réaction sous le message basculent et disent qui a réagi.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.reactions", "chat.emoji"],
+                demo: { kind: "route", url: "/chat" },
+                howItWorks: {
+                    en: "chatLongPress.ts runs a 500 ms timer from pointerdown, stopped by a move beyond 10 px, "
+                        + "the release, a pointercancel or a scroll; it calls no preventDefault, so the list "
+                        + "scrolls and text is selected as before, and the bubble's contextmenu is prevented. "
+                        + "The click that ends a long press is swallowed. The menu offers what Odoo's message "
+                        + "actions do: react on comment messages, delete on the user's own (a failed one is "
+                        + "dropped), copy on any message with text. A quick emoji the user already put on comes "
+                        + "off; a pick in the picker opened by « … » only adds, as Odoo's. Copy writes "
+                        + "bodyText through navigator.clipboard and shows « Copied » for 1.5 s; delete asks "
+                        + "first. A chip tap toggles the user's reaction; a long press lists the partners by "
+                        + "cached name and one « Guest » per guest. Each sheet takes a history entry "
+                        + "(chatBackEntry.ts), so back closes it; a popstate onto an entry still carrying its "
+                        + "mark is a sheet above it going back.",
+                    fr: "chatLongPress.ts lance une minuterie de 500 ms au pointerdown, arrêtée par un "
+                        + "déplacement de plus de 10 px, le relâchement, un pointercancel ou un défilement ; il "
+                        + "n'appelle aucun preventDefault, donc la liste défile et le texte se sélectionne comme "
+                        + "avant, et le contextmenu de la bulle est empêché. Le clic qui termine un appui long "
+                        + "est avalé. Le menu offre ce qu'offrent les actions de message d'Odoo : réagir sur les "
+                        + "messages comment, supprimer les siens (un échoué est abandonné), copier tout message "
+                        + "qui a du texte. Un émoji rapide déjà mis par l'utilisateur s'enlève ; un choix dans "
+                        + "le sélecteur ouvert par « … » ne fait qu'ajouter, comme celui d'Odoo. Copier écrit "
+                        + "bodyText par navigator.clipboard et affiche « Copié » 1,5 s ; supprimer demande "
+                        + "d'abord. Une touche sur une pastille bascule la réaction de l'utilisateur ; un appui "
+                        + "long liste les partenaires par leur nom en cache et un « Invité » par invité. Chaque "
+                        + "feuille prend une entrée d'historique (chatBackEntry.ts), donc retour la ferme ; un "
+                        + "popstate vers une entrée qui porte encore sa marque est une feuille au-dessus qui se "
+                        + "referme.",
+                },
+                files: [
+                    "src/components/chat/chatLongPress.ts",
+                    "src/components/chat/chatBackEntry.ts",
+                    "src/components/chat/chat_message_menu_component.ts",
+                    "src/components/chat/chat_message_menu_component.scss",
+                    "src/components/chat/chat_thread_component.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatLongPress.test.ts",
+                    "src/__tests__/chatMessageMenu.test.ts",
+                    "src/__tests__/chatThreadComponent.test.ts",
                 ],
             },
             {

@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 import { Events } from "../constants/events";
 import { __clearPluginMocks, __setPluginMock } from "@capacitor/core";
 import { App } from "@capacitor/app";
+import { Dialog } from "@capacitor/dialog";
+import { LONG_PRESS_MS } from "../components/chat/chatLongPress";
 
 function stubLocale() {
     const store: Record<string, string> = { app_lang: "en" };
@@ -62,6 +64,9 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
         keepDraftFile: vi.fn(async () => {}),
         sendStarted: vi.fn((_c: string, _ch: number) => vi.fn()),
         dropDraftFile: vi.fn(async () => {}),
+        reactions: vi.fn(async (_c: string, _ch: number, _keys: string[]): Promise<Map<string, any[]>> => new Map()),
+        react: vi.fn(async () => {}),
+        deleteMessage: vi.fn(async () => {}),
         queue: {
             flush: vi.fn().mockResolvedValue(undefined),
             files: {
@@ -1214,3 +1219,224 @@ describe("ChatThreadComponent", () => {
     });
 });
 
+/** A reaction group as ChatService.reactions gives it. */
+const reaction = (content: string, p: any = {}) => ({
+    configId: "a", channelId: 5, messageKey: "m10", messageId: 10, content, count: 1,
+    selfReacted: false, partnerIds: [7], guestCount: 0, sequence: 1, ...p,
+});
+
+describe("ChatThreadComponent message actions", () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        (Dialog.confirm as any).mockReset?.();
+        (Dialog.confirm as any).mockResolvedValue?.({ value: true });
+    });
+
+    const press = (x = 10, y = 10) => ({ button: 0, clientX: x, clientY: y });
+
+    it("a long press on a bubble opens its menu; a short one or a scroll does not", async () => {
+        const chat = fakeChat([msg(10), msg(11, { authorPartnerId: 7 })]);
+        const c = make(chat);
+        await c.open();
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const [mine, theirs] = c.state.rows;
+        c.onPressDown(theirs, press());
+        vi.advanceTimersByTime(LONG_PRESS_MS - 100);
+        c.onPressUp();
+        vi.advanceTimersByTime(LONG_PRESS_MS);
+        expect(c.state.actions).toBeNull();
+        c.onPressDown(theirs, press());
+        await c.onScroll();
+        vi.advanceTimersByTime(LONG_PRESS_MS);
+        expect(c.state.actions).toBeNull();
+        c.onPressDown(mine, press());
+        vi.advanceTimersByTime(LONG_PRESS_MS);
+        expect(c.state.actions).toBe("m10");
+        c.teardown();
+    });
+
+    it("the click ending a long press is swallowed, a plain tap goes through", async () => {
+        const c = make(fakeChat([msg(10)]));
+        await c.open();
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const ev = () => ({ stopPropagation: vi.fn(), preventDefault: vi.fn() });
+        c.onPressDown(c.state.rows[0], press());
+        c.onPressUp();
+        const tap = ev();
+        c.onBubbleClick(tap);
+        expect(tap.stopPropagation).not.toHaveBeenCalled();
+        c.onPressDown(c.state.rows[0], press());
+        vi.advanceTimersByTime(LONG_PRESS_MS);
+        c.onPressUp();
+        const end = ev();
+        c.onBubbleClick(end);
+        expect(end.stopPropagation).toHaveBeenCalled();
+        expect(end.preventDefault).toHaveBeenCalled();
+        c.teardown();
+    });
+
+    it("the bubble keeps scrolling and selection: no preventDefault on its press, its contextmenu prevented", () => {
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        const bubble = source.slice(source.indexOf('class="chat-thread__bubble"'), source.indexOf('<div t-if="row.hasBody"'));
+        expect(bubble).toMatch(/t-on-pointerdown="\(ev\) => this.onPressDown\(row, ev\)"/);
+        expect(bubble).not.toMatch(/t-on-pointerdown\.prevent/);
+        expect(bubble).toMatch(/t-on-contextmenu\.prevent=""/);
+        expect(bubble).toMatch(/t-on-click\.capture="onBubbleClick"/);
+    });
+
+    it("what the menu offers follows Odoo: another's message no edit or delete, a notification copy only", async () => {
+        const chat = fakeChat([
+            msg(10),
+            msg(11, { authorPartnerId: 7 }),
+            msg(12, { messageType: "notification", authorPartnerId: 7 }),
+            msg(13, { body: "" }),
+            msg(null, { clientUuid: "F1", status: "failed", outboxOpId: "op1" }),
+        ]);
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([["m13", [fileRow(31)]]]));
+        const c = make(chat);
+        await c.open();
+        expect(c.state.rows.map((r: any) => r.can)).toEqual([
+            { react: true, reply: true, copy: true, edit: true, delete: true },
+            { react: true, reply: true, copy: true, edit: false, delete: false },
+            { react: false, reply: false, copy: true, edit: false, delete: false },
+            { react: true, reply: true, copy: false, edit: true, delete: true },
+            { react: false, reply: false, copy: true, edit: false, delete: true },
+        ]);
+        expect(c.state.rows[0].target).toEqual({ messageId: 10, clientUuid: null });
+        expect(c.state.rows[4].target).toEqual({ messageId: null, clientUuid: "F1" });
+        c.openActions("m11");
+        expect(c.menuCan()).toMatchObject({ react: true, copy: true, edit: false, delete: false });
+        c.teardown();
+    });
+
+    it("a quick emoji reacts: on when the user has not, off when they have", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.reactions.mockResolvedValue(new Map([["m10", [reaction("👍", { selfReacted: true, partnerIds: [1] })]]]));
+        const c = make(chat);
+        await c.open();
+        expect(chat.reactions).toHaveBeenCalledWith("a", 5, ["m10"]);
+        c.openActions("m10");
+        expect(c.activeOf()).toEqual(["👍"]);
+        await c.onMenuReact("😂");
+        await c.onMenuReact("👍");
+        expect(chat.react.mock.calls).toEqual([
+            [expect.objectContaining({ configId: "a" }), 5, { messageId: 10, clientUuid: null }, "😂", true],
+            [expect.objectContaining({ configId: "a" }), 5, { messageId: 10, clientUuid: null }, "👍", false],
+        ]);
+        c.closeActions();
+        expect(c.state.actions).toBeNull();
+        c.teardown();
+    });
+
+    it("« … » opens the picker once the menu is gone, and a pick reacts instead of typing", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.reactions.mockResolvedValue(new Map([["m10", [reaction("👍", { selfReacted: true, partnerIds: [1] })]]]));
+        const c = make(chat);
+        await c.open();
+        c.openActions("m10");
+        c.onMenuMore();
+        expect(c.state.emoji).toBe(false);
+        c.closeActions();
+        expect(c.state.emoji).toBe(true);
+        expect(c.state.reactTo).toBe("m10");
+        c.onEmoji("🎉");
+        expect(chat.react).toHaveBeenCalledWith(expect.anything(), 5, { messageId: 10, clientUuid: null }, "🎉", true);
+        expect(c.state.text).toBe("");
+        expect(c.state.emoji).toBe(false);
+        expect(c.state.reactTo).toBeNull();
+        // A pick of a reaction the user already has leaves it, as Odoo's picker does
+        c.openActions("m10");
+        c.onMenuMore();
+        c.closeActions();
+        c.onEmoji("👍");
+        expect(chat.react).toHaveBeenCalledTimes(1);
+        // The composer's 😊 still types
+        c.toggleEmoji();
+        c.onEmoji("😀");
+        expect(c.state.text).toBe("😀");
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        expect(source).toMatch(/<ChatEmojiPickerComponent t-if="state.emoji" countUse="!state.reactTo"/);
+        c.teardown();
+    });
+
+    it("copy writes the body's text and shows « Copied » for 1.5 s; a refusal says so", async () => {
+        const body = '<p>one<br>two <a href="/odoo/res.partner/7" class="o_mail_redirect" data-oe-id="7" data-oe-model="res.partner">@Alice Martin</a></p>';
+        const writeText = vi.fn(async (_t: string) => {});
+        vi.stubGlobal("navigator", { clipboard: { writeText } });
+        const c = make(fakeChat([msg(10, { body })]));
+        await c.open();
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        c.openActions("m10");
+        await c.onMenuCopy();
+        expect(writeText).toHaveBeenCalledWith("one\ntwo @Alice Martin");
+        expect(c.state.flash).toBe("Copied");
+        vi.advanceTimersByTime(1499);
+        expect(c.state.flash).toBe("Copied");
+        vi.advanceTimersByTime(1);
+        expect(c.state.flash).toBe("");
+        writeText.mockRejectedValueOnce(new Error("denied"));
+        await c.onMenuCopy();
+        expect(c.state.flash).toBe("Could not copy the text");
+        vi.stubGlobal("navigator", {});
+        await c.onMenuCopy();
+        expect(c.state.flash).toBe("Could not copy the text");
+        c.teardown();
+    });
+
+    it("delete asks first and deletes only on yes", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: false });
+        c.openActions("m10");
+        await c.onMenuDelete();
+        expect(Dialog.confirm).toHaveBeenCalledWith(expect.objectContaining({ message: "Delete this message?" }));
+        expect(chat.deleteMessage).not.toHaveBeenCalled();
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: true });
+        c.openActions("m10");
+        await c.onMenuDelete();
+        expect(chat.deleteMessage).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 5, { messageId: 10, clientUuid: null });
+        c.teardown();
+    });
+
+    it("a chip tap removes an own reaction and adds another's", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.reactions.mockResolvedValue(new Map([["m10", [
+            reaction("👍", { count: 2, selfReacted: true, partnerIds: [1, 7] }),
+            reaction("😂", { sequence: 2 }),
+        ]]]));
+        const c = make(chat);
+        await c.open();
+        const row = c.state.rows[0];
+        expect(row.reactions.map((r: any) => [r.content, r.count, r.self])).toEqual([["👍", 2, true], ["😂", 1, false]]);
+        await c.onChip(row, "👍");
+        await c.onChip(row, "😂");
+        expect(chat.react.mock.calls.map((a: any[]) => [a[3], a[4]])).toEqual([["👍", false], ["😂", true]]);
+        c.teardown();
+    });
+
+    it("a chip long press lists who reacted by name, guests counted", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.reactions.mockResolvedValue(new Map([["m10", [reaction("😂", { count: 3, partnerIds: [7, 8], guestCount: 1 })]]]));
+        const c = make(chat);
+        await c.open();
+        c.onWho(c.state.rows[0], "😂");
+        expect(c.state.who).toEqual({ content: "😂", count: 3, self: false, names: ["Alice Roy", "Bob", "Guest"] });
+        c.closeWho();
+        expect(c.state.who).toBeNull();
+        c.teardown();
+    });
+
+    it("a reaction change repaints the row", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        const before = c.state.rows;
+        expect(before[0].reactions).toEqual([]);
+        chat.reactions.mockResolvedValue(new Map([["m10", [reaction("👍")]]]));
+        await c.refresh();
+        expect(c.state.rows).not.toBe(before);
+        expect(c.state.rows[0].reactions).toHaveLength(1);
+        c.teardown();
+    });
+});

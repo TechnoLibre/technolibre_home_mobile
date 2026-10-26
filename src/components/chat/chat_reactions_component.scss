@@ -1,0 +1,53 @@
+.chat-reactions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem;
+	margin: 0.25rem 0 0.1rem;
+}
+
+// A long press on a chip asks who reacted: it selects no text.
+.chat-reactions__chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.2rem;
+	padding: 0.1rem 0.45rem;
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 1rem;
+	background: var(--background, #fff);
+	color: inherit;
+	font-size: 0.85rem;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.chat-reactions__chip--self {
+	border-color: #2e9e4f;
+	background: rgba(46, 158, 79, 0.2);
+}
+
+.chat-reactions__count {
+	font-size: 0.75rem;
+}
+
+.chat-who__title {
+	display: flex;
+	align-items: baseline;
+	gap: 0.5rem;
+	margin: 0.2rem 0 0.4rem;
+	font-size: 1.2rem;
+}
+
+.chat-who__label {
+	font-size: 0.85rem;
+	opacity: 0.75;
+}
+
+.chat-who__names {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+
+	li {
+		padding: 0.35rem 0;
+	}
+}

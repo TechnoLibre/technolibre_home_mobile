@@ -2,6 +2,8 @@
 // messages take the height left by the header, the banners and the composer,
 // so the composer stays in view whatever the cell's height (keyboard open).
 #chat-thread {
+	// The sheets over the thread (message menu, who reacted) cover this cell
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	gap: 0.4rem;
@@ -110,6 +112,11 @@
 	background: rgba(46, 158, 79, 0.25);
 }
 
+// The message whose menu is open
+.chat-thread__bubble--pressed {
+	outline: 2px solid rgba(46, 158, 79, 0.6);
+}
+
 .chat-thread__bubble--preparing {
 	opacity: 0.8;
 }
@@ -177,6 +184,15 @@
 	color: inherit;
 	text-decoration: underline;
 	font-size: 0.7rem;
+}
+
+.chat-thread__flash {
+	align-self: center;
+	margin: 0;
+	padding: 0.2rem 0.8rem;
+	border-radius: 1rem;
+	background: rgba(127, 127, 127, 0.25);
+	font-size: 0.8rem;
 }
 
 .chat-thread__typing {

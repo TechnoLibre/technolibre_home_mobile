@@ -72,9 +72,23 @@ describe("ChatEmojiPickerComponent mounted", () => {
         host.querySelector<HTMLElement>(".chat-emoji__close")!.click();
         expect(back).toHaveBeenCalledTimes(1);
         expect(props.onClose).not.toHaveBeenCalled();
+        // The browser lands on the entry under the picker's
+        window.history.replaceState({}, "");
         window.dispatchEvent(new PopStateEvent("popstate"));
         expect(props.onClose).toHaveBeenCalledTimes(1);
         back.mockRestore();
+        app.destroy();
+    });
+
+    it("a back from a sheet opened above it leaves it open", async () => {
+        const { props, app } = await mounted();
+        // A sheet above it goes back: the entry now current is the picker's own, mark included
+        expect(window.history.state?.chatEmoji).toBe(true);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+        expect(props.onClose).not.toHaveBeenCalled();
+        window.history.replaceState({}, "");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+        expect(props.onClose).toHaveBeenCalledTimes(1);
         app.destroy();
     });
 });

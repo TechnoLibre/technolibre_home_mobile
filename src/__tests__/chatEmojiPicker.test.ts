@@ -21,7 +21,7 @@ function stubStorage(lang = "en", counts?: Record<string, number>) {
 
 function picker() {
     const p = new (ChatEmojiPickerComponent as any)();
-    const props = { onPick: vi.fn(), onClose: vi.fn() };
+    const props: any = { onPick: vi.fn(), onClose: vi.fn() };
     p.props = props;
     p.setup();
     return { p, props };
@@ -84,6 +84,17 @@ describe("ChatEmojiPickerComponent", () => {
         await p.load();
         p.pick("😀");
         expect(countEmojiUse).toHaveBeenCalledWith("😀");
+        expect(props.onPick).toHaveBeenCalledWith("😀");
+    });
+
+    it("a pick for a reaction is not counted here (the reaction counts it)", async () => {
+        stubStorage();
+        const { p, props } = picker();
+        props.countUse = false;
+        await p.load();
+        vi.mocked(countEmojiUse).mockClear();
+        p.pick("😀");
+        expect(countEmojiUse).not.toHaveBeenCalled();
         expect(props.onPick).toHaveBeenCalledWith("😀");
     });
 

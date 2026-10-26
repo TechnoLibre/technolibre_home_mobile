@@ -1,14 +1,19 @@
 import { markup, onMounted, onWillUnmount, useRef, useState, xml } from "@odoo/owl";
 import { App } from "@capacitor/app";
+import { Dialog } from "@capacitor/dialog";
 
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { HeadingComponent } from "../heading/heading_component";
 import { Events } from "../../constants/events";
 import { getCurrentLocale, t } from "../../i18n";
-import { renderBody } from "../../services/chat/chatBody";
+import { bodyText, renderBody } from "../../services/chat/chatBody";
 import type { ChatSource } from "../../services/chat/chatService";
 import { displayNameOf } from "../../services/chat/chatNames";
-import type { ChatAttachment, ChatChannel, ChatMember, ChatMessage, ChatPartner, OutgoingFile } from "../../models/chat";
+import { messageKeyOf } from "../../models/chat";
+import type {
+    ChatAttachment, ChatChannel, ChatMember, ChatMessage, ChatPartner, ChatReaction, MessageTarget, OutgoingFile,
+} from "../../models/chat";
+import { quickReactions } from "../../services/chat/chatEmoji";
 import { CHAT_UPLOAD } from "../../services/chat/chatOutbox";
 import { DraftText, joinDraftText } from "../../services/chat/chatDraft";
 import { ChatFile } from "../../plugins/chatFilePlugin";
@@ -28,6 +33,9 @@ import {
 } from "./chat_attachments_component";
 import { ChatImageViewerComponent } from "./chat_image_viewer_component";
 import { ChatEmojiPickerComponent } from "./chat_emoji_picker_component";
+import { ChatMessageMenuComponent, type MessageCan } from "./chat_message_menu_component";
+import { ChatReactionsComponent, ChatReactionWhoComponent, reactionViews, type ReactionView } from "./chat_reactions_component";
+import { LongPress } from "./chatLongPress";
 
 /** Quiet period that folds a burst of CHAT_CHANGED into one refresh. */
 const CHANGE_DEBOUNCE_MS = 150;
@@ -59,6 +67,14 @@ export interface ThreadRow {
     opId: string | null;
     /** The message's files, in pick order (ThreadAttachments.views). */
     attachments: AttachmentView[];
+    /** The message's key among its account's rows (messageKeyOf), which its reactions are stored under. */
+    messageKey: string;
+    /** The message as an action names it. */
+    target: MessageTarget;
+    /** Its reaction chips, in the server's order. */
+    reactions: ReactionView[];
+    /** What its long-press menu offers. */
+    can: MessageCan;
 }
 
 interface ThreadState {
@@ -84,6 +100,14 @@ interface ThreadState {
     inputRows: number;
     /** The emoji picker is open. */
     emoji: boolean;
+    /** Row key of the message whose long-press menu is open; null when it is closed. */
+    actions: string | null;
+    /** Row key of the message the open picker reacts to; null while the picker types into the composer. */
+    reactTo: string | null;
+    /** The reaction whose « who reacted » sheet is open; null when it is closed. */
+    who: ReactionView | null;
+    /** « Copied », or the copy's refusal, for FLASH_MS; "" otherwise. */
+    flash: string;
     /** Key of the image the viewer shows; null when it is closed. */
     viewer: string | null;
     /** From the ➤ tap until the post is queued: the text takes no input, 📎, 🎤 and ➤ are off. */
@@ -112,6 +136,9 @@ const SHOWN_IMAGE = /^image\/(jpeg|png|gif|webp)$/;
  */
 const PREPARING_IMAGES = 3;
 
+/** How long « Copied » (or the copy's refusal) stays shown, in ms. */
+const FLASH_MS = 1500;
+
 /** Rows the composer shows for a text, from 1 up to MAX_INPUT_ROWS. */
 function rowsOf(text: string): number {
     return Math.min(MAX_INPUT_ROWS, text.split("\n").length);
@@ -134,6 +161,32 @@ function utcMs(dt: string | null | undefined): number {
     if (!dt) return NaN;
     const iso = dt.replace(" ", "T");
     return Date.parse(/Z$|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + "Z");
+}
+
+/**
+ * What the long-press menu offers on a message, as Odoo's message actions:
+ * react and reply on a `comment` message of a conversation the user writes
+ * in (writable), never on one whose post failed; edit on the user's own
+ * `comment` messages, sent or queued (a failed one is not edited); delete
+ * on them too, a failed one included (it is dropped with its files); copy
+ * on any message whose text (bodyText) is not blank.
+ */
+export function canOf(m: ChatMessage, own: boolean, writable: boolean, text: string): MessageCan {
+    const live = writable && m.messageType === "comment";
+    const failed = m.status === "failed";
+    return {
+        react: live && !failed,
+        reply: live && !failed,
+        copy: text.trim() !== "",
+        edit: live && own && !failed,
+        delete: live && own,
+    };
+}
+
+/** The part of a row's signature its chips and menu add: a change repaints the row. */
+function actionsSig(r: ThreadRow): string {
+    const can = [r.can.react, r.can.reply, r.can.copy, r.can.edit, r.can.delete].map(Number).join("");
+    return can + "|" + r.reactions.map((x) => [x.content, x.count, Number(x.self), x.names.join(",")].join(":")).join(";");
 }
 
 /**
@@ -175,7 +228,10 @@ export class ChatThreadComponent extends EnhancedComponent {
     state!: ThreadState;
     scroller!: { el: HTMLElement | null };
 
-    static components = { HeadingComponent, ChatComposerAttachComponent, ChatAttachmentsComponent, ChatImageViewerComponent, ChatEmojiPickerComponent };
+    static components = {
+        HeadingComponent, ChatComposerAttachComponent, ChatAttachmentsComponent, ChatImageViewerComponent, ChatEmojiPickerComponent,
+        ChatMessageMenuComponent, ChatReactionsComponent, ChatReactionWhoComponent,
+    };
 
     static template = xml`
     <div id="chat-thread">
@@ -204,9 +260,14 @@ export class ChatThreadComponent extends EnhancedComponent {
       </div>
       <div class="chat-thread__scroll" t-ref="scroller" t-on-scroll="onScroll">
         <div t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-thread__bubble"
-             t-att-class="{'chat-thread__bubble--own': row.own}">
+             t-att-class="{'chat-thread__bubble--own': row.own, 'chat-thread__bubble--pressed': state.actions === row.key}"
+             t-on-pointerdown="(ev) => this.onPressDown(row, ev)" t-on-pointermove="onPressMove"
+             t-on-pointerup="onPressUp" t-on-pointercancel="onPressCancel"
+             t-on-contextmenu.prevent="" t-on-click.capture="onBubbleClick">
           <div t-if="row.hasBody" class="chat-thread__body"><t t-out="row.html"/></div>
           <ChatAttachmentsComponent t-if="row.attachments.length" row="row" ta="attachments" onImage.bind="openImage"/>
+          <ChatReactionsComponent t-if="row.reactions.length" reactions="row.reactions"
+                                  onToggle="(content) => this.onChip(row, content)" onWho="(content) => this.onWho(row, content)"/>
           <div class="chat-thread__meta">
             <span t-esc="row.time"/>
             <span t-if="row.meta === 'sent'" t-att-title="t('chat.sent')">✓</span>
@@ -234,10 +295,11 @@ export class ChatThreadComponent extends EnhancedComponent {
         </div>
       </div>
       <p t-if="state.typing" class="chat-thread__typing" t-esc="state.typing"/>
+      <p t-if="state.flash" class="chat-thread__flash" role="status" t-esc="state.flash"/>
       <p t-if="state.error" class="chat-thread__failed" role="alert" t-esc="state.error"/>
       <t t-if="!state.failedCreate">
         <ChatComposerAttachComponent attach="attach"/>
-        <ChatEmojiPickerComponent t-if="state.emoji" onPick.bind="onEmoji" onClose.bind="toggleEmoji"/>
+        <ChatEmojiPickerComponent t-if="state.emoji" countUse="!state.reactTo" onPick.bind="onEmoji" onClose.bind="toggleEmoji"/>
         <div class="chat-thread__composer">
           <button class="chat-thread__attach" t-att-aria-label="t('chat.attach')" t-att-aria-expanded="attachState.sheet ? 'true' : 'false'"
                   t-att-disabled="!attachState.ready or attachState.voice !== 'idle' or state.sending" t-on-mousedown.prevent="" t-on-click="() => this.attach.toggleSheet()">📎</button>
@@ -256,6 +318,10 @@ export class ChatThreadComponent extends EnhancedComponent {
                   t-on-mousedown.prevent="" t-on-click="() => this.onSend()">➤</button>
         </div>
       </t>
+      <ChatMessageMenuComponent t-if="state.actions" quick="quick()" active="activeOf()" can="menuCan()"
+                                onReact.bind="onMenuReact" onMore.bind="onMenuMore" onReply.bind="onMenuReply" onCopy.bind="onMenuCopy"
+                                onEdit.bind="onMenuEdit" onDelete.bind="onMenuDelete" onClose.bind="closeActions"/>
+      <ChatReactionWhoComponent t-if="state.who" reaction="state.who" onClose.bind="closeWho"/>
       <ChatImageViewerComponent t-if="state.viewer" ta="attachments" attKey="state.viewer" onClose.bind="closeViewer"/>
     </div>`;
 
@@ -284,10 +350,12 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _marking = false;
     private _markAgain = false;
     /** Rendered body per message version: renderBody runs for new or edited messages only. */
-    private _html = new Map<string, { html: unknown; shows: boolean }>();
+    private _html = new Map<string, { html: unknown; shows: boolean; text: string }>();
     private _sig = "";
     /** The rows last rendered (not the reactive proxies) and their parts the files do not change. */
     private _rows: ThreadRow[] = [];
+    /** The messages of the rows last rendered, by row key (for the menu's copy). */
+    private _messages = new Map<string, ChatMessage>();
     private _base: string[] = [];
     /** Mark of an own queued row before the Wi-Fi hold is considered, by row key. */
     private _metaBase = new Map<string, MetaKind>();
@@ -330,6 +398,10 @@ export class ChatThreadComponent extends EnhancedComponent {
             error: "",
             inputRows: 1,
             emoji: false,
+            actions: null,
+            reactTo: null,
+            who: null,
+            flash: "",
             viewer: null,
             sending: false,
             preparing: null,
@@ -383,6 +455,8 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
         if (this._debounce !== null) clearTimeout(this._debounce);
         if (this._typingTimer !== null) clearTimeout(this._typingTimer);
+        if (this._flashTimer !== null) clearTimeout(this._flashTimer);
+        this.press.cancel();
         if (this.source) this.chatService.typing(this.source, this.channelId, false).catch(() => {});
     }
 
@@ -450,7 +524,8 @@ export class ChatThreadComponent extends EnhancedComponent {
             if (this.destroyed) return;
             this._metaBase.clear();
             this._sig = "";
-            this._rows = kept.map((m) => this.rowOf(m, null, [], self, []));
+            this._messages = new Map(kept.map((m) => [this.keyOf(m), m]));
+            this._rows = kept.map((m) => this.rowOf(m, null, [], self, [], new Map()));
             this._base = this._rows.map(() => "");
             this.state.rows = this._rows;
             this.attachments.watch();
@@ -466,7 +541,11 @@ export class ChatThreadComponent extends EnhancedComponent {
         const ops: RowOp[] = messages.some((m) => m.status === "pending")
             ? await this.databaseService.getOutboxOpsForConfig(this.configId)
             : [];
-        await this.loadAttachments(messages, ops);
+        const keys = messages.filter((m) => m.messageId !== null || m.clientUuid).map(messageKeyOf);
+        const [groups] = await Promise.all([
+            keys.length ? this.chatService.reactions(this.configId, this.channelId, keys) : new Map<string, ChatReaction[]>(),
+            this.loadAttachments(messages, ops),
+        ]);
         if (this.destroyed) return;
         const names = new Map(partners.map((p) => [p.partnerId, p.name]));
         const self = st.selfPartnerId;
@@ -489,15 +568,16 @@ export class ChatThreadComponent extends EnhancedComponent {
         const stick = !el || this.atBottom(el);
         const before = el ? el.scrollHeight - el.scrollTop : 0;
         this._metaBase.clear();
-        const rows = messages.map((m) => this.rowOf(m, channel!, members, self, ops));
+        const rows = messages.map((m) => this.rowOf(m, channel!, members, self, ops, groups, names));
         // A change of members or typing alone leaves the rows, and the DOM, untouched
-        const base = rows.map((r, i) => [r.key, r.time, r.opId, this.htmlKey(messages[i])].join("|"));
+        const base = rows.map((r, i) => [r.key, r.time, r.opId, this.htmlKey(messages[i]), actionsSig(r)].join("|"));
         const sig = this.sigOf(base, rows);
         this.attachments.watch();
         if (sig === this._sig) return;
         this._sig = sig;
         this._base = base;
         this._rows = rows;
+        this._messages = new Map(messages.map((m) => [this.keyOf(m), m]));
         this.state.rows = rows;
         this._oldestShown = messages.find((m) => m.messageId !== null)?.messageId ?? null;
         this.pruneHtml(messages);
@@ -625,6 +705,8 @@ export class ChatThreadComponent extends EnhancedComponent {
         members: ChatMember[],
         self: number | null,
         ops: RowOp[],
+        groups: Map<string, ChatReaction[]>,
+        names: Map<number, string>,
     ): ThreadRow {
         const own = self !== null && m.authorPartnerId === self;
         const key = this.keyOf(m);
@@ -652,6 +734,8 @@ export class ChatThreadComponent extends EnhancedComponent {
             }
         }
         const body = this.htmlOf(m);
+        const named = m.messageId !== null || !!m.clientUuid;
+        const writable = named && channel !== null && !channel.createFailed && !channel.leftUnsent;
         return {
             key,
             own,
@@ -661,6 +745,10 @@ export class ChatThreadComponent extends EnhancedComponent {
             meta,
             opId: m.outboxOpId,
             attachments: this.attachments.views(key),
+            messageKey: messageKeyOf(m),
+            target: { messageId: m.messageId, clientUuid: m.clientUuid },
+            reactions: named ? reactionViews(groups.get(messageKeyOf(m)) ?? [], names) : [],
+            can: canOf(m, own, writable, body.text),
         };
     }
 
@@ -682,12 +770,12 @@ export class ChatThreadComponent extends EnhancedComponent {
         return false;
     }
 
-    private htmlOf(m: ChatMessage): { html: unknown; shows: boolean } {
+    private htmlOf(m: ChatMessage): { html: unknown; shows: boolean; text: string } {
         const k = this.htmlKey(m);
         let body = this._html.get(k);
         if (body === undefined) {
             const html = renderBody(m.body);
-            body = { html: markup(html), shows: shows(html) };
+            body = { html: markup(html), shows: shows(html), text: bodyText(m.body) };
             this._html.set(k, body);
         }
         return body;
@@ -722,6 +810,8 @@ export class ChatThreadComponent extends EnhancedComponent {
     }
 
     async onScroll(): Promise<void> {
+        // A press that scrolls the list is no long press
+        this.press.cancel();
         const el = this.scroller.el as HTMLElement | null;
         if (!el || !this.source) return;
         if (el.scrollTop <= EDGE_PX) await this.loadOlder();
@@ -841,6 +931,196 @@ export class ChatThreadComponent extends EnhancedComponent {
         await this.refresh();
     }
 
+    // ─── Message actions ──────────────────────────────────────────────────
+
+    /** A long press on a bubble opens its menu. */
+    private press = new LongPress((key) => this.openActions(key));
+    /** « … » was chosen in the menu of this row: the picker opens for it once the menu is gone. */
+    private _moreFor: string | null = null;
+    private _flashTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /**
+     * A press starts on a bubble (touch, pen or the main mouse button). It
+     * calls no preventDefault, so the list still scrolls and the text is
+     * still selected; the bubble's contextmenu is prevented in the template.
+     */
+    onPressDown(row: ThreadRow, ev: PointerEvent): void {
+        if (ev.button > 0) return;
+        this.press.down(row.key, ev.clientX, ev.clientY);
+    }
+
+    onPressMove(ev: PointerEvent): void {
+        this.press.move(ev.clientX, ev.clientY);
+    }
+
+    onPressUp(): void {
+        this.press.up();
+    }
+
+    onPressCancel(): void {
+        this.press.cancel();
+    }
+
+    /** The click that ends a long press reaches neither a link of the body nor a file: the menu took the press. */
+    onBubbleClick(ev: Event): void {
+        if (!this.press.takeFired()) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+    }
+
+    private rowAt(key: string | null): ThreadRow | undefined {
+        return key === null ? undefined : this._rows.find((r) => r.key === key);
+    }
+
+    /** Opens the menu of a row, unless another sheet is open or the menu would offer nothing. */
+    openActions(key: string): void {
+        const row = this.rowAt(key);
+        if (!row || this.state.actions !== null || this.state.who || this.state.viewer) return;
+        if (!Object.values(this.canIn(row)).some(Boolean)) return;
+        this.state.menu = false;
+        this.state.actions = key;
+    }
+
+    /**
+     * What the menu offers on a row. The composer has no reply or edit
+     * mode: Reply and Edit stay out of the menu, and onMenuReply and
+     * onMenuEdit answer nothing.
+     */
+    private canIn(row: ThreadRow): MessageCan {
+        return { ...row.can, reply: false, edit: false };
+    }
+
+    /** What the open menu offers; nothing once its row is gone. */
+    menuCan(): MessageCan {
+        const row = this.rowAt(this.state.actions);
+        return row ? this.canIn(row) : { react: false, reply: false, copy: false, edit: false, delete: false };
+    }
+
+    /** The menu's quick bar (quickReactions, from the uses counted on this phone). */
+    quick(): string[] {
+        return quickReactions();
+    }
+
+    /** The reactions the user put on the menu's message, pressed in its quick bar. */
+    activeOf(): string[] {
+        return (this.rowAt(this.state.actions)?.reactions ?? []).filter((r) => r.self).map((r) => r.content);
+    }
+
+    /** The menu went (its history entry with it); « … » chosen in it opens the picker for its message. */
+    closeActions(): void {
+        this.state.actions = null;
+        if (this._moreFor === null) return;
+        this.state.reactTo = this._moreFor;
+        this._moreFor = null;
+        this.state.emoji = true;
+    }
+
+    /** A quick emoji: put on the message, or taken off when the user already reacted with it. */
+    onMenuReact(content: string): Promise<void> {
+        const row = this.rowAt(this.state.actions);
+        if (!row) return Promise.resolve();
+        return this.react(row, content, !row.reactions.some((r) => r.content === content && r.self));
+    }
+
+    onMenuMore(): void {
+        this._moreFor = this.state.actions;
+    }
+
+    onMenuReply(): void {}
+
+    onMenuEdit(): void {}
+
+    /**
+     * Copies the message's text as the browser reads a body back (bodyText:
+     * line breaks kept, a mention as @Name, a link as its text), then shows
+     * « Copied » for FLASH_MS; a clipboard missing or refusing shows that
+     * the copy failed. The write starts inside the tap, as the clipboard asks.
+     */
+    async onMenuCopy(): Promise<void> {
+        const m = this.state.actions === null ? undefined : this._messages.get(this.state.actions);
+        if (!m) return;
+        try {
+            await navigator.clipboard.writeText(bodyText(m.body));
+            this.showFlash(t("chat.copied"));
+        } catch (e) {
+            console.warn("chat thread: copy refused", e);
+            this.showFlash(t("chat.copy_failed"));
+        }
+    }
+
+    /** Deletes the message as Odoo does, after the user confirms. */
+    async onMenuDelete(): Promise<void> {
+        const row = this.rowAt(this.state.actions);
+        const source = this.source;
+        if (!row || !source) return;
+        let yes = false;
+        try {
+            yes = (await Dialog.confirm({
+                message: t("chat.delete_confirm"),
+                okButtonTitle: t("chat.delete"),
+                cancelButtonTitle: t("chat.cancel"),
+            })).value;
+        } catch (e) {
+            console.warn("chat thread: delete confirmation", e);
+        }
+        if (!yes || this.destroyed) return;
+        try {
+            await this.chatService.deleteMessage(source, this.channelId, row.target);
+        } catch (e) {
+            console.warn("chat thread: delete", e);
+            this.state.error = t("chat.action_error");
+        }
+    }
+
+    /**
+     * A pick in the picker opened by « … »: the picker closes and the emoji
+     * goes on the message; one the user already put on stays as it is, as
+     * Odoo's picker does.
+     */
+    private pickReaction(codepoints: string): void {
+        const row = this.rowAt(this.state.reactTo);
+        this.state.reactTo = null;
+        this.state.emoji = false;
+        if (!row || row.reactions.some((r) => r.content === codepoints && r.self)) return;
+        void this.react(row, codepoints, true);
+    }
+
+    /** A tap on a chip: the user's own reaction comes off, another one goes on. */
+    onChip(row: ThreadRow, content: string): Promise<void> {
+        if (!row.can.react) return Promise.resolve();
+        return this.react(row, content, !row.reactions.some((r) => r.content === content && r.self));
+    }
+
+    /** A long press on a chip: who reacted with it. */
+    onWho(row: ThreadRow, content: string): void {
+        if (this.state.actions !== null) return;
+        this.state.who = row.reactions.find((r) => r.content === content) ?? null;
+    }
+
+    closeWho(): void {
+        this.state.who = null;
+    }
+
+    /** Queues the user's own reaction on or off (ChatService.react); a refusal to queue shows an error. */
+    private async react(row: ThreadRow, content: string, on: boolean): Promise<void> {
+        if (!this.source) return;
+        try {
+            await this.chatService.react(this.source, this.channelId, row.target, content, on);
+        } catch (e) {
+            console.warn("chat thread: reaction", e);
+            this.state.error = t("chat.action_error");
+        }
+    }
+
+    private showFlash(text: string): void {
+        if (this._flashTimer !== null) clearTimeout(this._flashTimer);
+        this.state.flash = text;
+        this._flashTimer = setTimeout(() => {
+            this._flashTimer = null;
+            this.state.flash = "";
+        }, FLASH_MS);
+    }
+
     // ─── Composer ─────────────────────────────────────────────────────────
 
     /**
@@ -908,16 +1188,23 @@ export class ChatThreadComponent extends EnhancedComponent {
         }
     }
 
+    /** The composer's 😊, and the picker's close: the picker opens to type, or closes whatever it was for. */
     toggleEmoji(): void {
         this.state.emoji = !this.state.emoji;
+        this.state.reactTo = null;
     }
 
     /**
-     * An emoji picked: inserted at the caret, replacing the selection, and
-     * kept in the draft like typed text. The caret ends after it. Refused
-     * while a send runs, as typing is.
+     * An emoji picked. Opened from a message's « … », it reacts to that
+     * message (pickReaction). Otherwise it is inserted at the caret,
+     * replacing the selection, and kept in the draft like typed text; the
+     * caret ends after it. Refused while a send runs, as typing is.
      */
     onEmoji(codepoints: string): void {
+        if (this.state.reactTo !== null) {
+            this.pickReaction(codepoints);
+            return;
+        }
         if (this.state.sending) return;
         const field = this.input.el as HTMLTextAreaElement | null;
         const text = this.state.text;
@@ -960,6 +1247,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         if (!text && extra.length === 0 && this.attachState.chips.length === 0) return false;
         this.state.sending = true;
         this.state.emoji = false;
+        this.state.reactTo = null;
         // A second screen of this conversation reads its draft once this post is queued
         const ended = this.chatService.sendStarted(this.configId, this.channelId);
         let queued = false;
