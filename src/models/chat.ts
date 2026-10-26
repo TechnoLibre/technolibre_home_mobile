@@ -80,6 +80,10 @@ export interface ChatMessage {
   parentClientUuid?: string | null;
   /** The partners the message mentions (`recipients`), in the server's order. */
   recipientIds?: number[];
+  /** When the message was pinned in its channel (`pinned_at`); null when it is not pinned. */
+  pinnedAt?: string | null;
+  /** Whether the user starred the message (`starred`, per user on the server). */
+  starred?: boolean;
 }
 
 /** A message as an action names it: by server id once it has one, else by the client uuid of its post. */
@@ -223,6 +227,8 @@ export interface ChatSourceState {
   fileDir: string | null;
   /** Level of the server module (attachment upload route at "1.2"); null while unknown. */
   moduleLevel: "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | null;
+  /** How many messages the user starred (`Store.starred.counter`). */
+  starredCounter: number;
 }
 
 /**

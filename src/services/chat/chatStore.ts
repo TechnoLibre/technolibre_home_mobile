@@ -27,6 +27,8 @@ export interface StoreDelta {
   deletedAttachmentIds: number[];
   partners: (Partial<ChatPartner> & { partnerId: number })[];
   inboxCounter: number | null;
+  /** The number of starred messages (`Store.starred.counter`); absent or null when the Store has none. */
+  starredCounter?: number | null;
   selfPartnerId: number | null;
   /** The account-wide mute end when the Store carries `settings`: a date, or null when unmuted. */
   globalMuteUntil?: string | null;
@@ -146,6 +148,9 @@ export function parseStore(
   }
   if (store.inbox && typeof store.inbox.counter === "number") {
     delta.inboxCounter = store.inbox.counter;
+  }
+  if (store.starred && typeof store.starred.counter === "number") {
+    delta.starredCounter = store.starred.counter;
   }
   if (store.settings && typeof store.settings === "object" && "mute_until_dt" in store.settings) {
     delta.globalMuteUntil = store.settings.mute_until_dt || null;
@@ -298,6 +303,8 @@ export function parseStore(
     copy(msg, m, "recipients", "recipientIds", (v) =>
       (Array.isArray(v) ? v : []).map(personaPartnerId).filter((x: number | null): x is number => x !== null),
     );
+    copy(msg, m, "pinned_at", "pinnedAt", (v) => v || null);
+    copy(msg, m, "starred", "starred", (v) => !!v);
     if ("reactions" in m) readReactions(m.id, m.reactions, delta);
     delta.messages.push(msg);
   }
@@ -409,6 +416,7 @@ export function mergeDeltas(a: StoreDelta, b: StoreDelta): StoreDelta {
     deletedAttachmentIds: union(a.deletedAttachmentIds, b.deletedAttachmentIds),
     partners: mergeBy(a.partners, b.partners, "partnerId"),
     inboxCounter: b.inboxCounter ?? a.inboxCounter,
+    starredCounter: b.starredCounter ?? a.starredCounter,
     selfPartnerId: b.selfPartnerId ?? a.selfPartnerId,
     globalMuteUntil: b.globalMuteUntil !== undefined ? b.globalMuteUntil : a.globalMuteUntil,
     ...mergeReactions(a, b),

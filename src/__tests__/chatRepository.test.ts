@@ -1418,3 +1418,164 @@ describe("migration 2026102607", () => {
     expect(await colsOf("chat_messages")).toEqual([]);
   });
 });
+
+describe("ChatRepository search text, pin and star", () => {
+  let db: DatabaseService;
+  let repo: ChatRepository;
+  const searchTexts = async () =>
+    Object.fromEntries((await db.rawQuery("SELECT id, search_text FROM chat_messages")).map((r) => [r.id, r.search_text]));
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await addChatTables(db);
+    repo = new ChatRepository(db);
+  });
+
+  it("every write keeps search_text the folded text of the body: post, settle, edit", async () => {
+    await repo.putPending(pending(A, "uu1", { body: "<p>Élan</p>" }));
+    expect(await searchTexts()).toEqual({ [`${A}#uuu1`]: "elan" });
+    await repo.settlePending(A, "uu1", 60);
+    expect(await searchTexts()).toEqual({ [`${A}#m60`]: "elan" });
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 60, body: `<p>Café <b>crème</b></p><span class="o-mail-Message-edited"></span>` }] }));
+    expect(await searchTexts()).toEqual({ [`${A}#m60`]: "cafe creme" });
+  });
+
+  it("a message round trips pinnedAt and starred; defaults when absent", async () => {
+    await repo.applyDelta(A, delta({ messages: [
+      { messageId: 60, channelId: 7, body: "a", pinnedAt: "2026-10-26 10:00:00", starred: true },
+      { messageId: 61, channelId: 7, body: "b" },
+    ] }));
+    expect(await repo.message(A, 60)).toMatchObject({ pinnedAt: "2026-10-26 10:00:00", starred: true });
+    expect(await repo.message(A, 61)).toMatchObject({ pinnedAt: null, starred: false });
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 60, pinnedAt: null, starred: false }] }));
+    expect(await repo.message(A, 60)).toMatchObject({ body: "a", pinnedAt: null, starred: false });
+  });
+
+  it("applyDelta writes the starred counter, and keeps it when the delta has none", async () => {
+    expect((await repo.sourceState(A)).starredCounter).toBe(0);
+    await repo.applyDelta(A, delta({ starredCounter: 3 }));
+    expect((await repo.sourceState(A)).starredCounter).toBe(3);
+    await repo.applyDelta(A, delta({ inboxCounter: 1 }));
+    expect(await repo.sourceState(A)).toMatchObject({ starredCounter: 3, inboxCounter: 1 });
+  });
+
+  it("setStarred sets the flag of a cached message and leaves an uncached one alone", async () => {
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 60, channelId: 7, body: "<p>x</p>" }] }));
+    await repo.setStarred(A, 60, true);
+    expect(await repo.message(A, 60)).toMatchObject({ starred: true, body: "<p>x</p>" });
+    await repo.setStarred(A, 60, false);
+    expect((await repo.message(A, 60))!.starred).toBe(false);
+    await repo.setStarred(A, 99, true);
+    expect(await repo.message(A, 99)).toBeNull();
+  });
+
+  it("the search engine of the test database is like, logged once", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(await db.chatSearchEngine()).toBe("like");
+      expect(await db.chatSearchEngine()).toBe("like");
+      expect(log.mock.calls.filter((c) => String(c[0]).includes("search engine"))).toEqual([["[chat] search engine: like"]]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+});
+
+describe("migration 2026102701", () => {
+  let db: DatabaseService;
+  const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102701)!;
+  const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+  const MESSAGE_COLS = ["search_text", "pinned_at", "starred"];
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+  });
+
+  it("a fresh install has the columns", async () => {
+    for (const m of APP_MIGRATIONS) {
+      if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+    }
+    expect(await colsOf("chat_messages")).toEqual(expect.arrayContaining(MESSAGE_COLS));
+    expect(await colsOf("chat_sources")).toContain("starred_counter");
+  });
+
+  // chat_messages and chat_sources as migrations 2026102501 to 2026102608 left them
+  const at2026102608 = async () => {
+    await (db as any).db.execute(`CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL, channel_id INTEGER NOT NULL, message_id INTEGER,
+      client_uuid TEXT, author_partner_id INTEGER, body TEXT NOT NULL, date TEXT NOT NULL, message_type TEXT NOT NULL,
+      status TEXT NOT NULL, outbox_op_id TEXT, write_date TEXT, parent_id INTEGER, parent_client_uuid TEXT,
+      recipient_ids TEXT)`);
+    await (db as any).db.execute(`CREATE TABLE IF NOT EXISTS chat_sources (
+      config_id TEXT PRIMARY KEY NOT NULL, self_partner_id INTEGER, last_bus_id INTEGER NOT NULL, bus_seen_at TEXT,
+      ws_version TEXT, is_system INTEGER NOT NULL, module_state TEXT NOT NULL, inbox_counter INTEGER NOT NULL,
+      loaded_at TEXT, counter_bus_id INTEGER NOT NULL DEFAULT 0, internal_user_group_id INTEGER,
+      global_mute_until TEXT, global_mute_at TEXT, is_internal_user INTEGER NOT NULL DEFAULT 0, file_dir TEXT,
+      module_level TEXT)`);
+  };
+  const insert = (id: string, messageId: number, body: string) => db.rawRun(
+    "INSERT INTO chat_messages (id, config_id, channel_id, message_id, body, date, message_type, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    [id, "a", 7, messageId, body, "d", "comment", "sent"],
+  );
+  const texts = async () =>
+    new Map((await db.rawQuery("SELECT id, search_text FROM chat_messages")).map((r) => [r.id, r.search_text]));
+
+  it("adds the columns to a database at 2026102608, keeping its rows; a second run changes nothing", async () => {
+    await at2026102608();
+    await insert("a#m1", 1, "<p>Café <b>crème</b></p>");
+    await db.rawRun("INSERT INTO chat_sources (config_id, last_bus_id, is_system, module_state, inbox_counter) VALUES (?, ?, ?, ?, ?)",
+      ["a", 0, 0, "unknown", 2]);
+    expect(migration().description).toBe("Clavardage : texte de recherche, épingle et favori des messages");
+    await migration().run(db);
+    await migration().run(db);
+    for (const c of MESSAGE_COLS) expect((await colsOf("chat_messages")).filter((x) => x === c)).toHaveLength(1);
+    expect((await colsOf("chat_sources")).filter((x) => x === "starred_counter")).toHaveLength(1);
+    expect(await texts()).toEqual(new Map([["a#m1", ""]]));
+    const repo = new ChatRepository(db);
+    expect(await repo.message("a", 1)).toMatchObject({ body: "<p>Café <b>crème</b></p>", pinnedAt: null, starred: false });
+    expect(await repo.sourceState("a")).toMatchObject({ inboxCounter: 2, starredCounter: 0 });
+  });
+
+  it("fillChatSearchText gives the rows cached before the column their text, over several rounds", async () => {
+    await at2026102608();
+    await insert("a#m1", 1, "<p>Café <b>crème</b></p>");
+    // More rows than one round of the fill reads
+    for (let i = 2; i <= 1201; i++) await insert(`a#m${i}`, i, `<p>Note ${i}</p>`);
+    await insert("a#m1202", 1202, "");
+    await migration().run(db);
+    await db.fillChatSearchText();
+    const filled = await texts();
+    expect(filled.size).toBe(1202);
+    expect(filled.get("a#m1")).toBe("cafe creme");
+    expect(filled.get("a#m1201")).toBe("note 1201");
+    expect([...filled].filter(([, t]) => !t).map(([id]) => id)).toEqual(["a#m1202"]);
+    await db.fillChatSearchText();
+    expect(await texts()).toEqual(filled);
+  });
+
+  it("fillChatSearchText leaves a message rewritten after its read with the text of its new body", async () => {
+    await at2026102608();
+    await insert("a#m1", 1, "<p>Ancien</p>");
+    await migration().run(db);
+    const repo = new ChatRepository(db);
+    const read = db.rawQuery.bind(db);
+    vi.spyOn(db, "rawQuery").mockImplementationOnce(async (sql, values) => {
+      const rows = await read(sql, values);
+      await repo.applyDelta("a", delta({ messages: [{ messageId: 1, body: "<p>Nouveau</p>" }] }));
+      return rows;
+    });
+    await db.fillChatSearchText();
+    expect(await texts()).toEqual(new Map([["a#m1", "nouveau"]]));
+  });
+
+  it("a database without the chat tables gets no columns", async () => {
+    await migration().run(db);
+    await db.fillChatSearchText();
+    expect(await colsOf("chat_messages")).toEqual([]);
+    expect(await colsOf("chat_sources")).toEqual([]);
+  });
+});

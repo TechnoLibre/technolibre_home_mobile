@@ -3,6 +3,7 @@ import { t } from "../../i18n";
 import { RequestNotSentError, type OdooRpcClient } from "../odoo/odooRpcClient";
 import type { ChatRepository } from "./chatRepository";
 import type { ChatSource } from "./chatSources";
+import { foldText as fold } from "./chatBody";
 import { parseStore, type StoreDelta } from "./chatStore";
 
 /** A public channel the user is not in yet, as the list of channels to join shows it. */
@@ -21,8 +22,6 @@ export interface AccessGroup {
   fullName: string;
 }
 
-/** Lower-cased text without accents, the form people names are compared in. */
-const fold = (text: string): string => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
 /** A delta carrying only partner records. */
 const partnersDelta = (partners: StoreDelta["partners"], selfPartnerId: number | null): StoreDelta => ({

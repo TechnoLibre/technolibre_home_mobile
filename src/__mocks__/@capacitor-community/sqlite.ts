@@ -2,7 +2,10 @@
  * Mock of @capacitor-community/sqlite.
  *
  * Simulates a SQLite database in memory using Maps.
- * Handles basic CREATE TABLE, INSERT, SELECT, UPDATE, DELETE.
+ * Handles basic CREATE TABLE, INSERT, SELECT, UPDATE, DELETE. A SELECT
+ * takes `col = ?`, `col != ?`, `col > ?`, `col < ?` conditions joined by
+ * AND, then an optional `ORDER BY col` and `LIMIT n`. Anything else (a
+ * virtual table, a trigger, sqlite_master) is accepted and does nothing.
  */
 
 type Row = Record<string, any>;
@@ -34,16 +37,19 @@ class MockDBConnection {
       }
     }
 
-    const alterMatch = sql.match(/ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(\w+)/i);
+    const alterMatch = sql.match(/ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(\w+)(?:.*\bDEFAULT\s+('[^']*'|-?\d+))?/i);
     if (alterMatch) {
       const table = alterMatch[1];
       const col = alterMatch[2];
+      // Existing rows take the column's DEFAULT ('' or a number), else null
+      const literal = alterMatch[3];
+      const fill = literal === undefined ? null : literal.startsWith("'") ? literal.slice(1, -1) : Number(literal);
       const cols = this.columns.get(table) ?? [];
       if (!cols.includes(col)) {
         cols.push(col);
         this.columns.set(table, cols);
         const rows = this.tables.get(table) ?? [];
-        rows.forEach((row) => { if (!(col in row)) row[col] = null; });
+        rows.forEach((row) => { if (!(col in row)) row[col] = fill; });
       }
     }
 
@@ -165,6 +171,13 @@ class MockDBConnection {
     return { changes: { changes: 0 } };
   }
 
+  /** Each statement of the set run in order, as one transaction would. */
+  async executeSet(set: { statement: string; values?: any[] }[], _transaction?: boolean) {
+    let changes = 0;
+    for (const s of set) changes += (await this.run(s.statement, s.values ?? [])).changes.changes;
+    return { changes: { changes } };
+  }
+
   async query(sql: string, values?: any[]) {
     // PRAGMA table_info(tableName)
     const pragmaMatch = sql.match(/PRAGMA\s+table_info\((\w+)\)/i);
@@ -183,14 +196,25 @@ class MockDBConnection {
       const table = selectMatch[2];
       let rows = this.tables.get(table) ?? [];
 
-      if (selectMatch[3] && values) {
-        const whereCols = selectMatch[3]
+      let where = selectMatch[3] ?? "";
+      const limitMatch = where.match(/\s*\bLIMIT\s+(\d+)\s*$/i);
+      if (limitMatch) where = where.slice(0, limitMatch.index);
+      const orderMatch = where.match(/\s*\bORDER BY\s+(\w+)\s*$/i);
+      if (orderMatch) where = where.slice(0, orderMatch.index);
+      if (where.trim() && values) {
+        const conds = where
           .split(/\s+AND\s+/i)
-          .map((c) => c.trim().split(/\s*=\s*\?/)[0].trim());
-        rows = rows.filter((row) =>
-          whereCols.every((col, i) => row[col] === values[i])
-        );
+          .map((c) => c.trim().match(/^(\w+)\s*(!=|>|<|=)\s*\?$/))
+          .map((m) => (m ? { col: m[1], op: m[2] } : { col: "", op: "=" }));
+        const test = (v: any, op: string, x: any): boolean =>
+          op === "=" ? v === x : op === "!=" ? v !== x : op === ">" ? v > x : v < x;
+        rows = rows.filter((row) => conds.every((c, i) => test(row[c.col], c.op, values[i])));
       }
+      if (orderMatch) {
+        const col = orderMatch[1];
+        rows = [...rows].sort((a, b) => (a[col] < b[col] ? -1 : a[col] > b[col] ? 1 : 0));
+      }
+      if (limitMatch) rows = rows.slice(0, Number(limitMatch[1]));
 
       if (colList === "*") {
         return { values: rows };

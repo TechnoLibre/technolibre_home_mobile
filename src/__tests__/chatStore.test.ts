@@ -366,3 +366,30 @@ describe("parseStore reactions, parents and recipients", () => {
     expect(mergeDeltas(a, b).deletedMessageIds).toEqual([1, 2]);
   });
 });
+
+describe("parseStore pin, star and the starred counter", () => {
+  it("reads pinned_at as a date, then false as unpinned, and starred", () => {
+    const pinned = parseStore({
+      "mail.message": [{ id: 70, thread: thread(7), pinned_at: "2026-10-26 10:00:00", starred: true }],
+    }, CFG, SELF);
+    expect(pinned.messages[0]).toMatchObject({ messageId: 70, pinnedAt: "2026-10-26 10:00:00", starred: true });
+    const unpinned = parseStore({ "mail.message": [{ id: 70, pinned_at: false, starred: false }] }, CFG, SELF);
+    expect(unpinned.messages[0]).toEqual({ messageId: 70, pinnedAt: null, starred: false });
+    const absent = parseStore({ "mail.message": [{ id: 70, thread: thread(7), body: "<p>x</p>" }] }, CFG, SELF);
+    expect(absent.messages[0]).not.toHaveProperty("pinnedAt");
+    expect(absent.messages[0]).not.toHaveProperty("starred");
+  });
+
+  it("reads Store.starred.counter, absent when the Store has none", () => {
+    expect(parseStore({ Store: { starred: { counter: 4, id: "starred", model: "mail.box" } } }, CFG, SELF).starredCounter)
+      .toBe(4);
+    expect(parseStore({ Store: { inbox: { counter: 1 } } }, CFG, SELF).starredCounter).toBeUndefined();
+  });
+
+  it("mergeDeltas keeps the later starred counter, the earlier when the later has none", () => {
+    const a = parseStore({ Store: { starred: { counter: 2 } } }, CFG, SELF);
+    const b = parseStore({ Store: { starred: { counter: 5 } } }, CFG, SELF);
+    expect(mergeDeltas(a, b).starredCounter).toBe(5);
+    expect(mergeDeltas(b, parseStore({}, CFG, SELF)).starredCounter).toBe(5);
+  });
+});

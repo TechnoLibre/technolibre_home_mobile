@@ -4383,6 +4383,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addChatLeftUnsent.ts",
                     "src/services/migrations/addChatAttachments.ts",
                     "src/services/migrations/addChatActions.ts",
+                    "src/services/migrations/addChatMessageSearch.ts",
                     "src/services/chat/chatRepository.ts",
                 ],
             },

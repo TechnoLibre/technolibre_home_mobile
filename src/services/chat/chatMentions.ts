@@ -5,6 +5,7 @@ import type { Mentions } from "./chatCompose";
 import type { ChatPeople } from "./chatPeople";
 import type { ChatRepository } from "./chatRepository";
 import type { ChatSource } from "./chatSources";
+import { foldText as fold } from "./chatBody";
 import { parseStore } from "./chatStore";
 
 /**
@@ -21,8 +22,6 @@ export const SUGGESTION_LIMIT = 8;
 const SPECIAL_MIN_CHARS = 4;
 const EVERYONE = "everyone";
 
-/** Lower-cased text without accents (Odoo's `cleanTerm`). */
-const fold = (text: string): string => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
 /** The @ or # word the caret ends: its delimiter, the text typed after it, and where the delimiter is. */
 export interface MentionQuery {

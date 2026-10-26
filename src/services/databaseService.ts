@@ -13,6 +13,7 @@ import type { ProcessRecord, ProcessType, ProcessStatus } from "../models/proces
 import { StorageConstants } from "../constants/storage";
 import { encryptCredential, decryptCredential } from "../utils/cryptoUtils";
 import { sameServerUrl, syncConfigIdFor } from "../models/syncConfig";
+import { searchTextOf } from "./chat/chatBody";
 
 export type SyncStatus = "local" | "pending" | "synced" | "conflict" | "error";
 
@@ -191,6 +192,30 @@ export interface NoteSyncInfo {
 }
 
 const DB_NAME = "erplibre_mobile";
+
+/** Rows of chat_messages read per query when fillChatSearchText fills search_text. */
+const SEARCH_FILL_ROUND = 500;
+
+/**
+ * The triggers that keep chat_search_fts in step with chat_messages, by
+ * name. An INSERT OR REPLACE over an existing id deletes the old row
+ * without firing delete triggers (recursive_triggers is off), so the
+ * before-insert trigger removes the old row's entry first: without it the
+ * index keeps text it no longer matches and reads as corrupt.
+ */
+const SEARCH_INDEX_TRIGGERS: Record<string, string> = {
+  chat_search_fts_bi:
+    "CREATE TRIGGER IF NOT EXISTS chat_search_fts_bi BEFORE INSERT ON chat_messages BEGIN INSERT INTO chat_search_fts(chat_search_fts, rowid, search_text) SELECT 'delete', rowid, search_text FROM chat_messages WHERE id = new.id; END",
+  chat_search_fts_ai:
+    "CREATE TRIGGER IF NOT EXISTS chat_search_fts_ai AFTER INSERT ON chat_messages BEGIN INSERT INTO chat_search_fts(rowid, search_text) VALUES (new.rowid, new.search_text); END",
+  chat_search_fts_ad:
+    "CREATE TRIGGER IF NOT EXISTS chat_search_fts_ad AFTER DELETE ON chat_messages BEGIN INSERT INTO chat_search_fts(chat_search_fts, rowid, search_text) VALUES ('delete', old.rowid, old.search_text); END",
+  chat_search_fts_au:
+    "CREATE TRIGGER IF NOT EXISTS chat_search_fts_au AFTER UPDATE OF search_text ON chat_messages BEGIN INSERT INTO chat_search_fts(chat_search_fts, rowid, search_text) VALUES ('delete', old.rowid, old.search_text); INSERT INTO chat_search_fts(rowid, search_text) VALUES (new.rowid, new.search_text); END",
+};
+
+/** The schema objects of the search index: the virtual table and its triggers. */
+const SEARCH_INDEX_PARTS = ["chat_search_fts", ...Object.keys(SEARCH_INDEX_TRIGGERS)];
 
 export class DatabaseService {
   private sqlite: SQLiteConnection;
@@ -511,6 +536,11 @@ export class DatabaseService {
   /** Direct write access for migrations. */
   async rawRun(sql: string, values: any[] = []): Promise<void> {
     await this.db.run(sql, values);
+  }
+
+  /** Several writes in one call and one transaction: all applied, or none. */
+  async rawRunSet(set: { statement: string; values: any[] }[]): Promise<void> {
+    if (set.length > 0) await this.db.executeSet(set, true);
   }
 
   async addNtfyTokenColumn(): Promise<void> {
@@ -1245,7 +1275,10 @@ export class DatabaseService {
         write_date        TEXT,
         parent_id         INTEGER,
         parent_client_uuid TEXT,
-        recipient_ids     TEXT
+        recipient_ids     TEXT,
+        search_text       TEXT NOT NULL DEFAULT '',
+        pinned_at         TEXT,
+        starred           INTEGER NOT NULL DEFAULT 0
       )
     `);
     await this.db.execute(
@@ -1291,7 +1324,8 @@ export class DatabaseService {
         global_mute_at         TEXT,
         is_internal_user       INTEGER NOT NULL DEFAULT 0,
         file_dir               TEXT,
-        module_level           TEXT
+        module_level           TEXT,
+        starred_counter        INTEGER NOT NULL DEFAULT 0
       )
     `);
     await this.createChatTempIdsTable();
@@ -1306,6 +1340,7 @@ export class DatabaseService {
     ]) {
       await this.db.execute(`CREATE INDEX IF NOT EXISTS idx_${table}_cfg ON ${table}(${col})`);
     }
+    await this.createChatSearchIndex();
   }
 
   /**
@@ -1438,6 +1473,120 @@ export class DatabaseService {
     for (const col of ["reply_to", "edit_of", "edit_text", "mentions"]) {
       if (!names.includes(col)) await this.db.execute(`ALTER TABLE chat_drafts ADD COLUMN ${col} TEXT`);
     }
+  }
+
+  /**
+   * Adds the searchable text, the pin date and the starred flag of
+   * chat_messages (search_text, pinned_at, starred) and
+   * chat_sources.starred_counter to tables created before them, then
+   * creates the search index. A column is added only when PRAGMA
+   * table_info does not list it, and only to an existing table: a fresh
+   * install (createChatTables already has them), a second run and a
+   * database without the chat tables change nothing. The rows already
+   * cached keep an empty search_text here; fillChatSearchText gives it to
+   * them after start, so the size of the cache never holds the boot.
+   */
+  async addChatMessageSearch(): Promise<void> {
+    const names = async (table: string) =>
+      ((await this.db.query(`PRAGMA table_info(${table})`)).values ?? []).map((r: any) => r.name as string);
+    const sources = await names("chat_sources");
+    if (sources.length > 0 && !sources.includes("starred_counter")) {
+      await this.db.execute("ALTER TABLE chat_sources ADD COLUMN starred_counter INTEGER NOT NULL DEFAULT 0");
+    }
+    const messages = await names("chat_messages");
+    if (messages.length === 0) return;
+    for (const [col, def] of [
+      ["search_text", "TEXT NOT NULL DEFAULT ''"],
+      ["pinned_at", "TEXT"],
+      ["starred", "INTEGER NOT NULL DEFAULT 0"],
+    ]) {
+      if (!messages.includes(col)) await this.db.execute(`ALTER TABLE chat_messages ADD COLUMN ${col} ${def}`);
+    }
+    await this.createChatSearchIndex();
+  }
+
+  /**
+   * Gives search_text (searchTextOf of the body) to the cached messages
+   * that have a body and an empty search_text: the rows cached before the
+   * column existed. Reads SEARCH_FILL_ROUND rows per query, in id order
+   * from the last one read, and writes each round in one transaction; a
+   * body whose text is empty is read once per call, never looped on. A
+   * write applies only while the row still holds the body it was computed
+   * from, so a message rewritten meanwhile keeps the text of its new body.
+   * A database without search_text is left as it is.
+   */
+  async fillChatSearchText(): Promise<void> {
+    const cols = ((await this.db.query("PRAGMA table_info(chat_messages)")).values ?? []).map((r: any) => r.name);
+    if (!cols.includes("search_text")) return;
+    let after = "";
+    for (;;) {
+      const rows = await this.rawQuery(
+        `SELECT id, body FROM chat_messages WHERE id > ? AND search_text = ? AND body != ? ORDER BY id LIMIT ${SEARCH_FILL_ROUND}`,
+        [after, "", ""],
+      );
+      await this.rawRunSet(rows.map((r) => ({
+        statement: "UPDATE chat_messages SET search_text = ? WHERE id = ? AND body = ?",
+        values: [searchTextOf(r.body), r.id, r.body],
+      })));
+      if (rows.length < SEARCH_FILL_ROUND) return;
+      after = rows[rows.length - 1].id;
+    }
+  }
+
+  /** Memo of chatSearchEngine; createChatSearchIndex clears it. */
+  private searchEngine: Promise<"fts5" | "like"> | null = null;
+
+  /**
+   * Creates chat_search_fts, an FTS5 index of chat_messages.search_text
+   * with the trigram tokenizer (any substring of three characters or
+   * more), when the SQLite build has FTS5 and that tokenizer (SQLite 3.34
+   * and later): the virtual table reads its text from chat_messages by
+   * rowid, the triggers of SEARCH_INDEX_TRIGGERS keep it in step, and a
+   * rebuild fills it when it is created. The plugin splits statements on a
+   * semicolon followed by a line end, so each statement goes alone, on one
+   * line. Any failure leaves no part of the index behind, and search keeps
+   * the LIKE over search_text. A database without search_text gets nothing.
+   */
+  async createChatSearchIndex(): Promise<void> {
+    this.searchEngine = null;
+    const cols = ((await this.db.query("PRAGMA table_info(chat_messages)")).values ?? []).map((r: any) => r.name);
+    if (!cols.includes("search_text")) return;
+    const existed = (await this.searchIndexParts()) === SEARCH_INDEX_PARTS.length;
+    try {
+      await this.db.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS chat_search_fts USING fts5(search_text, content='chat_messages', content_rowid='rowid', tokenize='trigram')",
+      );
+      for (const sql of Object.values(SEARCH_INDEX_TRIGGERS)) await this.db.execute(sql);
+      if (!existed) await this.db.execute("INSERT INTO chat_search_fts(chat_search_fts) VALUES ('rebuild')");
+    } catch (e) {
+      console.warn(`[chat] search index not created, search uses LIKE: ${e instanceof Error ? e.message : e}`);
+      for (const name of Object.keys(SEARCH_INDEX_TRIGGERS)) {
+        try { await this.db.execute(`DROP TRIGGER IF EXISTS ${name}`); } catch { /* absent */ }
+      }
+      try { await this.db.execute("DROP TABLE IF EXISTS chat_search_fts"); } catch { /* absent */ }
+    }
+  }
+
+  /** How many of SEARCH_INDEX_PARTS the schema holds. */
+  private async searchIndexParts(): Promise<number> {
+    const names = new Set((await this.rawQuery("SELECT name FROM sqlite_master")).map((r) => r.name));
+    return SEARCH_INDEX_PARTS.filter((n) => names.has(n)).length;
+  }
+
+  /**
+   * How message search runs on this database: "fts5" when chat_search_fts
+   * and all its triggers exist, else "like" (a LIKE over search_text).
+   * Read once, then memoized; the first read logs `[chat] search engine:`.
+   */
+  chatSearchEngine(): Promise<"fts5" | "like"> {
+    if (!this.searchEngine) {
+      this.searchEngine = this.searchIndexParts().then((n) => {
+        const engine = n === SEARCH_INDEX_PARTS.length ? "fts5" : "like";
+        console.log(`[chat] search engine: ${engine}`);
+        return engine;
+      });
+    }
+    return this.searchEngine;
   }
 
   /**

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import {
-  EDITED_CLASS, attachmentPreview, bodyHasMarker, bodyPreview, bodyText, chatMarker, isEdited, isEmptyBody, isEmptyMessage,
-  mentionAnchors, renderBody, withEditedMark,
+  EDITED_CLASS, attachmentPreview, bodyHasMarker, bodyPreview, bodyText, chatMarker, foldText, isEdited, isEmptyBody,
+  isEmptyMessage, mentionAnchors, renderBody, searchTextOf, withEditedMark,
 } from "../services/chat/chatBody";
 
 const MENTION = '<a href="/odoo/res.partner/7" class="o_mail_redirect" data-oe-id="7" data-oe-model="res.partner" target="_blank">@Alice Martin</a>';
@@ -78,6 +78,21 @@ describe("bodyText", () => {
     const linked = '<a target="_blank" rel="noreferrer noopener" href="https://example.com/">https://example.com</a>';
     expect(bodyText(`<p>${MENTION} &amp; ${linked}<br/>fin<span class="${EDITED_CLASS}"></span></p>${chatMarker("u")}`))
       .toBe("@Alice Martin & https://example.com\nfin");
+  });
+});
+
+describe("foldText and searchTextOf", () => {
+  it("foldText lowers the case and drops the accents", () => {
+    expect(foldText("ÉLÈVE Ça Où")).toBe("eleve ca ou");
+  });
+
+  it("searchTextOf is the folded text of the body", () => {
+    expect(searchTextOf("<p>Café <b>crème</b></p>")).toBe("cafe creme");
+  });
+
+  it("searchTextOf reads the marker comment and the edited span as nothing", () => {
+    expect(searchTextOf(`<p>Réunion ${MENTION}</p>${chatMarker("u1")}<span class="${EDITED_CLASS}"></span>`))
+      .toBe("reunion @alice martin");
   });
 });
 

@@ -141,6 +141,24 @@ export function bodyText(html: string): string {
   return parseBody(html.replace(/<br\s*\/?>/gi, "\n")).body.textContent ?? "";
 }
 
+/**
+ * Text lowered and stripped of its accents (NFD, combining marks removed;
+ * Odoo's `cleanTerm`): the form names, terms and message texts are
+ * compared in, so « Élan » and « elan » match.
+ */
+export function foldText(text: string): string {
+  return text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+/**
+ * The searchable text of a body (chat_messages.search_text): bodyText
+ * folded by foldText, so the marker comment and the edited span read as
+ * nothing and a mention as its `@Name`.
+ */
+export function searchTextOf(body: string): string {
+  return foldText(bodyText(body));
+}
+
 /** True when the body carries Odoo's edited span. */
 export function isEdited(body: string): boolean {
   return parseBody(body).querySelector("." + EDITED_CLASS) !== null;

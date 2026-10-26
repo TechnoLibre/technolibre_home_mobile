@@ -14,7 +14,7 @@ import type {
 import { messageKeyOf, sameTarget } from "../../models/chat";
 import { EMPTY_MENTIONS, type Mentions } from "./chatCompose";
 import type { StoreDelta } from "./chatStore";
-import { isEmptyBody, isEmptyMessage } from "./chatBody";
+import { isEmptyBody, isEmptyMessage, searchTextOf } from "./chatBody";
 
 type Row = Record<string, any>;
 
@@ -195,6 +195,8 @@ function messageFromRow(r: Row): ChatMessage {
     parentId: r.parent_id ?? null,
     parentClientUuid: r.parent_client_uuid ?? null,
     recipientIds: idList(r.recipient_ids),
+    pinnedAt: r.pinned_at ?? null,
+    starred: bool(r.starred),
   };
 }
 
@@ -297,6 +299,7 @@ function sourceFromRow(r: Row): ChatSourceState {
     isInternalUser: bool(r.is_internal_user),
     fileDir: r.file_dir ?? null,
     moduleLevel: r.module_level ?? null,
+    starredCounter: r.starred_counter ?? 0,
   };
 }
 
@@ -398,6 +401,10 @@ export class ChatRepository {
     };
   }
 
+  /**
+   * The row of a message. Every message write goes through here, so
+   * search_text always holds the folded text of the body it is written with.
+   */
   private messageRow(m: ChatMessage): Row {
     return {
       id: key(m.configId, messageKeyOf(m)),
@@ -415,6 +422,9 @@ export class ChatRepository {
       parent_id: m.parentId ?? null,
       parent_client_uuid: m.parentClientUuid ?? null,
       recipient_ids: JSON.stringify(m.recipientIds ?? []),
+      search_text: searchTextOf(m.body),
+      pinned_at: m.pinnedAt ?? null,
+      starred: flag(!!m.starred),
     };
   }
 
@@ -480,6 +490,7 @@ export class ChatRepository {
       is_internal_user: flag(s.isInternalUser),
       file_dir: s.fileDir,
       module_level: s.moduleLevel,
+      starred_counter: s.starredCounter,
     };
   }
 
@@ -531,6 +542,7 @@ export class ChatRepository {
     }
     const state: Partial<ChatSourceState> = {};
     if (d.inboxCounter !== null) state.inboxCounter = d.inboxCounter;
+    if (d.starredCounter != null) state.starredCounter = d.starredCounter;
     if (d.selfPartnerId !== null) state.selfPartnerId = d.selfPartnerId;
     if (d.globalMuteUntil !== undefined) {
       state.globalMuteUntil = d.globalMuteUntil;
@@ -1033,6 +1045,12 @@ export class ChatRepository {
     await this.put("chat_messages", this.messageRow({ ...messageFromRow(queued), status: "failed" }));
   }
 
+  /** Sets the starred flag of a cached message; a message not cached is left alone. */
+  async setStarred(configId: string, messageId: number, on: boolean): Promise<void> {
+    const stored = await this.message(configId, messageId);
+    if (stored) await this.put("chat_messages", this.messageRow({ ...stored, starred: on }));
+  }
+
   /** A message the server knows, by its id; null when it is not cached. */
   async message(configId: string, messageId: number): Promise<ChatMessage | null> {
     const row = await this.row("chat_messages", key(configId, `m${messageId}`));
@@ -1186,6 +1204,7 @@ export class ChatRepository {
       isInternalUser: false,
       fileDir: null,
       moduleLevel: null,
+      starredCounter: 0,
     };
   }
 

@@ -250,6 +250,11 @@ async function startApp() {
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
+	// Messages cached before search_text existed get it in the background: a large cache never holds the boot
+	db.fillChatSearchText().catch((e) =>
+		console.warn("[boot] fillChatSearchText failed:", e)
+	);
+
 	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, marianService, processService, repoExtractorService, repoEditService, codeStyleService, streamDeckController, streamDeckCameraStreamer, streamDeckLcdTextRenderer };
 
 	if (import.meta.env.MODE === "development") {
