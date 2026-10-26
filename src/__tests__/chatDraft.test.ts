@@ -20,6 +20,19 @@ describe("DraftText", () => {
         return { saved, draft };
     };
 
+    it("discard drops the change still waiting, storing nothing", () => {
+        vi.useFakeTimers();
+        const { saved, draft } = harness();
+        draft.typed("thrown away");
+        draft.discard();
+        vi.advanceTimersByTime(DRAFT_SAVE_MS * 2);
+        draft.flush();
+        expect(saved).toEqual([]);
+        draft.typed("kept");
+        draft.flush();
+        expect(saved).toEqual(["kept"]);
+    });
+
     it("stores the text once typing pauses for DRAFT_SAVE_MS", () => {
         vi.useFakeTimers();
         const { saved, draft } = harness();

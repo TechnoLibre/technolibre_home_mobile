@@ -11,7 +11,8 @@ import type {
   MessageTarget,
   OutgoingFile,
 } from "../../models/chat";
-import { messageKeyOf } from "../../models/chat";
+import { messageKeyOf, sameTarget } from "../../models/chat";
+import { EMPTY_MENTIONS, type Mentions } from "./chatCompose";
 import type { StoreDelta } from "./chatStore";
 import { isEmptyBody, isEmptyMessage } from "./chatBody";
 
@@ -43,6 +44,39 @@ function meaningful<T extends object>(p: T): Partial<T> {
   }
   return out;
 }
+
+/** A JSON object from a column; null for null or a value that does not parse as an object. */
+function parseJson<T>(v: any): T | null {
+  if (typeof v !== "string") return null;
+  try {
+    const out = JSON.parse(v);
+    return out !== null && typeof out === "object" ? (out as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a conversation's composer keeps (ChatRepository.draftOf): the text
+ * of a new message with its files and the message it answers, an edit in
+ * progress, and the people and channels picked in either text.
+ */
+export interface ChatDraft {
+  text: string;
+  files: ChatAttachment[];
+  replyTo: MessageTarget | null;
+  edit: { target: MessageTarget; text: string } | null;
+  mentions: Mentions;
+}
+
+/** The chat_drafts columns a draft write changes; the JSON ones as stored. */
+type DraftRow = {
+  text: string;
+  reply_to: string | null;
+  edit_of: string | null;
+  edit_text: string | null;
+  mentions: string | null;
+};
 
 /** A JSON list of ids from a column; [] for null or a value that is not one. */
 function idList(v: any): number[] {
@@ -1472,39 +1506,110 @@ export class ChatRepository {
       .sort(bySeq);
   }
 
-  /** What a conversation's composer keeps: the text typed and the draft files in chip order; empty for none. */
-  async draftOf(configId: string, channelId: number): Promise<{ text: string; files: ChatAttachment[] }> {
+  /**
+   * What a conversation's composer keeps: the text typed and the draft
+   * files in chip order, the message the text answers (replyTo), the edit
+   * in progress (its message and text) and the people and channels picked
+   * in either text; empty for none. A stored value that does not read as
+   * JSON counts as none.
+   */
+  async draftOf(configId: string, channelId: number): Promise<ChatDraft> {
     const row = await this.row("chat_drafts", key(configId, channelId));
-    return { text: row?.text ?? "", files: await this.draftFiles(configId, channelId) };
+    const editOf = parseJson<MessageTarget>(row?.edit_of);
+    return {
+      text: row?.text ?? "",
+      files: await this.draftFiles(configId, channelId),
+      replyTo: parseJson<MessageTarget>(row?.reply_to),
+      edit: editOf ? { target: editOf, text: row?.edit_text ?? "" } : null,
+      mentions: parseJson<Mentions>(row?.mentions) ?? EMPTY_MENTIONS,
+    };
   }
 
-  /** Stores the draft text of a conversation; an empty text with no draft file deletes its row. */
-  async putDraftText(configId: string, channelId: number, text: string): Promise<void> {
+  /**
+   * Writes some fields of a conversation's draft row, the others kept. A
+   * row left with no text, no reply target, no edit and no draft file is
+   * deleted: the picks alone keep nothing.
+   */
+  private async patchDraft(configId: string, channelId: number, patch: Partial<DraftRow>): Promise<void> {
     const id = key(configId, channelId);
-    if (text === "" && (await this.draftFiles(configId, channelId)).length === 0) {
-      await this.del("chat_drafts", { id });
+    const row = await this.row("chat_drafts", id);
+    const next: DraftRow = {
+      text: row?.text ?? "",
+      reply_to: row?.reply_to ?? null,
+      edit_of: row?.edit_of ?? null,
+      edit_text: row?.edit_text ?? null,
+      mentions: row?.mentions ?? null,
+      ...patch,
+    };
+    if (next.text === "" && next.reply_to === null && next.edit_of === null
+      && (await this.draftFiles(configId, channelId)).length === 0) {
+      if (row) await this.del("chat_drafts", { id });
       return;
     }
-    await this.put("chat_drafts", { id, config_id: configId, channel_id: channelId, text, updated_at: this.now() });
+    await this.put("chat_drafts", { id, config_id: configId, channel_id: channelId, ...next, updated_at: this.now() });
+  }
+
+  /** Stores the draft text of a conversation; an empty text with nothing else in the draft deletes its row. */
+  async putDraftText(configId: string, channelId: number, text: string): Promise<void> {
+    await this.patchDraft(configId, channelId, { text });
+  }
+
+  /** Stores the message a conversation's draft text answers; null for none. */
+  async putDraftReply(configId: string, channelId: number, target: MessageTarget | null): Promise<void> {
+    await this.patchDraft(configId, channelId, { reply_to: target ? JSON.stringify(target) : null });
+  }
+
+  /** Stores the edit in progress of a conversation's composer, its message and its text; null ends it. */
+  async putDraftEdit(configId: string, channelId: number, edit: { target: MessageTarget; text: string } | null): Promise<void> {
+    await this.patchDraft(configId, channelId, {
+      edit_of: edit ? JSON.stringify(edit.target) : null,
+      edit_text: edit ? edit.text : null,
+    });
+  }
+
+  /** Ends the edit in progress of a conversation's draft when it is still the edit of `target`. */
+  async removeDraftEdit(configId: string, channelId: number, target: MessageTarget): Promise<void> {
+    const editOf = parseJson<MessageTarget>((await this.row("chat_drafts", key(configId, channelId)))?.edit_of);
+    if (editOf && sameTarget(editOf, target)) await this.putDraftEdit(configId, channelId, null);
+  }
+
+  /** Stores the people and channels picked in a conversation's composer. */
+  async putDraftMentions(configId: string, channelId: number, mentions: Mentions): Promise<void> {
+    await this.patchDraft(configId, channelId, { mentions: JSON.stringify(mentions) });
   }
 
   /**
    * Empties a conversation's draft text when it is still `text` (blanks
-   * around aside): the text a post took. A draft typed on since is left,
-   * and so is one stored after `notAfter` (an ISO time, the post's): the
-   * same text typed again once the post was queued.
+   * around aside): the text a post took. Its reply target goes with it
+   * when it names `replyTo` (the post's parent), and so do the picks while
+   * no edit is in progress. A draft typed on since is left, and so is one
+   * stored after `notAfter` (an ISO time, the post's): the same text typed
+   * again once the post was queued.
    */
-  async removeDraftText(configId: string, channelId: number, text: string, notAfter?: string): Promise<void> {
+  async removeDraftText(
+    configId: string,
+    channelId: number,
+    text: string,
+    notAfter?: string,
+    replyTo?: MessageTarget | null,
+  ): Promise<void> {
     const row = await this.row("chat_drafts", key(configId, channelId));
-    if (!row?.text || row.text.trim() !== text.trim()) return;
+    if (!row || (row.text ?? "").trim() !== text.trim()) return;
     if (notAfter !== undefined && row.updated_at > notAfter) return;
-    await this.putDraftText(configId, channelId, "");
+    const stored = parseJson<MessageTarget>(row.reply_to);
+    const answered = !!stored && !!replyTo && sameTarget(stored, replyTo);
+    if (!row.text && !answered) return;
+    await this.patchDraft(configId, channelId, {
+      text: "",
+      ...(answered ? { reply_to: null } : {}),
+      ...(row.edit_of ? {} : { mentions: null }),
+    });
   }
 
-  /** Deletes a conversation's empty draft text row once no draft file is left. */
+  /** Deletes a conversation's draft row left with no text, no reply target and no edit once no draft file is left. */
   private async tidyDraft(configId: string, channelId: number): Promise<void> {
     const row = await this.row("chat_drafts", key(configId, channelId));
-    if (row && !row.text && (await this.draftFiles(configId, channelId)).length === 0) {
+    if (row && !row.text && !row.reply_to && !row.edit_of && (await this.draftFiles(configId, channelId)).length === 0) {
       await this.del("chat_drafts", { id: row.id });
     }
   }
@@ -1570,12 +1675,16 @@ export class ChatRepository {
     }
   }
 
-  /** Moves the draft text of a temporary id to the server's id; a text already there stays unless the moved one has words. */
+  /**
+   * Moves the draft of a temporary id (its text, reply target, edit and
+   * picks) to the server's id; a draft already there stays unless the moved
+   * one has words, a reply target or an edit.
+   */
   private async moveDraftText(configId: string, tempId: number, realId: number): Promise<void> {
     const temp = await this.row("chat_drafts", key(configId, tempId));
     if (!temp) return;
     await this.del("chat_drafts", { id: temp.id });
-    if (temp.text || !(await this.row("chat_drafts", key(configId, realId)))) {
+    if (temp.text || temp.reply_to || temp.edit_of || !(await this.row("chat_drafts", key(configId, realId)))) {
       await this.put("chat_drafts", { ...temp, id: key(configId, realId), channel_id: realId });
     }
   }

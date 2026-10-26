@@ -1233,4 +1233,9 @@ export const translations: Record<string, string> = {
   "chat.quote_unknown": "Original message",
   "chat.join_confirm": "Join the channel {name}?",
   "chat.join": "Join",
+  "chat.replying_to": "Replying to {name}",
+  "chat.editing": "Editing the message",
+  "chat.cancel_reply": "Cancel the reply",
+  "chat.cancel_edit": "Cancel the edit",
+  "chat.ignore": "Ignore",
 };

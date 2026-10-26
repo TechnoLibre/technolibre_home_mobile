@@ -88,6 +88,12 @@ export interface MessageTarget {
   clientUuid: string | null;
 }
 
+/** Whether two targets name one message: by the client uuid of its post when both have one, else by server id. */
+export function sameTarget(a: MessageTarget, b: MessageTarget): boolean {
+  if (a.clientUuid && b.clientUuid) return a.clientUuid === b.clientUuid;
+  return a.messageId != null && a.messageId === b.messageId;
+}
+
 /** The local key of a message among its account's rows: `m<id>` once the server has it, `u<clientUuid>` before. */
 export function messageKeyOf(m: { messageId: number | null; clientUuid: string | null }): string {
   return m.messageId !== null ? `m${m.messageId}` : `u${m.clientUuid}`;

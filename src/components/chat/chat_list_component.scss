@@ -171,6 +171,15 @@
 	text-align: left;
 }
 
+.chat-list__resume {
+	border: 1px solid #2e9e4f;
+	border-radius: 0.4rem;
+	background: transparent;
+	color: #2e9e4f;
+	font-size: 0.75rem;
+	padding: 0.1rem 0.5rem;
+}
+
 .chat-list__dismiss {
 	border: 1px solid #c0392b;
 	border-radius: 0.4rem;

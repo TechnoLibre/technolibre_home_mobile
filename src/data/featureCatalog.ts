@@ -4444,8 +4444,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.message-actions",
                 label: { en: "Message actions", fr: "Actions sur un message" },
                 description: {
-                    en: "A long press on a message opens its menu: six emojis in one touch and « … » for the picker, copy and delete; reaction chips under the message toggle and tell who reacted.",
-                    fr: "Un appui long sur un message ouvre son menu : six émojis d'une touche et « … » pour le sélecteur, copier et supprimer ; les pastilles de réaction sous le message basculent et disent qui a réagi.",
+                    en: "A long press on a message opens its menu: six emojis in one touch and « … » for the picker, reply, copy, edit and delete; reaction chips under the message toggle and tell who reacted.",
+                    fr: "Un appui long sur un message ouvre son menu : six émojis d'une touche et « … » pour le sélecteur, répondre, copier, modifier et supprimer ; les pastilles de réaction sous le message basculent et disent qui a réagi.",
                 },
                 status: "experimental",
                 dependsOn: ["chat.reactions", "chat.emoji"],
@@ -4464,7 +4464,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "« Message actions » button on each bubble, out of sight until the keyboard focuses "
                         + "it, opens the menu without a long press. Each layer (picker, menu, who reacted, "
                         + "image viewer) takes a history entry (chatBackEntry.ts), so back closes it; a "
-                        + "popstate landing on an entry still carrying its mark is a layer above it going back.",
+                        + "popstate landing on an entry still carrying its mark is a layer above it going back. "
+                        + "Reply and Edit put the composer in their mode, with a banner (the quote, ✕) above it, "
+                        + "both kept in the draft: a reply posts with its parent; an edit fills the composer "
+                        + "with the message's text, keeps the new message's text apart for after, and ➤ queues "
+                        + "the edit; an emptied edit of a message without files asks to delete it. A refused "
+                        + "edit's « Reprendre » (list or thread) brings its text back in edit mode, or into "
+                        + "the new message when the message was deleted.",
                     fr: "chatLongPress.ts lance une minuterie de 500 ms au pointerdown, arrêtée par un "
                         + "déplacement de plus de 10 px, le relâchement, un pointercancel ou un défilement ; il "
                         + "n'appelle aucun preventDefault, donc la liste défile et le texte se sélectionne comme "
@@ -4480,20 +4486,32 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "bulle, hors de vue tant que le clavier ne le sélectionne pas, ouvre le menu sans appui "
                         + "long. Chaque couche (sélecteur, menu, qui a réagi, visionneuse d'images) prend une "
                         + "entrée d'historique (chatBackEntry.ts), donc retour la ferme ; un popstate qui arrive "
-                        + "sur une entrée portant encore sa marque est une couche au-dessus qui se referme.",
+                        + "sur une entrée portant encore sa marque est une couche au-dessus qui se referme. "
+                        + "Répondre et Modifier mettent le composeur dans leur mode, avec un bandeau (la "
+                        + "citation, ✕) au-dessus, tous deux gardés dans le brouillon : une réponse part avec "
+                        + "son parent ; une modification remplit le composeur du texte du message, met de côté "
+                        + "le texte du nouveau message pour après, et ➤ met la modification en file ; une "
+                        + "modification vidée d'un message sans fichier demande de le supprimer. « Reprendre » "
+                        + "sur une modification refusée (liste ou conversation) ramène son texte en "
+                        + "modification, ou dans le nouveau message quand le message a été supprimé.",
                 },
                 files: [
                     "src/components/chat/chatLongPress.ts",
                     "src/components/chat/chatBackEntry.ts",
                     "src/components/chat/chat_message_menu_component.ts",
                     "src/components/chat/chat_message_menu_component.scss",
+                    "src/components/chat/chat_composer_banner_component.ts",
+                    "src/components/chat/chat_composer_banner_component.scss",
                     "src/components/chat/chat_thread_component.ts",
+                    "src/components/chat/chat_list_component.ts",
                 ],
                 tests: [
                     "src/__tests__/chatLongPress.test.ts",
                     "src/__tests__/chatBackEntry.test.ts",
                     "src/__tests__/chatMessageMenu.test.ts",
+                    "src/__tests__/chatComposerBanner.test.ts",
                     "src/__tests__/chatThreadComponent.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
                 ],
             },
             {
@@ -5047,7 +5065,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "kill before its message was stored, leaves the text and gives the files back to the draft. "
                         + "The purge, the clear and the startup sweeps never touch a draft file; the space "
                         + "counts it. The list shows « Draft: » in place of the last message, a temporary id hands its "
-                        + "draft to the server's id, and a dropped conversation or account releases its draft files.",
+                        + "draft to the server's id, and a dropped conversation or account releases its draft files. "
+                        + "The draft also keeps the message the text answers, an edit in progress with its text, "
+                        + "and the mention picks (migration 2026102608); a post takes its reply target out with "
+                        + "its text, a queued edit ends the draft's edit.",
                     fr: "Le texte s'enregistre 500 ms après la dernière frappe, et aussitôt quand l'écran se ferme ou "
                         + "que l'application passe en arrière-plan (table chat_drafts, une ligne par conversation). "
                         + "Chaque fichier préparé devient une ligne chat_attachments à l'état « draft », avec son "
@@ -5063,7 +5084,10 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "le vidage et les nettoyages au démarrage ne touchent jamais un fichier de brouillon ; "
                         + "l'espace le compte. La liste montre « Brouillon : » à la place du dernier message, un "
                         + "identifiant temporaire passe son brouillon à l'identifiant du serveur, et une conversation "
-                        + "ou un compte retiré libère les fichiers de son brouillon.",
+                        + "ou un compte retiré libère les fichiers de son brouillon. Le brouillon garde aussi le "
+                        + "message auquel le texte répond, une modification en cours avec son texte, et les "
+                        + "mentions choisies (migration 2026102608) ; un envoi retire sa cible de réponse avec son "
+                        + "texte, une modification mise en file termine celle du brouillon.",
                 },
                 demo: { kind: "route", url: "/chat" },
                 files: [
@@ -5074,6 +5098,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatBody.ts",
                     "src/services/migrations/addChatDrafts.ts",
                     "src/services/migrations/addChatDraftOrigin.ts",
+                    "src/services/migrations/addChatDraftModes.ts",
                     "src/components/chat/chat_composer_attach_component.ts",
                     "src/components/chat/chat_thread_component.ts",
                     "src/components/chat/chat_list_component.ts",

@@ -640,7 +640,7 @@ describe("ChatRepository", () => {
       outgoing(configId, uuid, { postClientUuid: null, state: "draft", ...over });
 
     it("a conversation's draft is its text and its draft files in chip order", async () => {
-      expect(await repo.draftOf(A, 7)).toEqual({ text: "", files: [] });
+      expect(await repo.draftOf(A, 7)).toEqual({ text: "", files: [], replyTo: null, edit: null, mentions: { partners: [], channels: [] } });
       await repo.putDraftText(A, 7, "half a sentence");
       await repo.putDraftFile(draftFile(A, "d2", { seq: 1 }));
       await repo.putDraftFile(draftFile(A, "d1", { seq: 0 }));
@@ -649,8 +649,8 @@ describe("ChatRepository", () => {
       const draft = await repo.draftOf(A, 7);
       expect(draft.text).toBe("half a sentence");
       expect(draft.files.map((f) => [f.localUuid, f.state, f.postClientUuid])).toEqual([["d1", "draft", null], ["d2", "draft", null]]);
-      expect(await repo.draftOf(A, 8)).toEqual({ text: "", files: [] });
-      expect(await repo.draftOf(B, 7)).toEqual({ text: "", files: [] });
+      expect(await repo.draftOf(A, 8)).toEqual({ text: "", files: [], replyTo: null, edit: null, mentions: { partners: [], channels: [] } });
+      expect(await repo.draftOf(B, 7)).toEqual({ text: "", files: [], replyTo: null, edit: null, mentions: { partners: [], channels: [] } });
     });
 
     it("an empty text with no file deletes the draft row; with files it stays", async () => {
@@ -744,7 +744,7 @@ describe("ChatRepository", () => {
       await repo.putDraftText(A, -5, "to the new group");
       await repo.putDraftFile(draftFile(A, "d1", { channelId: -5 }));
       await repo.swapChannelId(A, -5, 7);
-      expect(await repo.draftOf(A, -5)).toEqual({ text: "", files: [] });
+      expect(await repo.draftOf(A, -5)).toEqual({ text: "", files: [], replyTo: null, edit: null, mentions: { partners: [], channels: [] } });
       const draft = await repo.draftOf(A, 7);
       expect(draft.text).toBe("to the new group");
       expect(draft.files.map((f) => f.localUuid)).toEqual(["d1"]);
@@ -774,6 +774,138 @@ describe("ChatRepository", () => {
       expect(await repo.draftChannels()).toEqual(new Set([`${B}#7`]));
       expect(released.flat()).toEqual(["chat/dir/out/d1/photo.jpg"]);
     });
+
+    const PICKS = { partners: [{ id: 4, name: "Alice Martin" }], channels: [{ id: 9, name: "général-test", parentName: null }] };
+    const REPLY = { messageId: 51, clientUuid: null };
+    const MINE = { messageId: null, clientUuid: "u-pending-1" };
+
+    it("the edit text survives a restart and the new-message text is kept", async () => {
+      await repo.putDraftText(A, 7, "half a new message");
+      await repo.putDraftReply(A, 7, REPLY);
+      await repo.putDraftEdit(A, 7, { target: MINE, text: "the edit" });
+      await repo.putDraftMentions(A, 7, PICKS);
+      // Each write keeps the others
+      await repo.putDraftText(A, 7, "half a new message, longer");
+      await repo.putDraftEdit(A, 7, { target: MINE, text: "the edit, longer" });
+      const restarted = new ChatRepository(db);
+      expect(await restarted.draftOf(A, 7)).toEqual({
+        text: "half a new message, longer",
+        files: [],
+        replyTo: REPLY,
+        edit: { target: MINE, text: "the edit, longer" },
+        mentions: PICKS,
+      });
+      expect(await restarted.draftOf(A, 8)).toEqual({ text: "", files: [], replyTo: null, edit: null, mentions: { partners: [], channels: [] } });
+    });
+
+    it("a reply target or an edit alone keeps the draft row; with neither, no text and no file it goes", async () => {
+      await repo.putDraftReply(A, 7, REPLY);
+      expect(await db.rawQuery("SELECT id, text FROM chat_drafts")).toEqual([{ id: `${A}#7`, text: "" }]);
+      await repo.putDraftEdit(A, 7, { target: MINE, text: "" });
+      await repo.putDraftReply(A, 7, null);
+      expect((await repo.draftOf(A, 7)).edit).toEqual({ target: MINE, text: "" });
+      await repo.putDraftMentions(A, 7, PICKS);
+      await repo.putDraftEdit(A, 7, null);
+      expect(await db.rawQuery("SELECT * FROM chat_drafts")).toEqual([]);
+      // A file removed from a draft that answers a message leaves the reply target
+      await repo.putDraftReply(A, 7, REPLY);
+      await repo.putDraftFile(draftFile(A, "d1"));
+      await repo.removeDraftFile(A, "d1");
+      expect((await repo.draftOf(A, 7)).replyTo).toEqual(REPLY);
+      // Only the edit of that message ends with removeDraftEdit
+      await repo.putDraftEdit(A, 7, { target: MINE, text: "x" });
+      await repo.removeDraftEdit(A, 7, REPLY);
+      expect((await repo.draftOf(A, 7)).edit).toEqual({ target: MINE, text: "x" });
+      await repo.removeDraftEdit(A, 7, { messageId: 70, clientUuid: "u-pending-1" });
+      expect((await repo.draftOf(A, 7)).edit).toBeNull();
+    });
+
+    it("removeDraftText takes the reply target and the picks with the text a post took", async () => {
+      await repo.putDraftText(A, 7, "the answer ");
+      await repo.putDraftReply(A, 7, REPLY);
+      await repo.putDraftMentions(A, 7, PICKS);
+      // Another target is another reply: it stays
+      await repo.removeDraftText(A, 7, "the answer", undefined, { messageId: 52, clientUuid: null });
+      expect(await repo.draftOf(A, 7)).toMatchObject({ text: "", replyTo: REPLY });
+      await repo.putDraftText(A, 7, "the answer ");
+      await repo.removeDraftText(A, 7, "the answer", undefined, { messageId: 51, clientUuid: "u-settled" });
+      expect(await db.rawQuery("SELECT * FROM chat_drafts")).toEqual([]);
+      // A post of files only takes the reply target of an empty text
+      await repo.putDraftReply(A, 7, MINE);
+      await repo.removeDraftText(A, 7, "", undefined, { messageId: 60, clientUuid: "u-pending-1" });
+      expect(await db.rawQuery("SELECT * FROM chat_drafts")).toEqual([]);
+      // A draft kept by its files loses the picks with the text
+      await repo.putDraftText(A, 7, "with a photo");
+      await repo.putDraftMentions(A, 7, PICKS);
+      await repo.putDraftFile(draftFile(A, "d9"));
+      await repo.removeDraftText(A, 7, "with a photo");
+      expect(await repo.draftOf(A, 7)).toMatchObject({ text: "", mentions: { partners: [], channels: [] } });
+      // An edit in progress keeps them: they are its picks too
+      await repo.putDraftText(A, 7, "with a photo");
+      await repo.putDraftMentions(A, 7, PICKS);
+      await repo.putDraftEdit(A, 7, { target: MINE, text: "Alice Martin" });
+      await repo.removeDraftText(A, 7, "with a photo");
+      expect((await repo.draftOf(A, 7)).mentions).toEqual(PICKS);
+      await repo.putDraftEdit(A, 7, null);
+      await repo.removeDraftFile(A, "d9");
+      // A text typed on since keeps its reply target
+      await repo.putDraftText(A, 7, "typed on");
+      await repo.putDraftReply(A, 7, REPLY);
+      await repo.removeDraftText(A, 7, "the answer", undefined, REPLY);
+      expect(await repo.draftOf(A, 7)).toMatchObject({ text: "typed on", replyTo: REPLY });
+    });
+
+    it("a swapped temporary id keeps the reply target", async () => {
+      await repo.putDraftReply(A, -5, REPLY);
+      await repo.swapChannelId(A, -5, 7);
+      expect((await repo.draftOf(A, -5)).replyTo).toBeNull();
+      expect((await repo.draftOf(A, 7)).replyTo).toEqual(REPLY);
+      // Moved over a server-id row without words: a reply target or an edit counts as words
+      await repo.putDraftEdit(A, -6, { target: MINE, text: "" });
+      await repo.putDraftReply(A, 8, { messageId: 52, clientUuid: null });
+      await repo.swapChannelId(A, -6, 8);
+      expect(await repo.draftOf(A, 8)).toMatchObject({ replyTo: null, edit: { target: MINE, text: "" } });
+    });
+  });
+});
+
+describe("migration 2026102608", () => {
+  let db: DatabaseService;
+  const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102608)!;
+  const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+  const DRAFTS = ["id", "config_id", "channel_id", "text", "updated_at", "reply_to", "edit_of", "edit_text", "mentions"];
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+  });
+
+  it("a fresh install has the columns", async () => {
+    for (const m of APP_MIGRATIONS) {
+      if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+    }
+    expect(await colsOf("chat_drafts")).toEqual(DRAFTS);
+  });
+
+  it("adds the columns to a database at 2026102607 once, keeping its drafts", async () => {
+    // chat_drafts as migration 2026102605 created it
+    await (db as any).db.execute(`CREATE TABLE IF NOT EXISTS chat_drafts (
+      id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL, channel_id INTEGER NOT NULL,
+      text TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL)`);
+    await db.rawRun("INSERT INTO chat_drafts (id, config_id, channel_id, text, updated_at) VALUES (?, ?, ?, ?, ?)",
+      ["a#7", "a", 7, "kept", "2026-10-26T10:00:00Z"]);
+    expect(migration().description).toBe("Clavardage : réponse, modification et mentions du brouillon");
+    await migration().run(db);
+    await migration().run(db);
+    expect(await colsOf("chat_drafts")).toEqual(DRAFTS);
+    const repo = new ChatRepository(db);
+    expect(await repo.draftOf("a", 7)).toMatchObject({ text: "kept", replyTo: null, edit: null, mentions: { partners: [], channels: [] } });
+  });
+
+  it("a database without the chat tables gets no drafts table", async () => {
+    await migration().run(db);
+    expect(await colsOf("chat_drafts")).toEqual([]);
   });
 });
 
@@ -990,7 +1122,8 @@ describe("ChatRepository lot 2", () => {
   describe("migration 2026102605", () => {
     const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102605)!;
     const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
-    const DRAFTS = ["id", "config_id", "channel_id", "text", "updated_at"];
+    // createChatDraftsTable writes the columns of every later migration too (2026102608)
+    const DRAFTS = ["id", "config_id", "channel_id", "text", "updated_at", "reply_to", "edit_of", "edit_text", "mentions"];
 
     it("a fresh install has the drafts table", async () => {
       for (const m of APP_MIGRATIONS) {

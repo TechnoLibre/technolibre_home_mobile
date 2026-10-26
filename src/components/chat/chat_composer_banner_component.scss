@@ -1,0 +1,49 @@
+// The reply or edit band, between the messages and the composer.
+.chat-banner {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin: 0 0 0.3rem;
+	padding: 0.3rem 0.5rem;
+	border-left: 3px solid #2e9e4f;
+	border-radius: 0.3rem;
+	background: rgba(127, 127, 127, 0.12);
+	font-size: 0.85rem;
+}
+
+.chat-banner--edit {
+	border-left-color: #d68910;
+}
+
+.chat-banner__text {
+	flex: 1;
+	min-width: 0;
+}
+
+.chat-banner__title {
+	display: block;
+}
+
+.chat-banner__quote {
+	display: block;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	opacity: 0.85;
+}
+
+.chat-banner__quote--attachments,
+.chat-banner__quote--deleted {
+	font-style: italic;
+	opacity: 0.7;
+}
+
+.chat-banner__cancel {
+	flex: none;
+	min-width: 2.2rem;
+	min-height: 2.2rem;
+	border: none;
+	background: transparent;
+	color: inherit;
+	font-size: 1.1rem;
+}

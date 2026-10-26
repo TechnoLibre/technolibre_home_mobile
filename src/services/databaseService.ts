@@ -1424,6 +1424,23 @@ export class DatabaseService {
   }
 
   /**
+   * Adds the reply target, the edit in progress and the mention picks of
+   * chat_drafts (reply_to, edit_of, edit_text, mentions) to a table created
+   * before them. A column is added only when PRAGMA table_info does not
+   * list it, and only to an existing chat_drafts: a fresh install
+   * (createChatDraftsTable already has them), a second run and a database
+   * without the chat tables change nothing.
+   */
+  async addChatDraftModes(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(chat_drafts)");
+    const names = (existing.values ?? []).map((r: any) => r.name as string);
+    if (names.length === 0) return;
+    for (const col of ["reply_to", "edit_of", "edit_text", "mentions"]) {
+      if (!names.includes(col)) await this.db.execute(`ALTER TABLE chat_drafts ADD COLUMN ${col} TEXT`);
+    }
+  }
+
+  /**
    * One row per reaction group of a message, keyed
    * `configId#<messageKey>#<content>`: `message_key` is `m<messageId>`, or
    * `u<clientUuid>` for a message still queued. `partner_ids` is a JSON
@@ -1451,7 +1468,11 @@ export class DatabaseService {
   /**
    * The text typed in a conversation's composer and not sent yet, one row
    * per conversation keyed `configId#channelId`. Its files are the
-   * conversation's chat_attachments rows in the "draft" state.
+   * conversation's chat_attachments rows in the "draft" state. `reply_to`
+   * is the message the text answers and `edit_of` the message being edited
+   * (each a JSON MessageTarget, null for none), `edit_text` the edit's text
+   * and `mentions` the people and channels picked in either text (JSON
+   * Mentions).
    */
   private async createChatDraftsTable(): Promise<void> {
     await this.db.execute(`
@@ -1460,7 +1481,11 @@ export class DatabaseService {
         config_id  TEXT NOT NULL,
         channel_id INTEGER NOT NULL,
         text       TEXT NOT NULL DEFAULT '',
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        reply_to   TEXT,
+        edit_of    TEXT,
+        edit_text  TEXT,
+        mentions   TEXT
       )
     `);
     await this.db.execute("CREATE INDEX IF NOT EXISTS chat_drafts_config ON chat_drafts (config_id)");

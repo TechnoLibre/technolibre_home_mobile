@@ -1,5 +1,6 @@
 import {
   messageKeyOf,
+  sameTarget,
   type ChannelType, type ChatAttachment, type ChatMessage, type ChatNotice, type ChatReaction, type MessageTarget,
   type OutgoingFile,
 } from "../../models/chat";
@@ -302,10 +303,12 @@ const VANISHED_ERRORS = new Set(["werkzeug.exceptions.NotFound", "odoo.exception
 
 const isVanished = (e: unknown): boolean => e instanceof OdooRpcError && e.odooName !== null && VANISHED_ERRORS.has(e.odooName);
 
-/** Whether two targets name one message: by the client uuid of its post when both have one, else by server id. */
-export function sameTarget(a: MessageTarget, b: MessageTarget): boolean {
-  if (a.clientUuid && b.clientUuid) return a.clientUuid === b.clientUuid;
-  return a.messageId != null && a.messageId === b.messageId;
+/** Kept with MessageTarget (models/chat) so the repository compares targets too; named here for the outbox's callers. */
+export { sameTarget };
+
+/** An edit given up because the message changed or went on the server: a notice that keeps its text (« Reprendre »). */
+function isRefusedEdit(op: Pick<OutboxOp, "kind" | "status" | "params">): boolean {
+  return op.kind === CHAT_EDIT && op.status === "blocked" && op.params.blockedReason === "changed";
 }
 
 /** The message an action on a message names, from its params (MESSAGE_KINDS). */
@@ -620,7 +623,7 @@ export class ChatOutbox {
       };
       await this.repo.putPending(failed);
       if (files.length > 0) await this.storeFiles(configId, channelId, failed.clientUuid, files, drafts, "refused");
-      await this.releaseDraftText(configId, channelId, opts.draftText);
+      await this.releaseDraftText(configId, channelId, opts.draftText, undefined, parent);
       return failed;
     }
     const all = await this.db.getOutboxOpsForConfig(configId);
@@ -702,7 +705,7 @@ export class ChatOutbox {
       }
       throw e;
     }
-    await this.releaseDraftText(configId, channelId, opts.draftText);
+    await this.releaseDraftText(configId, channelId, opts.draftText, undefined, parent);
     return message;
   }
 
@@ -724,11 +727,21 @@ export class ChatOutbox {
     return (await this.repo.messageOf(configId, parent))?.messageId ?? parent.messageId;
   }
 
-  /** Removes a stored post's text from the draft (removeDraftText, `notAfter` passed on); a failure is logged, the post is not touched. */
-  private async releaseDraftText(configId: string, channelId: number, text: unknown, notAfter?: string): Promise<void> {
+  /**
+   * Removes a stored post's text from the draft, with its reply target when
+   * it is the post's parent (removeDraftText, `notAfter` passed on); a
+   * failure is logged, the post is not touched.
+   */
+  private async releaseDraftText(
+    configId: string,
+    channelId: number,
+    text: unknown,
+    notAfter?: string,
+    parent?: MessageTarget | null,
+  ): Promise<void> {
     if (typeof text !== "string") return;
     try {
-      await this.repo.removeDraftText(configId, channelId, text, notAfter);
+      await this.repo.removeDraftText(configId, channelId, text, notAfter, parent ?? null);
     } catch (e: unknown) {
       console.warn("chat: a sent text stays in the draft", e);
     }
@@ -945,8 +958,10 @@ export class ChatOutbox {
    * before any of them) cancels the waiting ops and queues nothing: null.
    * An op whose send may have reached the server (params.sentAt, stamped
    * by runMessageAction) counts as running there: it is kept with the new
-   * value, a resend being idempotent. Runs under exclusive(), with the id
-   * the create settled on when it did.
+   * value, a resend being idempotent. An edit refused because the message
+   * changed (isRefusedEdit) is not replaced: its notice keeps the refused
+   * text. Runs under exclusive(), with the id the create settled on when it
+   * did.
    */
   private queueAction(
     configId: string,
@@ -973,7 +988,8 @@ export class ChatOutbox {
       const id = channelId === null ? null : ((await this.realIdOf(configId, channelId)) ?? channelId);
       const all = await this.db.getOutboxOpsForConfig(configId);
       const same = all.filter((o) => o.kind === kind && (id === null || o.params.channelId === id) && (opts.same?.(o) ?? true));
-      for (const o of same) if (o.status === "blocked") await this.outbox.cancel(o.id);
+      // A refused edit's notice holds its text for « Reprendre »: a new edit of the message leaves it
+      for (const o of same) if (o.status === "blocked" && !isRefusedEdit(o)) await this.outbox.cancel(o.id);
       const values = { ...(id === null ? {} : { channelId: id }), ...params };
       // In dependency order: the first waits for none of the others, a follow-up comes after the op it waits for
       const waiting = dependencyOrder(same).filter((o) => o.status !== "running" && o.status !== "blocked");
@@ -1681,7 +1697,7 @@ export class ChatOutbox {
       const stored = await this.repo.queuedMessageUuids(configId);
       for (const op of await this.db.getOutboxOpsForConfig(configId)) {
         if (op.kind !== CHAT_POST || (!stored.has(op.clientUuid) && op.status === "incomplete")) continue;
-        await this.releaseDraftText(configId, op.params.channelId, op.params.draftText, op.createdAt);
+        await this.releaseDraftText(configId, op.params.channelId, op.params.draftText, op.createdAt, op.params.parent);
       }
       for (const op of all) {
         if (op.status !== "incomplete" || (op.kind !== CHAT_CREATE && op.kind !== CHAT_JOIN)) continue;

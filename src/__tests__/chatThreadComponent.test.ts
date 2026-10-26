@@ -67,6 +67,15 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
         reactions: vi.fn(async (_c: string, _ch: number, _keys: string[]): Promise<Map<string, any[]>> => new Map()),
         react: vi.fn(async () => {}),
         deleteMessage: vi.fn(async () => {}),
+        editDraftOf: vi.fn(async (_c: string, _ch: number, _t: any): Promise<any> => ({ text: "hi", mentions: { partners: [], channels: [] } })),
+        editMessage: vi.fn(async (_s: any, _ch: number, _t: any, _text: string, _m: any, opts?: any) => { opts?.onQueued?.(); }),
+        saveDraftReply: vi.fn(async (_c: string, _ch: number, _t: any) => {}),
+        saveDraftEdit: vi.fn(async (_c: string, _ch: number, _e: any) => {}),
+        saveDraftMentions: vi.fn(async (_c: string, _ch: number, _m: any) => {}),
+        requestResume: vi.fn((_c: string, _id: string) => {}),
+        takeResume: vi.fn(async (_c: string, _ch: number): Promise<any> => null),
+        notices: vi.fn(async (_ids?: string[]): Promise<any[]> => []),
+        dismissNotice: vi.fn(async (_c: string, _id: string) => {}),
         startDirect: vi.fn(async (_s: any, _p: number, _o?: any) => ({ configId: "a", channelId: 40 })),
         join: vi.fn(async (_s: any, id: number, _n?: string, _o?: any) => ({ configId: "a", channelId: id })),
         queue: {
@@ -1681,6 +1690,277 @@ describe("ChatThreadComponent edited, deleted and quoted messages", () => {
         await c.onBodyClick(tap(other));
         expect(chat.join).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 9, "général-test", { background: true });
         expect(c.navigate).toHaveBeenLastCalledWith("/chat/a/9");
+        c.teardown();
+    });
+});
+
+describe("ChatThreadComponent composer modes", () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        (Dialog.confirm as any).mockReset?.();
+        (Dialog.confirm as any).mockResolvedValue?.({ value: true });
+    });
+
+    const NONE = { partners: [], channels: [] };
+    const BOB = { partners: [{ id: 8, name: "Bob" }], channels: [] };
+    const M10 = { messageId: 10, clientUuid: null };
+    const theirs = () => msg(11, { authorPartnerId: 7, body: "<p>can you come?</p>" });
+
+    it("Reply and Edit are offered in the thread for an own comment, and act", async () => {
+        const chat = fakeChat([msg(10, { body: "<p>mine</p>" }), theirs()]);
+        chat.editDraftOf.mockResolvedValue({ text: "mine", mentions: BOB });
+        const c = make(chat);
+        await c.open();
+        c.openActions("m10");
+        expect(c.menuCan()).toMatchObject({ reply: true, edit: true });
+        c.onMenuReply();
+        c.closeActions();
+        await vi.waitFor(() => expect(c.state.mode).toEqual({ kind: "reply", target: M10 }));
+        expect(chat.saveDraftReply).toHaveBeenCalledWith("a", 5, M10);
+        expect(c.state.banner).toMatchObject({ author: "You", text: "mine" });
+        c.openActions("m11");
+        expect(c.menuCan()).toMatchObject({ reply: true, edit: false });
+        c.openActions("m10");
+        c.state.actions = null;
+        c.openActions("m10");
+        c.onMenuEdit();
+        c.closeActions();
+        await vi.waitFor(() => expect(c.state.mode).toEqual({ kind: "edit", target: M10 }));
+        expect(chat.editDraftOf).toHaveBeenCalledWith("a", 5, M10);
+        expect(c.state.text).toBe("mine");
+        expect(chat.saveDraftEdit).toHaveBeenCalledWith("a", 5, { target: M10, text: "mine" });
+        expect(chat.saveDraftMentions).toHaveBeenCalledWith("a", 5, BOB);
+        c.teardown();
+    });
+
+    it("a reply target survives leaving and reopening", async () => {
+        const chat = fakeChat([msg(10), theirs()]);
+        const first = make(chat);
+        await first.open();
+        await first.startReply({ messageId: 11, clientUuid: null });
+        first.teardown();
+        expect(chat.saveDraftReply).toHaveBeenCalledWith("a", 5, { messageId: 11, clientUuid: null });
+        chat.draft.mockResolvedValue({ text: "on my way", files: [], lost: [], replyTo: { messageId: 11, clientUuid: null }, edit: null, mentions: NONE });
+        const again = make(chat);
+        await again.open();
+        expect(again.state.mode).toEqual({ kind: "reply", target: { messageId: 11, clientUuid: null } });
+        expect(again.state.banner).toMatchObject({ author: "Alice Roy", text: "can you come?" });
+        expect(again.state.text).toBe("on my way");
+        // ✕ ends the reply, the text stays
+        again.onCancelMode();
+        expect(again.state.mode).toEqual({ kind: "new" });
+        expect(again.state.banner).toBeNull();
+        expect(again.state.text).toBe("on my way");
+        expect(chat.saveDraftReply).toHaveBeenLastCalledWith("a", 5, null);
+        again.teardown();
+    });
+
+    it("send in reply mode passes replyTo and clears the banner", async () => {
+        const chat = fakeChat([msg(10), theirs()]);
+        chat.draft.mockResolvedValue({ text: "", files: [], lost: [], replyTo: { messageId: 11, clientUuid: null }, edit: null, mentions: BOB });
+        const c = make(chat);
+        await c.open();
+        let atCall: any = null;
+        chat.send.mockImplementationOnce(async (_s: any, _ch: number, _t: string, _f: any, opts: any) => {
+            atCall = { mode: c.state.mode, banner: c.state.banner };
+            opts.onQueued();
+            return msg(null);
+        });
+        c.state.text = "on my way @Bob ";
+        await c.onSend();
+        expect(chat.send).toHaveBeenCalledWith(expect.anything(), 5, "on my way @Bob", [], expect.objectContaining({
+            draftText: "on my way @Bob ", replyTo: { messageId: 11, clientUuid: null }, mentions: BOB,
+        }));
+        // Cleared in the first step, with the text; the outbox takes them out of the draft with the post
+        expect(atCall).toEqual({ mode: { kind: "new" }, banner: null });
+        expect(chat.saveDraftReply).not.toHaveBeenCalled();
+        // A send refused before its post is queued puts the reply back
+        chat.send.mockRejectedValueOnce(new Error("disk"));
+        await c.startReply({ messageId: 11, clientUuid: null });
+        c.state.text = "second";
+        await c.onSend();
+        expect(c.state.mode).toEqual({ kind: "reply", target: { messageId: 11, clientUuid: null } });
+        expect(c.state.banner).toMatchObject({ text: "can you come?" });
+        expect(c.state.text).toBe("second");
+        c.teardown();
+    });
+
+    it("the edit text survives a restart and the new-message text is kept", async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const chat = fakeChat([msg(10, { body: "<p>before</p>" })]);
+        chat.draft.mockResolvedValue({
+            text: "half a new message", files: [], lost: [], replyTo: null, edit: { target: M10, text: "after, almost" }, mentions: NONE,
+        });
+        const c = make(chat);
+        await c.open();
+        expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
+        expect(c.state.text).toBe("after, almost");
+        expect(c.state.banner).toMatchObject({ text: "before" });
+        // Typing goes to the edit, never into the new message's text
+        c.onInput({ target: { value: "after, done" } } as any);
+        vi.advanceTimersByTime(500);
+        expect(chat.saveDraftEdit.mock.calls).toEqual([["a", 5, { target: M10, text: "after, done" }]]);
+        expect(chat.saveDraftText).not.toHaveBeenCalled();
+        expect(chat.typing).not.toHaveBeenCalledWith(expect.anything(), 5, true);
+        // ✕ ends the edit and gives the new message back
+        c.onInput({ target: { value: "after, done!" } } as any);
+        c.onCancelMode();
+        vi.advanceTimersByTime(1000);
+        expect(c.state.mode).toEqual({ kind: "new" });
+        expect(c.state.text).toBe("half a new message");
+        expect(chat.saveDraftEdit.mock.calls.slice(1)).toEqual([["a", 5, null]]);
+        expect(chat.saveDraftText).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
+    it("Edit keeps the new message typed, stored at once, under the edit", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        c.onInput({ target: { value: "not sent yet" } } as any);
+        await c.startEdit(M10);
+        expect(chat.saveDraftText.mock.calls).toEqual([["a", 5, "not sent yet"]]);
+        expect(c.state.text).toBe("hi");
+        c.onCancelMode();
+        expect(c.state.text).toBe("not sent yet");
+        c.teardown();
+    });
+
+    it("send in edit mode edits the message and goes back to the kept text", async () => {
+        const chat = fakeChat([msg(10, { body: "<p>hi</p>" })]);
+        chat.draft.mockResolvedValue({
+            text: "kept", files: [], lost: [], replyTo: { messageId: 10, clientUuid: null }, edit: { target: M10, text: "hi there " }, mentions: BOB,
+        });
+        let sendingAtCall: boolean | null = null;
+        chat.editMessage.mockImplementationOnce(async (_s: any, _ch: number, _t: any, _x: string, _m: any, opts: any) => {
+            sendingAtCall = c.state.sending;
+            opts.onQueued();
+        });
+        const c = make(chat);
+        await c.open();
+        await c.onSend();
+        expect(sendingAtCall).toBe(true);
+        expect(chat.editMessage).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 5, M10, "hi there", BOB,
+            expect.objectContaining({ fromDraft: true }));
+        // Stored at the tap; the service ends the draft's edit once queued
+        expect(chat.saveDraftEdit.mock.calls).toEqual([["a", 5, { target: M10, text: "hi there " }]]);
+        expect(c.state.mode).toEqual({ kind: "reply", target: M10 });
+        expect(c.state.text).toBe("kept");
+        expect(c.state.sending).toBe(false);
+        expect(chat.send).not.toHaveBeenCalled();
+        // A refused edit stays in the composer
+        chat.editMessage.mockRejectedValueOnce(new Error("not cached"));
+        await c.startEdit(M10);
+        c.state.text = "again";
+        await c.onSend();
+        expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
+        expect(c.state.text).toBe("again");
+        expect(c.state.error).not.toBe("");
+        c.teardown();
+    });
+
+    it("an emptied edit asks to delete", async () => {
+        const chat = fakeChat([msg(10), msg(12, { body: "<p>caption</p>" })]);
+        chat.repo.attachmentsOf.mockImplementation(async (_c: string, _ch: number, ids: number[]) =>
+            new Map(ids.includes(12) ? [["m12", [fileRow(31, { messageId: 12 })]]] : []));
+        chat.repo.messageOf.mockImplementation(async (_c: string, t: any) => t.messageId === 12 ? msg(12) : msg(10));
+        const c = make(chat);
+        await c.open();
+        await c.startEdit(M10);
+        c.state.text = "  ";
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: false });
+        await c.onSend();
+        expect(Dialog.confirm).toHaveBeenCalledWith(expect.objectContaining({ message: "Delete this message?" }));
+        expect(chat.deleteMessage).not.toHaveBeenCalled();
+        expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: true });
+        await c.onSend();
+        expect(chat.deleteMessage).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 5, M10);
+        expect(chat.editMessage).not.toHaveBeenCalled();
+        expect(c.state.mode).toEqual({ kind: "new" });
+        expect(chat.saveDraftEdit).toHaveBeenLastCalledWith("a", 5, null);
+        // A message with files takes the empty text as its edit, as the browser's
+        (Dialog.confirm as any).mockClear();
+        await c.startEdit({ messageId: 12, clientUuid: null });
+        c.state.text = "";
+        await c.onSend();
+        expect(Dialog.confirm).not.toHaveBeenCalled();
+        expect(chat.editMessage).toHaveBeenCalledWith(expect.anything(), 5, { messageId: 12, clientUuid: null }, "", expect.anything(),
+            expect.anything());
+        c.teardown();
+    });
+
+    it("Reprendre of a changed edit opens edit mode with the text", async () => {
+        const chat = fakeChat([msg(10, { body: "<p>browser</p>" })]);
+        chat.repo.messageOf.mockResolvedValue(msg(10, { body: "<p>browser</p>" }));
+        chat.takeResume.mockResolvedValueOnce({ target: M10, text: "late", mentions: BOB, deleted: false });
+        const c = make(chat);
+        await c.open();
+        expect(chat.takeResume).toHaveBeenCalledWith("a", 5);
+        expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
+        expect(c.state.text).toBe("late");
+        expect(c.state.banner).toMatchObject({ text: "browser" });
+        expect(chat.editDraftOf).not.toHaveBeenCalled();
+        expect(chat.saveDraftEdit).toHaveBeenCalledWith("a", 5, { target: M10, text: "late" });
+        c.teardown();
+    });
+
+    it("the thread's refused-edit notices offer « Reprendre » and « Ignorer »", async () => {
+        const chat = fakeChat([msg(10)]);
+        const edit = { target: M10, text: "late", mentions: NONE, deleted: false };
+        chat.notices.mockResolvedValue([
+            { id: "n1", configId: "a", kind: "chat.edit", channelId: 5, reason: "changed", error: "", count: 1, label: "", edit },
+            { id: "n2", configId: "a", kind: "chat.edit", channelId: 6, reason: "changed", error: "", count: 1, label: "", edit },
+            { id: "n3", configId: "a", kind: "chat.mute", channelId: 5, reason: "refused", error: "", count: 1, label: "" },
+        ]);
+        chat.repo.messageOf.mockResolvedValue(msg(10));
+        const c = make(chat);
+        await c.open();
+        expect(c.state.resumes).toEqual([{ id: "n1", text: "Edit not sent: the message changed meanwhile." }]);
+        chat.takeResume.mockResolvedValueOnce(edit);
+        await c.onResume(c.state.resumes[0]);
+        expect(chat.requestResume).toHaveBeenCalledWith("a", "n1");
+        expect(c.state.mode).toEqual({ kind: "edit", target: M10 });
+        expect(c.state.text).toBe("late");
+        await c.onIgnore({ id: "n1" });
+        expect(chat.dismissNotice).toHaveBeenCalledWith("a", "n1");
+        c.teardown();
+    });
+
+    it("Reprendre of a deleted message puts the text in the draft", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.draft.mockResolvedValue({ text: "typed", files: [], lost: [], replyTo: null, edit: null, mentions: NONE });
+        // The emptied row may still be cached: deleted is deleted
+        chat.repo.messageOf.mockResolvedValue(msg(9, { body: "" }));
+        chat.takeResume.mockResolvedValueOnce({ target: { messageId: 9, clientUuid: null }, text: "late @Bob", mentions: BOB, deleted: true });
+        const c = make(chat);
+        await c.open();
+        expect(c.state.mode).toEqual({ kind: "new" });
+        expect(c.state.text).toBe("typed\nlate @Bob");
+        expect(chat.saveDraftText).toHaveBeenLastCalledWith("a", 5, "typed\nlate @Bob");
+        expect(chat.saveDraftMentions).toHaveBeenLastCalledWith("a", 5, BOB);
+        expect(chat.saveDraftEdit).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
+    it("the mode banner shows the quote and ✕; a quote with nothing to reach is out of the tab order", () => {
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        const quote = source.slice(source.indexOf('class="chat-thread__quote"'));
+        expect(quote.slice(0, quote.indexOf(">"))).toMatch(/t-att-tabindex="row\.quote\.key \? null : '-1'"/);
+        expect(source).toMatch(/<ChatComposerBannerComponent t-if="state\.mode\.kind !== 'new'" mode="state\.mode" quote="state\.banner" onCancel\.bind="onCancelMode"\/>/);
+    });
+
+    it("📎 and 🎤 are off while editing: an edit takes no new file", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        await c.startEdit(M10);
+        expect(await c.onSend([outFile("Voice-1.mp3", { voice: true })])).toBe(false);
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        for (const cls of ["chat-thread__attach", "chat-thread__mic"]) {
+            const tag = source.slice(source.indexOf('class="' + cls + '"'));
+            expect(tag.slice(0, tag.indexOf(">")), cls).toMatch(/t-att-disabled="[^"]*state\.mode\.kind === 'edit'/);
+        }
         c.teardown();
     });
 });

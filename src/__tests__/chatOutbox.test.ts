@@ -844,6 +844,21 @@ describe("ChatOutbox", () => {
         }
       });
 
+      it("startup takes the reply target out of the draft with the text a kill left", async () => {
+        chatOdoo();
+        await repo.putDraftText(CONFIG, CHANNEL, "the answer");
+        await repo.putDraftReply(CONFIG, CHANNEL, { messageId: 51, clientUuid: null });
+        await outbox.enqueue({
+          noteId: CHAT_NOTE, configId: CONFIG, kind: CHAT_POST,
+          params: {
+            channelId: CHANNEL, text: "the answer", useModule: false, draftText: "the answer",
+            parent: { messageId: 51, clientUuid: null },
+          },
+        });
+        await chat.recoverIncomplete();
+        expect(await repo.draftOf(CONFIG, CHANNEL)).toMatchObject({ text: "", replyTo: null });
+      });
+
       it("startup leaves a draft text typed again after its post was queued", async () => {
         chatOdoo();
         await repo.putDraftText(CONFIG, CHANNEL, "ok");

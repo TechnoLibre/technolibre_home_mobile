@@ -3610,6 +3610,50 @@ describe("ChatService", () => {
       expect(await chat.notices()).toEqual([]);
     });
 
+    it("a refused edit's notice survives a new edit of the same message", async () => {
+      offline();
+      await chat.editMessage(src, GROUP, sent(601), "late", NONE);
+      server.state.bodies.set(601, `<p>browser${EDITED}</p>`);
+      online();
+      await chat.flushAll();
+      const [refused] = await chat.notices();
+      expect(refused.edit).toMatchObject({ text: "late" });
+      await chat.editMessage(src, GROUP, sent(601), "made again", NONE);
+      expect(server.state.bodies.get(601)).toBe(`<p>made again${EDITED}</p>`);
+      // The refused text stays available, its « Reprendre » with it
+      expect((await chat.notices()).map((n) => [n.id, n.edit?.text])).toEqual([[refused.id, "late"]]);
+    });
+
+    it("an edit from the draft ends the draft's edit once queued, before the flush", async () => {
+      await chat.saveDraftText(config, GROUP, "kept new text");
+      await chat.saveDraftEdit(config, GROUP, { target: sent(601), text: "edited " });
+      let atQueue: any = null;
+      await chat.editMessage(src, GROUP, sent(601), "edited", NONE, {
+        fromDraft: true,
+        onQueued: () => { atQueue = server.edits().length; },
+      });
+      expect(atQueue).toBe(0);
+      expect(server.state.bodies.get(601)).toBe(`<p>edited${EDITED}</p>`);
+      expect(await chat.draft(config, GROUP)).toMatchObject({ text: "kept new text", edit: null });
+      // An edit of another message leaves the draft's
+      await chat.saveDraftEdit(config, GROUP, { target: sent(602), text: "bye!" });
+      await chat.editMessage(src, GROUP, sent(601), "again", NONE, { fromDraft: true });
+      expect((await chat.draft(config, GROUP)).edit).toEqual({ target: sent(602), text: "bye!" });
+    });
+
+    it("a reply sent from the draft takes its reply target and picks with its text", async () => {
+      offline();
+      await chat.saveDraftText(config, GROUP, "the answer ");
+      await chat.saveDraftReply(config, GROUP, sent(601));
+      await chat.saveDraftMentions(config, GROUP, BOB_PICK);
+      // Kept across leaving and reopening the conversation
+      expect(await chat.draft(config, GROUP)).toMatchObject({ text: "the answer ", replyTo: sent(601), mentions: BOB_PICK });
+      await chat.send(src, GROUP, "the answer", [], { draftText: "the answer ", replyTo: sent(601), mentions: BOB_PICK });
+      expect(await chat.draft(config, GROUP)).toEqual({
+        text: "", files: [], lost: [], replyTo: null, edit: null, mentions: NONE,
+      });
+    });
+
     it("an answered edit rebases the next one", async () => {
       let release!: () => void;
       server.state.hold = new Promise<void>((r) => { release = r; });
@@ -4383,7 +4427,7 @@ describe("ChatService", () => {
         await chat.keepDraftFile(config, GROUP, a, 0);
         await chat.saveDraftText(config, GROUP, "");
         await chat.dropDraftFile(config, a);
-        expect(await chat.draft(config, GROUP)).toEqual({ text: "", files: [], lost: [] });
+        expect(await chat.draft(config, GROUP)).toEqual({ text: "", files: [], lost: [], replyTo: null, edit: null, mentions: { partners: [], channels: [] } });
         expect(server.files.bytes(a.path)).toBeUndefined();
         expect(await chat.repo.draftChannels(config)).toEqual(new Set());
       });
@@ -4416,7 +4460,7 @@ describe("ChatService", () => {
         expect(server.uploads().map((c) => c.file!.name)).toEqual(["a.jpg", "Voice-2026-10-26-123.mp3"]);
         expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900, 901]]);
         expect((await chat.messages(config, GROUP)).find((m) => m.clientUuid === sent.clientUuid)).toMatchObject({ status: "sent" });
-        expect(await chat.draft(config, GROUP)).toEqual({ text: "", files: [], lost: [] });
+        expect(await chat.draft(config, GROUP)).toEqual({ text: "", files: [], lost: [], replyTo: null, edit: null, mentions: { partners: [], channels: [] } });
         expect(await chat.repo.draftFileCount(config)).toBe(0);
       });
 
@@ -4463,10 +4507,10 @@ describe("ChatService", () => {
         offline();
         await chat.send(src, GROUP, "sent from the first screen", [a], { draftText: "sent from the first screen", onQueued: end });
         await reading;
-        expect(read).toEqual({ text: "", files: [], lost: [] });
+        expect(read).toEqual({ text: "", files: [], lost: [], replyTo: null, edit: null, mentions: { partners: [], channels: [] } });
         // Another conversation is not held by it
         const other = chat.sendStarted(config, GROUP + 1);
-        expect(await chat.draft(config, GROUP)).toEqual({ text: "", files: [], lost: [] });
+        expect(await chat.draft(config, GROUP)).toEqual({ text: "", files: [], lost: [], replyTo: null, edit: null, mentions: { partners: [], channels: [] } });
         other();
         other();
         online();

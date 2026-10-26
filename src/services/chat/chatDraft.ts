@@ -18,7 +18,8 @@ export function joinDraftText(older: string, newer: string): string {
  * stores it DRAFT_SAVE_MS after the last change; flush() stores a change
  * still waiting at once (the screen closes, the app goes to the
  * background); set() stores a text at once in place of a waiting one (the
- * send's "", a refused send's text put back). Each store is asked
+ * send's "", a refused send's text put back); discard() drops a change
+ * still waiting without storing it (an edit given up). Each store is asked
  * synchronously, in call order, so the last text asked is the one kept. A
  * text of blanks only is stored as "". A failed store is logged.
  */
@@ -46,6 +47,11 @@ export class DraftText {
         this.stopTimer();
         this.waiting = null;
         this.store(text);
+    }
+
+    discard(): void {
+        this.stopTimer();
+        this.waiting = null;
     }
 
     private store(text: string): void {

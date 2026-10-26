@@ -20,7 +20,7 @@ import { deviceChatFiles, type ChatFiles, type ChatHttp } from "./chatFiles";
 import { ChatModuleLevel, effectiveLevel, levelAtLeast, moduleProbe } from "./chatModule";
 import { CHAT_EDIT, ChatOutbox, sameTarget, targetOf, type CreateMode } from "./chatOutbox";
 import { ChatPeople } from "./chatPeople";
-import { ChatRepository } from "./chatRepository";
+import { ChatRepository, type ChatDraft } from "./chatRepository";
 import { chatSettings } from "./chatSettings";
 import { CHAT_MAJOR, parseOdooMajor, sourceLabels, type ChatSource } from "./chatSources";
 import { parseStore, type StoreDelta } from "./chatStore";
@@ -630,18 +630,19 @@ export class ChatService {
   }
 
   /**
-   * What the conversation's composer kept: its text and its draft files in
-   * chip order, read once the sends of the conversation still before their
-   * queue have ended (sendStarted). A file whose staged copy is gone is
-   * dropped from the draft and its name given in `lost`. A temporary id
-   * whose create settled reads the server's id, as every draft call does
-   * (ChatOutbox.draftTask).
+   * What the conversation's composer kept (ChatRepository.draftOf): its
+   * text and its draft files in chip order, the message it answers, the
+   * edit in progress and the picks, read once the sends of the conversation
+   * still before their queue have ended (sendStarted). A file whose staged
+   * copy is gone is dropped from the draft and its name given in `lost`. A
+   * temporary id whose create settled reads the server's id, as every draft
+   * call does (ChatOutbox.draftTask).
    */
-  async draft(configId: string, channelId: number): Promise<{ text: string; files: ChatAttachment[]; lost: string[] }> {
+  async draft(configId: string, channelId: number): Promise<ChatDraft & { lost: string[] }> {
     const real = (await this.realIdOf(configId, channelId)) ?? channelId;
     for (const id of new Set([channelId, real])) await Promise.all([...(this.sendsRunning.get(`${configId}#${id}`) ?? [])]);
     return this.queue.draftTask(configId, channelId, async (id) => {
-      const { text, files } = await this.repo.draftOf(configId, id);
+      const { files, ...rest } = await this.repo.draftOf(configId, id);
       const kept: ChatAttachment[] = [];
       const lost: string[] = [];
       for (const f of files) {
@@ -652,13 +653,28 @@ export class ChatService {
         lost.push(f.name);
         await this.repo.removeDraftFile(configId, f.localUuid!);
       }
-      return { text, files: kept, lost };
+      return { ...rest, files: kept, lost };
     });
   }
 
-  /** Stores the text typed in a conversation's composer; "" with no draft file leaves no draft. */
+  /** Stores the text typed in a conversation's composer; "" with nothing else in the draft leaves no draft. */
   saveDraftText(configId: string, channelId: number, text: string): Promise<void> {
     return this.queue.draftTask(configId, channelId, (id) => this.repo.putDraftText(configId, id, text));
+  }
+
+  /** Stores the message the composer's text answers (Reply); null ends the reply. */
+  saveDraftReply(configId: string, channelId: number, target: MessageTarget | null): Promise<void> {
+    return this.queue.draftTask(configId, channelId, (id) => this.repo.putDraftReply(configId, id, target));
+  }
+
+  /** Stores the composer's edit in progress, its message and its text (Edit); null ends it. */
+  saveDraftEdit(configId: string, channelId: number, edit: { target: MessageTarget; text: string } | null): Promise<void> {
+    return this.queue.draftTask(configId, channelId, (id) => this.repo.putDraftEdit(configId, id, edit));
+  }
+
+  /** Stores the people and channels picked in the composer, those of the new message and of the edit together. */
+  saveDraftMentions(configId: string, channelId: number, mentions: Mentions): Promise<void> {
+    return this.queue.draftTask(configId, channelId, (id) => this.repo.putDraftMentions(configId, id, mentions));
   }
 
   /** Keeps a file staged in a conversation's composer as a draft file at chip position `seq`, with where it was taken. */
@@ -950,9 +966,28 @@ export class ChatService {
    * picked (see ChatOutbox.queueEdit): shown at once, sent when online; a
    * message not sent yet takes the text into its post. An edit the server's
    * newer body refuses is a notice keeping the text (takeResume).
+   * fromDraft: the edit is the composer's, and the draft's edit of that
+   * message ends once it is queued. onQueued is called then, before the
+   * flush.
    */
-  async editMessage(src: ChatSource, channelId: number, target: MessageTarget, text: string, mentions: Mentions): Promise<void> {
-    await this.queue.queueEdit(src.configId, channelId, target, text, mentions);
+  async editMessage(
+    src: ChatSource,
+    channelId: number,
+    target: MessageTarget,
+    text: string,
+    mentions: Mentions,
+    opts: { fromDraft?: boolean; onQueued?: () => void } = {},
+  ): Promise<void> {
+    const { configId } = src;
+    await this.queue.queueEdit(configId, channelId, target, text, mentions);
+    if (opts.fromDraft) {
+      try {
+        await this.queue.draftTask(configId, channelId, (id) => this.repo.removeDraftEdit(configId, id, target));
+      } catch (e: unknown) {
+        console.warn("chat: an edit sent stays in the draft", e);
+      }
+    }
+    opts.onQueued?.();
     await this.afterAction(src, channelId);
   }
 

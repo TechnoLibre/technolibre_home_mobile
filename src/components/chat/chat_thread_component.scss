@@ -302,6 +302,42 @@
 	opacity: 0.75;
 }
 
+// The conversation's refused edits, above the composer: the text, « Reprendre », « Ignorer ».
+.chat-thread__resumes {
+	margin: 0 0 0.3rem;
+	padding: 0;
+	list-style: none;
+	font-size: 0.85rem;
+}
+
+.chat-thread__resume {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.4rem;
+	padding: 0.2rem 0;
+}
+
+.chat-thread__resume-text {
+	flex: 1 1 12rem;
+	color: #c0392b;
+}
+
+.chat-thread__resume-take,
+.chat-thread__resume-ignore {
+	padding: 0.15rem 0.6rem;
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 0.4rem;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+}
+
+.chat-thread__resume-take {
+	border-color: #2e9e4f;
+	color: #2e9e4f;
+}
+
 .chat-thread__composer {
 	display: flex;
 	gap: 0.4rem;

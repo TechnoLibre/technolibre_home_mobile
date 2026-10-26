@@ -183,6 +183,15 @@ describe("ChatListComponent", () => {
             "Team — Edit not sent: the message was deleted meanwhile.",
             "Team — Delete: refused by the server.",
         ]);
+        // « Reprendre » on a refused edit only: the thread of its conversation takes it
+        expect(c.state.notices.map((n: any) => n.resume)).toEqual([5, 5, null]);
+        chat.requestResume = vi.fn();
+        c.navigate = vi.fn();
+        c.onResume(c.state.notices[1]);
+        expect(chat.requestResume).toHaveBeenCalledWith("a", "op2");
+        expect(c.navigate).toHaveBeenCalledWith("/chat/a/5");
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_list_component.ts"), "utf8");
+        expect(source).toMatch(/<button t-if="n\.resume !== null" class="chat-list__resume" t-on-click="\(\) => this\.onResume\(n\)" t-esc="t\('chat\.resume'\)"\/>/);
     });
 
     it("a dropped notice says one action or several, capitalised without a name", async () => {

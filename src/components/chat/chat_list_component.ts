@@ -46,6 +46,8 @@ interface NoticeRow {
     /** The server of the notice, shown as the rows show theirs. */
     serverLabel: string;
     text: string;
+    /** For a refused edit, the conversation whose thread takes its text back (« Reprendre »); null otherwise. */
+    resume: number | null;
 }
 
 interface ChatListState {
@@ -164,6 +166,7 @@ export class ChatListComponent extends EnhancedComponent {
           <li t-foreach="state.notices" t-as="n" t-key="n.id" class="chat-list__notice">
             <span t-if="state.mode !== 'none'" class="chat-list__tag" t-esc="n.serverLabel"/>
             <span class="chat-list__failed" t-esc="'⚠️ ' + n.text"/>
+            <button t-if="n.resume !== null" class="chat-list__resume" t-on-click="() => this.onResume(n)" t-esc="t('chat.resume')"/>
             <button class="chat-list__dismiss" t-on-click="() => this.onDismissNotice(n)" t-esc="t('chat.dismiss')"/>
           </li>
         </ul>
@@ -402,7 +405,7 @@ export class ChatListComponent extends EnhancedComponent {
             });
         }
         const line = name ? name + " — " + text : text.charAt(0).toUpperCase() + text.slice(1);
-        return { id: n.id, configId: n.configId, serverLabel, text: line };
+        return { id: n.id, configId: n.configId, serverLabel, text: line, resume: n.edit && n.channelId !== null ? n.channelId : null };
     }
 
     failedText(row: ChatRow): string {
@@ -492,6 +495,17 @@ export class ChatListComponent extends EnhancedComponent {
     /** Removes a conversation the server refused, or one left, with its unsent texts; a failure shows a notice. */
     async onDismiss(row: ChatRow): Promise<void> {
         await this.dismissing(() => this.chatService.discardCreate(row.configId, row.channelId));
+    }
+
+    /**
+     * « Reprendre » on a refused edit: asked of the service
+     * (requestResume), then its conversation opens, whose thread takes the
+     * text back.
+     */
+    onResume(n: NoticeRow): void {
+        if (n.resume === null) return;
+        this.chatService.requestResume(n.configId, n.id);
+        this.navigate("/chat/" + encodeURIComponent(n.configId) + "/" + n.resume);
     }
 
     async onDismissNotice(n: NoticeRow): Promise<void> {

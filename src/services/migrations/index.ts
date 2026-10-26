@@ -32,6 +32,7 @@ import { addChatAttachments } from "./addChatAttachments";
 import { addChatDrafts } from "./addChatDrafts";
 import { addChatDraftOrigin } from "./addChatDraftOrigin";
 import { addChatActions } from "./addChatActions";
+import { addChatDraftModes } from "./addChatDraftModes";
 
 /**
  * The app's database migrations, in version order: runMigrations runs at
@@ -203,5 +204,10 @@ export const APP_MIGRATIONS: Migration[] = [
 		version: 2026102607,
 		description: "Clavardage : réactions, réponses et destinataires des messages",
 		run: addChatActions,
+	},
+	{
+		version: 2026102608,
+		description: "Clavardage : réponse, modification et mentions du brouillon",
+		run: addChatDraftModes,
 	},
 ];
