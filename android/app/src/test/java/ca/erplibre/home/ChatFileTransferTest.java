@@ -10,7 +10,9 @@ import static org.junit.Assert.fail;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.ServerSocket;
+import java.util.Arrays;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -96,7 +98,7 @@ public class ChatFileTransferTest {
             "thread_id", "12", "thread_model", "discuss.channel",
             "is_pending", "true", "csrf_token", "tok0o1");
         List<long[]> progress = new ArrayList<>();
-        ChatFileTransfer.Answer answer = transfer.upload("a1",
+        ChatFileTransfer.Answer answer = transfer.upload(transfer.reserve("a1"),
             server.url("/mail/attachment/upload").toString(),
             headers("Cookie", "session_id=s1"), fields, file, "photo.jpg",
             "image/jpeg", (done, total) -> progress.add(new long[] {done, total}));
@@ -164,7 +166,7 @@ public class ChatFileTransferTest {
             .setHeader("Content-Type", "image/png; charset=binary"));
         File target = new File(chatRoot, "d1/files/7/a.png");
 
-        ChatFileTransfer.Download d = transfer.download("d1",
+        ChatFileTransfer.Download d = transfer.download(transfer.reserve("d1"),
             server.url("/web/content/7").toString(), headers("Cookie", "session_id=s1"),
             target, (done, total) -> {});
 
@@ -183,7 +185,7 @@ public class ChatFileTransferTest {
         File target = new File(chatRoot, "d1/files/8/b.bin");
 
         server.enqueue(new MockResponse().setResponseCode(500).setBody("boom"));
-        ChatFileTransfer.Download d = transfer.download("d2",
+        ChatFileTransfer.Download d = transfer.download(transfer.reserve("d2"),
             server.url("/web/content/8").toString(), headers(), target, (done, total) -> {});
         assertEquals(500, d.status);
         assertNull(d.sha1);
@@ -193,7 +195,7 @@ public class ChatFileTransferTest {
         server.enqueue(new MockResponse().setBody(new Buffer().write(sample(500_000)))
             .setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY));
         try {
-            transfer.download("d3", server.url("/web/content/8").toString(), headers(),
+            transfer.download(transfer.reserve("d3"), server.url("/web/content/8").toString(), headers(),
                 target, (done, total) -> {});
             fail("a body cut short must fail");
         } catch (IOException expected) {
@@ -211,7 +213,7 @@ public class ChatFileTransferTest {
         }
         File file = writeFile("d1/out/u2/a.txt", sample(10));
         try {
-            transfer.upload("u2", "http://127.0.0.1:" + port + "/mail/attachment/upload",
+            transfer.upload(transfer.reserve("u2"), "http://127.0.0.1:" + port + "/mail/attachment/upload",
                 headers(), headers("thread_id", "1"), file, "a.txt", "text/plain",
                 (done, total) -> {});
             fail("a refused connection must fail");
@@ -230,7 +232,7 @@ public class ChatFileTransferTest {
         server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST));
         server.enqueue(new MockResponse().setBody("{\"data\":{}}"));
         try {
-            transfer.upload("u3", server.url("/mail/attachment/upload").toString(), headers(),
+            transfer.upload(transfer.reserve("u3"), server.url("/mail/attachment/upload").toString(), headers(),
                 headers("thread_id", "1"), file, "a.bin", "application/octet-stream", (d, t) -> {});
             fail("a connection cut after the request must fail");
         } catch (IOException expected) {
@@ -248,7 +250,7 @@ public class ChatFileTransferTest {
         AtomicReference<Throwable> outcome = new AtomicReference<>();
         Thread t = new Thread(() -> {
             try {
-                transfer.download("c1", server.url("/web/content/9").toString(), headers(), target,
+                transfer.download(transfer.reserve("c1"), server.url("/web/content/9").toString(), headers(), target,
                     (done, total) -> started.countDown());
             } catch (Throwable e) {
                 outcome.set(e);
@@ -266,21 +268,21 @@ public class ChatFileTransferTest {
     @Test
     public void aCancelBeforeTheCallIsRegisteredStillCancelsIt() throws Exception {
         File file = writeFile("d1/out/u4/a.txt", sample(10));
-        Object slot = transfer.reserve("u4");
+        ChatFileTransfer.Slot slot = transfer.reserve("u4");
         transfer.cancel("u4");
         try {
-            transfer.upload("u4", server.url("/mail/attachment/upload").toString(), headers(),
+            transfer.upload(slot, server.url("/mail/attachment/upload").toString(), headers(),
                 headers("thread_id", "1"), file, "a.txt", "text/plain", (d, t) -> {});
             fail("a reserved transfer cancelled before it starts must not run");
         } catch (ChatFileTransfer.CancelledException expected) {
             // never sent
         } finally {
-            transfer.release("u4", slot);
+            transfer.release(slot);
         }
         assertEquals(0, server.getRequestCount());
         // The tombstone ends with its transfer: the same id runs again
         server.enqueue(new MockResponse().setBody("ok"));
-        assertEquals(200, transfer.upload("u4", server.url("/mail/attachment/upload").toString(),
+        assertEquals(200, transfer.upload(transfer.reserve("u4"), server.url("/mail/attachment/upload").toString(),
             headers(), headers("thread_id", "1"), file, "a.txt", "text/plain", (d, t) -> {}).status);
     }
 
@@ -289,8 +291,54 @@ public class ChatFileTransferTest {
         transfer.cancel("u5");
         server.enqueue(new MockResponse().setBody("ok"));
         File file = writeFile("d1/out/u5/a.txt", sample(10));
-        assertEquals(200, transfer.upload("u5", server.url("/mail/attachment/upload").toString(),
+        assertEquals(200, transfer.upload(transfer.reserve("u5"), server.url("/mail/attachment/upload").toString(),
             headers(), headers("thread_id", "1"), file, "a.txt", "text/plain", (d, t) -> {}).status);
+    }
+
+    @Test
+    public void anIdHeldByATransferIsRefused() throws Exception {
+        ChatFileTransfer.Slot slot = transfer.reserve("u6");
+        try {
+            transfer.reserve("u6");
+            fail("two transfers under one id");
+        } catch (ChatFileTransfer.IdInUseException expected) {
+            // ids are unique per transfer
+        }
+        transfer.release(slot);
+        transfer.release(transfer.reserve("u6"));
+    }
+
+    @Test
+    public void aDeadFirstAddressFallsBackToTheNextOne() throws Exception {
+        // 127.0.0.2 is loopback with nothing listening on the server's port: refused at once
+        InetAddress dead = InetAddress.getByName("127.0.0.2");
+        InetAddress live = InetAddress.getByName(server.getHostName());
+        ChatFileTransfer twoAddresses = new ChatFileTransfer(host -> Arrays.asList(dead, live));
+        String base = "http://files.test:" + server.getPort();
+        File file = writeFile("d1/out/u7/a.bin", sample(1000));
+
+        server.enqueue(new MockResponse().setBody("{\"data\":{}}"));
+        assertEquals(200, twoAddresses.upload(twoAddresses.reserve("u7"), base + "/mail/attachment/upload",
+            headers(), headers("thread_id", "1"), file, "a.bin", "application/octet-stream",
+            (d, t) -> {}).status);
+
+        byte[] bytes = sample(3000);
+        server.enqueue(new MockResponse().setBody(new Buffer().write(bytes)));
+        File target = new File(chatRoot, "d1/files/7/a.bin");
+        ChatFileTransfer.Download d = twoAddresses.download(twoAddresses.reserve("d7"),
+            base + "/web/content/7", headers(), target, (done, total) -> {});
+        assertEquals(200, d.status);
+        assertEquals(sha1Hex(bytes), d.sha1);
+        assertEquals(2, server.getRequestCount());
+    }
+
+    @Test
+    public void aGetOnAPooledConnectionTheServerClosedIsSentAgain() throws Exception {
+        server.enqueue(new MockResponse().setBody("one").setSocketPolicy(SocketPolicy.DISCONNECT_AT_END));
+        server.enqueue(new MockResponse().setBody("two"));
+        assertEquals("one", transfer.getText(server.url("/web/login").toString(), headers()).data);
+        Thread.sleep(300);
+        assertEquals("two", transfer.getText(server.url("/web/login").toString(), headers()).data);
     }
 
     @Test

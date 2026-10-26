@@ -13,7 +13,11 @@ export interface HttpAnswer {
  * from file.uri (a file inside the app's chat directory) under file.name.
  */
 export interface UploadRequest {
-    /** Transfer id, for cancel() and the progress events. */
+    /**
+     * Transfer id, for cancel() and the progress events. Unique per
+     * transfer: the native side refuses an id a running transfer holds,
+     * and frees it before the transfer settles.
+     */
     id: string;
     url: string;
     headers: Record<string, string>;
@@ -23,6 +27,7 @@ export interface UploadRequest {
 
 /** A GET streamed to uri (a file inside the app's chat directory). */
 export interface DownloadRequest {
+    /** As UploadRequest.id. */
     id: string;
     url: string;
     headers: Record<string, string>;

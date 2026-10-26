@@ -20,7 +20,8 @@ import java.util.concurrent.Executors;
  * multipart upload streamed from a file, a download streamed to a file.
  * Every transfer runs on a worker thread, never the bridge thread; its id
  * is reserved on the bridge thread first, so a cancel() that comes before
- * the worker starts it still stops it.
+ * the worker starts it still stops it. Ids are unique per transfer: an id
+ * held by a transfer still running is rejected (« id in use »).
  *
  * Files are named by uri (file: URI or absolute path) and must lie inside
  * filesDir/chat; any other path is rejected. A request that never reached
@@ -74,17 +75,20 @@ public class ChatFilePlugin extends Plugin {
         String uri = file.getString("uri");
         String name = file.getString("name", "file");
         String mimetype = file.getString("mimetype", "application/octet-stream");
-        Object slot = transfer.reserve(id);
+        ChatFileTransfer.Slot slot = reserveOrReject(call, id);
+        if (slot == null) return;
         worker.execute(() -> {
+            JSObject result;
             try {
                 File source = ChatFileTransfer.resolveInside(chatRoot(), uri);
-                call.resolve(answer(transfer.upload(id, url, headers, fields, source,
-                    name, mimetype, throttled(id))));
+                result = answer(transfer.upload(slot, url, headers, fields, source,
+                    name, mimetype, throttled(id)));
             } catch (Exception e) {
+                transfer.release(slot);
                 reject(call, e);
-            } finally {
-                transfer.release(id, slot);
+                return;
             }
+            call.resolve(result);
         });
     }
 
@@ -98,22 +102,24 @@ public class ChatFilePlugin extends Plugin {
             return;
         }
         Map<String, String> headers = strings(call.getObject("headers", new JSObject()));
-        Object slot = transfer.reserve(id);
+        ChatFileTransfer.Slot slot = reserveOrReject(call, id);
+        if (slot == null) return;
         worker.execute(() -> {
+            ChatFileTransfer.Download d;
             try {
                 File target = ChatFileTransfer.resolveInside(chatRoot(), uri);
-                ChatFileTransfer.Download d = transfer.download(id, url, headers, target, throttled(id));
-                JSObject result = new JSObject();
-                result.put("status", d.status);
-                result.put("size", d.size);
-                result.put("sha1", d.sha1 == null ? JSONObject.NULL : d.sha1);
-                result.put("mimetype", d.mimetype == null ? JSONObject.NULL : d.mimetype);
-                call.resolve(result);
+                d = transfer.download(slot, url, headers, target, throttled(id));
             } catch (Exception e) {
+                transfer.release(slot);
                 reject(call, e);
-            } finally {
-                transfer.release(id, slot);
+                return;
             }
+            JSObject result = new JSObject();
+            result.put("status", d.status);
+            result.put("size", d.size);
+            result.put("sha1", d.sha1 == null ? JSONObject.NULL : d.sha1);
+            result.put("mimetype", d.mimetype == null ? JSONObject.NULL : d.mimetype);
+            call.resolve(result);
         });
     }
 
@@ -127,6 +133,21 @@ public class ChatFilePlugin extends Plugin {
     @Override
     protected void handleOnDestroy() {
         worker.shutdownNow();
+    }
+
+    /**
+     * The id's hold for this call, taken on the bridge thread before the
+     * worker starts; null (call rejected) when another transfer holds the id.
+     * The transfer ends the hold before the call settles, so the caller may
+     * reuse the id as soon as it has the answer.
+     */
+    private ChatFileTransfer.Slot reserveOrReject(PluginCall call, String id) {
+        try {
+            return transfer.reserve(id);
+        } catch (ChatFileTransfer.IdInUseException e) {
+            call.reject(e.getMessage());
+            return null;
+        }
     }
 
     private static void reject(PluginCall call, Exception e) {

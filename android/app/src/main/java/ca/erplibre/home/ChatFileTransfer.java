@@ -14,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Call;
+import okhttp3.Dns;
 import okhttp3.EventListener;
 import okhttp3.MediaType;
 import okhttp3.MultipartBody;
@@ -40,9 +41,9 @@ import okio.Source;
  * TLS handshake, connect timeout) throws UnsentException: the server saw
  * nothing. A transfer cancelled through cancel(id) throws
  * CancelledException. Any other IOException may come after the server
- * received part or all of the request. The client never sends a request
- * again by itself (no retry on a connection failure): every attempt is
- * the caller's, which knows whether a repeat is safe.
+ * received part or all of the request. An upload is never sent twice by
+ * the client (one-shot body): every attempt after its start is the
+ * caller's, which knows whether a repeat is safe.
  */
 public class ChatFileTransfer {
 
@@ -102,32 +103,58 @@ public class ChatFileTransfer {
         volatile boolean value;
     }
 
+    /** reserve() of an id that a reserved or running transfer already holds. */
+    public static class IdInUseException extends IllegalStateException {
+        IdInUseException(String id) {
+            super("id in use: " + id);
+        }
+    }
+
     /**
-     * One transfer id's state from reserve() (or the transfer's start) to
-     * its end. cancel() sets `cancelled` then reads `call`; execute() sets
-     * `call` then reads `cancelled`: with both volatile, a cancel racing
-     * the registration is always seen by one side, so it is never lost.
+     * One transfer's hold on its id, from reserve() to the transfer's end.
+     * cancel() sets `cancelled` then reads `call`; execute() sets `call`
+     * then reads `cancelled`: with both volatile, a cancel racing the
+     * registration is always seen by one side, so it is never lost.
      */
-    static final class Slot {
+    public static final class Slot {
+        final String id;
         volatile boolean cancelled;
         volatile Call call;
+
+        Slot(String id) {
+            this.id = id;
+        }
     }
 
     private static final int CHUNK = 64 * 1024;
 
+    private final OkHttpClient client;
+
+    /** Transfers reserved or running, by id, for cancel(id). */
+    private final Map<String, Slot> slots = new ConcurrentHashMap<>();
+
+    public ChatFileTransfer() {
+        this(Dns.SYSTEM);
+    }
+
     /**
      * Write and read timeouts are per socket operation, not per transfer:
      * a large file on a slow link never times out while bytes keep moving.
-     * There is no call timeout for the same reason.
+     * There is no call timeout for the same reason. OkHttp's retry on a
+     * connection failure stays on: a connect failure moves on to the next
+     * address of the host, and a GET on a pooled connection the server
+     * closed is sent again on a new one. The upload body is one-shot, so a
+     * POST is never sent again once it started out.
      */
-    private final OkHttpClient client = new OkHttpClient.Builder()
+    ChatFileTransfer(Dns dns) {
+        client = new OkHttpClient.Builder()
+        .dns(dns)
         .connectTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(120, TimeUnit.SECONDS)
         .readTimeout(300, TimeUnit.SECONDS)
         .callTimeout(0, TimeUnit.SECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
-        .retryOnConnectionFailure(false)
         .eventListenerFactory(call -> {
             final Sent sent = call.request().tag(Sent.class);
             if (sent == null) return EventListener.NONE;
@@ -139,9 +166,7 @@ public class ChatFileTransfer {
             };
         })
         .build();
-
-    /** Transfers reserved or running, by id, for cancel(id). */
-    private final Map<String, Slot> slots = new ConcurrentHashMap<>();
+    }
 
     /**
      * The file a uri names (a file: URI or an absolute path), when it lies
@@ -173,7 +198,7 @@ public class ChatFileTransfer {
     public Answer getText(String url, Map<String, String> headers) throws IOException {
         Sent sent = new Sent();
         Request request = request(url, headers, sent).get().build();
-        try (Response response = execute(new Slot(), request, sent)) {
+        try (Response response = execute(new Slot(null), request, sent)) {
             return answer(response);
         }
     }
@@ -181,9 +206,10 @@ public class ChatFileTransfer {
     /**
      * POST url as multipart/form-data: the fields in their map order, then
      * one part "ufile" named `name`, streamed from `file`. Progress counts
-     * the file's bytes written to the socket.
+     * the file's bytes written to the socket. The transfer runs under the
+     * slot reserve() gave, and ends it.
      */
-    public Answer upload(String id, String url, Map<String, String> headers,
+    public Answer upload(Slot slot, String url, Map<String, String> headers,
                          Map<String, String> fields, File file, String name,
                          String mimetype, Progress progress) throws IOException {
         MultipartBody.Builder body = new MultipartBody.Builder().setType(MultipartBody.FORM);
@@ -192,14 +218,13 @@ public class ChatFileTransfer {
         }
         body.addFormDataPart("ufile", name, new FileBody(file, mimetype, progress));
         Sent sent = new Sent();
-        Request request = request(url, headers, sent).post(body.build()).build();
-        Slot slot = slots.computeIfAbsent(id, k -> new Slot());
+        Request request = request(url, headers, sent).post(new OneShot(body.build())).build();
         try (Response response = execute(slot, request, sent)) {
             return answer(response);
         } catch (IOException e) {
             throw classify(slot, e);
         } finally {
-            slots.remove(id, slot);
+            release(slot);
         }
     }
 
@@ -208,14 +233,13 @@ public class ChatFileTransfer {
      * its SHA-1 computed on the way, and the part file is renamed onto the
      * target only after the last byte; a non-2xx status, an error or a
      * cancel deletes the part file, so the target is either complete or
-     * untouched.
+     * untouched. The transfer runs under the slot reserve() gave, and ends it.
      */
-    public Download download(String id, String url, Map<String, String> headers,
+    public Download download(Slot slot, String url, Map<String, String> headers,
                              File target, Progress progress) throws IOException {
         File part = new File(target.getPath() + ".part");
         Sent sent = new Sent();
         Request request = request(url, headers, sent).get().build();
-        Slot slot = slots.computeIfAbsent(id, k -> new Slot());
         try (Response response = execute(slot, request, sent)) {
             int status = response.code();
             if (status < 200 || status >= 300) {
@@ -258,29 +282,33 @@ public class ChatFileTransfer {
             part.delete();
             throw e;
         } finally {
-            slots.remove(id, slot);
+            release(slot);
         }
     }
 
     /**
-     * Marks `id` as a transfer about to run, before it reaches a worker
+     * Holds `id` for one transfer about to run, before it reaches a worker
      * thread: a cancel(id) from then on stops it, even before its call
-     * exists. The transfer ends the reservation; release() ends one whose
-     * transfer never started. Returns the token release() takes.
+     * exists. Ids are unique per transfer: an id a reserved or running
+     * transfer holds throws IdInUseException. upload() and download() end
+     * the hold; release() ends one whose transfer never started.
      */
-    public Object reserve(String id) {
-        return slots.computeIfAbsent(id, k -> new Slot());
+    public Slot reserve(String id) {
+        Slot slot = new Slot(id);
+        if (slots.putIfAbsent(id, slot) != null) throw new IdInUseException(id);
+        return slot;
     }
 
-    /** Ends the reservation `token` of id, if it is still the current one. */
-    public void release(String id, Object token) {
-        slots.remove(id, token);
+    /** Ends the hold of slot on its id; calling it again does nothing. */
+    public void release(Slot slot) {
+        if (slot.id != null) slots.remove(slot.id, slot);
     }
 
     /**
-     * Cancels the transfer `id`, reserved or running; it then throws
-     * CancelledException. Nothing when no transfer holds the id, so a late
-     * cancel never stops a later transfer reusing it.
+     * Cancels the transfer holding `id`, reserved or running; it then
+     * throws CancelledException. Nothing when no transfer holds the id, so
+     * a late cancel never stops a later transfer reusing it (ids are unique
+     * per transfer, never shared by two at once).
      */
     public void cancel(String id) {
         Slot slot = slots.get(id);
@@ -350,6 +378,40 @@ public class ChatFileTransfer {
         StringBuilder sb = new StringBuilder(bytes.length * 2);
         for (byte b : bytes) sb.append(String.format("%02x", b));
         return sb.toString();
+    }
+
+    /**
+     * A body OkHttp never writes twice: once a request started out, a
+     * connection failure is not recovered by sending it again (the server
+     * may already hold it), while a failure while connecting still moves on
+     * to the next address.
+     */
+    private static final class OneShot extends RequestBody {
+        private final RequestBody body;
+
+        OneShot(RequestBody body) {
+            this.body = body;
+        }
+
+        @Override
+        public MediaType contentType() {
+            return body.contentType();
+        }
+
+        @Override
+        public long contentLength() throws IOException {
+            return body.contentLength();
+        }
+
+        @Override
+        public boolean isOneShot() {
+            return true;
+        }
+
+        @Override
+        public void writeTo(BufferedSink sink) throws IOException {
+            body.writeTo(sink);
+        }
     }
 
     /** A file as a request body, read in chunks while it is written out. */
