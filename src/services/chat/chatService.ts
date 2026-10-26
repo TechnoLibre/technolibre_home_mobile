@@ -69,6 +69,16 @@ const maxDt = (a: string | null, b: string | null | undefined): string | null =>
   !b ? a : !a || b > a ? b : a;
 
 /**
+ * How a new conversation's call returns. By default it waits for the flush
+ * and returns the server's id once the create settled; `background` returns
+ * the id it queued under at once (temporary for a new one) and lets the
+ * flush run, so a screen opens on it and follows the swap (realIdOf).
+ */
+export interface QueuedOpts {
+  background?: boolean;
+}
+
+/**
  * The chat as the screens and the app lifecycle use it, over the cache
  * (repo) and the chat outbox (queue). Every server call goes through the
  * shared OdooRpcClient; nothing here starts a timer or a listener at
@@ -500,9 +510,10 @@ export class ChatService {
    * returned at once; a hidden one is shown again and channel_get is
    * queued to pin it on the server; otherwise a new chat is written under a
    * temporary id and channel_get queued. Online, the outbox is flushed at
-   * once, and the server's id is returned when the create settled.
+   * once, and the server's id is returned when the create settled (see
+   * QueuedOpts).
    */
-  async startDirect(src: ChatSource, partnerId: number): Promise<{ configId: string; channelId: number }> {
+  async startDirect(src: ChatSource, partnerId: number, opts: QueuedOpts = {}): Promise<{ configId: string; channelId: number }> {
     const { configId } = src;
     const chats = (await this.repo.channels(configId))
       .filter((c) => c.channelType === "chat" && c.isMember && c.correspondentPartnerId === partnerId)
@@ -512,25 +523,31 @@ export class ChatService {
     const hidden = chats[0];
     const channelId = hidden ? hidden.channelId : await this.repo.newTemporaryId(configId, this.now());
     await this.queue.queueCreate(configId, channelId, { mode: "dm", partnerIds: [partnerId], name: "", groupId: false, useModule: false });
-    return this.afterQueued(src, channelId);
+    return this.afterQueued(src, channelId, opts);
   }
 
   /** Creates a group with these people (self is added by Odoo); see createConversation. */
-  createGroup(src: ChatSource, partnerIds: number[], name = ""): Promise<{ configId: string; channelId: number }> {
-    return this.createConversation(src, "group", partnerIds, name, false);
+  createGroup(src: ChatSource, partnerIds: number[], name = "", opts: QueuedOpts = {}): Promise<{ configId: string; channelId: number }> {
+    return this.createConversation(src, "group", partnerIds, name, false, opts);
   }
 
   /** Creates a channel open to an access group (false: everyone); the name is required. */
-  createChannel(src: ChatSource, name: string, groupId: number | false): Promise<{ configId: string; channelId: number }> {
+  createChannel(
+    src: ChatSource,
+    name: string,
+    groupId: number | false,
+    opts: QueuedOpts = {},
+  ): Promise<{ configId: string; channelId: number }> {
     if (!name.trim()) throw new Error("A channel needs a name.");
-    return this.createConversation(src, "channel", [], name.trim(), groupId);
+    return this.createConversation(src, "channel", [], name.trim(), groupId, opts);
   }
 
   /**
    * Writes the conversation under a temporary id and queues its create,
    * deduped by the server module 1.1 when installed (features), else by a
    * fingerprint after a lost answer. Online, the outbox is flushed at once,
-   * and the server's id is returned when the create settled.
+   * and the server's id is returned when the create settled (see
+   * QueuedOpts).
    */
   private async createConversation(
     src: ChatSource,
@@ -538,33 +555,47 @@ export class ChatService {
     partnerIds: number[],
     name: string,
     groupId: number | false,
+    opts: QueuedOpts,
   ): Promise<{ configId: string; channelId: number }> {
     const { configId } = src;
     const useModule = (await this.features(configId)).idempotentCreate;
     const channelId = await this.repo.newTemporaryId(configId, this.now());
     await this.queue.queueCreate(configId, channelId, { mode, partnerIds: [...new Set(partnerIds)], name, groupId, useModule });
-    return this.afterQueued(src, channelId);
+    return this.afterQueued(src, channelId, opts);
   }
 
   /**
    * Joins a public channel through the outbox; `name` labels the cached row
-   * while the server has not answered. Online, the outbox is flushed at once.
+   * while the server has not answered. Online, the outbox is flushed at
+   * once (see QueuedOpts).
    */
-  async join(src: ChatSource, channelId: number, name = ""): Promise<{ configId: string; channelId: number }> {
+  async join(src: ChatSource, channelId: number, name = "", opts: QueuedOpts = {}): Promise<{ configId: string; channelId: number }> {
     await this.queue.queueJoin(src.configId, channelId, name);
-    return this.afterQueued(src, channelId);
+    return this.afterQueued(src, channelId, opts);
   }
 
-  private async afterQueued(src: ChatSource, channelId: number): Promise<{ configId: string; channelId: number }> {
+  private async afterQueued(
+    src: ChatSource,
+    channelId: number,
+    opts: QueuedOpts,
+  ): Promise<{ configId: string; channelId: number }> {
     const { configId } = src;
     this.changed(configId, channelId);
-    if (await this.isOnline()) {
+    const flushed = (async () => {
+      if (!(await this.isOnline())) return;
       try {
         await this.queue.flush(src.creds);
       } catch {
         // Kept in the outbox for the next flush
       }
+      // The swap already told the screens; a create still waiting changed its row (attempts, a block)
+      this.changed(configId, channelId);
+    })();
+    if (opts.background) {
+      void flushed;
+      return { configId, channelId };
     }
+    await flushed;
     return { configId, channelId: (await this.realIdOf(configId, channelId)) ?? channelId };
   }
 

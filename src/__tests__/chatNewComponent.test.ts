@@ -107,7 +107,7 @@ describe("ChatNewComponent", () => {
         const chat = fakeChat(["a|u|d"]);
         const c = await make(chat);
         await c.onPerson(c.state.recent[0]);
-        expect(chat.startDirect).toHaveBeenCalledWith(expect.objectContaining({ configId: "a|u|d" }), 1);
+        expect(chat.startDirect).toHaveBeenCalledWith(expect.objectContaining({ configId: "a|u|d" }), 1, { background: true });
         expect(c.navigate).toHaveBeenCalledWith("/chat/a%7Cu%7Cd/-1");
     });
 
@@ -133,13 +133,13 @@ describe("ChatNewComponent", () => {
         await c.onCreateGroup();
         expect(chat.createGroup).not.toHaveBeenCalled();
         await c.onWriteToPicked();
-        expect(chat.startDirect).toHaveBeenCalledWith(expect.anything(), 1);
+        expect(chat.startDirect).toHaveBeenCalledWith(expect.anything(), 1, { background: true });
         c.navigate.mockClear();
         c.onPerson(c.state.recent[1]);
         expect(c.canCreateGroup()).toBe(true);
         c.onGroupName(input(" Team "));
         await c.onCreateGroup();
-        expect(chat.createGroup).toHaveBeenCalledWith(expect.anything(), [1, 2], "Team");
+        expect(chat.createGroup).toHaveBeenCalledWith(expect.anything(), [1, 2], "Team", { background: true });
         expect(c.navigate).toHaveBeenCalledWith("/chat/a/-50");
     });
 
@@ -153,7 +153,7 @@ describe("ChatNewComponent", () => {
         expect(chat.createChannel).not.toHaveBeenCalled();
         c.onChannelName(input("  news "));
         await c.onCreateChannel();
-        expect(chat.createChannel).toHaveBeenCalledWith(expect.anything(), "news", 11);
+        expect(chat.createChannel).toHaveBeenCalledWith(expect.anything(), "news", 11, { background: true });
         c.onAccessChange(input("false"));
         expect(c.state.groupId).toBe(false);
         c.onAccessChange(input("12"));
@@ -167,7 +167,7 @@ describe("ChatNewComponent", () => {
         await c.onView("join");
         expect(c.state.joinable.map((x: any) => x.name)).toEqual(["general"]);
         await c.onJoin(c.state.joinable[0]);
-        expect(chat.join).toHaveBeenCalledWith(expect.anything(), 9, "general");
+        expect(chat.join).toHaveBeenCalledWith(expect.anything(), 9, "general", { background: true });
         expect(c.navigate).toHaveBeenCalledWith("/chat/a/9");
         chat.people.joinableChannels.mockResolvedValue({ channels: [], offline: true });
         await c.onView("join");

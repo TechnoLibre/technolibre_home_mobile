@@ -13,6 +13,8 @@ const SERVER_KEY = "chat.new.server";
 export const SEARCH_DEBOUNCE_MS = 300;
 /** A group is a conversation of at least this many other people. */
 const GROUP_MIN = 2;
+/** The thread opens as soon as the conversation is queued; the flush runs behind it. */
+const AT_ONCE = { background: true };
 
 type NewView = "people" | "group" | "channel" | "join";
 
@@ -45,8 +47,10 @@ interface ChatNewState {
 /**
  * The new conversation screen: a server, then people (recent ones, or the
  * server's search once a term is typed) to write to, a group to create, a
- * channel to create, or a public channel to join. Every action ends in the
- * thread of the conversation, whose id may still be temporary.
+ * channel to create, or a public channel to join. Every action opens the
+ * thread of the conversation once it is queued, without waiting for the
+ * server: its id may still be temporary, and the thread moves to the
+ * server's id when the create settles.
  */
 export class ChatNewComponent extends EnhancedComponent {
     state!: ChatNewState;
@@ -348,7 +352,7 @@ export class ChatNewComponent extends EnhancedComponent {
             this.state.picked = [...this.state.picked, p];
             return;
         }
-        return this.run((src) => this.chatService.startDirect(src, p.partnerId));
+        return this.run((src) => this.chatService.startDirect(src, p.partnerId, AT_ONCE));
     }
 
     onUnpick(p: ChatPartner): void {
@@ -358,7 +362,7 @@ export class ChatNewComponent extends EnhancedComponent {
     /** One person picked is a direct message, not a group. */
     onWriteToPicked(): Promise<void> {
         const only = this.state.picked[0];
-        return this.run((src) => this.chatService.startDirect(src, only.partnerId));
+        return this.run((src) => this.chatService.startDirect(src, only.partnerId, AT_ONCE));
     }
 
     onGroupName(ev: Event): void {
@@ -369,7 +373,7 @@ export class ChatNewComponent extends EnhancedComponent {
         if (!this.canCreateGroup()) return;
         const ids = this.state.picked.map((p) => p.partnerId);
         const name = this.state.groupName.trim();
-        return this.run((src) => this.chatService.createGroup(src, ids, name));
+        return this.run((src) => this.chatService.createGroup(src, ids, name, AT_ONCE));
     }
 
     onChannelName(ev: Event): void {
@@ -385,14 +389,14 @@ export class ChatNewComponent extends EnhancedComponent {
         if (!this.canCreateChannel()) return;
         const name = this.state.channelName.trim();
         const groupId = this.state.groupId;
-        return this.run((src) => this.chatService.createChannel(src, name, groupId));
+        return this.run((src) => this.chatService.createChannel(src, name, groupId, AT_ONCE));
     }
 
     onJoin(c: JoinableChannel): Promise<void> {
-        return this.run((src) => this.chatService.join(src, c.channelId, c.name));
+        return this.run((src) => this.chatService.join(src, c.channelId, c.name, AT_ONCE));
     }
 
-    /** Runs an action on the chosen server, then opens the thread it returns; a failure shows a notice and stays here. */
+    /** Runs an action on the chosen server, then opens the thread it returns; a failure to queue shows a notice and stays here. */
     private async run(
         action: (src: ChatSource) => Promise<{ configId: string; channelId: number }>,
     ): Promise<void> {

@@ -1375,6 +1375,29 @@ describe("ChatService", () => {
     expect(createCalls(odoo)).toHaveLength(2);
   });
 
+  it("a create in the background returns its temporary id before the server answers, then swaps", async () => {
+    const odoo = fakeOdoo();
+    const server = createServer(odoo, { now: () => clock });
+    const src = await source();
+    await chat.load(src);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    server.state.onCreate = () => held;
+    const changes: [string, number | null][] = [];
+    chat.onChange = (c, ch) => changes.push([c, ch]);
+    const opened = await chat.createGroup(src, [BOB, 7], "", { background: true });
+    expect(opened.channelId).toBeLessThan(0);
+    await vi.waitFor(() => expect(createCalls(odoo)).toHaveLength(1));
+    // The server still holds the answer: nothing settled, the screen is already open on the temporary id
+    expect(await chat.realIdOf(config, opened.channelId)).toBeNull();
+    release();
+    await vi.waitFor(async () => expect(await chat.realIdOf(config, opened.channelId)).toBe(server.channels[0].id));
+    expect(changes.map(([, ch]) => ch)).toContain(server.channels[0].id);
+    // Waiting (the default) returns the server's id
+    const waited = await chat.createGroup(src, [BOB], "Waited");
+    expect(waited.channelId).toBe(server.channels[1].id);
+  });
+
   it("offline group then posts survive a restart and the id swap", async () => {
     const odoo = fakeOdoo();
     const server = createServer(odoo, { now: () => clock });
