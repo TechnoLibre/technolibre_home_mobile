@@ -110,6 +110,8 @@ export class ChatNewComponent extends EnhancedComponent {
             <button class="chat-new__person" t-on-click="() => this.onPerson(p)">
               <span class="chat-new__avatar" aria-hidden="true" t-esc="initialOf(p)"/>
               <span class="chat-new__person-name" t-esc="p.name"/>
+              <span class="chat-new__presence" t-att-class="'chat-new__presence--' + presenceOf(p)"
+                    t-att-title="t('chat.presence_' + presenceOf(p))" t-att-aria-label="t('chat.presence_' + presenceOf(p))"/>
             </button>
           </li>
         </ul>
@@ -331,6 +333,11 @@ export class ChatNewComponent extends EnhancedComponent {
         if (this.state.view !== "group") return list;
         const taken = new Set(this.state.picked.map((p) => p.partnerId));
         return list.filter((p) => !taken.has(p.partnerId));
+    }
+
+    /** The presence of a person as the info screen shows it: online, away, else offline. */
+    presenceOf(p: ChatPartner): "online" | "away" | "offline" {
+        return p.imStatus === "online" ? "online" : p.imStatus === "away" ? "away" : "offline";
     }
 
     initialOf(p: ChatPartner): string {

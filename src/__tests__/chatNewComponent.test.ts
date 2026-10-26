@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { ChatNewComponent, SEARCH_DEBOUNCE_MS } from "../components/chat/chat_new_component";
 import { ChatListComponent } from "../components/chat/chat_list_component";
@@ -101,6 +104,18 @@ describe("ChatNewComponent", () => {
         const c = await make(chat);
         await expect(c.search("x")).resolves.toBeUndefined();
         expect(c.state.error).toBe("Could not do it. Try again.");
+    });
+
+    it("each person shows a presence, as the info screen", async () => {
+        const chat = fakeChat(["a"]);
+        chat.people.recentPeople.mockResolvedValue([
+            { ...person(1, "Alice"), imStatus: "online" }, { ...person(2, "Bob"), imStatus: "away" },
+            { ...person(4, "Dan"), imStatus: "offline" }, person(5, "Eve"),
+        ]);
+        const c = await make(chat);
+        expect(c.shownPeople().map((p: any) => c.presenceOf(p))).toEqual(["online", "away", "offline", "offline"]);
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_new_component.ts"), "utf8");
+        expect(source).toContain("'chat-new__presence--' + presenceOf(p)");
     });
 
     it("tapping a person opens the thread of the direct message, temp id included", async () => {

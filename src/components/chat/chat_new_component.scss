@@ -118,6 +118,25 @@
 	justify-content: center;
 }
 
+.chat-new__person-name {
+	flex: 1;
+}
+
+.chat-new__presence {
+	width: 0.6rem;
+	height: 0.6rem;
+	border-radius: 50%;
+	background: var(--text-greyed-out);
+}
+
+.chat-new__presence--online {
+	background: #22c55e;
+}
+
+.chat-new__presence--away {
+	background: #f59e0b;
+}
+
 .chat-new__channel-desc,
 .chat-new__hint,
 .chat-new__empty,
