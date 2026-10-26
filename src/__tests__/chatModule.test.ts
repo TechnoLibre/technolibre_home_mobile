@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CHAT_MODULE, CHAT_UUID_FIELD, installModule, levelAtLeast, moduleLevel, moduleState, upgradeModule } from "../services/chat/chatModule";
+import { CHAT_MODULE, CHAT_UUID_FIELD, installModule, effectiveLevel, levelAtLeast, moduleLevel, moduleState, upgradeModule } from "../services/chat/chatModule";
 import { OdooRpcError, SyncCredentials } from "../services/odoo/odooRpcClient";
 
 const CREDS: SyncCredentials = { odooUrl: "https://odoo.example.com", username: "u", password: "p", database: "db" };
@@ -150,20 +150,20 @@ describe("upgrade chat module", () => {
   it("upgrades the module row, then probes fresh", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }] });
     const caps = fakeCaps([WITH], [WITH], [{}, WITH]);
-    expect(await upgradeModule(rpc, caps, CREDS)).toBe("installed");
+    expect((await upgradeModule(rpc, caps, CREDS)).state).toBe("installed");
     expect(rpc.calls).toContain("ir.module.module.button_immediate_upgrade [[7]]");
     expect(caps.calls.at(-1).options.maxAgeMs).toBe(0);
   });
 
   it("treats a lost response as no error and returns what the probe says", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }], upgradeError: new Error("timeout") });
-    expect(await upgradeModule(rpc, fakeCaps([WITH], [WITH], [{}, WITH]), CREDS)).toBe("installed");
+    expect((await upgradeModule(rpc, fakeCaps([WITH], [WITH], [{}, WITH]), CREDS)).state).toBe("installed");
   });
 
   it("returns the probed state on an AccessError and propagates other server errors", async () => {
     const denied = new OdooRpcError("denied", "odoo.exceptions.AccessError");
     const refused = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }], upgradeError: denied });
-    expect(await upgradeModule(refused, fakeCaps([WITH], [{}]), CREDS)).toBe("outdated");
+    expect((await upgradeModule(refused, fakeCaps([WITH], [{}]), CREDS)).state).toBe("outdated");
     const boom = new OdooRpcError("broken", "odoo.exceptions.UserError");
     const broken = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }], upgradeError: boom });
     await expect(upgradeModule(broken, fakeCaps([WITH], [{}]), CREDS)).rejects.toBe(boom);
@@ -171,11 +171,21 @@ describe("upgrade chat module", () => {
 
   it("never upgrades for a non-system user nor when not outdated", async () => {
     const user = fakeRpc({ isSystem: false });
-    expect(await upgradeModule(user, fakeCaps([WITH], [{}]), CREDS)).toBe("outdated");
+    expect((await upgradeModule(user, fakeCaps([WITH], [{}]), CREDS)).state).toBe("outdated");
     expect(user.calls).toEqual([]);
     const current = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }] });
-    expect(await upgradeModule(current, fakeCaps([WITH], [WITH], [WITH]), CREDS)).toBe("installed");
+    expect((await upgradeModule(current, fakeCaps([WITH], [WITH], [WITH]), CREDS)).state).toBe("installed");
     expect(current.calls).toEqual([]);
+  });
+});
+
+describe("effective level", () => {
+  it("keeps a stored level and maps a legacy state otherwise", () => {
+    expect(effectiveLevel({ moduleState: "installed", moduleLevel: "1.2" })).toBe("1.2");
+    expect(effectiveLevel({ moduleState: "installed", moduleLevel: null })).toBe("1.1");
+    expect(effectiveLevel({ moduleState: "outdated", moduleLevel: null })).toBe("1.0");
+    expect(effectiveLevel({ moduleState: "unknown", moduleLevel: null })).toBeNull();
+    expect(effectiveLevel({ moduleState: "available", moduleLevel: null })).toBeNull();
   });
 });
 
@@ -184,7 +194,7 @@ describe("upgrade from module 1.1", () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }] });
     const caps = fakeCaps([WITH], [WITH], [{}, WITH]);
     expect(await moduleState(rpc, caps, CREDS, { online: true })).toBe("outdated");
-    expect(await upgradeModule(rpc, fakeCaps([WITH], [WITH], [{}, WITH]), CREDS)).toBe("installed");
+    expect((await upgradeModule(rpc, fakeCaps([WITH], [WITH], [{}, WITH]), CREDS)).state).toBe("installed");
     expect(rpc.calls).toContain("ir.module.module.button_immediate_upgrade [[7]]");
   });
 });
@@ -193,20 +203,20 @@ describe("install chat module", () => {
   it("installs the module row, then probes fresh", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "uninstalled" }] });
     const caps = fakeCaps([{}, WITH], [{}, WITH], [{}, WITH]);
-    expect(await installModule(rpc, caps, CREDS)).toBe("installed");
+    expect((await installModule(rpc, caps, CREDS)).state).toBe("installed");
     expect(rpc.calls).toContain("ir.module.module.button_immediate_install [[7]]");
     expect(caps.calls.at(-1).options.maxAgeMs).toBe(0);
   });
 
   it("treats a lost response as no error and returns what the probe says", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "uninstalled" }], installError: new Error("timeout") });
-    expect(await installModule(rpc, fakeCaps([{}, WITH], [{}, WITH], [{}, WITH]), CREDS)).toBe("installed");
+    expect((await installModule(rpc, fakeCaps([{}, WITH], [{}, WITH], [{}, WITH]), CREDS)).state).toBe("installed");
   });
 
   it("returns the probed state when the server refuses with an AccessError", async () => {
     const refusal = new OdooRpcError("denied", "odoo.exceptions.AccessError");
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "uninstalled" }], installError: refusal });
-    expect(await installModule(rpc, fakeCaps([{}, {}]), CREDS)).toBe("available");
+    expect((await installModule(rpc, fakeCaps([{}, {}]), CREDS)).state).toBe("available");
   });
 
   it("propagates any other server error", async () => {
@@ -217,7 +227,7 @@ describe("install chat module", () => {
 
   it("does not call install when the module is not available", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [] });
-    expect(await installModule(rpc, fakeCaps([{}]), CREDS)).toBe("absent");
+    expect((await installModule(rpc, fakeCaps([{}]), CREDS)).state).toBe("absent");
     expect(rpc.calls.some((c: string) => c.includes("button_immediate_install"))).toBe(false);
   });
 });

@@ -540,6 +540,26 @@ describe("ChatService", () => {
     }
   });
 
+  it("a row stored before the level existed falls back on its module state, offline", async () => {
+    fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: null, isSystem: true });
+    expect(await chat.features(config)).toEqual({
+      canRemoveMembers: true, idempotentCreate: true, idempotentUpload: false,
+    });
+    await chat.repo.setSourceState({ configId: config, moduleState: "outdated", moduleLevel: null });
+    expect(await chat.features(config)).toEqual({
+      canRemoveMembers: false, idempotentCreate: false, idempotentUpload: false,
+    });
+    for (const st of ["installed", "outdated"] as const) {
+      const odoo = fakeOdoo();
+      await chat.repo.setSourceState({ configId: config, moduleState: st, moduleLevel: null });
+      await chat.send(src, GROUP, st);
+      expect(odoo.on("/mail/message/post").at(-1)!.params.post_data.erplibre_client_uuid).toEqual(expect.any(String));
+    }
+  });
+
   it("features give nothing when the module is ignored", async () => {
     fakeOdoo();
     await chat.load(await source());

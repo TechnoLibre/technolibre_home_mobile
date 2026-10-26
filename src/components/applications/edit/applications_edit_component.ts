@@ -10,7 +10,7 @@ import { SyncService } from "../../../services/syncService";
 import { networkService } from "../../../services/networkService";
 import { syncConfigIdFor } from "../../../models/syncConfig";
 import { CHAT_MAJOR, parseOdooMajor } from "../../../services/chat/chatSources";
-import { installModule, moduleLevel, moduleState, upgradeModule } from "../../../services/chat/chatModule";
+import { installModule, moduleState, upgradeModule } from "../../../services/chat/chatModule";
 import type { SyncCredentials } from "../../../services/odoo/odooRpcClient";
 import { t } from "../../../i18n";
 
@@ -323,11 +323,10 @@ export class ApplicationsEditComponent extends EnhancedComponent {
         this.state.chatError = "";
         try {
             const next = await upgradeModule(this.syncService.rpc, this.syncService.capabilities, target.creds);
-            const level = await moduleLevel(this.syncService.capabilities, target.creds, { online: true, fresh: true });
             await this.chatService.repo.setSourceState({
-                configId: target.configId, moduleState: next, moduleLevel: level,
+                configId: target.configId, moduleState: next.state, moduleLevel: next.level,
             });
-            this.state.chatModule = next;
+            this.state.chatModule = next.state;
             await this.refreshChatCanUpgrade(target.creds);
         } catch {
             this.state.chatError = t("chat.module_upgrade_error");
@@ -344,11 +343,10 @@ export class ApplicationsEditComponent extends EnhancedComponent {
         this.state.chatError = "";
         try {
             const next = await installModule(this.syncService.rpc, this.syncService.capabilities, target.creds);
-            const level = await moduleLevel(this.syncService.capabilities, target.creds, { online: true, fresh: true });
             await this.chatService.repo.setSourceState({
-                configId: target.configId, moduleState: next, moduleLevel: level,
+                configId: target.configId, moduleState: next.state, moduleLevel: next.level,
             });
-            this.state.chatModule = next;
+            this.state.chatModule = next.state;
         } catch {
             this.state.chatError = t("chat.module_install_error");
         } finally {

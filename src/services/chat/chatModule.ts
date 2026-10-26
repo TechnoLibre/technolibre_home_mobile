@@ -57,6 +57,9 @@ export async function moduleLevel(
   return null;
 }
 
+/** Module state with the level it was read at. */
+export type ModuleProbe = { state: ChatModuleState; level: ChatModuleLevel | null };
+
 /**
  * State of the chat module on a server, with its level; it never persists
  * them.
@@ -74,7 +77,7 @@ export async function moduleProbe(
   capabilities: CapabilityService,
   creds: SyncCredentials,
   opts: { online: boolean; fresh?: boolean }
-): Promise<{ state: ChatModuleState; level: ChatModuleLevel | null }> {
+): Promise<ModuleProbe> {
   const level = await moduleLevel(capabilities, creds, opts);
   if (level) return { state: level === "1.2" ? "installed" : "outdated", level };
   if (!opts.online) return { state: "unknown", level };
@@ -83,6 +86,21 @@ export async function moduleProbe(
   if (!row) return { state: "absent", level };
   if (row.state === "to upgrade") return { state: "outdated", level };
   return { state: row.state === "installed" ? "installed" : "available", level };
+}
+
+/**
+ * Level to act on for a stored source state. A row stored before the level
+ * existed has none: its state then meant module 1.1 when installed and 1.0
+ * when outdated, which the fallback keeps until the next probe stores the
+ * real level.
+ */
+export function effectiveLevel(stored: {
+  moduleState: ChatModuleState;
+  moduleLevel: ChatModuleLevel | null;
+}): ChatModuleLevel | null {
+  if (stored.moduleLevel) return stored.moduleLevel;
+  if (stored.moduleState === "installed") return "1.1";
+  return stored.moduleState === "outdated" ? "1.0" : null;
 }
 
 /** The state half of moduleProbe. */
@@ -97,7 +115,7 @@ export async function moduleState(
 
 /**
  * Runs a module button (install or upgrade) on the module row, then returns
- * the freshly probed state. The button can outlast the transport timeout
+ * the freshly probed state and level. The button can outlast the transport timeout
  * while the work goes on server side, so a response lost to a transport
  * error is not a failure: the probe tells the outcome. An AccessError
  * refusal also returns the probed state; any other server error propagates.
@@ -107,7 +125,7 @@ async function pressModuleButton(
   capabilities: CapabilityService,
   creds: SyncCredentials,
   button: string
-): Promise<ChatModuleState> {
+): Promise<ModuleProbe> {
   const row = await moduleRow(rpc, creds);
   if (row) {
     try {
@@ -118,17 +136,17 @@ async function pressModuleButton(
       if (!refused && !lost) throw e;
     }
   }
-  return moduleState(rpc, capabilities, creds, { online: true, fresh: true });
+  return moduleProbe(rpc, capabilities, creds, { online: true, fresh: true });
 }
 
-/** Installs the module when the server lists it as available; returns the probed state. */
+/** Installs the module when the server lists it as available; returns the probed state and level. */
 export async function installModule(
   rpc: OdooRpcClient,
   capabilities: CapabilityService,
   creds: SyncCredentials
-): Promise<ChatModuleState> {
-  const before = await moduleState(rpc, capabilities, creds, { online: true, fresh: true });
-  if (before !== "available") return before;
+): Promise<ModuleProbe> {
+  const before = await moduleProbe(rpc, capabilities, creds, { online: true, fresh: true });
+  if (before.state !== "available") return before;
   return pressModuleButton(rpc, capabilities, creds, "button_immediate_install");
 }
 
@@ -140,8 +158,8 @@ export async function upgradeModule(
   rpc: OdooRpcClient,
   capabilities: CapabilityService,
   creds: SyncCredentials
-): Promise<ChatModuleState> {
-  const before = await moduleState(rpc, capabilities, creds, { online: true, fresh: true });
-  if (before !== "outdated" || !(await rpc.sessionInfo(creds)).isSystem) return before;
+): Promise<ModuleProbe> {
+  const before = await moduleProbe(rpc, capabilities, creds, { online: true, fresh: true });
+  if (before.state !== "outdated" || !(await rpc.sessionInfo(creds)).isSystem) return before;
   return pressModuleButton(rpc, capabilities, creds, "button_immediate_upgrade");
 }

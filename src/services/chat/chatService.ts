@@ -7,7 +7,7 @@ import type { CapabilityService } from "../odoo/capabilityService";
 import type { OdooRpcClient, SyncCredentials } from "../odoo/odooRpcClient";
 import type { OutboxService } from "../outboxService";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
-import { ChatModuleLevel, levelAtLeast, moduleProbe } from "./chatModule";
+import { ChatModuleLevel, effectiveLevel, levelAtLeast, moduleProbe } from "./chatModule";
 import { ChatOutbox, type CreateMode } from "./chatOutbox";
 import { ChatPeople } from "./chatPeople";
 import { ChatRepository } from "./chatRepository";
@@ -480,7 +480,7 @@ export class ChatService {
     configId: string
   ): Promise<{ canRemoveMembers: boolean; idempotentCreate: boolean; idempotentUpload: boolean }> {
     const state = await this.repo.sourceState(configId);
-    const at = (min: ChatModuleLevel) => this.moduleMode === "auto" && levelAtLeast(state.moduleLevel, min);
+    const at = (min: ChatModuleLevel) => this.moduleMode === "auto" && levelAtLeast(effectiveLevel(state), min);
     return {
       canRemoveMembers: state.isSystem && at("1.1"),
       idempotentCreate: at("1.1"),
@@ -496,7 +496,7 @@ export class ChatService {
   async send(src: ChatSource, channelId: number, text: string): Promise<ChatMessage> {
     const { configId } = src;
     // Module 1.0 already dedupes message posts by uuid; only 1.1 adds channels
-    const level = (await this.repo.sourceState(configId)).moduleLevel;
+    const level = effectiveLevel(await this.repo.sourceState(configId));
     const useModule = this.moduleMode === "auto" && level !== null;
     const message = await this.queue.queuePost(configId, channelId, text, useModule);
     this.changed(configId, channelId);
