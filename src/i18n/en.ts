@@ -1199,6 +1199,7 @@ export const translations: Record<string, string> = {
   "chat.att_play_failed": "This file cannot be played here.",
   "chat.open_with": "Open with",
   "chat.suggestions": "Suggestions",
+  "chat.suggestions_shown": "Suggestions shown: {count}",
   "chat.suggest_everyone": "Notify everyone",
   "chat.emoji": "Emoji",
   "chat.emoji_search": "Search an emoji",

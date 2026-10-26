@@ -1,4 +1,5 @@
 import type { ChatChannel } from "../../models/chat";
+import { t } from "../../i18n";
 import { RequestNotSentError, type OdooRpcClient } from "../odoo/odooRpcClient";
 import type { Mentions } from "./chatCompose";
 import type { ChatPeople } from "./chatPeople";
@@ -218,11 +219,14 @@ export class ChatMentions {
   }
 
   /**
-   * The people whose name holds `term` (folded): the cached members with a
-   * name, the people cache in a public channel, then the server's answer
-   * (`store`, null for none) as the scope lets it, a member of a chat or a
-   * group being one in the cache or in the answer. Members first, then a
-   * name that starts with the term, then by name and id; @everyone last.
+   * The people to offer: the cached members whose name holds `term`
+   * (folded), the people cache in a public channel, then the server's
+   * answer (`store`, null for none) as the scope lets it, a member of a
+   * chat or a group being one in the cache or in the answer. The server's
+   * partners are kept as it matched them, by name or email. Members first,
+   * then a name that starts with the term, then by name and id. @everyone
+   * last, when the term starts « everyone » or is in its description
+   * (chat.suggest_everyone, the list's own text), as the browser matches it.
    */
   private async partners(configId: string, channel: ChatChannel, term: string, store: any): Promise<Suggestion[]> {
     const needle = fold(term);
@@ -235,8 +239,8 @@ export class ChatMentions {
     const names = new Map(cached.map((p) => [p.partnerId, p.name]));
     const memberIds = new Set(members.map((m) => m.partnerId));
     const found = new Map<number, { id: number; name: string }>();
-    const add = (id: number, name: string | undefined) => {
-      if (name && fold(name).includes(needle)) found.set(id, { id, name });
+    const add = (id: number, name: string | undefined, matched = false) => {
+      if (name && (matched || fold(name).includes(needle))) found.set(id, { id, name });
     };
     for (const id of memberIds) add(id, names.get(id));
     if (scope === "public") {
@@ -251,7 +255,8 @@ export class ChatMentions {
       }
       for (const p of delta.partners) {
         if (scope === "members" && !memberIds.has(p.partnerId)) continue;
-        add(p.partnerId, p.name ?? names.get(p.partnerId));
+        // The server matched on the name or the email: kept as it matched
+        add(p.partnerId, p.name ?? names.get(p.partnerId), true);
       }
     }
     const out: Suggestion[] = [...found.values()]
@@ -263,13 +268,15 @@ export class ChatMentions {
       .slice(0, SUGGESTION_LIMIT)
       .map((c) => ({ kind: "partner", id: c.id, name: c.name }));
     const special = channel.channelType === "group" || channel.channelType === "channel";
-    if (special && needle.length >= SPECIAL_MIN_CHARS && EVERYONE.startsWith(needle)) out.push({ kind: "special", label: EVERYONE });
+    const everyone = EVERYONE.startsWith(needle) || fold(t("chat.suggest_everyone")).includes(needle);
+    if (special && needle.length >= SPECIAL_MIN_CHARS && everyone) out.push({ kind: "special", label: EVERYONE });
     return out;
   }
 
   /**
-   * The channels whose name holds `term` (folded): the cached ones of type
-   * channel the user is a member of, then the server's `rows`. A
+   * The channels to offer: the cached ones of type channel the user is a
+   * member of whose name holds `term` (folded), then the server's `rows`,
+   * kept as it matched them. A
    * sub-channel is offered under its parent's name, so one whose parent
    * is not cached is left out; so is a channel still under a temporary id.
    * A name that starts with the term first, then by name and id.
@@ -279,8 +286,8 @@ export class ChatMentions {
     const all = await this.repo.channels(configId);
     const byId = new Map(all.map((c) => [c.channelId, c]));
     const found = new Map<number, Suggestion & { kind: "channel" }>();
-    const add = (id: number, name: string, parentId: number | null) => {
-      if (id <= 0 || !name || found.has(id) || !fold(name).includes(needle)) return;
+    const add = (id: number, name: string, parentId: number | null, matched = false) => {
+      if (id <= 0 || !name || found.has(id) || !(matched || fold(name).includes(needle))) return;
       const parentName = parentId === null ? null : byId.get(parentId)?.name || null;
       if (parentId !== null && !parentName) return;
       found.set(id, { kind: "channel", id, name, parentName });
@@ -291,7 +298,7 @@ export class ChatMentions {
     for (const r of rows) {
       if (typeof r?.id !== "number" || r.channel_type !== "channel" || typeof r.name !== "string") continue;
       const parent = r.parent_channel_id && typeof r.parent_channel_id.id === "number" ? r.parent_channel_id.id : null;
-      add(r.id, r.name, parent);
+      add(r.id, r.name, parent, true);
     }
     return [...found.values()]
       .sort((a, b) =>

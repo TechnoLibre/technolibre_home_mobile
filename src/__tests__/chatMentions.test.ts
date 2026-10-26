@@ -211,6 +211,25 @@ describe("ChatMentions", () => {
     expect(kw.at(-1)).toMatchObject({ model: "discuss.channel", method: "get_mention_suggestions", kwargs: { search: "gen", limit: 8 } });
   });
 
+  it("the server's matches are kept as it matched them (by email too), the members-only rule still applied", async () => {
+    // Matched by their email on the server: the name does not hold the term
+    answers.get_mention_suggestions_from_channel = storeAnswer(21, [{ id: 9, name: "Zed Quill" }], []);
+    expect(names(await mentions.remote(SRC, await ch(21), mentionQuery("@zq@", 4)!))).toEqual(["Zed Quill"]);
+    answers.get_mention_suggestions_from_channel = storeAnswer(20, [{ id: 9, name: "Zed Quill" }, { id: 4, name: "Bob Lane" }], [4]);
+    expect(names(await mentions.remote(SRC, await ch(20), mentionQuery("@lane.example", 13)!))).toEqual(["Bob Lane"]);
+    // A channel the server matched is kept as it is, its name not compared again
+    answers.get_mention_suggestions = [{ id: 30, model: "discuss.channel", name: "Équipe", channel_type: "channel", parent_channel_id: false }];
+    expect(names(await mentions.remote(SRC, await ch(20), mentionQuery("#team", 5)!))).toEqual(["Équipe"]);
+  });
+
+  it("@everyone also answers its description, as the browser's list does", async () => {
+    online = false;
+    // The description in the app's language (« Notifier tout le monde » here)
+    expect(names(await mentions.local(SRC, await ch(21), mentionQuery("@tout", 5)!))).toEqual(["@everyone"]);
+    expect(names(await mentions.local(SRC, await ch(25), mentionQuery("@tout", 5)!))).toEqual([]);
+    expect(names(await mentions.local(SRC, await ch(21), mentionQuery("@tou", 4)!))).toEqual([]);
+  });
+
   it("a request that never left answers from the cache; another error propagates", async () => {
     answers.get_mention_suggestions_from_channel = new RequestNotSentError("offline");
     expect(names(await mentions.remote(SRC, await ch(20), mentionQuery("@b", 2)!))).toEqual(["Bob Lane"]);

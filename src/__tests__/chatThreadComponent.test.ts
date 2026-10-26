@@ -2325,6 +2325,74 @@ describe("ChatThreadComponent mention suggestions", () => {
         c.teardown();
     });
 
+    it("moving the caret out of the query closes the list; back into one shows it again", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.mentions.local.mockResolvedValue([ALICE]);
+        const c = make(chat);
+        await c.open();
+        const field = { value: "@al and more", selectionStart: 3, selectionEnd: 3, setSelectionRange: vi.fn() };
+        c.input = { el: field };
+        c.onInput({ target: field } as any);
+        await settle();
+        expect(c.state.suggestions).toEqual([ALICE]);
+        // The keyup after the input leaves the caret where it was: nothing asked again
+        c.onCaret();
+        expect(chat.mentions.local).toHaveBeenCalledTimes(1);
+        field.selectionStart = field.selectionEnd = 12;
+        c.onCaret();
+        expect(c.state.suggestions).toEqual([]);
+        field.selectionStart = field.selectionEnd = 3;
+        c.onCaret();
+        await settle();
+        expect(chat.mentions.local).toHaveBeenCalledTimes(2);
+        expect(c.state.suggestions).toEqual([ALICE]);
+        // A selection is no query
+        field.selectionStart = 0;
+        c.onCaret();
+        expect(c.state.suggestions).toEqual([]);
+        c.teardown();
+    });
+
+    it("a selectionchange of the focused field follows the caret, none after the screen closes", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.mentions.local.mockResolvedValue([ALICE]);
+        const c = make(chat);
+        await c.open();
+        const field = document.createElement("textarea");
+        document.body.appendChild(field);
+        field.value = "@al and more";
+        c.input = { el: field };
+        field.focus();
+        field.setSelectionRange(3, 3);
+        c.onInput({ target: field } as any);
+        await settle();
+        expect(c.state.suggestions).toEqual([ALICE]);
+        field.setSelectionRange(12, 12);
+        document.dispatchEvent(new Event("selectionchange"));
+        expect(c.state.suggestions).toEqual([]);
+        c.teardown();
+        field.setSelectionRange(3, 3);
+        document.dispatchEvent(new Event("selectionchange"));
+        expect(chat.mentions.local).toHaveBeenCalledTimes(1);
+        field.remove();
+    });
+
+    it("a live region tells that suggestions appeared; the list itself keeps no listbox role", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.mentions.local.mockResolvedValue([ALICE, BOB]);
+        const c = make(chat);
+        await c.open();
+        expect(c.suggestionsLive()).toBe("");
+        c.onInput({ target: { value: "@a" } } as any);
+        await settle();
+        expect(c.suggestionsLive()).toBe("Suggestions shown: 2");
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        expect(source).toMatch(/<p class="sr-only" aria-live="polite" aria-atomic="true" t-esc="suggestionsLive\(\)"\/>/);
+        const list = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_suggestions_component.ts"), "utf8");
+        expect(list).not.toMatch(/role="listbox"/);
+        c.teardown();
+    });
+
     it("the suggestion list sits beside the attachments, above the composer row", () => {
         const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
         expect(source).toMatch(/<ChatComposerAttachComponent attach="attach"\/>\s*<\/div>\s*<ChatSuggestionsComponent t-if="state\.suggestions\.length" items="state\.suggestions" onPick\.bind="onSuggestion"\/>/);

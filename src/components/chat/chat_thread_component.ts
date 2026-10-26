@@ -15,7 +15,7 @@ import type {
 } from "../../models/chat";
 import { EMPTY_MENTIONS, joinMentions, validMentions, type Mentions } from "../../services/chat/chatCompose";
 import {
-    adjustPicks, applySuggestion, mentionQuery, picksOf, picksToMentions, type MentionPick, type Suggestion,
+    adjustPicks, applySuggestion, mentionQuery, picksOf, picksToMentions, type MentionPick, type MentionQuery, type Suggestion,
 } from "../../services/chat/chatMentions";
 import type { ChatDraft } from "../../services/chat/chatRepository";
 import { quickReactions } from "../../services/chat/chatEmoji";
@@ -188,6 +188,11 @@ const FLASH_MS = 1500;
 const HIGHLIGHT_MS = 1000;
 /** The edited mark renderBody adds: it alone does not make a body shown. */
 const EDITED_MARK = /<em class="chat-msg__edited">[^<]*<\/em>/g;
+
+/** One query as a string: its delimiter, its place and its term. */
+function queryKey(q: MentionQuery): string {
+    return q.kind + q.start + ":" + q.term;
+}
 
 /** Rows the composer shows for a text, from 1 up to MAX_INPUT_ROWS. */
 function rowsOf(text: string): number {
@@ -381,6 +386,7 @@ export class ChatThreadComponent extends EnhancedComponent {
           <ChatComposerAttachComponent attach="attach"/>
         </div>
         <ChatSuggestionsComponent t-if="state.suggestions.length" items="state.suggestions" onPick.bind="onSuggestion"/>
+        <p class="sr-only" aria-live="polite" aria-atomic="true" t-esc="suggestionsLive()"/>
         <ChatEmojiPickerComponent t-if="state.emoji" countUse="!state.reactTo" onPick.bind="onEmoji" onClose.bind="toggleEmoji"/>
         <div class="chat-thread__composer">
           <button class="chat-thread__attach" t-att-aria-label="t('chat.attach')" t-att-aria-expanded="attachState.sheet ? 'true' : 'false'"
@@ -389,7 +395,8 @@ export class ChatThreadComponent extends EnhancedComponent {
           <button class="chat-thread__emoji" t-att-aria-label="t('chat.emoji')" t-att-aria-expanded="state.emoji ? 'true' : 'false'"
                   t-att-disabled="state.sending" t-on-mousedown.prevent="" t-on-click="() => this.toggleEmoji()">😊</button>
           <textarea class="chat-thread__input" t-ref="input" t-att-rows="state.inputRows" t-att-placeholder="t('chat.compose_placeholder')"
-                    t-att-value="state.text" t-on-beforeinput="onBeforeInput" t-on-input="onInput"/>
+                    t-att-value="state.text" t-on-beforeinput="onBeforeInput" t-on-input="onInput"
+                    t-on-click="onCaret" t-on-keyup="onCaret"/>
           <button t-if="!attach.hasVoiceChip()" class="chat-thread__mic"
                   t-att-class="{'chat-thread__mic--on': attachState.voice === 'recording'}"
                   t-att-aria-label="attachState.voice === 'recording' ? t('chat.voice_stop_send') : t('chat.voice_record')"
@@ -431,6 +438,13 @@ export class ChatThreadComponent extends EnhancedComponent {
     /** Counts the suggestion queries, so an answer to an older one is never shown. */
     private _suggestSeq = 0;
     private _suggestTimer: ReturnType<typeof setTimeout> | null = null;
+    /** The query the list was last asked for (kind, place, term); null when none. */
+    private _queryKey: string | null = null;
+    /** A caret moved in the focused field (a drag of its handle included) follows the query (onCaret). */
+    private _onSelection = () => {
+        const el = this.input.el;
+        if (el && el === document.activeElement) this.onCaret();
+    };
     /** The appStateChange listener that stores the draft text when the app leaves the front. */
     private _appState: Promise<{ remove: () => Promise<void> }> | undefined;
     /** The files of the shown messages: their views, previews, opening and polling. */
@@ -516,6 +530,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.configId = params.get("source") ?? "";
         this.channelId = Number(params.get("channelId"));
         this.attachState = useState(newComposerAttachState());
+        document.addEventListener("selectionchange", this._onSelection);
         // Draft calls name the screen's id at call time; the service maps a settled temporary id itself
         this.attach = new ComposerAttach(this.attachState, deviceComposerDeps({
             fileDir: () => this.chatService.fileDirOf(this.configId),
@@ -571,6 +586,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         if (this._debounce !== null) clearTimeout(this._debounce);
         if (this._typingTimer !== null) clearTimeout(this._typingTimer);
         if (this._suggestTimer !== null) clearTimeout(this._suggestTimer);
+        document.removeEventListener("selectionchange", this._onSelection);
         if (this._flashTimer !== null) clearTimeout(this._flashTimer);
         if (this._highlightTimer !== null) clearTimeout(this._highlightTimer);
         this.press.cancel();
@@ -1900,6 +1916,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         }
         const seq = ++this._suggestSeq;
         if (this._suggestTimer !== null) clearTimeout(this._suggestTimer);
+        this._queryKey = queryKey(q);
         const mentions = this.chatService.mentions;
         let merged = false;
         const show = (list: Suggestion[]) => {
@@ -1924,9 +1941,36 @@ export class ChatThreadComponent extends EnhancedComponent {
     /** Hides the suggestions, and voids the answers still to come and the server request still waiting. */
     private closeSuggestions(): void {
         this._suggestSeq++;
+        this._queryKey = null;
         if (this._suggestTimer !== null) clearTimeout(this._suggestTimer);
         this._suggestTimer = null;
         if (this.state.suggestions.length) this.state.suggestions = [];
+    }
+
+    /**
+     * The caret moved without an input (a tap in the field, an arrow key, a
+     * drag of its handle): a selection or a caret that ends no query closes
+     * the list, a caret that ends another query asks for its suggestions,
+     * and the query already asked for is left as it is.
+     */
+    onCaret(): void {
+        if (this.state.sending || this.destroyed) return;
+        const field = this.input.el as HTMLTextAreaElement | null;
+        if (!field) return;
+        const start = field.selectionStart ?? this.state.text.length;
+        if (start !== (field.selectionEnd ?? start)) {
+            this.closeSuggestions();
+            return;
+        }
+        const q = mentionQuery(this.state.text, start);
+        if (q && queryKey(q) === this._queryKey) return;
+        this.suggest(start);
+    }
+
+    /** What the live region says: how many suggestions the list shows; "" while it is closed. */
+    suggestionsLive(): string {
+        const count = this.state.suggestions.length;
+        return count ? t("chat.suggestions_shown", { count }) : "";
     }
 
     /**
