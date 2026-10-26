@@ -1826,3 +1826,173 @@ describe("ChatRepository conversations on top", () => {
     expect(await db.rawQuery("SELECT config_id FROM chat_on_top")).toEqual([{ config_id: B }]);
   });
 });
+
+describe("ChatRepository search", () => {
+  let db: DatabaseService;
+  let repo: ChatRepository;
+  const msg = (messageId: number, body: string, date: string) => ({ messageId, channelId: 7, body, date, messageType: "comment", status: "sent" as const });
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await addChatTables(db);
+    repo = new ChatRepository(db);
+  });
+
+  it("searchMessages is a LIKE over search_text of the account, newest first, at most limit", async () => {
+    await repo.applyDelta(A, delta({ messages: [
+      msg(60, "<p>Café</p>", "2026-10-26 08:00:00"), msg(61, "<p>un cafe</p>", "2026-10-26 10:00:00"),
+      msg(62, "<p>caf</p>", "2026-10-26 11:00:00"), msg(63, "<p>CAFÉ!</p>", "2026-10-26 09:00:00"),
+    ] }));
+    await repo.applyDelta(B, delta({ messages: [msg(64, "<p>café</p>", "2026-10-26 12:00:00")] }));
+    expect((await repo.searchMessages(A, "cafe")).map((m) => m.messageId)).toEqual([61, 63, 60]);
+    expect((await repo.searchMessages(A, "Café", 2)).map((m) => m.messageId)).toEqual([61, 63]);
+    expect(await repo.searchMessages(A, "   ")).toEqual([]);
+  });
+
+  it("with the FTS5 index, the words of three characters or more narrow the rows, each its own quoted phrase", async () => {
+    vi.spyOn(db, "chatSearchEngine").mockResolvedValue("fts5");
+    const raw = vi.spyOn(db, "rawQuery").mockResolvedValue([
+      { config_id: A, channel_id: 7, message_id: 60, body: "x", date: "d", message_type: "comment", status: "sent", search_text: 'cafe au cre"me' },
+      { config_id: A, channel_id: 7, message_id: 61, body: "y", date: "d", message_type: "comment", status: "sent", search_text: "cafe seul" },
+    ]);
+    expect((await repo.searchMessages(A, 'Café cre"me', 9)).map((m) => m.messageId)).toEqual([60]);
+    const [sql, params] = raw.mock.calls[0];
+    expect(sql).toBe("SELECT * FROM chat_messages WHERE rowid IN (SELECT rowid FROM chat_search_fts WHERE chat_search_fts MATCH ?) AND config_id = ? AND search_text LIKE ? ESCAPE '\\' ORDER BY date DESC LIMIT ?");
+    expect(params).toEqual(['"cafe" "cre""me"', A, '%cafe%cre"me%', 9]);
+    raw.mockClear();
+    await repo.searchMessages(A, "ab cd");
+    expect(raw.mock.calls[0][0]).not.toContain("MATCH");
+  });
+
+  it("an FTS5 query that fails falls back to the LIKE", async () => {
+    vi.spyOn(db, "chatSearchEngine").mockResolvedValue("fts5");
+    await repo.applyDelta(A, delta({ messages: [msg(60, "<p>café</p>", "2026-10-26 08:00:00")] }));
+    const real = db.rawQuery.bind(db);
+    vi.spyOn(db, "rawQuery").mockImplementation(async (sql: string, values?: any[]) => {
+      if (sql.includes("MATCH")) throw new Error("fts5: malformed");
+      return real(sql, values);
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect((await repo.searchMessages(A, "cafe")).map((m) => m.messageId)).toEqual([60]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("searchMailbox finds inbox, history and starred rows alike, newest first", async () => {
+    await repo.applyDelta(A, delta({ mailbox: [
+      { messageId: 90, threadModel: "project.task", threadId: 5, recordName: "Tâche démo", body: "<p>a</p>", needaction: true },
+      { messageId: 92, threadModel: "project.task", threadId: 5, recordName: "Tâche démo", body: "<p>b</p>", history: true },
+      { messageId: 91, threadModel: "res.partner", threadId: 6, recordName: "Fiche", body: "<p>une démo</p>", starred: true },
+      { messageId: 93, threadModel: "res.partner", threadId: 6, recordName: "Fiche", body: "<p>rien</p>", starred: true },
+    ] }));
+    await repo.applyDelta(B, delta({ mailbox: [
+      { messageId: 94, threadModel: "project.task", threadId: 5, recordName: "Tâche démo", body: "", needaction: true },
+    ] }));
+    expect((await repo.searchMailbox(A, "demo")).map((i) => i.messageId)).toEqual([92, 91, 90]);
+    expect((await repo.searchMailbox(A, "demo", 1)).map((i) => i.messageId)).toEqual([92]);
+  });
+});
+
+describe("SQLite mock LIKE … ESCAPE", () => {
+  let db: DatabaseService;
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    const raw = (db as any).db;
+    await raw.execute("CREATE TABLE IF NOT EXISTS t (id TEXT PRIMARY KEY NOT NULL, k TEXT, v TEXT, n INTEGER)");
+    for (const [id, k, v, n] of [
+      ["1", "a", "100% sûr", 3], ["2", "a", "1000 fois", 1], ["3", "a", "A_B", 2], ["4", "a", "axb", 5],
+      ["5", "b", "100% aussi", 4], ["6", "a", "back\\slash", 6], ["7", "a", null, 7], ["8", "a", "ÉTÉ", 8],
+    ]) await db.rawRun("INSERT INTO t (id, k, v, n) VALUES (?, ?, ?, ?)", [id, k, v, n]);
+  });
+
+  const ids = async (pattern: string, k = "a") =>
+    (await db.rawQuery("SELECT * FROM t WHERE k = ? AND v LIKE ? ESCAPE '\\' ORDER BY n DESC LIMIT ?", [k, pattern, 10])).map((r) => r.id);
+
+  it("% and _ are wildcards, escaped they match only themselves", async () => {
+    expect(await ids("%100%")).toEqual(["1", "2"]);
+    expect(await ids("%100\\%%")).toEqual(["1"]);
+    expect(await ids("a_b")).toEqual(["4", "3"]);
+    expect(await ids("a\\_b")).toEqual(["3"]);
+    expect(await ids("%\\\\%")).toEqual(["6"]);
+    expect(await ids("%100\\%%", "b")).toEqual(["5"]);
+  });
+
+  it("folds ASCII case only, never matches NULL, and keeps ORDER BY and LIMIT ?", async () => {
+    expect(await ids("a_B")).toEqual(["4", "3"]);
+    expect(await ids("%été%")).toEqual([]);
+    expect(await ids("%")).toEqual(["8", "6", "4", "1", "3", "2"]);
+    expect((await db.rawQuery("SELECT * FROM t WHERE k = ? AND v LIKE ? ESCAPE '\\' ORDER BY n ASC LIMIT ?", ["a", "%", 2])).map((r) => r.id))
+      .toEqual(["2", "3"]);
+  });
+});
+
+describe("DatabaseService.createChatSearchIndex", () => {
+  const PARTS = ["chat_search_fts", "chat_search_fts_bi", "chat_search_fts_ai", "chat_search_fts_ad", "chat_search_fts_au"];
+  const REBUILD = "INSERT INTO chat_search_fts(chat_search_fts) VALUES ('rebuild')";
+
+  /**
+   * A connection that keeps the schema names and whether a rebuild has
+   * indexed the table; `hangAt` makes that statement never return, as an
+   * app killed while it runs.
+   */
+  function fakeConn(names: string[], indexed: boolean, hangAt = -1) {
+    const state = { have: new Set(names), indexed, log: [] as string[] };
+    const conn = {
+      query: async (sql: string) =>
+        sql.startsWith("PRAGMA") ? { values: [{ name: "search_text" }] }
+          : sql.includes("sqlite_master") ? { values: [...state.have].map((name) => ({ name })) } : { values: [] },
+      execute: async (sql: string) => {
+        if (state.log.length === hangAt) return new Promise(() => {});
+        state.log.push(sql);
+        const made = sql.match(/CREATE (?:VIRTUAL TABLE|TRIGGER) IF NOT EXISTS (\w+)/);
+        if (made) state.have.add(made[1]);
+        if (sql === REBUILD) state.indexed = true;
+        return { changes: { changes: 0 } };
+      },
+    };
+    return { state, conn };
+  }
+
+  async function run(names: string[], indexed: boolean, hangAt = -1) {
+    const db = new DatabaseService();
+    const fake = fakeConn(names, indexed, hangAt);
+    (db as any).db = fake.conn;
+    const done = db.createChatSearchIndex();
+    if (hangAt < 0) await done;
+    else for (let i = 0; i < 50; i++) await Promise.resolve();
+    return fake.state;
+  }
+
+  it("a new index is rebuilt before any trigger exists", async () => {
+    const { log } = await run([], false);
+    expect(log[0]).toMatch(/^CREATE VIRTUAL TABLE IF NOT EXISTS chat_search_fts /);
+    expect(log[1]).toBe(REBUILD);
+    expect(log.slice(2).every((s) => s.startsWith("CREATE TRIGGER IF NOT EXISTS"))).toBe(true);
+    expect(log).toHaveLength(6);
+  });
+
+  it("an index missing a trigger is rebuilt before the triggers are made again", async () => {
+    const { log, have } = await run(PARTS.slice(0, 3), true);
+    expect(log.indexOf(REBUILD)).toBeLessThan(log.findIndex((s) => s.startsWith("CREATE TRIGGER")));
+    expect([...have].sort()).toEqual([...PARTS].sort());
+  });
+
+  it("a complete index is left as it is", async () => {
+    expect((await run(PARTS, true)).log).toEqual([]);
+  });
+
+  it("a start killed at any statement is completed and rebuilt by the next one", async () => {
+    for (let k = 0; k < 6; k++) {
+      const killed = await run([], false, k);
+      const next = await run([...killed.have], killed.indexed);
+      expect([k, [...next.have].sort(), next.indexed]).toEqual([k, [...PARTS].sort(), true]);
+    }
+  });
+});

@@ -22,7 +22,6 @@ export const SUGGESTION_LIMIT = 8;
 const SPECIAL_MIN_CHARS = 4;
 const EVERYONE = "everyone";
 
-
 /** The @ or # word the caret ends: its delimiter, the text typed after it, and where the delimiter is. */
 export interface MentionQuery {
   kind: "@" | "#";
@@ -161,7 +160,6 @@ export function picksOf(text: string, m: Mentions): MentionPick[] {
  * "public" in a channel open to everyone, members, then anyone.
  */
 type Scope = "members" | "group" | "public";
-
 
 /**
  * The @ and # suggestions of a conversation's composer. local() reads the

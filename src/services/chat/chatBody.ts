@@ -150,13 +150,21 @@ export function foldText(text: string): string {
   return text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 }
 
+/** The client marker as text (`erplibre-mobile:<uuid>`, outboxMarker.ts), which a record's chatter post shows in a `<small>`. */
+const MARKER_TEXT = /erplibre-mobile:[0-9A-Za-z-]*/g;
+
 /**
- * The searchable text of a body (chat_messages.search_text): bodyText
- * folded by foldText, so the marker comment and the edited span read as
- * nothing and a mention as its `@Name`.
+ * The text of a body that search reads and quotes: bodyText without the
+ * client markers, so the marker comment, the marker text of a chatter post
+ * and the edited span read as nothing and a mention as its `@Name`.
  */
+export function searchableText(body: string): string {
+  return bodyText(body).replace(MARKER_TEXT, "");
+}
+
+/** The searchable text of a body (chat_messages.search_text): searchableText folded by foldText. */
 export function searchTextOf(body: string): string {
-  return foldText(bodyText(body));
+  return foldText(searchableText(body));
 }
 
 /** True when the body carries Odoo's edited span. */

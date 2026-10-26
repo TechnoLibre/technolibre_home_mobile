@@ -105,6 +105,10 @@ async function startApp() {
 
 	setBootStep(t("boot.checking_migrations"));
 	await runMigrations(db, APP_MIGRATIONS, setBootNote);
+	// A migration is recorded before it runs: a search index a stopped start left incomplete is completed here, before any chat write
+	await db.createChatSearchIndex().catch((e) =>
+		console.warn("[boot] createChatSearchIndex failed:", e)
+	);
 
 	setBootStep(t("boot.loading_graphic_prefs"));
 	{

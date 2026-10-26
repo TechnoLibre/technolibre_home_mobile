@@ -24,6 +24,7 @@ import { CHAT_EDIT, ChatOutbox, sameTarget, targetOf, type CreateMode } from "./
 import { ChatMentions } from "./chatMentions";
 import { ChatPeople } from "./chatPeople";
 import { ChatRepository, type ChatDraft } from "./chatRepository";
+import { ChatSearch } from "./chatSearch";
 import { chatSettings } from "./chatSettings";
 import { CHAT_MAJOR, parseOdooMajor, sourceLabels, type ChatSource } from "./chatSources";
 import { parseStore, type StoreDelta } from "./chatStore";
@@ -162,6 +163,9 @@ export class ChatService {
   /** The composer's @ and # suggestions, from the cache and the server. */
   readonly mentions: ChatMentions;
 
+  /** Search of messages, conversations, people, files and the mailbox, over the conversations of the list. */
+  readonly search: ChatSearch;
+
   /** The attachments' files on the phone: previews, downloads, space, purge (made by useFileIO). */
   attachments!: ChatAttachmentCache;
 
@@ -177,6 +181,8 @@ export class ChatService {
     this.repo = new ChatRepository(db, now);
     this.people = new ChatPeople(rpc, this.repo, () => this.isOnline());
     this.mentions = new ChatMentions(this.repo, rpc, this.people, () => this.isOnline());
+    this.search = new ChatSearch(this.repo, this.people, rpc, (configId) => this.features(configId), () => this.isOnline());
+    this.search.conversations = (configIds) => this.conversations(configIds);
     this.queue = new ChatOutbox(db, rpc, outbox, this.repo, now);
     this.queue.isOnline = () => this.isOnline();
     this.queue.serial = (configId, task) => this.serial(configId, task);

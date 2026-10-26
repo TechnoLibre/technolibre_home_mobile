@@ -3,10 +3,32 @@
  *
  * Simulates a SQLite database in memory using Maps.
  * Handles basic CREATE TABLE, INSERT, SELECT, UPDATE, DELETE. A SELECT
- * takes `col = ?`, `col != ?`, `col > ?`, `col < ?` conditions joined by
- * AND, then an optional `ORDER BY col` and `LIMIT n`. Anything else (a
+ * takes `col = ?`, `col != ?`, `col > ?`, `col < ?` and
+ * `col LIKE ? ESCAPE '\'` conditions joined by AND, then an optional
+ * `ORDER BY col [ASC|DESC]` and `LIMIT n` or `LIMIT ?`. Anything else (a
  * virtual table, a trigger, sqlite_master) is accepted and does nothing.
  */
+
+/**
+ * SQLite's LIKE with an escape character: `%` any run of characters, `_`
+ * one character, the escape makes the next character literal; case is
+ * folded for ASCII letters only, as SQLite does without ICU. NULL never
+ * matches.
+ */
+function sqliteLike(value: any, pattern: string, escape: string): boolean {
+  if (value === null || value === undefined) return false;
+  const lower = (s: string) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  let re = "";
+  const chars = Array.from(lower(String(pattern)));
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i];
+    if (c === escape && i + 1 < chars.length) re += chars[++i].replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+    else if (c === "%") re += "[\\s\\S]*";
+    else if (c === "_") re += "[\\s\\S]";
+    else re += c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  }
+  return new RegExp("^" + re + "$", "u").test(lower(String(value)));
+}
 
 type Row = Record<string, any>;
 
@@ -197,24 +219,27 @@ class MockDBConnection {
       let rows = this.tables.get(table) ?? [];
 
       let where = selectMatch[3] ?? "";
-      const limitMatch = where.match(/\s*\bLIMIT\s+(\d+)\s*$/i);
+      const limitMatch = where.match(/\s*\bLIMIT\s+(\d+|\?)\s*$/i);
       if (limitMatch) where = where.slice(0, limitMatch.index);
-      const orderMatch = where.match(/\s*\bORDER BY\s+(\w+)\s*$/i);
+      const orderMatch = where.match(/\s*\bORDER BY\s+(\w+)(?:\s+(ASC|DESC))?\s*$/i);
       if (orderMatch) where = where.slice(0, orderMatch.index);
-      if (where.trim() && values) {
-        const conds = where
-          .split(/\s+AND\s+/i)
-          .map((c) => c.trim().match(/^(\w+)\s*(!=|>|<|=)\s*\?$/))
-          .map((m) => (m ? { col: m[1], op: m[2] } : { col: "", op: "=" }));
-        const test = (v: any, op: string, x: any): boolean =>
-          op === "=" ? v === x : op === "!=" ? v !== x : op === ">" ? v > x : v < x;
-        rows = rows.filter((row) => conds.every((c, i) => test(row[c.col], c.op, values[i])));
+      const conds = where.trim()
+        ? where
+            .split(/\s+AND\s+/i)
+            .map((c) => c.trim().match(/^(\w+)\s*(!=|>|<|=|LIKE)\s*\?(?:\s+ESCAPE\s+'(.)')?$/i))
+            .map((m) => (m ? { col: m[1], op: m[2].toUpperCase(), escape: m[3] ?? "" } : { col: "", op: "=", escape: "" }))
+        : [];
+      if (conds.length > 0 && values) {
+        const test = (v: any, c: { op: string; escape: string }, x: any): boolean =>
+          c.op === "=" ? v === x : c.op === "!=" ? v !== x : c.op === ">" ? v > x : c.op === "<" ? v < x : sqliteLike(v, x, c.escape);
+        rows = rows.filter((row) => conds.every((c, i) => test(row[c.col], c, values[i])));
       }
       if (orderMatch) {
         const col = orderMatch[1];
-        rows = [...rows].sort((a, b) => (a[col] < b[col] ? -1 : a[col] > b[col] ? 1 : 0));
+        const dir = orderMatch[2]?.toUpperCase() === "DESC" ? -1 : 1;
+        rows = [...rows].sort((a, b) => (a[col] < b[col] ? -dir : a[col] > b[col] ? dir : 0));
       }
-      if (limitMatch) rows = rows.slice(0, Number(limitMatch[1]));
+      if (limitMatch) rows = rows.slice(0, Number(limitMatch[1] === "?" ? values?.[conds.length] : limitMatch[1]));
 
       if (colList === "*") {
         return { values: rows };

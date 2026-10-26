@@ -5053,6 +5053,37 @@ export const FEATURE_TREE: FeatureNode[] = [
                 tests: ["src/__tests__/chatListComponent.test.ts"],
             },
             {
+                id: "chat.search",
+                label: { en: "Chat search", fr: "Recherche du clavardage" },
+                description: {
+                    en: "Search from the list's field: conversations, people, messages, files and the inbox and favourite items cached on the phone.",
+                    fr: "Recherche depuis le champ de la liste : conversations, personnes, messages, fichiers et éléments de la boîte de réception et des favoris gardés sur le téléphone.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.list", "chat.people"],
+                howItWorks: {
+                    en: "From two characters typed (accents and case ignored), the phone searches 200 ms after the "
+                        + "last key and the results replace the rows. Messages and mailbox items are a LIKE over "
+                        + "their folded text, the words of the term in order, % and _ literal; the FTS5 trigram "
+                        + "index narrows the messages first where SQLite has it. Files match by name, "
+                        + "conversations by their display name, people from the cache. A hit opens its "
+                        + "conversation at the message.",
+                    fr: "Dès deux caractères tapés (sans accents ni casse), le téléphone cherche 200 ms après la "
+                        + "dernière touche et les résultats remplacent les lignes. Messages et éléments de la "
+                        + "boîte sont un LIKE sur leur texte replié, les mots du terme dans l'ordre, % et _ "
+                        + "littéraux ; l'index FTS5 trigramme restreint d'abord les messages là où SQLite l'a. "
+                        + "Les fichiers se trouvent par leur nom, les conversations par leur nom affiché, les "
+                        + "personnes depuis le cache. Un résultat ouvre sa conversation au message.",
+                },
+                demo: { kind: "route", url: "/chat" },
+                files: [
+                    "src/services/chat/chatSearch.ts",
+                    "src/components/chat/chat_search_results_component.ts",
+                    "src/components/chat/chat_search_results_component.scss",
+                ],
+                tests: ["src/__tests__/chatSearch.test.ts", "src/__tests__/chatSearchResults.test.ts"],
+            },
+            {
                 id: "chat.thread",
                 label: { en: "Conversation screen", fr: "Écran de conversation" },
                 description: {

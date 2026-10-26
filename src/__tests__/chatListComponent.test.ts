@@ -512,3 +512,85 @@ describe("ChatListComponent cache warning", () => {
         expect(c.state.cacheWarn).toBe(false);
     });
 });
+
+describe("ChatListComponent search", () => {
+    const hit = (p: any = {}) => ({
+        configId: "a", channelId: 5, messageId: 60, clientUuid: null, authorPartnerId: 7, date: "2026-10-26 10:00:00",
+        snippet: "un café", fileName: null, origin: "phone", ...p,
+    });
+    const empty = () => ({ conversations: [], people: [], joinable: [], messages: [], files: [], mailbox: [] });
+    const typed = (c: any, value: string) => c.onQueryInput({ target: { value } } as any);
+
+    function searching(answer: (ids: string[], term: string) => Promise<any> = async () => ({ ...empty(), messages: [hit()] })) {
+        const chat: any = fakeChat(["a"], [chan("a", 5, { name: "Team" }), chan("a", 6, { name: "Café" })]);
+        chat.search = { local: vi.fn(answer) };
+        return chat;
+    }
+
+    afterEach(() => vi.useRealTimers());
+
+    it("the list shows the results under two characters typed and the rows again when cleared", async () => {
+        vi.useFakeTimers();
+        const chat = searching();
+        const c = make(chat);
+        await c.loadCache();
+        typed(c, "c");
+        await vi.advanceTimersByTimeAsync(300);
+        expect(chat.search.local).not.toHaveBeenCalled();
+        expect(c.state.results).toBeNull();
+        expect(c.visibleRows().map((r: any) => r.channelId)).toEqual([6]);
+        typed(c, "ca");
+        await vi.advanceTimersByTimeAsync(199);
+        expect(chat.search.local).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(chat.search.local).toHaveBeenCalledWith(["a"], "ca");
+        expect(c.state.results.messages).toHaveLength(1);
+        expect(c.searchLabels().get("a:5")).toBe("Team");
+        expect(c.searchLabels().get("a#p7")).toBe("Alice Roy");
+        typed(c, "");
+        expect(c.state.results).toBeNull();
+        expect(c.visibleRows().map((r: any) => r.channelId)).toEqual([5, 6]);
+    });
+
+    it("a burst of keys searches once, and an older answer never replaces a newer one", async () => {
+        vi.useFakeTimers();
+        let release!: (v: any) => void;
+        const chat = searching((_ids, term) => term === "caf"
+            ? new Promise((r) => { release = r; })
+            : Promise.resolve({ ...empty(), messages: [hit({ messageId: 61 })] }));
+        const c = make(chat);
+        await c.loadCache();
+        typed(c, "ca");
+        typed(c, "caf");
+        await vi.advanceTimersByTimeAsync(200);
+        expect(chat.search.local.mock.calls.map((x: any[]) => x[1])).toEqual(["caf"]);
+        typed(c, "cafe");
+        await vi.advanceTimersByTimeAsync(200);
+        release({ ...empty(), messages: [hit({ messageId: 60 })] });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(c.state.results.messages.map((h: any) => h.messageId)).toEqual([61]);
+    });
+
+    it("a hit navigates with ?m=, a pending one with ?u=", () => {
+        const c = make(searching());
+        c.navigate = vi.fn();
+        c.onHit(hit());
+        c.onHit(hit({ messageId: null, clientUuid: "u-1" }));
+        expect(c.navigate.mock.calls).toEqual([["/chat/a/5?m=60"], ["/chat/a/5?u=u-1"]]);
+    });
+
+    it("a person opens the direct conversation, a conversation its thread, a channel mention its message", async () => {
+        const chat = searching();
+        chat.startDirect = vi.fn().mockResolvedValue({ configId: "a", channelId: 12 });
+        const c = make(chat);
+        await c.loadCache();
+        c.navigate = vi.fn();
+        await c.onSearchPerson("a", 7);
+        expect(chat.startDirect).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 7, { background: true });
+        c.onSearchConversation("a", 5);
+        const item = { configId: "a", messageId: 90, threadModel: "discuss.channel", threadId: 5 };
+        c.onSearchMailbox(item);
+        c.onSearchMailbox({ ...item, threadModel: "project.task" });
+        expect(c.navigate.mock.calls).toEqual([["/chat/a/12"], ["/chat/a/5"], ["/chat/a/5?m=90"]]);
+    });
+});

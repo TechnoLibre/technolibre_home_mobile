@@ -1190,6 +1190,13 @@ describe("ChatService", () => {
     expect((await chat.conversations()).map((c) => c.channelId)).toEqual([GENERAL, CHAT, GROUP, MUTED, QUIET]);
   });
 
+  it("search finds the conversations the list shows, by display name", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    expect((await chat.search.local([config], "bob")).conversations).toEqual([{ configId: config, channelId: CHAT }]);
+    expect((await chat.search.local([config], "team")).conversations).toEqual([{ configId: config, channelId: GROUP }]);
+  });
+
   it("bus leave, delete, fetched, presence and joined", async () => {
     const odoo = fakeOdoo();
     await chat.load(await source());

@@ -5,10 +5,12 @@ import { HeadingComponent } from "../heading/heading_component";
 import { Events } from "../../constants/events";
 import { getCurrentLocale, t } from "../../i18n";
 import { attachmentPreview, bodyPreview, draftPreview, isEmptyBody } from "../../services/chat/chatBody";
-import { serverChoiceMode, type ChoiceMode } from "../../services/chat/chatSources";
+import { serverChoiceMode, type ChatSource, type ChoiceMode } from "../../services/chat/chatSources";
 import { displayNameOf } from "../../services/chat/chatNames";
 import { isBold, unreadOf } from "../../services/chat/chatUnread";
-import type { ChatChannel, ChatMessage, ChatNotice } from "../../models/chat";
+import type { ChatChannel, ChatMailboxItem, ChatMessage, ChatNotice } from "../../models/chat";
+import { isSearchTerm, type SearchHit, type SearchResults } from "../../services/chat/chatSearch";
+import { ChatSearchResultsComponent, conversationLabelKey, partnerLabelKey } from "./chat_search_results_component";
 import { CHAT_DELETE, sameTarget, targetOf } from "../../services/chat/chatOutbox";
 import { formatBytes } from "../../utils/formatBytes";
 
@@ -16,6 +18,10 @@ const FILTER_KEY = "chat.filter";
 const PREVIEW_MAX = 80;
 /** Quiet period that folds a burst of CHAT_CHANGED into one rebuild. */
 const CHANGE_DEBOUNCE_MS = 150;
+/** Quiet period after the last key before the phone's search runs. */
+const SEARCH_DEBOUNCE_MS = 200;
+/** A conversation started from the search opens at once, as from the new conversation screen. */
+const AT_ONCE = { background: true };
 
 interface ListSource {
     configId: string;
@@ -60,6 +66,8 @@ interface ChatListState {
     rows: ChatRow[];
     notices: NoticeRow[];
     query: string;
+    /** The search's answer while the query is a search term (isSearchTerm), shown in place of the rows; null otherwise. */
+    results: SearchResults | null;
     refreshing: boolean;
     /** At least one server lets the user start a conversation (an internal user, or not read yet). */
     canCreate: boolean;
@@ -123,7 +131,7 @@ function fileNoticeText(file: NonNullable<ChatNotice["file"]>): string {
 export class ChatListComponent extends EnhancedComponent {
     state!: ChatListState;
 
-    static components = { HeadingComponent };
+    static components = { HeadingComponent, ChatSearchResultsComponent };
 
     static template = xml`
     <div id="chat-list">
@@ -172,6 +180,11 @@ export class ChatListComponent extends EnhancedComponent {
             <button class="chat-list__dismiss" t-on-click="() => this.onDismissNotice(n)" t-esc="t('chat.dismiss')"/>
           </li>
         </ul>
+        <ChatSearchResultsComponent t-if="state.results" results="state.results" term="searchTerm()" server="'idle'" count="null"
+                                    more="false" labels="searchLabels()" onConversation.bind="onSearchConversation"
+                                    onHit.bind="onHit" onMailbox.bind="onSearchMailbox" onPerson.bind="onSearchPerson"
+                                    onJoin.bind="onSearchJoin" onMore.bind="onSearchMore"/>
+        <t t-else="">
         <ul class="chat-list__rows">
           <li t-foreach="visibleRows()" t-as="row" t-key="row.configId + ':' + row.channelId"
               class="chat-list__row" t-att-class="{'chat-list__row--bold': row.bold}"
@@ -199,6 +212,7 @@ export class ChatListComponent extends EnhancedComponent {
         </ul>
         <p t-if="!state.refreshing and visibleRows().length === 0" class="chat-list__empty"
            t-esc="t('chat.empty')"/>
+        </t>
       </t>
     </div>`;
 
@@ -207,6 +221,12 @@ export class ChatListComponent extends EnhancedComponent {
     /** Bumped by every filter change; a build started under an older value is dropped. */
     private _gen = 0;
     private _debounce: ReturnType<typeof setTimeout> | null = null;
+    /** Bumped by every query change; a search answer started under an older value is dropped. */
+    private _searchGen = 0;
+    private _searchTimer: ReturnType<typeof setTimeout> | null = null;
+    /** The names the results show (ChatSearchResultsComponent `labels`) and the term they answer, set with each answer. */
+    private _labels = new Map<string, string>();
+    private _term = "";
     private _onChanged = () => {
         if (this._debounce !== null) clearTimeout(this._debounce);
         this._debounce = setTimeout(() => {
@@ -223,6 +243,7 @@ export class ChatListComponent extends EnhancedComponent {
             rows: [],
             notices: [],
             query: "",
+            results: null,
             refreshing: false,
             canCreate: true,
             error: "",
@@ -236,6 +257,8 @@ export class ChatListComponent extends EnhancedComponent {
         onWillUnmount(() => {
             this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
             if (this._debounce !== null) clearTimeout(this._debounce);
+            if (this._searchTimer !== null) clearTimeout(this._searchTimer);
+            this._searchGen++;
         });
     }
 
@@ -483,14 +506,130 @@ export class ChatListComponent extends EnhancedComponent {
         this.state.filter = configId;
         this.writeFilter(configId);
         await this.loadCache();
+        if (this.state.results) this.scheduleSearch();
     }
 
     onSelectChange(ev: Event): void {
         this.onFilter((ev.target as HTMLSelectElement).value || null);
     }
 
+    /**
+     * A query of SEARCH_MIN characters or more searches the phone
+     * SEARCH_DEBOUNCE_MS after the last key, and its answer replaces the
+     * rows; a shorter one filters the rows at once.
+     */
     onQueryInput(ev: Event): void {
         this.state.query = (ev.target as HTMLInputElement).value;
+        this.scheduleSearch();
+    }
+
+    /**
+     * Restarts the search wait for the current query. Every call moves the
+     * generation, so an answer of an older query or filter is dropped; a
+     * query that is not a search term clears the results at once.
+     */
+    private scheduleSearch(): void {
+        if (this._searchTimer !== null) clearTimeout(this._searchTimer);
+        this._searchTimer = null;
+        const gen = ++this._searchGen;
+        if (!isSearchTerm(this.state.query)) {
+            this.state.results = null;
+            return;
+        }
+        this._searchTimer = setTimeout(() => {
+            this._searchTimer = null;
+            void this.runSearch(gen);
+        }, SEARCH_DEBOUNCE_MS);
+    }
+
+    /**
+     * Searches the accounts the filter keeps, then the names the results
+     * show: the server of each account when the list shows servers, the
+     * title of each listed conversation, the cached people. A failure
+     * shows no result.
+     */
+    private async runSearch(gen: number): Promise<void> {
+        const term = this.state.query;
+        const ids = this.state.filter === null ? this.state.sources.map((s) => s.configId) : [this.state.filter];
+        let results: SearchResults;
+        const labels = new Map<string, string>();
+        try {
+            results = await this.chatService.search.local(ids, term);
+            if (gen !== this._searchGen) return;
+            if (this.state.mode !== "none") for (const s of this.state.sources) labels.set(s.configId, s.label);
+            for (const r of this.state.rows) labels.set(conversationLabelKey(r.configId, r.channelId), r.title);
+            for (const id of ids) {
+                for (const p of await this.chatService.repo.partners(id)) labels.set(partnerLabelKey(id, p.partnerId), p.name);
+            }
+        } catch (e) {
+            console.warn("chat list: search failed", e);
+            results = { conversations: [], people: [], joinable: [], messages: [], files: [], mailbox: [] };
+        }
+        if (gen !== this._searchGen) return;
+        this._labels = labels;
+        this._term = term;
+        this.state.results = results;
+    }
+
+    searchLabels(): Map<string, string> {
+        return this._labels;
+    }
+
+    searchTerm(): string {
+        return this._term;
+    }
+
+    private openThread(configId: string, channelId: number, at = ""): void {
+        this.navigate("/chat/" + encodeURIComponent(configId) + "/" + channelId + at);
+    }
+
+    /** A message found opens its conversation at it: `?m=<id>`, or `?u=<client uuid>` for one still queued. */
+    onHit(hit: SearchHit): void {
+        const at = hit.messageId !== null ? "?m=" + hit.messageId : hit.clientUuid ? "?u=" + encodeURIComponent(hit.clientUuid) : "";
+        this.openThread(hit.configId, hit.channelId, at);
+    }
+
+    onSearchConversation(configId: string, channelId: number): void {
+        this.openThread(configId, channelId);
+    }
+
+    /** A channel's item opens its conversation at the message; a record's goes to onMailbox. */
+    onSearchMailbox(item: ChatMailboxItem): void {
+        if (item.threadModel === "discuss.channel") this.openThread(item.configId, item.threadId, "?m=" + item.messageId);
+        else this.onMailbox(item);
+    }
+
+    /** Opens a record's mailbox item; nothing opens one yet. */
+    onMailbox(_item: ChatMailboxItem): void {}
+
+    /** The person's direct conversation (startDirect), then its thread; a failure to queue shows a notice. */
+    async onSearchPerson(configId: string, partnerId: number): Promise<void> {
+        await this.fromSearch(configId, (src) => this.chatService.startDirect(src, partnerId, AT_ONCE));
+    }
+
+    /** Joins a channel found, then opens its thread. */
+    async onSearchJoin(configId: string, channelId: number): Promise<void> {
+        const name = this.state.results?.joinable.find((j) => j.configId === configId && j.channel.channelId === channelId)?.channel.name ?? "";
+        await this.fromSearch(configId, (src) => this.chatService.join(src, channelId, name, AT_ONCE));
+    }
+
+    /** The server's next page; the phone's search has none. */
+    onSearchMore(): void {}
+
+    private async fromSearch(
+        configId: string,
+        action: (src: ChatSource) => Promise<{ configId: string; channelId: number }>,
+    ): Promise<void> {
+        this.state.error = "";
+        try {
+            const src = (await this.chatService.sources({ online: false })).find((s) => s.configId === configId);
+            if (!src) return;
+            const r = await action(src);
+            this.openThread(r.configId, r.channelId);
+        } catch (e) {
+            console.warn("chat list:", e);
+            this.state.error = t("chat.action_error");
+        }
     }
 
     onRowClick(row: ChatRow): void {

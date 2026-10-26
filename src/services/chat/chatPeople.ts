@@ -22,7 +22,6 @@ export interface AccessGroup {
   fullName: string;
 }
 
-
 /** A delta carrying only partner records. */
 const partnersDelta = (partners: StoreDelta["partners"], selfPartnerId: number | null): StoreDelta => ({
   channels: [],

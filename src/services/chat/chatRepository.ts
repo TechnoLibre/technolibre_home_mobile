@@ -15,7 +15,8 @@ import type {
 import { messageKeyOf, sameTarget } from "../../models/chat";
 import { EMPTY_MENTIONS, type Mentions } from "./chatCompose";
 import type { StoreDelta } from "./chatStore";
-import { bodyText, foldText, isEmptyBody, isEmptyMessage, searchTextOf } from "./chatBody";
+import { foldText, isEmptyBody, isEmptyMessage, searchTextOf } from "./chatBody";
+import { likePattern, matchesTerm, termWords } from "./chatSearch";
 
 type Row = Record<string, any>;
 
@@ -322,6 +323,9 @@ function mailboxFromRow(r: Row): ChatMailboxItem {
   };
 }
 
+/** The shortest word the trigram index of chat_search_fts can look up. */
+const TRIGRAM = 3;
+
 /** A message with a server id sorts by it; a pending one (no id) sorts last, by date. */
 function byThread(a: ChatMessage, b: ChatMessage): number {
   if (a.messageId !== null && b.messageId !== null) return a.messageId - b.messageId;
@@ -334,8 +338,9 @@ function byThread(a: ChatMessage, b: ChatMessage): number {
  * SQLite cache of the chat: channels, messages, members, partners and the
  * per-source sync state. A store delta carries partial records, so every
  * upsert reads the stored row, overlays the keys the partial carries and
- * writes the whole row back. Queries are equality-only; ordering and paging
- * happen here.
+ * writes the whole row back. Most queries are equality lookups, ordered
+ * and paged here; the aggregates, adoptOutgoing and the searches
+ * (searchMessages, searchMailbox) run in SQLite.
  */
 export class ChatRepository {
   /**
@@ -467,7 +472,7 @@ export class ChatRepository {
       needaction: flag(i.needaction),
       starred: flag(i.starred),
       history: flag(i.history),
-      search_text: foldText(`${i.recordName} ${bodyText(i.body)}`),
+      search_text: `${foldText(i.recordName)} ${searchTextOf(i.body)}`,
     };
   }
 
@@ -886,6 +891,21 @@ export class ChatRepository {
     return rows.map(mailboxFromRow).sort((a, b) => b.messageId - a.messageId);
   }
 
+  /**
+   * The cached mailbox items of the account whose search_text (record
+   * name and text) holds the words of `term` in order (likePattern),
+   * whatever their boxes: inbox, history and starred alike. Newest message
+   * first, at most `limit`; a term without a word finds nothing.
+   */
+  async searchMailbox(configId: string, term: string, limit = 50): Promise<ChatMailboxItem[]> {
+    if (termWords(term).length === 0) return [];
+    const rows = await this.db.rawQuery(
+      "SELECT * FROM chat_mailbox WHERE config_id = ? AND search_text LIKE ? ESCAPE '\\' ORDER BY message_id DESC LIMIT ?",
+      [configId, likePattern(term), limit],
+    );
+    return rows.map(mailboxFromRow);
+  }
+
   /** One cached mailbox item; null when the message is not in the cache. */
   async mailboxItem(configId: string, messageId: number): Promise<ChatMailboxItem | null> {
     const row = await this.row("chat_mailbox", key(configId, `m${messageId}`));
@@ -1167,6 +1187,42 @@ export class ChatRepository {
     const queued = await this.row("chat_messages", key(configId, `u${clientUuid}`));
     if (!queued) return;
     await this.put("chat_messages", this.messageRow({ ...messageFromRow(queued), status: "failed" }));
+  }
+
+  /**
+   * The cached messages of the account whose search_text holds the words
+   * of `term` in order (likePattern), newest first, at most `limit`; a
+   * term without a word finds nothing. With the FTS5 index
+   * (chatSearchEngine "fts5"), each word of TRIGRAM characters or more is
+   * a quoted phrase of the MATCH (inner quotes doubled), all of them
+   * required, which narrows the rows to a superset of the LIKE's; the LIKE
+   * in the same query and matchesTerm keep exactly the LIKE's rows, so
+   * the limit counts the same rows either way. Shorter words alone take
+   * the LIKE, and so does a MATCH that fails. The term reaches SQL only
+   * as bound parameters.
+   */
+  async searchMessages(configId: string, term: string, limit = 50): Promise<ChatMessage[]> {
+    const words = termWords(term);
+    if (words.length === 0) return [];
+    const pattern = likePattern(term);
+    const indexed = words.filter((w) => Array.from(w).length >= TRIGRAM);
+    if (indexed.length > 0 && (await this.db.chatSearchEngine()) === "fts5") {
+      const match = indexed.map((w) => '"' + w.replace(/"/g, '""') + '"').join(" ");
+      try {
+        const rows = await this.db.rawQuery(
+          "SELECT * FROM chat_messages WHERE rowid IN (SELECT rowid FROM chat_search_fts WHERE chat_search_fts MATCH ?) AND config_id = ? AND search_text LIKE ? ESCAPE '\\' ORDER BY date DESC LIMIT ?",
+          [match, configId, pattern, limit],
+        );
+        return rows.filter((r) => matchesTerm(r.search_text ?? "", term)).map(messageFromRow);
+      } catch (e) {
+        console.warn(`[chat] search index query failed, LIKE used: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+    const rows = await this.db.rawQuery(
+      "SELECT * FROM chat_messages WHERE config_id = ? AND search_text LIKE ? ESCAPE '\\' ORDER BY date DESC LIMIT ?",
+      [configId, pattern, limit],
+    );
+    return rows.map(messageFromRow);
   }
 
   /** Sets the starred flag of a cached message; a message not cached is left alone. */
@@ -1509,6 +1565,11 @@ export class ChatRepository {
     return out;
   }
 
+  /** Every attachment row of the account, whatever its state, in pick order. */
+  async sourceAttachments(configId: string): Promise<ChatAttachment[]> {
+    return (await this.rows("chat_attachments", { config_id: configId })).map(attachmentFromRow).sort(bySeq);
+  }
+
   /** The row of a server attachment (`a<id>`), or null when it is not cached. */
   async attachment(configId: string, attachmentId: number): Promise<ChatAttachment | null> {
     return this.attachmentByKey(configId, `a${attachmentId}`);
@@ -1535,7 +1596,7 @@ export class ChatRepository {
     const params: unknown[] = [];
     if (configId !== undefined) { conds.push("config_id = ?"); params.push(configId); }
     if (channelId !== undefined) { conds.push("channel_id = ?"); params.push(channelId); }
-    // One aggregate in SQLite, not the rows summed here. With adoptOutgoing, the only statements of this class that are not plain equality lookups.
+    // One aggregate in SQLite, not the rows summed here
     const rows = await this.db.rawQuery(
       "SELECT COALESCE(SUM(COALESCE(thumb_bytes, 0) + COALESCE(original_bytes, 0)), 0) AS bytes FROM chat_attachments"
         + (conds.length > 0 ? " WHERE " + conds.join(" AND ") : ""),

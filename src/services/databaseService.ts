@@ -1611,23 +1611,32 @@ export class DatabaseService {
    * with the trigram tokenizer (any substring of three characters or
    * more), when the SQLite build has FTS5 and that tokenizer (SQLite 3.34
    * and later): the virtual table reads its text from chat_messages by
-   * rowid, the triggers of SEARCH_INDEX_TRIGGERS keep it in step, and a
-   * rebuild fills it when it is created. The plugin splits statements on a
-   * semicolon followed by a line end, so each statement goes alone, on one
-   * line. Any failure leaves no part of the index behind, and search keeps
-   * the LIKE over search_text. A database without search_text gets nothing.
+   * rowid, the triggers of SEARCH_INDEX_TRIGGERS keep it in step.
+   *
+   * A complete index (all of SEARCH_INDEX_PARTS) is left as it is. Any
+   * other state is made again in this order: the table, a rebuild that
+   * indexes every row, then the triggers. The last trigger is what marks
+   * the index complete, so an app stopped at any step leaves a part
+   * missing and the next call rebuilds; each start makes that call after
+   * the migrations, before any chat write. A row is therefore indexed
+   * before a trigger can delete its entry: deleting an entry the index
+   * never held corrupts an external-content FTS5 index. The plugin splits
+   * statements on a semicolon followed by a line end, so each statement
+   * goes alone, on one line. Any failure leaves no part of the index behind, and
+   * search keeps the LIKE over search_text. A database without
+   * search_text gets nothing.
    */
   async createChatSearchIndex(): Promise<void> {
     this.searchEngine = null;
     const cols = ((await this.db.query("PRAGMA table_info(chat_messages)")).values ?? []).map((r: any) => r.name);
     if (!cols.includes("search_text")) return;
-    const existed = (await this.searchIndexParts()) === SEARCH_INDEX_PARTS.length;
+    if ((await this.searchIndexParts()) === SEARCH_INDEX_PARTS.length) return;
     try {
       await this.db.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS chat_search_fts USING fts5(search_text, content='chat_messages', content_rowid='rowid', tokenize='trigram')",
       );
+      await this.db.execute("INSERT INTO chat_search_fts(chat_search_fts) VALUES ('rebuild')");
       for (const sql of Object.values(SEARCH_INDEX_TRIGGERS)) await this.db.execute(sql);
-      if (!existed) await this.db.execute("INSERT INTO chat_search_fts(chat_search_fts) VALUES ('rebuild')");
     } catch (e) {
       console.warn(`[chat] search index not created, search uses LIKE: ${e instanceof Error ? e.message : e}`);
       for (const name of Object.keys(SEARCH_INDEX_TRIGGERS)) {
