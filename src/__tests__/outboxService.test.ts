@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
-import { OutboxBlockedError, OutboxRetryLaterError, OutboxService, RETRY_MAX_MS, dependencyOrder, retryDelayMs } from "../services/outboxService";
+import { OutboxBlockedError, OutboxHeldError, OutboxRetryLaterError, OutboxService, RETRY_MAX_MS, dependencyOrder, retryDelayMs } from "../services/outboxService";
 import type { SyncCredentials } from "../services/odoo/odooRpcClient";
 import { addSyncOutboxTable } from "../services/migrations/addSyncOutboxTable";
 
@@ -215,6 +215,65 @@ describe("OutboxService", () => {
       const result = await outbox.drain(CREDS, CONFIG);
       expect(result).toMatchObject({ done: 0, failed: 0, blocked: 1 });
       expect(result.errors[0]).toContain("b n1");
+    });
+
+    it("a held op keeps its attempts and gets no retry delay", async () => {
+      let retries = 0;
+      outbox.onRetryScheduled = () => { retries++; };
+      outbox.registerHandler("h", (_c, op) => outbox.attempt(op.id, async () => { throw new OutboxHeldError("wait", "upload"); }));
+      const op = await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "h" });
+      const result = await outbox.drain(CREDS, CONFIG);
+      expect(result).toMatchObject({ done: 0, failed: 0, blocked: 0, held: 1 });
+      const stored = (await db.getOutboxOp(op.id))!;
+      expect(stored).toMatchObject({ status: "queued", attempts: 0, nextAttemptAt: null, params: { heldFor: "upload" } });
+      expect(retries).toBe(0);
+      expect(outbox.isDue(stored)).toBe(true);
+    });
+
+    it("a held op thrown before any attempt is recorded as held too", async () => {
+      outbox.registerHandler("h", async () => { throw new OutboxHeldError("wait", "upload"); });
+      const op = await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "h" });
+      expect(await outbox.drain(CREDS, CONFIG)).toMatchObject({ failed: 0, held: 1 });
+      expect(await db.getOutboxOp(op.id)).toMatchObject({ status: "queued", attempts: 0, params: { heldFor: "upload" } });
+    });
+
+    it("a held op is run again by the next drain", async () => {
+      let hold = true;
+      const ran: string[] = [];
+      outbox.registerHandler("h", (_c, op) => outbox.attempt(op.id, async () => {
+        if (hold) throw new OutboxHeldError("wait", "upload");
+        ran.push("h");
+      }));
+      await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "h" });
+      await outbox.drain(CREDS, CONFIG);
+      hold = false;
+      const result = await outbox.drain(CREDS, CONFIG);
+      expect(ran).toEqual(["h"]);
+      expect(result).toMatchObject({ done: 1, held: 0 });
+    });
+
+    it("a held op holds its dependent", async () => {
+      const ran: string[] = [];
+      outbox.registerHandler("h", (_c, op) => outbox.attempt(op.id, async () => { throw new OutboxHeldError("wait", "upload"); }));
+      outbox.registerHandler("k", record(ran));
+      const first = await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "h" });
+      await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "k", params: { tag: "dep" }, dependsOn: first.id });
+      const result = await outbox.drain(CREDS, CONFIG);
+      expect(ran).toEqual([]);
+      expect(result).toMatchObject({ done: 0, held: 1 });
+    });
+
+    it("skipped kinds are not run and hold their dependents", async () => {
+      const ran: string[] = [];
+      outbox.registerHandler("s", record(ran));
+      outbox.registerHandler("k", record(ran));
+      const first = await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "s", params: { tag: "skipped" } });
+      await outbox.enqueue({ noteId: "n1", configId: CONFIG, kind: "k", params: { tag: "dep" }, dependsOn: first.id });
+      await outbox.enqueue({ noteId: "n2", configId: CONFIG, kind: "k", params: { tag: "free" } });
+      const result = await outbox.drain(CREDS, CONFIG, { skipKinds: new Set(["s"]) });
+      expect(ran).toEqual(["free"]);
+      expect(result).toMatchObject({ done: 1, held: 0 });
+      expect((await db.getOutboxOp(first.id))).toMatchObject({ status: "queued", attempts: 0 });
     });
   });
 

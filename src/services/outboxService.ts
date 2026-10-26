@@ -42,6 +42,19 @@ export class OutboxRetryLaterError extends Error {
 }
 
 /**
+ * Raised by a handler that must wait for a condition of its own (heldFor
+ * names it) before it contacts the server. Not an attempt and not a
+ * failure: the row stays queued with its attempts, gets no retry delay and
+ * schedules no retry; the next drain runs the handler again, forced or
+ * not, and the handler decides again whether to hold.
+ */
+export class OutboxHeldError extends Error {
+  constructor(message: string, readonly heldFor: string) {
+    super(message);
+  }
+}
+
+/**
  * Runs one operation against its server. A handler wraps its work in
  * OutboxService.attempt(), which counts the attempt and settles the row;
  * it may instead delegate to a service that does so itself.
@@ -52,6 +65,8 @@ export interface DrainResult {
   done: number;
   failed: number;
   blocked: number;
+  /** Operations whose handler held them (OutboxHeldError). */
+  held: number;
   errors: string[];
 }
 
@@ -270,6 +285,16 @@ export class OutboxService {
       });
       return;
     }
+    if (e instanceof OutboxHeldError) {
+      // Written as queued, not left running: a kill after this point must not make the row look interrupted
+      await this.db.updateOutboxOp(op.id, {
+        status: "queued",
+        attempts: stored.attempts,
+        params: { ...params, heldFor: e.heldFor },
+        updatedAt: at.toISOString(),
+      });
+      return;
+    }
     let nextAttemptAt: string;
     if (e instanceof OutboxRetryLaterError) {
       // Not an attempt: the server was not contacted
@@ -316,15 +341,19 @@ export class OutboxService {
    * force ignores the retry delay) whose dependency is done and whose
    * kind has a handler. An operation of a note in skipNoteIds is left for
    * later: the caller already ran that note in this pass. With
-   * onlyNoteIds, only the operations of those notes run. A failure is
-   * counted and the next operation still runs.
+   * onlyNoteIds, only the operations of those notes run. An operation
+   * of a kind in skipKinds is not run (its caller runs it elsewhere) and,
+   * like a held one, keeps its dependents waiting. A failure is counted
+   * and the next operation still runs.
    */
   async drain(
     creds: SyncCredentials,
     configId: string,
-    options: { force?: boolean; skipNoteIds?: Set<string>; onlyNoteIds?: Set<string> } = {}
+    options: {
+      force?: boolean; skipNoteIds?: Set<string>; onlyNoteIds?: Set<string>; skipKinds?: Set<string>;
+    } = {}
   ): Promise<DrainResult> {
-    const result: DrainResult = { done: 0, failed: 0, blocked: 0, errors: [] };
+    const result: DrainResult = { done: 0, failed: 0, blocked: 0, held: 0, errors: [] };
     const ops = dependencyOrder(await this.db.getOutboxOpsForConfig(configId));
     const pendingIds = new Set(ops.map((op) => op.id));
     for (const op of ops) {
@@ -334,11 +363,19 @@ export class OutboxService {
       if (op.dependsOn && pendingIds.has(op.dependsOn)) continue;
       const handler = this.handlers.get(op.kind);
       if (!handler) continue;
+      if (options.skipKinds?.has(op.kind)) continue;
       try {
         await handler(creds, op);
         pendingIds.delete(op.id);
         result.done++;
       } catch (e: unknown) {
+        if (e instanceof OutboxHeldError) {
+          result.held++;
+          // A handler that held before attempt() has not recorded it
+          const row = await this.db.getOutboxOp(op.id);
+          if (row && row.params.heldFor !== e.heldFor) await this.setParams(op.id, { heldFor: e.heldFor });
+          continue;
+        }
         if (e instanceof OutboxBlockedError) result.blocked++;
         else result.failed++;
         result.errors.push(`${op.kind} ${op.noteId}: ${e instanceof Error ? e.message : String(e)}`);

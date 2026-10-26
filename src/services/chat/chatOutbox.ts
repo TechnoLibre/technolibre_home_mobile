@@ -761,7 +761,7 @@ export class ChatOutbox {
   async flush(creds: SyncCredentials, opts: { force?: boolean } = {}): Promise<DrainResult> {
     const configId = syncConfigIdFor(creds.odooUrl, creds.username, creds.database);
     if (!(await this.db.getLiveSyncConfigIds()).has(configId)) {
-      return { done: 0, failed: 0, blocked: 0, errors: [] };
+      return { done: 0, failed: 0, blocked: 0, held: 0, errors: [] };
     }
     return this.outbox.drain(creds, configId, { force: opts.force, onlyNoteIds: new Set([CHAT_NOTE]) });
   }
