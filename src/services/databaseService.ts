@@ -1301,8 +1301,11 @@ export class DatabaseService {
   }
 
   /**
-   * Adds the lot 2 chat columns to tables created by lot 1. Each column is
-   * added only when PRAGMA table_info does not list it, so a fresh install
+   * Adds the conversation management columns (pin, edit right, naming,
+   * access group, membership, a create still running or refused, the
+   * session's group and global mute) to the chat tables of migration
+   * 2026102501, and the table of temporary ids. Each column is added only
+   * when PRAGMA table_info does not list it, so a fresh install
    * (createChatTables already has them) and a second run change nothing.
    */
   async addChatLot2Columns(): Promise<void> {

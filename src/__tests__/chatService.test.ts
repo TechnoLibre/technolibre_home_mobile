@@ -331,7 +331,7 @@ describe("ChatService", () => {
   });
 
   it("a load reads the global mute fresh and a newer bus change wins over a load that started earlier", async () => {
-    const odoo = fakeOdoo({ sessionMute: "9999-12-31 23:59:59" });
+    fakeOdoo({ sessionMute: "9999-12-31 23:59:59" });
     const src = await source();
     await chat.load(src);
     expect((await chat.repo.sourceState(src.configId)).globalMuteUntil).toBe("9999-12-31 23:59:59");
@@ -348,7 +348,6 @@ describe("ChatService", () => {
     await chat.repo.setSourceState({ configId: src.configId, globalMuteAt: new Date(clock.getTime() - 60000).toISOString() });
     await chat.load(src);
     expect((await chat.repo.sourceState(src.configId)).globalMuteUntil).toBe("9999-12-31 23:59:59");
-    void odoo;
   });
 
   it("loadOlder pages with around and never before", async () => {

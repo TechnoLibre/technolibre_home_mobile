@@ -167,7 +167,7 @@ export const APP_MIGRATIONS: Migration[] = [
 	},
 	{
 		version: 2026102601,
-		description: "Clavardage : colonnes du lot 2",
+		description: "Clavardage : colonnes de gestion des conversations",
 		run: addChatLot2Columns,
 	},
 	{
