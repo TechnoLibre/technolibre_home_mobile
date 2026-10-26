@@ -188,10 +188,11 @@ const attachmentRecord = (a: ServerFile) => ({
   thread: a.res_model === "discuss.channel" ? { id: a.res_id, model: "discuss.channel" } : false,
 });
 
-/** ir.attachment search_read over the fake's rows: "=", ">=" and "in" terms, order "id asc", limit. */
+/** ir.attachment search_read over the fake's rows: "=", ">=", "<=" and "in" terms, order "id asc", limit. */
 function searchFiles(rows: ServerFile[], kwargs: any): any[] {
   const hit = (a: any) => (kwargs.domain as any[][]).every(([field, op, value]) =>
-    op === "=" ? a[field] === value : op === ">=" ? a[field] >= value : op === "in" ? value.includes(a[field]) : false);
+    op === "=" ? a[field] === value : op === ">=" ? a[field] >= value : op === "<=" ? a[field] <= value
+      : op === "in" ? value.includes(a[field]) : false);
   const found = rows.filter(hit).sort((a, b) => a.id - b.id);
   return found.slice(0, kwargs.limit ?? found.length).map((a) => ({ ...attachmentRecord(a), file_size: a.file_size }));
 }
@@ -206,6 +207,8 @@ function searchFiles(rows: ServerFile[], kwargs: any): any[] {
  * ("before" or "after" its row is made) until `release()` or a cancel;
  * `notFound` answers 404 to the module route ("module", a module gone) or
  * to every upload ("all", a conversation the server no longer shows).
+ * `resize` stores the images Odoo's route resizes (png, jpeg, bmp, tiff)
+ * smaller than the bytes sent, as its post-processing does over 1920 px.
  */
 function fileServer(odoo: ReturnType<typeof fakeOdoo>, now: () => Date) {
   const files = memoryChatFiles();
@@ -213,6 +216,7 @@ function fileServer(odoo: ReturnType<typeof fakeOdoo>, now: () => Date) {
     nextId: 900, drop: 0, status: null as number | null,
     hold: null as null | { nth: number; when: "before" | "after" },
     notFound: null as null | "module" | "all",
+    resize: false,
   };
   let count = 0;
   const held = new Map<string, { resolve: () => void; reject: (e: unknown) => void }>();
@@ -234,8 +238,9 @@ function fileServer(odoo: ReturnType<typeof fakeOdoo>, now: () => Date) {
       let a = uuid ? odoo.state.attachments.find((x) => x.uuid === uuid) : undefined;
       if (!a) {
         const bytes = files.bytes(decodeURI(r.file.uri.replace("file:///memory/files/", "")))!;
+        const resized = state.resize && !onModule && /^image\/(png|jpeg|bmp|tiff)$/.test(r.file.mimetype);
         a = {
-          id: state.nextId++, name: r.file.name, file_size: bytes.length, mimetype: r.file.mimetype, checksum: `sha${state.nextId}`,
+          id: state.nextId++, name: r.file.name, file_size: resized ? Math.ceil(bytes.length / 2) : bytes.length, mimetype: r.file.mimetype, checksum: `sha${state.nextId}`,
           voice: r.fields.voice === "true", res_model: "mail.compose.message", res_id: 0, create_uid: 2,
           create_date: now().toISOString().slice(0, 19).replace("T", " "), uuid,
         };
@@ -2677,7 +2682,7 @@ describe("ChatService", () => {
     it("lost upload answer without the module reuses its pending upload", async () => {
       const sentAt = clock;
       server.state.drop = 1;
-      await chat.send(src, GROUP, "once", [stage("a.jpg")]);
+      await chat.send(src, GROUP, "once", [stage("a.pdf", 3, "application/pdf")]);
       await idle();
       const [up] = await ops("chat.upload");
       expect(up.params).toMatchObject({ uploadSentAt: sentAt.toISOString(), uploadEndedAt: sentAt.toISOString() });
@@ -2695,9 +2700,10 @@ describe("ChatService", () => {
           ["res_model", "=", "mail.compose.message"],
           ["res_id", "=", 0],
           ["create_uid", "=", 2],
-          ["name", "=", "a.jpg"],
+          ["name", "=", "a.pdf"],
           ["file_size", "=", 3],
           ["create_date", ">=", odooDate(new Date(sentAt.getTime() - CREATE_CLOCK_SKEW_MS))],
+          ["create_date", "<=", odooDate(new Date(sentAt.getTime() + CREATE_CLOCK_SKEW_MS))],
         ],
         order: "id asc",
         limit: 1,
@@ -2705,6 +2711,31 @@ describe("ChatService", () => {
       expect(server.uploads()).toHaveLength(1);
       expect(odoo.state.attachments).toHaveLength(1);
       expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900]]);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("lost upload answer without the module finds the photo Odoo's route resized", async () => {
+      const sentAt = clock;
+      server.state.resize = true;
+      server.state.drop = 1;
+      await chat.send(src, GROUP, "once", [stage("big.jpg", 8)]);
+      await idle();
+      advance(3 * 60_000 + 1);
+      await chat.flushAll({ force: true });
+      await idle();
+      const [search] = odoo.kw("search_read").filter((c) => c.params.model === "ir.attachment");
+      expect(search.params.kwargs.domain).toEqual([
+        ["res_model", "=", "mail.compose.message"],
+        ["res_id", "=", 0],
+        ["create_uid", "=", 2],
+        ["name", "=", "big.jpg"],
+        ["create_date", ">=", odooDate(new Date(sentAt.getTime() - CREATE_CLOCK_SKEW_MS))],
+        ["create_date", "<=", odooDate(new Date(sentAt.getTime() + CREATE_CLOCK_SKEW_MS))],
+      ]);
+      expect(server.uploads()).toHaveLength(1);
+      expect(odoo.state.attachments).toHaveLength(1);
+      expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900]]);
+      expect(await chat.repo.attachment(config, 900)).toMatchObject({ attachmentId: 900, size: 4 });
       expect(await ops()).toEqual([]);
     });
 

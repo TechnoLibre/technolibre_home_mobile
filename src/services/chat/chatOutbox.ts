@@ -112,6 +112,12 @@ export type FileRefusal = "too_big" | "missing" | "refused" | "not_found";
 
 /** The pending attachments of the upload routes: Odoo's placeholder record (mail/controllers/attachment.py). */
 const PENDING_MODEL = "mail.compose.message";
+/**
+ * The mimetypes Odoo's upload route resizes and re-encodes past 1920 px
+ * (ir.attachment._postprocess_contents, its default
+ * base.image_autoresize_extensions): their stored size is not the size sent.
+ */
+const RESIZABLE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/bmp", "image/tiff"]);
 
 /** The actions of the user a conversation taken away cancels, and counts in its CHAT_DROPPED notice. */
 const USER_ACTIONS = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE, CHAT_REMOVE]);
@@ -1737,10 +1743,13 @@ export class ChatOutbox {
   /**
    * The pending attachment a lost upload made, or null: the user's own
    * placeholder rows (res_model mail.compose.message, res_id 0, as Odoo's
-   * route stores them) of the same name and size created since
-   * uploadSentAt − CREATE_CLOCK_SKEW_MS, the oldest first. An attachment
-   * another file of this phone already holds (state "uploaded") is never
-   * taken again.
+   * route stores them) of the same name created between uploadSentAt −
+   * CREATE_CLOCK_SKEW_MS and (uploadEndedAt, or now) + CREATE_CLOCK_SKEW_MS,
+   * the oldest first. The size must match too, except for the image types
+   * Odoo's route may resize (RESIZABLE_IMAGE_TYPES): those are stored
+   * re-encoded at another size. An attachment another file of this phone
+   * already holds (state "uploaded") is never taken again; two uploads of
+   * one name are never in doubt at once (twins are ordered).
    */
   private async findUploaded(
     creds: SyncCredentials,
@@ -1749,6 +1758,8 @@ export class ChatOutbox {
     const { uid } = await this.rpc.sessionInfo(creds);
     const taken = await this.repo.uploadedIds(op.configId);
     const sentAt = new Date(op.params.uploadSentAt).getTime();
+    const endedAt = op.params.uploadEndedAt ? new Date(op.params.uploadEndedAt).getTime() : this.now().getTime();
+    const resizable = RESIZABLE_IMAGE_TYPES.has(String(op.params.mimetype ?? "").toLowerCase());
     const found = (await this.rpc.searchRead<any>(
       creds,
       "ir.attachment",
@@ -1757,8 +1768,9 @@ export class ChatOutbox {
         ["res_id", "=", 0],
         ["create_uid", "=", uid],
         ["name", "=", op.params.name],
-        ["file_size", "=", op.params.size],
+        ...(resizable ? [] : [["file_size", "=", op.params.size]]),
         ["create_date", ">=", odooDate(new Date(sentAt - CREATE_CLOCK_SKEW_MS))],
+        ["create_date", "<=", odooDate(new Date(endedAt + CREATE_CLOCK_SKEW_MS))],
       ],
       ["id", "name", "mimetype", "file_size", "checksum"],
       { order: "id asc", limit: 1 + taken.size },
