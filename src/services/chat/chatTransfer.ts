@@ -1,8 +1,5 @@
-import { CHAT_FILE_CANCELLED, CHAT_FILE_UNSENT } from "../../plugins/chatFilePlugin";
 import { assertUrlAllowed } from "../odoo/httpPolicy";
-import {
-    RequestNotSentError, SessionExpiredError, type OdooRpcClient, type SyncCredentials,
-} from "../odoo/odooRpcClient";
+import { SessionExpiredError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
 import type { ChatCsrf } from "./chatCsrf";
 import type { ChatFiles, ChatHttp, DownloadAnswer, HttpAnswer } from "./chatFiles";
 
@@ -32,28 +29,11 @@ export class ChatTransferRefusedError extends Error {
     }
 }
 
-/** The transfer was stopped by cancel(id). */
+/** The transfer was stopped by cancel(id) (ChatTransfer's, or the transport's CANCELLED). */
 export class ChatTransferCancelledError extends Error {}
 
 /** Werkzeug's BadRequest text for a missing or invalid token (odoo/http.py). */
 const INVALID_CSRF = /invalid CSRF token/i;
-
-/** A transport rejection carrying a plugin code, mapped to the typed errors. */
-function transportError(e: unknown): unknown {
-    const code = (e as { code?: unknown } | null)?.code;
-    const msg = e instanceof Error ? e.message : String(e);
-    if (code === CHAT_FILE_UNSENT) return new RequestNotSentError(msg);
-    if (code === CHAT_FILE_CANCELLED) return new ChatTransferCancelledError(msg);
-    return e;
-}
-
-async function send<T>(call: () => Promise<T>): Promise<T> {
-    try {
-        return await call();
-    } catch (e) {
-        throw transportError(e);
-    }
-}
 
 const preview = (data: string) => data.slice(0, 200).replace(/\s+/g, " ");
 
@@ -73,8 +53,17 @@ const preview = (data: string) => data.slice(0, 200).replace(/\s+/g, " ");
  * Errors: ChatFileTooBigError (413), ChatTransferRefusedError,
  * RequestNotSentError (nothing reached the server), ChatTransferCancelledError,
  * InsecureHttpError (http:// not allowed); anything else is a plain Error.
+ *
+ * cancel(id) of a running transfer holds between the requests too: the
+ * id is checked before each request (the CSRF fetch included), after the
+ * CSRF fetch and at the start of the attempt after a re-authentication.
+ * A cancel of an id with no transfer running is forgotten at once.
  */
 export class ChatTransfer {
+    /** Ids of the transfers running here, and those of them cancelled. */
+    private running = new Set<string>();
+    private cancelled = new Set<string>();
+
     constructor(
         private rpc: OdooRpcClient,
         private http: ChatHttp,
@@ -101,31 +90,33 @@ export class ChatTransfer {
             mimetype: string;
         }
     ): Promise<any> {
-        const url = `${this.rpc.normalizeUrl(creds.odooUrl)}${a.route}`;
-        assertUrlAllowed(url);
-        const uri = await this.files.uri(a.path);
-        let attempt = 0;
-        return this.rpc.callWithAuth(creds, async (sessionId) => {
-            attempt += 1;
-            const fields: Record<string, string> = {
-                thread_id: String(a.channelId),
-                thread_model: "discuss.channel",
-                is_pending: "true",
-                csrf_token: await this.csrf.token(creds, sessionId),
-            };
-            if (a.voice) fields.voice = "true";
-            if (a.clientUuid && a.route === MODULE_UPLOAD_ROUTE) fields.client_uuid = a.clientUuid;
-            const answer = await send(() =>
-                this.http.upload({
+        const url = this.serverUrl(creds, a.route);
+        return this.track(a.id, async () => {
+            const uri = await this.files.uri(a.path);
+            let attempt = 0;
+            return this.rpc.callWithAuth(creds, async (sessionId) => {
+                attempt += 1;
+                this.stopIfCancelled(a.id);
+                const csrfToken = await this.csrf.token(creds, sessionId);
+                this.stopIfCancelled(a.id);
+                const fields: Record<string, string> = {
+                    thread_id: String(a.channelId),
+                    thread_model: "discuss.channel",
+                    is_pending: "true",
+                    csrf_token: csrfToken,
+                };
+                if (a.voice) fields.voice = "true";
+                if (a.clientUuid && a.route === MODULE_UPLOAD_ROUTE) fields.client_uuid = a.clientUuid;
+                const answer = await this.http.upload({
                     id: a.id,
                     url,
                     headers: { Cookie: `session_id=${sessionId}` },
                     fields,
                     file: { uri, name: a.name, mimetype: a.mimetype },
-                })
-            );
-            this.checkStatus(answer.status, answer.data, url, sessionId, attempt);
-            return this.attachmentOf(answer, url);
+                });
+                this.checkStatus(answer.status, answer.data, url, sessionId, attempt);
+                return this.attachmentOf(answer, url);
+            });
         });
     }
 
@@ -138,23 +129,53 @@ export class ChatTransfer {
         creds: SyncCredentials,
         a: { id: string; urlPath: string; path: string }
     ): Promise<DownloadAnswer> {
-        const url = `${this.rpc.normalizeUrl(creds.odooUrl)}${a.urlPath}`;
-        assertUrlAllowed(url);
-        const uri = await this.files.uri(a.path);
-        let attempt = 0;
-        return this.rpc.callWithAuth(creds, async (sessionId) => {
-            attempt += 1;
-            const answer = await send(() =>
-                this.http.download({ id: a.id, url, headers: { Cookie: `session_id=${sessionId}` }, uri })
-            );
-            this.checkStatus(answer.status, "", url, sessionId, attempt);
-            return answer;
+        const url = this.serverUrl(creds, a.urlPath);
+        return this.track(a.id, async () => {
+            const uri = await this.files.uri(a.path);
+            let attempt = 0;
+            return this.rpc.callWithAuth(creds, async (sessionId) => {
+                attempt += 1;
+                this.stopIfCancelled(a.id);
+                const answer = await this.http.download({
+                    id: a.id, url, headers: { Cookie: `session_id=${sessionId}` }, uri,
+                });
+                this.checkStatus(answer.status, "", url, sessionId, attempt);
+                return answer;
+            });
         });
     }
 
-    /** Stops the transfer a.id in flight; it then rejects with ChatTransferCancelledError. */
+    /** Stops the transfer id, at its next step or in flight; it then rejects with ChatTransferCancelledError. */
     cancel(id: string): Promise<void> {
+        if (this.running.has(id)) this.cancelled.add(id);
         return this.http.cancel(id);
+    }
+
+    /**
+     * The server's url for path, which must start with "/": appended to a
+     * base without one, it could name another host (base + "@host/…")
+     * that would receive the session cookie. http:// is refused unless allowed.
+     */
+    private serverUrl(creds: SyncCredentials, path: string): string {
+        if (!path.startsWith("/")) throw new Error(`server path must start with "/": ${path}`);
+        const url = `${this.rpc.normalizeUrl(creds.odooUrl)}${path}`;
+        assertUrlAllowed(url);
+        return url;
+    }
+
+    /** Runs a transfer under id, its cancel mark cleared when it ends. */
+    private async track<T>(id: string, run: () => Promise<T>): Promise<T> {
+        this.running.add(id);
+        try {
+            return await run();
+        } finally {
+            this.running.delete(id);
+            this.cancelled.delete(id);
+        }
+    }
+
+    private stopIfCancelled(id: string): void {
+        if (this.cancelled.has(id)) throw new ChatTransferCancelledError(`transfer ${id} cancelled`);
     }
 
     /** Throws for any status but 2xx, as the class comment maps them. */

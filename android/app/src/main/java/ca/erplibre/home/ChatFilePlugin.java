@@ -18,7 +18,9 @@ import java.util.concurrent.Executors;
 /**
  * Chat file transfer over ChatFileTransfer (OkHttp): GET as text, a
  * multipart upload streamed from a file, a download streamed to a file.
- * Every transfer runs on a worker thread, never the bridge thread.
+ * Every transfer runs on a worker thread, never the bridge thread; its id
+ * is reserved on the bridge thread first, so a cancel() that comes before
+ * the worker starts it still stops it.
  *
  * Files are named by uri (file: URI or absolute path) and must lie inside
  * filesDir/chat; any other path is rejected. A request that never reached
@@ -72,6 +74,7 @@ public class ChatFilePlugin extends Plugin {
         String uri = file.getString("uri");
         String name = file.getString("name", "file");
         String mimetype = file.getString("mimetype", "application/octet-stream");
+        Object slot = transfer.reserve(id);
         worker.execute(() -> {
             try {
                 File source = ChatFileTransfer.resolveInside(chatRoot(), uri);
@@ -79,6 +82,8 @@ public class ChatFilePlugin extends Plugin {
                     name, mimetype, throttled(id))));
             } catch (Exception e) {
                 reject(call, e);
+            } finally {
+                transfer.release(id, slot);
             }
         });
     }
@@ -93,6 +98,7 @@ public class ChatFilePlugin extends Plugin {
             return;
         }
         Map<String, String> headers = strings(call.getObject("headers", new JSObject()));
+        Object slot = transfer.reserve(id);
         worker.execute(() -> {
             try {
                 File target = ChatFileTransfer.resolveInside(chatRoot(), uri);
@@ -105,6 +111,8 @@ public class ChatFilePlugin extends Plugin {
                 call.resolve(result);
             } catch (Exception e) {
                 reject(call, e);
+            } finally {
+                transfer.release(id, slot);
             }
         });
     }

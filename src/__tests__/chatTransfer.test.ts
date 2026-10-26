@@ -13,14 +13,15 @@ import { fakeChatHttp, memoryChatFiles } from "../testing/chatFakes";
 const CREDS: SyncCredentials = { odooUrl: "https://odoo.example.com", username: "u", password: "p", database: "db" };
 const BASE = "https://odoo.example.com";
 
-/** A stored session sid1; each authenticate answers the next sid (sid2, sid3…). */
-function odooAuth() {
+/** A stored session sid1; each authenticate answers the next sid (sid2, sid3…), after onLogin. */
+function odooAuth(onLogin: () => void = () => {}) {
     let next = 2;
     const logins: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
         const headers = new Headers();
         let result: object = { uid: 2 };
         if (url.endsWith("/web/session/authenticate")) {
+            onLogin();
             const sid = `sid${next++}`;
             logins.push(sid);
             headers.append("set-cookie", `session_id=${sid}; Path=/; HttpOnly`);
@@ -166,6 +167,63 @@ describe("ChatTransfer", () => {
         const transfer = new ChatTransfer(rpc, http, memoryChatFiles(), new ChatCsrf(rpc, http));
         await expect(transfer.download(CREDS, { id: "dl", urlPath: "/web/image/9/512x512", path: "chat/d/thumbs/9" }))
             .rejects.toMatchObject({ reason: "not_found" });
+    });
+
+    it("a redirect of the login page re-authenticates once, then uploads", async () => {
+        let n = 0;
+        const http = fakeChatHttp({
+            getText: (_url, headers) => (++n === 1 ? { status: 303, headers: { location: "/web/database/selector" }, data: "" } : login(sidOf(headers)!)),
+            upload: () => ok(),
+        });
+        const rpc = new OdooRpcClient();
+        const files = memoryChatFiles();
+        const transfer = new ChatTransfer(rpc, http, files, new ChatCsrf(rpc, http));
+        expect((await transfer.upload(CREDS, UPLOAD)).id).toBe(51);
+        expect(logins).toEqual(["sid2"]);
+        expect(http.calls.find((c) => c.kind === "upload")!.fields!.csrf_token).toBe("tok-sid2");
+    });
+
+    it("a cancel during the CSRF fetch stops the upload before it is sent", async () => {
+        let release!: () => void;
+        const gate = new Promise<void>((r) => (release = r));
+        const http = fakeChatHttp({
+            getText: async (_url, headers) => { await gate; return login(sidOf(headers)!); },
+            upload: () => ok(),
+        });
+        const rpc = new OdooRpcClient();
+        const transfer = new ChatTransfer(rpc, http, memoryChatFiles(), new ChatCsrf(rpc, http));
+        const running = transfer.upload(CREDS, UPLOAD);
+        await vi.waitFor(() => expect(http.calls.some((c) => c.kind === "getText")).toBe(true));
+        await transfer.cancel(UPLOAD.id);
+        release();
+        await expect(running).rejects.toBeInstanceOf(ChatTransferCancelledError);
+        expect(http.calls.filter((c) => c.kind === "upload")).toHaveLength(0);
+    });
+
+    it("a cancel during the re-authentication stops the second attempt", async () => {
+        let transfer!: ChatTransfer;
+        vi.unstubAllGlobals();
+        logins = odooAuth(() => void transfer.cancel(UPLOAD.id));
+        const built = build(() => ({ status: 404, headers: {}, data: "" }));
+        transfer = built.transfer;
+        await expect(transfer.upload(CREDS, UPLOAD)).rejects.toBeInstanceOf(ChatTransferCancelledError);
+        expect(built.http.calls.filter((c) => c.kind === "upload")).toHaveLength(1);
+        expect(logins).toEqual(["sid2"]);
+    });
+
+    it("a cancel after the transfer ended does not stop the next one with the same id", async () => {
+        const { transfer } = build(() => ok());
+        await transfer.upload(CREDS, UPLOAD);
+        await transfer.cancel(UPLOAD.id);
+        expect((await transfer.upload(CREDS, UPLOAD)).id).toBe(51);
+    });
+
+    it("refuses a route or url path that does not start with a slash", async () => {
+        const { http, transfer } = build(() => ok());
+        await expect(transfer.upload(CREDS, { ...UPLOAD, route: "@elsewhere.example/upload" })).rejects.toThrow(/path/);
+        await expect(transfer.download(CREDS, { id: "d", urlPath: ".elsewhere.example/web/content/1", path: "chat/d/x" }))
+            .rejects.toThrow(/path/);
+        expect(http.calls).toHaveLength(0);
     });
 
     it("cancel reaches the transport", async () => {

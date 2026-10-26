@@ -16,6 +16,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import okhttp3.MediaType;
 import okhttp3.MultipartReader;
@@ -215,6 +218,79 @@ public class ChatFileTransferTest {
         } catch (ChatFileTransfer.UnsentException expected) {
             // nothing reached the server
         }
+    }
+
+    @Test
+    public void anUploadCutAfterTheServerReadItIsNotSentAgain() throws Exception {
+        File file = writeFile("d1/out/u3/a.bin", sample(50_000));
+        // A first answer leaves a pooled connection: a failure on a reused
+        // connection is the case a retrying client sends again on a new one
+        server.enqueue(new MockResponse().setBody("<html></html>"));
+        assertEquals(200, transfer.getText(server.url("/web/login").toString(), headers()).status);
+        server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST));
+        server.enqueue(new MockResponse().setBody("{\"data\":{}}"));
+        try {
+            transfer.upload("u3", server.url("/mail/attachment/upload").toString(), headers(),
+                headers("thread_id", "1"), file, "a.bin", "application/octet-stream", (d, t) -> {});
+            fail("a connection cut after the request must fail");
+        } catch (IOException expected) {
+            assertFalse(expected instanceof ChatFileTransfer.UnsentException);
+        }
+        assertEquals(2, server.getRequestCount());
+    }
+
+    @Test
+    public void cancelStopsADownloadAndLeavesNoPartFile() throws Exception {
+        server.enqueue(new MockResponse().setBody(new Buffer().write(sample(2_000_000)))
+            .throttleBody(64 * 1024, 50, TimeUnit.MILLISECONDS));
+        File target = new File(chatRoot, "d1/files/9/c.bin");
+        CountDownLatch started = new CountDownLatch(1);
+        AtomicReference<Throwable> outcome = new AtomicReference<>();
+        Thread t = new Thread(() -> {
+            try {
+                transfer.download("c1", server.url("/web/content/9").toString(), headers(), target,
+                    (done, total) -> started.countDown());
+            } catch (Throwable e) {
+                outcome.set(e);
+            }
+        });
+        t.start();
+        assertTrue(started.await(10, TimeUnit.SECONDS));
+        transfer.cancel("c1");
+        t.join(10_000);
+        assertTrue(outcome.get() instanceof ChatFileTransfer.CancelledException);
+        assertFalse(target.exists());
+        assertFalse(new File(target.getPath() + ".part").exists());
+    }
+
+    @Test
+    public void aCancelBeforeTheCallIsRegisteredStillCancelsIt() throws Exception {
+        File file = writeFile("d1/out/u4/a.txt", sample(10));
+        Object slot = transfer.reserve("u4");
+        transfer.cancel("u4");
+        try {
+            transfer.upload("u4", server.url("/mail/attachment/upload").toString(), headers(),
+                headers("thread_id", "1"), file, "a.txt", "text/plain", (d, t) -> {});
+            fail("a reserved transfer cancelled before it starts must not run");
+        } catch (ChatFileTransfer.CancelledException expected) {
+            // never sent
+        } finally {
+            transfer.release("u4", slot);
+        }
+        assertEquals(0, server.getRequestCount());
+        // The tombstone ends with its transfer: the same id runs again
+        server.enqueue(new MockResponse().setBody("ok"));
+        assertEquals(200, transfer.upload("u4", server.url("/mail/attachment/upload").toString(),
+            headers(), headers("thread_id", "1"), file, "a.txt", "text/plain", (d, t) -> {}).status);
+    }
+
+    @Test
+    public void aCancelOfNoTransferLeavesNoTombstone() throws Exception {
+        transfer.cancel("u5");
+        server.enqueue(new MockResponse().setBody("ok"));
+        File file = writeFile("d1/out/u5/a.txt", sample(10));
+        assertEquals(200, transfer.upload("u5", server.url("/mail/attachment/upload").toString(),
+            headers(), headers("thread_id", "1"), file, "a.txt", "text/plain", (d, t) -> {}).status);
     }
 
     @Test

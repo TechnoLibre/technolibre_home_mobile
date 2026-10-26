@@ -21,7 +21,8 @@ vi.mock("@capacitor/core", () => ({
     registerPlugin: () => mockApi,
 }));
 
-import { CHAT_FILE_UNSENT, nativeChatHttp } from "../plugins/chatFilePlugin";
+import { CHAT_FILE_CANCELLED, CHAT_FILE_UNSENT, nativeChatHttp } from "../plugins/chatFilePlugin";
+import { ChatTransferCancelledError } from "../services/chat/chatTransfer";
 import { RequestNotSentError } from "../services/odoo/odooRpcClient";
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -62,11 +63,13 @@ describe("nativeChatHttp", () => {
         expect(mockApi.cancel).toHaveBeenCalledWith({ id: "d1" });
     });
 
-    it("maps an UNSENT rejection to RequestNotSentError, and leaves others as they are", async () => {
+    it("maps UNSENT to RequestNotSentError and CANCELLED to ChatTransferCancelledError, others as they are", async () => {
         mockApi.upload.mockRejectedValue(Object.assign(new Error("ChatFile error: refused"), { code: CHAT_FILE_UNSENT }));
         const http = nativeChatHttp();
         const req = { id: "u", url: "u", headers: {}, fields: {}, file: { uri: "f", name: "n", mimetype: "m" } };
         await expect(http.upload(req)).rejects.toBeInstanceOf(RequestNotSentError);
+        mockApi.download.mockRejectedValue(Object.assign(new Error("ChatFile error: cancelled"), { code: CHAT_FILE_CANCELLED }));
+        await expect(http.download({ id: "d", url: "u", headers: {}, uri: "f" })).rejects.toBeInstanceOf(ChatTransferCancelledError);
         mockApi.getText.mockRejectedValue(Object.assign(new Error("ChatFile error: reset"), { code: undefined }));
         const other = http.getText("u", {});
         await expect(other).rejects.toThrow("reset");

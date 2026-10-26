@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ChatCsrf } from "../services/chat/chatCsrf";
-import { OdooRpcClient, type SyncCredentials } from "../services/odoo/odooRpcClient";
+import { OdooRpcClient, SessionExpiredError, type SyncCredentials } from "../services/odoo/odooRpcClient";
 import { fakeChatHttp } from "../testing/chatFakes";
 
 const CREDS: SyncCredentials = { odooUrl: "https://odoo.example.com/", username: "u", password: "p", database: "db" };
@@ -37,11 +37,17 @@ describe("ChatCsrf", () => {
         expect(http.calls).toHaveLength(3);
     });
 
-    it("a redirect or a page without a token is an error, and is not cached", async () => {
-        let answer = { status: 303, headers: { location: "/odoo" }, data: "" };
+    it("a redirect is an expired session, a page without a token an error, neither cached", async () => {
+        let answer = { status: 303, headers: { location: "/web/database/selector" }, data: "" };
         const http = fakeChatHttp({ getText: () => answer });
         const csrf = new ChatCsrf(new OdooRpcClient(), http);
-        await expect(csrf.token(CREDS, "sid1")).rejects.toThrow(/303/);
+        const redirected = csrf.token(CREDS, "sid1");
+        await expect(redirected).rejects.toBeInstanceOf(SessionExpiredError);
+        await expect(redirected).rejects.toThrow(/303/);
+        answer = { status: 500, headers: {}, data: "" };
+        const failed = csrf.token(CREDS, "sid1");
+        await expect(failed).rejects.toThrow(/500/);
+        await expect(failed).rejects.not.toBeInstanceOf(SessionExpiredError);
         answer = { status: 200, headers: {}, data: "<html>nothing</html>" };
         await expect(csrf.token(CREDS, "sid1")).rejects.toThrow(/csrf/i);
         answer = { status: 200, headers: {}, data: loginForm("c3o1") };

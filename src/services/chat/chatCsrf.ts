@@ -1,5 +1,5 @@
 import { assertUrlAllowed } from "../odoo/httpPolicy";
-import type { OdooRpcClient, SyncCredentials } from "../odoo/odooRpcClient";
+import { SessionExpiredError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
 import type { ChatHttp } from "./chatFiles";
 
 /** The hidden input of the login form, attributes in either order. */
@@ -14,8 +14,11 @@ const LAYOUT_TOKEN = /csrf_token\s*:\s*["']([^"']+)["']/;
  * re-authentication) needs a new token and an old one is never reused for
  * it. No JSON route returns the token: it is read from `GET /web/login`
  * without a `redirect` param, which renders the login page (and its token)
- * even for a logged-in session. Concurrent requests for one session share
- * one fetch; a failed fetch is not cached.
+ * even for a logged-in session. A redirect instead means the session is
+ * not usable there (gone from the server, or a database selector on a
+ * multi-database server): SessionExpiredError, so callWithAuth logs in
+ * again once. Concurrent requests for one session share one fetch; a
+ * failed fetch is not cached.
  */
 export class ChatCsrf {
     private tokens = new Map<string, Promise<string>>();
@@ -43,6 +46,9 @@ export class ChatCsrf {
         const url = `${this.rpc.normalizeUrl(creds.odooUrl)}/web/login`;
         assertUrlAllowed(url);
         const answer = await this.http.getText(url, { Cookie: `session_id=${sessionId}` });
+        if (answer.status >= 300 && answer.status < 400) {
+            throw new SessionExpiredError(`HTTP ${answer.status} from ${url}: redirected, no csrf token`);
+        }
         if (answer.status < 200 || answer.status >= 300) {
             throw new Error(`HTTP ${answer.status} from ${url}: no csrf token`);
         }

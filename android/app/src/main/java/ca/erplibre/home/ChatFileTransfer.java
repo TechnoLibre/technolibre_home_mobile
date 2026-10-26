@@ -40,7 +40,9 @@ import okio.Source;
  * TLS handshake, connect timeout) throws UnsentException: the server saw
  * nothing. A transfer cancelled through cancel(id) throws
  * CancelledException. Any other IOException may come after the server
- * received part or all of the request.
+ * received part or all of the request. The client never sends a request
+ * again by itself (no retry on a connection failure): every attempt is
+ * the caller's, which knows whether a repeat is safe.
  */
 public class ChatFileTransfer {
 
@@ -100,6 +102,17 @@ public class ChatFileTransfer {
         volatile boolean value;
     }
 
+    /**
+     * One transfer id's state from reserve() (or the transfer's start) to
+     * its end. cancel() sets `cancelled` then reads `call`; execute() sets
+     * `call` then reads `cancelled`: with both volatile, a cancel racing
+     * the registration is always seen by one side, so it is never lost.
+     */
+    static final class Slot {
+        volatile boolean cancelled;
+        volatile Call call;
+    }
+
     private static final int CHUNK = 64 * 1024;
 
     /**
@@ -114,6 +127,7 @@ public class ChatFileTransfer {
         .callTimeout(0, TimeUnit.SECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
+        .retryOnConnectionFailure(false)
         .eventListenerFactory(call -> {
             final Sent sent = call.request().tag(Sent.class);
             if (sent == null) return EventListener.NONE;
@@ -126,8 +140,8 @@ public class ChatFileTransfer {
         })
         .build();
 
-    /** Calls in flight by transfer id, for cancel(id). */
-    private final Map<String, Call> calls = new ConcurrentHashMap<>();
+    /** Transfers reserved or running, by id, for cancel(id). */
+    private final Map<String, Slot> slots = new ConcurrentHashMap<>();
 
     /**
      * The file a uri names (a file: URI or an absolute path), when it lies
@@ -159,7 +173,7 @@ public class ChatFileTransfer {
     public Answer getText(String url, Map<String, String> headers) throws IOException {
         Sent sent = new Sent();
         Request request = request(url, headers, sent).get().build();
-        try (Response response = execute(null, request, sent)) {
+        try (Response response = execute(new Slot(), request, sent)) {
             return answer(response);
         }
     }
@@ -179,12 +193,13 @@ public class ChatFileTransfer {
         body.addFormDataPart("ufile", name, new FileBody(file, mimetype, progress));
         Sent sent = new Sent();
         Request request = request(url, headers, sent).post(body.build()).build();
-        try (Response response = execute(id, request, sent)) {
+        Slot slot = slots.computeIfAbsent(id, k -> new Slot());
+        try (Response response = execute(slot, request, sent)) {
             return answer(response);
         } catch (IOException e) {
-            throw classify(id, e);
+            throw classify(slot, e);
         } finally {
-            if (id != null) calls.remove(id);
+            slots.remove(id, slot);
         }
     }
 
@@ -200,7 +215,8 @@ public class ChatFileTransfer {
         File part = new File(target.getPath() + ".part");
         Sent sent = new Sent();
         Request request = request(url, headers, sent).get().build();
-        try (Response response = execute(id, request, sent)) {
+        Slot slot = slots.computeIfAbsent(id, k -> new Slot());
+        try (Response response = execute(slot, request, sent)) {
             int status = response.code();
             if (status < 200 || status >= 300) {
                 part.delete();
@@ -228,9 +244,8 @@ public class ChatFileTransfer {
                     }
                 }
             }
-            if (target.exists() && !target.delete()) {
-                throw new IOException("cannot replace " + target.getName());
-            }
+            // rename(2) replaces an existing target in one step: a reader
+            // sees the old file or the new one, never none
             if (!part.renameTo(target)) {
                 throw new IOException("cannot rename onto " + target.getName());
             }
@@ -238,18 +253,40 @@ public class ChatFileTransfer {
                 mimetype(response.header("Content-Type")));
         } catch (IOException e) {
             part.delete();
-            throw classify(id, e);
+            throw classify(slot, e);
         } catch (RuntimeException e) {
             part.delete();
             throw e;
         } finally {
-            if (id != null) calls.remove(id);
+            slots.remove(id, slot);
         }
     }
 
-    /** Cancels the transfer `id` in flight; nothing when none runs under it. */
+    /**
+     * Marks `id` as a transfer about to run, before it reaches a worker
+     * thread: a cancel(id) from then on stops it, even before its call
+     * exists. The transfer ends the reservation; release() ends one whose
+     * transfer never started. Returns the token release() takes.
+     */
+    public Object reserve(String id) {
+        return slots.computeIfAbsent(id, k -> new Slot());
+    }
+
+    /** Ends the reservation `token` of id, if it is still the current one. */
+    public void release(String id, Object token) {
+        slots.remove(id, token);
+    }
+
+    /**
+     * Cancels the transfer `id`, reserved or running; it then throws
+     * CancelledException. Nothing when no transfer holds the id, so a late
+     * cancel never stops a later transfer reusing it.
+     */
     public void cancel(String id) {
-        Call call = calls.get(id);
+        Slot slot = slots.get(id);
+        if (slot == null) return;
+        slot.cancelled = true;
+        Call call = slot.call;
         if (call != null) call.cancel();
     }
 
@@ -261,10 +298,15 @@ public class ChatFileTransfer {
         return rb;
     }
 
-    /** Runs the call registered under id (when given); an early failure becomes UnsentException. */
-    private Response execute(String id, Request request, Sent sent) throws IOException {
+    /**
+     * Runs the request as the slot's call; a slot already cancelled runs
+     * nothing, and an early failure becomes UnsentException.
+     */
+    private Response execute(Slot slot, Request request, Sent sent) throws IOException {
+        if (slot.cancelled) throw new CancelledException(new IOException("cancelled before start"));
         Call call = client.newCall(request);
-        if (id != null) calls.put(id, call);
+        slot.call = call;
+        if (slot.cancelled) call.cancel();
         try {
             return call.execute();
         } catch (IOException e) {
@@ -275,10 +317,9 @@ public class ChatFileTransfer {
     }
 
     /** A failure after execute() returned: a cancel is told apart, the rest passes as is. */
-    private IOException classify(String id, IOException e) {
+    private IOException classify(Slot slot, IOException e) {
         if (e instanceof UnsentException || e instanceof CancelledException) return e;
-        Call call = id == null ? null : calls.get(id);
-        if (call != null && call.isCanceled()) return new CancelledException(e);
+        if (slot.cancelled) return new CancelledException(e);
         return e;
     }
 

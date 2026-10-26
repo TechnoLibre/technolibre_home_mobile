@@ -3,6 +3,7 @@ import type { PluginListenerHandle } from "@capacitor/core";
 import type {
     ChatHttp, DownloadAnswer, DownloadRequest, HttpAnswer, TransferProgress, UploadRequest,
 } from "../services/chat/chatFiles";
+import { ChatTransferCancelledError } from "../services/chat/chatTransfer";
 import { RequestNotSentError } from "../services/odoo/odooRpcClient";
 
 /** Code of a rejection whose request never reached the server (failed before its headers went out). */
@@ -28,15 +29,25 @@ export interface ChatFilePlugin {
  */
 export const ChatFile = registerPlugin<ChatFilePlugin>("ChatFile");
 
-/** An UNSENT rejection becomes RequestNotSentError; any other passes as is, its code kept. */
+/**
+ * The typed error of a transport rejection: code UNSENT becomes
+ * RequestNotSentError, code CANCELLED ChatTransferCancelledError; any
+ * other passes as is. Every ChatHttp (fakeChatHttp too) maps through it,
+ * so callers only ever see the typed errors.
+ */
+export function transportError(e: unknown): unknown {
+    const code = (e as { code?: unknown } | null)?.code;
+    const msg = e instanceof Error ? e.message : String(e);
+    if (code === CHAT_FILE_UNSENT) return new RequestNotSentError(msg);
+    if (code === CHAT_FILE_CANCELLED) return new ChatTransferCancelledError(msg);
+    return e;
+}
+
 async function bridged<T>(call: () => Promise<T>): Promise<T> {
     try {
         return await call();
     } catch (e: unknown) {
-        if ((e as { code?: unknown } | null)?.code === CHAT_FILE_UNSENT) {
-            throw new RequestNotSentError(e instanceof Error ? e.message : String(e));
-        }
-        throw e;
+        throw transportError(e);
     }
 }
 

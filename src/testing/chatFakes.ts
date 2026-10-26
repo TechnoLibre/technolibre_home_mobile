@@ -1,3 +1,4 @@
+import { transportError } from "../plugins/chatFilePlugin";
 import type {
     ChatFiles, ChatHttp, DownloadAnswer, DownloadRequest, HttpAnswer, TransferProgress, UploadRequest,
 } from "../services/chat/chatFiles";
@@ -61,9 +62,11 @@ export interface FakeHttpCall {
 
 /**
  * ChatHttp answering through handlers, recording each call (cancel's url
- * is ""). A missing handler rejects. A handler that throws an Error with
- * `code: CHAT_FILE_UNSENT` stands for a request that never left. emit()
- * sends a progress event to the subscribers.
+ * is ""). A missing handler rejects. A handler error goes through
+ * transportError as the native bridge's does: `code: CHAT_FILE_UNSENT`
+ * gives RequestNotSentError, `code: CHAT_FILE_CANCELLED`
+ * ChatTransferCancelledError. emit() sends a progress event to the
+ * subscribers.
  */
 export function fakeChatHttp(handlers: {
     getText?: (url: string, headers: Record<string, string>) => Answerable<HttpAnswer>;
@@ -74,22 +77,29 @@ export function fakeChatHttp(handlers: {
     const calls: FakeHttpCall[] = [];
     const listeners = new Set<(p: TransferProgress) => void>();
     const missing = (kind: string) => Promise.reject(new Error(`fakeChatHttp: no ${kind} handler`));
+    const answer = async <T>(run: () => Answerable<T>): Promise<T> => {
+        try {
+            return await run();
+        } catch (e) {
+            throw transportError(e);
+        }
+    };
     return {
         calls,
         emit: (p) => listeners.forEach((fn) => fn(p)),
         async getText(url, headers) {
             calls.push({ kind: "getText", url, headers: { ...headers } });
-            return handlers.getText ? handlers.getText(url, headers) : missing("getText");
+            return handlers.getText ? answer(() => handlers.getText!(url, headers)) : missing("getText");
         },
         async upload(r) {
             calls.push({
                 kind: "upload", url: r.url, id: r.id, headers: { ...r.headers }, fields: { ...r.fields }, file: { ...r.file },
             });
-            return handlers.upload ? handlers.upload(r) : missing("upload");
+            return handlers.upload ? answer(() => handlers.upload!(r)) : missing("upload");
         },
         async download(r) {
             calls.push({ kind: "download", url: r.url, id: r.id, headers: { ...r.headers }, uri: r.uri });
-            return handlers.download ? handlers.download(r) : missing("download");
+            return handlers.download ? answer(() => handlers.download!(r)) : missing("download");
         },
         async cancel(id) {
             calls.push({ kind: "cancel", url: "", id });
