@@ -29,6 +29,10 @@ export const translations: Record<string, string> = {
   "options.language": "Langue",
   "options.changelog": "Changelog",
   "options.changelog_version": "Version {version}",
+  "options.licenses": "Licences tierces",
+  "options.licenses_intro": "L'application embarque les bibliothèques ci-dessous. Leurs licences sont reproduites telles que livrées.",
+  "options.licenses_use": "{name} est embarquée sous la licence {license} : elle encode le MP3 des messages vocaux du clavardage. Elle est liée comme module séparé de l'application, et son code source est disponible à l'adresse ci-dessous.",
+  "options.licenses_source": "Source :",
   "options.sms_gateway": "Passerelle SMS",
 
   // Language picker

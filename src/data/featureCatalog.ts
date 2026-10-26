@@ -3658,6 +3658,31 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "meta.licenses",
+                label: { en: "Third-party licenses", fr: "Licences tierces" },
+                description: {
+                    en: "Names the bundled libraries whose license asks for a notice, with the license text and a link to the source.",
+                    fr: "Nomme les bibliothèques embarquées dont la licence exige une mention, avec le texte de la licence et un lien vers le code source.",
+                },
+                status: "stable",
+                howItWorks: {
+                    en: "An expandable Options entry lists THIRD_PARTY_NOTICES: for the MP3 encoder "
+                        + "@breezystack/lamejs (LGPL-3.0) it shows its version, a sentence on what the app "
+                        + "uses it for, the link to its source and the LICENSE text the package ships, "
+                        + "bundled as a text asset.",
+                    fr: "Une entrée dépliable des Options liste THIRD_PARTY_NOTICES : pour l'encodeur MP3 "
+                        + "@breezystack/lamejs (LGPL-3.0), elle montre sa version, une phrase sur l'usage "
+                        + "qu'en fait l'application, le lien vers son code source et le texte LICENSE "
+                        + "livré par le paquet, embarqué comme ressource texte.",
+                },
+                demo: { kind: "options", sectionId: "licenses" },
+                files: [
+                    "src/components/options/licenses/options_licenses_component.ts",
+                    "src/components/options/licenses/options_licenses_component.scss",
+                    "src/assets/licenses/breezystack-lamejs.LICENSE.txt",
+                ],
+            },
+            {
                 id: "meta.erplibre",
                 label: { en: "Open ERPLibre source", fr: "Ouvrir source ERPLibre" },
                 description: {

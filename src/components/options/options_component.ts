@@ -11,6 +11,7 @@ import { HeadingComponent } from "../heading/heading_component";
 import { OptionsClearCacheComponent } from "./clear_cache/options_clear_cache_component";
 import { OptionsToggleBiometryComponent } from "./options_toggle_biometry_component.ts/options_toggle_biometry_component";
 import { OptionsChangelogComponent } from "./changelog/options_changelog_component";
+import { OptionsLicensesComponent } from "./licenses/options_licenses_component";
 import { OptionsDeviceInfoComponent } from "./device_info/options_device_info_component";
 import { OptionsPermissionsComponent } from "./permissions/options_permissions_component";
 import { OptionsMigrationHistoryComponent } from "./migration_history/options_migration_history_component";
@@ -53,6 +54,7 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsGraphicComponent />
         <OptionsCodeStyleComponent />
         <OptionsChangelogComponent />
+        <OptionsLicensesComponent />
         <li class="options-list__item">
           <a href="#" role="button" t-att-aria-label="t('options.transcription')" t-on-click.stop.prevent="onTranscriptionClick">
             🎙️ <t t-esc="t('options.transcription')"/> ›
@@ -158,6 +160,7 @@ export class OptionsComponent extends EnhancedComponent {
 		OptionsClearCacheComponent,
 		OptionsToggleBiometryComponent,
 		OptionsChangelogComponent,
+		OptionsLicensesComponent,
 		OptionsDeviceInfoComponent,
 		OptionsPermissionsComponent,
 		OptionsMigrationHistoryComponent,
