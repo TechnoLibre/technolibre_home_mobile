@@ -2926,6 +2926,52 @@ describe("ChatService", () => {
       expect(posts()).toHaveLength(1);
     });
 
+    it("a module probe that fails after the 404s keeps the file for a retry", async () => {
+      await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.2" });
+      server.state.notFound = "module";
+      const probe = vi.spyOn(chat.queue, "moduleRefused").mockRejectedValueOnce(new Error("network down"));
+      const sent = await chat.send(src, GROUP, "with file", [stage("a.jpg")]);
+      await idle();
+      expect(await chat.notices([config])).toEqual([]);
+      expect((await chat.repo.outgoingOf(config, sent.clientUuid))[0]).toMatchObject({ state: "queued" });
+      expect(await ops("chat.upload")).toEqual([expect.objectContaining({ status: "failed" })]);
+      probe.mockRestore();
+      await chat.flushAll({ force: true });
+      await idle();
+      expect(new URL(server.uploads().at(-1)!.url).pathname).toBe("/mail/attachment/upload");
+      expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900]]);
+    });
+
+    it("an upload of the same file held by its conversation waits for the twin in doubt", async () => {
+      offline();
+      // B first in the outbox, behind a text of its conversation that fails once
+      await chat.send(src, GROUP, "p0");
+      await chat.send(src, GROUP, "b", [stage("same.jpg")]);
+      advance(1);
+      await chat.send(src, GENERAL, "a", [stage("same.jpg")]);
+      let fail = true;
+      odoo.state.onPost = async (params) => {
+        if (fail && params.post_data.body.startsWith("p0")) {
+          fail = false;
+          return { __error: "builtins.RuntimeError" };
+        }
+      };
+      online();
+      server.state.drop = 2;
+      await chat.flushAll();
+      await idle();
+      for (let i = 0; i < 4; i++) {
+        advance(3 * 60_000 + 1);
+        await chat.flushAll();
+        await idle();
+      }
+      expect(await ops()).toEqual([]);
+      expect(server.uploads()).toHaveLength(2);
+      const linked = posts().filter((p) => p.params.post_data.attachment_ids).map((p) => [p.params.thread_id, p.params.post_data.attachment_ids]);
+      // Each conversation gets the attachment its own send made: A sent first (900)
+      expect(linked.sort()).toEqual([[GENERAL, [900]], [GROUP, [901]]].sort());
+    });
+
     /** Makes the first delete of op `id` fail, as an app killed after the op's work and before its row went. */
     const killBeforeDelete = (id: () => string | undefined) => {
       const remove = env.db.deleteOutboxOp.bind(env.db);

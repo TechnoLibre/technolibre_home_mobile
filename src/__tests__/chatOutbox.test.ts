@@ -463,6 +463,15 @@ describe("ChatOutbox", () => {
       expect(files.bytes(f.path)).toBeUndefined();
     });
 
+    it("an upload cut before its post was queued deletes its staged file at startup", async () => {
+      chatOdoo();
+      const f = file("u1");
+      await outbox.enqueue({ noteId: CHAT_NOTE, configId: CONFIG, kind: CHAT_UPLOAD, params: { channelId: CHANNEL, localUuid: "u1", path: f.path }, status: "incomplete" });
+      await chat.recoverIncomplete();
+      expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+      expect(files.bytes(f.path)).toBeUndefined();
+    });
+
     it("a post with files cut while being queued is repaired at startup", async () => {
       chatOdoo();
       // Cut before the completion: everything written, still incomplete

@@ -977,6 +977,7 @@ export class ChatOutbox {
       }
       for (const up of all.filter((o) => o.kind === CHAT_UPLOAD && o.status === "incomplete" && !kept.has(o.id))) {
         await this.outbox.cancel(up.id);
+        await this.removeFiles([String(up.params.path ?? "")]);
       }
       for (const op of all) {
         if (op.status !== "incomplete" || (op.kind !== CHAT_CREATE && op.kind !== CHAT_JOIN)) continue;
@@ -1029,14 +1030,15 @@ export class ChatOutbox {
   /**
    * Starts the account's due upload ops whose dependency is done (see
    * OutboxService.isDue; force skips the retry delays), oldest first, up
-   * to CHAT_UPLOADS_AT_ONCE running at once. Not awaited by flush. An
-   * upload off the module route waits while another upload of the same
-   * name and size runs, or holds a send that may have reached the server
-   * and cannot start yet (its quiet window, its retry delay): the
-   * search after a lost answer would find either attachment, so two such
-   * uploads never search or send at the same time. One that can start is
-   * not held back by it, so two lost uploads still run, one after the
-   * other.
+   * to CHAT_UPLOADS_AT_ONCE running at once. Not awaited by flush.
+   *
+   * Uploads of the same name and size (twins) are ordered, as the search
+   * after a lost answer could find either one's attachment: a running twin
+   * holds every other; a twin with no send yet waits while any twin holds
+   * a send that may have reached the server (uploadSentAt), so its own
+   * attachment never exists while that one is in doubt; among twins in
+   * doubt the earliest uploadSentAt (then the op id) goes first. The
+   * first in that order always may start, so none waits forever.
    */
   private pumpUploads(creds: SyncCredentials, configId: string, force: boolean): void {
     this.laneTrack(configId, this.pumpNow(creds, configId, force)).catch((e) => console.warn("chat: upload lane failed", e));
@@ -1048,15 +1050,17 @@ export class ChatOutbox {
     let running = this.lane.get(configId);
     if (!running) this.lane.set(configId, (running = new Set()));
     const startable = (o: OutboxOp) => !(o.dependsOn && pendingIds.has(o.dependsOn)) && this.outbox.isDue(o, force);
-    // Another upload of the same name and size: a search after a lost answer cannot tell their attachments apart
     const twin = (o: OutboxOp, op: OutboxOp) => o.id !== op.id && o.kind === CHAT_UPLOAD
       && o.params.name === op.params.name && o.params.size === op.params.size;
+    const doubtBefore = (o: OutboxOp, op: OutboxOp) => !!o.params.uploadSentAt
+      && (!op.params.uploadSentAt || o.params.uploadSentAt < op.params.uploadSentAt
+        || (o.params.uploadSentAt === op.params.uploadSentAt && o.id < op.id));
+    const heldByTwin = (op: OutboxOp) => ops.some((o) => twin(o, op) && (running.has(o.id) || doubtBefore(o, op)));
     // No await from here on: two pumps never start the same op or pass the cap
     for (const op of dependencyOrder(ops)) {
       if (running.size >= CHAT_UPLOADS_AT_ONCE) return;
       if (op.kind !== CHAT_UPLOAD || op.noteId !== CHAT_NOTE || running.has(op.id)) continue;
-      if (!startable(op)) continue;
-      if (!op.params.useModule && ops.some((o) => twin(o, op) && (running.has(o.id) || (o.params.uploadSentAt && !startable(o))))) continue;
+      if (!startable(op) || heldByTwin(op)) continue;
       running.add(op.id);
       this.laneTrack(configId, this.laneRun(creds, op, running)).catch((e) => console.warn("chat: upload lane failed", e));
     }
@@ -1588,14 +1592,14 @@ export class ChatOutbox {
    * and the other files of its post take Odoo's route from now on, as a
    * first send (the module route made nothing), and this throws
    * OutboxRetryLaterError for a retry at once. Still 1.2, it returns: the
-   * channel itself is not found.
+   * channel itself is not found. A probe that fails throws a plain error:
+   * the retry meets the 404 and probes again, the file is not refused.
    */
   private async moduleRouteGone(op: OutboxOp): Promise<void> {
     try {
       await this.moduleRefused(op.configId);
     } catch (probe) {
-      console.warn("chat: module probe after a refused upload failed", probe);
-      return;
+      throw new Error(`The module route answered 404 and the module probe failed: ${(probe as Error)?.message ?? probe}`);
     }
     if (levelAtLeast(effectiveLevel(await this.repo.sourceState(op.configId)), "1.2")) return;
     const all = await this.db.getOutboxOpsForConfig(op.configId);
