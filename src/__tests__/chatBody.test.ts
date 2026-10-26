@@ -73,7 +73,10 @@ describe("attachmentPreview", () => {
     expect(attachmentPreview([file("Voice-2026-10-26-1.mp3", "audio/mpeg", true)])).toBe("🎤 Voice message");
     expect(attachmentPreview([file("IMG_1.jpg", "image/jpeg")])).toBe("🖼️ IMG_1.jpg");
     expect(attachmentPreview([file("report.pdf", "application/pdf")])).toBe("📎 report.pdf");
-    expect(attachmentPreview([file("song.ogg", "audio/ogg")])).toBe("📎 song.ogg");
+    // As the thread shows them: other audio plays (🎤), a HEIC or a TIFF opens as a file
+    expect(attachmentPreview([file("song.ogg", "audio/ogg")])).toBe("🎤 song.ogg");
+    expect(attachmentPreview([file("IMG_2.heic", "image/heic")])).toBe("📎 IMG_2.heic");
+    expect(attachmentPreview([file("scan.tiff", "image/tiff")])).toBe("📎 scan.tiff");
     localStorage.setItem("app_lang", "fr");
     expect(attachmentPreview([file("Voice-2026-10-26-1.mp3", "audio/mpeg", true)])).toBe("🎤 Message vocal");
   });

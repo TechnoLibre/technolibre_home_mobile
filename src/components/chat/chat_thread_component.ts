@@ -292,6 +292,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             openWith: (uri, mimetype) => ChatFile.openWith({ uri, mimetype, title: t("chat.open_with") }),
             onTick: () => this.retick(),
             onReload: () => void this.refresh(),
+            root: () => this.scroller.el,
         });
         onMounted(async () => {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);

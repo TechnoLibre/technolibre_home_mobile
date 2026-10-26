@@ -1,9 +1,10 @@
-// The viewer covers the whole screen above the thread and the navbar; the
-// image fits it whole, the status line sits at the bottom.
+// The viewer covers the whole screen, above the thread, the navbar and the
+// sync banner (z-index 100); the image fits it whole, the status line sits
+// at the bottom.
 .chat-viewer {
 	position: fixed;
 	inset: 0;
-	z-index: 100;
+	z-index: 1000;
 	display: flex;
 	flex-direction: column;
 	align-items: center;

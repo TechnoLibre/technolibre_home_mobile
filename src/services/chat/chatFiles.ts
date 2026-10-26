@@ -205,14 +205,35 @@ async function unlessGone(rel: string, error: unknown): Promise<void> {
     if (still) throw error;
 }
 
+/** The file: URI of Directory.Data, asked of the phone once (again after a failure). */
+let webRoot: Promise<string> | null = null;
+
+function dataRoot(): Promise<string> {
+    if (!webRoot) {
+        const asked = Filesystem.getUri({ path: "", directory: Directory.Data }).then((r) => r.uri.replace(/\/+$/, ""));
+        webRoot = asked;
+        asked.catch(() => {
+            if (webRoot === asked) webRoot = null;
+        });
+    }
+    return webRoot;
+}
+
+/** Forgets the cached data root, so the next webUrl asks the phone again. */
+export function resetWebRoot(): void {
+    webRoot = null;
+}
+
 /** ChatFiles over @capacitor/filesystem, under Directory.Data. */
 export const deviceChatFiles: ChatFiles = {
     async uri(rel) {
         return (await Filesystem.getUri({ path: rel, directory: Directory.Data })).uri;
     },
 
+    /** Built from the data root and rel, each segment percent-encoded: one bridge call for the whole app. */
     async webUrl(rel) {
-        return Capacitor.convertFileSrc(await this.uri(rel));
+        const path = rel.split("/").map(encodeURIComponent).join("/");
+        return Capacitor.convertFileSrc((await dataRoot()) + "/" + path);
     },
 
     async size(rel) {

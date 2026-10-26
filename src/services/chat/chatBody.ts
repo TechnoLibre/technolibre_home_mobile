@@ -129,10 +129,35 @@ export function bodyPreview(html: string, max = 80): string {
   return text.length > max ? text.slice(0, Math.max(0, max - 1)).trimEnd() + "…" : text;
 }
 
-/** The files of a message as one line of a conversation list: 🎤 for a voice message, 🖼️ before an image's name, 📎 before any other; cut to `max` characters. */
+/** Mimetypes the web view shows as an image, as Odoo's attachment list does (TIFF and HEIC open as files). */
+const IMAGE_TYPES = new Set([
+  "image/bmp", "image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp", "image/x-icon",
+]);
+
+export type AttachmentKind = "image" | "voice" | "file";
+
+/**
+ * How a file of a message is shown, in the thread as in the list: an image
+ * the web view shows, a voice message or other audio (the player), else a
+ * file opened with another app.
+ */
+export function attachmentKind(a: { mimetype: string; voice: boolean }): AttachmentKind {
+  const type = (a.mimetype || "").toLowerCase();
+  if (IMAGE_TYPES.has(type)) return "image";
+  if (a.voice || type.startsWith("audio/")) return "voice";
+  return "file";
+}
+
+const ICONS: Record<AttachmentKind, string> = { image: "🖼️", voice: "🎤", file: "📎" };
+
+/**
+ * The files of a message as one line of a conversation list, by
+ * attachmentKind: 🎤 and « voice message » for a voice message, the icon
+ * of its kind before any other file's name; cut to `max` characters.
+ */
 export function attachmentPreview(atts: { name: string; mimetype: string; voice: boolean }[], max = 80): string {
   const text = atts
-    .map((a) => (a.voice ? "🎤 " + t("chat.voice_message") : ((a.mimetype || "").startsWith("image/") ? "🖼️ " : "📎 ") + a.name))
+    .map((a) => ICONS[attachmentKind(a)] + " " + (a.voice ? t("chat.voice_message") : a.name))
     .join(", ");
   return text.length > max ? text.slice(0, Math.max(0, max - 1)).trimEnd() + "…" : text;
 }

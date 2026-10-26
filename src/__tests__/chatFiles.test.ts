@@ -13,7 +13,7 @@ vi.mock("@capacitor/filesystem", () => ({
 }));
 
 import {
-    WRITE_CHUNK_BYTES, deviceChatFiles, originalPath, outgoingPath, previewPath, removeChatFile, safeFileName, sourceDir,
+    WRITE_CHUNK_BYTES, deviceChatFiles, resetWebRoot, originalPath, outgoingPath, previewPath, removeChatFile, safeFileName, sourceDir,
 } from "../services/chat/chatFiles";
 import { memoryChatFiles } from "../testing/chatFakes";
 
@@ -103,7 +103,30 @@ describe("deviceChatFiles", () => {
         mockFs.getUri.mockResolvedValue({ uri: "file:///data/files/chat/d/a.png" });
         expect(await deviceChatFiles.uri("chat/d/a.png")).toBe("file:///data/files/chat/d/a.png");
         expect(mockFs.getUri).toHaveBeenCalledWith({ path: "chat/d/a.png", directory: "DATA" });
-        expect(await deviceChatFiles.webUrl("chat/d/a.png")).toBe("file:///data/files/chat/d/a.png");
+    });
+
+    it("webUrl builds every URL from the data root, asked of the phone once", async () => {
+        resetWebRoot();
+        mockFs.getUri.mockReset();
+        mockFs.getUri.mockResolvedValue({ uri: "file:///data/user/0/app/files" });
+        const urls = await Promise.all([
+            deviceChatFiles.webUrl("chat/d/thumbs/1"),
+            deviceChatFiles.webUrl("chat/d/files/2/Mon rapport #2.pdf"),
+        ]);
+        expect(await deviceChatFiles.webUrl("chat/d/files/3/é.jpg")).toBe("file:///data/user/0/app/files/chat/d/files/3/%C3%A9.jpg");
+        expect(urls).toEqual([
+            "file:///data/user/0/app/files/chat/d/thumbs/1",
+            "file:///data/user/0/app/files/chat/d/files/2/Mon%20rapport%20%232.pdf",
+        ]);
+        expect(mockFs.getUri.mock.calls).toEqual([[{ path: "", directory: "DATA" }]]);
+    });
+
+    it("a failed read of the data root is asked again next time", async () => {
+        resetWebRoot();
+        mockFs.getUri.mockReset();
+        mockFs.getUri.mockRejectedValueOnce(new Error("not ready")).mockResolvedValue({ uri: "file:///data/files/" });
+        await expect(deviceChatFiles.webUrl("chat/d/a")).rejects.toThrow("not ready");
+        expect(await deviceChatFiles.webUrl("chat/d/a")).toBe("file:///data/files/chat/d/a");
     });
 
     it("copyFrom copies an outside uri in and returns its size", async () => {

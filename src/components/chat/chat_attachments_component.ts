@@ -1,4 +1,4 @@
-import { onMounted, onWillUnmount, useRef, useState, xml } from "@odoo/owl";
+import { onMounted, onPatched, onWillUnmount, useRef, useState, xml } from "@odoo/owl";
 
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { getCurrentLocale, t } from "../../i18n";
@@ -8,6 +8,9 @@ import type { ChatFiles } from "../../services/chat/chatFiles";
 import { CHAT_FILE_NO_APP } from "../../plugins/chatFilePlugin";
 import type { ChatSource } from "../../services/chat/chatSources";
 import { formatBytes } from "../../utils/formatBytes";
+import { attachmentKind, type AttachmentKind } from "../../services/chat/chatBody";
+
+export { attachmentKind, type AttachmentKind };
 
 /** Poll period while a file of the screen is on the wire: progress moves. */
 export const PROGRESS_POLL_MS = 250;
@@ -16,14 +19,8 @@ export const WAIT_POLL_MS = 1000;
 /** Margin around the screen within which a row counts as visible, so a preview is there when it scrolls in. */
 const VISIBLE_MARGIN = "100px";
 
-/** Mimetypes the web view shows as an image, as Odoo's attachment list does (TIFF and HEIC open as files). */
-const IMAGE_TYPES = new Set([
-    "image/bmp", "image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp", "image/x-icon",
-]);
 /** Refusal reasons a row may carry (ChatOutbox), each with its line; any other reads as « refused ». */
 const REFUSALS = new Set(["too_big", "missing", "refused", "not_found", "left", "channel"]);
-
-export type AttachmentKind = "image" | "voice" | "file";
 
 /**
  * uploading: a file of the phone on its way (progress while on the wire);
@@ -78,20 +75,17 @@ export interface ThreadAttachmentDeps {
     onTick: () => void;
     /** A download ended outside an open() of the screen: the thread reads the cache again. */
     onReload?: () => void;
+    /**
+     * The thread's scroll element, the root rows are seen within (so the
+     * margin reaches past its edges); the viewport while it is unknown.
+     */
+    root?: () => Element | null;
 }
 
 /** How a row's files load: which rows are posts still queued, which uploads wait for Wi-Fi. */
 export interface AttachmentLoad {
     pendingRows: Set<string>;
     heldUploads: Set<string>;
-}
-
-/** The kind a file is shown as: an image the web view shows, a voice message or other audio (the player), else a file. */
-export function attachmentKind(a: Pick<ChatAttachment, "mimetype" | "voice">): AttachmentKind {
-    const type = (a.mimetype || "").toLowerCase();
-    if (IMAGE_TYPES.has(type)) return "image";
-    if (a.voice || type.startsWith("audio/")) return "voice";
-    return "file";
 }
 
 /** The part of the views a render shows: a row is rendered again only when it changes. */
@@ -307,7 +301,7 @@ export class ThreadAttachments {
                     if (e.isIntersecting) this.seen(row);
                     else this.visible.delete(row);
                 }
-            }, { rootMargin: VISIBLE_MARGIN });
+            }, { root: this.deps.root?.() ?? null, rootMargin: VISIBLE_MARGIN });
         }
         this.observed.set(el, rowKey);
         this.observer.observe(el);
@@ -506,10 +500,11 @@ export class ThreadAttachments {
 }
 
 /**
- * The files of one message: images as a grid (one image tall, several as
- * tiles), voice and audio as player rows, other files as chips. A tap on
- * an image opens the viewer (onImage), on a failed preview retries it; a
- * file opens through « open with »; a held file offers « download anyway ».
+ * The files of one message: images as a grid (one image in a fixed box,
+ * several as tiles), voice and audio as player rows, other files as chips.
+ * A tap on an image opens the viewer (onImage), on a failed preview
+ * retries it; a file opens through « open with »; a held file offers
+ * « download anyway ».
  */
 export class ChatAttachmentsComponent extends EnhancedComponent {
     static props = { row: Object, ta: Object, onImage: Function };
@@ -533,7 +528,7 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
       </t>
       <div t-foreach="voices()" t-as="v" t-key="v.key" class="chat-att__voice">
         <button class="chat-att__play" t-att-disabled="v.state === 'refused' or v.state === 'downloading'"
-                t-att-aria-label="player.playing[v.key] ? t('chat.att_pause') : t('chat.att_play')"
+                t-att-aria-label="playLabel(v)"
                 t-on-click="() => this.onToggle(v)" t-esc="player.playing[v.key] ? '⏸' : '▶'"/>
         <span t-if="v.voice" class="chat-att__badge" t-att-title="t('chat.voice_message')" aria-hidden="true">🎤</span>
         <span t-else="" class="chat-att__name" t-esc="'🎵 ' + v.name"/>
@@ -546,10 +541,11 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
           <button t-if="!v.outgoing" class="chat-att__anyway" t-on-click="() => this.onAnyway(v)" t-esc="t('chat.download_anyway')"/>
         </t>
         <span t-if="v.error" class="chat-att__error" role="alert" t-esc="v.error"/>
-        <audio class="chat-att__audio" preload="metadata" t-att-data-key="v.key" t-att-src="v.src or undefined"
+        <audio class="chat-att__audio" preload="metadata" t-att-data-key="v.key"
                t-on-loadedmetadata="(ev) => this.onAudio(ev, v.key)" t-on-durationchange="(ev) => this.onAudio(ev, v.key)"
-               t-on-timeupdate="(ev) => this.onAudio(ev, v.key)" t-on-play="(ev) => this.onAudio(ev, v.key)"
-               t-on-pause="(ev) => this.onAudio(ev, v.key)" t-on-ended="(ev) => this.onAudio(ev, v.key)"/>
+               t-on-timeupdate="(ev) => this.onAudio(ev, v.key)" t-on-playing="(ev) => this.onAudio(ev, v.key)"
+               t-on-pause="(ev) => this.onAudio(ev, v.key)" t-on-ended="(ev) => this.onAudio(ev, v.key)"
+               t-on-error="(ev) => this.onAudio(ev, v.key)"/>
       </div>
       <div t-foreach="files()" t-as="v" t-key="v.key" class="chat-att__file">
         <button class="chat-att__open" t-att-disabled="v.state === 'refused'" t-on-click="() => this.onFile(v)">
@@ -578,7 +574,9 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
         onMounted(() => {
             this._el = this.root.el;
             if (this._el) this.ta.observe(this._el, this.props.row.key);
+            this.syncSources();
         });
+        onPatched(() => this.syncSources());
         onWillUnmount(() => {
             if (this._el) this.ta.unobserve(this._el);
         });
@@ -654,7 +652,33 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
         await this.play(v, false);
     }
 
-    /** Plays the file from the phone, its original fetched first when none is there. */
+    /** The play button's label: what plays, the voice message or the file's name. */
+    playLabel(v: AttachmentView): string {
+        const name = v.voice ? t("chat.att_voice_name") : v.name;
+        return t(this.player.playing[v.key] ? "chat.att_pause" : "chat.att_play", { name });
+    }
+
+    /**
+     * Gives each player whose file is on the phone its source, once: the
+     * template never binds src, so a render can never reload a player that
+     * is starting or playing (setting src restarts the media load).
+     */
+    syncSources(): void {
+        for (const v of this.voices()) {
+            if (!v.src) continue;
+            const audio = this.audioOf(v.key);
+            if (audio) this.setSource(audio, v.src);
+        }
+    }
+
+    private setSource(audio: HTMLAudioElement, url: string): void {
+        if (audio.getAttribute("src") !== url) audio.src = url;
+    }
+
+    /**
+     * Plays the file from the phone, its original fetched first when none is
+     * there; « playing » then follows the audio's own events.
+     */
     async play(v: AttachmentView, anyNetwork: boolean): Promise<void> {
         let url = v.src;
         if (!url) {
@@ -664,7 +688,7 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
         }
         const audio = this.audioOf(v.key);
         if (!audio) return;
-        if (audio.src !== url) audio.src = url;
+        this.setSource(audio, url);
         this.ta.playing(audio);
         try {
             await audio.play();
@@ -681,8 +705,8 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
         const audio = ev.target as HTMLAudioElement;
         if (ev.type === "loadedmetadata" || ev.type === "durationchange") this.player.duration[key] = audio.duration;
         else if (ev.type === "timeupdate") this.player.position[key] = audio.currentTime;
-        else if (ev.type === "play") this.player.playing[key] = true;
-        else if (ev.type === "pause") this.player.playing[key] = false;
+        else if (ev.type === "playing") this.player.playing[key] = true;
+        else if (ev.type === "pause" || ev.type === "error") this.player.playing[key] = false;
         else if (ev.type === "ended") {
             this.player.playing[key] = false;
             this.player.position[key] = 0;

@@ -18,8 +18,12 @@ interface ViewerState {
 /**
  * One image over the whole screen: its preview at once, then its original
  * (ThreadAttachments.open, so Wi-Fi only holds it). Held for Wi-Fi, it
- * offers « download anyway » for that image alone. Closing leaves a
- * download running: the original lands in the cache.
+ * offers « download anyway » for that image alone, and asks again by
+ * itself once the hold ends (the cache took the file on Wi-Fi). Closing
+ * leaves a download running: the original lands in the cache.
+ *
+ * The viewer holds its own history entry (same URL), so Android's back
+ * closes it rather than the conversation; ✕ goes back over that entry.
  */
 export class ChatImageViewerComponent extends EnhancedComponent {
     static props = { ta: Object, attKey: String, onClose: Function };
@@ -43,6 +47,13 @@ export class ChatImageViewerComponent extends EnhancedComponent {
     state!: ViewerState;
     private _poll: ReturnType<typeof setInterval> | null = null;
     private _closed = false;
+    /** The viewer's history entry is the current one. */
+    private _inHistory = false;
+    private _onPop = () => {
+        if (!this._inHistory) return;
+        this._inHistory = false;
+        this.props.onClose();
+    };
 
     setup() {
         this.state = useState<ViewerState>({
@@ -50,11 +61,25 @@ export class ChatImageViewerComponent extends EnhancedComponent {
             stage: "loading",
             progress: null,
         });
-        onMounted(() => void this.load());
-        onWillUnmount(() => {
-            this._closed = true;
-            this.stopPoll();
-        });
+        onMounted(() => this.onOpened());
+        onWillUnmount(() => this.onClosing());
+    }
+
+    /** Shown: takes a history entry, follows the file and asks its original. */
+    onOpened(): void {
+        window.history.pushState({ ...(window.history.state ?? {}), chatViewer: true }, "");
+        this._inHistory = true;
+        window.addEventListener("popstate", this._onPop);
+        this.startPoll();
+        void this.load();
+    }
+
+    /** Gone from the screen: stops following; its history entry is left to whoever moved the screen. */
+    onClosing(): void {
+        this._closed = true;
+        this._inHistory = false;
+        window.removeEventListener("popstate", this._onPop);
+        this.stopPoll();
     }
 
     get ta(): ThreadAttachments {
@@ -73,9 +98,8 @@ export class ChatImageViewerComponent extends EnhancedComponent {
     /** Asks the original (anyNetwork: now, whatever the network); the preview stays until it is there. */
     async load(anyNetwork = false): Promise<void> {
         this.state.stage = "loading";
-        this.startPoll();
+        this.state.progress = null;
         const r = await this.ta.open(this.props.attKey, anyNetwork ? { anyNetwork: true } : {});
-        this.stopPoll();
         if (this._closed) return;
         if (r.kind === "ready") {
             this.state.url = r.url;
@@ -89,14 +113,23 @@ export class ChatImageViewerComponent extends EnhancedComponent {
         return this.load(true);
     }
 
+    /** ✕: back over the viewer's entry (popstate closes it), or closes at once without one. */
     onClose(): void {
-        this.props.onClose();
+        if (this._inHistory) window.history.back();
+        else this.props.onClose();
     }
 
+    /**
+     * From memory only, every PROGRESS_POLL_MS: the percent while loading;
+     * while held, a hold that ended (the cache took the file on Wi-Fi)
+     * asks the original again, which joins that download.
+     */
     private startPoll(): void {
         this.stopPoll();
         this._poll = setInterval(() => {
-            this.state.progress = this.ta.view(this.props.attKey)?.progress ?? null;
+            const v = this.ta.view(this.props.attKey);
+            if (this.state.stage === "loading") this.state.progress = v?.progress ?? null;
+            else if (this.state.stage === "waiting_wifi" && v && v.state !== "waiting_wifi") void this.load();
         }, PROGRESS_POLL_MS);
     }
 

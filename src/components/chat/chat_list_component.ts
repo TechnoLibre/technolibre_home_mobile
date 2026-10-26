@@ -301,16 +301,23 @@ export class ChatListComponent extends EnhancedComponent {
             const blocked = new Set(ops
                 .filter((o) => o.status === "blocked" && o.params?.blockedReason === "ambiguous")
                 .map((o) => o.id));
+            // The files of last messages without text are read side by side, after the rows
+            const filesLines: Promise<void>[] = [];
             for (const c of mine) {
                 const queued = pendings.get(c.channelId);
                 const last = queued?.[queued.length - 1] ?? lasts.get(c.channelId) ?? null;
                 const title = displayNameOf(c, membersOf.get(c.channelId) ?? [], byPartner, state.selfPartnerId, getCurrentLocale());
                 const text = last ? bodyPreview(last.body, PREVIEW_MAX) : "";
-                const preview = text || (last ? await this.filesLine(id, c.channelId, last) : "");
-                const row = this.rowOf(c, labelOf.get(id) ?? "", title, last, preview);
+                const row = this.rowOf(c, labelOf.get(id) ?? "", title, last, text);
                 row.ambiguous = !!c.createOpId && blocked.has(c.createOpId);
                 byKey.set(c.configId + ":" + c.channelId, row);
+                if (!text && last && last.messageType === "comment") {
+                    filesLines.push(this.filesLine(id, c.channelId, last).then((line) => {
+                        if (line) row.preview = (last.status === "pending" ? "⏳ " : "") + line;
+                    }));
+                }
             }
+            await Promise.all(filesLines);
         }
         // Rows keep the order the service gave
         const ordered = channels.map((c) => byKey.get(c.configId + ":" + c.channelId)!);
@@ -351,7 +358,10 @@ export class ChatListComponent extends EnhancedComponent {
         return row.failed === "join" ? t("chat.join_failed_short") : t("chat.create_failed_short");
     }
 
-    /** The preview of a last message without text: its files (attachmentPreview), "" when it has none. */
+    /**
+     * The preview of a last post without text: its files (attachmentPreview),
+     * "" when it has none (a post emptied on the server keeps no file).
+     */
     private async filesLine(configId: string, channelId: number, last: ChatMessage): Promise<string> {
         const key = last.messageId !== null ? "m" + last.messageId : last.clientUuid ? "u" + last.clientUuid : null;
         if (!key) return "";

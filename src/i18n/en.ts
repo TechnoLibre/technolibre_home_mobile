@@ -1157,10 +1157,11 @@ export const translations: Record<string, string> = {
   "chat.att_open_failed": "The file could not be opened.",
   "chat.att_retry_preview": "{name}: preview not loaded, tap to try again",
   "chat.att_cancel": "Stop downloading {name}",
-  "chat.att_play": "Play",
-  "chat.att_pause": "Pause",
+  "chat.att_play": "Play {name}",
+  "chat.att_pause": "Pause {name}",
   "chat.att_progress": "{percent}%",
   "chat.open_with": "Open with",
   "chat.viewer_close": "Close",
   "chat.viewer_loading": "Downloading the original…",
+  "chat.att_voice_name": "the voice message",
 };

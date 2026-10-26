@@ -236,11 +236,11 @@ describe("ChatListComponent", () => {
     it("a message with only files previews them by icon and name", async () => {
         const chat = fakeChat(["a"], [chan("a", 1, { name: "Team" }), chan("a", 2, { name: "Pair" }), chan("a", 3)]);
         chat.repo.lastMessages.mockResolvedValue(new Map([
-            [1, { messageId: 40, clientUuid: null, status: "sent", body: "", date: "2020-01-01 09:00:00" }],
-            [3, { messageId: 41, clientUuid: null, status: "sent", body: "<p>words</p>", date: "2020-01-01 09:00:00" }],
+            [1, { messageId: 40, clientUuid: null, messageType: "comment", status: "sent", body: "", date: "2020-01-01 09:00:00" }],
+            [3, { messageId: 41, clientUuid: null, messageType: "comment", status: "sent", body: "<p>words</p>", date: "2020-01-01 09:00:00" }],
         ]));
         chat.repo.pendingMessages.mockResolvedValue(new Map([[2, [{
-            messageId: null, clientUuid: "P1", status: "pending", body: "<!-- erplibre-mobile:P1 -->", date: "2020-01-01 10:00:00",
+            messageId: null, clientUuid: "P1", messageType: "comment", status: "pending", body: "<!-- erplibre-mobile:P1 -->", date: "2020-01-01 10:00:00",
         }]]]));
         chat.repo.attachmentsOf.mockImplementation(async (_c: string, channelId: number) => channelId === 1
             ? new Map([["m40", [{ name: "IMG_1.jpg", mimetype: "image/jpeg", voice: false }, { name: "b.pdf", mimetype: "application/pdf", voice: false }]]])
@@ -249,6 +249,31 @@ describe("ChatListComponent", () => {
         await c.loadCache();
         expect(c.state.rows.map((r: any) => r.preview)).toEqual(["🖼️ IMG_1.jpg, 📎 b.pdf", "⏳ 🎤 Voice message", "words"]);
         expect(chat.repo.attachmentsOf.mock.calls).toEqual([["a", 1, [40], []], ["a", 2, [], ["P1"]]]);
+    });
+
+    it("the files of several conversations are read side by side, none for a message that is not a post", async () => {
+        const chat = fakeChat(["a"], [chan("a", 1), chan("a", 2), chan("a", 3)]);
+        chat.repo.lastMessages.mockResolvedValue(new Map([
+            [1, { messageId: 40, clientUuid: null, status: "sent", messageType: "comment", body: "", date: "2020-01-01 09:00:00" }],
+            [2, { messageId: 41, clientUuid: null, status: "sent", messageType: "comment", body: "", date: "2020-01-01 09:00:00" }],
+            [3, { messageId: 42, clientUuid: null, status: "sent", messageType: "notification", body: "", date: "2020-01-01 09:00:00" }],
+        ]));
+        let started = 0;
+        let release!: () => void;
+        const gate = new Promise<void>((r) => { release = r; });
+        chat.repo.attachmentsOf.mockImplementation(async (_c: string, channelId: number) => {
+            started += 1;
+            await gate;
+            return new Map([["m" + (39 + channelId), [{ name: "f" + channelId + ".pdf", mimetype: "application/pdf", voice: false }]]]);
+        });
+        const c = make(chat);
+        const loading = c.loadCache();
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        expect(started).toBe(2);
+        release();
+        await loading;
+        expect(c.state.rows.map((r: any) => r.preview)).toEqual(["📎 f1.pdf", "📎 f2.pdf", ""]);
+        expect(chat.repo.attachmentsOf).toHaveBeenCalledTimes(2);
     });
 
     it("a stale build for All never overwrites the chip B rows", async () => {

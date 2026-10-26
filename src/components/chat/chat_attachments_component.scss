@@ -1,6 +1,6 @@
-// The files of one message, under its body: a single image stands up to
-// 300 px tall, several are 75 px tiles (Odoo's attachment list sizes);
-// voice rows and file chips stack below.
+// The files of one message, under its body: a single image in a 240 px
+// box, several as 75 px tiles (Odoo's tile size); voice rows and file
+// chips stack below.
 .chat-att {
 	display: flex;
 	flex-direction: column;
@@ -36,19 +36,15 @@
 	object-fit: cover;
 }
 
+// One image takes a fixed box, its preview fitted inside: the row keeps its
+// height whether the preview is there yet or not, so nothing shifts.
 .chat-att__grid--single .chat-att__tile {
-	width: auto;
-	height: auto;
-	min-width: 75px;
-	min-height: 75px;
+	width: 240px;
+	height: 240px;
 	max-width: 100%;
 }
 
 .chat-att__grid--single .chat-att__img {
-	width: auto;
-	height: auto;
-	max-width: 100%;
-	max-height: 300px;
 	object-fit: contain;
 }
 

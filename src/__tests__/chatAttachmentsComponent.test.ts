@@ -386,6 +386,25 @@ describe("ThreadAttachments", () => {
     });
 });
 
+describe("ThreadAttachments visibility root", () => {
+    it("the observer watches within the thread's scroll element, so its margin preloads", async () => {
+        stubLocale();
+        let options: any;
+        class IO {
+            constructor(_cb: any, o: any) { options = o; }
+            observe() {}
+            unobserve() {}
+            disconnect() {}
+        }
+        vi.stubGlobal("IntersectionObserver", IO);
+        const scroller = document.createElement("div");
+        const { ta } = harness({ root: () => scroller });
+        await ta.load(new Map([["m1", [att(1)]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        ta.observe(document.createElement("div"), "m1");
+        expect(options).toMatchObject({ root: scroller, rootMargin: "100px" });
+    });
+});
+
 describe("ChatImageViewerComponent", () => {
     function viewer(h: ReturnType<typeof harness>) {
         const v = new (ChatImageViewerComponent as any)();
@@ -421,6 +440,57 @@ describe("ChatImageViewerComponent", () => {
         expect(v.state).toMatchObject({ stage: "ready", url: "http://localhost/_capacitor_file_/data/chat/d/files/1/f1.jpg" });
         v.onClose();
         expect(onClose).toHaveBeenCalled();
+    });
+
+    it("a held original shows once Wi-Fi lets it go, with no tap", async () => {
+        stubLocale();
+        vi.useFakeTimers();
+        const h = harness();
+        await h.ta.load(new Map([["m1", [att(1, { thumbPath: "chat/d/thumbs/1" })]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        h.cache.open.mockImplementation(async () => {
+            if (h.waiting.has(1)) return { kind: "waiting_wifi" };
+            return { kind: "ready", path: "chat/d/files/1/f1.jpg" };
+        });
+        h.waiting.add(1);
+        const { v } = viewer(h);
+        v.onOpened();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(v.state.stage).toBe("waiting_wifi");
+        // The cache's resumeWaiting takes it: the hold ends
+        h.waiting.delete(1);
+        await vi.advanceTimersByTimeAsync(PROGRESS_POLL_MS * 2);
+        expect(v.state).toMatchObject({ stage: "ready", url: "http://localhost/_capacitor_file_/data/chat/d/files/1/f1.jpg" });
+        expect(h.cache.open.mock.calls.every((c) => !c[2]?.anyNetwork)).toBe(true);
+        v.onClosing();
+    });
+
+    it("Android back closes the viewer through its own history entry; ✕ pops that entry", async () => {
+        stubLocale();
+        const h = harness();
+        await h.ta.load(new Map([["m1", [att(1, { thumbPath: "chat/d/thumbs/1" })]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        const push = vi.spyOn(window.history, "pushState");
+        const back = vi.spyOn(window.history, "back").mockImplementation(() => {
+            window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+        });
+        const { v, onClose } = viewer(h);
+        v.onOpened();
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(window.location.pathname).toBe(window.location.pathname);
+        window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+        expect(onClose).toHaveBeenCalledTimes(1);
+        v.onClosing();
+
+        const second = viewer(h);
+        second.v.onOpened();
+        second.v.onClose();
+        expect(back).toHaveBeenCalledTimes(1);
+        expect(second.onClose).toHaveBeenCalledTimes(1);
+        second.v.onClosing();
+        // Closed: a later back is not the viewer's
+        window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+        expect(second.onClose).toHaveBeenCalledTimes(1);
+        push.mockRestore();
+        back.mockRestore();
     });
 
     it("an original gone from the server says so and keeps the preview", async () => {
@@ -466,7 +536,8 @@ describe("ChatAttachmentsComponent", () => {
         const pdf = att(4, { name: "report.pdf", mimetype: "application/pdf" });
         await h.ta.load(new Map([["m1", [voice, pdf]]]), { pendingRows: new Set(), heldUploads: new Set() });
         const { c } = comp(h);
-        const audio = { src: "", play: vi.fn(async () => {}), pause: vi.fn(), paused: true };
+        const audio: any = { src: "", play: vi.fn(async () => {}), pause: vi.fn(), paused: true };
+        audio.getAttribute = () => audio.src || null;
         c.audioOf = () => audio;
         const [v, f] = h.ta.views("m1");
         await c.onAnyway(v);
@@ -475,6 +546,70 @@ describe("ChatAttachmentsComponent", () => {
         expect(audio.src).toBe("http://localhost/_capacitor_file_/data/chat/d/files/2/Voice-2026-10-26-1.mp3");
         expect(audio.play).toHaveBeenCalled();
         expect(h.deps.openWith).toHaveBeenCalledWith("file:///data/user/0/app/files/chat/d/files/4/report.pdf", "application/pdf");
+    });
+
+    it("the player sets the audio's source once, and reads « playing » from the audio itself", async () => {
+        stubLocale();
+        const h = harness();
+        const voice = att(2, { name: "Voice-2026-10-26-1.mp3", mimetype: "audio/mpeg", voice: true });
+        await h.ta.load(new Map([["m1", [voice]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        const { c } = comp(h);
+        const audio: any = document.createElement("audio");
+        audio.play = vi.fn(async () => {});
+        Object.defineProperty(audio, "paused", { get: () => !c.player.playing.a2 });
+        c.audioOf = () => audio;
+        const sets: string[] = [];
+        const native = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "src")!;
+        Object.defineProperty(audio, "src", {
+            get: () => native.get!.call(audio),
+            set: (u: string) => { sets.push(u); native.set!.call(audio, u); },
+        });
+        await c.onToggle(h.ta.views("m1")[0]);
+        expect(sets).toEqual(["http://localhost/_capacitor_file_/data/chat/d/files/2/Voice-2026-10-26-1.mp3"]);
+        expect(audio.play).toHaveBeenCalledTimes(1);
+        // The tap alone is not playback
+        expect(c.player.playing.a2).toBeFalsy();
+        c.onAudio({ type: "play", target: audio }, "a2");
+        expect(c.player.playing.a2).toBeFalsy();
+        c.onAudio({ type: "playing", target: audio }, "a2");
+        expect(c.player.playing.a2).toBe(true);
+        // A render after the open finds the source there and leaves it
+        c.props.row = { key: "m1", attachments: h.ta.views("m1") };
+        c.syncSources();
+        expect(sets).toHaveLength(1);
+        c.onAudio({ type: "error", target: audio }, "a2");
+        expect(c.player.playing.a2).toBe(false);
+    });
+
+    it("a voice already on the phone gets its source after a render, for its duration", async () => {
+        stubLocale();
+        const h = harness();
+        const voice = att(2, { mimetype: "audio/mpeg", voice: true, originalPath: "chat/d/files/2/v.mp3" });
+        await h.ta.load(new Map([["m1", [voice]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        const { c } = comp(h);
+        const audio: any = document.createElement("audio");
+        c.audioOf = () => audio;
+        c.syncSources();
+        expect(audio.getAttribute("src")).toBe("http://localhost/_capacitor_file_/data/chat/d/files/2/v.mp3");
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_attachments_component.ts"), "utf8");
+        const tag = source.slice(source.indexOf("<audio"));
+        expect(tag.slice(0, tag.indexOf("/>"))).not.toContain("t-att-src");
+    });
+
+    it("the play button names the voice message or the file", async () => {
+        stubLocale();
+        const h = harness();
+        await h.ta.load(new Map([["m1", [
+            att(2, { mimetype: "audio/mpeg", voice: true }), att(3, { name: "song.ogg", mimetype: "audio/ogg" }),
+        ]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        const { c } = comp(h);
+        const [v, a] = h.ta.views("m1");
+        expect(c.playLabel(v)).toBe("Play the voice message");
+        expect(c.playLabel(a)).toBe("Play song.ogg");
+        c.player.playing.a3 = true;
+        expect(c.playLabel(a)).toBe("Pause song.ogg");
+        stubLocale("fr");
+        expect(c.playLabel(v)).toBe("Lire le message vocal");
     });
 
     it("the player shows the position over the duration", () => {
