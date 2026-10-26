@@ -1,0 +1,163 @@
+[
+  {
+    "name": "plain text",
+    "body": "Bonjour tout le monde",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "one newline",
+    "body": "ligne un<br>ligne deux",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "three newlines",
+    "body": "ligne un<br><br>ligne deux",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "carriage return and newline",
+    "body": "ligne un<br><br>ligne deux",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "leading and trailing blanks",
+    "body": "bonjour   le monde",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "markup characters",
+    "body": "&lt;b&gt;gras&lt;/b&gt; &amp; &quot;citation&quot; &#x27;apostrophe&#x27; &#x60;accent&#x60;",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "url",
+    "body": "voir <a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/\">https://example.com</a> maintenant",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "url with a trailing dot",
+    "body": "voir <a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/\">https://example.com</a>.",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "www without a scheme",
+    "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://www.example.org/path?q=1\">www.example.org/path?q=1</a>",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "url with a query and an ampersand",
+    "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/a?b=1&amp;c=2\">https://example.com/a?b=1&amp;c=2</a>",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "url in capitals",
+    "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/Chemin\">HTTPS://Example.COM/Chemin</a>",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "url without a tld",
+    "body": "https://x",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "emoticon alone",
+    "body": "😊",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "emoticon before a line break",
+    "body": ":)<br>suite",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "shortcode",
+    "body": "salut 😀 !",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "emoticons with escaped characters",
+    "body": "j&#x27;aime ❤️ mais 😢",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "partner mentioned twice",
+    "body": "<a href=\"/odoo/res.partner/7\" class=\"o_mail_redirect\" data-oe-id=\"7\" data-oe-model=\"res.partner\" target=\"_blank\" contenteditable=\"false\">@Alice Martin</a> et encore @Alice Martin",
+    "partnerIds": [
+      7
+    ],
+    "specialMentions": []
+  },
+  {
+    "name": "shorter and longer partner names",
+    "body": "<a href=\"/odoo/res.partner/8\" class=\"o_mail_redirect\" data-oe-id=\"8\" data-oe-model=\"res.partner\" target=\"_blank\" contenteditable=\"false\">@Alice</a> puis <a href=\"/odoo/res.partner/7\" class=\"o_mail_redirect\" data-oe-id=\"7\" data-oe-model=\"res.partner\" target=\"_blank\" contenteditable=\"false\">@Alice Martin</a>",
+    "partnerIds": [
+      8,
+      7
+    ],
+    "specialMentions": []
+  },
+  {
+    "name": "pick edited away",
+    "body": "@Alice Mart bonjour",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "channel",
+    "body": "voir <a href=\"/odoo/discuss.channel/3\" class=\"o_channel_redirect\" data-oe-id=\"3\" data-oe-model=\"discuss.channel\" target=\"_blank\" contenteditable=\"false\">#général-test</a>",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "sub-channel",
+    "body": "suite dans <a href=\"/odoo/discuss.channel/4\" class=\"o_channel_redirect o_channel_redirect_asThread\" data-oe-id=\"4\" data-oe-model=\"discuss.channel\" target=\"_blank\" contenteditable=\"false\">#général-test &gt; sous-fil</a>",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "everyone",
+    "body": "<a href=\"#\" class=\"o-discuss-mention\">@everyone</a> réunion à 10 h",
+    "partnerIds": [],
+    "specialMentions": [
+      "everyone"
+    ]
+  },
+  {
+    "name": "mention at the start",
+    "body": "<a href=\"/odoo/res.partner/7\" class=\"o_mail_redirect\" data-oe-id=\"7\" data-oe-model=\"res.partner\" target=\"_blank\" contenteditable=\"false\">@Alice Martin</a> bonjour",
+    "partnerIds": [
+      7
+    ],
+    "specialMentions": []
+  },
+  {
+    "name": "emoji typed directly",
+    "body": "Bravo 🎉 à tous",
+    "partnerIds": [],
+    "specialMentions": []
+  },
+  {
+    "name": "review focus mix",
+    "body": "<a href=\"/odoo/res.partner/7\" class=\"o_mail_redirect\" data-oe-id=\"7\" data-oe-model=\"res.partner\" target=\"_blank\" contenteditable=\"false\">@Alice Martin</a>, voir <a href=\"/odoo/discuss.channel/3\" class=\"o_channel_redirect\" data-oe-id=\"3\" data-oe-model=\"discuss.channel\" target=\"_blank\" contenteditable=\"false\">#général-test</a> :)<br><a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/\">https://example.com</a>. &lt;b&gt;&amp;&quot;&#x27;<br><br>@Alice Martin",
+    "partnerIds": [
+      7
+    ],
+    "specialMentions": []
+  }
+]

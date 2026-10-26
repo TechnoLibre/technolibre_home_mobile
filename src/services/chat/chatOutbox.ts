@@ -26,7 +26,9 @@ import {
 } from "./chatTransfer";
 import { syncConfigIdFor } from "../../models/syncConfig";
 import { CREATE_QUIET_WINDOW_MS, clientMarker } from "../outboxMarker";
-import { bodyHasMarker, textToBody } from "./chatBody";
+import { bodyHasMarker, chatMarker } from "./chatBody";
+import { EMPTY_MENTIONS, composeBody } from "./chatCompose";
+import { emojiConversions } from "./chatEmoji";
 import { effectiveLevel, levelAtLeast } from "./chatModule";
 import type { ChatRepository } from "./chatRepository";
 import { parseStore, type StoreDelta } from "./chatStore";
@@ -427,7 +429,7 @@ export class ChatOutbox {
         messageId: null,
         clientUuid: uuidv4(),
         authorPartnerId: (await this.repo.sourceState(configId)).selfPartnerId,
-        body: textToBody(text, null),
+        body: composeBody(text, EMPTY_MENTIONS, await emojiConversions()).body,
         date: odooDate(this.now()),
         messageType: "comment",
         status: "failed",
@@ -491,7 +493,7 @@ export class ChatOutbox {
       messageId: null,
       clientUuid: op.clientUuid,
       authorPartnerId: (await this.repo.sourceState(configId)).selfPartnerId,
-      body: textToBody(text, null),
+      body: composeBody(text, EMPTY_MENTIONS, await emojiConversions()).body,
       date: odooDate(this.now()),
       messageType: "comment",
       status: "pending",
@@ -1434,7 +1436,7 @@ export class ChatOutbox {
       if (messageId === null) {
         await this.outbox.setParams(op.id, { createSentAt: this.now().toISOString() });
         const postData: Record<string, any> = {
-          body: textToBody(text, op.clientUuid),
+          body: composeBody(text, EMPTY_MENTIONS, await emojiConversions()).body + chatMarker(op.clientUuid),
           message_type: "comment",
           subtype_xmlid: "mail.mt_comment",
         };

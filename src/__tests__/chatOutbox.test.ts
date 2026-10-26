@@ -187,6 +187,15 @@ describe("ChatOutbox", () => {
     expect(await db.getOutboxOpsForConfig(CONFIG)).toHaveLength(0);
   });
 
+  it("a post sends the browser composer's HTML, then the marker", async () => {
+    const odoo = chatOdoo();
+    const m = await chat.queuePost(CONFIG, CHANNEL, "voir https://example.com :) fin", false);
+    const html = 'voir <a target="_blank" rel="noreferrer noopener" href="https://example.com/">https://example.com</a> 😊 fin';
+    expect(m.body).toBe(html);
+    await chat.flush(CREDS);
+    expect(odoo.posts()[0].params.post_data.body).toBe(html + chatMarker(m.clientUuid!));
+  });
+
   it("lost response then retry adopts the marked message", async () => {
     const odoo = chatOdoo();
     odoo.state.dropResponses = 1;

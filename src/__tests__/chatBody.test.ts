@@ -1,28 +1,16 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { attachmentPreview, bodyHasMarker, bodyPreview, chatMarker, renderBody, textToBody } from "../services/chat/chatBody";
+import {
+  EDITED_CLASS, attachmentPreview, bodyHasMarker, bodyPreview, bodyText, chatMarker, isEdited, isEmptyBody, isEmptyMessage,
+  mentionAnchors, renderBody, withEditedMark,
+} from "../services/chat/chatBody";
 
-describe("textToBody", () => {
-  it("escapes and turns newlines into br", () => {
-    expect(textToBody("a < b\nc", null)).toBe("a &lt; b<br>c");
-    expect(textToBody(`"x" & 'y' > z`, null)).toBe("&quot;x&quot; &amp; &#39;y&#39; &gt; z");
-  });
+const MENTION = '<a href="/odoo/res.partner/7" class="o_mail_redirect" data-oe-id="7" data-oe-model="res.partner" target="_blank">@Alice Martin</a>';
+const CHANNEL = '<a href="/odoo/discuss.channel/3" class="o_channel_redirect" data-oe-id="3" data-oe-model="discuss.channel" target="_blank">#général-test</a>';
 
-  it("links http(s) URLs only", () => {
-    expect(textToBody("see https://x.org/a?b=1&c now", null)).toBe(
-      'see <a href="https://x.org/a?b=1&amp;c" target="_blank" rel="noreferrer noopener">https://x.org/a?b=1&amp;c</a> now',
-    );
-    expect(textToBody("javascript:alert(1) ftp://x.org", null)).not.toContain("<a");
-  });
-
-  it("does not let a quote end the href", () => {
-    const out = textToBody('https://x.org/"onmouseover="x', null);
-    expect(out).not.toContain('"onmouseover');
-  });
-
-  it("appends the marker, found by bodyHasMarker", () => {
-    const out = textToBody("hi", "u1");
-    expect(out.endsWith("<!-- erplibre-mobile:u1 -->")).toBe(true);
+describe("chatMarker", () => {
+  it("is found by bodyHasMarker", () => {
+    const out = "hi" + chatMarker("u1");
     expect(chatMarker("u1")).toBe("<!-- erplibre-mobile:u1 -->");
     expect(bodyHasMarker(out, "u1")).toBe(true);
     expect(bodyHasMarker(out, "u2")).toBe(false);
@@ -47,11 +35,80 @@ describe("renderBody", () => {
     expect(out).not.toContain("class=\"k\"");
   });
 
+  it("keeps a mention chip and drops its href", () => {
+    const out = renderBody(`<p>${MENTION} et ${CHANNEL} <a href="#" class="o-discuss-mention">@everyone</a></p>`, { selfPartnerId: 9 });
+    expect(out).toBe(
+      '<p><a class="chat-msg__mention" data-oe-id="7" data-oe-model="res.partner">@Alice Martin</a> et '
+        + '<a class="chat-msg__channel" data-oe-id="3" data-oe-model="discuss.channel">#général-test</a> '
+        + '<a class="chat-msg__special">@everyone</a></p>',
+    );
+    expect(renderBody(MENTION, { selfPartnerId: 7 })).toContain('class="chat-msg__mention chat-msg__mention--self"');
+    const thread = renderBody('<a href="/odoo/discuss.channel/4" class="o_channel_redirect o_channel_redirect_asThread" '
+      + 'data-oe-id="4" data-oe-model="discuss.channel">#général-test &gt; sous-fil</a>');
+    expect(thread).toBe('<a class="chat-msg__channel" data-oe-id="4" data-oe-model="discuss.channel">#général-test &gt; sous-fil</a>');
+  });
+
+  it("refuses a data-oe-model it does not know", () => {
+    expect(renderBody('<a href="#" class="o_mail_redirect" data-oe-id="5" data-oe-model="res.users">@x</a>')).toBe("<a>@x</a>");
+    expect(renderBody('<a class="o_mail_redirect" data-oe-id="5 or 1" data-oe-model="res.partner">@x</a>')).toBe("<a>@x</a>");
+    // A chip class of the other model is no chip either
+    expect(renderBody('<a class="o_channel_redirect" data-oe-id="5" data-oe-model="res.partner">#x</a>')).toBe("<a>#x</a>");
+  });
+
+  it("shows « (modifié) » where the span was", () => {
+    const body = `<p>texte<span class="${EDITED_CLASS}"></span></p>`;
+    expect(renderBody(body, { editedLabel: "(modifié)" })).toBe('<p>texte<em class="chat-msg__edited"> (modifié)</em></p>');
+    expect(renderBody(body)).toBe("<p>texte</p>");
+  });
+
   it("replaces images by a placeholder and drops comments", () => {
     const out = renderBody('<p>a<img src="x.png"></p><!-- erplibre-mobile:u -->');
     expect(out).toContain('<span class="chat-msg__image">🖼️</span>');
     expect(out).not.toContain("img");
     expect(out).not.toContain("erplibre-mobile");
+  });
+});
+
+describe("bodyText", () => {
+  it("of <p>a<br>b</p> is \"a\\nb\"", () => {
+    expect(bodyText("<p>a<br>b</p>")).toBe("a\nb");
+  });
+
+  it("gives mentions as their text and links as typed, without the marker or the edited mark", () => {
+    const linked = '<a target="_blank" rel="noreferrer noopener" href="https://example.com/">https://example.com</a>';
+    expect(bodyText(`<p>${MENTION} &amp; ${linked}<br/>fin<span class="${EDITED_CLASS}"></span></p>${chatMarker("u")}`))
+      .toBe("@Alice Martin & https://example.com\nfin");
+  });
+});
+
+describe("edited and empty bodies", () => {
+  it("isEmptyBody of the lone edited span is true", () => {
+    expect(isEmptyBody(`<span class="${EDITED_CLASS}"></span>`)).toBe(true);
+    expect(isEmptyBody("")).toBe(true);
+    expect(isEmptyBody("<p><br></p>")).toBe(true);
+    expect(isEmptyBody(" <p> </p> ")).toBe(true);
+    expect(isEmptyBody("<p>x</p>")).toBe(false);
+  });
+
+  it("isEmptyMessage keeps an emptied body with a file", () => {
+    expect(isEmptyMessage("", 1)).toBe(false);
+    expect(isEmptyMessage("", 0)).toBe(true);
+    expect(isEmptyMessage("<p>x</p>", 0)).toBe(false);
+  });
+
+  it("withEditedMark appends the span isEdited finds", () => {
+    expect(isEdited("<p>x</p>")).toBe(false);
+    expect(withEditedMark("<p>x</p>")).toBe(`<p>x</p><span class="${EDITED_CLASS}"></span>`);
+    expect(isEdited(withEditedMark("<p>x</p>"))).toBe(true);
+    expect(isEdited(`<p>x<span class='${EDITED_CLASS}'/></p>`)).toBe(true);
+  });
+});
+
+describe("mentionAnchors", () => {
+  it("lists the partners and channels linked in a body, once each", () => {
+    const other = '<a class="o_mail_redirect" data-oe-id="5" data-oe-model="res.users">@y</a>';
+    expect(mentionAnchors(`<p>${MENTION} ${CHANNEL} ${MENTION} ${other}</p>`)).toEqual({ partners: [7], channels: [3] });
+    expect(mentionAnchors("<p>rien</p>")).toEqual({ partners: [], channels: [] });
   });
 });
 

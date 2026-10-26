@@ -19,32 +19,6 @@ export function chatMarker(uuid: string): string {
   return "<!-- erplibre-mobile:" + uuid + " -->";
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-// Runs on escaped text: a URL stops at whitespace, "<" or an escaped quote or bracket.
-const URL_RE = /https?:\/\/(?:(?!&(?:quot|gt|lt|#39);)[^\s<])+/g;
-
-/**
- * Plain text as the browser composer sends it: escaped, newlines as <br>,
- * http(s) URLs as links, then the marker of `markerUuid` when given. Text is
- * escaped before it is linked, so the href never holds a raw quote or bracket.
- */
-export function textToBody(text: string, markerUuid: string | null): string {
-  const linked = escapeHtml(text).replace(URL_RE, (match) => {
-    const url = match.replace(/[.,;:!?)\]]+$/, "");
-    const rest = match.slice(url.length);
-    return `<a href="${url}" target="_blank" rel="noreferrer noopener">${url}</a>${rest}`;
-  });
-  return linked.replace(/\r\n|\r|\n/g, "<br>") + (markerUuid ? chatMarker(markerUuid) : "");
-}
-
 /** True when the body carries the marker of `uuid`. */
 export function bodyHasMarker(body: string, uuid: string): boolean {
   return body.includes(chatMarker(uuid));
@@ -61,13 +35,63 @@ function parseBody(html: string): Document {
   return new DOMParser().parseFromString("<body>" + html + "</body>", "text/html");
 }
 
+/** The class of the empty span Odoo appends to an edited body (`mail_thread.py` `_message_update_content`). */
+export const EDITED_CLASS = "o-mail-Message-edited";
+
 /**
- * Rebuilds a received HTML body from a whitelist: only the tags of KEEP, an
- * `href` on links (plus the target and rel set here), images as a placeholder
- * span. Scripts, styles, frames, comments, event handlers and every other
- * attribute never reach the output. Unknown tags keep their text.
+ * The anchors shown as chips: the class of a received anchor, the model its
+ * `data-oe-model` must name (null: none read), and the class given.
  */
-export function renderBody(html: string): string {
+const CHIPS: { from: string; model: string | null; to: string }[] = [
+  { from: "o_mail_redirect", model: "res.partner", to: "chat-msg__mention" },
+  { from: "o_channel_redirect", model: "discuss.channel", to: "chat-msg__channel" },
+  { from: "o-discuss-mention", model: null, to: "chat-msg__special" },
+];
+
+export interface RenderOptions {
+  /** The text of the edited mark, « (modifié) »; without it the mark is not shown. */
+  editedLabel?: string;
+  /** The user's partner: a mention of it gets `chat-msg__mention--self`. */
+  selfPartnerId?: number | null;
+}
+
+/**
+ * The attributes of a kept anchor: an `href` that safeHref keeps (with the
+ * target and rel set here; a relative or `#` href is dropped), and, for a
+ * chip of CHIPS, its class with `data-oe-id` (digits only) and
+ * `data-oe-model` (the chip's own model only). An anchor whose model or id
+ * fails stays a plain anchor: no chip class, no `data-oe-*`.
+ */
+function copyAnchor(el: Element, copy: Element, opts: RenderOptions): void {
+  const href = safeHref(el.getAttribute("href") ?? "");
+  if (href !== null) {
+    copy.setAttribute("href", href);
+    copy.setAttribute("target", "_blank");
+    copy.setAttribute("rel", "noreferrer noopener");
+  }
+  const chip = CHIPS.find((c) => el.classList.contains(c.from));
+  if (!chip) return;
+  if (chip.model === null) {
+    copy.setAttribute("class", chip.to);
+    return;
+  }
+  const id = el.getAttribute("data-oe-id") ?? "";
+  if (el.getAttribute("data-oe-model") !== chip.model || !/^\d+$/.test(id)) return;
+  const self = chip.model === "res.partner" && opts.selfPartnerId != null && Number(id) === opts.selfPartnerId;
+  copy.setAttribute("class", self ? `${chip.to} ${chip.to}--self` : chip.to);
+  copy.setAttribute("data-oe-id", id);
+  copy.setAttribute("data-oe-model", chip.model);
+}
+
+/**
+ * Rebuilds a received HTML body from a whitelist: only the tags of KEEP,
+ * anchors as copyAnchor keeps them, images as a placeholder span, the
+ * edited span as `<em class="chat-msg__edited"> label</em>` where it was
+ * (`message.xml` `mail.Message.edited`). Scripts, styles, frames, comments,
+ * event handlers and every other attribute never reach the output. Unknown
+ * tags keep their text.
+ */
+export function renderBody(html: string, opts: RenderOptions = {}): string {
   const src = parseBody(html);
   const out = src.implementation.createHTMLDocument("");
   const walk = (from: Node, into: Node): void => {
@@ -79,7 +103,14 @@ export function renderBody(html: string): string {
       if (node.nodeType !== 1) continue;
       const el = node as Element;
       const tag = el.tagName.toLowerCase();
-      if (tag === "img") {
+      if (el.classList.contains(EDITED_CLASS)) {
+        if (opts.editedLabel) {
+          const em = out.createElement("em");
+          em.setAttribute("class", "chat-msg__edited");
+          em.textContent = " " + opts.editedLabel;
+          into.appendChild(em);
+        }
+      } else if (tag === "img") {
         const span = out.createElement("span");
         span.setAttribute("class", "chat-msg__image");
         span.textContent = IMAGE_PLACEHOLDER;
@@ -88,14 +119,7 @@ export function renderBody(html: string): string {
         continue;
       } else if (KEEP.has(tag)) {
         const copy = out.createElement(tag);
-        if (tag === "a") {
-          const href = safeHref(el.getAttribute("href") ?? "");
-          if (href !== null) {
-            copy.setAttribute("href", href);
-            copy.setAttribute("target", "_blank");
-            copy.setAttribute("rel", "noreferrer noopener");
-          }
-        }
+        if (tag === "a") copyAnchor(el, copy, opts);
         walk(el, copy);
         into.appendChild(copy);
       } else {
@@ -105,6 +129,63 @@ export function renderBody(html: string): string {
   };
   walk(src.body, out.body);
   return out.body.innerHTML;
+}
+
+/**
+ * The text of a body as the browser puts it back in its composer to edit it
+ * (`convertBrToLineBreak`, `format.js:260-263`): each `<br>` a line end, then
+ * the text content, so a mention reads `@Name`, a link its typed text, and
+ * the marker comment and the edited span nothing. Copy uses it too.
+ */
+export function bodyText(html: string): string {
+  return parseBody(html.replace(/<br\s*\/?>/gi, "\n")).body.textContent ?? "";
+}
+
+/** True when the body carries Odoo's edited span. */
+export function isEdited(body: string): boolean {
+  return parseBody(body).querySelector("." + EDITED_CLASS) !== null;
+}
+
+/** The bodies the browser takes for empty once the edited span and every whitespace are removed. */
+const EMPTY_FORMS = new Set(["", "<p></p>", "<p><br></p>", "<p><br/></p>", "<div></div>", "<div><br></div>", "<div><br/></div>"]);
+
+/** `isBodyEmpty` of `message_model.js:364-382`, on the body as stored. */
+export function isEmptyBody(body: string): boolean {
+  return !body || EMPTY_FORMS.has(body.replace(`<span class="${EDITED_CLASS}"></span>`, "").replace(/\s/g, ""));
+}
+
+/**
+ * A message the thread hides, as the browser does for a deleted one: an
+ * empty body and no file. An emptied body that still has a file stays.
+ */
+export function isEmptyMessage(body: string, attachmentCount: number): boolean {
+  return isEmptyBody(body) && attachmentCount === 0;
+}
+
+/** The optimistic body of a queued edit: the new body with the edited span the server will add. */
+export function withEditedMark(body: string): string {
+  return body + `<span class="${EDITED_CLASS}"></span>`;
+}
+
+/**
+ * The partners and channels a body links, in body order, each once: the
+ * anchors the browser reads back to edit a message (`a.o_mail_redirect` of
+ * `res.partner`, `.o_channel_redirect` of `discuss.channel`), digit ids only.
+ */
+export function mentionAnchors(html: string): { partners: number[]; channels: number[] } {
+  const doc = parseBody(html);
+  const ids = (selector: string): number[] => [
+    ...new Set(
+      Array.from(doc.querySelectorAll(selector))
+        .map((el) => el.getAttribute("data-oe-id") ?? "")
+        .filter((id) => /^\d+$/.test(id))
+        .map(Number),
+    ),
+  ];
+  return {
+    partners: ids('a.o_mail_redirect[data-oe-model="res.partner"]'),
+    channels: ids('.o_channel_redirect[data-oe-model="discuss.channel"]'),
+  };
 }
 
 /** The body as one line of text for a conversation list, cut to `max` characters with an ellipsis. */
@@ -172,3 +253,4 @@ export function attachmentPreview(atts: { name: string; mimetype: string; voice:
     .join(", ");
   return text.length > max ? text.slice(0, Math.max(0, max - 1)).trimEnd() + "…" : text;
 }
+
