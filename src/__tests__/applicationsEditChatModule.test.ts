@@ -123,9 +123,17 @@ describe("ApplicationsEditComponent chat module line", () => {
         expect(c.state.chatCanUpgrade).toBe(false);
     });
 
+    it("an admin on a 1.2 server is offered the upgrade", async () => {
+        isSystem = true;
+        moduleState.mockResolvedValue("outdated");
+        const { c } = make("18.0");
+        await c.loadAppData();
+        expect(c.state.chatCanUpgrade).toBe(true);
+    });
+
     it("upgrade updates the line to installed and persists it", async () => {
         moduleState.mockResolvedValue("outdated");
-        upgradeModule.mockResolvedValue({ state: "installed", level: "1.2" });
+        upgradeModule.mockResolvedValue({ state: "installed", level: "1.3" });
         const { c, setSourceState } = make("18.0");
         await c.loadAppData();
         await c.upgradeChatModule();
@@ -133,7 +141,7 @@ describe("ApplicationsEditComponent chat module line", () => {
         expect(c.state.chatCanUpgrade).toBe(false);
         expect(c.state.chatInstalling).toBe(false);
         expect(setSourceState).toHaveBeenCalledWith({
-            configId: "https://odoo.example.test|alice|db1", moduleState: "installed", moduleLevel: "1.2",
+            configId: "https://odoo.example.test|alice|db1", moduleState: "installed", moduleLevel: "1.3",
         });
     });
 

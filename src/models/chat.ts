@@ -214,7 +214,7 @@ export interface ChatSourceState {
   /** Random id of the account's directory under chat/; never derived from the account. */
   fileDir: string | null;
   /** Level of the server module (attachment upload route at "1.2"); null while unknown. */
-  moduleLevel: "1.0" | "1.1" | "1.2" | null;
+  moduleLevel: "1.0" | "1.1" | "1.2" | "1.3" | null;
 }
 
 /**
