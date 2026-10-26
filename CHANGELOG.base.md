@@ -67,6 +67,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   messages and the files not sent yet. The app bundles the MP3 encoder
   @breezystack/lamejs, licensed LGPL-3.0: Options › Third-party licenses
   names it, links its source and reproduces the licence text.
+- **Chat, lot 4: actions and writing** — a long press on a message opens a
+  menu: a bar of six reactions (👍 ❤️ 😂 😮 😢 🙏 at first, then the ones the
+  user reacts with most), a button for the full emoji picker, Reply, Copy
+  (the whole message), and, on one's own messages, Edit and Delete. Reactions
+  show as chips under the message; a tap adds or removes one's own, a long
+  press lists who reacted. Everything queues offline and is never applied
+  twice: a reaction is sent as an explicit add or remove, one added then
+  removed before it left sends nothing, and an edit or a delete whose answer
+  was lost counts as done when the server shows it. A reply shows a quote
+  of the original, which a tap scrolls to; an edited message shows « (modifié) »;
+  a deleted one disappears, and a reply quoting it says the original is
+  deleted. An edit is refused rather than overwriting a message changed or
+  deleted in the browser meanwhile (with the server module 1.3 the server
+  compares the body it holds; without it the app re-reads the message just
+  before sending), and the refused text stays one tap away under « Reprendre ».
+  The composer writes what the browser composer writes: line breaks, links,
+  emoji shortcodes, and @people and #channels picked from suggestions (the
+  people and channels the phone knows, then the server's), with @everyone;
+  a reply, an edit in progress and the picks are kept in the draft of the
+  conversation. The emoji picker has search, categories and recent emoji;
+  its names, keywords and shortcodes come from Odoo 18's `web` module
+  (LGPL-3.0), converted once into an asset loaded when the picker opens, and
+  they are Unicode CLDR data under the Unicode-DFS-2016 licence: Options ›
+  Third-party licenses names both and reproduces the Unicode text, the
+  authors' sentence in the language of the app. Migrations 2026102607
+  (reactions, replies, recipients) and 2026102608 (reply, edit and mentions
+  of the draft). The test kit is at `HARNESS_API` 4 and the device hook at
+  `DEVICE_HOOK_API` 5.
 - **Sync test entry points** — `src/testing/syncTestKit.ts` (versioned by
   `HARNESS_API`) sets the sync code up for ERPLibre's integration tests
   against real Odoo servers; a development build also exposes
@@ -520,6 +548,37 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   l'encodeur MP3 @breezystack/lamejs, sous licence LGPL-3.0 : Options ›
   Licences tierces le nomme, lie son code source et reproduit le texte de la
   licence.
+- **Clavardage, lot 4 : actions et écriture** — un appui long sur un message
+  ouvre un menu : une barre de six réactions (👍 ❤️ 😂 😮 😢 🙏 au début, puis
+  celles dont l'utilisateur se sert le plus), un bouton vers le sélecteur
+  d'émojis complet, Répondre, Copier (le message entier) et, sur ses propres
+  messages, Modifier et Supprimer. Les réactions s'affichent en pastilles
+  sous le message ; un appui ajoute ou retire la sienne, un appui long
+  indique qui a réagi. Tout se met en file hors ligne et n'est jamais appliqué
+  deux fois : une réaction part en ajout ou en retrait explicite, celle
+  ajoutée puis retirée avant de partir n'envoie rien, et une modification ou
+  une suppression dont la réponse s'est perdue compte comme faite quand le
+  serveur la montre. Une réponse montre une citation de l'original, vers
+  laquelle un appui défile ; un message modifié montre « (modifié) » ; un
+  message supprimé disparaît, et une réponse qui le cite dit que l'original
+  est supprimé. Une modification est refusée plutôt que d'écraser un message
+  changé ou supprimé entre-temps dans le navigateur (avec le module serveur
+  1.3, le serveur compare le corps qu'il détient ; sans lui, l'app relit le
+  message juste avant l'envoi), et le texte refusé reste à un appui sous
+  « Reprendre ». La zone de saisie écrit ce qu'écrit celle du navigateur :
+  sauts de ligne, liens, codes courts d'émojis, et @personnes et #canaux
+  choisis dans des suggestions (ceux que le téléphone connaît, puis ceux du
+  serveur), avec @everyone ; une réponse, une modification en cours et les
+  choix sont gardés dans le brouillon de la conversation. Le sélecteur
+  d'émojis offre recherche, catégories et récents ; ses noms, mots-clés et
+  codes courts viennent du module `web` d'Odoo 18 (LGPL-3.0), convertis une
+  fois en une ressource chargée à l'ouverture du sélecteur, et ce sont des
+  données Unicode CLDR sous la licence Unicode-DFS-2016 : Options › Licences
+  tierces nomme les deux et reproduit le texte d'Unicode, la phrase des
+  auteurs dans la langue de l'app. Migrations 2026102607 (réactions,
+  réponses, destinataires) et 2026102608 (réponse, modification et mentions
+  du brouillon). Le kit de test est à `HARNESS_API` 4 et le crochet appareil
+  à `DEVICE_HOOK_API` 5.
 - **Points d'entrée des tests de synchro** — `src/testing/syncTestKit.ts`
   (versionné par `HARNESS_API`) prépare le code de synchro pour les tests
   d'intégration d'ERPLibre contre de vrais Odoo ; une construction de

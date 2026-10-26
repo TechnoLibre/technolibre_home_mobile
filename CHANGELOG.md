@@ -61,6 +61,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   messages and the files not sent yet. The app bundles the MP3 encoder
   @breezystack/lamejs, licensed LGPL-3.0: Options › Third-party licenses
   names it, links its source and reproduces the licence text.
+- **Chat, lot 4: actions and writing** — a long press on a message opens a
+  menu: a bar of six reactions (👍 ❤️ 😂 😮 😢 🙏 at first, then the ones the
+  user reacts with most), a button for the full emoji picker, Reply, Copy
+  (the whole message), and, on one's own messages, Edit and Delete. Reactions
+  show as chips under the message; a tap adds or removes one's own, a long
+  press lists who reacted. Everything queues offline and is never applied
+  twice: a reaction is sent as an explicit add or remove, one added then
+  removed before it left sends nothing, and an edit or a delete whose answer
+  was lost counts as done when the server shows it. A reply shows a quote
+  of the original, which a tap scrolls to; an edited message shows « (modifié) »;
+  a deleted one disappears, and a reply quoting it says the original is
+  deleted. An edit is refused rather than overwriting a message changed or
+  deleted in the browser meanwhile (with the server module 1.3 the server
+  compares the body it holds; without it the app re-reads the message just
+  before sending), and the refused text stays one tap away under « Reprendre ».
+  The composer writes what the browser composer writes: line breaks, links,
+  emoji shortcodes, and @people and #channels picked from suggestions (the
+  people and channels the phone knows, then the server's), with @everyone;
+  a reply, an edit in progress and the picks are kept in the draft of the
+  conversation. The emoji picker has search, categories and recent emoji;
+  its names, keywords and shortcodes come from Odoo 18's `web` module
+  (LGPL-3.0), converted once into an asset loaded when the picker opens, and
+  they are Unicode CLDR data under the Unicode-DFS-2016 licence: Options ›
+  Third-party licenses names both and reproduces the Unicode text, the
+  authors' sentence in the language of the app. Migrations 2026102607
+  (reactions, replies, recipients) and 2026102608 (reply, edit and mentions
+  of the draft). The test kit is at `HARNESS_API` 4 and the device hook at
+  `DEVICE_HOOK_API` 5.
 - **Sync test entry points** — `src/testing/syncTestKit.ts` (versioned by
   `HARNESS_API`) sets the sync code up for ERPLibre's integration tests
   against real Odoo servers; a development build also exposes

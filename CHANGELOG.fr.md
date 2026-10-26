@@ -69,6 +69,37 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   l'encodeur MP3 @breezystack/lamejs, sous licence LGPL-3.0 : Options ›
   Licences tierces le nomme, lie son code source et reproduit le texte de la
   licence.
+- **Clavardage, lot 4 : actions et écriture** — un appui long sur un message
+  ouvre un menu : une barre de six réactions (👍 ❤️ 😂 😮 😢 🙏 au début, puis
+  celles dont l'utilisateur se sert le plus), un bouton vers le sélecteur
+  d'émojis complet, Répondre, Copier (le message entier) et, sur ses propres
+  messages, Modifier et Supprimer. Les réactions s'affichent en pastilles
+  sous le message ; un appui ajoute ou retire la sienne, un appui long
+  indique qui a réagi. Tout se met en file hors ligne et n'est jamais appliqué
+  deux fois : une réaction part en ajout ou en retrait explicite, celle
+  ajoutée puis retirée avant de partir n'envoie rien, et une modification ou
+  une suppression dont la réponse s'est perdue compte comme faite quand le
+  serveur la montre. Une réponse montre une citation de l'original, vers
+  laquelle un appui défile ; un message modifié montre « (modifié) » ; un
+  message supprimé disparaît, et une réponse qui le cite dit que l'original
+  est supprimé. Une modification est refusée plutôt que d'écraser un message
+  changé ou supprimé entre-temps dans le navigateur (avec le module serveur
+  1.3, le serveur compare le corps qu'il détient ; sans lui, l'app relit le
+  message juste avant l'envoi), et le texte refusé reste à un appui sous
+  « Reprendre ». La zone de saisie écrit ce qu'écrit celle du navigateur :
+  sauts de ligne, liens, codes courts d'émojis, et @personnes et #canaux
+  choisis dans des suggestions (ceux que le téléphone connaît, puis ceux du
+  serveur), avec @everyone ; une réponse, une modification en cours et les
+  choix sont gardés dans le brouillon de la conversation. Le sélecteur
+  d'émojis offre recherche, catégories et récents ; ses noms, mots-clés et
+  codes courts viennent du module `web` d'Odoo 18 (LGPL-3.0), convertis une
+  fois en une ressource chargée à l'ouverture du sélecteur, et ce sont des
+  données Unicode CLDR sous la licence Unicode-DFS-2016 : Options › Licences
+  tierces nomme les deux et reproduit le texte d'Unicode, la phrase des
+  auteurs dans la langue de l'app. Migrations 2026102607 (réactions,
+  réponses, destinataires) et 2026102608 (réponse, modification et mentions
+  du brouillon). Le kit de test est à `HARNESS_API` 4 et le crochet appareil
+  à `DEVICE_HOOK_API` 5.
 - **Points d'entrée des tests de synchro** — `src/testing/syncTestKit.ts`
   (versionné par `HARNESS_API`) prépare le code de synchro pour les tests
   d'intégration d'ERPLibre contre de vrais Odoo ; une construction de
