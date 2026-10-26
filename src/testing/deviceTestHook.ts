@@ -20,9 +20,10 @@ import type { NoteService } from "../services/note/noteService";
 import type { NotificationService } from "../services/notificationService";
 import { SyncService } from "../services/syncService";
 import { ChatCapture } from "../services/chat/chatCapture";
-import type { ChatAttachment } from "../models/chat";
+import { messageKeyOf, type ChatAttachment, type ChatReaction, type MessageTarget } from "../models/chat";
+import { EMPTY_MENTIONS, type Mentions } from "../services/chat/chatCompose";
 
-export const DEVICE_HOOK_API = 4;
+export const DEVICE_HOOK_API = 5;
 
 /** The stage limit the composer takes while the server's is unknown: Odoo's default. */
 const DEFAULT_STAGE_LIMIT = 128 * 1024 * 1024;
@@ -43,6 +44,11 @@ export interface DeviceTarget {
 	username: string;
 	password: string;
 	database: string;
+}
+
+/** A message the server holds, as an action names it. */
+function sent(messageId: number): MessageTarget {
+	return { messageId, clientUuid: null };
 }
 
 async function chatSourceOf(env: DeviceHookEnv, configId: string) {
@@ -98,10 +104,42 @@ export function deviceTestHook(env: DeviceHookEnv) {
 		async chatLoad(configId: string): Promise<void> {
 			await env.syncService.chat.load(await chatSourceOf(env, configId));
 		},
-		/** Posts text in the channel as the composer does; returns the pending message's clientUuid. */
-		async chatSend(configId: string, channelId: number, text: string): Promise<string> {
-			const message = await env.syncService.chat.send(await chatSourceOf(env, configId), channelId, text);
+		/**
+		 * Posts text in the channel as the composer does, with the people and
+		 * channels picked (mentions) and as a reply to the message replyTo
+		 * (a server id) when given; returns the pending message's clientUuid.
+		 */
+		async chatSend(
+			configId: string,
+			channelId: number,
+			text: string,
+			opts: { replyTo?: number; mentions?: Mentions } = {},
+		): Promise<string> {
+			const message = await env.syncService.chat.send(await chatSourceOf(env, configId), channelId, text, [], {
+				mentions: opts.mentions ?? EMPTY_MENTIONS,
+				replyTo: opts.replyTo != null ? sent(opts.replyTo) : null,
+			});
 			return message.clientUuid as string;
+		},
+		/** Turns the user's own reaction content on the message messageId on (on) or off, as a tap does. */
+		async chatReact(configId: string, channelId: number, messageId: number, content: string, on: boolean): Promise<void> {
+			await env.syncService.chat.react(await chatSourceOf(env, configId), channelId, sent(messageId), content, on);
+		},
+		/** Edits the user's own message messageId to text, the picks of its current body kept (editDraftOf). */
+		async chatEdit(configId: string, channelId: number, messageId: number, text: string): Promise<void> {
+			const chat = env.syncService.chat;
+			const draft = await chat.editDraftOf(configId, channelId, sent(messageId));
+			await chat.editMessage(await chatSourceOf(env, configId), channelId, sent(messageId), text, draft?.mentions ?? EMPTY_MENTIONS);
+		},
+		/** Deletes the user's own message messageId, as the menu's Delete once confirmed. */
+		async chatDelete(configId: string, channelId: number, messageId: number): Promise<void> {
+			await env.syncService.chat.deleteMessage(await chatSourceOf(env, configId), channelId, sent(messageId));
+		},
+		/** The cached reaction groups of the channel's cached messages, by message key (m<id>, u<uuid>). */
+		async chatReactions(configId: string, channelId: number): Promise<Record<string, ChatReaction[]>> {
+			const chat = env.syncService.chat;
+			const keys = (await chat.messages(configId, channelId)).map(messageKeyOf);
+			return Object.fromEntries(await chat.reactions(configId, channelId, keys));
 		},
 		/**
 		 * Creates a group with these people (self added by Odoo) as the new

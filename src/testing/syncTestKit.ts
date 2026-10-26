@@ -28,11 +28,24 @@ import { encodeMp3, voiceName } from "../services/chat/chatMp3";
 import type { ChatSource } from "../services/chat/chatSources";
 import { CHAT_FILE_CANCELLED, CHAT_FILE_UNSENT, transportError } from "../plugins/chatFilePlugin";
 import { memoryChatFiles, type MemoryChatFiles } from "./chatFakes";
+import { composeBody, EMPTY_MENTIONS, type Mentions } from "../services/chat/chatCompose";
+import { bodyText, isEmptyMessage } from "../services/chat/chatBody";
+import { emojiConversions } from "../services/chat/chatEmoji";
+import type { MessageTarget } from "../models/chat";
 
 export { memoryChatFiles };
 export type { MemoryChatFiles };
+/**
+ * The body rules of the chat, for a test to build what a browser sends and
+ * to read what the server stores as the app reads it: composeBody (the
+ * browser composer's HTML for a text, with emojiConversions), bodyText (the
+ * text a browser edit starts from), isEmptyMessage (a message the thread
+ * hides, and quotes as deleted).
+ */
+export { composeBody, EMPTY_MENTIONS, bodyText, isEmptyMessage, emojiConversions };
+export type { Mentions, MessageTarget };
 
-export const HARNESS_API = 3;
+export const HARNESS_API = 4;
 
 /** Migrations that read what an older install left (secure storage, video files): none on a new database. */
 const SKIPPED_MIGRATIONS = new Set([2026031801, 2026032401]);

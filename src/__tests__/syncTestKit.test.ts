@@ -7,6 +7,7 @@ import { __setNetworkStatus, Network } from "@capacitor/network";
 import {
 	HARNESS_API, createSyncEnv, nodeTransport, installLocalStorage, memoryAttachmentIO, resetMocks,
 	restartSyncEnv, setOnline, setNetwork, chatTitle, memoryChatFiles, nodeChatHttp, stageChatFile, stageChatVoice,
+	composeBody, bodyText, emojiConversions, isEmptyMessage, EMPTY_MENTIONS,
 } from "../testing/syncTestKit";
 import { syncSessionKey } from "../services/syncService";
 import { isHttpAllowed } from "../services/odoo/httpPolicy";
@@ -22,8 +23,19 @@ describe("syncTestKit", () => {
 		resetMocks();
 	});
 
-	it("is at API 3", () => {
-		expect(HARNESS_API).toBe(3);
+	it("is at API 4", () => {
+		expect(HARNESS_API).toBe(4);
+	});
+
+	it("gives the chat's body rules: a composed body reads back as its text, an emptied one is hidden", async () => {
+		const mentions = { partners: [{ id: 7, name: "Alice Martin" }], channels: [] };
+		const composed = composeBody("@Alice Martin :) voir\nwww.example.org", mentions, await emojiConversions());
+		expect(composed.partnerIds).toEqual([7]);
+		expect(composed.body).toContain('data-oe-id="7"');
+		expect(bodyText(composed.body)).toBe("@Alice Martin 😊 voir\nwww.example.org");
+		expect(composeBody("texte", EMPTY_MENTIONS, []).partnerIds).toEqual([]);
+		expect(isEmptyMessage('<span class="o-mail-Message-edited"></span>', 0)).toBe(true);
+		expect(isEmptyMessage("", 1)).toBe(false);
 	});
 
 	it("builds a migrated database with one application per target and pushes a note through it", async () => {
