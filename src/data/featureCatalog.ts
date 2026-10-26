@@ -4411,8 +4411,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.attachments",
                 label: { en: "Chat attachments", fr: "Pièces jointes du clavardage" },
                 description: {
-                    en: "Streamed file upload and download with the session, the app's chat file layout, the CSRF token of the upload routes, and the cache of previews and originals.",
-                    fr: "Envoi et téléchargement de fichiers en flux avec la session, l'arborescence des fichiers du clavardage, le jeton CSRF des routes d'envoi et le cache des aperçus et des originaux.",
+                    en: "Capture from the camera, the gallery or any file, streamed file upload and download with the session, the app's chat file layout, the CSRF token of the upload routes, and the cache of previews and originals.",
+                    fr: "Capture par l'appareil photo, la galerie ou tout fichier, envoi et téléchargement de fichiers en flux avec la session, l'arborescence des fichiers du clavardage, le jeton CSRF des routes d'envoi et le cache des aperçus et des originaux.",
                 },
                 status: "experimental",
                 howItWorks: {
@@ -4425,7 +4425,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "the newest first, whatever the network; an original downloads on open, its SHA-1 "
                         + "checked, and waits for Wi-Fi when « Wi-Fi only » is on unless downloaded anyway. "
                         + "The purge (off by default) frees the least recently opened originals, then previews; "
-                        + "files waiting to be sent are never touched.",
+                        + "files waiting to be sent are never touched. Picks go through the web view's own file "
+                        + "input: its camera chooser hands over the camera app's file untouched, named "
+                        + "IMG_<date>.jpg; each pick is copied by chunks under out/<uuid>/, refused first when "
+                        + "over the server's limit. A HEIC becomes a JPEG (quality 92) on the phone; « compress » "
+                        + "fits a photo to 1920 px at quality 80.",
                     fr: "Un plugin natif OkHttp envoie en flux un formulaire multipart lu d'un fichier et "
                         + "télécharge vers un fichier « .part » renommé une fois complet, donc un fichier n'est "
                         + "jamais entier en mémoire JS ; il ne touche que les fichiers du répertoire de "
@@ -4437,7 +4441,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "original se télécharge à l'ouverture, son SHA-1 vérifié, et attend le Wi-Fi quand "
                         + "« Wi-Fi seulement » est actif, sauf téléchargement forcé. La purge (inactive par "
                         + "défaut) libère les originaux ouverts le moins récemment, puis les aperçus ; les "
-                        + "fichiers en attente d'envoi ne sont jamais touchés.",
+                        + "fichiers en attente d'envoi ne sont jamais touchés. Les choix passent par le champ "
+                        + "fichier de la vue web : son sélecteur d'appareil photo remet le fichier de l'application "
+                        + "photo intact, nommé IMG_<date>.jpg ; chaque choix est copié par morceaux sous "
+                        + "out/<uuid>/, refusé d'abord s'il dépasse la limite du serveur. Un HEIC devient un JPEG "
+                        + "(qualité 92) sur le téléphone ; « compresser » ramène une photo à 1920 px en qualité 80.",
                 },
                 demo: NONE_PLUMBING,
                 files: [
@@ -4448,6 +4456,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatCsrf.ts",
                     "src/services/chat/chatTransfer.ts",
                     "src/services/chat/chatAttachmentCache.ts",
+                    "src/services/chat/chatCapture.ts",
+                    "android/app/src/main/java/ca/erplibre/home/ChatImageSize.java",
                     "src/testing/chatFakes.ts",
                 ],
                 tests: [
@@ -4457,6 +4467,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/chatCsrf.test.ts",
                     "src/__tests__/chatTransfer.test.ts",
                     "src/__tests__/chatAttachmentCache.test.ts",
+                    "src/__tests__/chatCapture.test.ts",
+                    "android/app/src/test/java/ca/erplibre/home/ChatImageSizeTest.java",
                 ],
             },
             {

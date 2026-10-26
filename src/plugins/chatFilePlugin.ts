@@ -3,6 +3,7 @@ import type { PluginListenerHandle } from "@capacitor/core";
 import type {
     ChatHttp, DownloadAnswer, DownloadRequest, HttpAnswer, TransferProgress, UploadRequest,
 } from "../services/chat/chatFiles";
+import type { JpegAnswer, JpegRequest } from "../services/chat/chatCapture";
 import { ChatTransferCancelledError } from "../services/chat/chatTransfer";
 import { RequestNotSentError } from "../services/odoo/odooRpcClient";
 
@@ -16,6 +17,13 @@ export interface ChatFilePlugin {
     upload(options: UploadRequest): Promise<HttpAnswer>;
     download(options: DownloadRequest): Promise<DownloadAnswer>;
     cancel(options: { id: string }): Promise<void>;
+    /**
+     * Writes the image at from as a JPEG at to (both inside the chat
+     * directory; to may be from): EXIF orientation applied, the long side
+     * fitted to maxPx (0 keeps the size), transparency on white. Rejects
+     * when the phone cannot decode the image (a HEIC before Android 9).
+     */
+    toJpeg(options: JpegRequest): Promise<JpegAnswer>;
     addListener(
         event: "chatFileProgress",
         fn: (ev: TransferProgress) => void
@@ -24,8 +32,9 @@ export interface ChatFilePlugin {
 
 /**
  * Native streamed file transfer (OkHttp): multipart uploads read from a
- * file and downloads written to one, with the session Cookie sent as given.
- * Files must lie inside the app's chat directory.
+ * file and downloads written to one, with the session Cookie sent as given;
+ * and JPEG conversion of a picked image. Files must lie inside the app's
+ * chat directory.
  */
 export const ChatFile = registerPlugin<ChatFilePlugin>("ChatFile");
 

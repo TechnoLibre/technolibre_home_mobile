@@ -1,5 +1,14 @@
 package ca.erplibre.home;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.ImageDecoder;
+import android.graphics.Matrix;
+import android.media.ExifInterface;
+import android.os.Build;
+
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -9,6 +18,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -28,6 +39,9 @@ import java.util.concurrent.Executors;
  * the server rejects with code UNSENT, a transfer stopped by cancel() with
  * code CANCELLED. Event chatFileProgress {id, done, total} (total null when
  * unknown) is emitted at most every 250 ms per transfer.
+ *
+ * toJpeg converts a picked image (HEIC to JPEG, a photo reduced before
+ * sending) on the same workers, under the same chatRoot rule.
  */
 @CapacitorPlugin(name = "ChatFile")
 public class ChatFilePlugin extends Plugin {
@@ -123,6 +137,45 @@ public class ChatFilePlugin extends Plugin {
         });
     }
 
+    /**
+     * Writes the image at from as a JPEG at to: {from, to, maxPx, quality}
+     * → {size, width, height}. The EXIF orientation is applied, the long
+     * side fitted to maxPx (0 keeps the size, ChatImageSize.fit), a
+     * transparent image laid on white. The JPEG is written to « to.part »
+     * then renamed, so to may be from and a failure leaves no partial file.
+     * Android 9+ decodes with ImageDecoder (HEIC/HEIF included); older
+     * versions with BitmapFactory, which rejects a HEIC.
+     */
+    @PluginMethod
+    public void toJpeg(PluginCall call) {
+        String from = call.getString("from");
+        String to = call.getString("to");
+        int maxPx = call.getInt("maxPx", 0);
+        int quality = call.getInt("quality", 92);
+        if (from == null || to == null || quality < 0 || quality > 100) {
+            call.reject("from, to and a quality from 0 to 100 are required");
+            return;
+        }
+        worker.execute(() -> {
+            Bitmap bitmap = null;
+            try {
+                File source = ChatFileTransfer.resolveInside(chatRoot(), from);
+                File target = ChatFileTransfer.resolveInside(chatRoot(), to);
+                bitmap = decodeFitted(source, maxPx);
+                long size = writeJpeg(bitmap, target, quality);
+                JSObject result = new JSObject();
+                result.put("size", size);
+                result.put("width", bitmap.getWidth());
+                result.put("height", bitmap.getHeight());
+                call.resolve(result);
+            } catch (Exception | OutOfMemoryError e) {
+                call.reject("ChatFile error: " + e.getMessage());
+            } finally {
+                if (bitmap != null) bitmap.recycle();
+            }
+        });
+    }
+
     @PluginMethod
     public void cancel(PluginCall call) {
         String id = call.getString("id");
@@ -133,6 +186,83 @@ public class ChatFilePlugin extends Plugin {
     @Override
     protected void handleOnDestroy() {
         worker.shutdownNow();
+    }
+
+    /** The image at source, upright and fitted to maxPx (ChatImageSize.fit). */
+    private static Bitmap decodeFitted(File source, int maxPx) throws IOException {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return ImageDecoder.decodeBitmap(ImageDecoder.createSource(source), (decoder, info, src) -> {
+                decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
+                int[] fit = ChatImageSize.fit(info.getSize().getWidth(), info.getSize().getHeight(), maxPx);
+                decoder.setTargetSize(fit[0], fit[1]);
+            });
+        }
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(source.getPath(), bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            throw new IOException("cannot decode " + source.getName());
+        }
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = ChatImageSize.sampleSize(bounds.outWidth, bounds.outHeight, maxPx);
+        Bitmap decoded = BitmapFactory.decodeFile(source.getPath(), options);
+        if (decoded == null) throw new IOException("cannot decode " + source.getName());
+        int[] fit = ChatImageSize.fit(bounds.outWidth, bounds.outHeight, maxPx);
+        Matrix matrix = orientation(new ExifInterface(source.getPath())
+            .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL));
+        matrix.preScale((float) fit[0] / decoded.getWidth(), (float) fit[1] / decoded.getHeight());
+        Bitmap upright = Bitmap.createBitmap(decoded, 0, 0, decoded.getWidth(), decoded.getHeight(), matrix, true);
+        if (upright != decoded) decoded.recycle();
+        return upright;
+    }
+
+    /** The transform that shows an image of the given EXIF orientation upright. */
+    private static Matrix orientation(int exif) {
+        Matrix m = new Matrix();
+        switch (exif) {
+            case ExifInterface.ORIENTATION_FLIP_HORIZONTAL: m.postScale(-1, 1); break;
+            case ExifInterface.ORIENTATION_ROTATE_180: m.postRotate(180); break;
+            case ExifInterface.ORIENTATION_FLIP_VERTICAL: m.postScale(1, -1); break;
+            case ExifInterface.ORIENTATION_TRANSPOSE: m.postRotate(90); m.postScale(-1, 1); break;
+            case ExifInterface.ORIENTATION_ROTATE_90: m.postRotate(90); break;
+            case ExifInterface.ORIENTATION_TRANSVERSE: m.postRotate(-90); m.postScale(-1, 1); break;
+            case ExifInterface.ORIENTATION_ROTATE_270: m.postRotate(-90); break;
+            default: break;
+        }
+        return m;
+    }
+
+    /**
+     * bitmap as a JPEG at target (through « target.part », renamed once
+     * complete); a bitmap with transparency is laid on white first, as
+     * JPEG has no alpha. Returns the bytes written.
+     */
+    private static long writeJpeg(Bitmap bitmap, File target, int quality) throws IOException {
+        Bitmap opaque = bitmap;
+        if (bitmap.hasAlpha()) {
+            opaque = Bitmap.createBitmap(bitmap.getWidth(), bitmap.getHeight(), Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(opaque);
+            canvas.drawColor(Color.WHITE);
+            canvas.drawBitmap(bitmap, 0, 0, null);
+        }
+        File parent = target.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            throw new IOException("cannot make " + parent.getName());
+        }
+        File part = new File(parent, target.getName() + ".part");
+        try {
+            try (FileOutputStream out = new FileOutputStream(part)) {
+                if (!opaque.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
+                    throw new IOException("JPEG encoding failed");
+                }
+                out.getFD().sync();
+            }
+            if (!part.renameTo(target)) throw new IOException("cannot rename to " + target.getName());
+            return target.length();
+        } finally {
+            if (part.exists()) part.delete();
+            if (opaque != bitmap) opaque.recycle();
+        }
     }
 
     /**
