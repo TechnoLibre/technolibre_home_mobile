@@ -11,6 +11,8 @@ import { RequestNotSentError } from "../services/odoo/odooRpcClient";
 export const CHAT_FILE_UNSENT = "UNSENT";
 /** Code of a rejection of a transfer stopped by cancel(). */
 export const CHAT_FILE_CANCELLED = "CANCELLED";
+/** Code of an openWith rejection when no app on the phone opens the file. */
+export const CHAT_FILE_NO_APP = "NO_APP";
 
 export interface ChatFilePlugin {
     getText(options: { url: string; headers: Record<string, string> }): Promise<HttpAnswer>;
@@ -24,6 +26,13 @@ export interface ChatFilePlugin {
      * when the phone cannot decode the image (a HEIC before Android 9).
      */
     toJpeg(options: JpegRequest): Promise<JpegAnswer>;
+    /**
+     * Opens a file of the chat directory (uri as ChatFiles.uri gives it) in
+     * another app, through Android's chooser titled title: shared as a
+     * FileProvider content: URI with a read grant. Rejects with code NO_APP
+     * when no app takes mimetype.
+     */
+    openWith(options: { uri: string; mimetype: string; title?: string }): Promise<void>;
     addListener(
         event: "chatFileProgress",
         fn: (ev: TransferProgress) => void
@@ -33,8 +42,8 @@ export interface ChatFilePlugin {
 /**
  * Native streamed file transfer (OkHttp): multipart uploads read from a
  * file and downloads written to one, with the session Cookie sent as given;
- * and JPEG conversion of a picked image. Files must lie inside the app's
- * chat directory.
+ * JPEG conversion of a picked image; « open with » of a file. Files must
+ * lie inside the app's chat directory.
  */
 export const ChatFile = registerPlugin<ChatFilePlugin>("ChatFile");
 

@@ -4,7 +4,7 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { HeadingComponent } from "../heading/heading_component";
 import { Events } from "../../constants/events";
 import { getCurrentLocale, t } from "../../i18n";
-import { bodyPreview } from "../../services/chat/chatBody";
+import { attachmentPreview, bodyPreview } from "../../services/chat/chatBody";
 import { serverChoiceMode, type ChoiceMode } from "../../services/chat/chatSources";
 import { displayNameOf } from "../../services/chat/chatNames";
 import { isBold, unreadOf } from "../../services/chat/chatUnread";
@@ -305,7 +305,9 @@ export class ChatListComponent extends EnhancedComponent {
                 const queued = pendings.get(c.channelId);
                 const last = queued?.[queued.length - 1] ?? lasts.get(c.channelId) ?? null;
                 const title = displayNameOf(c, membersOf.get(c.channelId) ?? [], byPartner, state.selfPartnerId, getCurrentLocale());
-                const row = this.rowOf(c, labelOf.get(id) ?? "", title, last);
+                const text = last ? bodyPreview(last.body, PREVIEW_MAX) : "";
+                const preview = text || (last ? await this.filesLine(id, c.channelId, last) : "");
+                const row = this.rowOf(c, labelOf.get(id) ?? "", title, last, preview);
                 row.ambiguous = !!c.createOpId && blocked.has(c.createOpId);
                 byKey.set(c.configId + ":" + c.channelId, row);
             }
@@ -349,8 +351,20 @@ export class ChatListComponent extends EnhancedComponent {
         return row.failed === "join" ? t("chat.join_failed_short") : t("chat.create_failed_short");
     }
 
-    private rowOf(c: ChatChannel, serverLabel: string, title: string, last: ChatMessage | null): ChatRow {
-        const text = last ? bodyPreview(last.body, PREVIEW_MAX) : "";
+    /** The preview of a last message without text: its files (attachmentPreview), "" when it has none. */
+    private async filesLine(configId: string, channelId: number, last: ChatMessage): Promise<string> {
+        const key = last.messageId !== null ? "m" + last.messageId : last.clientUuid ? "u" + last.clientUuid : null;
+        if (!key) return "";
+        const groups = await this.chatService.repo.attachmentsOf(
+            configId, channelId,
+            last.messageId !== null ? [last.messageId] : [],
+            last.messageId === null && last.clientUuid ? [last.clientUuid] : [],
+        );
+        return attachmentPreview(groups.get(key) ?? [], PREVIEW_MAX);
+    }
+
+    /** One row; text is the last message's preview line (its body, else its files). */
+    private rowOf(c: ChatChannel, serverLabel: string, title: string, last: ChatMessage | null, text: string): ChatRow {
         return {
             configId: c.configId,
             channelId: c.channelId,

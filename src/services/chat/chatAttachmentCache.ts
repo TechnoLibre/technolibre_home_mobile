@@ -72,7 +72,7 @@ function fileQuery(checksum: string | null): string {
  * uploaded and not posted): its row is keyed by its local uuid, as
  * ChatRepository keys it, and its file is the one under out/.
  */
-const onItsWay = (a: ChatAttachment): boolean => a.attachmentId === null || (a.localUuid !== null && a.state !== "posted");
+export const onItsWay = (a: ChatAttachment): boolean => a.attachmentId === null || (a.localUuid !== null && a.state !== "posted");
 
 /** The account's work started before an erase stops at its next step: the account's rows are gone. */
 class ErasedError extends Error {}

@@ -7,7 +7,9 @@ import { getCurrentLocale, t } from "../../i18n";
 import { renderBody } from "../../services/chat/chatBody";
 import type { ChatSource } from "../../services/chat/chatService";
 import { displayNameOf } from "../../services/chat/chatNames";
-import type { ChatChannel, ChatMember, ChatMessage, ChatPartner, OutgoingFile } from "../../models/chat";
+import type { ChatAttachment, ChatChannel, ChatMember, ChatMessage, ChatPartner, OutgoingFile } from "../../models/chat";
+import { CHAT_UPLOAD } from "../../services/chat/chatOutbox";
+import { ChatFile } from "../../plugins/chatFilePlugin";
 import { formatListTime, initialsOf } from "./chat_list_component";
 import {
     ChatComposerAttachComponent,
@@ -16,6 +18,13 @@ import {
     newComposerAttachState,
     type ComposerAttachState,
 } from "./chat_composer_attach_component";
+import {
+    ChatAttachmentsComponent,
+    ThreadAttachments,
+    viewSig,
+    type AttachmentView,
+} from "./chat_attachments_component";
+import { ChatImageViewerComponent } from "./chat_image_viewer_component";
 
 /** Quiet period that folds a burst of CHAT_CHANGED into one refresh. */
 const CHANGE_DEBOUNCE_MS = 150;
@@ -30,15 +39,23 @@ export const THREAD_WINDOW = 100;
 /** Cached messages a scroll to the top adds to the rendered ones before the server is asked. */
 export const THREAD_PAGE = 50;
 
-type MetaKind = "none" | "sent" | "seen" | "pending" | "waiting" | "waiting_create" | "ambiguous" | "failed" | "left";
+type MetaKind =
+    | "none" | "sent" | "seen" | "pending" | "waiting" | "waiting_create" | "waiting_wifi" | "ambiguous" | "failed" | "left";
+
+/** The outbox ops a build reads, for the pending rows' marks. */
+type RowOp = { id: string; kind?: string; dependsOn: string | null; status?: string; params?: Record<string, any> };
 
 export interface ThreadRow {
     key: string;
     own: boolean;
     html: unknown;
+    /** The body shows something (an attachment-only message has no text bubble). */
+    hasBody: boolean;
     time: string;
     meta: MetaKind;
     opId: string | null;
+    /** The message's files, in pick order (ThreadAttachments.views). */
+    attachments: AttachmentView[];
 }
 
 interface ThreadState {
@@ -62,6 +79,8 @@ interface ThreadState {
     error: string;
     /** Rows the composer shows, from 1 up to MAX_INPUT_ROWS. */
     inputRows: number;
+    /** Key of the image the viewer shows; null when it is closed. */
+    viewer: string | null;
 }
 
 /** Cheap 32-bit hash (djb2) of a body, so a changed body never reuses a cached render. */
@@ -69,6 +88,11 @@ function bodyHash(body: string): string {
     let h = 5381;
     for (let i = 0; i < body.length; i++) h = ((h << 5) + h + body.charCodeAt(i)) | 0;
     return (h >>> 0).toString(36) + "." + body.length;
+}
+
+/** Whether a rendered body shows anything: text, or an image placeholder. */
+function shows(html: string): boolean {
+    return html.includes("chat-msg__image") || /\S/.test(html.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " "));
 }
 
 /** Epoch ms of an Odoo UTC date string (space or ISO form); NaN when unreadable. */
@@ -106,13 +130,16 @@ export function typingLine(
  * bottom marks it read, and so
  * does a new message arriving while the bottom is in view. Message
  * bodies go through renderBody (whitelisted HTML) and nothing else is
- * rendered as markup.
+ * rendered as markup. A message's files show under its body
+ * (ChatAttachmentsComponent over ThreadAttachments), an image in the
+ * viewer; a tick of the files' progress renders again only the rows whose
+ * files changed.
  */
 export class ChatThreadComponent extends EnhancedComponent {
     state!: ThreadState;
     scroller!: { el: HTMLElement | null };
 
-    static components = { HeadingComponent, ChatComposerAttachComponent };
+    static components = { HeadingComponent, ChatComposerAttachComponent, ChatAttachmentsComponent, ChatImageViewerComponent };
 
     static template = xml`
     <div id="chat-thread">
@@ -142,7 +169,8 @@ export class ChatThreadComponent extends EnhancedComponent {
       <div class="chat-thread__scroll" t-ref="scroller" t-on-scroll="onScroll">
         <div t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-thread__bubble"
              t-att-class="{'chat-thread__bubble--own': row.own}">
-          <div class="chat-thread__body"><t t-out="row.html"/></div>
+          <div t-if="row.hasBody" class="chat-thread__body"><t t-out="row.html"/></div>
+          <ChatAttachmentsComponent t-if="row.attachments.length" row="row" ta="attachments" onImage.bind="openImage"/>
           <div class="chat-thread__meta">
             <span t-esc="row.time"/>
             <span t-if="row.meta === 'sent'" t-att-title="t('chat.sent')">✓</span>
@@ -150,6 +178,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             <span t-if="row.meta === 'pending'" t-esc="'⏳ ' + t('chat.pending')"/>
             <span t-if="row.meta === 'waiting'" t-esc="'⏳ ' + t('chat.waiting_previous')"/>
             <span t-if="row.meta === 'waiting_create'" t-esc="'⏳ ' + t('chat.waiting_create')"/>
+            <span t-if="row.meta === 'waiting_wifi'" t-esc="'⏳ ' + t('chat.waiting_wifi')"/>
             <span t-if="row.meta === 'ambiguous'" class="chat-thread__failed" t-esc="'⚠️ ' + t('chat.create_ambiguous')"/>
             <span t-if="row.meta === 'failed'" class="chat-thread__failed" t-esc="'⚠️ ' + t('chat.failed')"/>
             <span t-if="row.meta === 'left'" class="chat-thread__failed" t-esc="'⚠️ ' + t('chat.left_conversation')"/>
@@ -178,11 +207,14 @@ export class ChatThreadComponent extends EnhancedComponent {
                   t-on-mousedown.prevent="" t-on-click="() => this.onSend()">➤</button>
         </div>
       </t>
+      <ChatImageViewerComponent t-if="state.viewer" ta="attachments" attKey="state.viewer" onClose.bind="closeViewer"/>
     </div>`;
 
     /** The composer's picks, chips and voice message (ChatComposerAttachComponent shows them). */
     attachState!: ComposerAttachState;
     attach!: ComposerAttach;
+    /** The files of the shown messages: their views, previews, opening and polling. */
+    attachments!: ThreadAttachments;
     private configId = "";
     private channelId = 0;
     private source: ChatSource | null = null;
@@ -197,8 +229,13 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _marking = false;
     private _markAgain = false;
     /** Rendered body per message version: renderBody runs for new or edited messages only. */
-    private _html = new Map<string, unknown>();
+    private _html = new Map<string, { html: unknown; shows: boolean }>();
     private _sig = "";
+    /** The rows last rendered (not the reactive proxies) and their parts the files do not change. */
+    private _rows: ThreadRow[] = [];
+    private _base: string[] = [];
+    /** Mark of an own queued row before the Wi-Fi hold is considered, by row key. */
+    private _metaBase = new Map<string, MetaKind>();
     private _members: ChatMember[] = [];
     private _names = new Map<number, string>();
     private _self: number | null = null;
@@ -237,6 +274,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             failedCreate: "",
             error: "",
             inputRows: 1,
+            viewer: null,
         });
         const params = this.router.getRouteParams(window.location.pathname, "/chat/:source/:channelId");
         this.configId = params.get("source") ?? "";
@@ -247,6 +285,14 @@ export class ChatThreadComponent extends EnhancedComponent {
             uploadLimit: async () => (this.source ? this.chatService.uploadLimit(this.source) : null),
             send: (extra) => this.onSend(extra),
         }));
+        this.attachments = new ThreadAttachments({
+            cache: () => this.chatService.attachments,
+            files: () => this.chatService.queue.files,
+            uploadProgress: (localUuid) => this.chatService.queue.uploadProgress(localUuid),
+            openWith: (uri, mimetype) => ChatFile.openWith({ uri, mimetype, title: t("chat.open_with") }),
+            onTick: () => this.retick(),
+            onReload: () => void this.refresh(),
+        });
         onMounted(async () => {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
             await this.open();
@@ -262,6 +308,7 @@ export class ChatThreadComponent extends EnhancedComponent {
     teardown(): void {
         this.destroyed = true;
         void this.attach.dispose();
+        this.attachments.dispose();
         this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
         if (this._debounce !== null) clearTimeout(this._debounce);
         if (this._typingTimer !== null) clearTimeout(this._typingTimer);
@@ -276,6 +323,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         const sources = await this.chatService.sources({ online: false });
         this.source = sources.find((s) => s.configId === this.configId) ?? null;
         if (this.destroyed) return;
+        this.attachments.source = this.source;
         if (this.source) void this.attach.start();
         this.state.serverLabel = this.source?.label ?? "";
         await this.refresh();
@@ -322,8 +370,14 @@ export class ChatThreadComponent extends EnhancedComponent {
             const self = (await repo.sourceState(this.configId)).selfPartnerId;
             const kept = (await this.chatService.messages(this.configId, this.channelId))
                 .filter((m) => m.messageId === null);
+            await this.loadAttachments(kept, []);
+            if (this.destroyed) return;
+            this._metaBase.clear();
             this._sig = "";
-            this.state.rows = kept.map((m) => this.rowOf(m, null, [], self, []));
+            this._rows = kept.map((m) => this.rowOf(m, null, [], self, []));
+            this._base = this._rows.map(() => "");
+            this.state.rows = this._rows;
+            this.attachments.watch();
             return;
         }
         const [messages, members, partners, st] = await Promise.all([
@@ -333,9 +387,11 @@ export class ChatThreadComponent extends EnhancedComponent {
             repo.sourceState(this.configId),
         ]);
         // Outbox ops matter only to pending rows, once per build
-        const ops = messages.some((m) => m.status === "pending")
+        const ops: RowOp[] = messages.some((m) => m.status === "pending")
             ? await this.databaseService.getOutboxOpsForConfig(this.configId)
             : [];
+        await this.loadAttachments(messages, ops);
+        if (this.destroyed) return;
         const names = new Map(partners.map((p) => [p.partnerId, p.name]));
         const self = st.selfPartnerId;
         this.state.found = true;
@@ -356,11 +412,16 @@ export class ChatThreadComponent extends EnhancedComponent {
         const el = this.scroller.el as HTMLElement | null;
         const stick = !el || this.atBottom(el);
         const before = el ? el.scrollHeight - el.scrollTop : 0;
+        this._metaBase.clear();
         const rows = messages.map((m) => this.rowOf(m, channel!, members, self, ops));
         // A change of members or typing alone leaves the rows, and the DOM, untouched
-        const sig = rows.map((r, i) => [r.key, r.meta, r.time, r.opId, this.htmlKey(messages[i])].join("|")).join("\n");
+        const base = rows.map((r, i) => [r.key, r.time, r.opId, this.htmlKey(messages[i])].join("|"));
+        const sig = this.sigOf(base, rows);
+        this.attachments.watch();
         if (sig === this._sig) return;
         this._sig = sig;
+        this._base = base;
+        this._rows = rows;
         this.state.rows = rows;
         this._oldestShown = messages.find((m) => m.messageId !== null)?.messageId ?? null;
         this.pruneHtml(messages);
@@ -372,6 +433,66 @@ export class ChatThreadComponent extends EnhancedComponent {
         }
         // Rows changed where the user looks (bottom in view, or nothing to scroll): read up to the last one
         if (!el || stick || el.scrollHeight <= el.clientHeight) void this.markRead();
+    }
+
+    /**
+     * Reads the files of the given messages (server ones by id, queued ones
+     * by client uuid) into ThreadAttachments, with which posts are queued
+     * and which uploads the outbox holds for Wi-Fi.
+     */
+    private async loadAttachments(messages: ChatMessage[], ops: RowOp[]): Promise<void> {
+        const ids = messages.filter((m) => m.messageId !== null).map((m) => m.messageId!);
+        const uuids = messages.filter((m) => m.messageId === null && m.clientUuid).map((m) => m.clientUuid!);
+        const groups: Map<string, ChatAttachment[]> = ids.length || uuids.length
+            ? await this.chatService.repo.attachmentsOf(this.configId, this.channelId, ids, uuids)
+            : new Map();
+        const pendingRows = new Set(messages.filter((m) => m.status === "pending").map((m) => this.keyOf(m)));
+        const heldUploads = new Set(ops
+            .filter((o) => o.kind === CHAT_UPLOAD && o.params?.heldFor === "wifi" && typeof o.params?.localUuid === "string")
+            .map((o) => o.params!.localUuid as string));
+        await this.attachments.load(groups, { pendingRows, heldUploads });
+    }
+
+    /** The rows' signature: what a render shows of each, the files' state included. */
+    private sigOf(base: string[], rows: ThreadRow[]): string {
+        return rows.map((r, i) => base[i] + "|" + r.meta + "|" + viewSig(r.attachments)).join("\n");
+    }
+
+    /**
+     * Recomputes the rows' files and Wi-Fi marks from memory (no cache
+     * read), on a ThreadAttachments tick: a row whose files did not change
+     * keeps its object, so its part of the screen is not rendered again.
+     */
+    retick(): void {
+        if (this.destroyed) return;
+        const rows = this._rows.map((r) => {
+            const attachments = this.attachments.views(r.key);
+            const meta = this.wifiMeta(r.key, r.meta);
+            if (meta === r.meta && viewSig(attachments) === viewSig(r.attachments)) return r;
+            return { ...r, attachments, meta };
+        });
+        const sig = this.sigOf(this._base, rows);
+        if (sig !== this._sig) {
+            // A preview that lands makes its row taller: the bottom in view stays in view
+            const el = this.scroller.el as HTMLElement | null;
+            const stick = !!el && this.atBottom(el);
+            this._sig = sig;
+            this._rows = rows;
+            this.state.rows = rows;
+            if (stick) this.scrollToBottomSoon();
+        }
+        this.attachments.watch();
+    }
+
+    /** An own queued row reads « waiting for Wi-Fi » while one of its uploads is held, its own mark otherwise. */
+    private wifiMeta(key: string, meta: MetaKind): MetaKind {
+        const base = this._metaBase.get(key);
+        if (base === undefined) return meta;
+        return this.attachments.heldForWifi(key) ? "waiting_wifi" : base;
+    }
+
+    private keyOf(m: ChatMessage): string {
+        return m.messageId !== null ? "m" + m.messageId : "u" + (m.clientUuid ?? m.outboxOpId ?? m.date);
     }
 
     /** Drops the cached bodies of messages no longer shown. */
@@ -427,9 +548,10 @@ export class ChatThreadComponent extends EnhancedComponent {
         channel: ChatChannel | null,
         members: ChatMember[],
         self: number | null,
-        ops: { id: string; dependsOn: string | null; status?: string; params?: Record<string, any> }[],
+        ops: RowOp[],
     ): ThreadRow {
         const own = self !== null && m.authorPartnerId === self;
+        const key = this.keyOf(m);
         let meta: MetaKind = "none";
         if (own) {
             if (m.status === "failed") meta = channel?.leftUnsent ? "left" : "failed";
@@ -438,7 +560,11 @@ export class ChatThreadComponent extends EnhancedComponent {
                 const create = channel?.createOpId ? ops.find((o) => o.id === channel.createOpId) : undefined;
                 if (create?.status === "blocked" && create.params?.blockedReason === "ambiguous") meta = "ambiguous";
                 else if (create) meta = "waiting_create";
-                else meta = op?.dependsOn && ops.some((o) => o.id === op.dependsOn) ? "waiting" : "pending";
+                else {
+                    meta = this.waitsForEarlier(op, ops) ? "waiting" : "pending";
+                    this._metaBase.set(key, meta);
+                    if (this.attachments.heldForWifi(key)) meta = "waiting_wifi";
+                }
             } else if (m.messageId !== null) {
                 const others = members.filter((x) => x.partnerId !== self);
                 const seen =
@@ -449,24 +575,46 @@ export class ChatThreadComponent extends EnhancedComponent {
                 meta = seen ? "seen" : "sent";
             }
         }
+        const body = this.htmlOf(m);
         return {
-            key: m.messageId !== null ? "m" + m.messageId : "u" + (m.clientUuid ?? m.outboxOpId ?? m.date),
+            key,
             own,
-            html: this.htmlOf(m),
+            html: body.html,
+            hasBody: body.shows,
             time: formatListTime(m.date),
             meta,
             opId: m.outboxOpId,
+            attachments: this.attachments.views(key),
         };
     }
 
-    private htmlOf(m: ChatMessage): unknown {
-        const k = this.htmlKey(m);
-        let html = this._html.get(k);
-        if (html === undefined) {
-            html = markup(renderBody(m.body));
-            this._html.set(k, html);
+    /**
+     * Whether a queued post waits for an earlier op of its conversation: its
+     * chain is followed through its own uploads (a post depends on its
+     * files), to the op before them.
+     */
+    private waitsForEarlier(op: RowOp | undefined, ops: RowOp[]): boolean {
+        let dep = op?.dependsOn ?? null;
+        const seen = new Set<string>();
+        while (dep !== null && !seen.has(dep)) {
+            seen.add(dep);
+            const before = ops.find((o) => o.id === dep);
+            if (!before) return false;
+            if (before.kind !== CHAT_UPLOAD) return true;
+            dep = before.dependsOn;
         }
-        return html;
+        return false;
+    }
+
+    private htmlOf(m: ChatMessage): { html: unknown; shows: boolean } {
+        const k = this.htmlKey(m);
+        let body = this._html.get(k);
+        if (body === undefined) {
+            const html = renderBody(m.body);
+            body = { html: markup(html), shows: shows(html) };
+            this._html.set(k, body);
+        }
+        return body;
     }
 
     initials(): string {
@@ -577,6 +725,17 @@ export class ChatThreadComponent extends EnhancedComponent {
         } catch {
             // Not marked: the next bottom scroll sends it again
         }
+    }
+
+    // ─── Attachments ──────────────────────────────────────────────────────
+
+    /** Opens the viewer on an image of the screen. */
+    openImage(key: string): void {
+        this.state.viewer = key;
+    }
+
+    closeViewer(): void {
+        this.state.viewer = null;
     }
 
     // ─── Menu ─────────────────────────────────────────────────────────────

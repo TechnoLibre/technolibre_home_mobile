@@ -37,6 +37,7 @@ function fakeChat(ids: string[], channels: any[], unread: Record<string, number>
             partners: vi.fn().mockResolvedValue([{ partnerId: 7, name: "Alice Roy" }]),
             messages: vi.fn().mockResolvedValue([]),
             lastMessages: vi.fn().mockResolvedValue(new Map()),
+            attachmentsOf: vi.fn(async (): Promise<Map<string, any[]>> => new Map()),
             pendingMessages: vi.fn().mockResolvedValue(new Map()),
             membersBySource: vi.fn().mockResolvedValue(new Map()),
             sourceState: vi.fn().mockResolvedValue({ selfPartnerId: 3 }),
@@ -230,6 +231,24 @@ describe("ChatListComponent", () => {
         expect(c.state.rows[0].title).toBe("Alice Roy");
         expect(c.state.rows[0].typeIcon).toBe("👤");
         expect(c.state.rows[0].preview).toBe("⏳ hello");
+    });
+
+    it("a message with only files previews them by icon and name", async () => {
+        const chat = fakeChat(["a"], [chan("a", 1, { name: "Team" }), chan("a", 2, { name: "Pair" }), chan("a", 3)]);
+        chat.repo.lastMessages.mockResolvedValue(new Map([
+            [1, { messageId: 40, clientUuid: null, status: "sent", body: "", date: "2020-01-01 09:00:00" }],
+            [3, { messageId: 41, clientUuid: null, status: "sent", body: "<p>words</p>", date: "2020-01-01 09:00:00" }],
+        ]));
+        chat.repo.pendingMessages.mockResolvedValue(new Map([[2, [{
+            messageId: null, clientUuid: "P1", status: "pending", body: "<!-- erplibre-mobile:P1 -->", date: "2020-01-01 10:00:00",
+        }]]]));
+        chat.repo.attachmentsOf.mockImplementation(async (_c: string, channelId: number) => channelId === 1
+            ? new Map([["m40", [{ name: "IMG_1.jpg", mimetype: "image/jpeg", voice: false }, { name: "b.pdf", mimetype: "application/pdf", voice: false }]]])
+            : new Map([["uP1", [{ name: "Voice-2026-10-26-1.mp3", mimetype: "audio/mpeg", voice: true }]]]));
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.state.rows.map((r: any) => r.preview)).toEqual(["🖼️ IMG_1.jpg, 📎 b.pdf", "⏳ 🎤 Voice message", "words"]);
+        expect(chat.repo.attachmentsOf.mock.calls).toEqual([["a", 1, [40], []], ["a", 2, [], ["P1"]]]);
     });
 
     it("a stale build for All never overwrites the chip B rows", async () => {

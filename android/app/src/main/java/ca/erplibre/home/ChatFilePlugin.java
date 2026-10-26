@@ -1,5 +1,7 @@
 package ca.erplibre.home;
 
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -7,7 +9,10 @@ import android.graphics.Color;
 import android.graphics.ImageDecoder;
 import android.graphics.Matrix;
 import android.media.ExifInterface;
+import android.net.Uri;
 import android.os.Build;
+
+import androidx.core.content.FileProvider;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -42,13 +47,17 @@ import java.util.concurrent.Semaphore;
  * unknown) is emitted at most every 250 ms per transfer.
  *
  * toJpeg converts a picked image (HEIC to JPEG, a photo reduced before
- * sending) on the same workers, under the same chatRoot rule.
+ * sending) on the same workers, under the same chatRoot rule. openWith
+ * hands a file of the same directory to Android's « open with » chooser
+ * through the app's FileProvider (file_paths.xml « chat_files »).
  */
 @CapacitorPlugin(name = "ChatFile")
 public class ChatFilePlugin extends Plugin {
 
     static final String UNSENT = "UNSENT";
     static final String CANCELLED = "CANCELLED";
+    /** Code of an openWith rejection when no app on the phone takes the file. */
+    static final String NO_APP = "NO_APP";
 
     private static final long PROGRESS_EVERY_MS = 250;
 
@@ -183,6 +192,51 @@ public class ChatFilePlugin extends Plugin {
                 if (held) conversions.release();
             }
         });
+    }
+
+    /**
+     * Opens a file of the chat directory in another app: {uri, mimetype,
+     * title?}. The file is shared as a content: URI of the app's
+     * FileProvider (never a file: URI, which Android refuses to pass on)
+     * with a read grant, through a chooser titled title. Rejects with code
+     * NO_APP when no app takes the mimetype, and when the file is missing
+     * or outside the chat directory.
+     */
+    @PluginMethod
+    public void openWith(PluginCall call) {
+        String uri = call.getString("uri");
+        String mimetype = call.getString("mimetype");
+        if (uri == null || uri.isEmpty()) {
+            call.reject("uri is required");
+            return;
+        }
+        if (mimetype == null || mimetype.isEmpty()) mimetype = "application/octet-stream";
+        String title = call.getString("title", "");
+        try {
+            File file = ChatFileTransfer.resolveInside(chatRoot(), uri);
+            if (!file.isFile()) {
+                call.reject("ChatFile error: no such file " + file.getName());
+                return;
+            }
+            Uri content = FileProvider.getUriForFile(
+                getContext(), getContext().getPackageName() + ".fileprovider", file);
+            Intent view = new Intent(Intent.ACTION_VIEW);
+            view.setDataAndType(content, mimetype);
+            view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            // createChooser carries the read grant over to the app picked
+            Intent chooser = Intent.createChooser(view, title);
+            if (getActivity() != null) {
+                getActivity().startActivity(chooser);
+            } else {
+                chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(chooser);
+            }
+            call.resolve();
+        } catch (ActivityNotFoundException e) {
+            call.reject("ChatFile error: no app opens " + mimetype, NO_APP, e);
+        } catch (Exception e) {
+            call.reject("ChatFile error: " + e.getMessage(), e);
+        }
     }
 
     @PluginMethod

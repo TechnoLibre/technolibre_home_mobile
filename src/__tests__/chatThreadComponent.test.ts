@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Events } from "../constants/events";
+import { __clearPluginMocks, __setPluginMock } from "@capacitor/core";
 
 function stubLocale() {
     const store: Record<string, string> = { app_lang: "en" };
@@ -55,8 +56,25 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
         typing: vi.fn().mockResolvedValue(undefined),
         realIdOf: vi.fn(async (): Promise<number | null> => null),
         discardCreate: vi.fn().mockResolvedValue(undefined),
-        queue: { flush: vi.fn().mockResolvedValue(undefined) },
+        queue: {
+            flush: vi.fn().mockResolvedValue(undefined),
+            files: {
+                webUrl: async (rel: string) => "http://localhost/_capacitor_file_/data/" + rel,
+                uri: async (rel: string) => "file:///data/user/0/app/files/" + rel,
+            },
+            uploadProgress: vi.fn((_u: string): any => null),
+        },
+        attachments: {
+            preview: vi.fn(async (_s: any, a: any) => "chat/d/thumbs/" + a.attachmentId),
+            retryPreview: vi.fn(async () => null),
+            previewFailed: vi.fn(() => false),
+            open: vi.fn(async (_s: any, a: any) => ({ kind: "ready", path: "chat/d/files/" + a.attachmentId + "/" + a.name })),
+            downloadProgress: vi.fn(() => null),
+            cancel: vi.fn(async () => {}),
+            waitingWifi: vi.fn(() => false),
+        },
         repo: {
+            attachmentsOf: vi.fn(async (): Promise<Map<string, any[]>> => new Map()),
             channel: vi.fn(async () => ch),
             members: vi.fn(async () => members),
             partners: vi.fn().mockResolvedValue([
@@ -116,6 +134,14 @@ function fakeAttachments(c: any, opts: { askCompress?: boolean } = {}) {
     const chip = (file: any, origin = "gallery") => c.attachState.chips.push({ key: "k" + file.name, file, origin });
     return { recorder, capture, confirm, files, voice, chip };
 }
+
+/** A row of chat_attachments as ChatRepository.attachmentsOf gives it. */
+const fileRow = (id: number | null, p: any = {}) => ({
+    configId: "a", channelId: 5, messageId: id === null ? null : 10, attachmentId: id, localUuid: null,
+    postClientUuid: null, seq: 0, name: "IMG_" + id + ".jpg", mimetype: "image/jpeg", size: 2048,
+    checksum: "c" + id, voice: false, thumbPath: null, thumbBytes: 0, originalPath: null, originalBytes: 0,
+    state: "posted", error: null, lastOpenedAt: null, createdAt: "2026-10-26T10:00:00Z", ...p,
+});
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -684,4 +710,113 @@ describe("ChatThreadComponent", () => {
         expect(a.recorder.discard).toHaveBeenCalledTimes(1);
         expect(a.recorder.onAutoStop).toBeNull();
     });
+
+    // ─── Attachments ──────────────────────────────────────────────────────
+
+    it("a message's files reach its row; previews wait until the row is on screen", async () => {
+        const chat = fakeChat([msg(10, { body: "" }), msg(11)]);
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([["m10", [fileRow(31), fileRow(32, { name: "a.pdf", mimetype: "application/pdf" })]]]));
+        const c = make(chat);
+        await c.open();
+        expect(chat.repo.attachmentsOf).toHaveBeenCalledWith("a", 5, [10, 11], []);
+        expect(c.state.rows.map((r: any) => r.attachments.map((v: any) => [v.key, v.kind, v.state]))).toEqual([
+            [["a31", "image", "remote"], ["a32", "file", "remote"]],
+            [],
+        ]);
+        // An attachment-only message has no text bubble
+        expect(c.state.rows.map((r: any) => r.hasBody)).toEqual([false, true]);
+        expect(chat.attachments.preview).not.toHaveBeenCalled();
+        c.attachments.seen("m10");
+        await new Promise((r) => setTimeout(r, 0));
+        expect(chat.attachments.preview).toHaveBeenCalledTimes(1);
+        c.teardown();
+    });
+
+    it("a queued post whose upload waits for Wi-Fi reads « waiting for Wi-Fi »", async () => {
+        const pending = msg(null, { clientUuid: "P1", outboxOpId: "op9", body: "<p>look</p>" });
+        const chat = fakeChat([msg(10), pending]);
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([["uP1", [
+            fileRow(null, { localUuid: "lu1", state: "queued", postClientUuid: "P1", originalPath: "chat/d/out/lu1/IMG_1.jpg" }),
+        ]]]));
+        const c = make(chat, [
+            { id: "op9", kind: "chat.post", dependsOn: "op8", status: "queued", params: {} },
+            { id: "op8", kind: "chat.upload", dependsOn: null, status: "queued", params: { localUuid: "lu1", heldFor: "wifi" } },
+        ]);
+        await c.open();
+        expect(chat.repo.attachmentsOf).toHaveBeenCalledWith("a", 5, [10], ["P1"]);
+        const row = c.state.rows[1];
+        expect(row.meta).toBe("waiting_wifi");
+        expect(row.attachments.map((v: any) => [v.state, v.src])).toEqual([
+            ["waiting_wifi", "http://localhost/_capacitor_file_/data/chat/d/out/lu1/IMG_1.jpg"],
+        ]);
+        c.teardown();
+    });
+
+    it("a progress tick renders again only the rows whose files changed", async () => {
+        const pending = msg(null, { clientUuid: "P1", outboxOpId: "op9" });
+        const chat = fakeChat([msg(10), pending]);
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([["uP1", [
+            fileRow(null, { localUuid: "lu1", state: "queued", postClientUuid: "P1", originalPath: "chat/d/out/lu1/IMG_1.jpg" }),
+        ]]]));
+        const c = make(chat, [{ id: "op9", kind: "chat.post", dependsOn: null, status: "queued", params: {} }]);
+        await c.open();
+        const before = c.state.rows;
+        c.retick();
+        expect(c.state.rows).toBe(before);
+        chat.queue.uploadProgress.mockImplementation(() => ({ done: 500, total: 1000 }));
+        c.retick();
+        expect(c.state.rows).not.toBe(before);
+        expect(c.state.rows[0]).toBe(before[0]);
+        expect(c.state.rows[1].attachments[0]).toMatchObject({ state: "uploading", progress: 50 });
+        c.teardown();
+    });
+
+    it("a tap on an image opens the viewer; closing it empties it", async () => {
+        const chat = fakeChat([msg(10)]);
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([["m10", [fileRow(31)]]]));
+        const c = make(chat);
+        await c.open();
+        c.openImage("a31");
+        expect(c.state.viewer).toBe("a31");
+        c.closeViewer();
+        expect(c.state.viewer).toBeNull();
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        expect(source).toMatch(/<ChatAttachmentsComponent t-if="row.attachments.length" row="row" ta="attachments"/);
+        expect(source).toMatch(/<ChatImageViewerComponent t-if="state.viewer"/);
+        c.teardown();
+    });
+
+    it("a post with files waits for an earlier post, not for its own uploads", async () => {
+        const first = msg(null, { clientUuid: "P1", outboxOpId: "op1" });
+        const second = msg(null, { clientUuid: "P2", outboxOpId: "op9" });
+        const chat = fakeChat([first, second]);
+        const ops = [
+            { id: "op9", kind: "chat.post", dependsOn: "op8", status: "queued", params: {} },
+            { id: "op8", kind: "chat.upload", dependsOn: null, status: "queued", params: { localUuid: "lu1" } },
+        ];
+        const c = make(chat, ops);
+        await c.open();
+        expect(c.state.rows.map((r: any) => r.meta)).toEqual(["pending", "pending"]);
+        ops[1].dependsOn = "op1";
+        ops.push({ id: "op1", kind: "chat.post", dependsOn: null, status: "queued", params: {} });
+        await c.refresh();
+        expect(c.state.rows.map((r: any) => r.meta)).toEqual(["pending", "waiting"]);
+        c.teardown();
+    });
+
+    it("a file goes to the native « open with » with its mimetype and the chooser's title", async () => {
+        const openWith = vi.fn(async () => {});
+        __setPluginMock("ChatFile", { openWith });
+        const chat = fakeChat([msg(10)]);
+        chat.repo.attachmentsOf.mockResolvedValue(new Map([["m10", [fileRow(32, { name: "a.pdf", mimetype: "application/pdf" })]]]));
+        const c = make(chat);
+        await c.open();
+        await c.attachments.openFile("a32");
+        expect(openWith).toHaveBeenCalledWith({
+            uri: "file:///data/user/0/app/files/chat/d/files/32/a.pdf", mimetype: "application/pdf", title: "Open with",
+        });
+        __clearPluginMocks();
+        c.teardown();
+    });
 });
+

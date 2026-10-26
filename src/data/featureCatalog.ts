@@ -4498,6 +4498,65 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.attachment-view",
+                label: { en: "Attachments in the thread", fr: "Pièces jointes dans la conversation" },
+                description: {
+                    en: "A message's images as a grid with a full-screen viewer, voice messages and audio in a player, other files opened with another app, with transfer progress, cancel and « download anyway ».",
+                    fr: "Les images d'un message en grille avec une visionneuse plein écran, les messages vocaux et l'audio dans un lecteur, les autres fichiers ouverts avec une autre application, avec la progression, l'annulation et « Télécharger quand même ».",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The thread reads the files of the shown messages in one query and keeps them in "
+                        + "ThreadAttachments; each file's state (sending, waiting for Wi-Fi, refused, "
+                        + "downloading, failed preview, on the phone, not yet) is computed from memory, and "
+                        + "the rows are rendered again only when that state, the progress or the local file "
+                        + "changes. Progress is polled every 250 ms while bytes flow, every second while a "
+                        + "file waits to start, never otherwise. Previews are asked only for rows on screen "
+                        + "(IntersectionObserver), the cache running two at a time; a failed one is a "
+                        + "tap-to-retry placeholder. A file still on its way shows its own copy. One image is "
+                        + "up to 300 px tall, several are 75 px tiles; a tap opens the viewer (the preview at "
+                        + "once, then the original). Voice and audio play in an <audio> once the original is "
+                        + "on the phone. Other files open through Android's « open with » chooser as a "
+                        + "FileProvider content: URI with a read grant. Originals follow « Wi-Fi only »; a "
+                        + "held file offers « download anyway » for itself alone. The list previews a message "
+                        + "with only files as 🎤, 🖼️ or 📎 with its name.",
+                    fr: "La conversation lit les fichiers des messages affichés en une requête et les garde "
+                        + "dans ThreadAttachments ; l'état de chaque fichier (envoi, attente du Wi-Fi, refus, "
+                        + "téléchargement, aperçu échoué, sur le téléphone, pas encore) se calcule en mémoire, "
+                        + "et les lignes ne sont rendues à nouveau que si cet état, la progression ou le "
+                        + "fichier local change. La progression est relue toutes les 250 ms pendant qu'un "
+                        + "transfert avance, chaque seconde pendant qu'un fichier attend de partir, jamais "
+                        + "sinon. Les aperçus ne sont demandés que pour les lignes à l'écran "
+                        + "(IntersectionObserver), le cache en charge deux à la fois ; un aperçu échoué se "
+                        + "réessaie d'un toucher. Un fichier encore en route montre sa propre copie. Une image "
+                        + "seule monte jusqu'à 300 px, plusieurs font des tuiles de 75 px ; un toucher ouvre la "
+                        + "visionneuse (l'aperçu tout de suite, puis l'original). Les messages vocaux et "
+                        + "l'audio jouent dans un <audio> une fois l'original sur le téléphone. Les autres "
+                        + "fichiers s'ouvrent par le sélecteur « Ouvrir avec » d'Android, en URI content: du "
+                        + "FileProvider avec un droit de lecture. Les originaux suivent « Wi-Fi seulement » ; "
+                        + "un fichier retenu offre « Télécharger quand même » pour lui seul. La liste résume un "
+                        + "message fait seulement de fichiers par 🎤, 🖼️ ou 📎 et son nom.",
+                },
+                demo: { kind: "route", url: "/chat" },
+                files: [
+                    "src/components/chat/chat_attachments_component.ts",
+                    "src/components/chat/chat_attachments_component.scss",
+                    "src/components/chat/chat_image_viewer_component.ts",
+                    "src/components/chat/chat_image_viewer_component.scss",
+                    "src/components/chat/chat_thread_component.ts",
+                    "src/services/chat/chatBody.ts",
+                    "src/plugins/chatFilePlugin.ts",
+                    "android/app/src/main/java/ca/erplibre/home/ChatFilePlugin.java",
+                    "android/app/src/main/res/xml/file_paths.xml",
+                ],
+                tests: [
+                    "src/__tests__/chatAttachmentsComponent.test.ts",
+                    "src/__tests__/chatThreadComponent.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                    "src/__tests__/chatBody.test.ts",
+                ],
+            },
+            {
                 id: "chat.outbox",
                 label: { en: "Chat outbox", fr: "Boîte d'envoi du clavardage" },
                 description: {

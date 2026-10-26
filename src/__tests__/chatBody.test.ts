@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { bodyHasMarker, bodyPreview, chatMarker, renderBody, textToBody } from "../services/chat/chatBody";
+import { attachmentPreview, bodyHasMarker, bodyPreview, chatMarker, renderBody, textToBody } from "../services/chat/chatBody";
 
 describe("textToBody", () => {
   it("escapes and turns newlines into br", () => {
@@ -62,5 +62,25 @@ describe("bodyPreview", () => {
 
   it("truncates", () => {
     expect(bodyPreview("<p>abcdefghij</p>", 5)).toBe("abcd…");
+  });
+});
+
+describe("attachmentPreview", () => {
+  const file = (name: string, mimetype: string, voice = false) => ({ name, mimetype, voice });
+
+  it("names a voice message, an image or a file by its icon", () => {
+    localStorage.setItem("app_lang", "en");
+    expect(attachmentPreview([file("Voice-2026-10-26-1.mp3", "audio/mpeg", true)])).toBe("🎤 Voice message");
+    expect(attachmentPreview([file("IMG_1.jpg", "image/jpeg")])).toBe("🖼️ IMG_1.jpg");
+    expect(attachmentPreview([file("report.pdf", "application/pdf")])).toBe("📎 report.pdf");
+    expect(attachmentPreview([file("song.ogg", "audio/ogg")])).toBe("📎 song.ogg");
+    localStorage.setItem("app_lang", "fr");
+    expect(attachmentPreview([file("Voice-2026-10-26-1.mp3", "audio/mpeg", true)])).toBe("🎤 Message vocal");
+  });
+
+  it("lists several files and cuts to the length", () => {
+    expect(attachmentPreview([file("a.jpg", "image/jpeg"), file("b.pdf", "application/pdf")])).toBe("🖼️ a.jpg, 📎 b.pdf");
+    expect(attachmentPreview([file("abcdefghij.pdf", "application/pdf")], 8)).toBe("📎 abcd…");
+    expect(attachmentPreview([])).toBe("");
   });
 });

@@ -1,3 +1,5 @@
+import { t } from "../../i18n";
+
 /** Tags of a received body that are kept; every other tag is unwrapped or dropped. */
 const KEEP = new Set([
   "p", "br", "a", "span", "b", "strong", "i", "em", "u", "ul", "ol", "li", "blockquote", "code", "pre",
@@ -124,5 +126,13 @@ export function bodyPreview(html: string, max = 80): string {
   };
   walk(parseBody(html).body);
   const text = parts.join("").replace(/\s+/g, " ").trim();
+  return text.length > max ? text.slice(0, Math.max(0, max - 1)).trimEnd() + "…" : text;
+}
+
+/** The files of a message as one line of a conversation list: 🎤 for a voice message, 🖼️ before an image's name, 📎 before any other; cut to `max` characters. */
+export function attachmentPreview(atts: { name: string; mimetype: string; voice: boolean }[], max = 80): string {
+  const text = atts
+    .map((a) => (a.voice ? "🎤 " + t("chat.voice_message") : ((a.mimetype || "").startsWith("image/") ? "🖼️ " : "📎 ") + a.name))
+    .join(", ");
   return text.length > max ? text.slice(0, Math.max(0, max - 1)).trimEnd() + "…" : text;
 }
