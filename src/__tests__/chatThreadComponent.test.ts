@@ -60,6 +60,7 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
         draft: vi.fn(async (_c: string, _ch: number): Promise<any> => ({ text: "", files: [], lost: [] })),
         saveDraftText: vi.fn(async (_c: string, _ch: number, _t: string) => {}),
         keepDraftFile: vi.fn(async () => {}),
+        sendStarted: vi.fn((_c: string, _ch: number) => vi.fn()),
         dropDraftFile: vi.fn(async () => {}),
         queue: {
             flush: vi.fn().mockResolvedValue(undefined),
@@ -685,6 +686,47 @@ describe("ChatThreadComponent", () => {
             const tag = source.slice(source.indexOf('class="' + cls + '"'));
             expect(tag.slice(0, tag.indexOf(">")), cls).toMatch(/t-att-disabled="[^"]*state\.sending/);
         }
+    });
+
+    it("a send holds its conversation's draft from the tap until the post is queued, or refused", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        let endedAtQueue: number | null = null;
+        chat.send.mockImplementationOnce(async (_s: any, _ch: number, _t: string, _f: any, opts: any) => {
+            opts.onQueued();
+            endedAtQueue = chat.sendStarted.mock.results[0].value.mock.calls.length;
+            return msg(null);
+        });
+        c.state.text = "one";
+        const sending = c.onSend();
+        expect(chat.sendStarted).toHaveBeenCalledWith("a", 5);
+        expect(chat.sendStarted.mock.results[0].value).not.toHaveBeenCalled();
+        await sending;
+        expect(endedAtQueue).toBe(1);
+        chat.send.mockRejectedValueOnce(new Error("disk"));
+        c.state.text = "two";
+        await c.onSend();
+        expect(chat.sendStarted.mock.results[1].value).toHaveBeenCalled();
+    });
+
+    it("a failure after the post was queued puts back neither its text nor its chips", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        const a = fakeAttachments(c);
+        await c.open();
+        a.chip(outFile("a.jpg"));
+        chat.send.mockImplementationOnce(async (_s: any, _ch: number, _t: string, _f: any, opts: any) => {
+            opts.onQueued();
+            throw new Error("the flush after it failed");
+        });
+        const reads = chat.draft.mock.calls.length;
+        c.state.text = "queued already";
+        await c.onSend();
+        expect(c.state.text).toBe("");
+        expect(c.state.error).toBe("");
+        expect(c.attachState.chips).toEqual([]);
+        expect(chat.draft.mock.calls.length).toBe(reads);
     });
 
     it("a refused send leaves the composer open again with its text and the draft as it was", async () => {

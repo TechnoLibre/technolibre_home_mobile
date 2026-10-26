@@ -506,11 +506,11 @@ export class ChatOutbox {
     return message;
   }
 
-  /** Removes a stored post's text from the draft (removeDraftText); a failure is logged, the post is not touched. */
-  private async releaseDraftText(configId: string, channelId: number, text: unknown): Promise<void> {
+  /** Removes a stored post's text from the draft (removeDraftText, `notAfter` passed on); a failure is logged, the post is not touched. */
+  private async releaseDraftText(configId: string, channelId: number, text: unknown, notAfter?: string): Promise<void> {
     if (typeof text !== "string") return;
     try {
-      await this.repo.removeDraftText(configId, channelId, text);
+      await this.repo.removeDraftText(configId, channelId, text, notAfter);
     } catch (e: unknown) {
       console.warn("chat: a sent text stays in the draft", e);
     }
@@ -1031,8 +1031,9 @@ export class ChatOutbox {
    * (joinDraftText, ahead of what the draft holds) unless the draft holds
    * it already (draftText), and a staged file a draft row still names is never
    * deleted. An incomplete upload no post waits for is removed. A post
-   * whose message is stored has its draftText removed from the draft (a
-   * kill between the two). Returns how many were queued.
+   * that goes (its message stored, or queued as a text before it) has its
+   * draftText removed from the draft (a kill between the two), unless the
+   * draft was stored after the post. Returns how many were queued.
    */
   async recoverIncomplete(): Promise<number> {
     let queued = 0;
@@ -1070,10 +1071,12 @@ export class ChatOutbox {
         await this.outbox.cancel(up.id);
         await this.removeFiles(await this.notDrafts(configId, [up.params]));
       }
-      // A post stored with its message whose text a kill left in the draft
+      // A post that goes (its message stored, or a text queued before its bubble) whose text a kill left in the draft;
+      // a draft stored after the post is the same text typed again
       const stored = await this.repo.queuedMessageUuids(configId);
       for (const op of await this.db.getOutboxOpsForConfig(configId)) {
-        if (op.kind === CHAT_POST && stored.has(op.clientUuid)) await this.releaseDraftText(configId, op.params.channelId, op.params.draftText);
+        if (op.kind !== CHAT_POST || (!stored.has(op.clientUuid) && op.status === "incomplete")) continue;
+        await this.releaseDraftText(configId, op.params.channelId, op.params.draftText, op.createdAt);
       }
       for (const op of all) {
         if (op.status !== "incomplete" || (op.kind !== CHAT_CREATE && op.kind !== CHAT_JOIN)) continue;

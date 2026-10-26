@@ -109,7 +109,7 @@ describe("ChatOutbox", () => {
       value: JSON.stringify({ sessionId: "sid", odooMajorVersion: 18, createdAt: new Date().toISOString() }),
     });
     clock = new Date("2026-10-25T10:00:00.000Z");
-    repo = new ChatRepository(db);
+    repo = new ChatRepository(db, () => clock);
     rpc = new OdooRpcClient();
     outbox = new OutboxService(db, () => clock);
     chat = new ChatOutbox(db, rpc, outbox, repo, () => clock);
@@ -659,6 +659,30 @@ describe("ChatOutbox", () => {
           // The post itself still goes
           expect((await repo.pendingMessages(CONFIG)).get(CHANNEL)!.at(-1)!.body).toBe("almost sent");
         }
+      });
+
+      it("startup leaves a draft text typed again after its post was queued", async () => {
+        chatOdoo();
+        await repo.putDraftText(CONFIG, CHANNEL, "ok");
+        await chat.queuePost(CONFIG, CHANNEL, "ok", false, { draftText: "ok" });
+        expect((await repo.draftOf(CONFIG, CHANNEL)).text).toBe("");
+        // Offline: the post waits; the same text is typed again later
+        advance(60_000);
+        await repo.putDraftText(CONFIG, CHANNEL, "ok");
+        chat = new ChatOutbox(db, rpc, outbox, repo, () => clock);
+        await chat.recoverIncomplete();
+        expect((await repo.draftOf(CONFIG, CHANNEL)).text).toBe("ok");
+      });
+
+      it("startup releases the draft text of a text-only post that will be sent though its message was never stored", async () => {
+        chatOdoo();
+        await repo.putDraftText(CONFIG, CHANNEL, "cut before its bubble");
+        await outbox.enqueue({
+          noteId: CHAT_NOTE, configId: CONFIG, kind: CHAT_POST,
+          params: { channelId: CHANNEL, text: "cut before its bubble", useModule: false, draftText: "cut before its bubble" },
+        });
+        await chat.recoverIncomplete();
+        expect((await repo.draftOf(CONFIG, CHANNEL)).text).toBe("");
       });
 
       it("a conversation that cannot take a post keeps the draft files refused beside the failed text", async () => {

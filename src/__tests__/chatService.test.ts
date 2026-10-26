@@ -3205,6 +3205,28 @@ describe("ChatService", () => {
         expect(await chat.repo.draftChannels(config)).toEqual(new Set());
       });
 
+      it("a screen opened while a send of its conversation runs reads the draft once the post is queued", async () => {
+        const a = stage("a.jpg");
+        await chat.saveDraftText(config, GROUP, "sent from the first screen");
+        await chat.keepDraftFile(config, GROUP, a, 0, "camera");
+        // The first screen's tap: the compress question still open
+        const end = chat.sendStarted(config, GROUP);
+        let read: any = null;
+        const reading = chat.draft(config, GROUP).then((d) => { read = d; });
+        await new Promise((r) => setTimeout(r, 0));
+        expect(read).toBeNull();
+        offline();
+        await chat.send(src, GROUP, "sent from the first screen", [a], { draftText: "sent from the first screen", onQueued: end });
+        await reading;
+        expect(read).toEqual({ text: "", files: [], lost: [] });
+        // Another conversation is not held by it
+        const other = chat.sendStarted(config, GROUP + 1);
+        expect(await chat.draft(config, GROUP)).toEqual({ text: "", files: [], lost: [] });
+        other();
+        other();
+        online();
+      });
+
       it("the drafts of an account read after the writes asked before them", async () => {
         void chat.saveDraftText(config, GROUP, "written as the screen closes");
         expect(await chat.draftSummaries(config)).toEqual(new Map([[GROUP, { text: "written as the screen closes", files: 0 }]]));

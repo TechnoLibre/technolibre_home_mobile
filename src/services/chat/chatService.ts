@@ -164,7 +164,7 @@ export class ChatService {
     opts: { moduleMode?: "auto" | "ignore" } = {},
   ) {
     this.moduleMode = opts.moduleMode ?? "auto";
-    this.repo = new ChatRepository(db);
+    this.repo = new ChatRepository(db, now);
     this.people = new ChatPeople(rpc, this.repo, () => this.isOnline());
     this.queue = new ChatOutbox(db, rpc, outbox, this.repo, now);
     this.queue.isOnline = () => this.isOnline();
@@ -578,13 +578,44 @@ export class ChatService {
 
   // ─── Drafts ───────────────────────────────────────────────────────────────
 
+  /** Per "configId#channelId", the composer sends between their tap and their post queued (sendStarted). */
+  private sendsRunning = new Map<string, Set<Promise<void>>>();
+
+  /**
+   * Marks a send of the conversation as running, from the composer's tap
+   * (before its compress question) until its post is queued or refused:
+   * call the function returned then (more calls do nothing). Meanwhile
+   * draft() of that conversation waits, so a second screen never shows
+   * again the text and the files a send is taking.
+   */
+  sendStarted(configId: string, channelId: number): () => void {
+    const k = `${configId}#${channelId}`;
+    let end!: () => void;
+    const running = new Promise<void>((resolve) => { end = resolve; });
+    const set = this.sendsRunning.get(k) ?? new Set<Promise<void>>();
+    set.add(running);
+    this.sendsRunning.set(k, set);
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      set.delete(running);
+      if (set.size === 0 && this.sendsRunning.get(k) === set) this.sendsRunning.delete(k);
+      end();
+    };
+  }
+
   /**
    * What the conversation's composer kept: its text and its draft files in
-   * chip order. A file whose staged copy is gone is dropped from the draft
-   * and its name given in `lost`. A temporary id whose create settled reads
-   * the server's id, as every draft call does (ChatOutbox.draftTask).
+   * chip order, read once the sends of the conversation still before their
+   * queue have ended (sendStarted). A file whose staged copy is gone is
+   * dropped from the draft and its name given in `lost`. A temporary id
+   * whose create settled reads the server's id, as every draft call does
+   * (ChatOutbox.draftTask).
    */
-  draft(configId: string, channelId: number): Promise<{ text: string; files: ChatAttachment[]; lost: string[] }> {
+  async draft(configId: string, channelId: number): Promise<{ text: string; files: ChatAttachment[]; lost: string[] }> {
+    const real = (await this.realIdOf(configId, channelId)) ?? channelId;
+    for (const id of new Set([channelId, real])) await Promise.all([...(this.sendsRunning.get(`${configId}#${id}`) ?? [])]);
     return this.queue.draftTask(configId, channelId, async (id) => {
       const { text, files } = await this.repo.draftOf(configId, id);
       const kept: ChatAttachment[] = [];

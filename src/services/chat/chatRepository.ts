@@ -227,14 +227,15 @@ export class ChatRepository {
    */
   onFilesReleased: (paths: string[]) => void | Promise<void> = () => {};
 
-  constructor(private db: DatabaseService) {}
+  /** `clock` stamps the rows' updated_at (the service's clock, a test's). */
+  constructor(private db: DatabaseService, private clock: () => Date = () => new Date()) {}
 
   private async release(paths: string[]): Promise<void> {
     if (paths.length > 0) await this.onFilesReleased(paths);
   }
 
   private now(): string {
-    return new Date().toISOString();
+    return this.clock().toISOString();
   }
 
   private async rows(table: string, where: Row): Promise<Row[]> {
@@ -1300,11 +1301,15 @@ export class ChatRepository {
 
   /**
    * Empties a conversation's draft text when it is still `text` (blanks
-   * around aside): the text a post took. A draft typed on since is left.
+   * around aside): the text a post took. A draft typed on since is left,
+   * and so is one stored after `notAfter` (an ISO time, the post's): the
+   * same text typed again once the post was queued.
    */
-  async removeDraftText(configId: string, channelId: number, text: string): Promise<void> {
-    const held = (await this.row("chat_drafts", key(configId, channelId)))?.text ?? "";
-    if (held && held.trim() === text.trim()) await this.putDraftText(configId, channelId, "");
+  async removeDraftText(configId: string, channelId: number, text: string, notAfter?: string): Promise<void> {
+    const row = await this.row("chat_drafts", key(configId, channelId));
+    if (!row?.text || row.text.trim() !== text.trim()) return;
+    if (notAfter !== undefined && row.updated_at > notAfter) return;
+    await this.putDraftText(configId, channelId, "");
   }
 
   /** Deletes a conversation's empty draft text row once no draft file is left. */

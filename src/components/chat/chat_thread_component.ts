@@ -850,16 +850,22 @@ export class ChatThreadComponent extends EnhancedComponent {
      * nothing is typed meanwhile. The text is stored as the draft in that
      * same first step, so a kill during the question loses nothing, and the
      * outbox removes exactly that text from the draft once the post is
-     * stored (draftText). A failed send puts the text back (the draft still
-     * holds it), shows the error and shows again the chips whose files the
-     * outbox left in the draft. Returns whether the send was taken: false
-     * leaves extra to the caller.
+     * stored (draftText). From the tap until the post is queued, the
+     * conversation's draft is held for another screen
+     * (ChatService.sendStarted). A send refused before its post is queued
+     * puts the text back (the draft still holds it), shows the error and
+     * shows again the chips whose files the outbox left in the draft; a
+     * failure after it (the post goes) is only logged. Returns whether the
+     * send was taken: false leaves extra to the caller.
      */
     async onSend(extra: OutgoingFile[] = []): Promise<boolean> {
         if (!this.source || this.attach.busy() || this.state.sending) return false;
         const text = this.state.text.trim();
         if (!text && extra.length === 0 && this.attachState.chips.length === 0) return false;
         this.state.sending = true;
+        // A second screen of this conversation reads its draft once this post is queued
+        const ended = this.chatService.sendStarted(this.configId, this.channelId);
+        let queued = false;
         const chips = this.attach.take();
         const raw = this.state.text;
         this.state.text = "";
@@ -872,16 +878,26 @@ export class ChatThreadComponent extends EnhancedComponent {
             const files = [...(await this.attach.prepare(chips)), ...extra];
             await this.chatService.send(this.source, this.channelId, text, files, {
                 draftText: raw,
-                onQueued: () => { this.state.sending = false; },
+                onQueued: () => {
+                    queued = true;
+                    this.state.sending = false;
+                    ended();
+                },
             });
-        } catch {
+        } catch (e) {
+            ended();
             this.state.sending = false;
-            this.state.text = raw;
-            this.state.inputRows = rowsOf(raw);
-            this.state.error = t("chat.send_error");
-            await this.showDraft(false);
-            return true;
+            if (!queued) {
+                this.state.text = raw;
+                this.state.inputRows = rowsOf(raw);
+                this.state.error = t("chat.send_error");
+                await this.showDraft(false);
+                return true;
+            }
+            // The post is queued: putting its text back would send it twice
+            console.warn("chat thread: after a queued post", e);
         }
+        ended();
         this.state.sending = false;
         await this.refresh();
         this.scrollToBottomSoon();
