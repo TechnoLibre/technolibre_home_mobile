@@ -161,6 +161,31 @@ describe("OptionsChatComponent attachment cache", () => {
         expect(attachments.warning).toHaveBeenCalled();
     });
 
+    it("a limit is rounded to a whole number of MB and capped", async () => {
+        const { c, store } = makeCache();
+        await c.onLimitChange({ target: { value: "512.6" } });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY]).cacheLimitMb).toBe(513);
+        await c.onLimitChange({ target: { value: "99999999999" } });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY]).cacheLimitMb).toBe(1048576);
+        const target = { value: "0.2" };
+        await c.onLimitChange({ target });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY]).cacheLimitMb).toBe(1048576);
+        expect(target.value).toBe("1048576");
+    });
+
+    it("a burst of chat changes reads the space once", async () => {
+        vi.useFakeTimers();
+        try {
+            const { c, attachments } = makeCache();
+            const ev = new CustomEvent("chat_changed", { detail: { configId: "x" } });
+            for (let i = 0; i < 5; i++) c._onChanged(ev);
+            await vi.advanceTimersByTimeAsync(2000);
+            expect(attachments.space).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("a limit of 0, negative or not a number is refused and the input goes back", async () => {
         const { c, store } = makeCache();
         await c.onLimitChange({ target: { value: "512" } });

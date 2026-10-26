@@ -1138,13 +1138,17 @@ export class ChatRepository {
 
   /** Bytes cached on the phone (previews plus originals), for one channel, one account or all. */
   async attachmentBytes(configId?: string, channelId?: number): Promise<number> {
-    const where: Row = {};
-    if (configId !== undefined) where.config_id = configId;
-    if (channelId !== undefined) where.channel_id = channelId;
-    const rows = Object.keys(where).length > 0
-      ? await this.rows("chat_attachments", where)
-      : await this.db.rawQuery("SELECT * FROM chat_attachments");
-    return rows.reduce((sum, r) => sum + (r.thumb_bytes ?? 0) + (r.original_bytes ?? 0), 0);
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (configId !== undefined) { conds.push("config_id = ?"); params.push(configId); }
+    if (channelId !== undefined) { conds.push("channel_id = ?"); params.push(channelId); }
+    // One aggregate in SQLite, not the rows summed here. With adoptOutgoing, the only statements of this class that are not plain equality lookups.
+    const rows = await this.db.rawQuery(
+      "SELECT COALESCE(SUM(COALESCE(thumb_bytes, 0) + COALESCE(original_bytes, 0)), 0) AS bytes FROM chat_attachments"
+        + (conds.length > 0 ? " WHERE " + conds.join(" AND ") : ""),
+      params,
+    );
+    return Number(rows[0]?.bytes ?? 0);
   }
 
   /**

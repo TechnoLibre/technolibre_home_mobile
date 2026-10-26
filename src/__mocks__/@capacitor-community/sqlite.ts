@@ -196,6 +196,16 @@ class MockDBConnection {
         return { values: rows };
       }
 
+      // COALESCE(SUM(COALESCE(a, 0) + COALESCE(b, 0)), 0) AS alias
+      const sumMatch = colList.match(
+        /^COALESCE\(SUM\(COALESCE\((\w+), 0\) \+ COALESCE\((\w+), 0\)\), 0\) AS (\w+)$/i
+      );
+      if (sumMatch) {
+        const [, a, b, alias] = sumMatch;
+        const total = rows.reduce((sum, row) => sum + (row[a] ?? 0) + (row[b] ?? 0), 0);
+        return { values: [{ [alias]: total }] };
+      }
+
       // Project specific columns
       const requestedCols = colList.split(",").map((c) => c.trim());
       return {

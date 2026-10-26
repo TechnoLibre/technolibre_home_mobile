@@ -446,6 +446,21 @@ describe("ChatAttachmentCache", () => {
     expect(await chat.attachments.space()).toBe(2 * MB);
   });
 
+  it("a purge asked while one runs joins it", async () => {
+    await stored(62);
+    setChatSettings({ ...chatSettings(), cachePurge: true, cacheLimitMb: 1 });
+    await cached(62, { original: 2 * MB });
+    const first = chat.attachments.maybePurge();
+    const second = chat.attachments.maybePurge();
+    const third = chat.attachments.purge();
+    const results = await Promise.all([first, second, third]);
+    expect(results[1]).toBe(results[0]);
+    expect(results[2]).toBe(results[0]);
+    expect(results[0]).toEqual({ freed: 2 * MB });
+    // Settled: the next one starts afresh
+    expect(await chat.attachments.purge()).toEqual({ freed: 0 });
+  });
+
   it("warning at 80 % even with purge off", async () => {
     expect(CACHE_WARN_RATIO).toBe(0.8);
     setChatSettings({ ...chatSettings(), cachePurge: false, cacheLimitMb: 10 });

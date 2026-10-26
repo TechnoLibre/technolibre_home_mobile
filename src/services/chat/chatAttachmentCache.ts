@@ -109,6 +109,8 @@ export class ChatAttachmentCache {
   private previewQueue: PreviewJob[] = [];
   private previewsRunning = 0;
   private previewFailures = new Set<string>();
+  /** The purge under way, joined by a purge asked meanwhile. */
+  private purging: Promise<{ freed: number }> | null = null;
 
   /** open() calls under way, by attachment: a second one joins. */
   private opening = new Map<string, { promise: Promise<OpenResult>; anyNetwork: boolean }>();
@@ -437,9 +439,19 @@ export class ChatAttachmentCache {
    * With cachePurge on and the chat's files over cacheLimitMb: removes
    * cached originals, least recently opened first, then previews in the
    * same order, until they are back at the limit. Stamps LAST_PURGE_KEY.
-   * Returns the bytes freed (0 with the purge off).
+   * Returns the bytes freed (0 with the purge off). A call made while a
+   * purge runs joins it and gets its result.
    */
-  async purge(): Promise<{ freed: number }> {
+  purge(): Promise<{ freed: number }> {
+    if (this.purging) return this.purging;
+    const run = this.runPurge().finally(() => {
+      if (this.purging === run) this.purging = null;
+    });
+    this.purging = run;
+    return run;
+  }
+
+  private async runPurge(): Promise<{ freed: number }> {
     const settings = chatSettings();
     if (!settings.cachePurge) return { freed: 0 };
     const limit = settings.cacheLimitMb * MB;

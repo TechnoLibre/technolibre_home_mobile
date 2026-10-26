@@ -9,6 +9,11 @@ import { MUTE_CHOICES, muteText } from "../../../services/chat/chatMute";
 import { serverChoiceMode, type ChatSource, type ChoiceMode } from "../../../services/chat/chatSources";
 import { chatSettings, setChatSettings, ChatSettings } from "../../../services/chat/chatSettings";
 
+/** Delay that folds a burst of CHAT_CHANGED into one read of the cache space. */
+const CACHE_REFRESH_MS = 1000;
+/** Largest limit accepted, in MB (1 TB). */
+const MAX_LIMIT_MB = 1048576;
+
 export class OptionsChatComponent extends EnhancedComponent {
     static template = xml`
     <li id="chat" class="options-list__item options-sync">
@@ -85,10 +90,11 @@ export class OptionsChatComponent extends EnhancedComponent {
     muteChoices = MUTE_CHOICES;
     private _sources: ChatSource[] = [];
     private destroyed = false;
+    private _cacheTimer: ReturnType<typeof setTimeout> | null = null;
     private _onChanged = (ev: Event) => {
         const d = (ev as CustomEvent).detail ?? {};
         if (d.configId === this.state.serverId) void this.refreshMute();
-        void this.loadCache();
+        this.scheduleCache();
     };
 
     setup() {
@@ -112,6 +118,7 @@ export class OptionsChatComponent extends EnhancedComponent {
         });
         onWillUnmount(() => {
             this.destroyed = true;
+            if (this._cacheTimer !== null) clearTimeout(this._cacheTimer);
             this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
         });
     }
@@ -199,18 +206,29 @@ export class OptionsChatComponent extends EnhancedComponent {
         }
     }
 
+    /** Reads the space again after a quiet second: a burst of chat changes costs one read. */
+    private scheduleCache(): void {
+        if (this._cacheTimer !== null) return;
+        this._cacheTimer = setTimeout(() => {
+            this._cacheTimer = null;
+            void this.loadCache();
+        }, CACHE_REFRESH_MS);
+    }
+
     /** The limit as the user reads it, in the language's unit. */
     limitText(): string {
         return formatBytes(this.state.settings.cacheLimitMb * 1024 * 1024, getCurrentLocale());
     }
 
     /**
-     * Saves the limit typed in MB when it is a number above 0; anything
-     * else is refused and the input goes back to the limit in force.
+     * Saves the limit typed in MB, rounded to a whole number and capped at
+     * MAX_LIMIT_MB, when it comes to at least 1; anything else is refused
+     * and the input goes back to the limit in force.
      */
     async onLimitChange(ev: { target: any }): Promise<void> {
         const raw = String(ev.target.value ?? "").trim();
-        const mb = raw === "" ? NaN : Number(raw);
+        const typed = raw === "" ? NaN : Number(raw);
+        const mb = Math.min(Math.round(typed), MAX_LIMIT_MB);
         if (!Number.isFinite(mb) || mb <= 0) {
             ev.target.value = String(this.state.settings.cacheLimitMb);
             return;

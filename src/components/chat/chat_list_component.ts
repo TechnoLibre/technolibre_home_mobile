@@ -327,8 +327,10 @@ export class ChatListComponent extends EnhancedComponent {
         // Rows keep the order the service gave
         const ordered = channels.map((c) => byKey.get(c.configId + ":" + c.channelId)!);
         // A notice waits for the user's eyes: the filter of the rows does not hide it
-        const notices = sources.length === 0 ? [] : await this.chatService.notices(sources.map((s) => s.configId));
-        const cacheWarn = await this.cacheWarning();
+        const [notices, cacheWarn] = await Promise.all([
+            sources.length === 0 ? [] : this.chatService.notices(sources.map((s) => s.configId)),
+            this.cacheWarning(),
+        ]);
         if (gen !== this._gen) return;
         this.state.cacheWarn = cacheWarn;
         this.state.filter = kept;

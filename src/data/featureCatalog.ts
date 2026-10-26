@@ -4592,6 +4592,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 demo: { kind: "options", sectionId: "chat" },
                 files: [
                     "src/components/options/chat/options_chat_component.ts",
+                    "src/components/options/chat/options_chat_component.scss",
                     "src/components/chat/chat_info_component.ts",
                     "src/components/chat/chat_list_component.ts",
                     "src/components/chat/chat_list_component.scss",
