@@ -4,8 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // The suite's Owl stub renders nothing: this file mounts the picker on the real Owl
 vi.mock("@odoo/owl", async () => await import("../../node_modules/@odoo/owl/dist/owl.es.js"));
 
-import { mount } from "@odoo/owl";
+import { Component, mount, useState, xml } from "@odoo/owl";
 import { ChatEmojiPickerComponent } from "../components/chat/chat_emoji_picker_component";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function stubStorage(lang = "en") {
     const store: Record<string, string> = { app_lang: lang };
@@ -17,15 +20,17 @@ function stubStorage(lang = "en") {
 }
 
 describe("ChatEmojiPickerComponent mounted", () => {
-    async function mounted(lang = "en") {
-        stubStorage(lang);
+    async function mounted(lang = "en", keepStorage = false) {
+        if (!keepStorage) stubStorage(lang);
         const host = document.createElement("div");
         document.body.appendChild(host);
         const props = { onPick: vi.fn(), onClose: vi.fn() };
         const component = await mount(ChatEmojiPickerComponent as any, host, { props, env: {} } as any);
         const app = { destroy: () => (component as any).__owl__.app.destroy() };
-        return { host, props, app };
+        return { host, props, app, component: component as any };
     }
+
+    const tabs = (host: HTMLElement) => [...host.querySelectorAll(".chat-emoji__tab")].map((e) => e.textContent);
 
     afterEach(() => { document.body.innerHTML = ""; });
 
@@ -54,6 +59,55 @@ describe("ChatEmojiPickerComponent mounted", () => {
         expect(host.querySelectorAll(".chat-emoji__sections .chat-emoji__grid").length).toBeLessThan(8);
         await vi.waitFor(() => expect(host.querySelectorAll(".chat-emoji__sections .chat-emoji__grid").length).toBe(8));
         app.destroy();
+    });
+
+    it("picks keep the sections in the order they had at open, as Odoo's recentSnapshot", async () => {
+        const { host, component, app } = await mounted();
+        await vi.waitFor(() => expect(host.querySelectorAll(".chat-emoji__sections .chat-emoji__grid").length).toBe(8));
+        const before = tabs(host);
+        const first = () => host.querySelector(".chat-emoji__sections .chat-emoji__item")!.textContent;
+        const aimed = first();
+        host.querySelector<HTMLElement>(".chat-emoji__sections .chat-emoji__item")!.click();
+        // The thread re-renders the picker after a pick: the emoji under the finger stays the same
+        await component.render();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(tabs(host)).toEqual(before);
+        expect(first()).toBe(aimed);
+        host.querySelectorAll<HTMLElement>(".chat-emoji__sections .chat-emoji__item")[1].click();
+        await component.render();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(tabs(host)).toEqual(before);
+        app.destroy();
+        // Opened again, the most used come first
+        const again = await mounted("en", true);
+        await vi.waitFor(() => expect(tabs(again.host)[0]).toBe("🕘"));
+        again.app.destroy();
+    });
+
+    it("a keystroke in the thread's composer does not render the picker again", async () => {
+        stubStorage();
+        const renders = vi.spyOn(ChatEmojiPickerComponent.prototype as any, "sections");
+        // The thread's props, as its template passes them: class-field callbacks, no .bind
+        class Host extends Component {
+            static components = { ChatEmojiPickerComponent };
+            static template = xml`<div><input t-att-value="state.text"/><ChatEmojiPickerComponent onPick="onEmojiPick" onClose="onEmojiClose"/></div>`;
+            state = useState({ text: "" });
+            onEmojiPick = (_c: string) => {};
+            onEmojiClose = () => {};
+        }
+        const host = document.createElement("div");
+        document.body.appendChild(host);
+        const parent: any = await mount(Host, host, { env: {} } as any);
+        await vi.waitFor(() => expect(host.querySelectorAll(".chat-emoji__sections .chat-emoji__grid").length).toBe(8));
+        const before = renders.mock.calls.length;
+        parent.state.text = "typed";
+        await vi.waitFor(() => expect(host.querySelector("input")!.value).toBe("typed"));
+        expect(renders.mock.calls.length).toBe(before);
+        parent.__owl__.app.destroy();
+        renders.mockRestore();
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        const tag = source.slice(source.indexOf("<ChatEmojiPickerComponent"));
+        expect(tag.slice(0, tag.indexOf("/>"))).toMatch(/onPick="onEmojiPick" onClose="onEmojiClose"/);
     });
 
     it("a tab draws every section", async () => {

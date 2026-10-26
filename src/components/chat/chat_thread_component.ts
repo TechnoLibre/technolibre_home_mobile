@@ -387,7 +387,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         </div>
         <ChatSuggestionsComponent t-if="state.suggestions.length" items="state.suggestions" onPick.bind="onSuggestion"/>
         <p class="sr-only" aria-live="polite" aria-atomic="true" t-esc="suggestionsLive()"/>
-        <ChatEmojiPickerComponent t-if="state.emoji" countUse="!state.reactTo" onPick.bind="onEmoji" onClose.bind="toggleEmoji"/>
+        <ChatEmojiPickerComponent t-if="state.emoji" countUse="!state.reactTo" onPick="onEmojiPick" onClose="onEmojiClose"/>
         <div class="chat-thread__composer">
           <button class="chat-thread__attach" t-att-aria-label="t('chat.attach')" t-att-aria-expanded="attachState.sheet ? 'true' : 'false'"
                   t-att-disabled="!attachState.ready or attachState.voice !== 'idle' or state.sending or state.mode.kind === 'edit'"
@@ -440,6 +440,13 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _suggestTimer: ReturnType<typeof setTimeout> | null = null;
     /** The query the list was last asked for (kind, place, term); null when none. */
     private _queryKey: string | null = null;
+    /**
+     * The picker's callbacks, the same functions every render: a new one
+     * (a .bind in the template) would render its 1455 buttons again on
+     * every keystroke of the composer.
+     */
+    onEmojiPick = (codepoints: string) => this.onEmoji(codepoints);
+    onEmojiClose = () => this.toggleEmoji();
     /** A caret moved in the focused field (a drag of its handle included) follows the query (onCaret). */
     private _onSelection = () => {
         const el = this.input.el;

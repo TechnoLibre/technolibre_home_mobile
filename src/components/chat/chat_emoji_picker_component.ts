@@ -39,7 +39,9 @@ interface PickerState {
  * section is `content-visibility: auto` so the browser skips the ones out
  * of view: typing in the composer is never held by the 1455 buttons. The
  * buttons keep the focus where it was (mousedown prevented), so the
- * composer's keyboard stays open.
+ * composer's keyboard stays open. The most used are read once per open
+ * (load), as Odoo's recentSnapshot: a pick never moves the grid under the
+ * finger, the next open lists it.
  */
 export class ChatEmojiPickerComponent extends EnhancedComponent {
     static props = { onPick: Function, onClose: Function, countUse: { type: Boolean, optional: true } };
@@ -101,6 +103,8 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
     private _sectionsData: EmojiData | null = null;
     private _foundKey: [EmojiData | null, string, string] = [null, "", ""];
     private _found: EmojiEntry[] = [];
+    /** The most used emojis as they stood when the data came. */
+    private _frequent: string[] = [];
 
     setup() {
         this.state = useState<PickerState>({ data: null, failed: false, term: "", filled: 1 });
@@ -131,6 +135,7 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
         try {
             const data = await loadEmojiData();
             if (this._gone) return;
+            this._frequent = frequentEmoji(FREQUENT_COUNT);
             this.state.data = data;
             this.state.filled = 1;
             this.fillNext();
@@ -173,12 +178,12 @@ export class ChatEmojiPickerComponent extends EnhancedComponent {
         return this._found;
     }
 
-    /** The most used emojis (when there are any) then the categories by sortId; none while searching. */
+    /** The most used emojis at open (when there were any) then the categories by sortId; none while searching. */
     sections(): EmojiSection[] {
         const data = this.state.data;
         if (!data || this.searching()) return [];
         const lang = this.lang();
-        const frequent = frequentEmoji(FREQUENT_COUNT);
+        const frequent = this._frequent;
         const key = lang + "|" + frequent.join(",");
         if (this._sectionsKey === key && this._sectionsData === data) return this._sections;
         const byCode = new Map(data.emojis.map((e) => [e.codepoints, e]));
