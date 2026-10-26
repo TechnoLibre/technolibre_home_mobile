@@ -47,6 +47,8 @@ export interface CaptureDeps {
     camera: CameraPermissions;
     /** Deletes the camera's own copy of a shot, by its file name. */
     removeCaptureTemp: (name: string) => Promise<void>;
+    /** Deletes the chooser's empty files last modified before the given time (ms). */
+    sweepCaptureTemps: (before: number) => Promise<void>;
 }
 
 /** Quality of the JPEG a HEIC/HEIF becomes, whatever the compression setting. */
@@ -54,6 +56,15 @@ export const HEIC_JPEG_QUALITY = 92;
 /** Long side and quality of a compressed photo, as Odoo's own reduction. */
 export const COMPRESS_MAX_PX = 1920;
 export const COMPRESS_QUALITY = 80;
+
+/**
+ * Age under which a chooser file is left alone by the sweep: the file of
+ * the shot being taken is created just after the click.
+ */
+export const CAPTURE_SWEEP_MARGIN_MS = 2000;
+
+/** The name Capacitor's camera chooser gives its file (File.createTempFile). */
+const CAPTURE_TEMP = /^JPEG_\d{8}_\d{6}_\d+\.jpg$/;
 
 /** Images compress() converts; any other file passes unchanged. */
 const COMPRESSIBLE = new Set(["image/jpeg", "image/png", "image/heic", "image/heif"]);
@@ -130,6 +141,26 @@ async function removeDeviceCaptureTemp(name: string): Promise<void> {
 }
 
 /**
+ * Deletes the empty chooser files (`JPEG_<date>_<time>_<digits>.jpg`, 0
+ * bytes) last modified before `before` in the app's external Pictures
+ * directory: what a cancelled camera shot leaves. A file with bytes is
+ * never touched. Errors are swallowed: a missing directory is the usual
+ * case.
+ */
+export async function sweepDeviceCaptureTemps(before: number): Promise<void> {
+    let entries: { name: string; type: string; size: number; mtime: number }[];
+    try {
+        entries = (await Filesystem.readdir({ path: "Pictures", directory: Directory.External })).files;
+    } catch {
+        return;
+    }
+    for (const f of entries) {
+        if (f.type !== "file" || f.size !== 0 || !(f.mtime < before) || !CAPTURE_TEMP.test(f.name)) continue;
+        await Filesystem.deleteFile({ path: `Pictures/${f.name}`, directory: Directory.External }).catch(() => {});
+    }
+}
+
+/**
  * Capture for the chat composer: picks through the WebView's own
  * `<input type=file>` (its camera chooser hands over the camera app's
  * file untouched, its pickers the chosen files' bytes), then stages each
@@ -144,6 +175,7 @@ export class ChatCapture {
             images: ChatFile,
             camera: Camera,
             removeCaptureTemp: removeDeviceCaptureTemp,
+            sweepCaptureTemps: sweepDeviceCaptureTemps,
             ...deps,
         };
     }
@@ -169,9 +201,12 @@ export class ChatCapture {
      * tap's handler. Without the camera permission, the WebView's chooser
      * asks for it itself and keeps waiting for the answer; a refusal
      * dismisses the pick. A camera shot comes back named
-     * `IMG_<yyyyMMdd_HHmmss>.jpg`, from its capture time.
+     * `IMG_<yyyyMMdd_HHmmss>.jpg`, from its capture time. A camera pick
+     * also sweeps, after the click, the empty files earlier cancelled shots
+     * left (sweepCaptureTemps, older than CAPTURE_SWEEP_MARGIN_MS).
      */
     async pickFiles(input: HTMLInputElement, kind: PickKind): Promise<File[]> {
+        const started = Date.now();
         configure(input, kind);
         const files = await new Promise<File[]>((resolve) => {
             const done = (files: File[]) => {
@@ -184,6 +219,9 @@ export class ChatCapture {
             input.addEventListener("change", onChange);
             input.addEventListener("cancel", onCancel);
             input.click();
+            if (kind === "camera") {
+                void this.deps.sweepCaptureTemps(started - CAPTURE_SWEEP_MARGIN_MS).catch(() => {});
+            }
         });
         if (kind !== "camera") return files;
         return files.map((f) => {
@@ -244,14 +282,18 @@ export class ChatCapture {
      * staged file (same localUuid, name ending in `.jpg`). Only JPEG, PNG
      * and HEIC/HEIF images are converted; any other file, a failed
      * conversion, or a JPEG the conversion does not make smaller comes back
-     * unchanged.
+     * unchanged. A PNG becomes a JPEG even when larger, its transparency
+     * laid on white. The original is removed only once its replacement is
+     * in place, and no step relies on a rename overwriting a file: a
+     * failure at any step leaves the original as it was.
      */
     async compress(file: OutgoingFile): Promise<OutgoingFile> {
         if (!COMPRESSIBLE.has(file.mimetype)) return file;
         const { files } = this.deps;
         const dir = dirOf(file.path);
-        // A sibling the app never names otherwise (safeFileName drops leading dots)
+        // Siblings the app never names otherwise (safeFileName drops leading dots)
         const temp = `${dir}/.compress.jpg`;
+        const aside = `${dir}/.original`;
         let answer: JpegAnswer;
         try {
             answer = await this.deps.images.toJpeg({
@@ -270,8 +312,24 @@ export class ChatCapture {
         }
         const name = safeFileName(`${stemOf(file.name)}.jpg`);
         const path = `${dir}/${name}`;
-        if (path !== file.path) await files.remove(file.path);
-        await files.rename(temp, path);
+        try {
+            if (path === file.path) {
+                await files.rename(file.path, aside);
+                try {
+                    await files.rename(temp, path);
+                } catch (e) {
+                    await files.rename(aside, file.path);
+                    throw e;
+                }
+                await files.remove(aside).catch(() => {});
+            } else {
+                await files.rename(temp, path);
+                await files.remove(file.path).catch(() => {});
+            }
+        } catch {
+            await files.remove(temp).catch(() => {});
+            return file;
+        }
         return { ...file, path, name, mimetype: "image/jpeg", size: answer.size };
     }
 
@@ -292,7 +350,8 @@ export class ChatCapture {
             await files.remove(path).catch(() => {});
             return staged;
         }
-        await files.remove(staged.path);
+        // A HEIC already named .jpg is converted in place (toJpeg writes beside, then renames)
+        if (path !== staged.path) await files.remove(staged.path);
         return { ...staged, path, name, mimetype: "image/jpeg", size: answer.size };
     }
 }

@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 
 /**
  * Chat file transfer over ChatFileTransfer (OkHttp): GET as text, a
@@ -53,6 +54,8 @@ public class ChatFilePlugin extends Plugin {
 
     private final ChatFileTransfer transfer = new ChatFileTransfer();
     private final ExecutorService worker = Executors.newCachedThreadPool();
+    /** One toJpeg at a time: a full-size photo decodes to tens of MB. */
+    private final Semaphore conversions = new Semaphore(1);
 
     private File chatRoot() {
         return new File(getContext().getFilesDir(), "chat");
@@ -144,7 +147,8 @@ public class ChatFilePlugin extends Plugin {
      * transparent image laid on white. The JPEG is written to « to.part »
      * then renamed, so to may be from and a failure leaves no partial file.
      * Android 9+ decodes with ImageDecoder (HEIC/HEIF included); older
-     * versions with BitmapFactory, which rejects a HEIC.
+     * versions with BitmapFactory, which rejects a HEIC. Conversions run
+     * one at a time, the others waiting on their worker.
      */
     @PluginMethod
     public void toJpeg(PluginCall call) {
@@ -158,7 +162,10 @@ public class ChatFilePlugin extends Plugin {
         }
         worker.execute(() -> {
             Bitmap bitmap = null;
+            boolean held = false;
             try {
+                conversions.acquire();
+                held = true;
                 File source = ChatFileTransfer.resolveInside(chatRoot(), from);
                 File target = ChatFileTransfer.resolveInside(chatRoot(), to);
                 bitmap = decodeFitted(source, maxPx);
@@ -169,9 +176,11 @@ public class ChatFilePlugin extends Plugin {
                 result.put("height", bitmap.getHeight());
                 call.resolve(result);
             } catch (Exception | OutOfMemoryError e) {
-                call.reject("ChatFile error: " + e.getMessage());
+                String why = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                call.reject("ChatFile error: " + why);
             } finally {
                 if (bitmap != null) bitmap.recycle();
+                if (held) conversions.release();
             }
         });
     }

@@ -1,8 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@capacitor/camera", () => ({ Camera: {} }));
+const { mockFs } = vi.hoisted(() => ({ mockFs: { readdir: vi.fn(), deleteFile: vi.fn() } }));
 
-import { ChatCapture, type ChatImages, type JpegRequest } from "../services/chat/chatCapture";
+vi.mock("@capacitor/camera", () => ({ Camera: {} }));
+vi.mock("@capacitor/filesystem", () => ({
+    Filesystem: mockFs,
+    Directory: { Data: "DATA", External: "EXTERNAL" },
+}));
+
+import {
+    CAPTURE_SWEEP_MARGIN_MS, ChatCapture, sweepDeviceCaptureTemps, type ChatImages, type JpegRequest,
+} from "../services/chat/chatCapture";
 import { outgoingPath } from "../services/chat/chatFiles";
 import { UPLOAD_SLACK_BYTES } from "../services/chat/chatTransfer";
 import { memoryChatFiles } from "../testing/chatFakes";
@@ -36,6 +44,32 @@ class FakeInput extends EventTarget {
     dismiss() { this.dispatchEvent(new Event("cancel")); }
 }
 
+/**
+ * memoryChatFiles whose rename refuses an existing destination, as a
+ * platform that does not overwrite; failRename makes the rename onto that
+ * path fail once.
+ */
+function strictFiles(files: ReturnType<typeof memoryChatFiles>) {
+    const ops: string[] = [];
+    let failRename: string | null = null;
+    const strict = {
+        ...files,
+        ops,
+        failOnce(path: string) { failRename = path; },
+        async rename(from: string, to: string) {
+            ops.push(`rename ${from.split("/").pop()} > ${to.split("/").pop()}`);
+            if (files.bytes(to)) throw new Error(`exists: ${to}`);
+            if (to === failRename) { failRename = null; throw new Error("rename failed"); }
+            await files.rename(from, to);
+        },
+        async remove(rel: string) {
+            ops.push(`remove ${rel.split("/").pop()}`);
+            await files.remove(rel);
+        },
+    };
+    return strict;
+}
+
 const asInput = (i: FakeInput) => i as unknown as HTMLInputElement;
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -63,10 +97,12 @@ function fakeCamera(state: string, answer = state) {
 describe("ChatCapture", () => {
     let files: ReturnType<typeof memoryChatFiles>;
     let removeTemp: ReturnType<typeof vi.fn>;
+    let sweep: ReturnType<typeof vi.fn>;
 
     beforeEach(() => {
         files = memoryChatFiles();
         removeTemp = vi.fn(async () => {});
+        sweep = vi.fn(async () => {});
     });
 
     function capture(over: Partial<ConstructorParameters<typeof ChatCapture>[0]> = {}) {
@@ -75,6 +111,7 @@ describe("ChatCapture", () => {
             images: fakeImages(files).images,
             camera: fakeCamera("granted") as any,
             removeCaptureTemp: removeTemp,
+            sweepCaptureTemps: sweep,
             ...over,
         });
     }
@@ -261,5 +298,91 @@ describe("ChatCapture", () => {
         if ("refused" in jpg) throw new Error("refused");
         expect(await failing.compress(jpg)).toEqual(jpg);
         expect(await files.list(`chat/${FILE_DIR}/out/${jpg.localUuid}`)).toEqual(["b.jpg"]);
+    });
+
+    it("a HEIC already named .jpg keeps its converted file", async () => {
+        const { images } = fakeImages(files, 2500);
+        const file = new File([bytes(1200)], "IMG_3.jpg", { type: "image/heic" });
+        const staged = await capture({ images }).stage(FILE_DIR, file, { maxUploadSize: LIMIT });
+        if ("refused" in staged) throw new Error("refused");
+        expect(staged).toMatchObject({ name: "IMG_3.jpg", mimetype: "image/jpeg", size: 2500 });
+        expect(files.bytes(staged.path)).toEqual(bytes(2500, 9));
+    });
+
+    it("compress of a JPEG keeps its name and never relies on an overwrite", async () => {
+        const strict = strictFiles(files);
+        const { images } = fakeImages(files, 400);
+        const c = capture({ files: strict, images });
+        const staged = await c.stage(FILE_DIR, new File([bytes(5000)], "IMG_4.jpg", { type: "image/jpeg" }), { maxUploadSize: LIMIT });
+        if ("refused" in staged) throw new Error("refused");
+        const small = await c.compress(staged);
+        expect(small).toEqual({ ...staged, size: 400 });
+        expect(files.bytes(staged.path)).toEqual(bytes(400, 9));
+        expect(await files.list(`chat/${FILE_DIR}/out/${staged.localUuid}`)).toEqual(["IMG_4.jpg"]);
+    });
+
+    it("compress keeps the original when its replacement cannot take its place", async () => {
+        const strict = strictFiles(files);
+        const { images } = fakeImages(files, 400);
+        const c = capture({ files: strict, images });
+        const jpg = await c.stage(FILE_DIR, new File([bytes(5000)], "IMG_5.jpg", { type: "image/jpeg" }), { maxUploadSize: LIMIT });
+        const png = await c.stage(FILE_DIR, new File([bytes(5000)], "IMG_6.png", { type: "image/png" }), { maxUploadSize: LIMIT });
+        if ("refused" in jpg || "refused" in png) throw new Error("refused");
+        strict.failOnce(jpg.path);
+        expect(await c.compress(jpg)).toEqual(jpg);
+        expect(files.bytes(jpg.path)).toEqual(bytes(5000));
+        expect(await files.list(`chat/${FILE_DIR}/out/${jpg.localUuid}`)).toEqual(["IMG_5.jpg"]);
+        strict.failOnce(outgoingPath(FILE_DIR, png.localUuid, "IMG_6.jpg"));
+        expect(await c.compress(png)).toEqual(png);
+        expect(files.bytes(png.path)).toEqual(bytes(5000));
+        expect(await files.list(`chat/${FILE_DIR}/out/${png.localUuid}`)).toEqual(["IMG_6.png"]);
+    });
+
+    it("compress removes a PNG only once its JPEG is in place", async () => {
+        const strict = strictFiles(files);
+        const { images } = fakeImages(files, 9000);
+        const c = capture({ files: strict, images });
+        const png = await c.stage(FILE_DIR, new File([bytes(5000)], "IMG_7.png", { type: "image/png" }), { maxUploadSize: LIMIT });
+        if ("refused" in png) throw new Error("refused");
+        strict.ops.length = 0;
+        // A PNG becomes a JPEG even when larger: transparency is laid on white either way
+        expect(await c.compress(png)).toMatchObject({ name: "IMG_7.jpg", mimetype: "image/jpeg", size: 9000 });
+        expect(strict.ops).toEqual(["rename .compress.jpg > IMG_7.jpg", "remove IMG_7.png"]);
+    });
+
+    it("a camera pick sweeps the chooser's empty leftovers after the click", async () => {
+        const input = new FakeInput();
+        const before = Date.now();
+        const picked = capture().pickFiles(asInput(input), "camera");
+        expect(input.clicks).toBe(1);
+        expect(sweep).toHaveBeenCalledTimes(1);
+        expect(sweep.mock.calls[0][0]).toBeLessThanOrEqual(before - CAPTURE_SWEEP_MARGIN_MS + 50);
+        input.dismiss();
+        await picked;
+        void capture().pickFiles(asInput(new FakeInput()), "gallery");
+        void capture().pickFiles(asInput(new FakeInput()), "file");
+        expect(sweep).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("sweepDeviceCaptureTemps", () => {
+    it("deletes only the chooser's empty files older than the bound", async () => {
+        mockFs.readdir.mockResolvedValue({
+            files: [
+                { name: "JPEG_20261026_140509_1.jpg", type: "file", size: 0, mtime: 1000, uri: "" },
+                { name: "JPEG_20261026_140510_2.jpg", type: "file", size: 0, mtime: 5000, uri: "" },
+                { name: "JPEG_20261026_140511_3.jpg", type: "file", size: 812, mtime: 1000, uri: "" },
+                { name: "note.jpg", type: "file", size: 0, mtime: 1000, uri: "" },
+            ],
+        });
+        mockFs.deleteFile.mockResolvedValue(undefined);
+        await sweepDeviceCaptureTemps(4000);
+        expect(mockFs.readdir).toHaveBeenCalledWith({ path: "Pictures", directory: "EXTERNAL" });
+        expect(mockFs.deleteFile.mock.calls).toEqual([[{ path: "Pictures/JPEG_20261026_140509_1.jpg", directory: "EXTERNAL" }]]);
+    });
+
+    it("a missing Pictures directory is not an error", async () => {
+        mockFs.readdir.mockRejectedValue(new Error("Directory does not exist"));
+        await expect(sweepDeviceCaptureTemps(4000)).resolves.toBeUndefined();
     });
 });
