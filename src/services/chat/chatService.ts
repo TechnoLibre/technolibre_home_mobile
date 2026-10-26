@@ -7,7 +7,7 @@ import type { CapabilityService } from "../odoo/capabilityService";
 import type { OdooRpcClient, SyncCredentials } from "../odoo/odooRpcClient";
 import type { OutboxService } from "../outboxService";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
-import { moduleState } from "./chatModule";
+import { ChatModuleLevel, levelAtLeast, moduleProbe } from "./chatModule";
 import { ChatOutbox, type CreateMode } from "./chatOutbox";
 import { ChatPeople } from "./chatPeople";
 import { ChatRepository } from "./chatRepository";
@@ -332,16 +332,16 @@ export class ChatService {
     // Set, not raised: the server's bus ids restart from 0 when its bus table is emptied
     if (Number.isFinite(busId)) await this.repo.setSourceState({ configId, counterBusId: busId });
 
-    let module: ChatModuleState | null = null;
+    let module: { state: ChatModuleState; level: ChatModuleLevel | null } | null = null;
     try {
-      module = await moduleState(this.rpc, this.capabilities, creds, { online: true });
+      module = await moduleProbe(this.rpc, this.capabilities, creds, { online: true });
     } catch {
       // The state stored before stands
     }
     if (erased()) return;
     await this.repo.setSourceState({
       configId,
-      ...(module ? { moduleState: module } : {}),
+      ...(module ? { moduleState: module.state, moduleLevel: module.level } : {}),
       loadedAt: this.now().toISOString(),
     });
     this.changed(configId, null);
@@ -471,14 +471,21 @@ export class ChatService {
   // ─── Send, read, typing ───────────────────────────────────────────────────
 
   /**
-   * What the account's server supports, from the stored module state: member
+   * What the account's server supports, from the stored module level: member
    * removal needs a system user and module 1.1; an idempotent channel create
-   * needs module 1.1 (message posts also work with 1.0).
+   * needs module 1.1 (message posts also work with 1.0); an idempotent
+   * attachment upload needs module 1.2.
    */
-  async features(configId: string): Promise<{ canRemoveMembers: boolean; idempotentCreate: boolean }> {
+  async features(
+    configId: string
+  ): Promise<{ canRemoveMembers: boolean; idempotentCreate: boolean; idempotentUpload: boolean }> {
     const state = await this.repo.sourceState(configId);
-    const installed = this.moduleMode === "auto" && state.moduleState === "installed";
-    return { canRemoveMembers: state.isSystem && installed, idempotentCreate: installed };
+    const at = (min: ChatModuleLevel) => this.moduleMode === "auto" && levelAtLeast(state.moduleLevel, min);
+    return {
+      canRemoveMembers: state.isSystem && at("1.1"),
+      idempotentCreate: at("1.1"),
+      idempotentUpload: at("1.2"),
+    };
   }
 
   /**
@@ -489,8 +496,8 @@ export class ChatService {
   async send(src: ChatSource, channelId: number, text: string): Promise<ChatMessage> {
     const { configId } = src;
     // Module 1.0 already dedupes message posts by uuid; only 1.1 adds channels
-    const state = (await this.repo.sourceState(configId)).moduleState;
-    const useModule = this.moduleMode === "auto" && (state === "installed" || state === "outdated");
+    const level = (await this.repo.sourceState(configId)).moduleLevel;
+    const useModule = this.moduleMode === "auto" && level !== null;
     const message = await this.queue.queuePost(configId, channelId, text, useModule);
     this.changed(configId, channelId);
     if (await this.isOnline()) {
@@ -820,8 +827,8 @@ export class ChatService {
   private async probeModule(configId: string): Promise<void> {
     const src = await this.sourceOf(configId);
     if (!src) return;
-    const state = await moduleState(this.rpc, this.capabilities, src.creds, { online: true, fresh: true });
-    await this.repo.setSourceState({ configId, moduleState: state });
+    const { state, level } = await moduleProbe(this.rpc, this.capabilities, src.creds, { online: true, fresh: true });
+    await this.repo.setSourceState({ configId, moduleState: state, moduleLevel: level });
     this.changed(configId, null);
   }
 

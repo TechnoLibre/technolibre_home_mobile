@@ -498,7 +498,7 @@ describe("ChatService", () => {
     const odoo = fakeOdoo();
     const src = await source();
     await chat.load(src);
-    await chat.repo.setSourceState({ configId: config, moduleState: "installed" });
+    await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.2" });
     const sent = await chat.send(src, GROUP, "hello");
     expect(sent.status).toBe("pending");
     expect(odoo.on("/mail/message/post")[0].params.post_data.erplibre_client_uuid).toBe(sent.clientUuid);
@@ -510,8 +510,8 @@ describe("ChatService", () => {
     const src = await source();
     await chat.load(src);
     const uuids: Array<string | undefined> = [];
-    for (const st of ["outdated", "absent", "unknown"] as const) {
-      await chat.repo.setSourceState({ configId: config, moduleState: st });
+    for (const [st, level] of [["outdated", "1.0"], ["absent", null], ["unknown", null]] as const) {
+      await chat.repo.setSourceState({ configId: config, moduleState: st, moduleLevel: level });
       await chat.send(src, GROUP, st);
       uuids.push(odoo.on("/mail/message/post").at(-1)!.params.post_data.erplibre_client_uuid);
     }
@@ -520,20 +520,34 @@ describe("ChatService", () => {
     expect(uuids[2]).toBeUndefined();
   });
 
-  it("features need module 1.1 installed, member removal also a system user", async () => {
+  it("features follow the module level, member removal also a system user", async () => {
     fakeOdoo();
     await chat.load(await source());
-    const matrix: Array<[any, boolean, boolean, boolean]> = [
-      ["installed", true, true, true],
-      ["installed", false, false, true],
-      ["outdated", true, false, false],
-      ["available", true, false, false],
-      ["unknown", false, false, false],
+    const matrix: Array<[any, any, boolean, boolean, boolean, boolean]> = [
+      ["installed", "1.2", true, true, true, true],
+      ["installed", "1.2", false, false, true, true],
+      ["outdated", "1.1", true, true, true, false],
+      ["outdated", "1.1", false, false, true, false],
+      ["outdated", "1.0", true, false, false, false],
+      ["available", null, true, false, false, false],
+      ["unknown", null, false, false, false, false],
     ];
-    for (const [moduleState, isSystem, remove, create] of matrix) {
-      await chat.repo.setSourceState({ configId: config, moduleState, isSystem });
-      expect(await chat.features(config)).toEqual({ canRemoveMembers: remove, idempotentCreate: create });
+    for (const [moduleState, moduleLevel, isSystem, remove, create, upload] of matrix) {
+      await chat.repo.setSourceState({ configId: config, moduleState, moduleLevel, isSystem });
+      expect(await chat.features(config)).toEqual({
+        canRemoveMembers: remove, idempotentCreate: create, idempotentUpload: upload,
+      });
     }
+  });
+
+  it("features give nothing when the module is ignored", async () => {
+    fakeOdoo();
+    await chat.load(await source());
+    await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.2", isSystem: true });
+    const ignoring = new ChatService(env.db, (chat as any).rpc, new OutboxService(env.db), (chat as any).capabilities, undefined, { moduleMode: "ignore" });
+    expect(await ignoring.features(config)).toEqual({
+      canRemoveMembers: false, idempotentCreate: false, idempotentUpload: false,
+    });
   });
 
   it("own post echoed by bus before response stays one message", async () => {
@@ -1470,7 +1484,7 @@ describe("ChatService", () => {
     const server = createServer(odoo, { module: true, now: () => clock });
     const src = await source();
     await chat.load(src);
-    await chat.repo.setSourceState({ configId: config, moduleState: "installed" });
+    await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.2" });
     server.state.dropNext = 1;
     const { channelId: tempId } = await chat.createGroup(src, [BOB], "Team B");
     expect(tempId).toBeLessThan(0);
@@ -1828,7 +1842,7 @@ describe("ChatService", () => {
     const odoo = fakeOdoo();
     const src = await source();
     await chat.load(src);
-    await chat.repo.setSourceState({ configId: config, moduleState: "installed", isSystem: true });
+    await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.2", isSystem: true });
     await chat.invite(src, GROUP, [7, 8]);
     await chat.rename(src, GROUP, "  Crew ");
     await chat.rename(src, CHAT, "Pal");
@@ -2098,7 +2112,7 @@ describe("ChatService", () => {
     expect(await env.db.getOutboxOpsForConfig(config)).toHaveLength(0);
     expect(odoo.kw("erplibre_remove_member")).toHaveLength(0);
     // An admin with module 1.1 sends it; the server's refusal stays as a notice
-    await chat.repo.setSourceState({ configId: config, isSystem: true, moduleState: "installed" });
+    await chat.repo.setSourceState({ configId: config, isSystem: true, moduleState: "installed", moduleLevel: "1.2" });
     odoo.state.onKw = async ({ method }) =>
       (method === "erplibre_remove_member" ? { __error: "odoo.exceptions.UserError" } : undefined);
     await chat.removeMember(src, GROUP, 7);
@@ -2352,7 +2366,7 @@ describe("ChatService", () => {
     const odoo = fakeOdoo();
     const src = await source();
     await chat.load(src);
-    await chat.repo.setSourceState({ configId: config, isSystem: true, moduleState: "installed" });
+    await chat.repo.setSourceState({ configId: config, isSystem: true, moduleState: "installed", moduleLevel: "1.2" });
     odoo.state.onKw = async ({ method }) =>
       (method === "erplibre_remove_member" ? { __error: "builtins.AttributeError" } : undefined);
     await chat.removeMember(src, GROUP, BOB);

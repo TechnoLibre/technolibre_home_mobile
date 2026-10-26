@@ -4,11 +4,13 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 const moduleState = vi.fn();
 const installModule = vi.fn();
 const upgradeModule = vi.fn();
+const moduleLevel = vi.fn();
 let isSystem = true;
 vi.mock("../services/chat/chatModule", () => ({
     moduleState: (...a: any[]) => moduleState(...a),
     installModule: (...a: any[]) => installModule(...a),
     upgradeModule: (...a: any[]) => upgradeModule(...a),
+    moduleLevel: (...a: any[]) => moduleLevel(...a),
 }));
 vi.mock("../services/networkService", () => ({
     networkService: { isOnline: vi.fn().mockResolvedValue(true) },
@@ -45,6 +47,7 @@ afterEach(() => {
     moduleState.mockReset();
     installModule.mockReset();
     upgradeModule.mockReset();
+    moduleLevel.mockReset();
     isSystem = true;
     delete (globalThis as any).localStorage;
 });
@@ -84,6 +87,7 @@ describe("ApplicationsEditComponent chat module line", () => {
     it("install updates the line to installed and persists it", async () => {
         moduleState.mockResolvedValue("available");
         installModule.mockResolvedValue("installed");
+        moduleLevel.mockResolvedValue("1.2");
         const { c, setSourceState } = make("18.0");
         await c.loadAppData();
         await c.installChatModule();
@@ -91,7 +95,7 @@ describe("ApplicationsEditComponent chat module line", () => {
         expect(c.state.chatInstalling).toBe(false);
         expect(c.state.chatError).toBe("");
         expect(setSourceState).toHaveBeenCalledWith({
-            configId: "https://odoo.example.test|alice|db1", moduleState: "installed",
+            configId: "https://odoo.example.test|alice|db1", moduleState: "installed", moduleLevel: "1.2",
         });
     });
 
@@ -126,6 +130,7 @@ describe("ApplicationsEditComponent chat module line", () => {
     it("upgrade updates the line to installed and persists it", async () => {
         moduleState.mockResolvedValue("outdated");
         upgradeModule.mockResolvedValue("installed");
+        moduleLevel.mockResolvedValue("1.2");
         const { c, setSourceState } = make("18.0");
         await c.loadAppData();
         await c.upgradeChatModule();
@@ -133,7 +138,7 @@ describe("ApplicationsEditComponent chat module line", () => {
         expect(c.state.chatCanUpgrade).toBe(false);
         expect(c.state.chatInstalling).toBe(false);
         expect(setSourceState).toHaveBeenCalledWith({
-            configId: "https://odoo.example.test|alice|db1", moduleState: "installed",
+            configId: "https://odoo.example.test|alice|db1", moduleState: "installed", moduleLevel: "1.2",
         });
     });
 

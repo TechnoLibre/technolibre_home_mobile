@@ -73,7 +73,7 @@ describe("syncTestKit", () => {
 			installLocalStorage({ allowHttp: true });
 			const env = await createSyncEnv([TARGET], chatModule ? { chatModule } : undefined);
 			const configId = env.configIds[0];
-			await (env.chat as any).repo.setSourceState({ configId, moduleState: "installed" });
+			await (env.chat as any).repo.setSourceState({ configId, moduleState: "installed", moduleLevel: "1.2" });
 			env.chat.isOnline = async () => false;
 			const src = { configId, creds: env.creds[0], label: "x", app: {} } as any;
 			await env.chat.send(src, 7, "hello");
@@ -100,8 +100,8 @@ describe("syncTestKit", () => {
 			installLocalStorage({ allowHttp: true });
 			const env = await createSyncEnv([TARGET], { chatModule: "ignore" });
 			const configId = env.configIds[0];
-			await env.chat.repo.setSourceState({ configId, moduleState: "installed", isSystem: true });
-			expect(await env.chat.features(configId)).toEqual({ canRemoveMembers: false, idempotentCreate: false });
+			await env.chat.repo.setSourceState({ configId, moduleState: "installed", moduleLevel: "1.2", isSystem: true });
+			expect(await env.chat.features(configId)).toEqual({ canRemoveMembers: false, idempotentCreate: false, idempotentUpload: false });
 		});
 
 		it("setOnline is the network the chat reads", async () => {
