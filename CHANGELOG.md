@@ -21,6 +21,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   module, installed from « Edit an application » by a system user, the
   server recognises it too. Options › Chat turns off the read receipts and
   the typing indicator sent to the server.
+- **Chat, lot 2: new conversations and management** — a New conversation
+  screen starts a direct message (people found by name, the recent ones
+  first), a group, or a channel restricted to an access group or open to
+  everyone, and lists the public channels to join. Everything is made
+  offline: the conversation appears at once, waits in the queue, and takes
+  its server identity when the network returns; a create whose answer was
+  lost is found again instead of made twice (by an identifier the server
+  module stores, or, without it, by the conversation's fingerprint), and a
+  refusal leaves the conversation marked failed until dismissed. The info
+  screen lists the members by pages, adds people, renames a group or channel
+  (or a chat, for oneself), edits the description, mutes the conversation
+  from 15 minutes to a day, or for good, leaves it, and, for an administrator,
+  removes a member. A direct message hidden on the server stays hidden and
+  shows again when the other person writes. Options › Chat mutes the whole
+  account per server. The server module 1.1 is detected: an older module is
+  offered an upgrade (to a system user), and removal needs it. The thread
+  and info screens now load their styles, and a guard checks that every
+  sheet reachable from the entry is covered.
 - **Sync test entry points** — `src/testing/syncTestKit.ts` (versioned by
   `HARNESS_API`) sets the sync code up for ERPLibre's integration tests
   against real Odoo servers; a development build also exposes

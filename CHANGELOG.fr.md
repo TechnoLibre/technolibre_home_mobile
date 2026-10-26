@@ -23,6 +23,25 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   un utilisateur système, le serveur le reconnaît aussi. Options ›
   Clavardage coupe les accusés de lecture et l'indicateur de frappe envoyés
   au serveur.
+- **Clavardage, lot 2 : nouvelles conversations et gestion** — un écran
+  Nouvelle conversation démarre un message direct (personnes trouvées par
+  nom, les récentes d'abord), un groupe, ou un canal réservé à un groupe
+  d'accès ou ouvert à tous, et liste les canaux publics à rejoindre. Tout se
+  fait hors ligne : la conversation apparaît aussitôt, attend dans la file et
+  prend son identité serveur au retour du réseau ; une création dont la
+  réponse s'est perdue est retrouvée au lieu d'être faite deux fois (par un
+  identifiant que stocke le module serveur ou, sans lui, par l'empreinte de
+  la conversation), et un refus laisse la conversation marquée échouée
+  jusqu'à ce qu'on l'écarte. La fiche liste les membres par pages, ajoute des
+  personnes, renomme un groupe ou un canal (ou un chat, pour soi seul),
+  modifie la description, met la conversation en sourdine de 15 minutes à un jour
+  ou pour de bon, la quitte et, pour un administrateur, retire un membre. Un
+  message direct masqué sur le serveur le reste et réapparaît quand l'autre
+  personne écrit. Options › Clavardage met en sourdine tout le compte, par
+  serveur. Le module serveur 1.1 est détecté : un module plus ancien se voit
+  proposer sa mise à jour (à un utilisateur système), et le retrait en a
+  besoin. Les écrans de fil et de fiche chargent désormais leurs styles, et
+  une garde vérifie que chaque feuille atteinte depuis l'entrée est couverte.
 - **Points d'entrée des tests de synchro** — `src/testing/syncTestKit.ts`
   (versionné par `HARNESS_API`) prépare le code de synchro pour les tests
   d'intégration d'ERPLibre contre de vrais Odoo ; une construction de
