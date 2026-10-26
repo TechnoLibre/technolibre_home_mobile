@@ -11,6 +11,12 @@ export const CHAT_UUID_FIELD = "erplibre_client_uuid";
 /** Field the module adds to mail.message at 1.3: the fingerprint of the body a guarded edit checks. */
 export const CHAT_FINGERPRINT_FIELD = "erplibre_body_fingerprint";
 
+/**
+ * Field the module adds to mail.message at 1.4: a computed Selection whose
+ * keys name the level. A later level appends a key instead of adding a field.
+ */
+export const CHAT_LEVEL_FIELD = "erplibre_chat_level";
+
 /** ir.module.module is readable only with is_system, so the row is an admin-only signal. */
 async function moduleRow(
   rpc: OdooRpcClient,
@@ -26,9 +32,39 @@ async function moduleRow(
 }
 
 /** Module version as the fields it adds show it; null when none is visible. */
-export type ChatModuleLevel = "1.0" | "1.1" | "1.2" | "1.3";
+export type ChatModuleLevel = "1.0" | "1.1" | "1.2" | "1.3" | "1.4";
 
-const LEVEL_RANK: Record<ChatModuleLevel, number> = { "1.0": 0, "1.1": 1, "1.2": 2, "1.3": 3 };
+const LEVEL_RANK: Record<ChatModuleLevel, number> = { "1.0": 0, "1.1": 1, "1.2": 2, "1.3": 3, "1.4": 4 };
+
+/** The level at which the module reads installed: the highest this app knows. */
+const CURRENT_LEVEL: ChatModuleLevel = "1.4";
+
+const isKnownLevel = (key: string): key is ChatModuleLevel => key in LEVEL_RANK;
+
+/** Whether a "major.minor" key sorts above the current level. */
+function aboveCurrent(key: string): boolean {
+  const m = /^(\d+)\.(\d+)$/.exec(key);
+  if (!m) return false;
+  const [major, minor] = CURRENT_LEVEL.split(".").map(Number);
+  return Number(m[1]) > major || (Number(m[1]) === major && Number(m[2]) > minor);
+}
+
+/**
+ * Level named by the selection of CHAT_LEVEL_FIELD ([[key, label], ...]):
+ * the highest key this app knows, a key above every known one counting as
+ * the highest known; null when no key is usable.
+ */
+export function levelOfSelection(selection: unknown): ChatModuleLevel | null {
+  if (!Array.isArray(selection)) return null;
+  let best: ChatModuleLevel | null = null;
+  for (const entry of selection) {
+    const key = Array.isArray(entry) ? entry[0] : null;
+    if (typeof key !== "string") continue;
+    const level = isKnownLevel(key) ? key : aboveCurrent(key) ? CURRENT_LEVEL : null;
+    if (level && (!best || LEVEL_RANK[level] > LEVEL_RANK[best])) best = level;
+  }
+  return best;
+}
 
 /** Whether the level reaches min; a null level (module unseen) is below every one. */
 export function levelAtLeast(level: ChatModuleLevel | null, min: ChatModuleLevel): boolean {
@@ -37,7 +73,8 @@ export function levelAtLeast(level: ChatModuleLevel | null, min: ChatModuleLevel
 
 /**
  * Module version from the (cached or fresh) capabilities, which any user can
- * read: CHAT_FINGERPRINT_FIELD on mail.message is 1.3, CHAT_UUID_FIELD on
+ * read: the selection of CHAT_LEVEL_FIELD on mail.message names the level
+ * from 1.4; failing it, CHAT_FINGERPRINT_FIELD on mail.message is 1.3, CHAT_UUID_FIELD on
  * ir.attachment is 1.2, on discuss.channel 1.1, on mail.message 1.0; null
  * when none carries it, or offline without a cached capability. `fresh`
  * skips the capability cache, as needed right after an install or an
@@ -51,8 +88,10 @@ export async function moduleLevel(
   const probe = { online: opts.online, maxAgeMs: opts.fresh ? 0 : undefined };
   const hasField = (capability: { fields?: Record<string, unknown> } | null, field: string) =>
     !!capability && field in (capability.fields ?? {});
-  // mail.message is read once: its capability tells 1.3 and 1.0 alike
+  // mail.message is read once: its capability tells 1.4, 1.3 and 1.0 alike
   const message = await capabilities.ensure(creds, "mail.message", probe);
+  const named = levelOfSelection((message?.fields?.[CHAT_LEVEL_FIELD] as { selection?: unknown } | undefined)?.selection);
+  if (named) return named;
   if (hasField(message, CHAT_FINGERPRINT_FIELD)) return "1.3";
   const lower: Array<[string, ChatModuleLevel]> = [
     ["ir.attachment", "1.2"],
@@ -70,9 +109,9 @@ export type ModuleProbe = { state: ChatModuleState; level: ChatModuleLevel | nul
 /**
  * State of the chat module on a server, with its level; it never persists
  * them.
- * - installed: the level is 1.3; or a system user sees the module row
+ * - installed: the level is 1.4; or a system user sees the module row
  *   installed before the registry exposes any field;
- * - outdated: the level is 1.0 to 1.2 (the row of an older module reads
+ * - outdated: the level is 1.0 to 1.3 (the row of an older module reads
  *   installed until it is upgraded, so the level decides), or a system user
  *   sees the row waiting for an upgrade;
  * - available / absent: no level, and a system user sees the row not
@@ -86,7 +125,7 @@ export async function moduleProbe(
   opts: { online: boolean; fresh?: boolean }
 ): Promise<ModuleProbe> {
   const level = await moduleLevel(capabilities, creds, opts);
-  if (level) return { state: level === "1.3" ? "installed" : "outdated", level };
+  if (level) return { state: level === CURRENT_LEVEL ? "installed" : "outdated", level };
   if (!opts.online) return { state: "unknown", level };
   if (!(await rpc.sessionInfo(creds)).isSystem) return { state: "unknown", level };
   const row = await moduleRow(rpc, creds);
@@ -99,7 +138,7 @@ export async function moduleProbe(
  * Level to act on for a stored source state. A row stored before the level
  * existed has none: its state then meant module 1.1 when installed and 1.0
  * when outdated, which the fallback keeps until the next probe stores the
- * real level; it never maps to 1.2 or 1.3, which every probe since those
+ * real level; it never maps to 1.2 or above, which every probe since those
  * levels stores explicitly.
  */
 export function effectiveLevel(stored: {
@@ -159,7 +198,7 @@ export async function installModule(
 }
 
 /**
- * Upgrades a module 1.0, 1.1 or 1.2 to the current version; system users only, as the
+ * Upgrades a module 1.0 to 1.3 to the current version; system users only, as the
  * module row is not readable otherwise. Any other state is returned as probed.
  */
 export async function upgradeModule(

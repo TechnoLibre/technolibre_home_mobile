@@ -550,13 +550,17 @@ export class ChatService {
    * removal needs a system user and module 1.1; an idempotent channel create
    * needs module 1.1 (message posts also work with 1.0); an idempotent
    * attachment upload needs module 1.2; a guarded edit, which checks the
-   * body fingerprint, needs module 1.3.
+   * body fingerprint, needs module 1.3; server search, an idempotent star and
+   * an idempotent chatter post need module 1.4.
    */
   async features(configId: string): Promise<{
     canRemoveMembers: boolean;
     idempotentCreate: boolean;
     idempotentUpload: boolean;
     guardedEdit: boolean;
+    serverSearch: boolean;
+    idempotentStar: boolean;
+    idempotentRecordPost: boolean;
   }> {
     const state = await this.repo.sourceState(configId);
     const at = (min: ChatModuleLevel) => this.moduleMode === "auto" && levelAtLeast(effectiveLevel(state), min);
@@ -565,6 +569,9 @@ export class ChatService {
       idempotentCreate: at("1.1"),
       idempotentUpload: at("1.2"),
       guardedEdit: at("1.3"),
+      serverSearch: at("1.4"),
+      idempotentStar: at("1.4"),
+      idempotentRecordPost: at("1.4"),
     };
   }
 

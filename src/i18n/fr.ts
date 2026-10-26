@@ -1071,7 +1071,7 @@ export const translations: Record<string, string> = {
   "chat.module_install": "Installer le module de clavardage",
   "chat.module_installing": "Installation…",
   "chat.module_install_error": "Impossible d'installer le module. Réessayez.",
-  "chat.module_outdated": "Le module de clavardage du serveur est à mettre à jour. La mise à jour envoie les pièces jointes une seule fois, garde les photos originales et protège la modification des messages.",
+  "chat.module_outdated": "Le module de clavardage du serveur est à mettre à jour. La mise à jour envoie les pièces jointes une seule fois, garde les photos originales, protège la modification des messages, cherche les messages sur le serveur et rend les favoris et les réponses du chatter sûrs à rejouer.",
   "chat.module_upgrade": "Mettre à jour le module de clavardage",
   "chat.module_upgrading": "Mise à jour…",
   "chat.module_upgrade_error": "Impossible de mettre à jour le module. Réessayez.",
