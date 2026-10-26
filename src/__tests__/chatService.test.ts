@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as network from "@capacitor/network";
 import { createSyncEnv, installLocalStorage, resetMocks, type SyncEnv } from "../testing/syncTestKit";
-import { OdooRpcClient } from "../services/odoo/odooRpcClient";
+import { OdooRpcClient, RequestNotSentError } from "../services/odoo/odooRpcClient";
 import { OutboxService } from "../services/outboxService";
 import { CapabilityService } from "../services/odoo/capabilityService";
 import {
@@ -359,13 +359,17 @@ interface ServerReaction { messageId: number; content: string; partnerId: number
  * of (message, content) as mail_message.py:920-933 does, a lone DELETE
  * object once nobody is left. `rows` are the server's reactions; a message
  * in `missing` answers NotFound; `drop` applies the next calls then loses
- * their answer; while `hold` is set, a call waits on the server for it.
+ * their answer; `hang` applies them and never answers (an app killed
+ * meanwhile); `unsent` fails them as a connection that never opened; while
+ * `hold` is set, a call waits on the server for it.
  */
 function reactionServer(odoo: ReturnType<typeof fakeOdoo>) {
   const state = {
     rows: [] as ServerReaction[],
     missing: new Set<number>(),
     drop: 0,
+    hang: 0,
+    unsent: 0,
     hold: null as null | Promise<void>,
   };
   const previous = odoo.state.onRoute;
@@ -374,11 +378,13 @@ function reactionServer(odoo: ReturnType<typeof fakeOdoo>) {
     const { message_id: messageId, content, action } = params;
     if (state.missing.has(messageId)) return { __error: "werkzeug.exceptions.NotFound" };
     if (state.hold) await state.hold;
+    if (state.unsent > 0) { state.unsent--; throw new RequestNotSentError("RawHttp error: connection refused"); }
     const ofGroup = (r: ServerReaction) => r.messageId === messageId && r.content === content;
     const own = state.rows.find((r) => ofGroup(r) && r.partnerId === SELF);
     if (action === "add" && !own) state.rows.push({ messageId, content, partnerId: SELF });
     if (action === "remove" && own) state.rows.splice(state.rows.indexOf(own), 1);
     if (state.drop > 0) { state.drop--; throw new TypeError("Failed to fetch"); }
+    if (state.hang > 0) { state.hang--; return new Promise<never>(() => {}); }
     const group = state.rows.filter(ofGroup);
     if (group.length === 0) return { "mail.message": [{ id: messageId, reactions: [["DELETE", { message: messageId, content }]] }] };
     return {
@@ -2705,6 +2711,23 @@ describe("ChatService", () => {
       data["mail.message"].find((m: any) => m.id === 600).reactions = contents.map((content) => ({ message: 600, content }));
       data.MessageReactions = groups;
     };
+    /** What /mail/data answers for message 600 follows the server's reactions of it. */
+    const mirror = () => {
+      const rows = server.state.rows.filter((r) => r.messageId === 600);
+      const contents = [...new Set(rows.map((r) => r.content))];
+      serverReactions(contents, contents.map((content) => {
+        const of = rows.filter((r) => r.content === content);
+        return { content, count: of.length, sequence: 1, message: 600, personas: of.map((r) => ({ id: r.partnerId, type: "partner" })) };
+      }));
+    };
+    /** The app killed and started again: a new service over the same database, its interrupted rows failed. */
+    const reborn = async () => {
+      chat.dispose();
+      const rpc = new OdooRpcClient();
+      chat = new ChatService(env.db, rpc, new OutboxService(env.db, () => clock), new CapabilityService(env.db, rpc), () => clock);
+      await new OutboxService(env.db, () => clock).recoverInterrupted();
+      await chat.recover();
+    };
 
     beforeEach(async () => {
       odoo = fakeOdoo();
@@ -2803,6 +2826,95 @@ describe("ChatService", () => {
       expect(server.state.rows).toEqual([{ messageId: 600, content: THUMBS, partnerId: SELF }]);
       expect(await groupOf(GROUP, "m600", THUMBS)).toMatchObject({ count: 1, selfReacted: true });
       expect(await reactionOps()).toEqual([]);
+    });
+
+    it("a toggle back after a dropped answer is still sent", async () => {
+      server.state.drop = 1;
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      expect(server.state.rows).toHaveLength(1);
+      await chat.react(src, GROUP, sent(600), THUMBS, false);
+      await chat.flushAll({ force: true });
+      expect(server.calls().map((c) => c.action)).toEqual(["add", "remove"]);
+      expect(server.state.rows).toEqual([]);
+      mirror();
+      await chat.load(src);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toBeNull();
+    });
+
+    it("a toggle back after a kill during the send is still sent", async () => {
+      server.state.hang = 1;
+      void chat.react(src, GROUP, sent(600), THUMBS, true);
+      await vi.waitFor(() => expect(server.state.rows).toHaveLength(1));
+      await reborn();
+      await chat.react(src, GROUP, sent(600), THUMBS, false);
+      await chat.flushAll({ force: true });
+      expect(server.calls().map((c) => c.action)).toEqual(["add", "remove"]);
+      expect(server.state.rows).toEqual([]);
+      mirror();
+      await chat.load(src);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toBeNull();
+    });
+
+    it("with two ops waiting, a tap is a no-op against the first one's base", async () => {
+      let release!: () => void;
+      server.state.hold = new Promise<void>((r) => { release = r; });
+      server.state.unsent = 1;
+      const first = chat.react(src, GROUP, sent(600), THUMBS, true);
+      await vi.waitFor(() => expect(server.calls()).toHaveLength(1));
+      // A follow-up behind the add on the wire, then the add never reaches the server
+      advance(1000);
+      await chat.react(src, GROUP, sent(600), THUMBS, false);
+      server.state.hold = null;
+      release();
+      await first;
+      expect((await reactionOps()).map((o) => o.params.base).sort()).toEqual([false, true]);
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      await chat.flushAll({ force: true });
+      expect(server.state.rows).toEqual([{ messageId: 600, content: THUMBS, partnerId: SELF }]);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toMatchObject({ count: 1, selfReacted: true });
+      expect(await reactionOps()).toEqual([]);
+    });
+
+    it("a browser change read while a reaction waits is the base its next tap compares with", async () => {
+      offline();
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      // The user adds the same reaction in the browser; a load reads it
+      server.state.rows = [{ messageId: 600, content: THUMBS, partnerId: SELF }];
+      mirror();
+      await chat.load(src);
+      expect((await reactionOps()).map((o) => o.params.base)).toEqual([true]);
+      await chat.react(src, GROUP, sent(600), THUMBS, false);
+      online();
+      await chat.flushAll();
+      expect(server.calls().map((c) => c.action)).toEqual(["remove"]);
+      expect(server.state.rows).toEqual([]);
+      mirror();
+      await chat.load(src);
+      expect(await groupOf(GROUP, "m600", THUMBS)).toBeNull();
+    });
+
+    it("a failed message takes no reaction", async () => {
+      odoo.state.onPost = async () => ({ __error: "odoo.exceptions.AccessError" });
+      const failed = await chat.send(src, GROUP, "refused");
+      expect((await chat.messages(config, GROUP)).find((m) => m.clientUuid === failed.clientUuid)!.status).toBe("failed");
+      await expect(chat.react(src, GROUP, { messageId: null, clientUuid: failed.clientUuid }, THUMBS, true)).rejects.toThrow();
+      expect(await reactionOps()).toEqual([]);
+      expect(await groupOf(GROUP, `u${failed.clientUuid}`, THUMBS)).toBeNull();
+    });
+
+    it("a reaction cancelled as it starts is not sent", async () => {
+      offline();
+      await chat.react(src, GROUP, sent(600), THUMBS, true);
+      const [op] = await reactionOps();
+      const update = env.db.updateOutboxOp.bind(env.db);
+      vi.spyOn(env.db, "updateOutboxOp").mockImplementation(async (id, patch) => {
+        await update(id, patch);
+        // Its row goes between the "running" mark and the handler's read
+        if (id === op.id && patch.status === "running") await env.db.deleteOutboxOp(id);
+      });
+      online();
+      await chat.flushAll();
+      expect(server.calls()).toEqual([]);
     });
 
     it("a reaction on a message deleted meanwhile is dropped with a notice", async () => {

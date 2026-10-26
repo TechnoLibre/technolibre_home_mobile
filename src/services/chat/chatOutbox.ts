@@ -810,9 +810,13 @@ export class ChatOutbox {
    * joined holds the op until that op is done; the swap then moves it to the
    * server's id. `after` (the post of a message not sent yet) holds a new op
    * the same way, when no op of the key runs. With `noop` and no op of the
-   * key running, a value that leaves the server as it stood (`noop` of the
-   * merged params) cancels the waiting ops and queues nothing: null. Runs
-   * under exclusive(), with the id the create settled on when it did.
+   * key running or sent, a value that leaves the server as it stood (`noop`
+   * of the first waiting op's merged params, whose base is the server's
+   * before any of them) cancels the waiting ops and queues nothing: null.
+   * An op whose send may have reached the server (params.sentAt, stamped
+   * by runMessageAction) counts as running there: it is kept with the new
+   * value, a resend being idempotent. Runs under exclusive(), with the id
+   * the create settled on when it did.
    */
   private queueAction(
     configId: string,
@@ -841,15 +845,19 @@ export class ChatOutbox {
       const same = all.filter((o) => o.kind === kind && (id === null || o.params.channelId === id) && (opts.same?.(o) ?? true));
       for (const o of same) if (o.status === "blocked") await this.outbox.cancel(o.id);
       const values = { ...(id === null ? {} : { channelId: id }), ...params };
-      const waiting = same.filter((o) => o.status !== "running" && o.status !== "blocked");
+      // In dependency order: the first waits for none of the others, a follow-up comes after the op it waits for
+      const waiting = dependencyOrder(same).filter((o) => o.status !== "running" && o.status !== "blocked");
       const running = same.find((o) => o.status === "running");
+      const sent = waiting.some((o) => !!o.params.sentAt);
       let op: OutboxOp | null;
       if (waiting.length > 0) {
         for (const w of waiting) await this.outbox.setParams(w.id, opts.merge ? opts.merge(w.params) : params);
         // The newest may have started, finished or been given up between the lookup and the write
         const now = await this.db.getOutboxOp(waiting[waiting.length - 1].id);
         if (now && now.status !== "running" && now.status !== "blocked") {
-          op = !running && opts.noop?.(now.params) ? await this.cancelWaiting(waiting, now.params) : now;
+          const first = waiting.length > 1 ? await this.db.getOutboxOp(waiting[0].id) : now;
+          const noop = !running && !sent && !!first && !!opts.noop?.(first.params);
+          op = noop ? await this.cancelWaiting(waiting, first!.params) : now;
         } else {
           op = await this.outbox.enqueue({ noteId: CHAT_NOTE, configId, kind, params: values, dependsOn: now?.id ?? null });
         }
@@ -975,7 +983,7 @@ export class ChatOutbox {
    * (null). Shown at once (showReaction). The message is taken as the
    * cache holds it (messageOf): one not sent yet is named by its post's
    * client uuid and its op waits for that post. Rejects for a message not
-   * cached.
+   * cached, or one whose post failed.
    */
   async queueReaction(
     configId: string,
@@ -986,6 +994,7 @@ export class ChatOutbox {
   ): Promise<OutboxOp | null> {
     const message = await this.repo.messageOf(configId, target);
     if (!message) throw new Error("The message of the reaction is not cached.");
+    if (message.status === "failed") throw new Error("A message not sent takes no reaction.");
     const named: MessageTarget = { messageId: message.messageId, clientUuid: message.clientUuid };
     const action = on ? "add" : "remove";
     const key = messageKeyOf(message);
@@ -1127,7 +1136,9 @@ export class ChatOutbox {
    * groups a delta carries (a load, a history page, the bus, an answer), so
    * the server's older groups do not undo what the phone shows until they
    * are sent. Per key the newest op counts: its group in the delta gains
-   * or loses the user (ownReaction); a group the user is put into and the
+   * or loses the user (ownReaction), and the server's state the delta
+   * states for sure becomes the base of the key's ops when none was sent
+   * yet; a group the user is put into and the
    * delta's full set (reactionSets) or deletion leaves out is added, after
    * the message's others; one nobody is left in becomes a deletion. Only
    * the messages whose reactions the delta carries are touched.
@@ -1136,15 +1147,16 @@ export class ChatOutbox {
     const carried = new Set([...(delta.reactions ?? []), ...(delta.reactionSets ?? []), ...(delta.deletedReactions ?? [])]
       .map((r) => r.messageId));
     if (carried.size === 0) return;
-    // In dependency order: a follow-up comes after the op it waits for
-    const newest = new Map<string, OutboxOp>();
+    // Per key, in dependency order: a follow-up comes after the op it waits for
+    const byKey = new Map<string, OutboxOp[]>();
     for (const op of dependencyOrder(await this.db.getOutboxOpsForConfig(configId))) {
-      if (op.kind === CHAT_REACTION && op.status !== "blocked") newest.set(targetKey(op), op);
+      if (op.kind === CHAT_REACTION && op.status !== "blocked") byKey.set(targetKey(op), [...(byKey.get(targetKey(op)) ?? []), op]);
     }
-    if (newest.size === 0) return;
+    if (byKey.size === 0) return;
     const self = delta.selfPartnerId ?? (await this.repo.sourceState(configId)).selfPartnerId;
     const groups = (delta.reactions ??= []);
-    for (const op of newest.values()) {
+    for (const ops of byKey.values()) {
+      const op = ops[ops.length - 1];
       const { content } = op.params;
       const messageId: number | null = op.params.messageId
         ?? (op.params.clientUuid ? (await this.repo.messageByClientUuid(configId, op.params.clientUuid))?.messageId ?? null : null);
@@ -1153,6 +1165,13 @@ export class ChatOutbox {
       const set = delta.reactionSets?.find((r) => r.messageId === messageId);
       const named = (r: { messageId: number; content: string }) => r.messageId === messageId && r.content === content;
       const at = groups.findIndex(named);
+      // What the server holds of the user's reaction, when the delta says it for sure: the base of ops none of which
+      // was sent yet, so a later tap is compared with where the server stands now
+      const held = at >= 0 ? groups[at].selfReacted
+        : (set && !set.contents.includes(content)) || delta.deletedReactions?.some(named) ? false : null;
+      if (held !== null && ops.every((o) => o.status !== "running" && !o.params.sentAt)) {
+        for (const o of ops) if (!!o.params.base !== held) await this.outbox.setParams(o.id, { base: held });
+      }
       if (at < 0 && (!on || (!set && !delta.deletedReactions?.some(named)))) continue;
       const next = ownReaction(at >= 0 ? groups[at] : {
         messageId,
@@ -2366,14 +2385,19 @@ export class ChatOutbox {
    * uuid): one no longer cached, emptied (isEmptyMessage: deleted in
    * Discuss) or still pending with its post gone is not sent, given up as
    * "vanished"; one whose post still waits holds the action (a plain
-   * error, retried). The server's NotFound or MissingError gives it up as
+   * error, retried). A row gone when the handler reads it was cancelled:
+   * nothing is sent. The send stamps sentAt first, given back when the
+   * request provably never left (RequestNotSentError). The server's NotFound or MissingError gives it up as
    * "vanished", another refusal as "refused" (giveUpMessage). The answer's
    * Store is applied with the reactions still queued laid over it
    * (overlayMessages), in the account's queue of server writers (serial).
    */
   private runMessageAction(creds: SyncCredentials, op: OutboxOp): Promise<void> {
     return this.outbox.attempt(op.id, async (running) => {
-      const act: OutboxOp = { ...running, params: (await this.db.getOutboxOp(running.id))?.params ?? running.params };
+      const stored = await this.db.getOutboxOp(running.id);
+      // Cancelled as it started (a tap back to where the server stood): nothing to send
+      if (!stored) return;
+      const act: OutboxOp = { ...running, params: stored.params };
       if (!(await this.isOnline())) throw new RequestNotSentError(`Offline: ${act.kind} waits for the network.`);
       const { configId } = act;
       const channelId: number = act.params.channelId;
@@ -2391,12 +2415,19 @@ export class ChatOutbox {
       if (messageId === null || isEmptyMessage(message!.body, files)) {
         return this.giveUpMessage(act, "vanished", `The message of ${act.kind} is gone.`);
       }
-      // Named by its post until now: its notice, if any, names the message the server knows
-      if (act.params.messageId !== messageId) await this.outbox.setParams(act.id, { messageId });
+      // The message id: a notice names the message the server knows. sentAt: from now on the server may hold this
+      // value, so a tap back is sent rather than taken for a no-op (queueAction)
+      const sentAt: string | null = act.params.sentAt ?? null;
+      await this.outbox.setParams(act.id, { messageId, sentAt: this.now().toISOString() });
       let result: any;
       try {
         result = await this.sendMessageAction(creds, act, messageId);
       } catch (e: unknown) {
+        if (e instanceof RequestNotSentError) {
+          // Nothing of this attempt reached the server: the stamp goes back to the earlier one
+          await this.outbox.setParams(act.id, { sentAt });
+          throw e;
+        }
         if (isVanished(e)) return this.giveUpMessage(act, "vanished", (e as Error).message);
         if (!isRefused(e)) throw e;
         return this.giveUpMessage(act, "refused", (e as Error).message);
