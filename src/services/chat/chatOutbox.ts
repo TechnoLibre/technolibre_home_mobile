@@ -41,9 +41,13 @@ import { v4 as uuidv4 } from "uuid";
 /** Pseudo note id of every chat row in sync_outbox: the note sync leaves them alone. */
 export const CHAT_NOTE = "chat";
 /**
- * params { channelId, text, useModule: boolean, createSentAt?, files?,
- * idempotentUpload?, reuploaded? }. files: the local uuids of its files in
- * pick order (their rows carry the post's client uuid); idempotentUpload:
+ * params { channelId, text, mentions: Mentions, parent: MessageTarget|null,
+ * useModule: boolean, createSentAt?, files?, idempotentUpload?,
+ * reuploaded? }. mentions: the people and channels picked, the body and
+ * the post's partner_ids and special_mentions built from them and the text
+ * at each send (composeBody); parent: the message it replies to, its
+ * server id read at the send. files: the local uuids of its files in pick
+ * order (their rows carry the post's client uuid); idempotentUpload:
  * whether their uploads take the module route (module 1.2); reuploaded:
  * the files the server lost were uploaded again once.
  */
@@ -228,6 +232,15 @@ const MODULE_ONLY = new Set([CHAT_REMOVE]);
 
 /** The actions Odoo would make the user a member for (the mute route joins a non-member): sent only for a member. */
 const MEMBER_ONLY = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE]);
+
+/** The options of a post (ChatOutbox.queuePost). */
+export interface PostOpts {
+  files?: OutgoingFile[];
+  idempotentUpload?: boolean;
+  draftText?: string;
+  mentions?: Mentions;
+  replyTo?: MessageTarget | null;
+}
 
 /** Options of ChatOutbox.queueAction (see there). */
 interface QueueActionOpts {
@@ -506,13 +519,18 @@ export class ChatOutbox {
    * message is stored, best-effort (a failure is logged, the post stays);
    * recoverIncomplete finishes a removal a kill cut. A post not stored
    * leaves the draft as it was.
+   *
+   * mentions: the picks of the composer, the bubble showing the body the
+   * browser would post. replyTo: the message it answers, named as the
+   * cache holds it (messageOf; one not cached as given); the bubble
+   * carries it as parentId, or parentClientUuid while it has no server id.
    */
   queuePost(
     configId: string,
     channelId: number,
     text: string,
     useModule: boolean,
-    opts: { files?: OutgoingFile[]; idempotentUpload?: boolean; draftText?: string } = {},
+    opts: PostOpts = {},
   ): Promise<ChatMessage> {
     return this.exclusive(configId, async () =>
       this.queuePostNow(configId, (await this.realIdOf(configId, channelId)) ?? channelId, text, useModule, opts));
@@ -569,9 +587,16 @@ export class ChatOutbox {
     channelId: number,
     text: string,
     useModule: boolean,
-    opts: { files?: OutgoingFile[]; idempotentUpload?: boolean; draftText?: string },
+    opts: PostOpts,
   ): Promise<ChatMessage> {
     const files = opts.files ?? [];
+    const mentions = opts.mentions ?? EMPTY_MENTIONS;
+    const body = composeBody(text, mentions, await emojiConversions()).body;
+    const parent = opts.replyTo ? await this.parentOf(configId, opts.replyTo) : null;
+    const parentFields = {
+      parentId: parent?.messageId ?? null,
+      parentClientUuid: parent && parent.messageId === null ? parent.clientUuid : null,
+    };
     const drafts = new Set<string>();
     for (const f of files) {
       if ((await this.repo.outgoingFile(configId, f.localUuid))?.state === "draft") drafts.add(f.localUuid);
@@ -585,12 +610,13 @@ export class ChatOutbox {
         messageId: null,
         clientUuid: uuidv4(),
         authorPartnerId: (await this.repo.sourceState(configId)).selfPartnerId,
-        body: composeBody(text, EMPTY_MENTIONS, await emojiConversions()).body,
+        body,
         date: odooDate(this.now()),
         messageType: "comment",
         status: "failed",
         outboxOpId: null,
         writeDate: null,
+        ...parentFields,
       };
       await this.repo.putPending(failed);
       if (files.length > 0) await this.storeFiles(configId, channelId, failed.clientUuid, files, drafts, "refused");
@@ -629,10 +655,11 @@ export class ChatOutbox {
         params: {
           ...(incomplete
             ? {
-              channelId, text, useModule, files: files.map((f) => f.localUuid), idempotentUpload: !!opts.idempotentUpload,
+              channelId, text, mentions, parent, useModule, files: files.map((f) => f.localUuid),
+              idempotentUpload: !!opts.idempotentUpload,
               ...(drafts.size > 0 ? { drafts: files.filter((f) => drafts.has(f.localUuid)).map((f) => f.localUuid) } : {}),
             }
-            : { channelId, text, useModule }),
+            : { channelId, text, mentions, parent, useModule }),
           ...(opts.draftText !== undefined ? { draftText: opts.draftText } : {}),
         },
         dependsOn: tail,
@@ -649,12 +676,13 @@ export class ChatOutbox {
       messageId: null,
       clientUuid: op.clientUuid,
       authorPartnerId: (await this.repo.sourceState(configId)).selfPartnerId,
-      body: composeBody(text, EMPTY_MENTIONS, await emojiConversions()).body,
+      body,
       date: odooDate(this.now()),
       messageType: "comment",
       status: "pending",
       outboxOpId: op.id,
       writeDate: null,
+      ...parentFields,
     };
     try {
       if (incomplete) await this.storeFiles(configId, channelId, op.clientUuid, files, drafts, "queued");
@@ -676,6 +704,24 @@ export class ChatOutbox {
     }
     await this.releaseDraftText(configId, channelId, opts.draftText);
     return message;
+  }
+
+  /** A reply target as the cache names its message (messageOf): its server id and client uuid; one not cached as given. */
+  private async parentOf(configId: string, target: MessageTarget): Promise<MessageTarget> {
+    const message = await this.repo.messageOf(configId, target);
+    return message ? { messageId: message.messageId, clientUuid: message.clientUuid } : { ...target };
+  }
+
+  /**
+   * The server id a post sends as parent_id, read at its send: the
+   * parent's cached row (a pending parent has one once its own post
+   * settled), else the id it was named by. Null, left out of the post, for
+   * no parent or one that never got an id (dropped or failed before it
+   * was sent).
+   */
+  private async parentIdOf(configId: string, parent: MessageTarget | null | undefined): Promise<number | null> {
+    if (!parent) return null;
+    return (await this.repo.messageOf(configId, parent))?.messageId ?? parent.messageId;
   }
 
   /** Removes a stored post's text from the draft (removeDraftText, `notAfter` passed on); a failure is logged, the post is not touched. */
@@ -1942,6 +1988,12 @@ export class ChatOutbox {
    * (reuploadVanished): the missing ones are uploaded again once, chained
    * before the post, and the post waits for them. Any other refusal blocks
    * it as for a text.
+   *
+   * The body, partner_ids and special_mentions come from one composeBody
+   * of the text and its picks, so the anchors and the people notified
+   * always agree; each list goes only when non-empty, as the browser does.
+   * parent_id is the parent's server id at this send (parentIdOf), left
+   * out without one.
    */
   private async sendPost(creds: SyncCredentials, op: OutboxOp): Promise<void> {
     const { channelId, text } = op.params;
@@ -1970,7 +2022,9 @@ export class ChatOutbox {
       return;
     }
     // Built before any stamp: a conversion chunk that fails to load is a plain retry, never a possible send
-    const body = composeBody(text, EMPTY_MENTIONS, await emojiConversions()).body + chatMarker(op.clientUuid);
+    const composed = composeBody(text, op.params.mentions ?? EMPTY_MENTIONS, await emojiConversions());
+    const body = composed.body + chatMarker(op.clientUuid);
+    const parentId = await this.parentIdOf(op.configId, op.params.parent);
     const sentAt = await this.quietStamp(creds, op);
 
     let messageId: number | null = null;
@@ -1992,6 +2046,9 @@ export class ChatOutbox {
         };
         if (useModule) postData.erplibre_client_uuid = op.clientUuid;
         if (ids.length > 0) postData.attachment_ids = ids;
+        if (composed.partnerIds.length > 0) postData.partner_ids = composed.partnerIds;
+        if (composed.specialMentions.length > 0) postData.special_mentions = composed.specialMentions;
+        if (parentId !== null) postData.parent_id = parentId;
         result = await this.rpc.callWithAuth(creds, (sessionId) =>
           this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/message/post", {
             thread_model: CHANNEL_MODEL,
@@ -2122,9 +2179,13 @@ export class ChatOutbox {
   /**
    * Gives the pending message its server id, applies the Store the post
    * answered, and marks the channel read for its author as Odoo does on a
-   * post, unless a newer message is already known. Runs in the account's
-   * queue of counter writers (serial). An op no longer stored (its account
-   * was erased while the post was on the wire) writes nothing.
+   * post, unless a newer message is already known. The answer's
+   * `parentMessage` is the message's parent: false (a parent the server
+   * did not find in the channel) gives a plain message, no notice. An
+   * answer without it (a post found by its marker) keeps the parent the
+   * pending row named. Runs in the account's queue of counter writers
+   * (serial). An op no longer stored (its account was erased while the
+   * post was on the wire) writes nothing.
    */
   private settle(op: OutboxOp, messageId: number, result: any): Promise<void> {
     return this.serial(op.configId, () => this.settleNow(op, messageId, result));
@@ -2133,11 +2194,14 @@ export class ChatOutbox {
   private async settleNow(op: OutboxOp, messageId: number, result: any): Promise<void> {
     const { configId } = op;
     if (!(await this.db.getOutboxOp(op.id))) return;
+    let parentId: number | null | undefined;
     if (result) {
       const self = (await this.repo.sourceState(configId)).selfPartnerId;
-      await this.repo.applyDelta(configId, parseStore(result, configId, self));
+      const delta = parseStore(result, configId, self);
+      parentId = delta.messages.find((m) => m.messageId === messageId)?.parentId;
+      await this.repo.applyDelta(configId, delta);
     }
-    await this.repo.settlePending(configId, op.clientUuid, messageId);
+    await this.repo.settlePending(configId, op.clientUuid, messageId, parentId !== undefined ? { parentId } : {});
     await this.showQueuedBody(configId, op.clientUuid, messageId);
     if ((op.params.files ?? []).length > 0) await this.keepSentFiles(configId, op.clientUuid, messageId);
     const channel = await this.repo.channel(configId, op.params.channelId);

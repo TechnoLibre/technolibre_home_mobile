@@ -173,7 +173,10 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
         const linked = ids.map((i) => state.attachments.find((a) => a.id === i));
         if (linked.some((a) => !a)) return rpcError("odoo.exceptions.UserError");
         for (const a of linked as ServerFile[]) { a.res_model = "discuss.channel"; a.res_id = params.thread_id; }
-        const posted = { ...msg(id, params.thread_id, SELF, params.post_data.body), date: "2026-10-25 10:00:05" };
+        const posted = {
+          ...msg(id, params.thread_id, SELF, params.post_data.body), date: "2026-10-25 10:00:05",
+          parentMessage: params.post_data.parent_id ?? false,
+        };
         if (ids.length === 0) return ok({ "mail.message": [posted] });
         return ok({
           "mail.message": [{ ...posted, attachment_ids: ids }],
@@ -3352,6 +3355,26 @@ describe("ChatService", () => {
       expect(odoo.on("/mail/message/post")).toHaveLength(1);
       expect(odoo.on("/mail/message/post")[0].params.post_data.body).toMatch(/^hello /);
       expect(server.edits()).toEqual([]);
+    });
+
+    it("an edit folded into a pending post sends its partner_ids", async () => {
+      offline();
+      const pending = await chat.send(src, GROUP, "helo");
+      await chat.editMessage(src, GROUP, { messageId: null, clientUuid: pending.clientUuid }, "hello @Bob", BOB_PICK);
+      online();
+      await chat.flushAll();
+      const [post] = odoo.on("/mail/message/post");
+      expect(post.params.post_data.partner_ids).toEqual([BOB]);
+      expect(post.params.post_data.body.startsWith(await browserHtml("hello @Bob", BOB_PICK))).toBe(true);
+    });
+
+    it("send passes its mentions and reply target to the post", async () => {
+      const text = "@Bob @everyone see";
+      await chat.send(src, GROUP, text, [], { mentions: BOB_PICK, replyTo: sent(601) });
+      const [post] = odoo.on("/mail/message/post");
+      expect(post.params.post_data).toMatchObject({ partner_ids: [BOB], special_mentions: ["everyone"], parent_id: 601 });
+      expect(post.params.post_data.body.startsWith(await browserHtml(text, BOB_PICK))).toBe(true);
+      expect((await chat.messages(config, GROUP)).find((m) => m.messageId === 5000)).toMatchObject({ parentId: 601 });
     });
 
     it("delete of a pending post cancels it and its uploads", async () => {

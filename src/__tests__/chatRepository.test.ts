@@ -223,6 +223,20 @@ describe("ChatRepository", () => {
     expect({ ...viaBus[0], configId: B }).toEqual(viaSettle[0]);
   });
 
+  it("the server's parent replaces the queued one on settle, by the bus or the answer", async () => {
+    await repo.putPending({ ...pending(A, "u1"), parentClientUuid: "p1" });
+    // The bus echo says the server kept no parent
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 42, clientUuid: "u1", parentId: null }] }));
+    expect(await repo.message(A, 42)).toMatchObject({ parentId: null, parentClientUuid: null });
+    await repo.putPending({ ...pending(A, "u2"), parentClientUuid: "p1" });
+    await repo.settlePending(A, "u2", 43, { parentId: 41 });
+    expect(await repo.message(A, 43)).toMatchObject({ parentId: 41, parentClientUuid: null });
+    // Without the server's parent the queued one stays
+    await repo.putPending({ ...pending(A, "u3"), parentId: 41 });
+    await repo.settlePending(A, "u3", 44);
+    expect(await repo.message(A, 44)).toMatchObject({ parentId: 41 });
+  });
+
   it("markFailed flags the pending row", async () => {
     await repo.putPending(pending(A, "u1"));
     await repo.markFailed(A, "u1", "boom");

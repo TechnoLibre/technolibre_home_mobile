@@ -12,6 +12,7 @@ import {
 import { memoryChatFiles } from "../testing/chatFakes";
 import type { OutgoingFile } from "../models/chat";
 import { chatMarker } from "../services/chat/chatBody";
+import { composeBody, type Mentions } from "../services/chat/chatCompose";
 import { emojiConversions } from "../services/chat/chatEmoji";
 import { createHash } from "node:crypto";
 
@@ -36,12 +37,17 @@ interface Call { path: string; params: any }
  * wire (response lost); `failBefore` makes the next N fail before reaching it;
  * `unsent` makes the next N fail as a connection that never opened does;
  * `postError` answers the next post with a JSON-RPC error. With `module` it
- * dedups posts by erplibre_client_uuid as the server module does.
+ * dedups posts by erplibre_client_uuid as the server module does. A post
+ * answers its `parentMessage` as Odoo does for a channel: the parent_id it
+ * was given, or false (none given, or `dropParent`: a parent the server
+ * does not find in the channel).
  */
 function chatOdoo(opts: { module?: boolean } = {}) {
   const messages: Posted[] = [];
   const calls: Call[] = [];
-  const state = { dropResponses: 0, failBefore: 0, unsent: 0, postError: null as string | null, nextId: 500 };
+  const state = {
+    dropResponses: 0, failBefore: 0, unsent: 0, postError: null as string | null, nextId: 500, dropParent: false,
+  };
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
     headers: { forEach: () => {} },
@@ -67,9 +73,10 @@ function chatOdoo(opts: { module?: boolean } = {}) {
         messages.push(msg);
       }
       if (state.dropResponses > 0) { state.dropResponses--; throw new TypeError("Failed to fetch"); }
+      const parent = state.dropParent ? false : (params.post_data.parent_id ?? false);
       return ok({
         "mail.message": [{ id: msg.id, body: msg.body, date: "2026-10-25 10:00:05", message_type: "comment",
-          author: { id: 3, type: "partner" }, thread: { id: msg.res_id, model: msg.model } }],
+          author: { id: 3, type: "partner" }, thread: { id: msg.res_id, model: msg.model }, parentMessage: parent }],
       });
     }
     if (path === "/web/dataset/call_kw") {
@@ -227,6 +234,111 @@ describe("ChatOutbox", () => {
     expect(m.body).toBe(html);
     await chat.flush(CREDS);
     expect(odoo.posts()[0].params.post_data.body).toBe(html + chatMarker(m.clientUuid!));
+  });
+
+  describe("mentions and reply", () => {
+    const BOB: Mentions = { partners: [{ id: 4, name: "Bob Martin" }], channels: [] };
+    const html = async (text: string, m: Mentions) => composeBody(text, m, await emojiConversions()).body;
+    const QUESTION = 40;
+
+    beforeEach(async () => {
+      await repo.applyDelta(CONFIG, {
+        channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], attachments: [], deletedAttachmentIds: [],
+        partners: [], inboxCounter: null, selfPartnerId: null,
+        messages: [{ messageId: QUESTION, channelId: CHANNEL, authorPartnerId: 4, body: "<p>question</p>", date: "2026-10-25 09:00:00", messageType: "comment" }],
+      });
+    });
+
+    it("a mention sends partner_ids and the anchor", async () => {
+      const odoo = chatOdoo();
+      const m = await chat.queuePost(CONFIG, CHANNEL, "hi @Bob Martin", false, { mentions: BOB });
+      const body = await html("hi @Bob Martin", BOB);
+      expect(body).toContain('data-oe-id="4"');
+      expect(m.body).toBe(body);
+      expect((await db.getOutboxOpsForConfig(CONFIG))[0].params).toMatchObject({ mentions: BOB, parent: null });
+      // A pick edited away out of the text mentions no one
+      await chat.queuePost(CONFIG, CHANNEL, "hi Bob", false, { mentions: BOB });
+      await chat.flush(CREDS);
+      const [first, second] = odoo.posts().map((c) => c.params.post_data);
+      expect(first.body).toBe(body + chatMarker(m.clientUuid!));
+      expect(first.partner_ids).toEqual([4]);
+      expect(first).not.toHaveProperty("special_mentions");
+      expect(first).not.toHaveProperty("parent_id");
+      expect(second).not.toHaveProperty("partner_ids");
+    });
+
+    it("@everyone sends special_mentions", async () => {
+      const odoo = chatOdoo();
+      const m = await chat.queuePost(CONFIG, CHANNEL, "hello @everyone", false);
+      const body = await html("hello @everyone", { partners: [], channels: [] });
+      expect(body).toContain('class="o-discuss-mention"');
+      await chat.flush(CREDS);
+      const [post] = odoo.posts().map((c) => c.params.post_data);
+      expect(post.body).toBe(body + chatMarker(m.clientUuid!));
+      expect(post.special_mentions).toEqual(["everyone"]);
+      expect(post).not.toHaveProperty("partner_ids");
+    });
+
+    it("a reply sends parent_id", async () => {
+      const odoo = chatOdoo();
+      const m = await chat.queuePost(CONFIG, CHANNEL, "answer", false, { replyTo: { messageId: QUESTION, clientUuid: null } });
+      expect(m).toMatchObject({ parentId: QUESTION, parentClientUuid: null });
+      expect((await db.getOutboxOpsForConfig(CONFIG))[0].params.parent).toEqual({ messageId: QUESTION, clientUuid: null });
+      await chat.flush(CREDS);
+      expect(odoo.posts()[0].params.post_data.parent_id).toBe(QUESTION);
+      expect(await repo.message(CONFIG, 500)).toMatchObject({ status: "sent", parentId: QUESTION, parentClientUuid: null });
+    });
+
+    it("a reply to a pending message sends the parent's server id", async () => {
+      const odoo = chatOdoo();
+      const question = await chat.queuePost(CONFIG, CHANNEL, "question?", false);
+      const answer = await chat.queuePost(CONFIG, CHANNEL, "answer", false, { replyTo: { messageId: null, clientUuid: question.clientUuid } });
+      expect(answer).toMatchObject({ parentId: null, parentClientUuid: question.clientUuid });
+      await chat.flush(CREDS);
+      const [first, second] = odoo.posts().map((c) => c.params.post_data);
+      expect(first).not.toHaveProperty("parent_id");
+      expect(second.parent_id).toBe(500);
+      expect(await repo.message(CONFIG, 501)).toMatchObject({ clientUuid: answer.clientUuid, parentId: 500, parentClientUuid: null });
+    });
+
+    it("a reply to a message dropped before it was sent goes without parent_id", async () => {
+      const odoo = chatOdoo();
+      const question = await chat.queuePost(CONFIG, CHANNEL, "question?", false);
+      await chat.queuePost(CONFIG, CHANNEL, "answer", false, { replyTo: { messageId: null, clientUuid: question.clientUuid } });
+      expect(await chat.queueDelete(CONFIG, CHANNEL, { messageId: null, clientUuid: question.clientUuid })).toBeNull();
+      await chat.flush(CREDS);
+      expect(odoo.posts().map((c) => c.params.post_data.body)).toEqual([expect.stringMatching(/^answer/)]);
+      expect(odoo.posts()[0].params.post_data).not.toHaveProperty("parent_id");
+    });
+
+    it("a parent dropped by the server gives a plain message", async () => {
+      const odoo = chatOdoo();
+      odoo.state.dropParent = true;
+      await chat.queuePost(CONFIG, CHANNEL, "answer", false, { replyTo: { messageId: QUESTION, clientUuid: null } });
+      expect(await chat.flush(CREDS)).toMatchObject({ done: 1, failed: 0, blocked: 0 });
+      expect(odoo.posts()[0].params.post_data.parent_id).toBe(QUESTION);
+      expect(await repo.message(CONFIG, 500)).toMatchObject({ status: "sent", parentId: null, parentClientUuid: null });
+      expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+      expect(await chat.notices([CONFIG])).toEqual([]);
+    });
+
+    it("a retried post with mentions is found by its marker and not re-sent", async () => {
+      const odoo = chatOdoo();
+      odoo.state.dropResponses = 1;
+      const m = await chat.queuePost(CONFIG, CHANNEL, "hi @Bob Martin @everyone", false, {
+        mentions: BOB, replyTo: { messageId: QUESTION, clientUuid: null },
+      });
+      expect(await chat.flush(CREDS)).toMatchObject({ failed: 1 });
+      advance(CREATE_QUIET_WINDOW_MS + 1000);
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1, failed: 0 });
+      const [post] = odoo.posts().map((c) => c.params.post_data);
+      expect(odoo.posts()).toHaveLength(1);
+      expect(odoo.messages).toHaveLength(1);
+      expect(post).toMatchObject({ partner_ids: [4], special_mentions: ["everyone"], parent_id: QUESTION });
+      expect(post.body).toBe(await html("hi @Bob Martin @everyone", BOB) + chatMarker(m.clientUuid!));
+      // The answer was lost: the parent stays the one the post named
+      expect(await repo.message(CONFIG, 500)).toMatchObject({ status: "sent", clientUuid: m.clientUuid, parentId: QUESTION });
+    });
   });
 
   it("a post whose emoji chunk fails to load is not stamped as possibly sent", async () => {

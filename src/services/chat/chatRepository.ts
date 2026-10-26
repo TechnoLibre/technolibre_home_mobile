@@ -747,7 +747,9 @@ export class ChatRepository {
    * The one final state of a queued post that reached the server: a single
    * sent row, client uuid kept, no outbox op. The queued row supplies what the
    * user typed; the server's row overlays only the values it really carries,
-   * so a bus record without a body never blanks the text.
+   * so a bus record without a body never blanks the text. A patch that
+   * carries the server's parent (`parentId`, null for none) replaces the
+   * queued one, its client uuid included.
    */
   private mergeSettled(
     queued: ChatMessage | null,
@@ -760,6 +762,7 @@ export class ChatRepository {
     return {
       ...(queued ?? {}),
       ...(echoed ? meaningful(echoed) : {}),
+      ...(patch.parentId !== undefined ? { parentClientUuid: null } : {}),
       ...defined(patch),
       configId,
       messageId,

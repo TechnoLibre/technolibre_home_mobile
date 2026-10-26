@@ -569,21 +569,24 @@ export class ChatService {
    * pending message; a failed flush leaves it queued for the next one.
    * draftText: the composer's text as the draft holds it, removed from the
    * draft with the post (ChatOutbox.queuePost). onQueued is called once
-   * the post is queued, before the flush.
+   * the post is queued, before the flush. mentions: the people and
+   * channels picked in the composer; replyTo: the message it answers.
    */
   async send(
     src: ChatSource,
     channelId: number,
     text: string,
     files: OutgoingFile[] = [],
-    opts: { draftText?: string; onQueued?: () => void } = {},
+    opts: { draftText?: string; onQueued?: () => void; mentions?: Mentions; replyTo?: MessageTarget | null } = {},
   ): Promise<ChatMessage> {
     const { configId } = src;
     // Module 1.0 already dedupes message posts by uuid; only 1.1 adds channels
     const level = effectiveLevel(await this.repo.sourceState(configId));
     const useModule = this.moduleMode === "auto" && level !== null;
     const idempotentUpload = files.length > 0 && (await this.features(configId)).idempotentUpload;
-    const message = await this.queue.queuePost(configId, channelId, text, useModule, { files, idempotentUpload, draftText: opts.draftText });
+    const message = await this.queue.queuePost(configId, channelId, text, useModule, {
+      files, idempotentUpload, draftText: opts.draftText, mentions: opts.mentions, replyTo: opts.replyTo,
+    });
     opts.onQueued?.();
     this.changed(configId, channelId);
     if (await this.isOnline()) {
