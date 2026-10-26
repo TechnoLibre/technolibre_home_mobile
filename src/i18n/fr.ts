@@ -36,6 +36,7 @@ export const translations: Record<string, string> = {
   "options.licenses_source": "Source :",
   "options.licenses_based_on": "Elle repose sur {name}, l'encodeur MP3 dont les auteurs demandent d'être mentionnés :",
   "options.licenses_authors": "Mention des auteurs",
+  "options.licenses_authors_emoji": "Les données des émojis sont générées à partir de Unicode CLDR, qui relève de la licence suivante :",
   "options.licenses_base": "Afficher ou masquer le texte de la {name}",
   "options.sms_gateway": "Passerelle SMS",
 

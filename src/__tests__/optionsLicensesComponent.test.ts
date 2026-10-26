@@ -72,6 +72,9 @@ describe("OptionsLicensesComponent", () => {
         expect(emoji.useKey).toBe("options.licenses_use_emoji");
         const en = (await import("../i18n/en")).translations;
         const fr = (await import("../i18n/fr")).translations;
+        expect(emoji.authorsKey).toBe("options.licenses_authors_emoji");
+        expect(en["options.licenses_authors_emoji"]).toBe(emoji.authorsNotice);
+        expect(fr["options.licenses_authors_emoji"]).not.toBe(emoji.authorsNotice);
         for (const text of [en["options.licenses_use_emoji"], fr["options.licenses_use_emoji"]]) {
             expect(text).toContain("{license}");
             expect(text).toContain("Odoo 18");

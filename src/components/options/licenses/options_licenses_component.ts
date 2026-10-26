@@ -17,6 +17,8 @@ export interface ThirdPartyNotice {
     sourceUrl: string;
     /** The notice from the library's authors, as the package ships it. */
     authorsNotice: string;
+    /** The i18n key of a notice sentence written for the app, shown in place of authorsNotice when present. */
+    authorsKey?: string;
     /** The full licence text, and the text of the licence it builds on; absent when none, and no button shows it. */
     licenseText: string;
     baseLicenseName?: string;
@@ -52,6 +54,7 @@ export const THIRD_PARTY_NOTICES: ThirdPartyNotice[] = [
         useKey: "options.licenses_use_emoji",
         sourceUrl: "https://github.com/unicode-org/cldr",
         authorsNotice: "Emoji data are generated from Unicode CLDR, falling under the following licence:",
+        authorsKey: "options.licenses_authors_emoji",
         licenseText: unicodeLicense,
     },
 ];
@@ -86,7 +89,7 @@ export class OptionsLicensesComponent extends EnhancedComponent {
             <a t-att-href="notice.basedOn.url" target="_blank" rel="noreferrer noopener" t-esc="notice.basedOn.url"/>
           </p>
           <h5 t-esc="t('options.licenses_authors')"/>
-          <pre class="options-licenses__text" t-esc="notice.authorsNotice"/>
+          <pre class="options-licenses__text" t-esc="notice.authorsKey and t(notice.authorsKey) or notice.authorsNotice"/>
           <h5 t-esc="notice.license"/>
           <pre class="options-licenses__text" t-esc="notice.licenseText"/>
           <button t-if="notice.baseLicenseName" class="chat-new__chip" t-att-aria-expanded="state.base ? 'true' : 'false'"

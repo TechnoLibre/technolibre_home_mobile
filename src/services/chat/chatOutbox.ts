@@ -1512,8 +1512,8 @@ export class ChatOutbox {
    * else the newest edit its text (editedBody). An edit whose baseBody is
    * still unknown (queued while its post ran) takes the delta's body as
    * its base while that body is still the post's (postBody); a known base
-   * never moves, so a browser edit read meanwhile still refuses it. `except` is left out: the op whose own answer this
-   * is.
+   * never moves, so a browser edit read meanwhile still refuses it.
+   * `except` is left out: the op whose own answer this is.
    */
   private async overlayBodies(configId: string, delta: StoreDelta, except?: string): Promise<void> {
     const carried = new Map(delta.messages.filter((m) => m.body !== undefined).map((m) => [m.messageId, m]));
@@ -2984,7 +2984,6 @@ export class ChatOutbox {
     if (bodyText(server) === sends) return result;
     throw new EditConflictError(result.erplibre_conflict === "deleted" ? "deleted" : "changed", result, null);
   }
-
 
   /**
    * Gives an action on a message up (giveUp). A reaction no later op of
