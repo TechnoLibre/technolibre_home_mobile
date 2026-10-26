@@ -439,6 +439,20 @@ export class ThreadAttachments {
         this.changed();
     }
 
+    /** Files whose audio the web view could not play, by key. */
+    private unplayed = new Set<string>();
+
+    /** The web view could not play this file: its view says so, and unplayable() is true for it. */
+    cannotPlay(key: string): void {
+        this.unplayed.add(key);
+        this.errors.set(key, t("chat.att_play_failed"));
+        this.changed();
+    }
+
+    unplayable(key: string): boolean {
+        return this.unplayed.has(key);
+    }
+
     /** One player at a time: the one starting pauses the one before. */
     playing(audio: HTMLAudioElement): void {
         if (this.audio && this.audio !== audio) this.audio.pause();
@@ -514,7 +528,7 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
       <div t-if="images().length" class="chat-att__grid" t-att-class="{'chat-att__grid--single': images().length === 1}">
         <button t-foreach="images()" t-as="v" t-key="v.key" class="chat-att__tile"
                 t-att-class="{'chat-att__tile--failed': v.state === 'failed_preview'}"
-                t-att-aria-label="v.state === 'failed_preview' ? t('chat.att_retry_preview', {name: v.name}) : v.name"
+                t-att-aria-label="tileLabel(v)"
                 t-on-click="() => this.onImage(v)">
           <img t-if="v.src" class="chat-att__img" t-att-src="v.src" t-att-alt="v.name" t-on-error="() => this.props.ta.broke(v.key)"/>
           <span t-elif="v.state === 'failed_preview'" class="chat-att__placeholder" aria-hidden="true">↻</span>
@@ -532,7 +546,7 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
                 t-on-click="() => this.onToggle(v)" t-esc="player.playing[v.key] ? '⏸' : '▶'"/>
         <span t-if="v.voice" class="chat-att__badge" t-att-title="t('chat.voice_message')" aria-hidden="true">🎤</span>
         <span t-else="" class="chat-att__name" t-esc="'🎵 ' + v.name"/>
-        <span class="chat-att__clock" t-esc="clockText(v.key)"/>
+        <span class="chat-att__clock" t-esc="clockText(v)"/>
         <span t-if="v.state === 'uploading' or v.state === 'downloading'" class="chat-att__state" t-esc="transferText(v)"/>
         <button t-if="v.state === 'downloading'" class="chat-att__cancel" t-att-aria-label="t('chat.att_cancel', {name: v.name})"
                 t-on-click="() => this.onCancel(v)">✕</button>
@@ -541,6 +555,7 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
           <button t-if="!v.outgoing" class="chat-att__anyway" t-on-click="() => this.onAnyway(v)" t-esc="t('chat.download_anyway')"/>
         </t>
         <span t-if="v.error" class="chat-att__error" role="alert" t-esc="v.error"/>
+        <button t-if="canOpenWith(v)" class="chat-att__anyway" t-on-click="() => this.onFile(v)" t-esc="t('chat.open_with')"/>
         <audio class="chat-att__audio" preload="metadata" t-att-data-key="v.key"
                t-on-loadedmetadata="(ev) => this.onAudio(ev, v.key)" t-on-durationchange="(ev) => this.onAudio(ev, v.key)"
                t-on-timeupdate="(ev) => this.onAudio(ev, v.key)" t-on-playing="(ev) => this.onAudio(ev, v.key)"
@@ -612,11 +627,37 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
         return (v.state === "uploading" ? "↑ " : "↓ ") + amount;
     }
 
-    /** The player's position, over the duration once known. */
-    clockText(key: string): string {
-        const position = clock(this.player.position[key] ?? 0);
-        const duration = this.player.duration[key];
-        return duration && Number.isFinite(duration) ? position + " / " + clock(duration) : position;
+    /**
+     * The player's position, over the duration once known; « –:–– » while
+     * neither is known and the file is not on the phone (no source to read
+     * them from), rather than a « 0:00 » that reads as an empty recording.
+     */
+    clockText(v: Pick<AttachmentView, "key" | "src">): string {
+        const duration = this.player.duration[v.key];
+        const known = !!duration && Number.isFinite(duration);
+        if (!known && !v.src && !this.player.position[v.key]) return "–:––";
+        const position = clock(this.player.position[v.key] ?? 0);
+        return known ? position + " / " + clock(duration) : position;
+    }
+
+    /** An image tile's label: its name, then its state when it has one (screen readers read no inner text). */
+    tileLabel(v: AttachmentView): string {
+        if (v.state === "failed_preview") return t("chat.att_retry_preview", { name: v.name });
+        let state = "";
+        if (v.state === "uploading" || v.state === "downloading") {
+            state = t(v.state === "uploading" ? "chat.att_sending" : "chat.att_downloading");
+            if (v.progress !== null) state += ", " + t("chat.att_progress", { percent: v.progress });
+        } else if (v.state === "waiting_wifi") {
+            state = t("chat.waiting_wifi");
+        } else if (v.error) {
+            state = v.error;
+        }
+        return state ? v.name + " — " + state : v.name;
+    }
+
+    /** « Open with » beside an audio file the web view could not play; a voice message is Odoo's MP3 and plays here. */
+    canOpenWith(v: AttachmentView): boolean {
+        return !v.voice && this.ta.unplayable(v.key);
     }
 
     onImage(v: AttachmentView): void {
@@ -694,6 +735,7 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
             await audio.play();
         } catch (e: unknown) {
             console.warn("chat: audio did not play", e);
+            if ((e as { name?: unknown } | null)?.name === "NotSupportedError") this.ta.cannotPlay(v.key);
         }
     }
 
@@ -706,7 +748,12 @@ export class ChatAttachmentsComponent extends EnhancedComponent {
         if (ev.type === "loadedmetadata" || ev.type === "durationchange") this.player.duration[key] = audio.duration;
         else if (ev.type === "timeupdate") this.player.position[key] = audio.currentTime;
         else if (ev.type === "playing") this.player.playing[key] = true;
-        else if (ev.type === "pause" || ev.type === "error") this.player.playing[key] = false;
+        else if (ev.type === "pause") this.player.playing[key] = false;
+        else if (ev.type === "error") {
+            this.player.playing[key] = false;
+            // A source the web view cannot decode; an audio without one has nothing to say
+            if (audio.getAttribute("src")) this.ta.cannotPlay(key);
+        }
         else if (ev.type === "ended") {
             this.player.playing[key] = false;
             this.player.position[key] = 0;

@@ -153,6 +153,11 @@
 	font-size: 0.82rem;
 }
 
+/* The live region stays in the page, empty, so the warning appearing is announced; it takes no gap of its own */
+.chat-list__cache-status {
+	margin-top: -0.5rem;
+}
+
 .chat-list__cache-warning {
 	display: block;
 	width: 100%;

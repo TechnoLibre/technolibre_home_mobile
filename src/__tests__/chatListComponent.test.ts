@@ -6,6 +6,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ChatListComponent } from "../components/chat/chat_list_component";
 import { HomeComponent } from "../components/home/home_component";
 import { EventBus } from "@odoo/owl";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Events } from "../constants/events";
 
 function stubLocale() {
@@ -97,12 +100,34 @@ describe("ChatListComponent", () => {
         const c = make(chat);
         await c.loadCache();
         expect(c.state.notices.map((n: any) => n.text)).toEqual([
-            "Team — file “a.jpg” not sent: over the server's limit of 128 MB.",
+            "Team — file “a.jpg” not sent: over the server's limit of 128\u00a0MB.",
             "Team — file “b.jpg” not sent: the server found it too big.",
             "Team — file “c.jpg” not sent: it is no longer on the phone.",
             "Team — file “d.jpg” not sent: refused by the server.",
             "Team — file “e.jpg” not sent: the server cannot find the conversation.",
         ]);
+    });
+
+    it("a file's notice formats the limit as the composer does, in the user's language", async () => {
+        const chat: any = fakeChat(["a"], [chan("a", 5, { name: "Team" })]);
+        chat.notices = vi.fn().mockResolvedValue([{
+            id: "n", configId: "a", kind: "chat.file_refused", channelId: 5, reason: "refused", error: "", count: 1, label: "",
+            file: { name: "a.jpg", reason: "too_big", limit: 2.5 * 1024 * 1024 },
+        }]);
+        const c = make(chat);
+        localStorage.setItem("app_lang", "fr");
+        await c.loadCache();
+        expect(c.state.notices.map((n: any) => n.text)).toEqual([
+            "Team — fichier « a.jpg » non envoyé : dépasse la limite du serveur (2,5\u00a0Mo).",
+        ]);
+    });
+
+    it("the cache warning is a button for screen readers, announced by a status region beside it", () => {
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_list_component.ts"), "utf8");
+        const tag = source.slice(source.indexOf('class="chat-list__cache-warning"'));
+        expect(tag.slice(0, tag.indexOf("/>"))).not.toMatch(/role=/);
+        const region = source.slice(0, source.indexOf('class="chat-list__cache-warning"'));
+        expect(region.slice(region.lastIndexOf("<div"))).toMatch(/role="status"/);
     });
 
     it("an action the outbox gave up on is shown until dismissed", async () => {

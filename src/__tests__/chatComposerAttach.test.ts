@@ -312,6 +312,23 @@ describe("ComposerAttach", () => {
         expect(h.state.notices).toEqual(["“film.mp4” is over the server's limit of 2 MB: it cannot be sent."]);
     });
 
+    it("a pick shows its chips without waiting for the limit, and refuses late a file the limit then rules out", async () => {
+        const h = harness();
+        let answer!: (limit: number | null) => void;
+        h.attach.deps.uploadLimit = () => new Promise((r) => { answer = r; });
+        void h.attach.start();
+        h.pickNext([file("film.mp4", 3 * 1024 * 1024, "video/mp4"), file("ok.jpg", 10)]);
+        const picking = h.attach.pick(h.input, "file");
+        await vi.waitFor(() => expect(h.state.chips.map((c) => c.file.name)).toEqual(["film.mp4", "ok.jpg"]));
+        expect(h.capture.stage).toHaveBeenCalledWith(FILE_DIR, expect.any(File), { maxUploadSize: 128 * 1024 * 1024 });
+        answer(LIMIT);
+        await picking;
+        expect(h.state.limit).toBe(LIMIT);
+        expect(h.state.chips.map((c) => c.file.name)).toEqual(["ok.jpg"]);
+        expect(h.state.notices).toEqual(["“film.mp4” is over the server's limit of 2 MB: it cannot be sent."]);
+        expect([...h.drafts.values()].map((d) => d.file.name)).toEqual(["ok.jpg"]);
+    });
+
     it("a HEIC that could not be converted is kept with a notice", async () => {
         const h = harness();
         await h.attach.start();

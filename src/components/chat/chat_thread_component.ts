@@ -374,8 +374,10 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     /**
      * Resolves the source, opens the attachments once it is known (until
-     * then 📎 and 🎤 stay off), shows the draft and the cache, scrolls down
-     * and marks read.
+     * then 📎 and 🎤 stay off), shows the cache, scrolls down and marks
+     * read; the draft is read meanwhile and shows when it answers (its read
+     * waits for a send of this conversation still running elsewhere, which
+     * the cached messages never wait for).
      */
     async open(): Promise<void> {
         const sources = await this.chatService.sources({ online: false });
@@ -384,10 +386,11 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.attachments.source = this.source;
         if (this.source) void this.attach.start();
         this.state.serverLabel = this.source?.label ?? "";
-        await this.showDraft();
+        const draft = this.showDraft();
         await this.refresh();
         this.scrollToBottom();
         await this.markRead();
+        await draft;
     }
 
     /** Rebuilds the view from the cache; one build runs at a time, calls made meanwhile fold into one rerun. */

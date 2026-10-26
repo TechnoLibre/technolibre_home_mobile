@@ -18,6 +18,8 @@ export interface ThirdPartyNotice {
     licenseText: string;
     baseLicenseName: string;
     baseLicenseText: string;
+    /** The work the library derives from, whose authors ask to be acknowledged with a link; absent when none. */
+    basedOn?: { name: string; url: string };
 }
 
 /**
@@ -36,6 +38,7 @@ export const THIRD_PARTY_NOTICES: ThirdPartyNotice[] = [
         licenseText: lgplText,
         baseLicenseName: "GPL-3.0",
         baseLicenseText: gplText,
+        basedOn: { name: "LAME", url: "https://lame.sourceforge.net" },
     },
 ];
 
@@ -63,6 +66,10 @@ export class OptionsLicensesComponent extends EnhancedComponent {
           <p class="options-sync__info">
             <a t-att-href="notice.sourceUrl" target="_blank" rel="noreferrer noopener"
                t-esc="t('options.licenses_source') + ' ' + notice.sourceUrl"/>
+          </p>
+          <p t-if="notice.basedOn" class="options-sync__info">
+            <t t-esc="t('options.licenses_based_on', {name: notice.basedOn.name})"/>
+            <a t-att-href="notice.basedOn.url" target="_blank" rel="noreferrer noopener" t-esc="notice.basedOn.url"/>
           </p>
           <h5 t-esc="t('options.licenses_authors')"/>
           <pre class="options-licenses__text" t-esc="notice.authorsNotice"/>

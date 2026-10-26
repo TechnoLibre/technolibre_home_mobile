@@ -7,6 +7,7 @@ import type { OutgoingFile } from "../../models/chat";
 import { ChatCapture, type PickKind, type StageRefusal } from "../../services/chat/chatCapture";
 import { chatSettings } from "../../services/chat/chatSettings";
 import { ChatVoiceRecorder, sharedVoiceRecorder, type VoiceStart } from "../../services/chat/chatVoice";
+import { UPLOAD_SLACK_BYTES } from "../../services/chat/chatTransfer";
 import { formatBytes } from "../../utils/formatBytes";
 
 /** Where a chip's file comes from: a pick of that kind, or the voice recorder. */
@@ -192,7 +193,10 @@ export class ComposerAttach {
      * cannot be staged, and a HEIC the phone could not convert (kept as it
      * is) are each named in a notice. Each staged file is a draft file
      * before its chip shows; one staged after the screen closed stays in
-     * the draft without a chip.
+     * the draft without a chip. Staging uses the limit known at the tap
+     * (FALLBACK_LIMIT when none is) and never waits for the server's: read
+     * meanwhile, a lower one then takes off, with the same notice, the
+     * chips of this pick it rules out.
      */
     async pick(input: HTMLInputElement, kind: PickKind): Promise<void> {
         if (!this.state.ready) return;
@@ -202,11 +206,12 @@ export class ComposerAttach {
         if (picked.length === 0 || this.disposed) return;
         this.state.notices = [];
         this.state.staging++;
+        const maxUploadSize = this.state.limit ?? FALLBACK_LIMIT;
+        const limitRead = this.refreshLimit();
+        const lang = getCurrentLocale();
+        const mine = new Set<string>();
         try {
             const fileDir = await this.deps.fileDir();
-            await this.refreshLimit();
-            const maxUploadSize = this.state.limit ?? FALLBACK_LIMIT;
-            const lang = getCurrentLocale();
             for (const file of picked) {
                 let staged: OutgoingFile | StageRefusal;
                 try {
@@ -225,9 +230,18 @@ export class ComposerAttach {
                 if (this.disposed) continue;
                 if (/^image\/hei[cf]/.test(staged.mimetype)) this.notice(t("chat.heic_kept", { name: staged.name }));
                 this.addChip(staged, kind, seq);
+                mine.add(staged.localUuid);
             }
         } finally {
             this.state.staging--;
+        }
+        await limitRead;
+        const limit = this.state.limit;
+        if (limit === null || limit >= maxUploadSize) return;
+        for (const chip of this.state.chips) {
+            if (!mine.has(chip.file.localUuid) || chip.file.size + UPLOAD_SLACK_BYTES <= limit) continue;
+            this.notice(t("chat.file_too_big", { name: chip.file.name, limit: formatBytes(limit, lang) }));
+            await this.remove(chip);
         }
     }
 

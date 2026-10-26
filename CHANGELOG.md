@@ -45,7 +45,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   compressed (1920 px, JPEG quality 80) when the user asks. A voice message
   is recorded with a tap to start and a tap to stop (60 seconds at most) and
   encoded as MP3, mono, 128 kbit/s. The text and the files of a conversation
-  are kept as a draft per conversation, across restarts. The files go to the
+  are kept as a draft per conversation, across restarts, and the list shows a
+  « Draft: » line for it. A message with files shows at once, with a
+  « Preparing the photos… » line while they are compressed. The files go to the
   server one by one, streamed, in a queue lane of their own; a transfer whose
   answer was lost is not made twice (with the server module 1.2, which
   recognises the upload by its identifier, or, without it, by a search before
@@ -54,7 +56,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   viewer opens a photo, the player plays a voice message, and « open with »
   hands a file to another app. Options › Chat sets the compression question,
   the cache space, a purge of the oldest-opened files (off by default, 2048
-  MB, warned at 80 %) and clears the cache. The app bundles the MP3 encoder
+  MB, warned at 80 %) and clears the cache; a conversation's information screen
+  shows its own space and clears it. Deleting an application counts the
+  messages and the files not sent yet. The app bundles the MP3 encoder
   @breezystack/lamejs, licensed LGPL-3.0: Options › Third-party licenses
   names it, links its source and reproduces the licence text.
 - **Sync test entry points** — `src/testing/syncTestKit.ts` (versioned by

@@ -309,4 +309,26 @@ describe("chat wording", () => {
     expect(fr["sync.attachments_hint"]).toMatch(/messages vocaux/);
     expect(fr["sync.attachments_hint"]).toMatch(/aperçus/);
   });
+
+  it("French chat strings say « vous », and touch rather than « touche »", () => {
+    const chat = Object.entries(fr).filter(([k]) => k.startsWith("chat."));
+    expect(chat.filter(([, v]) => /(^|[\s'(«])(Touche|touche|tu|ton|ta|tes)(?=[\s,.;:!?)»]|$)/.test(v))).toEqual([]);
+    expect(fr["chat.list_cache_warning"]).toMatch(/Touchez pour les gérer\./);
+  });
+
+  it("freeing a conversation's space names the downloaded files, not the conversation", () => {
+    expect(en["chat.info_clear_space"]).toBe("Remove downloaded files");
+    expect(fr["chat.info_clear_space"]).toBe("Retirer les fichiers téléchargés");
+    expect(en["chat.cache_clear_all"]).toBe("Remove all downloaded files");
+    expect(fr["chat.cache_clear_all"]).toBe("Retirer tous les fichiers téléchargés");
+  });
+
+  it("French says « compresser » for every photo compression, and the time left after the time", () => {
+    const chat = Object.entries(fr).filter(([k]) => k.startsWith("chat."));
+    expect(chat.filter(([, v]) => /rédui/i.test(v))).toEqual([]);
+    expect(fr["chat.compress_yes"]).toBe("Compresser");
+    expect(fr["chat.compress_ask"]).toMatch(/^Compresser les photos/);
+    expect(fr["chat.voice_left"]).toBe("{time} restantes");
+    expect(fr["chat.att_progress"]).toBe("{percent}\u00a0%");
+  });
 });

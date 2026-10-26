@@ -674,14 +674,62 @@ describe("ChatAttachmentsComponent", () => {
         expect(c.playLabel(v)).toBe("Lire le message vocal");
     });
 
-    it("the player shows the position over the duration", () => {
+    it("the player shows the position over the duration; a voice not on the phone shows no time yet", () => {
         stubLocale();
         const h = harness();
         const { c } = comp(h);
-        expect(c.clockText("a2")).toBe("0:00");
+        const here = { key: "a2", src: "http://localhost/v.mp3" };
+        const remote = { key: "a2", src: null };
+        expect(c.clockText(here)).toBe("0:00");
+        expect(c.clockText(remote)).toBe("–:––");
         c.player.duration.a2 = 47.4;
         c.player.position.a2 = 12.2;
-        expect(c.clockText("a2")).toBe("0:12 / 0:47");
+        expect(c.clockText(here)).toBe("0:12 / 0:47");
+        expect(c.clockText(remote)).toBe("0:12 / 0:47");
+    });
+
+    it("an image tile's label says its state after its name", async () => {
+        stubLocale();
+        const h = harness();
+        await h.ta.load(new Map([["m1", [att(1, { thumbPath: "chat/d/thumbs/1" })]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        const { c } = comp(h);
+        const v = h.ta.views("m1")[0];
+        expect(c.tileLabel(v)).toBe(v.name);
+        expect(c.tileLabel({ ...v, state: "waiting_wifi" })).toBe(v.name + " — Waiting for Wi-Fi");
+        expect(c.tileLabel({ ...v, state: "downloading", progress: 40 })).toBe(v.name + " — downloading, 40%");
+        expect(c.tileLabel({ ...v, state: "uploading", progress: null })).toBe(v.name + " — sending");
+        expect(c.tileLabel({ ...v, state: "refused", error: "Not sent: over the server's limit" }))
+            .toBe(v.name + " — Not sent: over the server's limit");
+        expect(c.tileLabel({ ...v, state: "failed_preview" })).toBe(v.name + ": preview not loaded, tap to try again");
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_attachments_component.ts"), "utf8");
+        expect(source).toContain('t-att-aria-label="tileLabel(v)"');
+    });
+
+    it("audio the web view cannot play says so and offers « open with », a voice message only says so", async () => {
+        stubLocale();
+        const h = harness();
+        await h.ta.load(new Map([["m1", [
+            att(2, { mimetype: "audio/mpeg", voice: true, originalPath: "chat/d/files/2/v.mp3" }),
+            att(3, { name: "song.xyz", mimetype: "audio/x-unknown", originalPath: "chat/d/files/3/song.xyz" }),
+        ]]]), { pendingRows: new Set(), heldUploads: new Set() });
+        const { c } = comp(h);
+        const audio: any = document.createElement("audio");
+        audio.setAttribute("src", "http://localhost/_capacitor_file_/data/chat/d/files/3/song.xyz");
+        c.onAudio({ type: "error", target: audio }, "a3");
+        const failing: any = document.createElement("audio");
+        failing.play = vi.fn(async () => { throw Object.assign(new Error("no"), { name: "NotSupportedError" }); });
+        c.audioOf = () => failing;
+        await c.play(h.ta.views("m1")[0], false);
+        const [voice, song] = h.ta.views("m1");
+        expect(song.error).toBe("This file cannot be played here.");
+        expect(voice.error).toBe("This file cannot be played here.");
+        expect(c.canOpenWith(song)).toBe(true);
+        expect(c.canOpenWith(voice)).toBe(false);
+        c.onFile(song);
+        await flush();
+        expect(h.deps.openWith).toHaveBeenCalledWith("file:///data/user/0/app/files/chat/d/files/3/song.xyz", "audio/x-unknown");
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_attachments_component.ts"), "utf8");
+        expect(source).toMatch(/t-if="canOpenWith\(v\)"[^>]*t-on-click="\(\) => this\.onFile\(v\)"[^>]*t-esc="t\('chat\.open_with'\)"/);
     });
 
     it("the template keeps Owl's syntax: no ${} and the grid follows the count", () => {

@@ -145,6 +145,14 @@ describe("OptionsChatComponent attachment cache", () => {
         expect(c.state.cacheWarn).toBe(true);
     });
 
+    it("the space reads « … » until it is read, and stays so when the read fails", async () => {
+        const { c, attachments } = makeCache(3 * 1024 * 1024, false);
+        expect(c.state.spaceText).toBe("…");
+        attachments.space.mockRejectedValueOnce(new Error("db"));
+        await c.loadCache();
+        expect(c.state.spaceText).toBe("…");
+    });
+
     it("the purge switch and the compression question persist", () => {
         const { c, store } = makeCache();
         c.onToggle("cachePurge", { target: { checked: true } });

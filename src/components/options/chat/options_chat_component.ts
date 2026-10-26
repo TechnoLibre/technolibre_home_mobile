@@ -108,7 +108,8 @@ export class OptionsChatComponent extends EnhancedComponent {
             muteLabel: "",
             busy: false,
             error: "",
-            spaceText: formatBytes(0, getCurrentLocale()),
+            // Unknown until the cache answers, and after a read that failed: never a false « 0 B »
+            spaceText: "…",
             cacheWarn: false,
         });
         useFeatureSection("chat", () => { this.state.expanded = true; });

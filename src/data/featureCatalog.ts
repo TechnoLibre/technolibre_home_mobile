@@ -4594,7 +4594,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 status: "experimental",
                 howItWorks: {
                     en: "Options › Chat shows every chat byte of the phone (files waiting to be sent "
-                        + "included), « Clear all » removes the downloaded files of every conversation, and "
+                        + "included), « Remove all downloaded files » removes the downloaded files of every conversation, and "
                         + "the conversation's information screen does the same for one. Files not sent yet "
                         + "are kept. The purge is off until the user turns it on; its limit is typed in MB "
                         + "(2048 by default; 0, negative or not a number is refused). On, it runs when the "
@@ -4603,8 +4603,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "limit. At 80 % of the limit the options and the conversation list warn, the list "
                         + "reading it once per rebuild, not per render. Deleting an application erases its "
                         + "chat and the confirmation counts the messages and files not sent yet.",
-                    fr: "Options › Chat montre chaque octet du clavardage sur le téléphone (fichiers en "
-                        + "attente d'envoi compris), « Vider tout » retire les fichiers téléchargés de "
+                    fr: "Options › Clavardage montre chaque octet du clavardage sur le téléphone (fichiers en "
+                        + "attente d'envoi compris), « Retirer tous les fichiers téléchargés » retire les fichiers téléchargés de "
                         + "toutes les conversations, et l'écran d'information d'une conversation fait de "
                         + "même pour elle seule. Les fichiers pas encore envoyés sont gardés. La purge est "
                         + "éteinte jusqu'à ce que l'utilisateur l'allume ; sa limite se tape en Mo (2048 "

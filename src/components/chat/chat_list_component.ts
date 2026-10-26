@@ -9,6 +9,7 @@ import { serverChoiceMode, type ChoiceMode } from "../../services/chat/chatSourc
 import { displayNameOf } from "../../services/chat/chatNames";
 import { isBold, unreadOf } from "../../services/chat/chatUnread";
 import type { ChatChannel, ChatMessage, ChatNotice } from "../../models/chat";
+import { formatBytes } from "../../utils/formatBytes";
 
 const FILTER_KEY = "chat.filter";
 const PREVIEW_MAX = 80;
@@ -89,14 +90,14 @@ export function initialsOf(title: string): string {
     return (words.slice(0, 2).map((w) => Array.from(w)[0]).join("") || "?").toUpperCase();
 }
 
-/** What a notice of a file not sent says: its name and why, the server's limit in MB when known. */
+/** What a notice of a file not sent says: its name and why, the server's limit (formatBytes) when known. */
 function fileNoticeText(file: NonNullable<ChatNotice["file"]>): string {
     const name = file.name;
     switch (file.reason) {
         case "too_big":
             return file.limit === null
                 ? t("chat.notice_file_too_big_server", { name })
-                : t("chat.notice_file_too_big", { name, limit: Number((file.limit / (1024 * 1024)).toFixed(1)) });
+                : t("chat.notice_file_too_big", { name, limit: formatBytes(file.limit, getCurrentLocale()) });
         case "missing":
             return t("chat.notice_file_missing", { name });
         case "not_found":
@@ -152,8 +153,10 @@ export class ChatListComponent extends EnhancedComponent {
         </select>
         <input class="chat-list__search" type="search" t-att-placeholder="t('chat.search_placeholder')"
                t-att-value="state.query" t-on-input="onQueryInput"/>
-        <button t-if="state.cacheWarn" class="chat-list__cache-warning" role="alert" t-on-click="onCacheWarning"
-                t-esc="'⚠️ ' + t('chat.list_cache_warning')"/>
+        <div class="chat-list__cache-status" role="status">
+          <button t-if="state.cacheWarn" class="chat-list__cache-warning" t-on-click="onCacheWarning"
+                  t-esc="'⚠️ ' + t('chat.list_cache_warning')"/>
+        </div>
         <p t-if="state.refreshing" class="chat-list__refreshing" t-esc="t('chat.loading')"/>
         <p t-if="state.error" class="chat-list__failed" role="alert" t-esc="state.error"/>
         <ul t-if="state.notices.length" class="chat-list__notices" role="alert">

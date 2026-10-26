@@ -30,6 +30,18 @@ describe("OptionsLicensesComponent", () => {
         expect(lame?.sourceUrl).toMatch(/^https:\/\//);
     });
 
+    it("acknowledges LAME with a link to its site, as the authors' notice asks", async () => {
+        const lame = THIRD_PARTY_NOTICES[0];
+        expect(lame.authorsNotice).toContain("lame.sourceforge.net");
+        expect(lame.basedOn).toEqual({ name: "LAME", url: "https://lame.sourceforge.net" });
+        const source = readFileSync("src/components/options/licenses/options_licenses_component.ts", "utf8");
+        expect(source).toMatch(/t-att-href="notice\.basedOn\.url"/);
+        const en = (await import("../i18n/en")).translations;
+        const fr = (await import("../i18n/fr")).translations;
+        expect(en["options.licenses_based_on"]).toContain("{name}");
+        expect(fr["options.licenses_based_on"]).toContain("{name}");
+    });
+
     it("carries the licence text the package ships", () => {
         const lame = THIRD_PARTY_NOTICES[0];
         expect(lame.authorsNotice).toContain("LGPL");

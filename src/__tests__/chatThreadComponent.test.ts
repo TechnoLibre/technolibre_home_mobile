@@ -186,6 +186,19 @@ describe("ChatThreadComponent", () => {
         expect(c.state.rows.at(-1).meta).toBe("pending");
     });
 
+    it("open renders the cached messages and marks read without waiting for the draft", async () => {
+        const chat = fakeChat([msg(10), msg(11)]);
+        let answer!: (d: any) => void;
+        chat.draft.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+        const c = make(chat);
+        const opening = c.open();
+        await vi.waitFor(() => expect(c.state.rows).toHaveLength(2));
+        await vi.waitFor(() => expect(chat.markRead).toHaveBeenCalled());
+        answer({ text: "later", files: [], lost: [] });
+        await opening;
+        expect(c.state.text).toBe("later");
+    });
+
     it("a send stops the typing notice at once", async () => {
         const chat = fakeChat([]);
         const c = make(chat);
