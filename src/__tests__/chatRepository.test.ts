@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
 import { APP_MIGRATIONS } from "../services/migrations";
@@ -570,6 +570,142 @@ describe("ChatRepository", () => {
       expect(ids).toEqual([`${B}#a1`, `${B}#ll1`].sort());
     });
   });
+
+  describe("drafts", () => {
+    let released: string[][];
+    beforeEach(() => {
+      released = [];
+      repo.onFilesReleased = (paths) => { released.push(paths); };
+    });
+
+    const draftFile = (configId: string, uuid: string, over: Partial<ChatAttachment> = {}) =>
+      outgoing(configId, uuid, { postClientUuid: null, state: "draft", ...over });
+
+    it("a conversation's draft is its text and its draft files in chip order", async () => {
+      expect(await repo.draftOf(A, 7)).toEqual({ text: "", files: [] });
+      await repo.putDraftText(A, 7, "half a sentence");
+      await repo.putDraftFile(draftFile(A, "d2", { seq: 1 }));
+      await repo.putDraftFile(draftFile(A, "d1", { seq: 0 }));
+      // A queued file of the same conversation is not part of its draft
+      await repo.putOutgoing([outgoing(A, "q1")]);
+      const draft = await repo.draftOf(A, 7);
+      expect(draft.text).toBe("half a sentence");
+      expect(draft.files.map((f) => [f.localUuid, f.state, f.postClientUuid])).toEqual([["d1", "draft", null], ["d2", "draft", null]]);
+      expect(await repo.draftOf(A, 8)).toEqual({ text: "", files: [] });
+      expect(await repo.draftOf(B, 7)).toEqual({ text: "", files: [] });
+    });
+
+    it("an empty text with no file deletes the draft row; with files it stays", async () => {
+      await repo.putDraftText(A, 7, "x");
+      await repo.putDraftText(A, 7, "");
+      expect(await db.rawQuery("SELECT * FROM chat_drafts")).toEqual([]);
+      await repo.putDraftFile(draftFile(A, "d1"));
+      await repo.putDraftText(A, 7, "y");
+      await repo.putDraftText(A, 7, "");
+      expect(await db.rawQuery("SELECT id, text FROM chat_drafts")).toEqual([{ id: `${A}#7`, text: "" }]);
+    });
+
+    it("putDraftFile never turns a file already queued back into a draft", async () => {
+      await repo.putOutgoing([outgoing(A, "q1")]);
+      await repo.putDraftFile(draftFile(A, "q1"));
+      expect((await repo.outgoingFile(A, "q1"))!.state).toBe("queued");
+    });
+
+    it("removeDraftFile drops the row and gives its paths without releasing them", async () => {
+      await repo.putDraftFile(draftFile(A, "d1"));
+      await repo.putOutgoing([outgoing(A, "q1")]);
+      expect(await repo.removeDraftFile(A, "d1")).toEqual(["chat/dir/out/d1/photo.jpg"]);
+      expect(await repo.removeDraftFile(A, "q1")).toEqual([]);
+      expect(await repo.outgoingFile(A, "d1")).toBeNull();
+      expect(await repo.outgoingFile(A, "q1")).not.toBeNull();
+      expect(released).toEqual([]);
+    });
+
+    it("draftChannels names the conversations with text or files, draftFileCount the files", async () => {
+      await repo.putDraftText(A, 7, "hello");
+      await repo.putDraftFile(draftFile(A, "d1", { channelId: 8 }));
+      await repo.putDraftFile(draftFile(A, "d2", { channelId: 8 }));
+      await repo.putDraftFile(draftFile(B, "d3", { channelId: 9 }));
+      await repo.putOutgoing([outgoing(A, "q1", { channelId: 10 })]);
+      expect(await repo.draftChannels(A)).toEqual(new Set([`${A}#7`, `${A}#8`]));
+      expect(await repo.draftChannels()).toEqual(new Set([`${A}#7`, `${A}#8`, `${B}#9`]));
+      expect(await repo.draftFileCount(A)).toBe(2);
+      expect(await repo.draftFileCount(B)).toBe(1);
+      expect(await repo.draftSummaries(A)).toEqual(new Map([[7, { text: "hello", files: 0 }], [8, { text: "", files: 2 }]]));
+    });
+
+    it("queueDrafts turns draft rows into a post's files in place, by one update each", async () => {
+      await repo.putDraftFile(draftFile(A, "d1", { seq: 4 }));
+      await repo.putDraftFile(draftFile(A, "d2", { seq: 9 }));
+      const run = vi.spyOn(db, "rawRun");
+      await repo.queueDrafts(A, 7, "post9", [
+        { file: { localUuid: "d2", path: "chat/dir/out/d2/photo.jpg", name: "photo.jpg", mimetype: "image/jpeg", size: 1000, voice: false }, seq: 0 },
+        { file: { localUuid: "d1", path: "chat/dir/out/d1/small.jpg", name: "small.jpg", mimetype: "image/jpeg", size: 40, voice: false }, seq: 1 },
+      ], "queued");
+      const sql = run.mock.calls.map((c) => String(c[0]));
+      expect(sql.every((q) => q.startsWith("UPDATE chat_attachments SET "))).toBe(true);
+      expect(sql).toHaveLength(2);
+      run.mockRestore();
+      expect((await repo.outgoingOf(A, "post9")).map((r) => [r.localUuid, r.seq, r.state, r.originalPath, r.originalBytes, r.error])).toEqual([
+        ["d2", 0, "queued", "chat/dir/out/d2/photo.jpg", 1000, null],
+        ["d1", 1, "queued", "chat/dir/out/d1/small.jpg", 40, null],
+      ]);
+      expect((await repo.draftOf(A, 7)).files).toEqual([]);
+    });
+
+    it("backToDraft gives a post's files back to the draft of their conversation", async () => {
+      await repo.putOutgoing([outgoing(A, "q1"), outgoing(A, "q2", { seq: 1 })]);
+      await repo.backToDraft(A, ["q2", "q1"]);
+      expect(await repo.outgoingOf(A, "post1")).toEqual([]);
+      expect((await repo.draftOf(A, 7)).files.map((f) => [f.localUuid, f.state, f.postClientUuid])).toEqual([["q1", "draft", null], ["q2", "draft", null]]);
+    });
+
+    it("purge reads and clear never touch draft files", async () => {
+      await repo.putDraftFile(draftFile(A, "d1"));
+      expect(await repo.cachedRows()).toEqual([]);
+      await repo.clearFiles([`${A}#ld1`], "both");
+      expect((await repo.outgoingFile(A, "d1"))!.originalPath).toBe("chat/dir/out/d1/photo.jpg");
+      expect(released).toEqual([]);
+      // Space counts every chat byte on the phone, the drafts' too
+      expect(await repo.attachmentBytes(A)).toBe(1000);
+      expect(await repo.outgoingRows(A)).toEqual([]);
+    });
+
+    it("swapChannelId carries the draft to the server's id", async () => {
+      await repo.putDraftText(A, -5, "to the new group");
+      await repo.putDraftFile(draftFile(A, "d1", { channelId: -5 }));
+      await repo.swapChannelId(A, -5, 7);
+      expect(await repo.draftOf(A, -5)).toEqual({ text: "", files: [] });
+      const draft = await repo.draftOf(A, 7);
+      expect(draft.text).toBe("to the new group");
+      expect(draft.files.map((f) => f.localUuid)).toEqual(["d1"]);
+      expect(await repo.draftChannels(A)).toEqual(new Set([`${A}#7`]));
+    });
+
+    it("a conversation dropped or deleted by the server releases its draft", async () => {
+      await repo.applyDelta(A, delta({ channels: [{ channelId: 7, name: "a" }, { channelId: 8, name: "b" }] }));
+      await repo.putDraftText(A, 7, "x");
+      await repo.putDraftFile(draftFile(A, "d1"));
+      await repo.putDraftText(A, 8, "y");
+      await repo.putDraftFile(draftFile(A, "d2", { channelId: 8 }));
+      await repo.dropChannel(A, 7);
+      await repo.applyDelta(A, delta({ deletedChannelIds: [8] }));
+      expect(await repo.draftChannels(A)).toEqual(new Set());
+      expect(await db.rawQuery("SELECT * FROM chat_drafts")).toEqual([]);
+      expect(released.flat().sort()).toEqual(["chat/dir/out/d1/photo.jpg", "chat/dir/out/d2/photo.jpg"]);
+    });
+
+    it("dropSource and a rename take the drafts with the account", async () => {
+      await repo.putDraftText(A, 7, "x");
+      await repo.putDraftFile(draftFile(A, "d1"));
+      await repo.putDraftText(B, 7, "kept");
+      await db.renameSyncConfigId(A, "https://odoo.example.com|carol|db1");
+      expect(await repo.draftOf("https://odoo.example.com|carol|db1", 7)).toMatchObject({ text: "x", files: [expect.objectContaining({ localUuid: "d1" })] });
+      await repo.dropSource("https://odoo.example.com|carol|db1");
+      expect(await repo.draftChannels()).toEqual(new Set([`${B}#7`]));
+      expect(released.flat()).toEqual(["chat/dir/out/d1/photo.jpg"]);
+    });
+  });
 });
 
 describe("ChatRepository lot 2", () => {
@@ -749,6 +885,33 @@ describe("ChatRepository lot 2", () => {
       expect(await colsOf("chat_sources")).toEqual(expect.arrayContaining(["file_dir", "module_level"]));
       expect(await db.rawQuery("SELECT * FROM chat_attachments")).toHaveLength(1);
       expect(await db.rawQuery("SELECT * FROM chat_sources")).toHaveLength(1);
+    });
+  });
+
+  describe("migration 2026102605", () => {
+    const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102605)!;
+    const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+    const DRAFTS = ["id", "config_id", "channel_id", "text", "updated_at"];
+
+    it("a fresh install has the drafts table", async () => {
+      for (const m of APP_MIGRATIONS) {
+        if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+      }
+      expect(await colsOf("chat_drafts")).toEqual(DRAFTS);
+    });
+
+    it("adds the drafts table to a database at 2026102604, and a second run changes nothing", async () => {
+      // The chat tables as migration 2026102604 left them
+      await (db as any).db.execute("CREATE TABLE IF NOT EXISTS chat_sources (config_id TEXT PRIMARY KEY NOT NULL)");
+      await APP_MIGRATIONS.find((m) => m.version === 2026102604)!.run(db);
+      expect(await colsOf("chat_attachments")).toContain("local_uuid");
+      expect(await colsOf("chat_drafts")).toEqual([]);
+      expect(migration().description).toBe("Clavardage : brouillons");
+      await migration().run(db);
+      expect(await colsOf("chat_drafts")).toEqual(DRAFTS);
+      await db.rawRun("INSERT INTO chat_drafts (id, config_id, channel_id, text, updated_at) VALUES (?, ?, ?, ?, ?)", ["a#7", "a", 7, "t", "now"]);
+      await migration().run(db);
+      expect(await db.rawQuery("SELECT * FROM chat_drafts")).toHaveLength(1);
     });
   });
 });

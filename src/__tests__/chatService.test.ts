@@ -3112,5 +3112,97 @@ describe("ChatService", () => {
       expect((await chat.repo.attachmentsOf(config, realId, [message.messageId!], [])).get(`m${message.messageId}`))
         .toEqual([expect.objectContaining({ attachmentId: 900, channelId: realId })]);
     });
+
+    describe("drafts", () => {
+      it("a draft's text and files survive a restart and the startup repair", async () => {
+        const a = stage("IMG_20261026_101500.jpg");
+        const b = stage("notes.pdf", 5, "application/pdf");
+        await chat.saveDraftText(config, GROUP, "half a sentence");
+        await chat.keepDraftFile(config, GROUP, b, 1);
+        await chat.keepDraftFile(config, GROUP, a, 0);
+        await reborn();
+        await chat.recover();
+        const draft = await chat.draft(config, GROUP);
+        expect(draft.text).toBe("half a sentence");
+        expect(draft.files.map((f) => [f.localUuid, f.name, f.size, f.originalPath])).toEqual([
+          [a.localUuid, a.name, 3, a.path], [b.localUuid, b.name, 5, b.path],
+        ]);
+        expect(draft.lost).toEqual([]);
+        expect(server.files.bytes(a.path)).toBeDefined();
+        expect(server.files.bytes(b.path)).toBeDefined();
+      });
+
+      it("an emptied text and a removed file leave no draft; the removed file is deleted", async () => {
+        const a = stage("a.jpg");
+        await chat.saveDraftText(config, GROUP, "x");
+        await chat.keepDraftFile(config, GROUP, a, 0);
+        await chat.saveDraftText(config, GROUP, "");
+        await chat.dropDraftFile(config, a);
+        expect(await chat.draft(config, GROUP)).toEqual({ text: "", files: [], lost: [] });
+        expect(server.files.bytes(a.path)).toBeUndefined();
+        expect(await chat.repo.draftChannels(config)).toEqual(new Set());
+      });
+
+      it("a draft file whose staged copy is gone is dropped from the draft and named", async () => {
+        const a = stage("a.jpg");
+        const b = stage("b.jpg");
+        await chat.keepDraftFile(config, GROUP, a, 0);
+        await chat.keepDraftFile(config, GROUP, b, 1);
+        await server.files.remove(a.path);
+        const draft = await chat.draft(config, GROUP);
+        expect(draft.lost).toEqual(["a.jpg"]);
+        expect(draft.files.map((f) => f.localUuid)).toEqual([b.localUuid]);
+        expect(await chat.repo.outgoingFile(config, a.localUuid)).toBeNull();
+      });
+
+      it("a send takes the draft files in place and posts them", async () => {
+        const a = stage("a.jpg");
+        const voice = stage("Voice-2026-10-26-123.mp3", 4, "audio/mpeg", true);
+        await chat.keepDraftFile(config, GROUP, a, 0);
+        await chat.keepDraftFile(config, GROUP, voice, 1);
+        const sent = await chat.send(src, GROUP, "two", [a, voice]);
+        await idle();
+        expect(server.uploads().map((c) => c.file!.name)).toEqual(["a.jpg", "Voice-2026-10-26-123.mp3"]);
+        expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900, 901]]);
+        expect((await chat.messages(config, GROUP)).find((m) => m.clientUuid === sent.clientUuid)).toMatchObject({ status: "sent" });
+        expect(await chat.draft(config, GROUP)).toEqual({ text: "", files: [], lost: [] });
+        expect(await chat.repo.draftFileCount(config)).toBe(0);
+      });
+
+      it("a conversation created offline keeps its draft through the id swap", async () => {
+        const groups = createServer(odoo, { now: () => clock });
+        offline();
+        const { channelId: tempId } = await chat.createGroup(src, [BOB], "Drafts");
+        const a = stage("a.jpg");
+        await chat.saveDraftText(config, tempId, "for the new group");
+        await chat.keepDraftFile(config, tempId, a, 0);
+        online();
+        await chat.flushAll();
+        await idle();
+        const realId = groups.channels[0].id;
+        const draft = await chat.draft(config, realId);
+        expect(draft.text).toBe("for the new group");
+        expect(draft.files.map((f) => [f.localUuid, f.channelId])).toEqual([[a.localUuid, realId]]);
+        // A screen still on the temporary id reads and writes the server's
+        expect((await chat.draft(config, tempId)).text).toBe("for the new group");
+        await chat.saveDraftText(config, tempId, "typed after the swap");
+        expect((await chat.repo.draftOf(config, realId)).text).toBe("typed after the swap");
+        expect(await chat.repo.draftChannels(config)).toEqual(new Set([`${config}#${realId}`]));
+      });
+
+      it("a dropped conversation releases its draft files", async () => {
+        const a = stage("a.jpg");
+        await chat.keepDraftFile(config, GROUP, a, 0);
+        await chat.saveDraftText(config, GROUP, "x");
+        await chat.repo.dropChannel(config, GROUP);
+        expect(server.files.bytes(a.path)).toBeUndefined();
+        expect(await chat.repo.draftChannels(config)).toEqual(new Set());
+      });
+
+      it("the drafts of an account read after the writes asked before them", async () => {
+        void chat.saveDraftText(config, GROUP, "written as the screen closes");
+        expect(await chat.draftSummaries(config)).toEqual(new Map([[GROUP, { text: "written as the screen closes", files: 0 }]]));
+      });
+    });
   });
 });

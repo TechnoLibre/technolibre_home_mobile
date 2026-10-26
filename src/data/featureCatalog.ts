@@ -4783,6 +4783,56 @@ export const FEATURE_TREE: FeatureNode[] = [
                 tests: ["src/__tests__/chatThreadComponent.test.ts"],
             },
             {
+                id: "chat.drafts",
+                label: { en: "Conversation drafts", fr: "Brouillons des conversations" },
+                description: {
+                    en: "Each conversation keeps the text typed and the files not sent yet (photos, voice messages) until they are sent or removed, across leaving the screen and restarting the app.",
+                    fr: "Chaque conversation garde le texte tapé et les fichiers pas encore envoyés (photos, messages vocaux) jusqu'à leur envoi ou leur retrait, même en quittant l'écran ou en redémarrant l'application.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The text is stored 500 ms after the last keystroke, and at once when the screen closes or "
+                        + "the app goes to the background (table chat_drafts, one row per conversation). Each staged "
+                        + "file becomes a chat_attachments row in the « draft » state before its chip shows; ✕ removes "
+                        + "the row and the file. A recording under way when the screen closes is stopped and kept as a "
+                        + "draft voice file. A send empties the draft text in the same step as the composer, and the "
+                        + "outbox gives the draft rows to the post in place (same row, same file); a send that cannot "
+                        + "be queued, or a post cut by a kill before its message was stored, gives them back to the "
+                        + "draft. The purge, the clear and the startup sweeps never touch a draft file; the space "
+                        + "counts it. The list shows « Draft: » in place of the last message, a temporary id hands its "
+                        + "draft to the server's id, and a dropped conversation or account releases its draft files.",
+                    fr: "Le texte s'enregistre 500 ms après la dernière frappe, et aussitôt quand l'écran se ferme ou "
+                        + "que l'application passe en arrière-plan (table chat_drafts, une ligne par conversation). "
+                        + "Chaque fichier préparé devient une ligne chat_attachments à l'état « draft » avant que sa "
+                        + "puce s'affiche ; ✕ retire la ligne et le fichier. Un enregistrement en cours quand l'écran "
+                        + "se ferme est arrêté et gardé comme message vocal du brouillon. Un envoi vide le texte du "
+                        + "brouillon dans la même étape que le composeur, et la file donne les lignes du brouillon au "
+                        + "message sur place (même ligne, même fichier) ; un envoi qui ne peut être mis en file, ou un "
+                        + "message coupé par un arrêt brutal avant d'être enregistré, les rend au brouillon. La purge, "
+                        + "le vidage et les nettoyages au démarrage ne touchent jamais un fichier de brouillon ; "
+                        + "l'espace le compte. La liste montre « Brouillon : » à la place du dernier message, un "
+                        + "identifiant temporaire passe son brouillon à l'identifiant du serveur, et une conversation "
+                        + "ou un compte retiré libère les fichiers de son brouillon.",
+                },
+                demo: { kind: "route", url: "/chat" },
+                files: [
+                    "src/services/chat/chatDraft.ts",
+                    "src/services/chat/chatRepository.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/migrations/addChatDrafts.ts",
+                    "src/components/chat/chat_composer_attach_component.ts",
+                    "src/components/chat/chat_thread_component.ts",
+                    "src/components/chat/chat_list_component.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatDraft.test.ts",
+                    "src/__tests__/chatRepository.test.ts",
+                    "src/__tests__/chatService.test.ts",
+                    "src/__tests__/chatComposerAttach.test.ts",
+                    "src/__tests__/chatThreadComponent.test.ts",
+                ],
+            },
+            {
                 id: "chat.new",
                 label: { en: "New conversation", fr: "Nouvelle conversation" },
                 description: {

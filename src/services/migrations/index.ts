@@ -29,6 +29,7 @@ import { addChatLot2Columns } from "./addChatLot2Columns";
 import { addChatCreateFailed } from "./addChatCreateFailed";
 import { addChatLeftUnsent } from "./addChatLeftUnsent";
 import { addChatAttachments } from "./addChatAttachments";
+import { addChatDrafts } from "./addChatDrafts";
 
 /**
  * The app's database migrations, in version order: runMigrations runs at
@@ -185,5 +186,10 @@ export const APP_MIGRATIONS: Migration[] = [
 		version: 2026102604,
 		description: "Clavardage : pièces jointes et leur cache",
 		run: addChatAttachments,
+	},
+	{
+		version: 2026102605,
+		description: "Clavardage : brouillons",
+		run: addChatDrafts,
 	},
 ];

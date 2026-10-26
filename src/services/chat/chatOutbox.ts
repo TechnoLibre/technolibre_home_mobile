@@ -287,6 +287,18 @@ export class ChatOutbox {
     return run;
   }
 
+  /**
+   * Runs a draft read or write of the account in its exclusive() queue,
+   * with `channelId` taken as the server's id once its create settled: a
+   * draft is never written under a temporary id the swap already left, a
+   * post being queued sees the draft as it was asked, and a read sees every
+   * write asked before it.
+   */
+  draftTask<T>(configId: string, channelId: number | null, task: (channelId: number) => Promise<T>): Promise<T> {
+    return this.exclusive(configId, async () =>
+      task(channelId === null ? 0 : (await this.realIdOf(configId, channelId)) ?? channelId));
+  }
+
   /** The server id of a conversation created under `tempId` once its create settled, else null (stored, so it holds across restarts). */
   realIdOf(configId: string, tempId: number): Promise<number | null> {
     return this.repo.realIdOf(configId, tempId);
@@ -308,10 +320,14 @@ export class ChatOutbox {
    * per file goes between that tail and the post, in pick order:
    * tail ← upload₁ ← … ← uploadₙ ← post, so each file is uploaded just
    * before its post and a later post of the channel waits for all of it.
-   * Their rows are stored "queued" under the post's client uuid. The ops
-   * are stored "incomplete" until the rows and the message are written
-   * (recoverIncomplete repairs a cut). idempotentUpload sends the files
-   * through the module route (module 1.2).
+   * Their rows are stored "queued" under the post's client uuid: a file
+   * kept as the conversation's draft is given to the post in place
+   * (ChatRepository.queueDrafts), its row and staged file kept, and the
+   * post's `drafts` names those. The ops are stored "incomplete" until the
+   * rows and the message are written (recoverIncomplete repairs a cut). A
+   * post that cannot be queued deletes the other staged files and gives the
+   * draft files back to the draft. idempotentUpload sends the files through
+   * the module route (module 1.2).
    */
   queuePost(
     configId: string,
@@ -378,6 +394,11 @@ export class ChatOutbox {
     opts: { files?: OutgoingFile[]; idempotentUpload?: boolean },
   ): Promise<ChatMessage> {
     const files = opts.files ?? [];
+    const drafts = new Set<string>();
+    for (const f of files) {
+      if ((await this.repo.outgoingFile(configId, f.localUuid))?.state === "draft") drafts.add(f.localUuid);
+    }
+    const fresh = files.filter((f) => !drafts.has(f.localUuid));
     const channel = await this.repo.channel(configId, channelId);
     if (channel?.createFailed || (channelId < 0 && !channel?.createOpId) || (await this.leaving(configId, channelId))) {
       const failed: ChatMessage = {
@@ -394,7 +415,7 @@ export class ChatOutbox {
         writeDate: null,
       };
       await this.repo.putPending(failed);
-      if (files.length > 0) await this.repo.putOutgoing(this.outgoingRows(configId, channelId, failed.clientUuid, files, "refused"));
+      if (files.length > 0) await this.storeFiles(configId, channelId, failed.clientUuid, files, drafts, "refused");
       return failed;
     }
     const all = await this.db.getOutboxOpsForConfig(configId);
@@ -427,14 +448,17 @@ export class ChatOutbox {
         configId,
         kind: CHAT_POST,
         params: incomplete
-          ? { channelId, text, useModule, files: files.map((f) => f.localUuid), idempotentUpload: !!opts.idempotentUpload }
+          ? {
+            channelId, text, useModule, files: files.map((f) => f.localUuid), idempotentUpload: !!opts.idempotentUpload,
+            ...(drafts.size > 0 ? { drafts: files.filter((f) => drafts.has(f.localUuid)).map((f) => f.localUuid) } : {}),
+          }
           : { channelId, text, useModule },
         dependsOn: tail,
         ...(incomplete ? { status: "incomplete" as const } : {}),
       });
     } catch (e: unknown) {
       for (const up of uploads) await this.outbox.cancel(up.id);
-      await this.removeFiles(files.map((f) => f.path));
+      await this.removeFiles(fresh.map((f) => f.path));
       throw e;
     }
     const message: ChatMessage = {
@@ -451,7 +475,7 @@ export class ChatOutbox {
       writeDate: null,
     };
     try {
-      if (incomplete) await this.repo.putOutgoing(this.outgoingRows(configId, channelId, op.clientUuid, files, "queued"));
+      if (incomplete) await this.storeFiles(configId, channelId, op.clientUuid, files, drafts, "queued");
       await this.repo.putPending(message);
       // The post last: no drain sends it before its uploads are queued
       for (const up of uploads) await this.outbox.complete(up.id, {});
@@ -461,13 +485,43 @@ export class ChatOutbox {
       for (const up of uploads) await this.outbox.cancel(up.id);
       await this.outbox.cancel(op.id);
       if (incomplete) {
-        await this.dropOutgoing(configId, files.map((f) => f.localUuid));
+        await this.repo.backToDraft(configId, [...drafts]);
+        await this.dropOutgoing(configId, fresh.map((f) => f.localUuid));
         // A cut inside putOutgoing leaves files no row names
-        await this.removeFiles(files.map((f) => f.path));
+        await this.removeFiles(fresh.map((f) => f.path));
       }
       throw e;
     }
     return message;
+  }
+
+  /**
+   * Stores the rows of a post's files, each at its position: a draft file's
+   * row is given to the post in place, any other is written new.
+   */
+  private async storeFiles(
+    configId: string,
+    channelId: number,
+    postClientUuid: string,
+    files: OutgoingFile[],
+    drafts: Set<string>,
+    state: "queued" | "refused",
+  ): Promise<void> {
+    const rows = this.outgoingRows(configId, channelId, postClientUuid, files, state);
+    const fresh = rows.filter((r) => !drafts.has(r.localUuid!));
+    if (fresh.length > 0) await this.repo.putOutgoing(fresh);
+    const given = files.map((file, seq) => ({ file, seq })).filter(({ file }) => drafts.has(file.localUuid));
+    if (given.length > 0) await this.repo.queueDrafts(configId, channelId, postClientUuid, given, state);
+  }
+
+  /** The paths given whose file is not a draft's: those a cleanup may delete. */
+  private async notDrafts(configId: string, files: Record<string, any>[]): Promise<string[]> {
+    const out: string[] = [];
+    for (const f of files) {
+      const row = typeof f.localUuid === "string" ? await this.repo.outgoingFile(configId, f.localUuid) : null;
+      if (row?.state !== "draft") out.push(String(f.path ?? ""));
+    }
+    return out;
   }
 
   /** Removes outgoing rows by local uuid and deletes their files (the outbox owns them). */
@@ -951,8 +1005,11 @@ export class ChatOutbox {
    * and its row. With the row written (its createOpId names the op) it is
    * queued; without it, it is removed. A post with files cut while being
    * queued is queued with its uploads when its message was written, else
-   * removed with them, its rows and files; an incomplete upload no post
-   * waits for is removed. Returns how many were queued.
+   * removed with them, its rows and files; the files it took from the
+   * conversation's draft go back to the draft instead, with its text when
+   * the draft has none, and a staged file a draft row still names is never
+   * deleted. An incomplete upload no post waits for is removed. Returns how
+   * many were queued.
    */
   async recoverIncomplete(): Promise<number> {
     let queued = 0;
@@ -971,14 +1028,21 @@ export class ChatOutbox {
           queued++;
         } else {
           for (const op of [...chain, post]) await this.outbox.cancel(op.id);
-          await this.dropOutgoing(configId, (await this.repo.outgoingOf(configId, post.clientUuid)).map((r) => r.localUuid!));
+          const drafted = new Set<string>(post.params.drafts ?? []);
+          const rows = (await this.repo.outgoingOf(configId, post.clientUuid)).map((r) => r.localUuid!);
+          await this.repo.backToDraft(configId, rows.filter((u) => drafted.has(u)));
+          await this.dropOutgoing(configId, rows.filter((u) => !drafted.has(u)));
+          if (drafted.size > 0 && post.params.text) {
+            const channelId: number = post.params.channelId;
+            if (!(await this.repo.draftOf(configId, channelId)).text) await this.repo.putDraftText(configId, channelId, post.params.text);
+          }
           // Cut before its rows: the uploads' params still name the staged files
-          await this.removeFiles(chain.map((up) => String(up.params.path ?? "")));
+          await this.removeFiles(await this.notDrafts(configId, chain.map((up) => up.params)));
         }
       }
       for (const up of all.filter((o) => o.kind === CHAT_UPLOAD && o.status === "incomplete" && !kept.has(o.id))) {
         await this.outbox.cancel(up.id);
-        await this.removeFiles([String(up.params.path ?? "")]);
+        await this.removeFiles(await this.notDrafts(configId, [up.params]));
       }
       for (const op of all) {
         if (op.status !== "incomplete" || (op.kind !== CHAT_CREATE && op.kind !== CHAT_JOIN)) continue;

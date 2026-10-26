@@ -526,14 +526,15 @@ export class ApplicationsComponent extends EnhancedComponent {
         });
     }
 
-    /** Chat posts and files of the application still in the outbox; 0 each when it cannot be told. */
+    /** Chat posts and files of the application not sent yet (the outbox's and the drafts'); 0 each when it cannot be told. */
     private async unsentChat(appID: ApplicationID): Promise<{ posts: number; files: number }> {
         try {
             const app = await this.appService.getMatch(appID);
             if (!app.database) return { posts: 0, files: 0 };
             const configId = syncConfigIdFor(app.url, app.username, app.database);
-            const queue = this.syncService.chat.queue;
-            return { posts: await queue.pendingPostCount(configId), files: await queue.pendingUploadCount(configId) };
+            const { queue, repo } = this.syncService.chat;
+            const files = (await queue.pendingUploadCount(configId)) + (await repo.draftFileCount(configId));
+            return { posts: await queue.pendingPostCount(configId), files };
         } catch {
             return { posts: 0, files: 0 };
         }

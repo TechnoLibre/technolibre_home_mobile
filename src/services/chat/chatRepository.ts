@@ -7,6 +7,7 @@ import type {
   ChatMessage,
   ChatPartner,
   ChatSourceState,
+  OutgoingFile,
 } from "../../models/chat";
 import type { StoreDelta } from "./chatStore";
 
@@ -392,7 +393,7 @@ export class ChatRepository {
    * a counter without its bus id is not taken. Attachment rows take the
    * server's fields only; a message listing attachment ids claims those rows
    * and releases the ones it no longer lists, and a deleted channel drops its
-   * rows but the files still waiting to be sent.
+   * rows (its draft included) but the files still waiting to be sent.
    */
   async applyDelta(configId: string, d: StoreDelta, opts: { fromBus?: boolean } = {}): Promise<void> {
     for (const p of d.channels) await this.upsertChannel(configId, p, !!opts.fromBus);
@@ -414,10 +415,12 @@ export class ChatRepository {
         else await this.put("chat_messages", this.messageRow({ ...m, status: "failed", outboxOpId: null }));
       }
       await this.del("chat_members", { config_id: configId, channel_id: id });
+      // Its draft goes with it
       const dropped = (await this.rows("chat_attachments", { config_id: configId, channel_id: id }))
         .filter((r) => r.state !== "queued" && r.state !== "uploaded");
       for (const r of dropped) await this.del("chat_attachments", { id: r.id });
       await this.release(dropped.flatMap((r) => pathsOf(attachmentFromRow(r))));
+      await this.del("chat_drafts", { config_id: configId, channel_id: id });
     }
     const state: Partial<ChatSourceState> = {};
     if (d.inboxCounter !== null) state.inboxCounter = d.inboxCounter;
@@ -694,7 +697,7 @@ export class ChatRepository {
 
   /**
    * Moves a conversation created under a temporary id to the id the server
-   * gave it: its messages, its members, and the channelId of every outbox
+   * gave it: its messages, its files and its draft, its members, and the channelId of every outbox
    * row of the account that still names the temporary id. The server's row
    * (written by the create answer or by the bus before it) wins for every
    * server field; without one the temporary row is re-keyed. Placeholder
@@ -718,6 +721,7 @@ export class ChatRepository {
       "UPDATE chat_attachments SET channel_id = ? WHERE config_id = ? AND channel_id = ?",
       [realId, configId, tempId],
     );
+    await this.moveDraftText(configId, tempId, realId);
     if ((await this.members(configId, realId)).length > 0) {
       await this.db.rawRun(
         "DELETE FROM chat_members WHERE config_id = ? AND channel_id = ? AND member_id < 0",
@@ -763,10 +767,10 @@ export class ChatRepository {
 
   /**
    * Removes a conversation and everything cached of it, the texts it never
-   * sent included: the user dismissed it.
+   * sent and its draft included: the user dismissed it.
    */
   async dropChannel(configId: string, channelId: number): Promise<void> {
-    for (const t of ["chat_channels", "chat_messages", "chat_members"]) {
+    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_drafts"]) {
       await this.del(t, { config_id: configId, channel_id: channelId });
     }
     await this.dropAttachmentRows({ config_id: configId, channel_id: channelId });
@@ -1193,11 +1197,11 @@ export class ChatRepository {
     return (await this.attachmentByKey(configId, `a${attachmentId}`))?.channelId;
   }
 
-  /** The account's files of the phone (`l<uuid>` rows: queued, uploaded or refused), in no order. */
+  /** The account's files of the phone given to a post (`l<uuid>` rows: queued, uploaded or refused; not drafts), in no order. */
   async outgoingRows(configId: string): Promise<ChatAttachment[]> {
     const prefix = key(configId, "l");
     return (await this.rows("chat_attachments", { config_id: configId }))
-      .filter((r) => String(r.id).startsWith(prefix))
+      .filter((r) => String(r.id).startsWith(prefix) && r.state !== "draft")
       .map(attachmentFromRow);
   }
 
@@ -1259,11 +1263,146 @@ export class ChatRepository {
     return paths;
   }
 
-  /** Removes every cached row of one account, leaving the others. */
+  /** Removes every cached row of one account, its drafts included, leaving the others. */
   async dropSource(configId: string): Promise<void> {
     await this.dropAttachmentRows({ config_id: configId });
-    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_sources"]) {
+    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_drafts", "chat_sources"]) {
       await this.del(t, { config_id: configId });
     }
+  }
+
+  // ─── Drafts ───────────────────────────────────────────────────────────────
+
+  /** A conversation's draft files (`l<uuid>` rows in the "draft" state), in chip order. */
+  private async draftFiles(configId: string, channelId: number): Promise<ChatAttachment[]> {
+    return (await this.rows("chat_attachments", { config_id: configId, channel_id: channelId, state: "draft" }))
+      .map(attachmentFromRow)
+      .sort(bySeq);
+  }
+
+  /** What a conversation's composer keeps: the text typed and the draft files in chip order; empty for none. */
+  async draftOf(configId: string, channelId: number): Promise<{ text: string; files: ChatAttachment[] }> {
+    const row = await this.row("chat_drafts", key(configId, channelId));
+    return { text: row?.text ?? "", files: await this.draftFiles(configId, channelId) };
+  }
+
+  /** Stores the draft text of a conversation; an empty text with no draft file deletes its row. */
+  async putDraftText(configId: string, channelId: number, text: string): Promise<void> {
+    const id = key(configId, channelId);
+    if (text === "" && (await this.draftFiles(configId, channelId)).length === 0) {
+      await this.del("chat_drafts", { id });
+      return;
+    }
+    await this.put("chat_drafts", { id, config_id: configId, channel_id: channelId, text, updated_at: this.now() });
+  }
+
+  /** Deletes a conversation's empty draft text row once no draft file is left. */
+  private async tidyDraft(configId: string, channelId: number): Promise<void> {
+    const row = await this.row("chat_drafts", key(configId, channelId));
+    if (row && !row.text && (await this.draftFiles(configId, channelId)).length === 0) {
+      await this.del("chat_drafts", { id: row.id });
+    }
+  }
+
+  /**
+   * Stores a file of a conversation's composer as a draft row (`l<uuid>`,
+   * no post). A row of that uuid already given to a post is left as it is:
+   * a late write never takes a queued file back.
+   */
+  async putDraftFile(a: ChatAttachment): Promise<void> {
+    const stored = a.localUuid ? await this.attachmentByKey(a.configId, `l${a.localUuid}`) : null;
+    if (stored && stored.state !== "draft") return;
+    await this.put("chat_attachments", this.attachmentRow({
+      ...a, messageId: null, attachmentId: null, postClientUuid: null, state: "draft", error: null,
+    }));
+  }
+
+  /**
+   * Drops a draft file's row and returns its paths without releasing them
+   * (the caller deletes the staged file); a row that is not a draft stays
+   * and gives none.
+   */
+  async removeDraftFile(configId: string, localUuid: string): Promise<string[]> {
+    const row = await this.attachmentByKey(configId, `l${localUuid}`);
+    if (!row || row.state !== "draft") return [];
+    await this.del("chat_attachments", { id: key(configId, `l${localUuid}`) });
+    await this.tidyDraft(configId, row.channelId);
+    return pathsOf(row);
+  }
+
+  /**
+   * Gives draft files to a post, each at its position among the post's
+   * files: one UPDATE per row of its `l<uuid>` key, still a draft, so the
+   * row, its uuid and its staged file stay the same (a compressed photo
+   * brings its new path and size). `state` is "refused" (error "channel")
+   * for a conversation that cannot take a post.
+   */
+  async queueDrafts(
+    configId: string,
+    channelId: number,
+    postClientUuid: string,
+    files: { file: OutgoingFile; seq: number }[],
+    state: "queued" | "refused",
+  ): Promise<void> {
+    for (const { file: f, seq } of files) {
+      await this.db.rawRun(
+        "UPDATE chat_attachments SET state = ?, error = ?, post_client_uuid = ?, seq = ?, channel_id = ?, name = ?, "
+          + "mimetype = ?, size = ?, original_path = ?, original_bytes = ? WHERE id = ? AND state = ?",
+        [state, state === "refused" ? "channel" : null, postClientUuid, seq, channelId, f.name, f.mimetype, f.size,
+          f.path, f.size, key(configId, `l${f.localUuid}`), "draft"],
+      );
+    }
+    await this.tidyDraft(configId, channelId);
+  }
+
+  /** Gives the files of a post that was never queued back to the draft of their conversation. */
+  async backToDraft(configId: string, localUuids: string[]): Promise<void> {
+    for (const uuid of localUuids) {
+      await this.db.rawRun(
+        "UPDATE chat_attachments SET state = ?, error = ?, post_client_uuid = ?, attachment_id = ? WHERE id = ?",
+        ["draft", null, null, null, key(configId, `l${uuid}`)],
+      );
+    }
+  }
+
+  /** Moves the draft text of a temporary id to the server's id; a text already there stays unless the moved one has words. */
+  private async moveDraftText(configId: string, tempId: number, realId: number): Promise<void> {
+    const temp = await this.row("chat_drafts", key(configId, tempId));
+    if (!temp) return;
+    await this.del("chat_drafts", { id: temp.id });
+    if (temp.text || !(await this.row("chat_drafts", key(configId, realId)))) {
+      await this.put("chat_drafts", { ...temp, id: key(configId, realId), channel_id: realId });
+    }
+  }
+
+  /** Per conversation of the account with a draft: its text and how many files it keeps. */
+  async draftSummaries(configId: string): Promise<Map<number, { text: string; files: number }>> {
+    const out = new Map<number, { text: string; files: number }>();
+    for (const r of await this.rows("chat_drafts", { config_id: configId })) {
+      if (r.text) out.set(r.channel_id, { text: r.text, files: 0 });
+    }
+    for (const r of await this.rows("chat_attachments", { config_id: configId, state: "draft" })) {
+      const d = out.get(r.channel_id) ?? { text: "", files: 0 };
+      d.files++;
+      out.set(r.channel_id, d);
+    }
+    return out;
+  }
+
+  /** Keys `configId#channelId` of the conversations with a draft (text or files), of one account or all. */
+  async draftChannels(configId?: string): Promise<Set<string>> {
+    const texts = configId ? await this.rows("chat_drafts", { config_id: configId }) : await this.db.rawQuery("SELECT * FROM chat_drafts");
+    const files = configId
+      ? await this.rows("chat_attachments", { config_id: configId, state: "draft" })
+      : await this.rows("chat_attachments", { state: "draft" });
+    return new Set([
+      ...texts.filter((r) => r.text).map((r) => key(r.config_id, r.channel_id)),
+      ...files.map((r) => key(r.config_id, r.channel_id)),
+    ]);
+  }
+
+  /** How many draft files the account keeps on the phone. */
+  async draftFileCount(configId: string): Promise<number> {
+    return (await this.rows("chat_attachments", { config_id: configId, state: "draft" })).length;
   }
 }

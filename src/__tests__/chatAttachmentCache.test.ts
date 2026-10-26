@@ -379,6 +379,29 @@ describe("ChatAttachmentCache", () => {
     expect(await chat.attachments.space()).toBe(2000);
   });
 
+  it("a draft file survives purge, clear, the sweep and the startup sweep of staged files", async () => {
+    await stored(31);
+    await cached(31, { original: 3 * MB });
+    const dir = await chat.repo.fileDirOf(config);
+    const path = outgoingPath(dir, "d1", "IMG_20261026_101500.jpg");
+    files.put(path, bytesOf("kept in the composer"));
+    await chat.repo.putDraftFile({
+      configId: config, channelId: 7, messageId: null, attachmentId: null, localUuid: "d1", postClientUuid: null,
+      seq: 0, name: "IMG_20261026_101500.jpg", mimetype: "image/jpeg", size: 1000, checksum: null, voice: false,
+      thumbPath: null, thumbBytes: 0, originalPath: path, originalBytes: 1000, state: "draft", error: null,
+      lastOpenedAt: null, createdAt: clock.toISOString(),
+    });
+    setChatSettings({ ...chatSettings(), cachePurge: true, cacheLimitMb: 1 });
+    await chat.attachments.purge();
+    await chat.attachments.clear({ configId: config });
+    // No op names it and no message holds it: only its draft row keeps it
+    await chat.recover();
+    expect(files.bytes(path)).toEqual(bytesOf("kept in the composer"));
+    expect((await chat.repo.draftOf(config, 7)).files.map((f) => [f.localUuid, f.originalPath])).toEqual([["d1", path]]);
+    expect((await chat.repo.attachment(config, 31))!.originalPath).toBeNull();
+    expect(await chat.attachments.space(config)).toBe(1000);
+  });
+
   it("clear empties one conversation or everything, rows kept", async () => {
     await stored(41);
     await stored(42, { channelId: 8 });

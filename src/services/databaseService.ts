@@ -1293,6 +1293,7 @@ export class DatabaseService {
     `);
     await this.createChatTempIdsTable();
     await this.createChatAttachmentsTable();
+    await this.createChatDraftsTable();
     for (const [table, col] of [
       ["chat_channels", "config_id"],
       ["chat_messages", "config_id, channel_id"],
@@ -1377,6 +1378,33 @@ export class DatabaseService {
   }
 
   /**
+   * Adds the drafts table to tables created before it. CREATE TABLE IF NOT
+   * EXISTS: a fresh install (createChatTables already has it) and a second
+   * run change nothing.
+   */
+  async addChatDrafts(): Promise<void> {
+    await this.createChatDraftsTable();
+  }
+
+  /**
+   * The text typed in a conversation's composer and not sent yet, one row
+   * per conversation keyed `configId#channelId`. Its files are the
+   * conversation's chat_attachments rows in the "draft" state.
+   */
+  private async createChatDraftsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_drafts (
+        id         TEXT PRIMARY KEY NOT NULL,
+        config_id  TEXT NOT NULL,
+        channel_id INTEGER NOT NULL,
+        text       TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
+      )
+    `);
+    await this.db.execute("CREATE INDEX IF NOT EXISTS chat_drafts_config ON chat_drafts (config_id)");
+  }
+
+  /**
    * One row per file of a message, keyed `configId#a<attachmentId>` or
    * `configId#l<localUuid>` (see ChatAttachment). The paths and byte
    * counts describe the files cached on the phone.
@@ -1438,7 +1466,7 @@ export class DatabaseService {
    * column and the `configId#` prefix of the key. A table not created yet is skipped.
    */
   private async renameChatRows(oldId: string, newId: string): Promise<void> {
-    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_sources"]) {
+    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_sources"]) {
       try {
         const keyed = table !== "chat_sources";
         const key = keyed ? "id" : "config_id";

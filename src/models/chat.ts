@@ -99,11 +99,13 @@ export interface ChatPartner {
  * (also every attachment read from the server); refused: the server
  * refused the file, kept until the user dismisses it.
  */
-export type ChatAttachmentState = "queued" | "uploaded" | "posted" | "refused";
+/** "draft": a file kept in a conversation's composer, not sent yet (no post, no outbox op). */
+export type ChatAttachmentState = "draft" | "queued" | "uploaded" | "posted" | "refused";
 
 /**
- * One file of a message. Keyed `configId#a<attachmentId>` once the server
- * has an id, `configId#l<localUuid>` while it only exists on the phone.
+ * One file of a message, or of a conversation's draft. Keyed
+ * `configId#a<attachmentId>` once the server has an id,
+ * `configId#l<localUuid>` while it only exists on the phone.
  * Paths are relative to the app data directory; the bytes columns are the
  * size of the cached file, 0 when absent.
  */

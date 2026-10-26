@@ -1,4 +1,5 @@
 import { markup, onMounted, onWillUnmount, useRef, useState, xml } from "@odoo/owl";
+import { App } from "@capacitor/app";
 
 import { EnhancedComponent } from "../../js/enhancedComponent";
 import { HeadingComponent } from "../heading/heading_component";
@@ -9,6 +10,7 @@ import type { ChatSource } from "../../services/chat/chatService";
 import { displayNameOf } from "../../services/chat/chatNames";
 import type { ChatAttachment, ChatChannel, ChatMember, ChatMessage, ChatPartner, OutgoingFile } from "../../models/chat";
 import { CHAT_UPLOAD } from "../../services/chat/chatOutbox";
+import { DraftText } from "../../services/chat/chatDraft";
 import { ChatFile } from "../../plugins/chatFilePlugin";
 import { formatListTime, initialsOf } from "./chat_list_component";
 import {
@@ -17,6 +19,7 @@ import {
     deviceComposerDeps,
     newComposerAttachState,
     type ComposerAttachState,
+    type ComposerChip,
 } from "./chat_composer_attach_component";
 import {
     ChatAttachmentsComponent,
@@ -83,6 +86,11 @@ interface ThreadState {
     viewer: string | null;
 }
 
+/** Rows the composer shows for a text, from 1 up to MAX_INPUT_ROWS. */
+function rowsOf(text: string): number {
+    return Math.min(MAX_INPUT_ROWS, text.split("\n").length);
+}
+
 /** Cheap 32-bit hash (djb2) of a body, so a changed body never reuses a cached render. */
 function bodyHash(body: string): string {
     let h = 5381;
@@ -133,7 +141,9 @@ export function typingLine(
  * rendered as markup. A message's files show under its body
  * (ChatAttachmentsComponent over ThreadAttachments), an image in the
  * viewer; a tick of the files' progress renders again only the rows whose
- * files changed.
+ * files changed. The composer is the conversation's draft: its text
+ * (DraftText) and its chips are kept until sent or removed, and shown
+ * again when the conversation opens.
  */
 export class ChatThreadComponent extends EnhancedComponent {
     state!: ThreadState;
@@ -213,6 +223,10 @@ export class ChatThreadComponent extends EnhancedComponent {
     /** The composer's picks, chips and voice message (ChatComposerAttachComponent shows them). */
     attachState!: ComposerAttachState;
     attach!: ComposerAttach;
+    /** The composer's text, kept as the conversation's draft. */
+    draftText!: DraftText;
+    /** The appStateChange listener that stores the draft text when the app leaves the front. */
+    private _appState: Promise<{ remove: () => Promise<void> }> | undefined;
     /** The files of the shown messages: their views, previews, opening and polling. */
     attachments!: ThreadAttachments;
     private configId = "";
@@ -280,11 +294,20 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.configId = params.get("source") ?? "";
         this.channelId = Number(params.get("channelId"));
         this.attachState = useState(newComposerAttachState());
+        // Draft calls name the screen's id at call time; the service maps a settled temporary id itself
         this.attach = new ComposerAttach(this.attachState, deviceComposerDeps({
             fileDir: () => this.chatService.fileDirOf(this.configId),
             uploadLimit: async () => (this.source ? this.chatService.uploadLimit(this.source) : null),
             send: (extra) => this.onSend(extra),
+            draft: {
+                keep: (file, seq) => this.chatService.keepDraftFile(this.configId, this.channelId, file, seq),
+                drop: (file) => this.chatService.dropDraftFile(this.configId, file),
+            },
         }));
+        this.draftText = new DraftText((text) => this.chatService.saveDraftText(this.configId, this.channelId, text));
+        this._appState = App.addListener("appStateChange", ({ isActive }) => {
+            if (!isActive) this.draftText.flush();
+        });
         this.attachments = new ThreadAttachments({
             cache: () => this.chatService.attachments,
             files: () => this.chatService.queue.files,
@@ -302,12 +325,15 @@ export class ChatThreadComponent extends EnhancedComponent {
     }
 
     /**
-     * Detaches the listener and timers, stops the typing notice and lets go
-     * of the attachments (a recording under way is discarded, unsent chips
-     * deleted); open() after it does nothing.
+     * Detaches the listeners and timers, stores the draft text still
+     * waiting, stops the typing notice and lets go of the attachments (a
+     * recording under way is kept as a draft voice file, the chips stay in
+     * the draft); open() after it does nothing.
      */
     teardown(): void {
         this.destroyed = true;
+        this.draftText.flush();
+        void Promise.resolve(this._appState).then((h) => h?.remove()).catch(() => {});
         void this.attach.dispose();
         this.attachments.dispose();
         this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
@@ -318,7 +344,8 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     /**
      * Resolves the source, opens the attachments once it is known (until
-     * then 📎 and 🎤 stay off), shows the cache, scrolls down and marks read.
+     * then 📎 and 🎤 stay off), shows the draft and the cache, scrolls down
+     * and marks read.
      */
     async open(): Promise<void> {
         const sources = await this.chatService.sources({ online: false });
@@ -327,6 +354,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.attachments.source = this.source;
         if (this.source) void this.attach.start();
         this.state.serverLabel = this.source?.label ?? "";
+        await this.showDraft();
         await this.refresh();
         this.scrollToBottom();
         await this.markRead();
@@ -768,10 +796,37 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     // ─── Composer ─────────────────────────────────────────────────────────
 
+    /**
+     * The conversation's draft into the composer: its text when nothing
+     * was typed yet (and withText), its files as chips
+     * (ComposerAttach.restore; `known` are the chips a refused send took,
+     * whose origin they keep). A draft that cannot be read leaves the
+     * composer as it is.
+     */
+    private async showDraft(known: ComposerChip[] = [], withText = true): Promise<void> {
+        let draft: { text: string; files: ChatAttachment[]; lost: string[] };
+        try {
+            draft = await this.chatService.draft(this.configId, this.channelId);
+        } catch (e) {
+            console.warn("chat thread: draft unreadable", e);
+            return;
+        }
+        if (this.destroyed) return;
+        if (withText && !this.state.text && draft.text) {
+            this.state.text = draft.text;
+            this.state.inputRows = rowsOf(draft.text);
+        }
+        this.attach.restore(draft.files.map((a) => ({
+            file: { localUuid: a.localUuid!, path: a.originalPath!, name: a.name, mimetype: a.mimetype, size: a.size, voice: a.voice },
+            seq: a.seq,
+        })), draft.lost, known);
+    }
+
     onInput(ev: Event): void {
         const value = (ev.target as HTMLTextAreaElement).value;
         this.state.text = value;
-        this.state.inputRows = Math.min(MAX_INPUT_ROWS, value.split("\n").length);
+        this.state.inputRows = rowsOf(value);
+        this.draftText.typed(value);
         if (this.source && value.trim()) {
             this.chatService.typing(this.source, this.channelId, true).catch(() => {});
         }
@@ -782,9 +837,10 @@ export class ChatThreadComponent extends EnhancedComponent {
      * message just recorded); nothing is sent when all are empty, nor while
      * a voice message is prepared (it would be overtaken). The composer,
      * text and chips, clears before the first await, so a second tap finds
-     * it empty; the compress question (ComposerAttach.prepare) comes after.
-     * A failed send puts the text back and shows the error; the chips stay
-     * cleared, as the outbox deleted their files.
+     * it empty, and the draft text is emptied in that same step; the
+     * compress question (ComposerAttach.prepare) comes after. A failed send
+     * puts the text back, in the draft too, shows the error and shows again
+     * the chips whose files the outbox left in the draft.
      */
     async onSend(extra: OutgoingFile[] = []): Promise<void> {
         if (!this.source || this.attach.busy()) return;
@@ -794,6 +850,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         const raw = this.state.text;
         this.state.text = "";
         this.state.inputRows = 1;
+        this.draftText.set("");
         this.state.error = "";
         // The message ends the typing, as Odoo's composer does on a post
         this.chatService.typing(this.source, this.channelId, false).catch(() => {});
@@ -801,8 +858,13 @@ export class ChatThreadComponent extends EnhancedComponent {
             const files = [...(await this.attach.prepare(chips)), ...extra];
             await this.chatService.send(this.source, this.channelId, text, files);
         } catch {
-            if (!this.state.text) this.state.text = raw;
+            if (!this.state.text) {
+                this.state.text = raw;
+                this.state.inputRows = rowsOf(raw);
+                this.draftText.set(raw);
+            }
             this.state.error = t("chat.send_error");
+            await this.showDraft(chips, false);
             return;
         }
         await this.refresh();

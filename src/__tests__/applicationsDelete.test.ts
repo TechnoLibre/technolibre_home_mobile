@@ -5,7 +5,7 @@ vi.mock("../utils/biometryUtils", () => ({ BiometryUtils: { authenticateIfAvaila
 
 import { ApplicationsComponent } from "../components/applications/applications_component";
 
-function make(posts: number, files: number) {
+function make(posts: number, files: number, drafts = 0) {
     (globalThis as any).localStorage = {
         getItem: (k: string) => (k === "app_lang" ? "en" : null),
         setItem: () => {},
@@ -16,10 +16,13 @@ function make(posts: number, files: number) {
     c.env = {
         appService: { getMatch: vi.fn().mockResolvedValue(app) },
         syncService: {
-            chat: { queue: {
-                pendingPostCount: vi.fn().mockResolvedValue(posts),
-                pendingUploadCount: vi.fn().mockResolvedValue(files),
-            } },
+            chat: {
+                queue: {
+                    pendingPostCount: vi.fn().mockResolvedValue(posts),
+                    pendingUploadCount: vi.fn().mockResolvedValue(files),
+                },
+                repo: { draftFileCount: vi.fn().mockResolvedValue(drafts) },
+            },
         },
     };
     return c;
@@ -42,6 +45,15 @@ describe("deleting an application announces what is unsent", () => {
         const ask = vi.spyOn(window, "confirm").mockReturnValue(false);
         await make(2, 0).deleteApplication(id);
         expect(ask.mock.calls[0][0]).not.toContain("file(s)");
+    });
+
+    it("counts the files kept in drafts with the files not sent yet", async () => {
+        const ask = vi.spyOn(window, "confirm").mockReturnValue(false);
+        await make(0, 1, 2).deleteApplication(id);
+        expect(ask.mock.calls[0][0]).toContain("3 file(s)");
+        ask.mockClear();
+        await make(0, 0, 2).deleteApplication(id);
+        expect(ask.mock.calls[0][0]).toContain("2 file(s)");
     });
 
     it("announces files alone", async () => {

@@ -33,6 +33,7 @@ function fakeChat(ids: string[], channels: any[], unread: Record<string, number>
         unreadTotal: vi.fn(async (cfg?: string[]) =>
             (cfg ?? ids).reduce((s, id) => s + (unread[id] ?? 0), 0)),
         notices: vi.fn().mockResolvedValue([]),
+        draftSummaries: vi.fn(async (_c: string) => new Map<number, { text: string; files: number }>()),
         repo: {
             partners: vi.fn().mockResolvedValue([{ partnerId: 7, name: "Alice Roy" }]),
             messages: vi.fn().mockResolvedValue([]),
@@ -249,6 +250,33 @@ describe("ChatListComponent", () => {
         await c.loadCache();
         expect(c.state.rows.map((r: any) => r.preview)).toEqual(["🖼️ IMG_1.jpg, 📎 b.pdf", "⏳ 🎤 Voice message", "words"]);
         expect(chat.repo.attachmentsOf.mock.calls).toEqual([["a", 1, [40], []], ["a", 2, [], ["P1"]]]);
+    });
+
+    it("a conversation with a draft shows it in place of its last message; unread and order stay", async () => {
+        const chat = fakeChat(["a"], [
+            chan("a", 1, { name: "Team", channelType: "group", unreadCounter: 2 }), chan("a", 2, { name: "Pair" }), chan("a", 3, { name: "Other" }),
+        ]);
+        chat.repo.lastMessages.mockResolvedValue(new Map([
+            [1, { messageId: 40, clientUuid: null, messageType: "comment", status: "sent", body: "<p>last</p>", date: "2020-01-01 09:00:00" }],
+            [2, { messageId: 41, clientUuid: null, messageType: "comment", status: "sent", body: "", date: "2020-01-01 09:00:00" }],
+            [3, { messageId: 42, clientUuid: null, messageType: "comment", status: "sent", body: "<p>words</p>", date: "2020-01-01 09:00:00" }],
+        ]));
+        chat.draftSummaries.mockResolvedValue(new Map([
+            [1, { text: "see you\n  at " + "noon ".repeat(20), files: 1 }],
+            [2, { text: "", files: 2 }],
+        ]));
+        const c = make(chat);
+        await c.loadCache();
+        expect(chat.draftSummaries).toHaveBeenCalledWith("a");
+        const [team, pair, other] = c.state.rows;
+        expect(team.preview.startsWith("Draft: see you at noon noon")).toBe(true);
+        expect(team.preview.endsWith("…")).toBe(true);
+        expect(team.preview.length).toBe("Draft: ".length + 80);
+        expect(pair.preview).toBe("Draft: 📎 2");
+        expect(other.preview).toBe("words");
+        expect(c.state.rows.map((r: any) => [r.title, r.unread])).toEqual([["Team", 2], ["Pair", 0], ["Other", 0]]);
+        // The draft stands for the files of a text-less last message: none are read
+        expect(chat.repo.attachmentsOf).not.toHaveBeenCalled();
     });
 
     it("the files of several conversations are read side by side, none for a message that is not a post", async () => {

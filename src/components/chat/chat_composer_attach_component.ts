@@ -5,8 +5,6 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { getCurrentLocale, t } from "../../i18n";
 import type { OutgoingFile } from "../../models/chat";
 import { ChatCapture, type PickKind, type StageRefusal } from "../../services/chat/chatCapture";
-import type { ChatFiles } from "../../services/chat/chatFiles";
-import { deviceChatFiles } from "../../services/chat/chatFiles";
 import { chatSettings } from "../../services/chat/chatSettings";
 import { ChatVoiceRecorder, sharedVoiceRecorder, type VoiceStart } from "../../services/chat/chatVoice";
 import { formatBytes } from "../../utils/formatBytes";
@@ -18,6 +16,8 @@ export interface ComposerChip {
     key: string;
     file: OutgoingFile;
     origin: ChipOrigin;
+    /** Position among the conversation's draft files (ChatAttachment.seq of its draft row). */
+    seq: number;
 }
 
 /**
@@ -53,10 +53,18 @@ export type ComposerRecorder = Pick<
     "onAutoStop" | "onBackground" | "start" | "remainingMs" | "stop" | "discard"
 >;
 
+/** The conversation's draft files, as the composer keeps them (ChatService.keepDraftFile, dropDraftFile). */
+export interface ComposerDraft {
+    /** Stores a staged file as a draft file at chip position seq (a reduced photo replaces its own). */
+    keep: (file: OutgoingFile, seq: number) => Promise<void>;
+    /** Removes a draft file and deletes its staged file. */
+    drop: (file: OutgoingFile) => Promise<void>;
+}
+
 export interface ComposerAttachDeps {
     capture: Pick<ChatCapture, "pickFiles" | "stage" | "compress">;
     recorder: ComposerRecorder;
-    files: Pick<ChatFiles, "removeDir">;
+    draft: ComposerDraft;
     /** The account's directory under chat/, where picks and recordings are staged. */
     fileDir: () => Promise<string>;
     /** The server's upload limit in bytes; null when it cannot be read now. */
@@ -101,33 +109,40 @@ function isRefusal(r: OutgoingFile | StageRefusal): r is StageRefusal {
     return "refused" in r;
 }
 
-/** The directory stage() or the recorder made for one file: `out/<localUuid>`. */
-function stagedDir(file: OutgoingFile): string {
-    return file.path.slice(0, file.path.lastIndexOf("/"));
-}
-
 let chipSeq = 0;
+
+/**
+ * Where each draft file shown as a chip came from, by local uuid, for the
+ * app's lifetime: a conversation opened again shows its photos as camera
+ * or gallery ones (the compress question). Its draft row does not say; a
+ * file restored after a restart counts as « any file », a voice as voice.
+ */
+const draftOrigins = new Map<string, ChipOrigin>();
 
 /**
  * The attachments of one composer: the files picked (camera, gallery, any
  * file) staged one after another and shown as chips, and the voice
- * message.
+ * message. Every staged file is kept as a draft file of the conversation
+ * (deps.draft) before its chip shows, so a chip outlives the screen and
+ * the app until it is sent or its ✕ removes it.
  *
  * The voice: mic() starts recording, mic() again stops it and sends it at
  * once, with the composer's text and chips (deps.send); the recorder's
  * 60 s auto-stop sends the same way. While its MP3 is prepared, busy() is
  * true, so the composer refuses another send that would overtake it. The
- * app going to the background stops the recording and keeps it as an
- * unsent voice chip; one voice per composer, so the mic hides while a
- * voice chip exists.
+ * app going to the background, or the screen closing, stops the recording
+ * and keeps it as an unsent voice chip; one voice per composer, so the mic
+ * hides while a voice chip exists.
  *
  * The recorder is the app's one ChatVoiceRecorder (sharedVoiceRecorder):
  * its start() empties the shared recording directory. start() hooks its
- * callbacks to this composer; dispose() discards a recording under way,
- * deletes the chips' staged files and unhooks the callbacks still its own.
+ * callbacks to this composer; dispose() keeps a recording under way as a
+ * draft voice file and unhooks the callbacks still its own.
  */
 export class ComposerAttach {
     private disposed = false;
+    /** The chip position the next draft file takes. */
+    private nextSeq = 0;
     private tick: ReturnType<typeof setInterval> | null = null;
     private readonly autoStop = () => {
         if (this.state.voice === "recording") void this.stopAndSend();
@@ -179,7 +194,9 @@ export class ComposerAttach {
      * picker opens before anything is awaited, so this must be called from
      * the tap's own handler. A file over the server's limit, one that
      * cannot be staged, and a HEIC the phone could not convert (kept as it
-     * is) are each named in a notice.
+     * is) are each named in a notice. Each staged file is a draft file
+     * before its chip shows; one staged after the screen closed stays in
+     * the draft without a chip.
      */
     async pick(input: HTMLInputElement, kind: PickKind): Promise<void> {
         if (!this.state.ready) return;
@@ -206,49 +223,83 @@ export class ComposerAttach {
                     this.notice(t("chat.file_too_big", { name: file.name, limit: formatBytes(staged.limit, lang) }));
                     continue;
                 }
-                if (this.disposed) {
-                    await this.deps.files.removeDir(stagedDir(staged)).catch(() => {});
-                    continue;
-                }
+                const seq = this.nextSeq++;
+                await this.keepDraft(staged, seq);
+                // The screen closed meanwhile: the file waits in the draft for the next visit
+                if (this.disposed) continue;
                 if (/^image\/hei[cf]/.test(staged.mimetype)) this.notice(t("chat.heic_kept", { name: staged.name }));
-                this.addChip(staged, kind);
+                this.addChip(staged, kind, seq);
             }
         } finally {
             this.state.staging--;
         }
     }
 
-    /** Takes the chip off and deletes its staged file. */
+    /** Takes the chip off, out of the draft, and deletes its staged file. */
     async remove(chip: ComposerChip): Promise<void> {
         this.state.chips = this.state.chips.filter((c) => c.key !== chip.key);
-        await this.deps.files.removeDir(stagedDir(chip.file)).catch(() => {});
+        draftOrigins.delete(chip.file.localUuid);
+        await this.deps.draft.drop(chip.file).catch((e) => console.warn("chat: draft file not removed", e));
     }
 
     /**
      * The chips, taken off the composer at once (before the send's first
      * await, so a second tap finds none), with the notices of the picks
-     * before. Their files then belong to the send: the outbox deletes them
-     * if it cannot queue them.
+     * before. Their draft files then belong to the send: the outbox gives
+     * them to the post in place, or leaves them in the draft when it cannot
+     * queue it (restore() shows them again).
      */
     take(): ComposerChip[] {
         const chips = this.state.chips;
         this.state.chips = [];
         this.state.notices = [];
+        for (const c of chips) draftOrigins.delete(c.file.localUuid);
         return chips;
+    }
+
+    /**
+     * Shows the conversation's draft files (ChatService.draft) as chips,
+     * in their order, ahead of the chips picked since; one already shown is
+     * skipped. A chip of `known` (taken by a send that was refused) gives
+     * its origin back. Each name in `lost` (a draft file whose staged copy
+     * is gone) is told in a notice.
+     */
+    restore(files: { file: OutgoingFile; seq: number }[], lost: string[] = [], known: ComposerChip[] = []): void {
+        if (this.disposed) return;
+        const shown = new Set(this.state.chips.map((c) => c.file.localUuid));
+        const origins = new Map(known.map((c) => [c.file.localUuid, c.origin]));
+        const back = files
+            .filter(({ file }) => !shown.has(file.localUuid))
+            .sort((a, b) => a.seq - b.seq)
+            .map(({ file, seq }) => this.chipOf(
+                file, file.voice ? "voice" : origins.get(file.localUuid) ?? draftOrigins.get(file.localUuid) ?? "file", seq));
+        for (const { seq } of files) this.nextSeq = Math.max(this.nextSeq, seq + 1);
+        if (back.length > 0) this.state.chips = [...back, ...this.state.chips];
+        for (const name of lost) this.notice(t("chat.draft_file_lost", { name }));
     }
 
     /**
      * The files of the chips taken, in order. With « ask to compress » on
      * and a camera or gallery photo among them, the user is asked first;
-     * yes reduces those photos (ChatCapture.compress), one at a time. A
-     * file picked as « any file » is never asked about.
+     * yes reduces those photos (ChatCapture.compress), one at a time, each
+     * draft row then naming the reduced file. A file picked as « any file »
+     * is never asked about.
      */
     async prepare(chips: ComposerChip[]): Promise<OutgoingFile[]> {
         const isPhoto = (c: ComposerChip) => (c.origin === "camera" || c.origin === "gallery") && PHOTO.test(c.file.mimetype);
         if (!this.deps.askCompress() || !chips.some(isPhoto)) return chips.map((c) => c.file);
         const yes = await this.deps.confirm(t("chat.compress_ask")).catch(() => false);
         const files: OutgoingFile[] = [];
-        for (const chip of chips) files.push(yes && isPhoto(chip) ? await this.deps.capture.compress(chip.file) : chip.file);
+        for (const chip of chips) {
+            if (!yes || !isPhoto(chip)) {
+                files.push(chip.file);
+                continue;
+            }
+            const reduced = await this.deps.capture.compress(chip.file);
+            // The draft row follows the file it now names, for a send that is refused
+            if (reduced !== chip.file) await this.keepDraft(reduced, chip.seq);
+            files.push(reduced);
+        }
         return files;
     }
 
@@ -299,18 +350,30 @@ export class ComposerAttach {
         await this.deps.recorder.discard();
     }
 
-    /** Stops the recording and, once its MP3 is ready, sends it with the composer's text and chips. */
+    /**
+     * Stops the recording and, once its MP3 is ready, keeps it as a draft
+     * file and sends it with the composer's text and chips: a refused send
+     * leaves it in the draft.
+     */
     private async stopAndSend(): Promise<void> {
         const file = await this.finishRecording();
-        if (file) await this.deps.send([file]);
+        if (!file) return;
+        await this.keepDraft(file, this.nextSeq++);
+        await this.deps.send([file]);
     }
 
-    /** Stops the recording and keeps it as an unsent voice chip. */
+    /** Stops the recording and keeps it as a draft voice file, a chip while the screen is open. */
     private async keepUnsent(): Promise<void> {
         const file = await this.finishRecording();
         if (!file) return;
-        if (this.disposed) await this.deps.files.removeDir(stagedDir(file)).catch(() => {});
-        else this.addChip(file, "voice");
+        const seq = this.nextSeq++;
+        await this.keepDraft(file, seq);
+        if (!this.disposed) this.addChip(file, "voice", seq);
+    }
+
+    /** deps.draft.keep, a failure logged: the chip still shows and the file still goes with the next send. */
+    private async keepDraft(file: OutgoingFile, seq: number): Promise<void> {
+        await this.deps.draft.keep(file, seq).catch((e) => console.warn("chat: draft file not kept", e));
     }
 
     /** The recording as its MP3 staged file, "preparing" meanwhile; null with a notice when it fails. */
@@ -328,31 +391,35 @@ export class ComposerAttach {
     }
 
     /**
-     * The composer leaves the screen: a recording under way is discarded
-     * (a halted one would hold the recorder for the next start), the chips'
-     * staged files are deleted, and the recorder's callbacks are let go
-     * while they are still this composer's. A voice message being prepared
-     * is still sent: its tap was a send.
+     * The composer leaves the screen: a recording under way is stopped and
+     * kept as a draft voice file (a halted one would hold the recorder for
+     * the next start), one still starting is discarded, and the recorder's
+     * callbacks are let go while they are still this composer's. The chips
+     * stay in the draft. A voice message being prepared still goes where
+     * its tap sent it.
      */
     async dispose(): Promise<void> {
         this.disposed = true;
         this.state.ready = false;
-        this.endTick();
         const { recorder } = this.deps;
         const owned = recorder.onAutoStop === this.autoStop;
         if (owned) recorder.onAutoStop = null;
         if (recorder.onBackground === this.background) recorder.onBackground = null;
-        const chips = this.take();
-        const recording = this.state.voice === "recording" || this.state.voice === "starting";
-        if (recording) this.state.voice = "idle";
-        await Promise.all([
-            owned && recording ? recorder.discard().catch(() => {}) : Promise.resolve(),
-            ...chips.map((c) => this.deps.files.removeDir(stagedDir(c.file)).catch(() => {})),
-        ]);
+        if (owned && this.state.voice === "recording") return this.keepUnsent();
+        this.endTick();
+        if (this.state.voice === "starting") {
+            this.state.voice = "idle";
+            if (owned) await recorder.discard().catch(() => {});
+        }
     }
 
-    private addChip(file: OutgoingFile, origin: ChipOrigin): void {
-        this.state.chips = [...this.state.chips, { key: "c" + ++chipSeq, file, origin }];
+    private chipOf(file: OutgoingFile, origin: ChipOrigin, seq: number): ComposerChip {
+        draftOrigins.set(file.localUuid, origin);
+        return { key: "c" + ++chipSeq, file, origin, seq };
+    }
+
+    private addChip(file: OutgoingFile, origin: ChipOrigin, seq: number): void {
+        this.state.chips = [...this.state.chips, this.chipOf(file, origin, seq)];
     }
 
     private notice(text: string): void {
@@ -365,14 +432,13 @@ export class ComposerAttach {
     }
 }
 
-/** The device's dependencies of a composer, around the thread's own (account, send). */
+/** The device's dependencies of a composer, around the thread's own (account, send, draft). */
 export function deviceComposerDeps(
-    own: Pick<ComposerAttachDeps, "fileDir" | "uploadLimit" | "send">,
+    own: Pick<ComposerAttachDeps, "fileDir" | "uploadLimit" | "send" | "draft">,
 ): ComposerAttachDeps {
     return {
         capture: new ChatCapture(),
         recorder: sharedVoiceRecorder(),
-        files: deviceChatFiles,
         askCompress: () => chatSettings().askCompress,
         confirm: async (message) =>
             (await Dialog.confirm({
@@ -388,7 +454,7 @@ export function deviceComposerDeps(
 /**
  * What the composer shows of its attachments, above the text field: the
  * camera / gallery / file sheet with the server's limit under it, the
- * chips (name, size, ✕), the recording's countdown and ✕, and the
+ * chips (name, size, ✕ removing it from the draft), the recording's countdown and ✕, and the
  * notices. The hidden file input the picks go through lives here. The
  * 📎 and 🎤 buttons sit in the thread's composer row and drive the same
  * ComposerAttach.

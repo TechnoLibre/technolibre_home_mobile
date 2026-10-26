@@ -492,6 +492,112 @@ describe("ChatOutbox", () => {
       expect(await repo.outgoingOf(CONFIG, lost.clientUuid)).toEqual([]);
       expect(files.bytes(g1.path)).toBeUndefined();
     });
+
+    describe("draft files", () => {
+      /** A file of the conversation's composer, kept as its draft. */
+      const drafted = async (uuid: string, seq = 0): Promise<OutgoingFile> => {
+        const f = file(uuid);
+        await repo.putDraftFile({
+          configId: CONFIG, channelId: CHANNEL, messageId: null, attachmentId: null, localUuid: uuid, postClientUuid: null,
+          seq, name: f.name, mimetype: f.mimetype, size: f.size, checksum: null, voice: false, thumbPath: null, thumbBytes: 0,
+          originalPath: f.path, originalBytes: f.size, state: "draft", error: null, lastOpenedAt: null, createdAt: clock.toISOString(),
+        });
+        return f;
+      };
+      const statesOf = async (...uuids: string[]) =>
+        Promise.all(uuids.map(async (u) => (await repo.outgoingFile(CONFIG, u))?.state ?? null));
+
+      it("a post takes its draft files in place: same rows and files, no delete or insert", async () => {
+        chatOdoo();
+        const [a, b] = [await drafted("d1", 5), await drafted("d2", 6)];
+        const fresh = file("n1");
+        const run = vi.spyOn(db, "rawRun");
+        const m = await chat.queuePost(CONFIG, CHANNEL, "with drafts", false, { files: [b, a, fresh] });
+        const touching = run.mock.calls.map((c) => String(c[0])).filter((q) => q.includes("chat_attachments"));
+        run.mockRestore();
+        // One update per draft row, the fresh file inserted as before
+        expect(touching.filter((q) => q.startsWith("UPDATE"))).toHaveLength(2);
+        expect(touching.filter((q) => q.startsWith("DELETE"))).toEqual([]);
+        expect(touching.filter((q) => q.startsWith("INSERT"))).toHaveLength(1);
+        expect((await repo.outgoingOf(CONFIG, m.clientUuid)).map((r) => [r.localUuid, r.seq, r.state, r.originalPath])).toEqual([
+          ["d2", 0, "queued", b.path], ["d1", 1, "queued", a.path], ["n1", 2, "queued", fresh.path],
+        ]);
+        expect(files.bytes(a.path)).toBeDefined();
+        expect((await repo.draftOf(CONFIG, CHANNEL)).files).toEqual([]);
+        const post = (await db.getOutboxOpsForConfig(CONFIG)).find((o) => o.kind === CHAT_POST)!;
+        expect(post.params.drafts).toEqual(["d2", "d1"]);
+      });
+
+      it("a post whose message cannot be stored gives its draft files back to the draft", async () => {
+        chatOdoo();
+        const a = await drafted("d1");
+        const fresh = file("n1");
+        vi.spyOn(repo, "putPending").mockRejectedValueOnce(new Error("disk full"));
+        await expect(chat.queuePost(CONFIG, CHANNEL, "x", false, { files: [a, fresh] })).rejects.toThrow("disk full");
+        expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+        expect(await statesOf("d1", "n1")).toEqual(["draft", null]);
+        expect((await repo.outgoingFile(CONFIG, "d1"))!.postClientUuid).toBeNull();
+        expect(files.bytes(a.path)).toBeDefined();
+        expect(files.bytes(fresh.path)).toBeUndefined();
+      });
+
+      it("a post whose ops cannot be stored keeps its draft files", async () => {
+        chatOdoo();
+        const a = await drafted("d1");
+        const enqueue = outbox.enqueue.bind(outbox);
+        vi.spyOn(outbox, "enqueue").mockImplementation(async (op: any) => {
+          if (op.kind === CHAT_POST) throw new Error("disk full");
+          return enqueue(op);
+        });
+        await expect(chat.queuePost(CONFIG, CHANNEL, "x", false, { files: [a] })).rejects.toThrow("disk full");
+        expect(await statesOf("d1")).toEqual(["draft"]);
+        expect(files.bytes(a.path)).toBeDefined();
+      });
+
+      it("a kill between a post's ops and its draft files' conversion keeps them at startup, and the next send takes them", async () => {
+        chatOdoo();
+        const a = await drafted("d1");
+        // The process dies inside the conversion: no catch runs
+        const convert = vi.spyOn(repo, "queueDrafts").mockImplementation(() => new Promise(() => {}));
+        void chat.queuePost(CONFIG, CHANNEL, "cut", false, { files: [a] });
+        await vi.waitFor(() => expect(convert).toHaveBeenCalled());
+        convert.mockRestore();
+        chat = new ChatOutbox(db, rpc, outbox, repo, () => clock);
+        chat.files = files;
+        expect(await chat.recoverIncomplete()).toBe(0);
+        expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+        expect(await statesOf("d1")).toEqual(["draft"]);
+        expect(files.bytes(a.path)).toBeDefined();
+        const m = await chat.queuePost(CONFIG, CHANNEL, "again", false, { files: [a] });
+        expect((await repo.outgoingOf(CONFIG, m.clientUuid)).map((r) => [r.localUuid, r.state])).toEqual([["d1", "queued"]]);
+      });
+
+      it("a kill after the conversion, before the message, gives the files and the text back to the draft at startup", async () => {
+        chatOdoo();
+        const a = await drafted("d1");
+        const store = vi.spyOn(repo, "putPending").mockImplementation(() => new Promise(() => {}));
+        void chat.queuePost(CONFIG, CHANNEL, "typed before the kill", false, { files: [a] });
+        await vi.waitFor(() => expect(store).toHaveBeenCalled());
+        store.mockRestore();
+        chat = new ChatOutbox(db, rpc, outbox, repo, () => clock);
+        chat.files = files;
+        expect(await chat.recoverIncomplete()).toBe(0);
+        expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+        const draft = await repo.draftOf(CONFIG, CHANNEL);
+        expect(draft.text).toBe("typed before the kill");
+        expect(draft.files.map((f) => [f.localUuid, f.state, f.postClientUuid])).toEqual([["d1", "draft", null]]);
+        expect(files.bytes(a.path)).toBeDefined();
+      });
+
+      it("a conversation that cannot take a post keeps the draft files refused beside the failed text", async () => {
+        chatOdoo();
+        const a = await drafted("d1");
+        await repo.patchChannel(CONFIG, CHANNEL, { createFailed: true });
+        const m = await chat.queuePost(CONFIG, CHANNEL, "x", false, { files: [a] });
+        expect((await repo.outgoingOf(CONFIG, m.clientUuid)).map((r) => [r.localUuid, r.state, r.error])).toEqual([["d1", "refused", "channel"]]);
+        expect((await repo.draftOf(CONFIG, CHANNEL)).files).toEqual([]);
+      });
+    });
   });
 
   it("posts of different channels do not wait for each other", async () => {

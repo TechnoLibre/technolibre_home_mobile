@@ -151,6 +151,17 @@ export function attachmentKind(a: { mimetype: string; voice: boolean }): Attachm
 const ICONS: Record<AttachmentKind, string> = { image: "🖼️", voice: "🎤", file: "📎" };
 
 /**
+ * The list line of a conversation's draft: « Draft: » then its text on one
+ * line, cut at `max` characters with an ellipsis, or 📎 and its number of
+ * files when it has no text.
+ */
+export function draftPreview(text: string, files: number, max = 80): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  const shown = line ? (line.length > max ? line.slice(0, Math.max(0, max - 1)).trimEnd() + "…" : line) : "📎 " + files;
+  return t("chat.draft_preview", { text: shown });
+}
+
+/**
  * The files of a message as one line of a conversation list, by
  * attachmentKind: 🎤 and « voice message » for a voice message, the icon
  * of its kind before any other file's name; cut to `max` characters.

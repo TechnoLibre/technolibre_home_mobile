@@ -4,7 +4,7 @@ import { EnhancedComponent } from "../../js/enhancedComponent";
 import { HeadingComponent } from "../heading/heading_component";
 import { Events } from "../../constants/events";
 import { getCurrentLocale, t } from "../../i18n";
-import { attachmentPreview, bodyPreview } from "../../services/chat/chatBody";
+import { attachmentPreview, bodyPreview, draftPreview } from "../../services/chat/chatBody";
 import { serverChoiceMode, type ChoiceMode } from "../../services/chat/chatSources";
 import { displayNameOf } from "../../services/chat/chatNames";
 import { isBold, unreadOf } from "../../services/chat/chatUnread";
@@ -293,12 +293,13 @@ export class ChatListComponent extends EnhancedComponent {
         const byKey = new Map<string, ChatRow>();
         for (const id of new Set(channels.map((c) => c.configId))) {
             const mine = channels.filter((c) => c.configId === id);
-            const [partners, lasts, pendings, membersOf, state] = await Promise.all([
+            const [partners, lasts, pendings, membersOf, state, drafts] = await Promise.all([
                 this.chatService.repo.partners(id),
                 this.chatService.repo.lastMessages(id, mine),
                 this.chatService.repo.pendingMessages(id),
                 this.chatService.repo.membersBySource(id),
                 this.chatService.repo.sourceState(id),
+                this.chatService.draftSummaries(id),
             ]);
             const byPartner = new Map(partners.map((p) => [p.partnerId, p]));
             // Outbox ops matter only to conversations still being created
@@ -316,6 +317,12 @@ export class ChatListComponent extends EnhancedComponent {
                 const row = this.rowOf(c, labelOf.get(id) ?? "", title, last, text);
                 row.ambiguous = !!c.createOpId && blocked.has(c.createOpId);
                 byKey.set(c.configId + ":" + c.channelId, row);
+                // A draft stands in the last message's place; the time, unread and order stay the conversation's
+                const draft = drafts.get(c.channelId);
+                if (draft) {
+                    row.preview = draftPreview(draft.text, draft.files, PREVIEW_MAX);
+                    continue;
+                }
                 if (!text && last && last.messageType === "comment") {
                     filesLines.push(this.filesLine(id, c.channelId, last).then((line) => {
                         if (line) row.preview = (last.status === "pending" ? "⏳ " : "") + line;

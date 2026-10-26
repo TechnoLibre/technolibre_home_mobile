@@ -90,10 +90,19 @@ function harness(opts: { askCompress?: boolean; limit?: number | null; confirm?:
     };
     const send = vi.fn(async (_extra: OutgoingFile[]) => {});
     const confirm = vi.fn(async (_message: string) => opts.confirm ?? true);
+    /** The conversation's draft files, by local uuid, as ChatService keeps them. */
+    const drafts = new Map<string, { file: OutgoingFile; seq: number }>();
+    const draft = {
+        keep: vi.fn(async (f: OutgoingFile, seq: number) => { drafts.set(f.localUuid, { file: f, seq }); }),
+        drop: vi.fn(async (f: OutgoingFile) => {
+            drafts.delete(f.localUuid);
+            await files.removeDir(f.path.slice(0, f.path.lastIndexOf("/")));
+        }),
+    };
     const deps: ComposerAttachDeps = {
         capture,
         recorder,
-        files,
+        draft,
         fileDir: async () => FILE_DIR,
         uploadLimit: async () => (opts.limit === undefined ? LIMIT : opts.limit),
         askCompress: () => opts.askCompress ?? false,
@@ -103,7 +112,7 @@ function harness(opts: { askCompress?: boolean; limit?: number | null; confirm?:
     const state = newComposerAttachState();
     const attach = new ComposerAttach(state, deps);
     return {
-        attach, state, files, capture, recorder, send, confirm, order,
+        attach, state, files, capture, recorder, send, confirm, order, draft, drafts,
         pickNext: (list: File[]) => { picked = list; },
         setRemaining: (ms: number) => { remaining = ms; },
         input: document.createElement("input"),
@@ -211,7 +220,7 @@ describe("ComposerAttach", () => {
         expect(h.state.staging).toBe(0);
     });
 
-    it("a chip shows its size and its ✕ deletes the staged file", async () => {
+    it("a chip shows its size and its ✕ takes it out of the draft and deletes the staged file", async () => {
         const h = harness();
         await h.attach.start();
         h.pickNext([file("report.pdf", 17507, "application/pdf")]);
@@ -221,7 +230,61 @@ describe("ComposerAttach", () => {
         expect(h.files.bytes(chip.file.path)).toBeDefined();
         await h.attach.remove(chip);
         expect(h.state.chips).toEqual([]);
+        expect(h.draft.drop).toHaveBeenCalledWith(chip.file);
+        expect(h.drafts.size).toBe(0);
         expect(h.files.bytes(chip.file.path)).toBeUndefined();
+    });
+
+    it("each staged pick is a draft file before its chip shows, at its chip position", async () => {
+        const h = harness();
+        await h.attach.start();
+        const shownAtKeep: number[] = [];
+        h.draft.keep.mockImplementation(async (f: OutgoingFile, seq: number) => {
+            shownAtKeep.push(h.state.chips.length);
+            h.drafts.set(f.localUuid, { file: f, seq });
+        });
+        h.pickNext([file("a.jpg", 10), file("b.jpg", 20)]);
+        await h.attach.pick(h.input, "camera");
+        expect(shownAtKeep).toEqual([0, 1]);
+        expect(h.state.chips.map((c) => [c.file.name, c.seq])).toEqual([["a.jpg", 0], ["b.jpg", 1]]);
+        expect([...h.drafts.values()].map((d) => [d.file.name, d.seq])).toEqual([["a.jpg", 0], ["b.jpg", 1]]);
+    });
+
+    it("restore shows the draft's files in order ahead of new picks, a known origin kept, the lost ones named", async () => {
+        const h = harness();
+        await h.attach.start();
+        h.pickNext([file("new.jpg", 10)]);
+        await h.attach.pick(h.input, "gallery");
+        const photo = stagedOf(h.files, "IMG_20261026_101500.jpg", 10, "image/jpeg");
+        const voice = { ...stagedOf(h.files, "Voice-2026-10-26-77.mp3", 10, "audio/mpeg"), voice: true };
+        h.attach.restore([{ file: voice, seq: 7 }, { file: photo, seq: 3 }], ["gone.pdf"],
+            [{ key: "old", file: photo, origin: "camera", seq: 3 }]);
+        expect(h.state.chips.map((c) => [c.file.name, c.origin, c.seq])).toEqual([
+            ["IMG_20261026_101500.jpg", "camera", 3], ["Voice-2026-10-26-77.mp3", "voice", 7], ["new.jpg", "gallery", 0],
+        ]);
+        expect(h.state.notices).toEqual(["“gone.pdf” was no longer on the phone: it was taken out of the draft."]);
+        // Shown once, whatever the restores; the next file takes the position after the draft's
+        h.attach.restore([{ file: photo, seq: 3 }]);
+        expect(h.state.chips).toHaveLength(3);
+        h.pickNext([file("next.jpg", 10)]);
+        await h.attach.pick(h.input, "file");
+        expect(h.state.chips.at(-1)!.seq).toBe(8);
+    });
+
+    it("a draft photo shown again in this app run keeps its camera origin; after a restart it counts as a file", async () => {
+        const first = harness();
+        await first.attach.start();
+        first.pickNext([file("IMG_1.jpg", 10)]);
+        await first.attach.pick(first.input, "camera");
+        await first.attach.dispose();
+        const [kept] = [...first.drafts.values()];
+        const again = harness();
+        await again.attach.start();
+        again.attach.restore([kept]);
+        expect(again.state.chips.map((c) => c.origin)).toEqual(["camera"]);
+        const other = stagedOf(again.files, "IMG_2.jpg", 10, "image/jpeg");
+        again.attach.restore([{ file: other, seq: 5 }]);
+        expect(again.state.chips.map((c) => c.origin)).toEqual(["file", "camera"]);
     });
 
     it("a file over the limit is refused with the limit named, the others still staged", async () => {
@@ -311,6 +374,8 @@ describe("ComposerAttach", () => {
         expect(yes.confirm).toHaveBeenCalledWith("Compress the photos before sending? They are reduced to 1920 px.");
         expect(yes.capture.compress).toHaveBeenCalledTimes(1);
         expect(sent.map((f) => [f.name, f.size])).toEqual([["shot.jpg", 100], ["notes.pdf", 10]]);
+        // The draft row names the reduced photo, for a send that is refused
+        expect([...yes.drafts.values()].map((d) => [d.file.name, d.file.size, d.seq])).toEqual([["shot.jpg", 100, 0], ["notes.pdf", 10, 1]]);
 
         const no = harness({ askCompress: true, confirm: false });
         await no.attach.start();
@@ -339,6 +404,17 @@ describe("ComposerAttach", () => {
         expect(h.send.mock.calls[0][0].map((f: OutgoingFile) => [f.name, f.voice])).toEqual([["Voice-2026-10-26-4821.mp3", true]]);
         expect(h.state.voice).toBe("idle");
         expect(h.attach.busy()).toBe(false);
+    });
+
+    it("the voice the mic sends is a draft file first, so a refused send leaves it in the draft", async () => {
+        const h = harness();
+        await h.attach.start();
+        await h.attach.mic();
+        let kept = 0;
+        h.send.mockImplementation(async () => { kept = h.drafts.size; });
+        await h.attach.mic();
+        expect(kept).toBe(1);
+        expect([...h.drafts.values()][0].file.voice).toBe(true);
     });
 
     it("the voice goes idle before it is sent, so the send is not refused as busy", async () => {
@@ -382,6 +458,7 @@ describe("ComposerAttach", () => {
         expect(h.send).not.toHaveBeenCalled();
         expect(h.state.voice).toBe("idle");
         expect(h.state.chips.map((c) => [c.file.name, c.origin])).toEqual([["Voice-2026-10-26-4821.mp3", "voice"]]);
+        expect([...h.drafts.values()].map((d) => d.file.name)).toEqual(["Voice-2026-10-26-4821.mp3"]);
         expect(h.attach.hasVoiceChip()).toBe(true);
         await h.attach.remove(h.state.chips[0]);
         expect(h.attach.hasVoiceChip()).toBe(false);
@@ -420,7 +497,7 @@ describe("ComposerAttach", () => {
         expect(h.state.voice).toBe("recording");
     });
 
-    it("dispose discards the recording, deletes the unsent chips' files and lets go of the recorder", async () => {
+    it("dispose keeps the recording under way as a draft voice file, keeps the chips and lets go of the recorder", async () => {
         const h = harness();
         await h.attach.start();
         h.pickNext([file("a.jpg", 10)]);
@@ -428,10 +505,30 @@ describe("ComposerAttach", () => {
         const path = h.state.chips[0].file.path;
         await h.attach.mic();
         await h.attach.dispose();
-        expect(h.recorder.discard).toHaveBeenCalledTimes(1);
-        expect(h.files.bytes(path)).toBeUndefined();
+        expect(h.recorder.discard).not.toHaveBeenCalled();
+        expect(h.recorder.stop).toHaveBeenCalledWith(FILE_DIR);
+        expect([...h.drafts.values()].map((d) => [d.file.name, d.file.voice, d.seq])).toEqual([
+            ["a.jpg", false, 0], ["Voice-2026-10-26-4821.mp3", true, 1],
+        ]);
+        expect(h.files.bytes(path)).toBeDefined();
+        expect(h.draft.drop).not.toHaveBeenCalled();
+        expect(h.send).not.toHaveBeenCalled();
         expect(h.recorder.onAutoStop).toBeNull();
         expect(h.recorder.onBackground).toBeNull();
+    });
+
+    it("a recording still starting when the screen closes is discarded", async () => {
+        const h = harness();
+        await h.attach.start();
+        const gate = deferred<"recording">();
+        h.recorder.start.mockImplementation(() => gate.promise);
+        const mic = h.attach.mic();
+        await flush();
+        await h.attach.dispose();
+        gate.resolve("recording");
+        await mic;
+        expect(h.recorder.discard).toHaveBeenCalledTimes(1);
+        expect(h.drafts.size).toBe(0);
     });
 
     it("dispose leaves the recorder's callbacks to a composer that took it over", async () => {
@@ -444,7 +541,7 @@ describe("ComposerAttach", () => {
         expect(first.recorder.discard).not.toHaveBeenCalled();
     });
 
-    it("a file staged after dispose is deleted, not shown", async () => {
+    it("a file staged after dispose stays in the draft, not shown", async () => {
         const h = harness();
         await h.attach.start();
         const gate = deferred<void>();
@@ -462,6 +559,7 @@ describe("ComposerAttach", () => {
         gate.resolve();
         await picking;
         expect(h.state.chips).toEqual([]);
-        expect(h.files.bytes(staged!.path)).toBeUndefined();
+        expect([...h.drafts.keys()]).toEqual([staged!.localUuid]);
+        expect(h.files.bytes(staged!.path)).toBeDefined();
     });
 });

@@ -1129,6 +1129,8 @@ export const translations: Record<string, string> = {
   "chat.attach_remove": "Retirer {name}",
   "chat.attach_staging": "Préparation des fichiers…",
   "chat.attach_failed": "« {name} » n'a pas pu être joint.",
+  "chat.draft_file_lost": "« {name} » n'était plus sur le téléphone : il a été retiré du brouillon.",
+  "chat.draft_preview": "Brouillon : {text}",
   "chat.attachment_files": "Fichiers",
   "chat.cache_space": "Espace utilisé par les fichiers du clavardage : {size}",
   "chat.cache_clear_all": "Vider tout",

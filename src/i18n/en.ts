@@ -1129,6 +1129,8 @@ export const translations: Record<string, string> = {
   "chat.attach_remove": "Remove {name}",
   "chat.attach_staging": "Preparing the files…",
   "chat.attach_failed": "“{name}” could not be attached.",
+  "chat.draft_file_lost": "“{name}” was no longer on the phone: it was taken out of the draft.",
+  "chat.draft_preview": "Draft: {text}",
   "chat.attachment_files": "Files",
   "chat.cache_space": "Space used by the chat files: {size}",
   "chat.cache_clear_all": "Clear all",

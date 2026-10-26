@@ -1,6 +1,6 @@
 import type { Application } from "../../models/application";
 import type {
-  BusNotification, ChatChannel, ChatMember, ChatMessage, ChatModuleState, ChatNotice, OutgoingFile,
+  BusNotification, ChatAttachment, ChatChannel, ChatMember, ChatMessage, ChatModuleState, ChatNotice, OutgoingFile,
 } from "../../models/chat";
 import { syncConfigIdFor } from "../../models/syncConfig";
 import type { DatabaseService } from "../databaseService";
@@ -564,6 +564,81 @@ export class ChatService {
       this.changed(configId, channelId);
     }
     return message;
+  }
+
+  // ─── Drafts ───────────────────────────────────────────────────────────────
+
+  /**
+   * What the conversation's composer kept: its text and its draft files in
+   * chip order. A file whose staged copy is gone is dropped from the draft
+   * and its name given in `lost`. A temporary id whose create settled reads
+   * the server's id, as every draft call does (ChatOutbox.draftTask).
+   */
+  draft(configId: string, channelId: number): Promise<{ text: string; files: ChatAttachment[]; lost: string[] }> {
+    return this.queue.draftTask(configId, channelId, async (id) => {
+      const { text, files } = await this.repo.draftOf(configId, id);
+      const kept: ChatAttachment[] = [];
+      const lost: string[] = [];
+      for (const f of files) {
+        if (f.originalPath && (await this.queue.files.size(f.originalPath)) !== null) {
+          kept.push(f);
+          continue;
+        }
+        lost.push(f.name);
+        await this.repo.removeDraftFile(configId, f.localUuid!);
+      }
+      return { text, files: kept, lost };
+    });
+  }
+
+  /** Stores the text typed in a conversation's composer; "" with no draft file leaves no draft. */
+  saveDraftText(configId: string, channelId: number, text: string): Promise<void> {
+    return this.queue.draftTask(configId, channelId, (id) => this.repo.putDraftText(configId, id, text));
+  }
+
+  /** Keeps a file staged in a conversation's composer as a draft file at chip position `seq`. */
+  keepDraftFile(configId: string, channelId: number, file: OutgoingFile, seq: number): Promise<void> {
+    return this.queue.draftTask(configId, channelId, (id) => this.repo.putDraftFile({
+      configId,
+      channelId: id,
+      messageId: null,
+      attachmentId: null,
+      localUuid: file.localUuid,
+      postClientUuid: null,
+      seq,
+      name: file.name,
+      mimetype: file.mimetype,
+      size: file.size,
+      checksum: null,
+      voice: file.voice,
+      thumbPath: null,
+      thumbBytes: 0,
+      originalPath: file.path,
+      originalBytes: file.size,
+      state: "draft",
+      error: null,
+      lastOpenedAt: null,
+      createdAt: this.now().toISOString(),
+    }));
+  }
+
+  /**
+   * Removes a file from its conversation's draft (the chip's ✕) and deletes
+   * its staged file with its out/<localUuid>/ directory, its row found or
+   * not; a file already given to a post keeps its row and its file.
+   */
+  dropDraftFile(configId: string, file: OutgoingFile): Promise<void> {
+    return this.queue.draftTask(configId, null, async () => {
+      const row = await this.repo.outgoingFile(configId, file.localUuid);
+      if (row && row.state !== "draft") return;
+      await this.repo.removeDraftFile(configId, file.localUuid);
+      await this.attachments.release([file.path]);
+    });
+  }
+
+  /** Per conversation of the account with a draft: its text and how many files it keeps (the list's line). */
+  draftSummaries(configId: string): Promise<Map<number, { text: string; files: number }>> {
+    return this.queue.draftTask(configId, null, () => this.repo.draftSummaries(configId));
   }
 
   // ─── New conversations ────────────────────────────────────────────────────
