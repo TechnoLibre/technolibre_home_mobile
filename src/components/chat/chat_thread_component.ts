@@ -27,6 +27,7 @@ import {
     type AttachmentView,
 } from "./chat_attachments_component";
 import { ChatImageViewerComponent } from "./chat_image_viewer_component";
+import { ChatEmojiPickerComponent } from "./chat_emoji_picker_component";
 
 /** Quiet period that folds a burst of CHAT_CHANGED into one refresh. */
 const CHANGE_DEBOUNCE_MS = 150;
@@ -81,6 +82,8 @@ interface ThreadState {
     error: string;
     /** Rows the composer shows, from 1 up to MAX_INPUT_ROWS. */
     inputRows: number;
+    /** The emoji picker is open. */
+    emoji: boolean;
     /** Key of the image the viewer shows; null when it is closed. */
     viewer: string | null;
     /** From the ➤ tap until the post is queued: the text takes no input, 📎, 🎤 and ➤ are off. */
@@ -172,7 +175,7 @@ export class ChatThreadComponent extends EnhancedComponent {
     state!: ThreadState;
     scroller!: { el: HTMLElement | null };
 
-    static components = { HeadingComponent, ChatComposerAttachComponent, ChatAttachmentsComponent, ChatImageViewerComponent };
+    static components = { HeadingComponent, ChatComposerAttachComponent, ChatAttachmentsComponent, ChatImageViewerComponent, ChatEmojiPickerComponent };
 
     static template = xml`
     <div id="chat-thread">
@@ -234,10 +237,13 @@ export class ChatThreadComponent extends EnhancedComponent {
       <p t-if="state.error" class="chat-thread__failed" role="alert" t-esc="state.error"/>
       <t t-if="!state.failedCreate">
         <ChatComposerAttachComponent attach="attach"/>
+        <ChatEmojiPickerComponent t-if="state.emoji" onPick.bind="onEmoji" onClose.bind="toggleEmoji"/>
         <div class="chat-thread__composer">
           <button class="chat-thread__attach" t-att-aria-label="t('chat.attach')" t-att-aria-expanded="attachState.sheet ? 'true' : 'false'"
                   t-att-disabled="!attachState.ready or attachState.voice !== 'idle' or state.sending" t-on-mousedown.prevent="" t-on-click="() => this.attach.toggleSheet()">📎</button>
-          <textarea class="chat-thread__input" t-att-rows="state.inputRows" t-att-placeholder="t('chat.compose_placeholder')"
+          <button class="chat-thread__emoji" t-att-aria-label="t('chat.emoji')" t-att-aria-expanded="state.emoji ? 'true' : 'false'"
+                  t-att-disabled="state.sending" t-on-mousedown.prevent="" t-on-click="() => this.toggleEmoji()">😊</button>
+          <textarea class="chat-thread__input" t-ref="input" t-att-rows="state.inputRows" t-att-placeholder="t('chat.compose_placeholder')"
                     t-att-value="state.text" t-on-beforeinput="onBeforeInput" t-on-input="onInput"/>
           <button t-if="!attach.hasVoiceChip()" class="chat-thread__mic"
                   t-att-class="{'chat-thread__mic--on': attachState.voice === 'recording'}"
@@ -255,6 +261,8 @@ export class ChatThreadComponent extends EnhancedComponent {
 
     /** The composer's picks, chips and voice message (ChatComposerAttachComponent shows them). */
     attachState!: ComposerAttachState;
+    /** The composer's field, for the caret an emoji is inserted at. */
+    input = useRef("input");
     attach!: ComposerAttach;
     /** The composer's text, kept as the conversation's draft. */
     draftText!: DraftText;
@@ -321,6 +329,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             failedCreate: "",
             error: "",
             inputRows: 1,
+            emoji: false,
             viewer: null,
             sending: false,
             preparing: null,
@@ -886,12 +895,40 @@ export class ChatThreadComponent extends EnhancedComponent {
             field.value = this.state.text;
             return;
         }
-        const value = field.value;
+        this.setText(field.value);
+    }
+
+    /** The composer's text changed: shown, kept as the draft, and told to the others as typing. */
+    private setText(value: string): void {
         this.state.text = value;
         this.state.inputRows = rowsOf(value);
         this.draftText.typed(value);
         if (this.source && value.trim()) {
             this.chatService.typing(this.source, this.channelId, true).catch(() => {});
+        }
+    }
+
+    toggleEmoji(): void {
+        this.state.emoji = !this.state.emoji;
+    }
+
+    /**
+     * An emoji picked: inserted at the caret, replacing the selection, and
+     * kept in the draft like typed text. The caret ends after it. Refused
+     * while a send runs, as typing is.
+     */
+    onEmoji(codepoints: string): void {
+        if (this.state.sending) return;
+        const field = this.input.el as HTMLTextAreaElement | null;
+        const text = this.state.text;
+        const start = Math.min(field?.selectionStart ?? text.length, text.length);
+        const end = Math.min(field?.selectionEnd ?? start, text.length);
+        const value = text.slice(0, start) + codepoints + text.slice(end);
+        this.setText(value);
+        if (field) {
+            field.value = value;
+            const caret = start + codepoints.length;
+            field.setSelectionRange(caret, caret);
         }
     }
 

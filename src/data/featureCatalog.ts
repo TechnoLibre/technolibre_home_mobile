@@ -4452,21 +4452,30 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "in source order. The app imports it on first use, as its own chunk. Uses are counted "
                         + "in localStorage (chat.emoji.frequent, all accounts together); the bar starts from "
                         + "👍 ❤️ 😂 😮 😢 🙏 and an emoji used three times or more takes the slot, from the end, "
-                        + "of one used less.",
+                        + "of one used less. The picker (chat_emoji_picker_component.ts) lists the most used then "
+                        + "the categories, with tabs and a search; its sections are drawn one per turn and skipped "
+                        + "by the browser out of view (content-visibility). The composer's 😊 button inserts a pick "
+                        + "at the caret and keeps it in the draft.",
                     fr: "scripts/convert-odoo-emoji.mjs, lancé une fois à la main, évalue les gabarits de "
                         + "emoji_data.js d'Odoo 18 avec _t donnant l'anglais, puis le texte de fr.po, et écrit "
                         + "emojiData.json dans l'ordre de la source. L'application l'importe au premier usage, "
                         + "dans son propre morceau. Les usages sont comptés dans localStorage "
                         + "(chat.emoji.frequent, tous comptes confondus) ; la barre part de 👍 ❤️ 😂 😮 😢 🙏 et "
-                        + "un émoji utilisé trois fois ou plus prend la place, depuis la fin, d'un moins utilisé.",
+                        + "un émoji utilisé trois fois ou plus prend la place, depuis la fin, d'un moins utilisé. Le sélecteur "
+                        + "(chat_emoji_picker_component.ts) liste les plus utilisés puis les catégories, avec onglets "
+                        + "et recherche ; ses sections sont dessinées une par tour et ignorées par le navigateur "
+                        + "hors écran (content-visibility). Le bouton 😊 du compositeur insère le choix au curseur "
+                        + "et le garde dans le brouillon.",
                 },
                 files: [
                     "scripts/convert-odoo-emoji.mjs",
                     "src/data/emojiData.json",
                     "src/services/chat/chatEmoji.ts",
                     "src/assets/licenses/unicode-cldr.LICENSE.txt",
+                    "src/components/chat/chat_emoji_picker_component.ts",
+                    "src/components/chat/chat_emoji_picker_component.scss",
                 ],
-                tests: ["src/__tests__/chatEmoji.test.ts"],
+                tests: ["src/__tests__/chatEmoji.test.ts", "src/__tests__/chatEmojiPicker.test.ts"],
             },
             {
                 id: "chat.compose",

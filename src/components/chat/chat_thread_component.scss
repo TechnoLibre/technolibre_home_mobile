@@ -218,6 +218,7 @@
 }
 
 .chat-thread__attach,
+.chat-thread__emoji,
 .chat-thread__mic {
 	flex: none;
 	border: none;
@@ -230,6 +231,7 @@
 }
 
 .chat-thread__attach:disabled,
+.chat-thread__emoji:disabled,
 .chat-thread__mic:disabled {
 	opacity: 0.4;
 }

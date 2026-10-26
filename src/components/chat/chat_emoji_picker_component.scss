@@ -1,0 +1,93 @@
+// Sits between the messages and the composer row, in the flow: the thread's
+// column keeps it above the navbar, and the messages keep the height left.
+.chat-emoji {
+	display: flex;
+	flex-direction: column;
+	flex: none;
+	height: 40vh;
+	min-height: 0;
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 0.6rem;
+	background: var(--background, #fff);
+}
+
+.chat-emoji__bar {
+	display: flex;
+	gap: 0.4rem;
+	padding: 0.3rem;
+}
+
+.chat-emoji__search {
+	flex: 1;
+	min-width: 0;
+	padding: 0.3rem 0.6rem;
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 1rem;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+}
+
+.chat-emoji__close,
+.chat-emoji__retry {
+	flex: none;
+	border: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+}
+
+.chat-emoji__status {
+	margin: 0.6rem;
+	text-align: center;
+	opacity: 0.75;
+}
+
+.chat-emoji__tabs {
+	display: flex;
+	overflow-x: auto;
+	flex: none;
+}
+
+.chat-emoji__tab {
+	flex: 1 0 auto;
+	padding: 0.3rem 0.5rem;
+	border: none;
+	background: transparent;
+	font-size: 1.2rem;
+}
+
+.chat-emoji__sections,
+.chat-emoji__grid--found {
+	overflow-y: auto;
+	flex: 1;
+	min-height: 0;
+}
+
+// The browser skips the layout of a section out of view; the intrinsic size
+// keeps the scroll length steady until it is drawn.
+.chat-emoji__section {
+	content-visibility: auto;
+	contain-intrinsic-size: auto 12rem;
+}
+
+.chat-emoji__title {
+	margin: 0.4rem 0.5rem 0.1rem;
+	font-size: 0.8rem;
+	opacity: 0.7;
+}
+
+.chat-emoji__grid {
+	display: flex;
+	flex-wrap: wrap;
+	padding: 0 0.2rem;
+}
+
+.chat-emoji__item {
+	width: 12.5%;
+	padding: 0.2rem 0;
+	border: none;
+	background: transparent;
+	font-size: 1.5rem;
+	line-height: 1.3;
+}

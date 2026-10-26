@@ -705,6 +705,62 @@ describe("ChatThreadComponent", () => {
         expect(input.slice(0, input.indexOf("/>"))).not.toMatch(/t-att-(disabled|readonly)/);
     });
 
+    it("the emoji button inserts at the caret and the draft holds it", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        const field = { value: "helloworld", selectionStart: 5, selectionEnd: 5, setSelectionRange: vi.fn() };
+        c.input = { el: field };
+        c.state.text = "helloworld";
+        c.onEmoji("😀");
+        expect(c.state.text).toBe("hello😀world");
+        expect(field.setSelectionRange).toHaveBeenCalledWith(7, 7);
+        await c.draftText.flush();
+        expect(chat.saveDraftText).toHaveBeenLastCalledWith("a", 5, "hello😀world");
+    });
+
+    it("an emoji replaces the selected text", async () => {
+        const c = make(fakeChat([msg(10)]));
+        await c.open();
+        c.input = { el: { value: "abcdef", selectionStart: 1, selectionEnd: 4, setSelectionRange: vi.fn() } };
+        c.state.text = "abcdef";
+        c.onEmoji("🙏");
+        expect(c.state.text).toBe("a🙏ef");
+    });
+
+    it("an emoji is refused while a send runs, as typing is", async () => {
+        const chat = fakeChat([msg(10)]);
+        const c = make(chat);
+        await c.open();
+        let release!: () => void;
+        chat.send.mockImplementationOnce(async (_s: any, _ch: number, _t: string, _f: any, opts: any) => {
+            await new Promise<void>((r) => { release = r; });
+            opts.onQueued();
+            return msg(null);
+        });
+        c.state.text = "first";
+        const sending = c.onSend();
+        await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+        c.onEmoji("😀");
+        expect(c.state.text).toBe("");
+        release();
+        await sending;
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        const tag = source.slice(source.indexOf('class="chat-thread__emoji"'));
+        expect(tag.slice(0, tag.indexOf(">"))).toMatch(/t-att-disabled="[^"]*state\.sending/);
+        expect(tag.slice(0, tag.indexOf(">"))).toMatch(/t-on-mousedown\.prevent/);
+    });
+
+    it("the emoji button toggles the picker", async () => {
+        const c = make(fakeChat([msg(10)]));
+        await c.open();
+        expect(c.state.emoji).toBe(false);
+        c.toggleEmoji();
+        expect(c.state.emoji).toBe(true);
+        c.toggleEmoji();
+        expect(c.state.emoji).toBe(false);
+    });
+
     it("typing while a send runs changes nothing: the field shows the composer's text again", async () => {
         const chat = fakeChat([msg(10)]);
         const c = make(chat);
