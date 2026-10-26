@@ -3669,11 +3669,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "An expandable Options entry lists THIRD_PARTY_NOTICES: for the MP3 encoder "
                         + "@breezystack/lamejs (LGPL-3.0) it shows its version, a sentence on what the app "
                         + "uses it for, the link to its source and the LICENSE text the package ships, "
-                        + "bundled as a text asset.",
+                        + "bundled as a text asset. The chat's emoji data follows, under the Unicode licence "
+                        + "of CLDR, with the Odoo 18 web module (LGPL-3.0) it is converted from; an entry "
+                        + "without a base licence shows no button for one.",
                     fr: "Une entrée dépliable des Options liste THIRD_PARTY_NOTICES : pour l'encodeur MP3 "
                         + "@breezystack/lamejs (LGPL-3.0), elle montre sa version, une phrase sur l'usage "
                         + "qu'en fait l'application, le lien vers son code source et le texte LICENSE "
-                        + "livré par le paquet, embarqué comme ressource texte.",
+                        + "livré par le paquet, embarqué comme ressource texte. Les données d'émojis du "
+                        + "clavardage suivent, sous la licence Unicode de CLDR, avec le module web d'Odoo 18 "
+                        + "(LGPL-3.0) dont elles sont converties ; une entrée sans licence de base ne montre "
+                        + "aucun bouton pour en afficher une.",
                 },
                 demo: { kind: "options", sectionId: "licenses" },
                 files: [
@@ -3682,6 +3687,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/assets/licenses/breezystack-lamejs.LICENSE.txt",
                     "src/assets/licenses/LGPL-3.0.txt",
                     "src/assets/licenses/GPL-3.0.txt",
+                    "src/assets/licenses/unicode-cldr.LICENSE.txt",
                 ],
             },
             {
@@ -4416,6 +4422,37 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/chatRepository.test.ts",
                     "src/__tests__/chatService.test.ts",
                 ],
+            },
+            {
+                id: "chat.emoji",
+                label: { en: "Chat emoji", fr: "Émojis du clavardage" },
+                description: {
+                    en: "Emoji data from Odoo 18 in French and English, search, shortcode conversions and the most used behind the quick reaction bar.",
+                    fr: "Données d'émojis d'Odoo 18 en français et en anglais, recherche, conversions des codes courts et les plus utilisés derrière la barre de réactions rapides.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                howItWorks: {
+                    en: "scripts/convert-odoo-emoji.mjs, run once by hand, evaluates the template literals of Odoo "
+                        + "18's emoji_data.js with _t giving English, then fr.po's text, and writes emojiData.json "
+                        + "in source order. The app imports it on first use, as its own chunk. Uses are counted "
+                        + "in localStorage (chat.emoji.frequent, all accounts together); the bar starts from "
+                        + "👍 ❤️ 😂 😮 😢 🙏 and an emoji used three times or more takes the slot, from the end, "
+                        + "of one used less.",
+                    fr: "scripts/convert-odoo-emoji.mjs, lancé une fois à la main, évalue les gabarits de "
+                        + "emoji_data.js d'Odoo 18 avec _t donnant l'anglais, puis le texte de fr.po, et écrit "
+                        + "emojiData.json dans l'ordre de la source. L'application l'importe au premier usage, "
+                        + "dans son propre morceau. Les usages sont comptés dans localStorage "
+                        + "(chat.emoji.frequent, tous comptes confondus) ; la barre part de 👍 ❤️ 😂 😮 😢 🙏 et "
+                        + "un émoji utilisé trois fois ou plus prend la place, depuis la fin, d'un moins utilisé.",
+                },
+                files: [
+                    "scripts/convert-odoo-emoji.mjs",
+                    "src/data/emojiData.json",
+                    "src/services/chat/chatEmoji.ts",
+                    "src/assets/licenses/unicode-cldr.LICENSE.txt",
+                ],
+                tests: ["src/__tests__/chatEmoji.test.ts"],
             },
             {
                 id: "chat.people",

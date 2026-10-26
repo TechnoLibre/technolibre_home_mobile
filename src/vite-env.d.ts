@@ -42,3 +42,8 @@ declare module "*?raw" {
     const value: string;
     export default value;
 }
+
+declare module "*/emojiData.json" {
+    const value: import("./services/chat/chatEmoji").EmojiData;
+    export default value;
+}

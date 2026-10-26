@@ -4,20 +4,23 @@ import { EnhancedComponent } from "../../../js/enhancedComponent";
 import lamejsLicense from "../../../assets/licenses/breezystack-lamejs.LICENSE.txt?raw";
 import lgplText from "../../../assets/licenses/LGPL-3.0.txt?raw";
 import gplText from "../../../assets/licenses/GPL-3.0.txt?raw";
+import unicodeLicense from "../../../assets/licenses/unicode-cldr.LICENSE.txt?raw";
 
-/** One bundled third-party library whose licence asks to be named in the app. */
+/** One bundled third-party library or data set whose licence asks to be named in the app. */
 export interface ThirdPartyNotice {
     name: string;
     version: string;
     license: string;
+    /** The i18n key of the sentence on what the app uses it for, given {name} and {license}; `options.licenses_use` when absent. */
+    useKey?: string;
     /** Where the library's source can be read. */
     sourceUrl: string;
     /** The notice from the library's authors, as the package ships it. */
     authorsNotice: string;
-    /** The full licence text, and the text of the licence it builds on. */
+    /** The full licence text, and the text of the licence it builds on; absent when none, and no button shows it. */
     licenseText: string;
-    baseLicenseName: string;
-    baseLicenseText: string;
+    baseLicenseName?: string;
+    baseLicenseText?: string;
     /** The work the library derives from, whose authors ask to be acknowledged with a link; absent when none. */
     basedOn?: { name: string; url: string };
 }
@@ -26,7 +29,9 @@ export interface ThirdPartyNotice {
  * The libraries the app bundles under a licence that requires a notice. The
  * MP3 encoder of the chat voice messages is LGPL-3.0 and is linked as a
  * separate module of the bundle, which the licence allows when the app names
- * it and links to its source.
+ * it and links to its source. The emoji names, keywords and shortcodes are
+ * Unicode CLDR data under the Unicode licence, which asks for its notice to
+ * be kept, converted from a file of Odoo 18's LGPL-3.0 `web` module.
  */
 export const THIRD_PARTY_NOTICES: ThirdPartyNotice[] = [
     {
@@ -39,6 +44,15 @@ export const THIRD_PARTY_NOTICES: ThirdPartyNotice[] = [
         baseLicenseName: "GPL-3.0",
         baseLicenseText: gplText,
         basedOn: { name: "LAME", url: "https://lame.sourceforge.net" },
+    },
+    {
+        name: "Unicode CLDR emoji data",
+        version: "Odoo 18.0",
+        license: "Unicode-DFS-2016",
+        useKey: "options.licenses_use_emoji",
+        sourceUrl: "https://github.com/unicode-org/cldr",
+        authorsNotice: "Emoji data are generated from Unicode CLDR, falling under the following licence:",
+        licenseText: unicodeLicense,
     },
 ];
 
@@ -62,7 +76,7 @@ export class OptionsLicensesComponent extends EnhancedComponent {
         <p class="options-sync__info" t-esc="t('options.licenses_intro')"/>
         <t t-foreach="notices" t-as="notice" t-key="notice.name">
           <h4 t-esc="notice.name + ' ' + notice.version + ' — ' + notice.license"/>
-          <p class="options-sync__info" t-esc="t('options.licenses_use', {name: notice.name, license: notice.license})"/>
+          <p class="options-sync__info" t-esc="t(notice.useKey or 'options.licenses_use', {name: notice.name, license: notice.license})"/>
           <p class="options-sync__info">
             <a t-att-href="notice.sourceUrl" target="_blank" rel="noreferrer noopener"
                t-esc="t('options.licenses_source') + ' ' + notice.sourceUrl"/>
@@ -75,9 +89,9 @@ export class OptionsLicensesComponent extends EnhancedComponent {
           <pre class="options-licenses__text" t-esc="notice.authorsNotice"/>
           <h5 t-esc="notice.license"/>
           <pre class="options-licenses__text" t-esc="notice.licenseText"/>
-          <button class="chat-new__chip" t-att-aria-expanded="state.base ? 'true' : 'false'"
+          <button t-if="notice.baseLicenseName" class="chat-new__chip" t-att-aria-expanded="state.base ? 'true' : 'false'"
                   t-on-click="toggleBase" t-esc="t('options.licenses_base', {name: notice.baseLicenseName})"/>
-          <pre t-if="state.base" class="options-licenses__text" t-esc="notice.baseLicenseText"/>
+          <pre t-if="notice.baseLicenseText and state.base" class="options-licenses__text" t-esc="notice.baseLicenseText"/>
         </t>
       </div>
     </li>

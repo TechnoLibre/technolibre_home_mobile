@@ -64,6 +64,32 @@ describe("OptionsLicensesComponent", () => {
         expect(wanted.replace(/^[\^~]/, "")).toBe(THIRD_PARTY_NOTICES[0].version);
     });
 
+    it("names the emoji data under the Unicode licence and the converted file under LGPL-3.0", async () => {
+        const emoji = THIRD_PARTY_NOTICES.find((n) => n.name === "Unicode CLDR emoji data")!;
+        expect(emoji.license).toBe("Unicode-DFS-2016");
+        expect(emoji.sourceUrl).toBe("https://github.com/unicode-org/cldr");
+        expect(emoji.licenseText.startsWith("UNICODE, INC. LICENSE AGREEMENT")).toBe(true);
+        expect(emoji.useKey).toBe("options.licenses_use_emoji");
+        const en = (await import("../i18n/en")).translations;
+        const fr = (await import("../i18n/fr")).translations;
+        for (const text of [en["options.licenses_use_emoji"], fr["options.licenses_use_emoji"]]) {
+            expect(text).toContain("{license}");
+            expect(text).toContain("Odoo 18");
+            expect(text).toContain("LGPL-3.0");
+        }
+    });
+
+    it("renders the emoji entry with no base licence button", () => {
+        const emoji = THIRD_PARTY_NOTICES.find((n) => n.name === "Unicode CLDR emoji data")!;
+        expect(emoji.baseLicenseName).toBeUndefined();
+        expect(emoji.baseLicenseText).toBeUndefined();
+        const template = readFileSync("src/components/options/licenses/options_licenses_component.ts", "utf8");
+        expect(template).toMatch(/<button t-if="notice\.baseLicenseName"/);
+        expect(template).toMatch(/<pre t-if="notice\.baseLicenseText and state\.base"/);
+        expect(template).toContain("t(notice.useKey or 'options.licenses_use'");
+        expect(THIRD_PARTY_NOTICES[0].useKey).toBeUndefined();
+    });
+
     it("has its strings in both languages", async () => {
         const en = (await import("../i18n/en")).translations;
         const fr = (await import("../i18n/fr")).translations;

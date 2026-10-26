@@ -32,6 +32,7 @@ export const translations: Record<string, string> = {
   "options.licenses": "Licences tierces",
   "options.licenses_intro": "L'application embarque les bibliothèques ci-dessous. Leurs licences sont reproduites telles que livrées.",
   "options.licenses_use": "{name} est embarquée sous la licence {license} : elle encode le MP3 des messages vocaux du clavardage. Elle est liée comme module séparé de l'application, et son code source est disponible à l'adresse ci-dessous.",
+  "options.licenses_use_emoji": "Les noms, mots-clés et codes courts des émojis du clavardage proviennent de « {name} », sous la licence {license} (Unicode License Agreement – Data Files and Software), dont le texte suit. L'application les reprend tels que convertis dans le fichier emoji_data.js du module web d'Odoo 18, distribué sous la licence LGPL-3.0, dont le texte figure plus haut avec l'encodeur MP3.",
   "options.licenses_source": "Source :",
   "options.licenses_based_on": "Elle repose sur {name}, l'encodeur MP3 dont les auteurs demandent d'être mentionnés :",
   "options.licenses_authors": "Mention des auteurs",

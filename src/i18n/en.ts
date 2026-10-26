@@ -32,6 +32,7 @@ export const translations: Record<string, string> = {
   "options.licenses": "Third-party licenses",
   "options.licenses_intro": "The app bundles the libraries below. Their licenses are reproduced as shipped.",
   "options.licenses_use": "{name} is bundled under the {license} license: it encodes the MP3 of chat voice messages. It is linked as a separate module of the app, and its source is available at the address below.",
+  "options.licenses_use_emoji": "The chat's emoji names, keywords and shortcodes come from {name}, under the {license} license (Unicode License Agreement – Data Files and Software), whose text is below. The app carries them as converted in the file emoji_data.js of the web module of Odoo 18, distributed under the LGPL-3.0 license, whose text is given above with the MP3 encoder.",
   "options.licenses_source": "Source:",
   "options.licenses_based_on": "It is based on {name}, the MP3 encoder whose authors ask to be acknowledged:",
   "options.licenses_authors": "Notice from the authors",
