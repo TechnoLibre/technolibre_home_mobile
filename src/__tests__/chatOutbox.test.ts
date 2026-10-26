@@ -28,7 +28,7 @@ const GONE: SyncCredentials = { ...CREDS, username: "bob" };
 const GONE_CONFIG = syncConfigIdOf(GONE);
 const CHANNEL = 7;
 
-interface Posted { id: number; model: string; res_id: number; body: string; uuid: string | null; author?: number }
+interface Posted { id: number; model: string; res_id: number; body: string; uuid: string | null; author?: number; parent?: number | false }
 interface Call { path: string; params: any }
 
 /**
@@ -38,15 +38,16 @@ interface Call { path: string; params: any }
  * `unsent` makes the next N fail as a connection that never opened does;
  * `postError` answers the next post with a JSON-RPC error. With `module` it
  * dedups posts by erplibre_client_uuid as the server module does. A post
- * answers its `parentMessage` as Odoo does for a channel: the parent_id it
- * was given, or false (none given, or `dropParent`: a parent the server
- * does not find in the channel).
+ * keeps the parent_id it was given, or none (false) when none was given or
+ * the parent is in `elsewhere` (ids the server holds in another channel),
+ * as Odoo does for a channel; it answers it as `parentMessage`, and a
+ * search_read answers it as `parent_id` (`[id, name]` or false).
  */
 function chatOdoo(opts: { module?: boolean } = {}) {
   const messages: Posted[] = [];
   const calls: Call[] = [];
   const state = {
-    dropResponses: 0, failBefore: 0, unsent: 0, postError: null as string | null, nextId: 500, dropParent: false,
+    dropResponses: 0, failBefore: 0, unsent: 0, postError: null as string | null, nextId: 500, elsewhere: new Set<number>(),
   };
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
@@ -69,11 +70,13 @@ function chatOdoo(opts: { module?: boolean } = {}) {
       const uuid: string | null = params.post_data.erplibre_client_uuid ?? null;
       let msg = opts.module && uuid ? messages.find((m) => m.uuid === uuid) : undefined;
       if (!msg) {
-        msg = { id: state.nextId++, model: params.thread_model, res_id: params.thread_id, body: params.post_data.body, uuid, author: 3 };
+        const given: number | undefined = params.post_data.parent_id;
+        const parent = given === undefined || state.elsewhere.has(given) ? false : given;
+        msg = { id: state.nextId++, model: params.thread_model, res_id: params.thread_id, body: params.post_data.body, uuid, author: 3, parent };
         messages.push(msg);
       }
       if (state.dropResponses > 0) { state.dropResponses--; throw new TypeError("Failed to fetch"); }
-      const parent = state.dropParent ? false : (params.post_data.parent_id ?? false);
+      const parent = msg.parent ?? false;
       return ok({
         "mail.message": [{ id: msg.id, body: msg.body, date: "2026-10-25 10:00:05", message_type: "comment",
           author: { id: 3, type: "partner" }, thread: { id: msg.res_id, model: msg.model }, parentMessage: parent }],
@@ -87,7 +90,7 @@ function chatOdoo(opts: { module?: boolean } = {}) {
         const author = (kwargs.domain.find((d: any[]) => d[0] === "author_id") ?? [])[2];
         const rows = messages
           .filter((m) => m.res_id === resId && m.body.includes(needle) && (author === undefined || m.author === author))
-          .map((m) => ({ id: m.id, body: m.body }));
+          .map((m) => ({ id: m.id, body: m.body, parent_id: m.parent ? [m.parent, "m" + m.parent] : false }));
         return ok(rows.slice(0, kwargs.limit ?? rows.length));
       }
       return ok(method === "search_read" ? [] : true);
@@ -313,12 +316,25 @@ describe("ChatOutbox", () => {
 
     it("a parent dropped by the server gives a plain message", async () => {
       const odoo = chatOdoo();
-      odoo.state.dropParent = true;
+      odoo.state.elsewhere.add(QUESTION);
       await chat.queuePost(CONFIG, CHANNEL, "answer", false, { replyTo: { messageId: QUESTION, clientUuid: null } });
       expect(await chat.flush(CREDS)).toMatchObject({ done: 1, failed: 0, blocked: 0 });
       expect(odoo.posts()[0].params.post_data.parent_id).toBe(QUESTION);
       expect(await repo.message(CONFIG, 500)).toMatchObject({ status: "sent", parentId: null, parentClientUuid: null });
       expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+      expect(await chat.notices([CONFIG])).toEqual([]);
+    });
+
+    it("a parent of another channel dropped behind a lost answer gives a plain message once found", async () => {
+      const odoo = chatOdoo();
+      odoo.state.dropResponses = 1;
+      odoo.state.elsewhere.add(QUESTION);
+      await chat.queuePost(CONFIG, CHANNEL, "answer", false, { replyTo: { messageId: QUESTION, clientUuid: null } });
+      expect(await chat.flush(CREDS)).toMatchObject({ failed: 1 });
+      advance(CREATE_QUIET_WINDOW_MS + 1000);
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1, failed: 0 });
+      expect(odoo.posts()).toHaveLength(1);
+      expect(await repo.message(CONFIG, 500)).toMatchObject({ status: "sent", parentId: null, parentClientUuid: null });
       expect(await chat.notices([CONFIG])).toEqual([]);
     });
 

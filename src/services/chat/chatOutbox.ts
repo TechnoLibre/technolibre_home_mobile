@@ -2034,8 +2034,10 @@ export class ChatOutbox {
       const found = op.attempts > 1 ? await this.findSent(creds, op) : null;
       if (found) {
         messageId = found.id;
-        // The body the server holds, so the message settles on it and not on the pending one
-        result = { "mail.message": [{ id: found.id, body: found.body, thread: { id: channelId, model: CHANNEL_MODEL } }] };
+        // The body and parent the server holds, so the message settles on them and not on the pending ones
+        result = { "mail.message": [{
+          id: found.id, body: found.body, thread: { id: channelId, model: CHANNEL_MODEL }, parentMessage: found.parentId ?? false,
+        }] };
       }
       if (messageId === null) {
         await this.outbox.setParams(op.id, { createSentAt: this.now().toISOString() });
@@ -2144,15 +2146,16 @@ export class ChatOutbox {
   }
 
   /**
-   * The id and body of the user's own message in the channel that carries
-   * this op's marker comment exactly, or null. The search is by author and the hit is
+   * The id, body and parent (`parent_id`, null for none) of the user's own
+   * message in the channel that carries this op's marker comment exactly,
+   * or null. The search is by author and the hit is
    * checked on the whole comment, so another member's message that quotes
    * the uuid is never taken for the post. Two hits block the op.
    */
-  private async findSent(creds: SyncCredentials, op: OutboxOp): Promise<{ id: number; body: string } | null> {
+  private async findSent(creds: SyncCredentials, op: OutboxOp): Promise<{ id: number; body: string; parentId: number | null } | null> {
     const partnerId = (await this.rpc.sessionInfo(creds)).partnerId;
     if (!partnerId) throw new Error("The author partner of the session is unknown.");
-    const found = (await this.rpc.searchRead<{ id: number; body: string }>(
+    const found = (await this.rpc.searchRead<{ id: number; body: string; parent_id: [number, string] | false }>(
       creds,
       "mail.message",
       [
@@ -2161,7 +2164,7 @@ export class ChatOutbox {
         ["author_id", "=", partnerId],
         ["body", "ilike", clientMarker(op.clientUuid)],
       ],
-      ["id", "body"],
+      ["id", "body", "parent_id"],
       { limit: 2 },
     )).filter((m) => bodyHasMarker(m.body ?? "", op.clientUuid));
     if (found.length > 1) {
@@ -2173,7 +2176,9 @@ export class ChatOutbox {
         op.id,
       );
     }
-    return found.length === 1 ? { id: found[0].id, body: found[0].body ?? "" } : null;
+    if (found.length === 0) return null;
+    const parent = found[0].parent_id;
+    return { id: found[0].id, body: found[0].body ?? "", parentId: Array.isArray(parent) ? parent[0] : null };
   }
 
   /**
@@ -2181,11 +2186,12 @@ export class ChatOutbox {
    * answered, and marks the channel read for its author as Odoo does on a
    * post, unless a newer message is already known. The answer's
    * `parentMessage` is the message's parent: false (a parent the server
-   * did not find in the channel) gives a plain message, no notice. An
-   * answer without it (a post found by its marker) keeps the parent the
-   * pending row named. Runs in the account's queue of counter writers
-   * (serial). An op no longer stored (its account was erased while the
-   * post was on the wire) writes nothing.
+   * did not find in the channel) gives a plain message, no notice. A post
+   * found by its marker answers the `parent_id` the server holds the same
+   * way; an answer without it keeps the parent the pending row named. Runs
+   * in the account's queue of counter writers (serial). An op no longer
+   * stored (its account was erased while the post was on the wire) writes
+   * nothing.
    */
   private settle(op: OutboxOp, messageId: number, result: any): Promise<void> {
     return this.serial(op.configId, () => this.settleNow(op, messageId, result));
