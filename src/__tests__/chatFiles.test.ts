@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { mockFs } = vi.hoisted(() => ({
     mockFs: {
         writeFile: vi.fn(), appendFile: vi.fn(), stat: vi.fn(), getUri: vi.fn(),
-        rename: vi.fn(), deleteFile: vi.fn(), rmdir: vi.fn(), copy: vi.fn(), mkdir: vi.fn(),
+        rename: vi.fn(), deleteFile: vi.fn(), rmdir: vi.fn(), copy: vi.fn(), mkdir: vi.fn(), readdir: vi.fn(),
     },
 }));
 
@@ -13,7 +13,7 @@ vi.mock("@capacitor/filesystem", () => ({
 }));
 
 import {
-    WRITE_CHUNK_BYTES, deviceChatFiles, originalPath, outgoingPath, previewPath, safeFileName, sourceDir,
+    WRITE_CHUNK_BYTES, deviceChatFiles, originalPath, outgoingPath, previewPath, removeChatFile, safeFileName, sourceDir,
 } from "../services/chat/chatFiles";
 import { memoryChatFiles } from "../testing/chatFakes";
 
@@ -128,6 +128,18 @@ describe("deviceChatFiles", () => {
         expect(mockFs.rmdir).toHaveBeenCalledWith({ path: "chat/d/out/u", directory: "DATA", recursive: true });
     });
 
+    it("list names one level of a directory; a missing one is empty", async () => {
+        mockFs.readdir.mockResolvedValueOnce({ files: [{ name: "u1", type: "directory" }, { name: "u2", type: "directory" }] });
+        expect(await deviceChatFiles.list("chat/d/out")).toEqual(["u1", "u2"]);
+        expect(mockFs.readdir).toHaveBeenCalledWith({ path: "chat/d/out", directory: "DATA" });
+        mockFs.readdir.mockRejectedValueOnce(new Error("Folder does not exist"));
+        mockFs.stat.mockRejectedValueOnce(new Error("does not exist"));
+        expect(await deviceChatFiles.list("chat/d/none")).toEqual([]);
+        mockFs.readdir.mockRejectedValueOnce(new Error("permission denied"));
+        mockFs.stat.mockResolvedValueOnce({ size: 0 });
+        await expect(deviceChatFiles.list("chat/d/out")).rejects.toThrow("permission denied");
+    });
+
     it("a delete that fails on a file still there is an error", async () => {
         mockFs.deleteFile.mockRejectedValue(new Error("permission denied"));
         mockFs.stat.mockResolvedValue({ size: 3 });
@@ -152,5 +164,46 @@ describe("memoryChatFiles", () => {
         await files.remove("chat/d/a");
         expect(await files.size("chat/d/a")).toBeNull();
         expect(await files.uri("chat/d/a")).toMatch(/chat\/d\/a$/);
+    });
+});
+
+describe("removeChatFile", () => {
+    it("deletes a file with the directory it owns alone, a preview alone", async () => {
+        const files = memoryChatFiles();
+        const removed: string[] = [];
+        const removeDir = files.removeDir;
+        files.removeDir = async (rel) => {
+            removed.push(rel);
+            return removeDir(rel);
+        };
+        files.put(outgoingPath("d", "u1", "a.jpg"), new Uint8Array([1]));
+        files.put(originalPath("d", 7, "b.pdf"), new Uint8Array([2]));
+        files.put(previewPath("d", 7), new Uint8Array([3]));
+        files.put(previewPath("d", 8), new Uint8Array([4]));
+        for (const p of [outgoingPath("d", "u1", "a.jpg"), originalPath("d", 7, "b.pdf"), previewPath("d", 7)]) {
+            await removeChatFile(files, p);
+            expect(files.bytes(p)).toBeUndefined();
+        }
+        expect(removed).toEqual(["chat/d/out/u1", "chat/d/files/7"]);
+        expect(files.bytes(previewPath("d", 8))).toBeDefined();
+    });
+
+    it("refuses a path outside chat/", async () => {
+        const files = memoryChatFiles();
+        files.put("notes/x.jpg", new Uint8Array([1]));
+        await expect(removeChatFile(files, "notes/x.jpg")).rejects.toThrow(/chat/);
+        expect(files.bytes("notes/x.jpg")).toBeDefined();
+    });
+});
+
+describe("memoryChatFiles list", () => {
+    it("names the entries one level under a directory", async () => {
+        const files = memoryChatFiles();
+        files.put("chat/d/out/a/x", new Uint8Array([1]));
+        files.put("chat/d/out/a/y", new Uint8Array([1]));
+        files.put("chat/d/out/b/z", new Uint8Array([1]));
+        files.put("chat/d/files/1/q", new Uint8Array([1]));
+        expect((await files.list("chat/d/out")).sort()).toEqual(["a", "b"]);
+        expect(await files.list("chat/d/none")).toEqual([]);
     });
 });

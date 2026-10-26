@@ -198,8 +198,9 @@ export class ChatService {
     this.queue.setProgressSource((fn) => io.http.onProgress(fn));
     if (io.onWifi) this.queue.onWifi = io.onWifi;
     this.attachments?.setProgressSource(null);
-    this.attachments = new ChatAttachmentCache(this.repo, io.files, this.queue.transfer, this.queue.onWifi, this.now);
-    this.attachments.opsOf = (configId) => this.db.getOutboxOpsForConfig(configId);
+    this.attachments = new ChatAttachmentCache(
+      this.repo, io.files, this.queue.transfer, this.queue.onWifi, (configId) => this.db.getOutboxOpsForConfig(configId), this.now,
+    );
     this.attachments.setProgressSource((fn) => io.http.onProgress(fn));
     this.repo.onFilesReleased = (paths) => this.attachments.release(paths);
   }
@@ -888,11 +889,15 @@ export class ChatService {
    * Startup repair of the chat outbox, after OutboxService.recoverInterrupted:
    * a create or join cut between its op and its row is queued, or removed
    * when its row is missing (ChatOutbox.recoverIncomplete); then every
-   * account's files nothing needs go (ChatAttachmentCache.sweep).
+   * account's files nothing needs go (ChatAttachmentCache.sweep), and the
+   * staged directories no row names (sweepStaged: no composer is open yet).
    */
   async recover(): Promise<number> {
     const queued = await this.queue.recoverIncomplete();
-    for (const configId of await this.db.getLiveSyncConfigIds()) await this.sweep(configId);
+    for (const configId of await this.db.getLiveSyncConfigIds()) {
+      await this.sweep(configId);
+      await this.attachments.sweepStaged(configId).catch((e) => console.warn("chat: sweep of staged files failed", e));
+    }
     return queued;
   }
 

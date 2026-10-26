@@ -11,7 +11,9 @@ import {
   type DrainResult,
   type OutboxService,
 } from "../outboxService";
-import { deviceChatFiles, originalPath as originalFilePath, type ChatFiles, type TransferProgress } from "./chatFiles";
+import {
+  deviceChatFiles, originalPath as originalFilePath, removeChatFile, type ChatFiles, type TransferProgress,
+} from "./chatFiles";
 import {
   ChatFileTooBigError,
   ChatTransferCancelledError,
@@ -478,8 +480,7 @@ export class ChatOutbox {
     for (const path of paths) {
       if (!path) continue;
       try {
-        await this.files.remove(path);
-        if (path.includes("/out/")) await this.files.removeDir(path.slice(0, path.lastIndexOf("/")));
+        await removeChatFile(this.files, path);
       } catch (e: unknown) {
         console.warn("chat: an outgoing file was not deleted", e);
       }

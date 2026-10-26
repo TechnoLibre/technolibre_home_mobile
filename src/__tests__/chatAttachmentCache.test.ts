@@ -546,4 +546,72 @@ describe("ChatAttachmentCache", () => {
     const dir = await chat.repo.fileDirOf(config);
     expect(files.bytes(originalPath(dir, 95, "f95.png"))).toBeUndefined();
   });
+
+  it("a file still on its way opens from out/ and asks the server nothing", async () => {
+    const uploaded = await outgoing("u2", { state: "uploaded", attachmentId: 32 });
+    setAttachmentSettings({ wifiOnly: true, maxMb: null });
+    wifi = false;
+    expect(await chat.attachments.open(src, uploaded)).toEqual({ kind: "ready", path: uploaded.originalPath });
+    expect(await chat.attachments.preview(src, uploaded)).toBeNull();
+    expect(chat.attachments.waitingWifi(uploaded)).toBe(false);
+    expect(server.downloads()).toHaveLength(0);
+  });
+
+  it("recover removes staged out/ directories no row names", async () => {
+    const dir = await chat.repo.fileDirOf(config);
+    const staged = outgoingPath(dir, "staged", "big.mp4");
+    files.put(staged, bytesOf("picked, never sent"));
+    const queued = await outgoing("u1", { postClientUuid: (await outbox.enqueue({
+      noteId: CHAT_NOTE, configId: config, kind: CHAT_POST, params: { channelId: 7, text: "" },
+    })).clientUuid });
+    // A sent file whose move into files/ failed: posted, still under out/
+    await stored(33);
+    const kept = outgoingPath(dir, "sent", "photo.jpg");
+    files.put(kept, bytesOf("sent"));
+    await chat.repo.setOriginal(config, 33, kept, 4);
+    await env.db.rawRun("UPDATE chat_attachments SET local_uuid = ? WHERE attachment_id = ?", ["sent", 33]);
+    const otherDir = await chat.repo.fileDirOf(env.configIds[1]);
+    const otherStaged = outgoingPath(otherDir, "staged2", "a.jpg");
+    files.put(otherStaged, bytesOf("other"));
+    await chat.recover();
+    expect(files.bytes(staged)).toBeUndefined();
+    expect(files.bytes(otherStaged)).toBeUndefined();
+    expect(files.bytes(queued.originalPath!)).toBeDefined();
+    expect(files.bytes(kept)).toBeDefined();
+    expect(await files.list(`${sourceDir(dir)}/out`)).toEqual(expect.arrayContaining(["u1", "sent"]));
+    expect(await files.list(`${sourceDir(dir)}/out`)).toHaveLength(2);
+  });
+
+  it("erase stops a running preview and a download not yet started; nothing recreates the account", async () => {
+    const thumb = await stored(34);
+    const original = await stored(35);
+    server.s.holding = true;
+    const previewing = chat.attachments.preview(src, thumb);
+    await vi.waitFor(() => expect(server.downloads()).toHaveLength(1));
+    // The open waits on the network check while the account is erased
+    setAttachmentSettings({ wifiOnly: true, maxMb: null });
+    let answer!: (on: boolean) => void;
+    chat.attachments["onWifi"] = () => new Promise<boolean>((r) => { answer = r; });
+    const opening = chat.attachments.open(src, original);
+    await vi.waitFor(() => expect(answer).toBeDefined());
+    await chat.forgetSource(config);
+    expect(server.http.calls.filter((c) => c.kind === "cancel").map((c) => c.id)).toEqual([server.downloads()[0].id]);
+    expect(await previewing).toBeNull();
+    answer(true);
+    expect((await opening).kind).not.toBe("ready");
+    await chat.attachments.whenIdle();
+    expect(server.downloads()).toHaveLength(1);
+    expect(await chat.repo.hasSourceState(config)).toBe(false);
+  });
+
+  it("release deletes only files under chat/", async () => {
+    files.put("notes/x.jpg", bytesOf("note"));
+    await chat.attachments.release(["notes/x.jpg", "/data/x.jpg"]);
+    expect(files.bytes("notes/x.jpg")).toBeDefined();
+  });
+
+  it("a conversation is named with its account", async () => {
+    await expect(chat.attachments.space(undefined, 7)).rejects.toThrow(/account/);
+    await expect(chat.attachments.clear({ channelId: 7 })).rejects.toThrow(/account/);
+  });
 });

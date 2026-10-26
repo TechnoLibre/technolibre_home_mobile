@@ -44,6 +44,13 @@ export function memoryChatFiles(): ChatFiles & {
         async removeDir(rel) {
             for (const key of [...store.keys()]) if (key.startsWith(`${rel}/`)) store.delete(key);
         },
+        async list(rel) {
+            const names = new Set<string>();
+            for (const key of store.keys()) {
+                if (key.startsWith(`${rel}/`)) names.add(key.slice(rel.length + 1).split("/")[0]);
+            }
+            return [...names];
+        },
     };
 }
 

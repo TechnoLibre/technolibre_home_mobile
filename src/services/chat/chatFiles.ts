@@ -89,6 +89,8 @@ export interface ChatFiles {
     remove(rel: string): Promise<void>;
     /** Deletes the directory rel and all it holds; a missing one is not an error. */
     removeDir(rel: string): Promise<void>;
+    /** The names of the entries directly in the directory rel; none for a missing one. */
+    list(rel: string): Promise<string[]>;
 }
 
 /**
@@ -156,6 +158,27 @@ export function originalPath(fileDir: string, attachmentId: number, name: string
 /** A cached preview: `thumbs/<attachmentId>`. */
 export function previewPath(fileDir: string, attachmentId: number): string {
     return `${sourceDir(fileDir)}/thumbs/${attachmentSegment(attachmentId)}`;
+}
+
+/**
+ * The directory a chat file owns alone: `out/<localUuid>/` of a file to
+ * send, `files/<attachmentId>/` of an original; null for a preview, whose
+ * thumbs/ directory every preview shares.
+ */
+export function ownDirOf(rel: string): string | null {
+    return /\/(out|files)\/[^/]+\/[^/]+$/.test(rel) ? rel.slice(0, rel.lastIndexOf("/")) : null;
+}
+
+/**
+ * Deletes a chat file and the directory it owns alone (ownDirOf); a
+ * missing one is not an error. A path outside chat/ is refused: only the
+ * chat's own files are deleted this way.
+ */
+export async function removeChatFile(files: ChatFiles, rel: string): Promise<void> {
+    if (!rel.startsWith("chat/")) throw new Error(`not a chat file: ${rel}`);
+    await files.remove(rel);
+    const dir = ownDirOf(rel);
+    if (dir) await files.removeDir(dir);
 }
 
 /** Base64 of bytes, built in slices so String.fromCharCode never gets too many arguments. */
@@ -234,5 +257,14 @@ export const deviceChatFiles: ChatFiles = {
     async removeDir(rel) {
         await Filesystem.rmdir({ path: rel, directory: Directory.Data, recursive: true })
             .catch((e) => unlessGone(rel, e));
+    },
+
+    async list(rel) {
+        try {
+            return (await Filesystem.readdir({ path: rel, directory: Directory.Data })).files.map((f) => f.name);
+        } catch (e) {
+            await unlessGone(rel, e);
+            return [];
+        }
     },
 };

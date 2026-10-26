@@ -4456,6 +4456,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/chatFiles.test.ts",
                     "src/__tests__/chatCsrf.test.ts",
                     "src/__tests__/chatTransfer.test.ts",
+                    "src/__tests__/chatAttachmentCache.test.ts",
                 ],
             },
             {

@@ -3,7 +3,9 @@ import type { ChatAttachment } from "../../models/chat";
 import { attachmentSettings } from "../attachmentService";
 import type { OutboxOp } from "../databaseService";
 import { RequestNotSentError } from "../odoo/odooRpcClient";
-import { originalPath, previewPath, sourceDir, type ChatFiles, type TransferProgress } from "./chatFiles";
+import {
+  originalPath, previewPath, removeChatFile, sourceDir, type ChatFiles, type TransferProgress,
+} from "./chatFiles";
 import { attachmentKey, type ChatRepository } from "./chatRepository";
 import { chatSettings } from "./chatSettings";
 import type { ChatSource } from "./chatSources";
@@ -40,6 +42,8 @@ interface PreviewJob {
   key: string;
   src: ChatSource;
   att: ChatAttachment;
+  /** The account's erase count when it was asked. */
+  generation: number;
   promise: Promise<string | null>;
   resolve: (path: string | null) => void;
 }
@@ -53,15 +57,25 @@ interface Download {
 
 const refKey = (a: AttachmentRef): string => `${a.configId}#${a.attachmentId}`;
 
+/** A channel id names a conversation only with its account: channel ids repeat across accounts. */
+function assertScope(configId: string | undefined, channelId: number | undefined): void {
+  if (channelId !== undefined && configId === undefined) throw new Error("a conversation is named with its account");
+}
+
 /** The query of a file URL: `unique` busts Odoo's cache on a new version, `download=true` makes an error a 404. */
 function fileQuery(checksum: string | null): string {
   return checksum ? `unique=${encodeURIComponent(checksum)}&download=true` : "download=true";
 }
 
-/** The directory a file owns alone (`out/<uuid>/`, `files/<id>/`), removed with it; null for a preview. */
-function ownDir(path: string): string | null {
-  return /\/(out|files)\/[^/]+\/[^/]+$/.test(path) ? path.slice(0, path.lastIndexOf("/")) : null;
-}
+/**
+ * A file of the phone still on its way to a message (no server id yet, or
+ * uploaded and not posted): its row is keyed by its local uuid, as
+ * ChatRepository keys it, and its file is the one under out/.
+ */
+const onItsWay = (a: ChatAttachment): boolean => a.attachmentId === null || (a.localUuid !== null && a.state !== "posted");
+
+/** The account's work started before an erase stops at its next step: the account's rows are gone. */
+class ErasedError extends Error {}
 
 /**
  * The attachments' files on the phone, over the rows of ChatRepository
@@ -81,15 +95,15 @@ function ownDir(path: string): string | null {
  * - space(), warning(), clear(), purge() count every chat byte of the phone
  *   (the files waiting to be sent too) and free only the files of posted
  *   rows: a file an outbox op reads is never touched.
- * - sweep() drops the files of the phone nothing needs any more;
- *   erase() removes an account's directory.
+ * - sweep() drops the files of the phone nothing needs any more,
+ *   sweepStaged() the staged directories no row names; erase() removes an
+ *   account's directory and stops its transfers.
+ * - A file still on its way to a message opens from out/ and has no
+ *   preview here: nothing is asked of the server for it.
  *
  * Transfer ids are unique per transfer (the native side refuses one in use).
  */
 export class ChatAttachmentCache {
-  /** The account's outbox ops, for sweep(); ChatService sets it. Unset, sweep() does nothing. */
-  opsOf: ((configId: string) => Promise<OutboxOp[]>) | null = null;
-
   private previewJobs = new Map<string, PreviewJob>();
   /** Previews waiting for a slot, the newest last. */
   private previewQueue: PreviewJob[] = [];
@@ -101,6 +115,10 @@ export class ChatAttachmentCache {
   /** Originals on the wire, by attachment; by transfer id for the progress events. */
   private downloads = new Map<string, Download>();
   private byTransfer = new Map<string, Download>();
+  /** Preview transfers on the wire: transfer id → account, so an erase stops them. */
+  private previewTransfers = new Map<string, string>();
+  /** Per account, the count erase() moves: work begun before it stops before writing anything. */
+  private generations = new Map<string, number>();
   /** Originals held for Wi-Fi, by attachment. */
   private waiting = new Map<string, { src: ChatSource; att: ChatAttachment }>();
 
@@ -114,6 +132,8 @@ export class ChatAttachmentCache {
     private files: ChatFiles,
     private transfer: ChatTransfer,
     private onWifi: () => Promise<boolean>,
+    /** The account's outbox ops, for sweep(): a file an op names is never dropped. */
+    private opsOf: (configId: string) => Promise<OutboxOp[]>,
     private now: () => Date = () => new Date(),
   ) {}
 
@@ -122,10 +142,10 @@ export class ChatAttachmentCache {
   /**
    * The cached preview's path, or the preview fetched to previewPath; null
    * when it failed (previewFailed), when it never reached the server, or
-   * for a file without a server id.
+   * for a file still on its way to a message.
    */
   preview(src: ChatSource, att: ChatAttachment): Promise<string | null> {
-    if (att.attachmentId === null) return Promise.resolve(null);
+    if (onItsWay(att)) return Promise.resolve(null);
     const key = refKey(att);
     if (this.previewFailures.has(key)) return Promise.resolve(null);
     const known = this.previewJobs.get(key);
@@ -160,7 +180,7 @@ export class ChatAttachmentCache {
     if (known) return known.promise;
     let resolve!: (path: string | null) => void;
     const promise = new Promise<string | null>((r) => { resolve = r; });
-    const job: PreviewJob = { key, src, att, promise, resolve };
+    const job: PreviewJob = { key, src, att, promise, resolve, generation: this.generationOf(att.configId) };
     this.previewJobs.set(key, job);
     this.previewQueue.push(job);
     this.pumpPreviews();
@@ -193,10 +213,15 @@ export class ChatAttachmentCache {
       if ((await this.files.size(row.thumbPath)) !== null) return row.thumbPath;
       await this.repo.clearFiles([attachmentKey(configId, id)], "preview");
     }
+    if (this.generationOf(configId) !== job.generation) return null;
     const path = previewPath(await this.repo.fileDirOf(configId), id);
+    if (this.generationOf(configId) !== job.generation) return null;
+    const transferId = `pv-${uuidv4()}`;
+    // Registered and started in one step: an erase from here on finds the transfer running
+    this.previewTransfers.set(transferId, configId);
     try {
       const answer = await this.transfer.download(job.src.creds, {
-        id: `pv-${uuidv4()}`,
+        id: transferId,
         urlPath: `/web/image/${id}/${PREVIEW_PX}x${PREVIEW_PX}?${fileQuery(row.checksum)}`,
         path,
       });
@@ -213,6 +238,8 @@ export class ChatAttachmentCache {
         this.previewFailures.add(job.key);
       }
       return null;
+    } finally {
+      this.previewTransfers.delete(transferId);
     }
   }
 
@@ -223,19 +250,23 @@ export class ChatAttachmentCache {
    * disk (its last use stamped), else held for Wi-Fi (attachmentSettings()
    * wifiOnly, off Wi-Fi, not anyNetwork), else downloaded to originalPath.
    * A recorded file missing on disk (a sent file whose move into files/
-   * was cut) is forgotten and downloaded. A file of the phone without a
-   * server id opens from where it waits to be sent.
+   * was cut) is forgotten and downloaded. A file still on its way to a
+   * message opens from where it waits to be sent.
    */
   open(src: ChatSource, att: ChatAttachment, opts: { anyNetwork?: boolean } = {}): Promise<OpenResult> {
     const anyNetwork = !!opts.anyNetwork;
-    if (att.attachmentId === null) return this.openLocal(att);
+    if (onItsWay(att)) return this.openLocal(att);
     const key = refKey(att);
     const known = this.opening.get(key);
     if (known) {
       if (known.anyNetwork || !anyNetwork) return known.promise;
       return known.promise.then((r) => (r.kind === "waiting_wifi" ? this.open(src, att, opts) : r));
     }
-    const promise: Promise<OpenResult> = this.openNow(src, att, anyNetwork).finally(() => {
+    const generation = this.generationOf(att.configId);
+    const promise: Promise<OpenResult> = this.openNow(src, att, anyNetwork, generation).catch((e: unknown) => {
+      if (e instanceof ErasedError) return { kind: "gone" } as const;
+      throw e;
+    }).finally(() => {
       if (this.opening.get(key)?.promise === promise) this.opening.delete(key);
     });
     this.opening.set(key, { promise, anyNetwork });
@@ -297,7 +328,7 @@ export class ChatAttachmentCache {
     return { kind: "failed" };
   }
 
-  private async openNow(src: ChatSource, att: ChatAttachment, anyNetwork: boolean): Promise<OpenResult> {
+  private async openNow(src: ChatSource, att: ChatAttachment, anyNetwork: boolean, generation: number): Promise<OpenResult> {
     const { configId } = att;
     const id = att.attachmentId!;
     const key = refKey(att);
@@ -319,14 +350,16 @@ export class ChatAttachmentCache {
       return { kind: "waiting_wifi" };
     }
     this.waiting.delete(key);
-    return this.download(src, row);
+    return this.download(src, row, generation);
   }
 
-  private async download(src: ChatSource, row: ChatAttachment): Promise<OpenResult> {
+  private async download(src: ChatSource, row: ChatAttachment, generation: number): Promise<OpenResult> {
     const { configId } = row;
     const id = row.attachmentId!;
     const key = refKey(row);
+    this.stopIfErased(configId, generation);
     const path = originalPath(await this.repo.fileDirOf(configId), id, row.name);
+    this.stopIfErased(configId, generation);
     const d: Download = { configId, transferId: `dl-${uuidv4()}`, done: 0, total: row.size || null };
     this.watchProgress();
     // Registered and started in one step: a cancel() from here on finds the transfer running
@@ -375,8 +408,13 @@ export class ChatAttachmentCache {
 
   // ─── Space ────────────────────────────────────────────────────────────────
 
-  /** Bytes of the chat's files on the phone (cached and waiting to be sent), per conversation, account or in all. */
-  space(configId?: string, channelId?: number): Promise<number> {
+  /**
+   * Bytes of the chat's files on the phone (cached and waiting to be sent),
+   * per conversation, account or in all. A conversation is named with its
+   * account: channel ids repeat across accounts.
+   */
+  async space(configId?: string, channelId?: number): Promise<number> {
+    assertScope(configId, channelId);
     return this.repo.attachmentBytes(configId, channelId);
   }
 
@@ -385,8 +423,9 @@ export class ChatAttachmentCache {
     return (await this.repo.attachmentBytes()) >= CACHE_WARN_RATIO * chatSettings().cacheLimitMb * MB;
   }
 
-  /** Removes the cached originals and previews of one conversation, one account or all; the rows stay. */
+  /** Removes the cached originals and previews of one conversation (with its account), one account or all; the rows stay. */
   async clear(scope: { configId?: string; channelId?: number }): Promise<void> {
+    assertScope(scope.configId, scope.channelId);
     const keys = (await this.repo.cachedRows())
       .filter((a) => scope.configId === undefined || a.configId === scope.configId)
       .filter((a) => scope.channelId === undefined || a.channelId === scope.channelId)
@@ -454,7 +493,6 @@ export class ChatAttachmentCache {
    * its op stored before its rows.
    */
   async sweep(configId: string): Promise<void> {
-    if (!this.opsOf) return;
     const rows = await this.repo.outgoingRows(configId);
     if (rows.length === 0) return;
     const ops = await this.opsOf(configId);
@@ -475,13 +513,38 @@ export class ChatAttachmentCache {
   }
 
   /**
+   * Removes the account's staged directories (`out/<uuid>/`) that neither
+   * a row (of any state) nor an outbox op names: files picked in a
+   * composer the app left before sending. Only while no composer is open
+   * (at startup): a composer's staged files have no row yet.
+   */
+  async sweepStaged(configId: string): Promise<void> {
+    const fileDir = (await this.repo.sourceState(configId)).fileDir;
+    if (!fileDir) return;
+    const out = `${sourceDir(fileDir)}/out`;
+    const names = await this.files.list(out);
+    if (names.length === 0) return;
+    const named = await this.repo.localUuids(configId);
+    for (const o of await this.opsOf(configId)) if (typeof o.params?.localUuid === "string") named.add(o.params.localUuid);
+    for (const name of names) {
+      if (!named.has(name)) await this.files.removeDir(`${out}/${name}`);
+    }
+  }
+
+  /**
    * Removes an account's chat directory (`chat/<fileDir>`): its downloads
-   * stop, its queued previews and Wi-Fi holds are forgotten. The rows are
-   * the caller's to drop.
+   * and previews stop, the work it had begun stops before its next write,
+   * its queued previews and Wi-Fi holds are forgotten. The rows are the
+   * caller's to drop.
    */
   async erase(configId: string): Promise<void> {
-    for (const d of [...this.downloads.values()].filter((x) => x.configId === configId)) {
-      await this.transfer.cancel(d.transferId).catch((e) => console.warn("chat: download cancel failed", e));
+    this.generations.set(configId, this.generationOf(configId) + 1);
+    const running = [
+      ...[...this.downloads.values()].filter((d) => d.configId === configId).map((d) => d.transferId),
+      ...[...this.previewTransfers].filter(([, owner]) => owner === configId).map(([id]) => id),
+    ];
+    for (const id of running) {
+      await this.transfer.cancel(id).catch((e) => console.warn("chat: transfer cancel failed", e));
     }
     for (const job of this.previewQueue.filter((j) => j.att.configId === configId)) {
       this.previewQueue.splice(this.previewQueue.indexOf(job), 1);
@@ -497,19 +560,26 @@ export class ChatAttachmentCache {
 
   /**
    * Deletes released files (ChatRepository.onFilesReleased), with the
-   * `out/<uuid>/` or `files/<id>/` directory each owns; a failed delete is
-   * logged, the others still go.
+   * `out/<uuid>/` or `files/<id>/` directory each owns (removeChatFile); a
+   * path outside chat/ or a failed delete is logged, the others still go.
    */
   async release(paths: string[]): Promise<void> {
     for (const path of paths) {
       try {
-        await this.files.remove(path);
-        const dir = ownDir(path);
-        if (dir) await this.files.removeDir(dir);
+        await removeChatFile(this.files, path);
       } catch (e: unknown) {
         console.warn("chat: a released file was not deleted", e);
       }
     }
+  }
+
+  private generationOf(configId: string): number {
+    return this.generations.get(configId) ?? 0;
+  }
+
+  /** Throws ErasedError when the account was erased since `generation`. */
+  private stopIfErased(configId: string, generation: number): void {
+    if (this.generationOf(configId) !== generation) throw new ErasedError(`account ${configId} erased`);
   }
 
   private async removeQuietly(path: string): Promise<void> {

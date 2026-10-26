@@ -1197,6 +1197,13 @@ export class ChatRepository {
       .map(attachmentFromRow);
   }
 
+  /** Local uuids of every attachment row of the account that has one, whatever its state. */
+  async localUuids(configId: string): Promise<Set<string>> {
+    return new Set((await this.rows("chat_attachments", { config_id: configId }))
+      .map((r) => r.local_uuid as string | null)
+      .filter((u): u is string => !!u));
+  }
+
   /** Client uuids of the account's messages without a server id (queued or failed). */
   async queuedMessageUuids(configId: string): Promise<Set<string>> {
     return new Set((await this.rows("chat_messages", { config_id: configId }))
