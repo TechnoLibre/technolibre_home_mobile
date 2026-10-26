@@ -203,13 +203,16 @@ function searchFiles(rows: ServerFile[], kwargs: any): any[] {
  * client_uuid already made. `drop` makes the next uploads create their row
  * and lose the answer; `status` answers the next one with that HTTP status
  * and creates nothing; `hold` keeps the nth upload call on the wire
- * ("before" or "after" its row is made) until `release()` or a cancel.
+ * ("before" or "after" its row is made) until `release()` or a cancel;
+ * `notFound` answers 404 to the module route ("module", a module gone) or
+ * to every upload ("all", a conversation the server no longer shows).
  */
 function fileServer(odoo: ReturnType<typeof fakeOdoo>, now: () => Date) {
   const files = memoryChatFiles();
   const state = {
     nextId: 900, drop: 0, status: null as number | null,
     hold: null as null | { nth: number; when: "before" | "after" },
+    notFound: null as null | "module" | "all",
   };
   let count = 0;
   const held = new Map<string, { resolve: () => void; reject: (e: unknown) => void }>();
@@ -225,6 +228,8 @@ function fileServer(odoo: ReturnType<typeof fakeOdoo>, now: () => Date) {
         return { status, headers: {}, data: "" };
       }
       if (hold === "before") await wait();
+      const onModule = new URL(r.url).pathname === MODULE_UPLOAD_ROUTE;
+      if (state.notFound === "all" || (state.notFound === "module" && onModule)) return { status: 404, headers: {}, data: "" };
       const uuid = new URL(r.url).pathname === MODULE_UPLOAD_ROUTE ? r.fields.client_uuid : null;
       let a = uuid ? odoo.state.attachments.find((x) => x.uuid === uuid) : undefined;
       if (!a) {
@@ -2893,6 +2898,146 @@ describe("ChatService", () => {
       expect(odoo.kw("action_unfollow")).toHaveLength(1);
       expect(await chat.notices([config])).toEqual([]);
       expect(await ops()).toEqual([]);
+    });
+
+    it("a module route gone falls back on Odoo's route, one post with the file", async () => {
+      await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.2" });
+      server.state.notFound = "module";
+      const sent = await chat.send(src, GROUP, "with file", [stage("a.jpg")]);
+      await idle();
+      expect(server.uploads().map((c) => [new URL(c.url).pathname, c.fields!.client_uuid ?? null])).toEqual([
+        [MODULE_UPLOAD_ROUTE, expect.any(String)], [MODULE_UPLOAD_ROUTE, expect.any(String)], ["/mail/attachment/upload", null],
+      ]);
+      expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900]]);
+      expect((await chat.messages(config, GROUP)).find((m) => m.clientUuid === sent.clientUuid)).toMatchObject({ status: "sent" });
+      expect(await chat.notices([config])).toEqual([]);
+      expect((await chat.repo.sourceState(config)).moduleLevel).toBeNull();
+    });
+
+    it("a module route not found while the module is still there refuses the file", async () => {
+      await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.2" });
+      odoo.state.onKw = async ({ model, method }) =>
+        (method === "fields_get" && model === "ir.attachment" ? { erplibre_client_uuid: { type: "char" } } : undefined);
+      server.state.notFound = "module";
+      await chat.send(src, GROUP, "text", [stage("a.jpg")]);
+      await idle();
+      expect(server.uploads()).toHaveLength(2);
+      expect((await chat.notices([config]))[0]).toMatchObject({ file: { name: "a.jpg", reason: "not_found" } });
+      expect(posts()).toHaveLength(1);
+    });
+
+    /** Makes the first delete of op `id` fail, as an app killed after the op's work and before its row went. */
+    const killBeforeDelete = (id: () => string | undefined) => {
+      const remove = env.db.deleteOutboxOp.bind(env.db);
+      let killed = false;
+      return vi.spyOn(env.db, "deleteOutboxOp").mockImplementation(async (opId: string) => {
+        if (!killed && opId === id()) { killed = true; throw new Error("killed"); }
+        return remove(opId);
+      });
+    };
+
+    it("an upload run again after its row was uploaded sends nothing more", async () => {
+      offline();
+      await chat.send(src, GROUP, "once", [stage("a.jpg")]);
+      const [up] = await ops("chat.upload");
+      online();
+      killBeforeDelete(() => up.id);
+      await chat.flushAll();
+      await idle();
+      const outbox = await reborn();
+      await outbox.recoverInterrupted();
+      advance(3 * 60_000 + 1);
+      await chat.flushAll();
+      await idle();
+      expect(server.uploads()).toHaveLength(1);
+      expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900]]);
+      expect(await ops()).toEqual([]);
+    });
+
+    it("an upload run again after its file was refused sends nothing and adds no notice", async () => {
+      offline();
+      await chat.send(src, GROUP, "text", [stage("big.jpg")]);
+      const [up] = await ops("chat.upload");
+      online();
+      server.state.status = 413;
+      killBeforeDelete(() => up.id);
+      await chat.flushAll();
+      await idle();
+      const outbox = await reborn();
+      await outbox.recoverInterrupted();
+      await chat.flushAll();
+      await idle();
+      expect(server.uploads()).toHaveLength(1);
+      expect(await chat.notices([config])).toHaveLength(1);
+      expect(posts()).toHaveLength(1);
+    });
+
+    it("two lost uploads of the same file to two conversations keep their own attachment", async () => {
+      server.state.drop = 2;
+      await chat.send(src, GROUP, "one", [stage("same.jpg")]);
+      await chat.send(src, GENERAL, "two", [stage("same.jpg")]);
+      await idle();
+      // The second waits while the first holds a send that may have reached the server
+      expect(odoo.state.attachments).toHaveLength(1);
+      for (let i = 0; i < 2; i++) {
+        advance(3 * 60_000 + 1);
+        await chat.flushAll({ force: true });
+        await idle();
+      }
+      expect(server.uploads()).toHaveLength(2);
+      expect(odoo.state.attachments).toHaveLength(2);
+      expect(posts().map((p) => [p.params.thread_id, p.params.post_data.attachment_ids])).toEqual([[GROUP, [900]], [GENERAL, [901]]]);
+    });
+
+    it("a queued file whose upload op was lost gets one again and its post goes", async () => {
+      const queue = (chat.queue as any).outbox as OutboxService;
+      let vanish = true;
+      odoo.state.onPost = async () => {
+        if (!vanish) return;
+        vanish = false;
+        odoo.state.attachments.splice(0, 1);
+        // The app dies between the row put back in the queue and its new op
+        const enqueue = queue.enqueue.bind(queue);
+        vi.spyOn(queue, "enqueue").mockImplementationOnce(async () => { throw new Error("killed"); }).mockImplementation(enqueue);
+      };
+      const sent = await chat.send(src, GROUP, "again", [stage("a.jpg")]);
+      await idle();
+      expect(await ops("chat.upload")).toEqual([]);
+      await chat.flushAll({ force: true });
+      await idle();
+      // The refused send's stamp still holds the post for its quiet window
+      advance(3 * 60_000 + 1);
+      await chat.flushAll({ force: true });
+      await idle();
+      expect(server.uploads()).toHaveLength(2);
+      expect(posts().map((p) => p.params.post_data.attachment_ids)).toEqual([[900], [901]]);
+      expect((await chat.messages(config, GROUP)).find((m) => m.clientUuid === sent.clientUuid)).toMatchObject({ status: "sent" });
+    });
+
+    it("a leave that reaches the server first refuses the file on the wire without a notice", async () => {
+      server.state.hold = { nth: 1, when: "before" };
+      const a = stage("a.jpg");
+      const sent = await chat.send(src, GROUP, "never", [a]);
+      await vi.waitFor(() => expect(server.uploads()).toHaveLength(1));
+      // The cancel does not reach the transfer: its answer comes back as for a channel left
+      vi.spyOn(chat.queue.transfer!, "cancel").mockResolvedValue(undefined);
+      await chat.leave(src, GROUP);
+      server.state.notFound = "all";
+      server.release();
+      await idle();
+      expect(await chat.notices([config])).toEqual([]);
+      expect((await chat.repo.outgoingOf(config, sent.clientUuid))[0]).toMatchObject({ state: "refused", error: "left" });
+    });
+
+    it("a refused file's notice is written blocked at once", async () => {
+      const add = vi.spyOn(env.db, "addOutboxOp");
+      const update = vi.spyOn(env.db, "updateOutboxOp");
+      server.state.status = 413;
+      await chat.send(src, GROUP, "text", [stage("big.jpg")]);
+      await idle();
+      const notice = add.mock.calls.map(([op]) => op).find((op) => op.kind === "chat.file_refused")!;
+      expect(notice).toMatchObject({ status: "blocked", params: { name: "big.jpg", reason: "too_big", blockedReason: "refused" } });
+      expect(update.mock.calls.filter(([id]) => id === notice.id)).toEqual([]);
     });
 
     it("a temporary id swap reaches upload ops and rows", async () => {

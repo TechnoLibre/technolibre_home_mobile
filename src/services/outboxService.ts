@@ -128,14 +128,18 @@ export class OutboxService {
     this.handlers.set(kind, handler);
   }
 
-  /** Adds an operation; status "incomplete" when a choice is still missing. */
+  /**
+   * Adds an operation; status "incomplete" when a choice is still missing,
+   * "blocked" for a notice stored given up at once (with its lastError).
+   */
   async enqueue(input: {
     noteId: string;
     configId: string;
     kind: string;
     params?: Record<string, any>;
     dependsOn?: string | null;
-    status?: Extract<OutboxStatus, "queued" | "incomplete">;
+    status?: Extract<OutboxStatus, "queued" | "incomplete" | "blocked">;
+    lastError?: string | null;
   }): Promise<OutboxOp> {
     const at = this.now().toISOString();
     const op: OutboxOp = {
@@ -148,7 +152,7 @@ export class OutboxService {
       status: input.status ?? "queued",
       attempts: 0,
       nextAttemptAt: null,
-      lastError: null,
+      lastError: input.lastError ?? null,
       dependsOn: input.dependsOn ?? null,
       createdAt: at,
       updatedAt: at,

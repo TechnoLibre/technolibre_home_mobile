@@ -24,6 +24,7 @@ import {
 import { syncConfigIdFor } from "../../models/syncConfig";
 import { CREATE_QUIET_WINDOW_MS, clientMarker } from "../outboxMarker";
 import { bodyHasMarker, textToBody } from "./chatBody";
+import { effectiveLevel, levelAtLeast } from "./chatModule";
 import type { ChatRepository } from "./chatRepository";
 import { parseStore, type StoreDelta } from "./chatStore";
 import { v4 as uuidv4 } from "uuid";
@@ -431,6 +432,7 @@ export class ChatOutbox {
       });
     } catch (e: unknown) {
       for (const up of uploads) await this.outbox.cancel(up.id);
+      await this.removeFiles(files.map((f) => f.path));
       throw e;
     }
     const message: ChatMessage = {
@@ -456,15 +458,25 @@ export class ChatOutbox {
       // No op goes out without its bubble
       for (const up of uploads) await this.outbox.cancel(up.id);
       await this.outbox.cancel(op.id);
-      if (incomplete) await this.dropOutgoing(configId, files.map((f) => f.localUuid));
+      if (incomplete) {
+        await this.dropOutgoing(configId, files.map((f) => f.localUuid));
+        // A cut inside putOutgoing leaves files no row names
+        await this.removeFiles(files.map((f) => f.path));
+      }
       throw e;
     }
     return message;
   }
 
-  /** Removes outgoing rows by local uuid and deletes their files (the outbox owns them); a failed delete is logged. */
+  /** Removes outgoing rows by local uuid and deletes their files (the outbox owns them). */
   private async dropOutgoing(configId: string, localUuids: string[]): Promise<void> {
-    for (const path of await this.repo.deleteOutgoing(configId, localUuids)) {
+    await this.removeFiles(await this.repo.deleteOutgoing(configId, localUuids));
+  }
+
+  /** Deletes files (with their out/<localUuid>/ directory); a missing one is fine, a failed delete is logged. */
+  private async removeFiles(paths: string[]): Promise<void> {
+    for (const path of paths) {
+      if (!path) continue;
       try {
         await this.files.remove(path);
         if (path.includes("/out/")) await this.files.removeDir(path.slice(0, path.lastIndexOf("/")));
@@ -959,6 +971,8 @@ export class ChatOutbox {
         } else {
           for (const op of [...chain, post]) await this.outbox.cancel(op.id);
           await this.dropOutgoing(configId, (await this.repo.outgoingOf(configId, post.clientUuid)).map((r) => r.localUuid!));
+          // Cut before its rows: the uploads' params still name the staged files
+          await this.removeFiles(chain.map((up) => String(up.params.path ?? "")));
         }
       }
       for (const up of all.filter((o) => o.kind === CHAT_UPLOAD && o.status === "incomplete" && !kept.has(o.id))) {
@@ -1015,7 +1029,14 @@ export class ChatOutbox {
   /**
    * Starts the account's due upload ops whose dependency is done (see
    * OutboxService.isDue; force skips the retry delays), oldest first, up
-   * to CHAT_UPLOADS_AT_ONCE running at once. Not awaited by flush.
+   * to CHAT_UPLOADS_AT_ONCE running at once. Not awaited by flush. An
+   * upload off the module route waits while another upload of the same
+   * name and size runs, or holds a send that may have reached the server
+   * and cannot start yet (its quiet window, its retry delay): the
+   * search after a lost answer would find either attachment, so two such
+   * uploads never search or send at the same time. One that can start is
+   * not held back by it, so two lost uploads still run, one after the
+   * other.
    */
   private pumpUploads(creds: SyncCredentials, configId: string, force: boolean): void {
     this.laneTrack(configId, this.pumpNow(creds, configId, force)).catch((e) => console.warn("chat: upload lane failed", e));
@@ -1026,12 +1047,16 @@ export class ChatOutbox {
     const pendingIds = new Set(ops.map((o) => o.id));
     let running = this.lane.get(configId);
     if (!running) this.lane.set(configId, (running = new Set()));
+    const startable = (o: OutboxOp) => !(o.dependsOn && pendingIds.has(o.dependsOn)) && this.outbox.isDue(o, force);
+    // Another upload of the same name and size: a search after a lost answer cannot tell their attachments apart
+    const twin = (o: OutboxOp, op: OutboxOp) => o.id !== op.id && o.kind === CHAT_UPLOAD
+      && o.params.name === op.params.name && o.params.size === op.params.size;
     // No await from here on: two pumps never start the same op or pass the cap
     for (const op of dependencyOrder(ops)) {
       if (running.size >= CHAT_UPLOADS_AT_ONCE) return;
       if (op.kind !== CHAT_UPLOAD || op.noteId !== CHAT_NOTE || running.has(op.id)) continue;
-      if (op.dependsOn && pendingIds.has(op.dependsOn)) continue;
-      if (!this.outbox.isDue(op, force)) continue;
+      if (!startable(op)) continue;
+      if (!op.params.useModule && ops.some((o) => twin(o, op) && (running.has(o.id) || (o.params.uploadSentAt && !startable(o))))) continue;
       running.add(op.id);
       this.laneTrack(configId, this.laneRun(creds, op, running)).catch((e) => console.warn("chat: upload lane failed", e));
     }
@@ -1236,7 +1261,12 @@ export class ChatOutbox {
     const useModule = !!op.params.useModule;
     const withFiles = (op.params.files ?? []).length > 0;
     const rows = withFiles ? await this.repo.outgoingOf(op.configId, op.clientUuid) : [];
-    if (rows.some((r) => r.state === "queued")) throw new Error("A file of the post is still to be uploaded.");
+    if (rows.some((r) => r.state === "queued")) {
+      if (await this.requeueOrphans(op, rows)) {
+        throw new OutboxRetryLaterError(`Files of ${op.clientUuid} wait for their upload again.`, this.now().toISOString());
+      }
+      throw new Error("A file of the post is still to be uploaded.");
+    }
     const ids = rows.filter((r) => r.state === "uploaded" && r.attachmentId !== null).map((r) => r.attachmentId!);
     if (withFiles && ids.length === 0 && !String(text ?? "").trim()) {
       // Every file refused and no text: nothing is left to post
@@ -1302,6 +1332,36 @@ export class ChatOutbox {
   }
 
   /**
+   * Queued rows of a post that no upload op names (a cut between a row put
+   * back in the queue and its new op) get one, chained before the post
+   * behind what it waited for. Returns whether any was made.
+   */
+  private async requeueOrphans(op: OutboxOp, rows: ChatAttachment[]): Promise<boolean> {
+    const ops = await this.db.getOutboxOpsForConfig(op.configId);
+    const named = new Set(ops.filter((o) => o.kind === CHAT_UPLOAD).map((o) => o.params.localUuid));
+    const orphans = rows.filter((r) => r.state === "queued" && r.localUuid && !named.has(r.localUuid));
+    if (orphans.length === 0) return false;
+    let previous = (await this.db.getOutboxOp(op.id))?.dependsOn ?? null;
+    for (const r of orphans) previous = (await this.enqueueUpload(op, r, previous)).id;
+    await this.db.updateOutboxOp(op.id, { dependsOn: previous, updatedAt: this.now().toISOString() });
+    return true;
+  }
+
+  /** A new upload op for the row of a post's file, after `dependsOn`; its size is the file's on the phone. */
+  private async enqueueUpload(op: OutboxOp, r: ChatAttachment, dependsOn: string | null): Promise<OutboxOp> {
+    const path = r.originalPath ?? "";
+    const size = (path ? await this.files.size(path) : null) ?? r.size;
+    const file: OutgoingFile = { localUuid: r.localUuid!, path, name: r.name, mimetype: r.mimetype, size, voice: r.voice };
+    return this.outbox.enqueue({
+      noteId: CHAT_NOTE,
+      configId: op.configId,
+      kind: CHAT_UPLOAD,
+      params: this.uploadParams(op.params.channelId, file, !!op.params.idempotentUpload),
+      dependsOn,
+    });
+  }
+
+  /**
    * After a refused post: the ids the server no longer holds (a pending
    * attachment collected by Odoo's daily clean-up, deleted meanwhile) are
    * queued for upload again, their rows back to "queued", the new upload
@@ -1316,18 +1376,8 @@ export class ChatOutbox {
     if (gone.length === 0) return false;
     let previous: string | null = null;
     for (const r of gone) {
-      const path = r.originalPath ?? "";
-      const size = (path ? await this.files.size(path) : null) ?? r.size;
       await this.repo.requeueUpload(op.configId, r.localUuid!);
-      const file: OutgoingFile = { localUuid: r.localUuid!, path, name: r.name, mimetype: r.mimetype, size, voice: r.voice };
-      const up: OutboxOp = await this.outbox.enqueue({
-        noteId: CHAT_NOTE,
-        configId: op.configId,
-        kind: CHAT_UPLOAD,
-        params: this.uploadParams(op.params.channelId, file, !!op.params.idempotentUpload),
-        dependsOn: previous,
-      });
-      previous = up.id;
+      previous = (await this.enqueueUpload(op, r, previous)).id;
     }
     await this.db.updateOutboxOp(op.id, { dependsOn: previous, updatedAt: this.now().toISOString() });
     await this.outbox.setParams(op.id, { reuploaded: true, createSentAt: null });
@@ -1452,6 +1502,9 @@ export class ChatOutbox {
   private async sendUpload(creds: SyncCredentials, op: OutboxOp): Promise<void> {
     const { configId } = op;
     const { channelId, localUuid, path, name, mimetype, size } = op.params;
+    // Run again after its outcome was written (a kill before the op went): nothing is left to do
+    const row = await this.repo.outgoingFile(configId, localUuid);
+    if (!row || row.state === "refused" || (row.state === "uploaded" && row.attachmentId !== null)) return;
     if (await this.leaving(configId, channelId)) return this.refuseLeft(op);
     if (attachmentSettings().wifiOnly && !(await this.onWifi())) {
       await this.outbox.setParams(op.id, { heldFor: "wifi" });
@@ -1507,18 +1560,18 @@ export class ChatOutbox {
         }
       }
     } catch (e: unknown) {
+      // A leave reached the server meanwhile (a 404, a cancel): the file goes with the conversation, no notice
+      if (await this.leaving(configId, channelId)) return this.refuseLeft(op);
       if (e instanceof RequestNotSentError) {
         // Nothing of this send reached the server: a retry has nothing to look for
         if (firstSend) await this.outbox.setParams(op.id, { uploadSentAt: null });
         throw e;
       }
       if (e instanceof ChatFileTooBigError) return this.refuseFile(op, "too_big");
+      if (e instanceof ChatTransferRefusedError && e.reason === "not_found" && useModule) await this.moduleRouteGone(op);
       if (e instanceof ChatTransferRefusedError) return this.refuseFile(op, e.reason);
-      if (e instanceof ChatTransferCancelledError) {
-        // Cancelled by a drop (the op is gone) or a leave
-        if (!(await this.db.getOutboxOp(op.id))) return;
-        if (await this.leaving(configId, channelId)) return this.refuseLeft(op);
-      }
+      // Cancelled by a drop: the op is gone
+      if (e instanceof ChatTransferCancelledError && !(await this.db.getOutboxOp(op.id))) return;
       if (sending) await this.outbox.setParams(op.id, { uploadEndedAt: this.now().toISOString() });
       throw e;
     }
@@ -1527,6 +1580,34 @@ export class ChatOutbox {
     await this.repo.setUploaded(configId, localUuid, {
       attachmentId: record.id, checksum: record.checksum, size: record.size, mimetype: record.mimetype, name: record.name,
     });
+  }
+
+  /**
+   * The module route answered 404 twice: the module may be gone or older.
+   * The module state is probed again (moduleRefused); below 1.2 the file
+   * and the other files of its post take Odoo's route from now on, as a
+   * first send (the module route made nothing), and this throws
+   * OutboxRetryLaterError for a retry at once. Still 1.2, it returns: the
+   * channel itself is not found.
+   */
+  private async moduleRouteGone(op: OutboxOp): Promise<void> {
+    try {
+      await this.moduleRefused(op.configId);
+    } catch (probe) {
+      console.warn("chat: module probe after a refused upload failed", probe);
+      return;
+    }
+    if (levelAtLeast(effectiveLevel(await this.repo.sourceState(op.configId)), "1.2")) return;
+    const all = await this.db.getOutboxOpsForConfig(op.configId);
+    const post = all.find((o) => o.kind === CHAT_POST && (o.params.files ?? []).includes(op.params.localUuid));
+    const siblings = new Set<string>(post?.params.files ?? [op.params.localUuid]);
+    for (const o of all) {
+      if (o.kind === CHAT_UPLOAD && siblings.has(o.params.localUuid)) {
+        await this.outbox.setParams(o.id, { useModule: false, uploadSentAt: null, uploadEndedAt: null });
+      }
+    }
+    if (post) await this.outbox.setParams(post.id, { idempotentUpload: false });
+    throw new OutboxRetryLaterError("The module route is gone: the file goes through Odoo's route.", this.now().toISOString());
   }
 
   /**
@@ -1605,17 +1686,14 @@ export class ChatOutbox {
     const { configId } = op;
     const { channelId, localUuid, name } = op.params;
     await this.repo.setRefused(configId, localUuid, reason);
-    const notice = await this.outbox.enqueue({
+    // Written blocked in one statement: no drain ever sees it queued
+    await this.outbox.enqueue({
       noteId: CHAT_NOTE,
       configId,
       kind: CHAT_FILE_REFUSED,
-      params: { channelId, localUuid, name, reason, ...(limit ? { limit } : {}) },
-    });
-    await this.db.updateOutboxOp(notice.id, {
+      params: { channelId, localUuid, name, reason, ...(limit ? { limit } : {}), blockedReason: "refused", candidates: [] },
       status: "blocked",
       lastError: `File ${name} not sent: ${reason}.`,
-      params: { ...notice.params, blockedReason: "refused", candidates: [] },
-      updatedAt: this.now().toISOString(),
     });
     this.changed(configId, channelId);
   }

@@ -444,6 +444,25 @@ describe("ChatOutbox", () => {
       expect(files.bytes(f.path)).toBeUndefined();
     });
 
+    it("a post whose rows cannot be stored deletes its staged files", async () => {
+      chatOdoo();
+      vi.spyOn(repo, "putOutgoing").mockRejectedValueOnce(new Error("disk full"));
+      const f = file("l1");
+      await expect(chat.queuePost(CONFIG, CHANNEL, "x", false, { files: [f] })).rejects.toThrow("disk full");
+      expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+      expect(files.bytes(f.path)).toBeUndefined();
+    });
+
+    it("a post cut before its rows were stored deletes its staged files at startup", async () => {
+      chatOdoo();
+      const f = file("c1");
+      const up = await outbox.enqueue({ noteId: CHAT_NOTE, configId: CONFIG, kind: CHAT_UPLOAD, params: { channelId: CHANNEL, localUuid: "c1", path: f.path }, status: "incomplete" });
+      await outbox.enqueue({ noteId: CHAT_NOTE, configId: CONFIG, kind: CHAT_POST, params: { channelId: CHANNEL, text: "", files: ["c1"] }, dependsOn: up.id, status: "incomplete" });
+      expect(await chat.recoverIncomplete()).toBe(0);
+      expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+      expect(files.bytes(f.path)).toBeUndefined();
+    });
+
     it("a post with files cut while being queued is repaired at startup", async () => {
       chatOdoo();
       // Cut before the completion: everything written, still incomplete

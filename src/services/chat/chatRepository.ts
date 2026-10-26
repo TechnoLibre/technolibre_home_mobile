@@ -1024,6 +1024,11 @@ export class ChatRepository {
     await this.patchLocal(configId, localUuid, { state: "refused", error: reason });
   }
 
+  /** The row of a file of the phone (`l<uuid>`), or null. */
+  async outgoingFile(configId: string, localUuid: string): Promise<ChatAttachment | null> {
+    return this.attachmentByKey(configId, `l${localUuid}`);
+  }
+
   /** Server ids of the account's files uploaded and not yet posted ("uploaded" rows). */
   async uploadedIds(configId: string): Promise<Set<number>> {
     return new Set((await this.rows("chat_attachments", { config_id: configId, state: "uploaded" }))
