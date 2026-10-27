@@ -21,7 +21,8 @@ export class ChatFileTooBigError extends Error {}
 /**
  * The server refused the transfer for good: "refused" when Odoo's route
  * answers `{error}` (not allowed to upload there), "not_found" when the
- * channel or attachment is still not found after a re-authentication.
+ * thread (a channel, a record) or the attachment is still not found after
+ * a re-authentication.
  */
 export class ChatTransferRefusedError extends Error {
     constructor(readonly reason: "refused" | "not_found", message: string) {
@@ -73,9 +74,11 @@ export class ChatTransfer {
 
     /**
      * Sends the file at a.path (relative to Directory.Data) as a pending
-     * attachment of channel a.channelId. voice=true goes only for a voice
-     * file (Odoo reads any value as true) and client_uuid only on the
-     * module route. Returns the ir.attachment record of the answer's Store.
+     * attachment of the thread a.threadModel (discuss.channel by default)
+     * whose id is a.channelId: a channel, or the record a reply goes to.
+     * voice=true goes only for a voice file (Odoo reads any value as true)
+     * and client_uuid only on the module route. Returns the ir.attachment
+     * record of the answer's Store.
      */
     async upload(
         creds: SyncCredentials,
@@ -83,6 +86,7 @@ export class ChatTransfer {
             id: string;
             route: string;
             channelId: number;
+            threadModel?: string;
             clientUuid: string | null;
             voice: boolean;
             path: string;
@@ -101,7 +105,7 @@ export class ChatTransfer {
                 this.stopIfCancelled(a.id);
                 const fields: Record<string, string> = {
                     thread_id: String(a.channelId),
-                    thread_model: "discuss.channel",
+                    thread_model: a.threadModel ?? "discuss.channel",
                     is_pending: "true",
                     csrf_token: csrfToken,
                 };

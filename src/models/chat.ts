@@ -166,7 +166,9 @@ export type ChatFileOrigin = "camera" | "gallery" | "file" | "voice";
  * `configId#a<attachmentId>` once the server has an id,
  * `configId#l<localUuid>` while it only exists on the phone.
  * Paths are relative to the app data directory; the bytes columns are the
- * size of the cached file, 0 when absent.
+ * size of the cached file, 0 when absent. A file of a reply on a record
+ * (or of its draft) names the record in threadModel / threadId and has
+ * channelId 0, which no conversation has.
  */
 export interface ChatAttachment {
   configId: string;
@@ -196,6 +198,17 @@ export interface ChatAttachment {
    * offered compression at send); null for a server file or when unknown.
    */
   origin?: ChatFileOrigin | null;
+  /** The record's model for a file of a reply on a record; null (or absent) for a conversation's. */
+  threadModel?: string | null;
+  /** The record's id for a file of a reply on a record; null (or absent) for a conversation's. */
+  threadId?: number | null;
+}
+
+/** A record whose chatter a reply goes to: its model, its id and its name as the inbox showed it. */
+export interface RecordThread {
+  model: string;
+  resId: number;
+  recordName: string;
 }
 
 /** A file picked on the phone, waiting to be uploaded with its post. */
@@ -309,6 +322,12 @@ export interface ChatNotice {
    * meanwhile (« Reprendre » then makes the text a new message).
    */
   edit?: { target: MessageTarget; text: string; mentions: Mentions; deleted: boolean };
+  /**
+   * A reply on a record the server refused (chat.record_post): the record,
+   * the text, whether it was an internal note, and the local uuids of its
+   * files, kept on the phone until the notice is dismissed.
+   */
+  reply?: { thread: RecordThread; text: string; note: boolean; files: string[] };
 }
 
 /** One notification of the Odoo bus: its bus id and the typed message it carries. */

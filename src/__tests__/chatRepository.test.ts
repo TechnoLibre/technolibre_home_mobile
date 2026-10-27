@@ -910,6 +910,8 @@ describe("migration 2026102608", () => {
   const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102608)!;
   const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
   const DRAFTS = ["id", "config_id", "channel_id", "text", "updated_at", "reply_to", "edit_of", "edit_text", "mentions"];
+  // createChatDraftsTable writes the columns of every later migration too (2026102704)
+  const FRESH = [...DRAFTS, "thread_model", "thread_id"];
 
   beforeEach(async () => {
     SecureStoragePlugin._store.clear();
@@ -921,7 +923,7 @@ describe("migration 2026102608", () => {
     for (const m of APP_MIGRATIONS) {
       if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
     }
-    expect(await colsOf("chat_drafts")).toEqual(DRAFTS);
+    expect(await colsOf("chat_drafts")).toEqual(FRESH);
   });
 
   it("adds the columns to a database at 2026102607 once, keeping its drafts", async () => {
@@ -1158,8 +1160,8 @@ describe("ChatRepository lot 2", () => {
   describe("migration 2026102605", () => {
     const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102605)!;
     const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
-    // createChatDraftsTable writes the columns of every later migration too (2026102608)
-    const DRAFTS = ["id", "config_id", "channel_id", "text", "updated_at", "reply_to", "edit_of", "edit_text", "mentions"];
+    // createChatDraftsTable writes the columns of every later migration too (2026102608, 2026102704)
+    const DRAFTS = ["id", "config_id", "channel_id", "text", "updated_at", "reply_to", "edit_of", "edit_text", "mentions", "thread_model", "thread_id"];
 
     it("a fresh install has the drafts table", async () => {
       for (const m of APP_MIGRATIONS) {
@@ -2056,5 +2058,90 @@ describe("DatabaseService.createChatSearchIndex", () => {
       const next = await run([...killed.have], killed.indexed);
       expect([k, [...next.have].sort(), next.indexed]).toEqual([k, [...PARTS].sort(), true]);
     }
+  });
+});
+
+describe("migration 2026102704", () => {
+  let db: DatabaseService;
+  const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102704)!;
+  const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+  });
+
+  it("follows 2026102703 and adds the columns once, keeping the rows", async () => {
+    const versions = APP_MIGRATIONS.map((m) => m.version);
+    expect(versions[versions.indexOf(2026102704) - 1]).toBe(2026102703);
+    expect(migration().description).toBe("Clavardage : fichiers et brouillons des réponses aux enregistrements");
+    await (db as any).db.execute(`CREATE TABLE IF NOT EXISTS chat_drafts (
+      id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL, channel_id INTEGER NOT NULL, text TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL, reply_to TEXT, edit_of TEXT, edit_text TEXT, mentions TEXT)`);
+    await (db as any).db.execute(`CREATE TABLE IF NOT EXISTS chat_attachments (
+      id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL, channel_id INTEGER NOT NULL, local_uuid TEXT, name TEXT NOT NULL,
+      state TEXT NOT NULL, origin TEXT)`);
+    await db.rawRun("INSERT INTO chat_drafts (id, config_id, channel_id, text, updated_at) VALUES (?, ?, ?, ?, ?)",
+      ["a#7", "a", 7, "salut", "2026-10-26T10:00:00.000Z"]);
+    await migration().run(db);
+    await migration().run(db);
+    for (const t of ["chat_drafts", "chat_attachments"]) {
+      const cols = await colsOf(t);
+      expect(cols.filter((c) => c === "thread_model")).toHaveLength(1);
+      expect(cols.filter((c) => c === "thread_id")).toHaveLength(1);
+    }
+    expect(await db.rawQuery("SELECT id, text, thread_model FROM chat_drafts")).toEqual([{ id: "a#7", text: "salut", thread_model: null }]);
+  });
+
+  it("a fresh install has the columns, and a database without the chat tables gets none", async () => {
+    await migration().run(db);
+    expect(await colsOf("chat_drafts")).toEqual([]);
+    for (const m of APP_MIGRATIONS) {
+      if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+    }
+    for (const t of ["chat_drafts", "chat_attachments"]) expect(await colsOf(t)).toEqual(expect.arrayContaining(["thread_model", "thread_id"]));
+  });
+});
+
+describe("ChatRepository record threads", () => {
+  let db: DatabaseService;
+  let repo: ChatRepository;
+  const TASK = { model: "project.task", resId: 5 };
+  const recordFile = (uuid: string, over: Partial<ChatAttachment> = {}) =>
+    outgoing(A, uuid, { channelId: 0, threadModel: "project.task", threadId: 5, ...over });
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await addChatTables(db);
+    repo = new ChatRepository(db);
+  });
+
+  it("a record draft is not a conversation draft in the list", async () => {
+    await repo.putDraftText(A, TASK, "réponse");
+    await repo.putDraftFile(recordFile("r1", { state: "draft", postClientUuid: null }));
+    await repo.putDraftText(A, 7, "conversation");
+    expect(await repo.draftSummaries(A)).toEqual(new Map([[7, { text: "conversation", files: 0, editing: false }]]));
+    expect(await repo.draftChannels(A)).toEqual(new Set([`${A}#7`]));
+    expect(await db.rawQuery("SELECT id FROM chat_drafts WHERE thread_model = ?", ["project.task"])).toEqual([{ id: `${A}#rproject.task#5` }]);
+    expect(await repo.draftOf(A, TASK)).toMatchObject({ text: "réponse", files: [{ localUuid: "r1", threadModel: "project.task", threadId: 5 }] });
+    expect((await repo.draftOf(A, 0)).files).toEqual([]);
+    expect((await repo.draftOf(A, { model: "project.task", resId: 6 })).files).toEqual([]);
+    // The last file and the text gone, the record's draft row goes
+    await repo.removeDraftFile(A, "r1");
+    expect(await db.rawQuery("SELECT id FROM chat_drafts WHERE thread_model = ?", ["project.task"])).toHaveLength(1);
+    await repo.putDraftText(A, TASK, "");
+    expect(await db.rawQuery("SELECT id FROM chat_drafts WHERE thread_model = ?", ["project.task"])).toEqual([]);
+  });
+
+  it("the space per conversation leaves record files out", async () => {
+    await repo.putOutgoing([recordFile("r1"), outgoing(A, "c1")]);
+    expect(await repo.attachmentBytes(A, 7)).toBe(1000);
+    expect(await repo.attachmentBytes(A, 0)).toBe(0);
+    expect(await repo.attachmentBytes(A)).toBe(2000);
+    expect(await repo.outgoingFile(A, "r1")).toMatchObject({ channelId: 0, threadModel: "project.task", threadId: 5 });
+    expect(await repo.outgoingFile(A, "c1")).toMatchObject({ threadModel: null, threadId: null });
   });
 });

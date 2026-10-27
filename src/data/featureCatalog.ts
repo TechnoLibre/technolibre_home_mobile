@@ -4728,6 +4728,56 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.record-reply",
+                label: { en: "Reply on a record", fr: "Réponse sur une fiche" },
+                description: {
+                    en: "A reply in the chatter of a task, a lead or any record of an inbox item, as an internal note or a message to its followers, with text, mentions and files, queued offline, never lost nor doubled.",
+                    fr: "Une réponse dans le fil de discussion d'une tâche, d'une piste ou de toute fiche d'un élément de la boîte de réception, en note interne ou en message aux abonnés, avec texte, mentions et fichiers, en file hors ligne, jamais perdue ni doublée.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.inbox"],
+                demo: NONE_PLUMBING,
+                howItWorks: {
+                    en: "ChatOutbox.queueRecordPost queues chat.record_post, its files first as chat.upload ops on the "
+                        + "record (Odoo's /mail/attachment/upload with thread_model the record's model, or the module "
+                        + "1.4 route with a client uuid), then /mail/message/post on the record: mail.mt_note with "
+                        + "mail_post_autofollow false for a note, mail.mt_comment for a message, the body and "
+                        + "partner_ids of composeBody, the marker comment and, with the module, erplibre_client_uuid. "
+                        + "A retry finds the reply by its marker on the record before posting again; a lost upload "
+                        + "answer is found as the user's pending attachment. A refusal (no right to post, record gone, "
+                        + "its file refused) blocks the reply as a notice that keeps its text and files until "
+                        + "dismissed. Its files and draft rows carry the record (thread_model, thread_id) and "
+                        + "channel_id 0, so no conversation's draft, list or space counts them.",
+                    fr: "ChatOutbox.queueRecordPost met en file chat.record_post, ses fichiers d'abord en opérations "
+                        + "chat.upload sur la fiche (/mail/attachment/upload d'Odoo avec thread_model le modèle de la "
+                        + "fiche, ou la route du module 1.4 avec un identifiant client), puis /mail/message/post sur "
+                        + "la fiche : mail.mt_note avec mail_post_autofollow faux pour une note, mail.mt_comment pour "
+                        + "un message, le corps et les partner_ids de composeBody, le commentaire marqueur et, avec le "
+                        + "module, erplibre_client_uuid. Une reprise cherche la réponse par son marqueur sur la fiche "
+                        + "avant de publier à nouveau ; une réponse de téléversement perdue est retrouvée comme pièce "
+                        + "jointe en attente de l'utilisateur. Un refus (pas le droit de publier, fiche disparue, son "
+                        + "fichier refusé) bloque la réponse en avis qui garde son texte et ses fichiers jusqu'à ce "
+                        + "qu'il soit fermé. Ses lignes de fichiers et de brouillon portent la fiche (thread_model, "
+                        + "thread_id) et channel_id 0 : aucun brouillon, aucune liste ni aucun espace de conversation "
+                        + "ne les compte.",
+                },
+                files: [
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/chat/chatRepository.ts",
+                    "src/services/chat/chatTransfer.ts",
+                    "src/services/migrations/addChatRecordThreads.ts",
+                    "src/components/chat/chat_list_component.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatRecordPost.test.ts",
+                    "src/__tests__/chatOutbox.test.ts",
+                    "src/__tests__/chatRepository.test.ts",
+                    "src/__tests__/chatTransfer.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                ],
+            },
+            {
                 id: "chat.emoji",
                 label: { en: "Chat emoji", fr: "Émojis du clavardage" },
                 description: {

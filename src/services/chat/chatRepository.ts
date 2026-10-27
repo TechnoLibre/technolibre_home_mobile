@@ -86,6 +86,22 @@ export interface ChatDraft {
   mentions: Mentions;
 }
 
+/** The record a draft of a reply on a record belongs to (RecordThread without its name). */
+export type DraftThread = { model: string; resId: number };
+
+/**
+ * Where a draft lives: a conversation by its id, or a record. A record's
+ * draft row is keyed `configId#r<model>#<resId>` with channel_id 0, which
+ * no conversation has; its files are the "draft" rows naming the record.
+ */
+type DraftPlace = { id: string; channelId: number; thread: DraftThread | null };
+
+function placeOf(configId: string, where: number | DraftThread): DraftPlace {
+  return typeof where === "number"
+    ? { id: key(configId, where), channelId: where, thread: null }
+    : { id: key(configId, `r${where.model}#${where.resId}`), channelId: 0, thread: { model: where.model, resId: where.resId } };
+}
+
 /** The chat_drafts columns a draft write changes; the JSON ones as stored. */
 type DraftRow = {
   text: string;
@@ -259,6 +275,8 @@ function attachmentFromRow(r: Row): ChatAttachment {
     lastOpenedAt: r.last_opened_at ?? null,
     createdAt: r.created_at,
     origin: r.origin ?? null,
+    threadModel: r.thread_model ?? null,
+    threadId: r.thread_id ?? null,
   };
 }
 
@@ -505,6 +523,8 @@ export class ChatRepository {
       last_opened_at: a.lastOpenedAt,
       created_at: a.createdAt,
       origin: a.origin ?? null,
+      thread_model: a.threadModel ?? null,
+      thread_id: a.threadId ?? null,
     };
   }
 
@@ -1648,12 +1668,16 @@ export class ChatRepository {
     await this.patchServer(configId, attachmentId, { lastOpenedAt: at });
   }
 
-  /** Bytes cached on the phone (previews plus originals), for one channel, one account or all. */
+  /**
+   * Bytes cached on the phone (previews plus originals), for one channel,
+   * one account or all. A channel's leaves out the files of replies on
+   * records (thread_model set); an account's and the total count them.
+   */
   async attachmentBytes(configId?: string, channelId?: number): Promise<number> {
     const conds: string[] = [];
     const params: unknown[] = [];
     if (configId !== undefined) { conds.push("config_id = ?"); params.push(configId); }
-    if (channelId !== undefined) { conds.push("channel_id = ?"); params.push(channelId); }
+    if (channelId !== undefined) { conds.push("channel_id = ?", "thread_model IS NULL"); params.push(channelId); }
     // One aggregate in SQLite, not the rows summed here
     const rows = await this.db.rawQuery(
       "SELECT COALESCE(SUM(COALESCE(thumb_bytes, 0) + COALESCE(original_bytes, 0)), 0) AS bytes FROM chat_attachments"
@@ -1784,11 +1808,13 @@ export class ChatRepository {
 
   // ─── Drafts ───────────────────────────────────────────────────────────────
 
-  /** A conversation's draft files (`l<uuid>` rows in the "draft" state), in chip order. */
-  private async draftFiles(configId: string, channelId: number): Promise<ChatAttachment[]> {
-    return (await this.rows("chat_attachments", { config_id: configId, channel_id: channelId, state: "draft" }))
-      .map(attachmentFromRow)
-      .sort(bySeq);
+  /** A conversation's or a record's draft files (`l<uuid>` rows in the "draft" state), in chip order. */
+  private async draftFiles(configId: string, where: number | DraftThread): Promise<ChatAttachment[]> {
+    const { thread, channelId } = placeOf(configId, where);
+    const rows = thread
+      ? await this.rows("chat_attachments", { config_id: configId, thread_model: thread.model, thread_id: thread.resId, state: "draft" })
+      : (await this.rows("chat_attachments", { config_id: configId, channel_id: channelId, state: "draft" })).filter((r) => !r.thread_model);
+    return rows.map(attachmentFromRow).sort(bySeq);
   }
 
   /**
@@ -1796,14 +1822,15 @@ export class ChatRepository {
    * files in chip order, the message the text answers (replyTo), the edit
    * in progress (its message and text) and the people and channels picked
    * in either text; empty for none. A stored value that does not read as
-   * JSON counts as none.
+   * JSON counts as none. `where` is a conversation's id or a record
+   * (DraftThread), whose draft is that of a reply on it.
    */
-  async draftOf(configId: string, channelId: number): Promise<ChatDraft> {
-    const row = await this.row("chat_drafts", key(configId, channelId));
+  async draftOf(configId: string, where: number | DraftThread): Promise<ChatDraft> {
+    const row = await this.row("chat_drafts", placeOf(configId, where).id);
     const editOf = storedTarget(row?.edit_of);
     return {
       text: row?.text ?? "",
-      files: await this.draftFiles(configId, channelId),
+      files: await this.draftFiles(configId, where),
       replyTo: storedTarget(row?.reply_to),
       edit: editOf ? { target: editOf, text: row?.edit_text ?? "" } : null,
       mentions: mentionsOf(row?.mentions),
@@ -1817,8 +1844,8 @@ export class ChatRepository {
    * the text they belong to (a pick in an empty composer, an edit's picks
    * before the edit).
    */
-  private async patchDraft(configId: string, channelId: number, patch: Partial<DraftRow>): Promise<void> {
-    const id = key(configId, channelId);
+  private async patchDraft(configId: string, where: number | DraftThread, patch: Partial<DraftRow>): Promise<void> {
+    const { id, channelId, thread } = placeOf(configId, where);
     const row = await this.row("chat_drafts", id);
     const next: DraftRow = {
       text: row?.text ?? "",
@@ -1829,16 +1856,19 @@ export class ChatRepository {
       ...patch,
     };
     if (next.text === "" && next.reply_to === null && next.edit_of === null && next.mentions === null
-      && (await this.draftFiles(configId, channelId)).length === 0) {
+      && (await this.draftFiles(configId, where)).length === 0) {
       if (row) await this.del("chat_drafts", { id });
       return;
     }
-    await this.put("chat_drafts", { id, config_id: configId, channel_id: channelId, ...next, updated_at: this.now() });
+    await this.put("chat_drafts", {
+      id, config_id: configId, channel_id: channelId, ...next, updated_at: this.now(),
+      thread_model: thread?.model ?? null, thread_id: thread?.resId ?? null,
+    });
   }
 
-  /** Stores the draft text of a conversation; an empty text with nothing else in the draft deletes its row. */
-  async putDraftText(configId: string, channelId: number, text: string): Promise<void> {
-    await this.patchDraft(configId, channelId, { text });
+  /** Stores the draft text of a conversation or a record; an empty text with nothing else in the draft deletes its row. */
+  async putDraftText(configId: string, where: number | DraftThread, text: string): Promise<void> {
+    await this.patchDraft(configId, where, { text });
   }
 
   /** Stores the message a conversation's draft text answers; null for none. */
@@ -1860,10 +1890,10 @@ export class ChatRepository {
     if (editOf && sameTarget(editOf, target)) await this.putDraftEdit(configId, channelId, null);
   }
 
-  /** Stores the people and channels picked in a conversation's composer; none stores null. */
-  async putDraftMentions(configId: string, channelId: number, mentions: Mentions): Promise<void> {
+  /** Stores the people and channels picked in a conversation's or a record's composer; none stores null. */
+  async putDraftMentions(configId: string, where: number | DraftThread, mentions: Mentions): Promise<void> {
     const none = mentions.partners.length === 0 && mentions.channels.length === 0;
-    await this.patchDraft(configId, channelId, { mentions: none ? null : JSON.stringify(mentions) });
+    await this.patchDraft(configId, where, { mentions: none ? null : JSON.stringify(mentions) });
   }
 
   /**
@@ -1872,32 +1902,33 @@ export class ChatRepository {
    * when it names `replyTo` (the post's parent), and so do the picks while
    * no edit is in progress. A draft typed on since is left, and so is one
    * stored after `notAfter` (an ISO time, the post's): the same text typed
-   * again once the post was queued.
+   * again once the post was queued. `where` is a conversation's id or a
+   * record (a reply on it).
    */
   async removeDraftText(
     configId: string,
-    channelId: number,
+    where: number | DraftThread,
     text: string,
     notAfter?: string,
     replyTo?: MessageTarget | null,
   ): Promise<void> {
-    const row = await this.row("chat_drafts", key(configId, channelId));
+    const row = await this.row("chat_drafts", placeOf(configId, where).id);
     if (!row || (row.text ?? "").trim() !== text.trim()) return;
     if (notAfter !== undefined && row.updated_at > notAfter) return;
     const stored = storedTarget(row.reply_to);
     const answered = !!stored && !!replyTo && sameTarget(stored, replyTo);
     if (!row.text && !answered) return;
-    await this.patchDraft(configId, channelId, {
+    await this.patchDraft(configId, where, {
       text: "",
       ...(answered ? { reply_to: null } : {}),
       ...(row.edit_of ? {} : { mentions: null }),
     });
   }
 
-  /** Deletes a conversation's draft row left with no text, no reply target, no edit and no picks once no draft file is left. */
-  private async tidyDraft(configId: string, channelId: number): Promise<void> {
-    const row = await this.row("chat_drafts", key(configId, channelId));
-    if (row && !row.text && !row.reply_to && !row.edit_of && !row.mentions && (await this.draftFiles(configId, channelId)).length === 0) {
+  /** Deletes a conversation's or a record's draft row left with no text, no reply target, no edit and no picks once no draft file is left. */
+  private async tidyDraft(configId: string, where: number | DraftThread): Promise<void> {
+    const row = await this.row("chat_drafts", placeOf(configId, where).id);
+    if (row && !row.text && !row.reply_to && !row.edit_of && !row.mentions && (await this.draftFiles(configId, where)).length === 0) {
       await this.del("chat_drafts", { id: row.id });
     }
   }
@@ -1924,7 +1955,7 @@ export class ChatRepository {
     const row = await this.attachmentByKey(configId, `l${localUuid}`);
     if (!row || row.state !== "draft") return [];
     await this.del("chat_attachments", { id: key(configId, `l${localUuid}`) });
-    await this.tidyDraft(configId, row.channelId);
+    await this.tidyDraft(configId, row.threadModel ? { model: row.threadModel, resId: row.threadId ?? 0 } : row.channelId);
     return pathsOf(row);
   }
 
@@ -1933,7 +1964,8 @@ export class ChatRepository {
    * files: one UPDATE per row of its `l<uuid>` key, still a draft, so the
    * row, its uuid and its staged file stay the same (a compressed photo
    * brings its new path and size). `state` is "refused" (error "channel")
-   * for a conversation that cannot take a post.
+   * for a conversation that cannot take a post. A reply on a record names
+   * it as `thread` (channelId 0): its draft is the one tidied.
    */
   async queueDrafts(
     configId: string,
@@ -1941,6 +1973,7 @@ export class ChatRepository {
     postClientUuid: string,
     files: { file: OutgoingFile; seq: number }[],
     state: "queued" | "refused",
+    thread?: DraftThread,
   ): Promise<void> {
     for (const { file: f, seq } of files) {
       await this.db.rawRun(
@@ -1950,7 +1983,7 @@ export class ChatRepository {
           f.path, f.size, key(configId, `l${f.localUuid}`), "draft"],
       );
     }
-    await this.tidyDraft(configId, channelId);
+    await this.tidyDraft(configId, thread ?? channelId);
   }
 
   /** Gives the files of a post that was never queued back to the draft of their conversation. */
@@ -1977,13 +2010,18 @@ export class ChatRepository {
     }
   }
 
-  /** Per conversation of the account with a draft: its text, how many files it keeps, and whether an edit is in progress. */
+  /**
+   * Per conversation of the account with a draft: its text, how many files
+   * it keeps, and whether an edit is in progress. The drafts of replies on
+   * records (thread_model set) are not a conversation's.
+   */
   async draftSummaries(configId: string): Promise<Map<number, { text: string; files: number; editing: boolean }>> {
     const out = new Map<number, { text: string; files: number; editing: boolean }>();
     for (const r of await this.rows("chat_drafts", { config_id: configId })) {
-      if (r.text || r.edit_of) out.set(r.channel_id, { text: r.text ?? "", files: 0, editing: !!r.edit_of });
+      if (!r.thread_model && (r.text || r.edit_of)) out.set(r.channel_id, { text: r.text ?? "", files: 0, editing: !!r.edit_of });
     }
     for (const r of await this.rows("chat_attachments", { config_id: configId, state: "draft" })) {
+      if (r.thread_model) continue;
       const d = out.get(r.channel_id) ?? { text: "", files: 0, editing: false };
       d.files++;
       out.set(r.channel_id, d);
@@ -1991,15 +2029,15 @@ export class ChatRepository {
     return out;
   }
 
-  /** Keys `configId#channelId` of the conversations with a draft (text or files), of one account or all. */
+  /** Keys `configId#channelId` of the conversations with a draft (text or files), of one account or all; a record's draft is none. */
   async draftChannels(configId?: string): Promise<Set<string>> {
     const texts = configId ? await this.rows("chat_drafts", { config_id: configId }) : await this.db.rawQuery("SELECT * FROM chat_drafts");
     const files = configId
       ? await this.rows("chat_attachments", { config_id: configId, state: "draft" })
       : await this.rows("chat_attachments", { state: "draft" });
     return new Set([
-      ...texts.filter((r) => r.text).map((r) => key(r.config_id, r.channel_id)),
-      ...files.map((r) => key(r.config_id, r.channel_id)),
+      ...texts.filter((r) => r.text && !r.thread_model).map((r) => key(r.config_id, r.channel_id)),
+      ...files.filter((r) => !r.thread_model).map((r) => key(r.config_id, r.channel_id)),
     ]);
   }
 

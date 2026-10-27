@@ -2,7 +2,7 @@ import {
   messageKeyOf,
   sameTarget,
   type ChannelType, type ChatAttachment, type ChatMailboxItem, type ChatMessage, type ChatNotice, type ChatReaction, type MessageTarget,
-  type OutgoingFile,
+  type OutgoingFile, type RecordThread,
 } from "../../models/chat";
 import { attachmentSettings, deviceAttachmentIO } from "../attachmentService";
 import type { DatabaseService, OutboxOp } from "../databaseService";
@@ -35,7 +35,7 @@ import { bodyHasMarker, bodyText, chatMarker, isEmptyMessage, withEditedMark } f
 import { EMPTY_MENTIONS, composeBody, type Mentions } from "./chatCompose";
 import { emojiConversions } from "./chatEmoji";
 import { effectiveLevel, levelAtLeast } from "./chatModule";
-import type { ChatRepository } from "./chatRepository";
+import type { ChatRepository, DraftThread } from "./chatRepository";
 import { parseStore, type StoreDelta } from "./chatStore";
 import { v4 as uuidv4 } from "uuid";
 
@@ -54,12 +54,28 @@ export const CHAT_NOTE = "chat";
  */
 export const CHAT_POST = "chat.post";
 /**
- * params { channelId, localUuid, path, name, mimetype, size, voice,
- * useModule, uploadSentAt?, uploadEndedAt?, heldFor? }: one file of a post,
- * uploaded as a pending attachment just before it. The op's client uuid is
- * the client_uuid of the module route (useModule). uploadSentAt: the first
- * send that may have reached the server; uploadEndedAt: the end of the last
- * such send that failed.
+ * params { thread: RecordThread, parentId, text, mentions: Mentions, note,
+ * useModule, files?, drafts?, draftText?, createSentAt?, reuploaded? }: a
+ * reply in a record's chatter, from the inbox item of message parentId,
+ * posted on the record by /mail/message/post as an internal note (note:
+ * mail.mt_note, no follower added) or a message to the followers
+ * (mail.mt_comment). One op per reply, never merged; a reply waits for the
+ * reply on the same record queued before it. Its files are uploaded on the
+ * record as a post's are (CHAT_UPLOAD ops before it, naming the record in
+ * place of a channel) and linked the same way (postFiles). useModule:
+ * module 1.4, whose upload route takes records and whose post dedups by
+ * the op's client uuid on any model. No chat_messages row stands for it:
+ * the replies waiting are read from the ops (pendingRecordReplies).
+ */
+export const CHAT_RECORD_POST = "chat.record_post";
+/**
+ * params { channelId | thread, localUuid, path, name, mimetype, size,
+ * voice, useModule, uploadSentAt?, uploadEndedAt?, heldFor? }: one file of
+ * a post, uploaded as a pending attachment just before it, on its channel
+ * (channelId) or on the record a reply goes to (thread, a RecordThread).
+ * The op's client uuid is the client_uuid of the module route (useModule).
+ * uploadSentAt: the first send that may have reached the server;
+ * uploadEndedAt: the end of the last such send that failed.
  */
 export const CHAT_UPLOAD = "chat.upload";
 /**
@@ -243,6 +259,17 @@ function baseBodyOf(message: ChatMessage, mine: OutboxOp[]): string | null {
  */
 const postBody = (op: OutboxOp, body: string): boolean => !op.params.clientUuid || bodyHasMarker(body, op.params.clientUuid);
 
+/**
+ * Whether the uploads of a post take the module route: a conversation's
+ * post says so in idempotentUpload (module 1.2), a reply on a record in
+ * useModule (module 1.4).
+ */
+const uploadsByModule = (post: OutboxOp): boolean =>
+  post.kind === CHAT_RECORD_POST ? !!post.params.useModule : !!post.params.idempotentUpload;
+
+/** The record of a reply's op, as its draft is keyed. */
+const draftThreadOf = (op: OutboxOp): DraftThread => ({ model: op.params.thread?.model, resId: op.params.thread?.resId });
+
 /** Whether a post may be on the server already: running, or sent once without the proof that nothing left (createSentAt). */
 const postStarted = (op: OutboxOp): boolean => op.status === "running" || !!op.params.createSentAt;
 
@@ -252,7 +279,7 @@ const ACTION_KINDS = [
 ];
 
 /** The kinds whose blocked rows are notices. */
-const NOTICE_KINDS = [...ACTION_KINDS, ...MESSAGE_KINDS, ...MAILBOX_KINDS, CHAT_DROPPED, CHAT_FILE_REFUSED];
+const NOTICE_KINDS = [...ACTION_KINDS, ...MESSAGE_KINDS, ...MAILBOX_KINDS, CHAT_DROPPED, CHAT_FILE_REFUSED, CHAT_RECORD_POST];
 
 /** The kinds drain leaves to the upload lane (pumpUploads). */
 const LANE_KINDS = new Set([CHAT_UPLOAD]);
@@ -518,6 +545,7 @@ export class ChatOutbox {
     private now: () => Date = () => new Date(),
   ) {
     outbox.registerHandler(CHAT_POST, (creds, op) => this.runPost(creds, op));
+    outbox.registerHandler(CHAT_RECORD_POST, (creds, op) => this.runRecordPost(creds, op));
     outbox.registerHandler(CHAT_READ, (creds, op) => this.runRead(creds, op));
     outbox.registerHandler(CHAT_CREATE, (creds, op) => this.runCreate(creds, op));
     outbox.registerHandler(CHAT_JOIN, (creds, op) => this.runJoin(creds, op));
@@ -609,13 +637,14 @@ export class ChatOutbox {
       this.queuePostNow(configId, (await this.realIdOf(configId, channelId)) ?? channelId, text, useModule, opts));
   }
 
-  /** The rows of a post's files, in pick order. */
+  /** The rows of a post's files, in pick order; a reply on a record names it (`thread`, channelId 0). */
   private outgoingRows(
     configId: string,
     channelId: number,
     postClientUuid: string,
     files: OutgoingFile[],
     state: "queued" | "refused",
+    thread?: DraftThread,
   ): ChatAttachment[] {
     return files.map((f, seq) => ({
       configId,
@@ -638,13 +667,15 @@ export class ChatOutbox {
       error: state === "refused" ? "channel" : null,
       lastOpenedAt: null,
       createdAt: this.now().toISOString(),
+      threadModel: thread?.model ?? null,
+      threadId: thread?.resId ?? null,
     }));
   }
 
-  /** The params of the upload op of one file. */
-  private uploadParams(channelId: number, f: OutgoingFile, useModule: boolean): Record<string, any> {
+  /** The params of the upload op of one file: on its channel, or on the record (`thread`) a reply goes to. */
+  private uploadParams(channelId: number | undefined, f: OutgoingFile, useModule: boolean, thread?: RecordThread): Record<string, any> {
     return {
-      channelId,
+      ...(thread ? { thread } : { channelId }),
       localUuid: f.localUuid,
       path: f.path,
       name: f.name,
@@ -779,6 +810,134 @@ export class ChatOutbox {
     return message;
   }
 
+  /**
+   * Queues a reply in the chatter of the record an inbox item belongs to
+   * (CHAT_RECORD_POST): an internal note when `note`, else a message to the
+   * record's followers. Its files go first, one CHAT_UPLOAD each on the
+   * record in pick order, and the reply waits for the last of them, as
+   * queuePost chains a post (the reply queued before it on the same record
+   * holds the first). Their rows carry the record and channel_id 0; a file
+   * kept in the record's draft is given to the reply in place. The ops are
+   * stored "incomplete" until the rows are written (recoverIncomplete
+   * repairs a cut); a reply that cannot be stored deletes the other staged
+   * files, gives the draft files back and throws. idempotent: module 1.4
+   * (the module upload route on the record, the client uuid in the post).
+   * draftText is the composer's text as the record's draft holds it,
+   * removed from that draft once the reply is stored (best-effort, as for a
+   * post). Returns the reply's op.
+   */
+  queueRecordPost(
+    configId: string,
+    item: ChatMailboxItem,
+    text: string,
+    mentions: Mentions,
+    files: OutgoingFile[],
+    note: boolean,
+    opts: { idempotent: boolean; draftText?: string },
+  ): Promise<OutboxOp> {
+    return this.exclusive(configId, () => this.queueRecordPostNow(configId, item, text, mentions, files, note, opts));
+  }
+
+  private async queueRecordPostNow(
+    configId: string,
+    item: ChatMailboxItem,
+    text: string,
+    mentions: Mentions,
+    files: OutgoingFile[],
+    note: boolean,
+    opts: { idempotent: boolean; draftText?: string },
+  ): Promise<OutboxOp> {
+    const thread: RecordThread = { model: item.threadModel, resId: item.threadId, recordName: item.recordName };
+    const place: DraftThread = { model: thread.model, resId: thread.resId };
+    const drafts = new Set<string>();
+    for (const f of files) {
+      if ((await this.repo.outgoingFile(configId, f.localUuid))?.state === "draft") drafts.add(f.localUuid);
+    }
+    const fresh = files.filter((f) => !drafts.has(f.localUuid));
+    const all = await this.db.getOutboxOpsForConfig(configId);
+    const onRecord = (o: OutboxOp) => o.kind === CHAT_RECORD_POST && o.params.thread?.model === thread.model
+      && o.params.thread?.resId === thread.resId;
+    // The tail of the record's chain: its unfinished reply no other reply or upload waits for
+    const previous = all
+      .filter(onRecord)
+      .filter((c) => !all.some((o) => o.dependsOn === c.id && (o.kind === CHAT_RECORD_POST || o.kind === CHAT_UPLOAD)))
+      .at(-1);
+    const uploads: OutboxOp[] = [];
+    let tail = previous?.id ?? null;
+    const incomplete = files.length > 0;
+    let op: OutboxOp;
+    try {
+      for (const f of files) {
+        const up = await this.outbox.enqueue({
+          noteId: CHAT_NOTE,
+          configId,
+          kind: CHAT_UPLOAD,
+          params: this.uploadParams(undefined, f, opts.idempotent, thread),
+          dependsOn: tail,
+          status: "incomplete",
+        });
+        uploads.push(up);
+        tail = up.id;
+      }
+      op = await this.outbox.enqueue({
+        noteId: CHAT_NOTE,
+        configId,
+        kind: CHAT_RECORD_POST,
+        params: {
+          thread, parentId: item.messageId, text, mentions, note, useModule: opts.idempotent,
+          ...(incomplete
+            ? {
+              files: files.map((f) => f.localUuid),
+              ...(drafts.size > 0 ? { drafts: files.filter((f) => drafts.has(f.localUuid)).map((f) => f.localUuid) } : {}),
+            }
+            : {}),
+          ...(opts.draftText !== undefined ? { draftText: opts.draftText } : {}),
+        },
+        dependsOn: tail,
+        ...(incomplete ? { status: "incomplete" as const } : {}),
+      });
+    } catch (e: unknown) {
+      for (const up of uploads) await this.outbox.cancel(up.id);
+      await this.removeFiles(fresh.map((f) => f.path));
+      throw e;
+    }
+    if (incomplete) {
+      try {
+        await this.storeFiles(configId, 0, op.clientUuid, files, drafts, "queued", place);
+        // The reply last: no drain sends it before its uploads are queued
+        for (const up of uploads) await this.outbox.complete(up.id, {});
+        await this.outbox.complete(op.id, {});
+      } catch (e: unknown) {
+        for (const up of uploads) await this.outbox.cancel(up.id);
+        await this.outbox.cancel(op.id);
+        await this.repo.backToDraft(configId, [...drafts]);
+        await this.dropOutgoing(configId, fresh.map((f) => f.localUuid));
+        // A cut inside putOutgoing leaves files no row names
+        await this.removeFiles(fresh.map((f) => f.path));
+        throw e;
+      }
+      op = { ...op, status: "queued" };
+    }
+    await this.releaseDraftText(configId, place, opts.draftText);
+    return op;
+  }
+
+  /**
+   * The replies on records the account still has to send (CHAT_RECORD_POST
+   * ops not given up), by the inbox message they answer (parentId), oldest
+   * first: their text, whether each is a note, and how many files it holds.
+   */
+  async pendingRecordReplies(configId: string): Promise<Map<number, { text: string; note: boolean; files: number }[]>> {
+    const out = new Map<number, { text: string; note: boolean; files: number }[]>();
+    for (const o of await this.db.getOutboxOpsForConfig(configId)) {
+      if (o.kind !== CHAT_RECORD_POST || o.status === "blocked") continue;
+      const list = out.get(o.params.parentId) ?? [];
+      list.push({ text: o.params.text ?? "", note: o.params.note !== false, files: (o.params.files ?? []).length });
+      out.set(o.params.parentId, list);
+    }
+    return out;
+  }
+
   /** A reply target as the cache names its message (messageOf): its server id and client uuid; one not cached as given. */
   private async parentOf(configId: string, target: MessageTarget): Promise<MessageTarget> {
     const message = await this.repo.messageOf(configId, target);
@@ -804,7 +963,7 @@ export class ChatOutbox {
    */
   private async releaseDraftText(
     configId: string,
-    channelId: number,
+    channelId: number | DraftThread,
     text: unknown,
     notAfter?: string,
     parent?: MessageTarget | null,
@@ -819,7 +978,8 @@ export class ChatOutbox {
 
   /**
    * Stores the rows of a post's files, each at its position: a draft file's
-   * row is given to the post in place, any other is written new.
+   * row is given to the post in place, any other is written new. A reply
+   * on a record names it (`thread`, with channelId 0).
    */
   private async storeFiles(
     configId: string,
@@ -828,12 +988,13 @@ export class ChatOutbox {
     files: OutgoingFile[],
     drafts: Set<string>,
     state: "queued" | "refused",
+    thread?: DraftThread,
   ): Promise<void> {
-    const rows = this.outgoingRows(configId, channelId, postClientUuid, files, state);
+    const rows = this.outgoingRows(configId, channelId, postClientUuid, files, state, thread);
     const fresh = rows.filter((r) => !drafts.has(r.localUuid!));
     if (fresh.length > 0) await this.repo.putOutgoing(fresh);
     const given = files.map((file, seq) => ({ file, seq })).filter(({ file }) => drafts.has(file.localUuid));
-    if (given.length > 0) await this.repo.queueDrafts(configId, channelId, postClientUuid, given, state);
+    if (given.length > 0) await this.repo.queueDrafts(configId, channelId, postClientUuid, given, state, thread);
   }
 
   /** The paths given whose file is not a draft's: those a cleanup may delete. */
@@ -1966,18 +2127,32 @@ export class ChatOutbox {
               },
             }
             : {}),
+          ...(o.kind === CHAT_RECORD_POST
+            ? { reply: { thread: o.params.thread, text: o.params.text ?? "", note: o.params.note !== false, files: o.params.files ?? [] } }
+            : {}),
         });
       }
     }
     return out;
   }
 
-  /** Dismisses a notice: its outbox row goes, and for a refused file its row and file. */
+  /**
+   * Dismisses a notice: its outbox row goes, and for a refused file its
+   * row and file; for a refused reply on a record, its files (rows, staged
+   * copies, any upload of them still queued).
+   */
   async dismissNotice(configId: string, id: string): Promise<void> {
     const op = await this.db.getOutboxOp(id);
     if (!op || op.configId !== configId || op.status !== "blocked" || !NOTICE_KINDS.includes(op.kind)) return;
     await this.outbox.cancel(id);
     if (op.kind === CHAT_FILE_REFUSED && op.params.localUuid) await this.dropOutgoing(configId, [op.params.localUuid]);
+    if (op.kind === CHAT_RECORD_POST && (op.params.files ?? []).length > 0) {
+      const files = new Set<string>(op.params.files);
+      const uploads = (await this.db.getOutboxOpsForConfig(configId)).filter((o) => o.kind === CHAT_UPLOAD && files.has(o.params.localUuid));
+      this.stopUploads(uploads);
+      for (const up of uploads) await this.outbox.cancel(up.id);
+      await this.dropOutgoing(configId, [...files]);
+    }
   }
 
   /**
@@ -2040,7 +2215,10 @@ export class ChatOutbox {
    * deleted. An incomplete upload no post waits for is removed. A post
    * that goes (its message stored, or queued as a text before it) has its
    * draftText removed from the draft (a kill between the two), unless the
-   * draft was stored after the post. Returns how many were queued.
+   * draft was stored after the post. A reply on a record cut the same way
+   * is queued when every one of its files has its row, else removed as
+   * such a post is, its draft files and text going back to the record's
+   * draft. Returns how many were queued.
    */
   async recoverIncomplete(): Promise<number> {
     let queued = 0;
@@ -2074,6 +2252,27 @@ export class ChatOutbox {
           await this.removeFiles(await this.notDrafts(configId, chain.map((up) => up.params)));
         }
       }
+      for (const reply of all.filter((o) => o.kind === CHAT_RECORD_POST && o.status === "incomplete")) {
+        const chain: OutboxOp[] = [];
+        for (let up = reply.dependsOn ? byId.get(reply.dependsOn) : undefined; up?.kind === CHAT_UPLOAD && up.status === "incomplete";
+          up = up.dependsOn ? byId.get(up.dependsOn) : undefined) chain.push(up);
+        chain.forEach((up) => kept.add(up.id));
+        const rows = (await this.repo.outgoingOf(configId, reply.clientUuid)).map((r) => r.localUuid!);
+        if (rows.length === (reply.params.files ?? []).length) {
+          for (const op of [...chain.reverse(), reply]) await this.outbox.complete(op.id, {});
+          queued++;
+          continue;
+        }
+        for (const op of [...chain, reply]) await this.outbox.cancel(op.id);
+        const drafted = new Set<string>(reply.params.drafts ?? []);
+        await this.repo.backToDraft(configId, rows.filter((u) => drafted.has(u)));
+        await this.dropOutgoing(configId, rows.filter((u) => !drafted.has(u)));
+        if (drafted.size > 0 && reply.params.text && typeof reply.params.draftText !== "string") {
+          const held = (await this.repo.draftOf(configId, draftThreadOf(reply))).text;
+          await this.repo.putDraftText(configId, draftThreadOf(reply), joinDraftText(reply.params.text, held));
+        }
+        await this.removeFiles(await this.notDrafts(configId, chain.map((up) => up.params)));
+      }
       for (const up of all.filter((o) => o.kind === CHAT_UPLOAD && o.status === "incomplete" && !kept.has(o.id))) {
         await this.outbox.cancel(up.id);
         await this.removeFiles(await this.notDrafts(configId, [up.params]));
@@ -2082,6 +2281,9 @@ export class ChatOutbox {
       // a draft stored after the post is the same text typed again
       const stored = await this.repo.queuedMessageUuids(configId);
       for (const op of await this.db.getOutboxOpsForConfig(configId)) {
+        if (op.kind === CHAT_RECORD_POST && op.status !== "incomplete") {
+          await this.releaseDraftText(configId, draftThreadOf(op), op.params.draftText, op.createdAt);
+        }
         if (op.kind !== CHAT_POST || (!stored.has(op.clientUuid) && op.status === "incomplete")) continue;
         await this.releaseDraftText(configId, op.params.channelId, op.params.draftText, op.createdAt, op.params.parent);
       }
@@ -2238,9 +2440,9 @@ export class ChatOutbox {
     });
   }
 
-  /** Posts of the account still in the outbox, failed and blocked ones included. */
+  /** Posts of the account still in the outbox, replies on records too, failed and blocked ones included. */
   async pendingPostCount(configId: string): Promise<number> {
-    return (await this.db.getOutboxOpsForConfig(configId)).filter((o) => o.kind === CHAT_POST).length;
+    return (await this.db.getOutboxOpsForConfig(configId)).filter((o) => o.kind === CHAT_POST || o.kind === CHAT_RECORD_POST).length;
   }
 
   /** Files of the account still to be uploaded (their ops, failed ones included). */
@@ -2381,10 +2583,9 @@ export class ChatOutbox {
 
   /**
    * Posts the text with the files its uploads left "uploaded", in pick
-   * order: post_data.attachment_ids and a top-level attachment_tokens of
-   * the same length (false each: an internal user's pending attachments
-   * carry no token). A file still queued holds the post (a plain error,
-   * retried); a refused one is left out. With no text and no file left the
+   * order (postFiles): post_data.attachment_ids and a top-level
+   * attachment_tokens of the same length (false each: an internal user's
+   * pending attachments carry no token). With no text and no file left the
    * message fails and the op ends. A refusal of a post with files, before
    * any re-upload, asks the server which ids it still holds
    * (reuploadVanished): the missing ones are uploaded again once, chained
@@ -2408,21 +2609,13 @@ export class ChatOutbox {
       return;
     }
     const useModule = !!op.params.useModule;
-    const withFiles = (op.params.files ?? []).length > 0;
-    const rows = withFiles ? await this.repo.outgoingOf(op.configId, op.clientUuid) : [];
-    if (rows.some((r) => r.state === "queued")) {
-      if (await this.requeueOrphans(op, rows)) {
-        throw new OutboxRetryLaterError(`Files of ${op.clientUuid} wait for their upload again.`, this.now().toISOString());
-      }
-      throw new Error("A file of the post is still to be uploaded.");
-    }
-    const ids = rows.filter((r) => r.state === "uploaded" && r.attachmentId !== null).map((r) => r.attachmentId!);
-    if (withFiles && ids.length === 0 && !String(text ?? "").trim()) {
-      // Every file refused and no text: nothing is left to post
+    const files = await this.postFiles(op);
+    if (files === "nothing") {
       await this.repo.failQueued(op.configId, op.clientUuid);
       this.changed(op.configId, channelId);
       return;
     }
+    const { ids, rows } = files;
     // Built before any stamp: a conversion chunk that fails to load is a plain retry, never a possible send
     const composed = composeBody(text, op.params.mentions ?? EMPTY_MENTIONS, await emojiConversions());
     const body = composed.body + chatMarker(op.clientUuid);
@@ -2433,7 +2626,7 @@ export class ChatOutbox {
     let result: any = null;
     try {
       if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the post waits for the network.");
-      const found = op.attempts > 1 ? await this.findSent(creds, op) : null;
+      const found = op.attempts > 1 ? await this.findSent(creds, op, { model: CHANNEL_MODEL, resId: channelId }) : null;
       if (found) {
         messageId = found.id;
         // The body and parent the server holds, so the message settles on them and not on the pending ones
@@ -2495,6 +2688,30 @@ export class ChatOutbox {
   }
 
   /**
+   * The files a post (or a reply on a record) links, once its uploads ran:
+   * the server ids of its rows left "uploaded", in pick order, with the
+   * rows. A file still queued holds the post: a row no upload op names gets
+   * one (requeueOrphans) and the post retries at once
+   * (OutboxRetryLaterError), else a plain error retries it later. A
+   * refused file is left out. "nothing": the post had files, every one was
+   * refused and it has no text, so nothing is left to post.
+   */
+  private async postFiles(op: OutboxOp): Promise<{ ids: number[]; rows: ChatAttachment[] } | "nothing"> {
+    const withFiles = (op.params.files ?? []).length > 0;
+    const rows = withFiles ? await this.repo.outgoingOf(op.configId, op.clientUuid) : [];
+    if (rows.some((r) => r.state === "queued")) {
+      if (await this.requeueOrphans(op, rows)) {
+        throw new OutboxRetryLaterError(`Files of ${op.clientUuid} wait for their upload again.`, this.now().toISOString());
+      }
+      throw new Error("A file of the post is still to be uploaded.");
+    }
+    const ids = rows.filter((r) => r.state === "uploaded" && r.attachmentId !== null).map((r) => r.attachmentId!);
+    // Every file refused and no text: nothing is left to post
+    if (withFiles && ids.length === 0 && !String(op.params.text ?? "").trim()) return "nothing";
+    return { ids, rows };
+  }
+
+  /**
    * Queued rows of a post that no upload op names (a cut between a row put
    * back in the queue and its new op) get one, chained before the post
    * behind what it waited for. Returns whether any was made.
@@ -2519,7 +2736,7 @@ export class ChatOutbox {
       noteId: CHAT_NOTE,
       configId: op.configId,
       kind: CHAT_UPLOAD,
-      params: this.uploadParams(op.params.channelId, file, !!op.params.idempotentUpload),
+      params: this.uploadParams(op.params.channelId, file, uploadsByModule(op), op.params.thread),
       dependsOn,
     });
   }
@@ -2549,20 +2766,25 @@ export class ChatOutbox {
 
   /**
    * The id, body and parent (`parent_id`, null for none) of the user's own
-   * message in the channel that carries this op's marker comment exactly,
-   * or null. The search is by author and the hit is
-   * checked on the whole comment, so another member's message that quotes
-   * the uuid is never taken for the post. Two hits block the op.
+   * message on `thread` (a channel, or the record a reply goes to) that
+   * carries this op's marker comment exactly, or null. The search is by
+   * author and the hit is checked on the whole comment, so another
+   * member's message that quotes the uuid is never taken for the post. Two
+   * hits block the op.
    */
-  private async findSent(creds: SyncCredentials, op: OutboxOp): Promise<{ id: number; body: string; parentId: number | null } | null> {
+  private async findSent(
+    creds: SyncCredentials,
+    op: OutboxOp,
+    thread: { model: string; resId: number },
+  ): Promise<{ id: number; body: string; parentId: number | null } | null> {
     const partnerId = (await this.rpc.sessionInfo(creds)).partnerId;
     if (!partnerId) throw new Error("The author partner of the session is unknown.");
     const found = (await this.rpc.searchRead<{ id: number; body: string; parent_id: [number, string] | false }>(
       creds,
       "mail.message",
       [
-        ["model", "=", CHANNEL_MODEL],
-        ["res_id", "=", op.params.channelId],
+        ["model", "=", thread.model],
+        ["res_id", "=", thread.resId],
         ["author_id", "=", partnerId],
         ["body", "ilike", clientMarker(op.clientUuid)],
       ],
@@ -2662,14 +2884,99 @@ export class ChatOutbox {
     }
   }
 
+  private runRecordPost(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, (running) => this.sendRecordPost(creds, running));
+  }
+
+  /**
+   * Posts a reply on its record (CHAT_RECORD_POST) with the files postFiles
+   * gives, as sendPost does for a channel: body of composeBody plus the
+   * op's marker, mail.mt_note for a note (mail_post_autofollow false: no
+   * follower added) or mail.mt_comment, partner_ids of the picks (no
+   * special mentions off a channel), the client uuid with the module. The
+   * send stamps createSentAt and a retry, past the quiet window, first
+   * looks for the reply by its marker on the record (findSent). A file the
+   * record refused (its upload answered "refused" or "not_found", rows
+   * written by refuseRecordFile) or a refused post (NotFound, AccessError:
+   * no right to post there, or the record gone) blocks the reply with
+   * reason "refused": its text and files stay on the phone, as a notice,
+   * until it is dismissed. Every file refused otherwise and no text: the op
+   * ends, nothing is posted. Once posted, its files leave the phone: no
+   * screen shows a record's chatter.
+   */
+  private async sendRecordPost(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    const thread: RecordThread = op.params.thread;
+    const note = op.params.note !== false;
+    if ((op.params.files ?? []).length > 0) {
+      const denied = (await this.repo.outgoingOf(op.configId, op.clientUuid))
+        .find((r) => r.state === "refused" && (r.error === "refused" || r.error === "not_found"));
+      if (denied) {
+        throw new OutboxBlockedError(`The record refused the file ${denied.name} (${denied.error}).`, "refused", [], op.kind, op.id);
+      }
+    }
+    const files = await this.postFiles(op);
+    if (files === "nothing") {
+      this.changed(op.configId, null);
+      return;
+    }
+    const { ids, rows } = files;
+    // Built before any stamp: a conversion chunk that fails to load is a plain retry, never a possible send
+    const composed = composeBody(op.params.text, op.params.mentions ?? EMPTY_MENTIONS, await emojiConversions());
+    const body = composed.body + chatMarker(op.clientUuid);
+    const sentAt = await this.quietStamp(creds, op);
+    try {
+      if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the reply waits for the network.");
+      const found = op.attempts > 1 ? await this.findSent(creds, op, thread) : null;
+      if (!found) {
+        await this.outbox.setParams(op.id, { createSentAt: this.now().toISOString() });
+        const postData: Record<string, any> = {
+          body,
+          message_type: "comment",
+          subtype_xmlid: note ? "mail.mt_note" : "mail.mt_comment",
+        };
+        if (ids.length > 0) postData.attachment_ids = ids;
+        if (composed.partnerIds.length > 0) postData.partner_ids = composed.partnerIds;
+        if (op.params.useModule) postData.erplibre_client_uuid = op.clientUuid;
+        const result = await this.rpc.callWithAuth(creds, (sessionId) =>
+          this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/message/post", {
+            thread_model: thread.model,
+            thread_id: thread.resId,
+            post_data: postData,
+            ...(ids.length > 0 ? { attachment_tokens: ids.map(() => false) } : {}),
+            context: { temporary_id: op.clientUuid, mail_post_autofollow: !note },
+          }));
+        if (typeof result?.["mail.message"]?.[0]?.id !== "number") {
+          // The server may have posted: a retry finds the reply by its marker
+          throw new Error("The reply's answer holds no message id.");
+        }
+      }
+    } catch (e: unknown) {
+      if (e instanceof RequestNotSentError) {
+        // Nothing of this attempt reached the server: the stamp goes back to the earlier one, whose window is over
+        await this.outbox.setParams(op.id, { createSentAt: sentAt ?? null });
+        throw e;
+      }
+      if (!isRefused(e)) throw e;
+      if (ids.length > 0 && !op.params.reuploaded && (await this.reuploadVanished(creds, op, rows, ids))) {
+        throw new OutboxRetryLaterError(`Files of ${op.clientUuid} are uploaded again before the reply.`, this.now().toISOString());
+      }
+      // Refused for good: the quiet window must not hold a later manual retry
+      await this.outbox.setParams(op.id, { createSentAt: null });
+      throw new OutboxBlockedError((e as Error).message, "refused", [], op.kind, op.id);
+    }
+    await this.dropOutgoing(op.configId, op.params.files ?? []);
+    this.changed(op.configId, null);
+  }
+
   private runUpload(creds: SyncCredentials, op: OutboxOp): Promise<void> {
     return this.outbox.attempt(op.id, (running) => this.sendUpload(creds, running))
       .finally(() => this.stopped.delete(op.id));
   }
 
   /**
-   * Uploads one file of a post as a pending attachment of its channel, in
-   * this order: a conversation being left refuses the file ("left"); Wi-Fi
+   * Uploads one file of a post as a pending attachment of its channel, or
+   * of the record a reply goes to (params.thread), in this order: a
+   * conversation being left refuses the file ("left"; never a record's); Wi-Fi
    * only and off Wi-Fi holds the op (OutboxHeldError: no attempt, no
    * delay); offline waits for the network; a file no longer on the phone
    * ("missing") or over the session's limit with UPLOAD_SLACK_BYTES
@@ -2686,16 +2993,19 @@ export class ChatOutbox {
    * failure stamps uploadEndedAt. A 413 refuses the file ("too_big", no
    * limit known), a refusal of the route with its reason; a refused file
    * gets a CHAT_FILE_REFUSED notice and the op ends, so the post goes
-   * without it. Success records the server's attachment on the row
-   * (ChatRepository.setUploaded).
+   * without it; a record's file the route refuses is refuseRecordFile's,
+   * which blocks its reply instead. Success records the server's
+   * attachment on the row (ChatRepository.setUploaded).
    */
   private async sendUpload(creds: SyncCredentials, op: OutboxOp): Promise<void> {
     const { configId } = op;
     const { channelId, localUuid, path, name, mimetype, size } = op.params;
+    const thread: RecordThread | undefined = op.params.thread;
+    const left = async () => !thread && (await this.leaving(configId, channelId));
     // Run again after its outcome was written (a kill before the op went): nothing is left to do
     const row = await this.repo.outgoingFile(configId, localUuid);
     if (!row || row.state === "refused" || (row.state === "uploaded" && row.attachmentId !== null)) return;
-    if (await this.leaving(configId, channelId)) return this.refuseLeft(op);
+    if (await left()) return this.refuseLeft(op);
     if (attachmentSettings().wifiOnly && !(await this.onWifi())) {
       await this.outbox.setParams(op.id, { heldFor: "wifi" });
       throw new OutboxHeldError("Wi-Fi only: the file waits for Wi-Fi.", "wifi");
@@ -2730,7 +3040,8 @@ export class ChatOutbox {
           const a = await transfer.upload(creds, {
             id: transferId,
             route: useModule ? MODULE_UPLOAD_ROUTE : ODOO_UPLOAD_ROUTE,
-            channelId,
+            channelId: thread ? thread.resId : channelId,
+            ...(thread ? { threadModel: thread.model } : {}),
             clientUuid: useModule ? op.clientUuid : null,
             voice: !!op.params.voice,
             path,
@@ -2751,7 +3062,7 @@ export class ChatOutbox {
       }
     } catch (e: unknown) {
       // A leave reached the server meanwhile (a 404, a cancel): the file goes with the conversation, no notice
-      if (await this.leaving(configId, channelId)) return this.refuseLeft(op);
+      if (await left()) return this.refuseLeft(op);
       if (e instanceof RequestNotSentError) {
         // Nothing of this send reached the server: a retry has nothing to look for
         if (firstSend) await this.outbox.setParams(op.id, { uploadSentAt: null });
@@ -2759,14 +3070,14 @@ export class ChatOutbox {
       }
       if (e instanceof ChatFileTooBigError) return this.refuseFile(op, "too_big");
       if (e instanceof ChatTransferRefusedError && e.reason === "not_found" && useModule) await this.moduleRouteGone(op);
-      if (e instanceof ChatTransferRefusedError) return this.refuseFile(op, e.reason);
+      if (e instanceof ChatTransferRefusedError) return thread ? this.refuseRecordFile(op, e.reason) : this.refuseFile(op, e.reason);
       // Cancelled by a drop: the op is gone
       if (e instanceof ChatTransferCancelledError && !(await this.db.getOutboxOp(op.id))) return;
       if (sending) await this.outbox.setParams(op.id, { uploadEndedAt: this.now().toISOString() });
       throw e;
     }
     // Left while the file was on the wire: the post is gone, the file is not its
-    if (await this.leaving(configId, channelId)) return this.refuseLeft(op);
+    if (await left()) return this.refuseLeft(op);
     await this.repo.setUploaded(configId, localUuid, {
       attachmentId: record.id, checksum: record.checksum, size: record.size, mimetype: record.mimetype, name: record.name,
     });
@@ -2774,12 +3085,14 @@ export class ChatOutbox {
 
   /**
    * The module route answered 404 twice: the module may be gone or older.
-   * The module state is probed again (moduleRefused); below 1.2 the file
-   * and the other files of its post take Odoo's route from now on, as a
-   * first send (the module route made nothing), and this throws
-   * OutboxRetryLaterError for a retry at once. Still 1.2, it returns: the
-   * channel itself is not found. A probe that fails throws a plain error:
-   * the retry meets the 404 and probes again, the file is not refused.
+   * The module state is probed again (moduleRefused); below the level its
+   * route needs (1.2 for a channel, 1.4 for a record) the file and the
+   * other files of its post take Odoo's route from now on, as a first send
+   * (the module route made nothing), and this throws OutboxRetryLaterError
+   * for a retry at once. Still at that level, it returns: the channel or
+   * the record itself is not found. A probe that fails throws a plain
+   * error: the retry meets the 404 and probes again, the file is not
+   * refused.
    */
   private async moduleRouteGone(op: OutboxOp): Promise<void> {
     try {
@@ -2787,16 +3100,17 @@ export class ChatOutbox {
     } catch (probe) {
       throw new Error(`The module route answered 404 and the module probe failed: ${(probe as Error)?.message ?? probe}`);
     }
-    if (levelAtLeast(effectiveLevel(await this.repo.sourceState(op.configId)), "1.2")) return;
+    if (levelAtLeast(effectiveLevel(await this.repo.sourceState(op.configId)), op.params.thread ? "1.4" : "1.2")) return;
     const all = await this.db.getOutboxOpsForConfig(op.configId);
-    const post = all.find((o) => o.kind === CHAT_POST && (o.params.files ?? []).includes(op.params.localUuid));
+    const post = all.find((o) => (o.kind === CHAT_POST || o.kind === CHAT_RECORD_POST)
+      && (o.params.files ?? []).includes(op.params.localUuid));
     const siblings = new Set<string>(post?.params.files ?? [op.params.localUuid]);
     for (const o of all) {
       if (o.kind === CHAT_UPLOAD && siblings.has(o.params.localUuid)) {
         await this.outbox.setParams(o.id, { useModule: false, uploadSentAt: null, uploadEndedAt: null });
       }
     }
-    if (post) await this.outbox.setParams(post.id, { idempotentUpload: false });
+    if (post) await this.outbox.setParams(post.id, post.kind === CHAT_RECORD_POST ? { useModule: false } : { idempotentUpload: false });
     throw new OutboxRetryLaterError("The module route is gone: the file goes through Odoo's route.", this.now().toISOString());
   }
 
@@ -2865,6 +3179,16 @@ export class ChatOutbox {
       mimetype: a.mimetype || op.params.mimetype,
       name: a.name || op.params.name,
     };
+  }
+
+  /**
+   * A file of a reply the record refused (the upload route's `reason`):
+   * its row turns "refused" with it and the op ends, with no file notice:
+   * the reply blocks on it (sendRecordPost) and its notice keeps the file.
+   */
+  private async refuseRecordFile(op: OutboxOp, reason: "refused" | "not_found"): Promise<void> {
+    await this.repo.setRefused(op.configId, op.params.localUuid, reason);
+    this.changed(op.configId, null);
   }
 
   /** The file of a conversation being left: refused "left", no notice; the op ends. */

@@ -452,7 +452,8 @@ export class ChatListComponent extends EnhancedComponent {
     /**
      * The notice's line: the conversation's title when it is listed (else
      * the name the notice kept), then what was not done and why; without a
-     * name, the line starts with a capital.
+     * name, the line starts with a capital. A refused reply on a record
+     * names the record and its text (its files' count without text).
      */
     private noticeOf(n: ChatNotice, title: string, serverLabel: string): NoticeRow {
         const name = title || n.label;
@@ -462,6 +463,12 @@ export class ChatListComponent extends EnhancedComponent {
             text = t(n.count === 1 ? "chat.notice_dropped_one" : "chat.notice_dropped_other", { count: n.count });
         } else if (n.edit) {
             text = t(n.edit.deleted ? "chat.notice_edit_deleted" : "chat.notice_edit_changed");
+        } else if (n.reply) {
+            const record = n.reply.thread.recordName;
+            const count = n.reply.files.length;
+            text = n.reply.text.trim() || count === 0
+                ? t("chat.notice_record_post_refused", { record, text: n.reply.text.trim() })
+                : t(count === 1 ? "chat.notice_record_post_refused_files_one" : "chat.notice_record_post_refused_files_other", { record, count });
         } else {
             const vanished = n.message ? "chat.notice_message_vanished" : "chat.notice_vanished";
             text = t(n.reason === "vanished" ? vanished : "chat.notice_refused", {

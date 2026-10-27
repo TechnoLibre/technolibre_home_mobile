@@ -91,6 +91,14 @@ describe("ChatTransfer", () => {
         expect(up.fields).not.toHaveProperty("client_uuid");
     });
 
+    it("a record's file names the record's model and id as its thread", async () => {
+        const { http, transfer } = build(() => ok());
+        await transfer.upload(CREDS, { ...UPLOAD, channelId: 5, threadModel: "project.task" });
+        expect(http.calls.find((c) => c.kind === "upload")!.fields).toEqual({
+            thread_id: "5", thread_model: "project.task", is_pending: "true", csrf_token: "tok-sid1", client_uuid: "6f1c-uuid",
+        });
+    });
+
     it("404 then re-auth uploads once more with the new session's token", async () => {
         const { http, transfer } = build((r) => (sidOf(r.headers) === "sid1" ? { status: 404, headers: {}, data: "" } : ok()));
         expect((await transfer.upload(CREDS, UPLOAD)).id).toBe(51);

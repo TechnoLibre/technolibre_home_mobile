@@ -7,7 +7,7 @@ import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS, clientMarker } fro
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
 import {
-  CHAT_INBOX_ALL, CHAT_INBOX_DONE, CHAT_NOTE, CHAT_PIN, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_STAR, CHAT_UPLOAD, ChatOutbox,
+  CHAT_INBOX_ALL, CHAT_INBOX_DONE, CHAT_NOTE, CHAT_PIN, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_RECORD_POST, CHAT_STAR, CHAT_UPLOAD, ChatOutbox,
   bodyFingerprint, sameTarget,
   targetKey,
 } from "../services/chat/chatOutbox";
@@ -435,6 +435,27 @@ describe("ChatOutbox", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ messageId: 500, status: "sent", clientUuid: m.clientUuid });
     expect(await db.getOutboxOpsForConfig(CONFIG)).toHaveLength(0);
+  });
+
+  it("a record reply's lost answer is found on its record, the conversation's search unchanged", async () => {
+    const odoo = chatOdoo();
+    odoo.state.dropResponses = 1;
+    const item = {
+      configId: CONFIG, messageId: 60, threadModel: "project.task", threadId: 5, recordName: "Tâche démo", authorPartnerId: 8,
+      body: "<p>?</p>", date: "2026-10-25 09:00:00", messageType: "comment", needaction: true, starred: false, history: false,
+    };
+    const op = await chat.queueRecordPost(CONFIG, item, "noté", { partners: [], channels: [] }, [], true, { idempotent: false });
+    expect(op).toMatchObject({ kind: CHAT_RECORD_POST, dependsOn: null, params: { parentId: 60, note: true, useModule: false } });
+    expect(await chat.flush(CREDS)).toMatchObject({ failed: 1 });
+    advance(CREATE_QUIET_WINDOW_MS + 1);
+    expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1, failed: 0 });
+    const search = odoo.calls.find((c) => c.path === "/web/dataset/call_kw" && c.params.model === "mail.message")!;
+    expect(search.params.kwargs.domain.slice(0, 2)).toEqual([["model", "=", "project.task"], ["res_id", "=", 5]]);
+    expect(odoo.posts()).toHaveLength(1);
+    expect(odoo.messages).toMatchObject([{ model: "project.task", res_id: 5 }]);
+    // No conversation row: a record's reply is not a message of a channel
+    expect(await repo.messages(CONFIG, CHANNEL)).toEqual([]);
+    expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
   });
 
   it("a failure before the server saw the post is re-sent with the same body", async () => {

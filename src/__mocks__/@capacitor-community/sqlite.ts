@@ -3,9 +3,9 @@
  *
  * Simulates a SQLite database in memory using Maps.
  * Handles basic CREATE TABLE, INSERT, SELECT, UPDATE, DELETE. A SELECT
- * takes `col = ?`, `col != ?`, `col > ?`, `col < ?` and
- * `col LIKE ? ESCAPE '\'` conditions joined by AND, then an optional
- * `ORDER BY col [ASC|DESC][, col [ASC|DESC]]…` (`rowid` is the row's
+ * takes `col = ?`, `col != ?`, `col > ?`, `col < ?`,
+ * `col LIKE ? ESCAPE '\'` and `col IS NULL` conditions joined by AND, then
+ * an optional `ORDER BY col [ASC|DESC][, col [ASC|DESC]]…` (`rowid` is the row's
  * place in the table) and `LIMIT n` or `LIMIT ?`. Anything else (a
  * virtual table, a trigger, sqlite_master) is accepted and does nothing.
  */
@@ -227,13 +227,21 @@ class MockDBConnection {
       const conds = where.trim()
         ? where
             .split(/\s+AND\s+/i)
-            .map((c) => c.trim().match(/^(\w+)\s*(!=|>|<|=|LIKE)\s*\?(?:\s+ESCAPE\s+'(.)')?$/i))
-            .map((m) => (m ? { col: m[1], op: m[2].toUpperCase(), escape: m[3] ?? "" } : { col: "", op: "=", escape: "" }))
+            .map((c) => {
+              const isNull = c.trim().match(/^(\w+)\s+IS\s+NULL$/i);
+              if (isNull) return { col: isNull[1], op: "IS NULL", escape: "", at: -1 };
+              const m = c.trim().match(/^(\w+)\s*(!=|>|<|=|LIKE)\s*\?(?:\s+ESCAPE\s+'(.)')?$/i);
+              return m ? { col: m[1], op: m[2].toUpperCase(), escape: m[3] ?? "", at: 0 } : { col: "", op: "=", escape: "", at: 0 };
+            })
         : [];
-      if (conds.length > 0 && values) {
+      // Each `?` condition takes the next value; `IS NULL` takes none
+      let bound = 0;
+      for (const c of conds) if (c.at >= 0) c.at = bound++;
+      if (conds.length > 0 && (values || conds.some((c) => c.at < 0))) {
         const test = (v: any, c: { op: string; escape: string }, x: any): boolean =>
-          c.op === "=" ? v === x : c.op === "!=" ? v !== x : c.op === ">" ? v > x : c.op === "<" ? v < x : sqliteLike(v, x, c.escape);
-        rows = rows.filter((row) => conds.every((c, i) => test(row[c.col], c, values[i])));
+          c.op === "IS NULL" ? v === null || v === undefined
+            : c.op === "=" ? v === x : c.op === "!=" ? v !== x : c.op === ">" ? v > x : c.op === "<" ? v < x : sqliteLike(v, x, c.escape);
+        rows = rows.filter((row) => conds.every((c) => test(row[c.col], c, c.at >= 0 ? values?.[c.at] : undefined)));
       }
       if (orderMatch) {
         const keys = orderMatch[1].split(",").map((k) => {
@@ -253,7 +261,7 @@ class MockDBConnection {
           return 0;
         });
       }
-      if (limitMatch) rows = rows.slice(0, Number(limitMatch[1] === "?" ? values?.[conds.length] : limitMatch[1]));
+      if (limitMatch) rows = rows.slice(0, Number(limitMatch[1] === "?" ? values?.[bound] : limitMatch[1]));
 
       if (colList === "*") {
         return { values: rows };

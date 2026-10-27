@@ -108,6 +108,22 @@ describe("ChatListComponent", () => {
         ]);
     });
 
+    it("a reply a record refused names the record and its text, or its files without text", async () => {
+        const chat: any = fakeChat(["a"], [chan("a", 5, { name: "Team" })]);
+        const reply = (id: string, text: string, files: string[]) => ({
+            id, configId: "a", kind: "chat.record_post", channelId: null, reason: "refused", error: "AccessError", count: 1, label: "",
+            reply: { thread: { model: "project.task", resId: 5, recordName: "Tâche démo" }, text, note: true, files },
+        });
+        chat.notices = vi.fn().mockResolvedValue([reply("r1", "Bonjour", []), reply("r2", "", ["u1", "u2"]), reply("r3", "", ["u1"])]);
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.state.notices.map((n: any) => n.text)).toEqual([
+            "Reply not sent to Tâche démo: Bonjour",
+            "Reply not sent to Tâche démo: 2 files",
+            "Reply not sent to Tâche démo: 1 file",
+        ]);
+    });
+
     it("a file's notice formats the limit as the composer does, in the user's language", async () => {
         const chat: any = fakeChat(["a"], [chan("a", 5, { name: "Team" })]);
         chat.notices = vi.fn().mockResolvedValue([{

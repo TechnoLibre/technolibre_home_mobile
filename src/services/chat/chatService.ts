@@ -1,11 +1,11 @@
 import type { Application } from "../../models/application";
 import type {
   BusNotification, ChatAttachment, ChatChannel, ChatFileOrigin, ChatMailboxItem, ChatMember, ChatMessage, ChatModuleState,
-  ChatNotice, ChatReaction, MessageTarget, OutgoingFile,
+  ChatNotice, ChatReaction, MessageTarget, OutgoingFile, RecordThread,
 } from "../../models/chat";
 import { messageKeyOf } from "../../models/chat";
 import { syncConfigIdFor } from "../../models/syncConfig";
-import type { DatabaseService } from "../databaseService";
+import type { DatabaseService, OutboxOp } from "../databaseService";
 import { networkService } from "../networkService";
 import type { CapabilityService } from "../odoo/capabilityService";
 import { RequestNotSentError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
@@ -24,7 +24,7 @@ import { CHAT_DELETE, CHAT_EDIT, CHAT_STAR, ChatOutbox, sameTarget, targetOf, ty
 import { ChatInbox } from "./chatInbox";
 import { ChatMentions } from "./chatMentions";
 import { ChatPeople } from "./chatPeople";
-import { ChatRepository, type ChatDraft } from "./chatRepository";
+import { ChatRepository, type ChatDraft, type DraftThread } from "./chatRepository";
 import { ChatSearch } from "./chatSearch";
 import { chatSettings } from "./chatSettings";
 import { CHAT_MAJOR, parseOdooMajor, sourceLabels, type ChatSource } from "./chatSources";
@@ -106,6 +106,9 @@ export const STARRED_PAGE = 30;
 export interface QueuedOpts {
   background?: boolean;
 }
+
+/** The record of a reply's draft, without its name. */
+const draftThread = (thread: RecordThread): DraftThread => ({ model: thread.model, resId: thread.resId });
 
 /**
  * The chat as the screens and the app lifecycle use it, over the cache
@@ -675,6 +678,51 @@ export class ChatService {
     return message;
   }
 
+  /**
+   * Queues a reply in the chatter of the record of an inbox item
+   * (ChatOutbox.queueRecordPost): an internal note by default, a message
+   * to the record's followers with note false; text, picks and files
+   * (staged under fileDirOf) as a conversation's post holds them. Module
+   * 1.4 (features.idempotentRecordPost) sends the files by its upload
+   * route and the reply with its client uuid. draftText: the composer's
+   * text as the record's draft holds it, removed from it with the reply.
+   * Online, the outbox is flushed at once: the files upload in the
+   * background and the reply follows them; a failed flush leaves it
+   * queued. Returns the reply's op.
+   */
+  async replyOnRecord(
+    src: ChatSource,
+    item: ChatMailboxItem,
+    text: string,
+    mentions: Mentions,
+    files: OutgoingFile[],
+    note = true,
+    draftText?: string,
+  ): Promise<OutboxOp> {
+    const { configId } = src;
+    const idempotent = (await this.features(configId)).idempotentRecordPost;
+    const op = await this.queue.queueRecordPost(configId, item, text, mentions, files, note, { idempotent, draftText });
+    this.changed(configId, null);
+    if (await this.isOnline()) {
+      try {
+        await this.queue.flush(src.creds);
+      } catch {
+        // Kept in the outbox for the next flush
+      }
+      this.changed(configId, null);
+    }
+    return op;
+  }
+
+  /**
+   * The replies on records of the account not sent yet (refused ones are
+   * notices), by the inbox message they answer: text, note or message, how
+   * many files.
+   */
+  pendingRecordReplies(configId: string): Promise<Map<number, { text: string; note: boolean; files: number }[]>> {
+    return this.queue.pendingRecordReplies(configId);
+  }
+
   // ─── Drafts ───────────────────────────────────────────────────────────────
 
   /** Per "configId#channelId", the composer sends between their tap and their post queued (sendStarted). */
@@ -716,20 +764,57 @@ export class ChatService {
   async draft(configId: string, channelId: number): Promise<ChatDraft & { lost: string[] }> {
     const real = (await this.realIdOf(configId, channelId)) ?? channelId;
     for (const id of new Set([channelId, real])) await Promise.all([...(this.sendsRunning.get(`${configId}#${id}`) ?? [])]);
-    return this.queue.draftTask(configId, channelId, async (id) => {
-      const { files, ...rest } = await this.repo.draftOf(configId, id);
-      const kept: ChatAttachment[] = [];
-      const lost: string[] = [];
-      for (const f of files) {
-        if (f.originalPath && (await this.queue.files.size(f.originalPath)) !== null) {
-          kept.push(f);
-          continue;
-        }
-        lost.push(f.name);
-        await this.repo.removeDraftFile(configId, f.localUuid!);
+    return this.queue.draftTask(configId, channelId, (id) => this.draftNow(configId, id));
+  }
+
+  /** draftOf of a conversation or a record, its files whose staged copy is gone dropped and named in `lost`. */
+  private async draftNow(configId: string, where: number | DraftThread): Promise<ChatDraft & { lost: string[] }> {
+    const { files, ...rest } = await this.repo.draftOf(configId, where);
+    const kept: ChatAttachment[] = [];
+    const lost: string[] = [];
+    for (const f of files) {
+      if (f.originalPath && (await this.queue.files.size(f.originalPath)) !== null) {
+        kept.push(f);
+        continue;
       }
-      return { ...rest, files: kept, lost };
-    });
+      lost.push(f.name);
+      await this.repo.removeDraftFile(configId, f.localUuid!);
+    }
+    return { ...rest, files: kept, lost };
+  }
+
+  /**
+   * What the composer of a reply on a record kept: its text, picks and
+   * draft files in chip order, as draft() reads a conversation's (a file
+   * whose staged copy is gone dropped, named in `lost`).
+   */
+  recordDraft(configId: string, thread: RecordThread): Promise<ChatDraft & { lost: string[] }> {
+    return this.queue.draftTask(configId, null, () => this.draftNow(configId, draftThread(thread)));
+  }
+
+  /** Stores the text typed in a record's reply composer; "" with nothing else in the draft leaves no draft. */
+  saveRecordDraftText(configId: string, thread: RecordThread, text: string): Promise<void> {
+    return this.queue.draftTask(configId, null, () => this.repo.putDraftText(configId, draftThread(thread), text));
+  }
+
+  /** Stores the people and channels picked in a record's reply composer. */
+  saveRecordDraftMentions(configId: string, thread: RecordThread, mentions: Mentions): Promise<void> {
+    return this.queue.draftTask(configId, null, () => this.repo.putDraftMentions(configId, draftThread(thread), mentions));
+  }
+
+  /** Keeps a file staged in a record's reply composer as a draft file at chip position `seq`, with where it was taken. */
+  keepRecordDraftFile(
+    configId: string,
+    thread: RecordThread,
+    file: OutgoingFile,
+    seq: number,
+    origin: ChatFileOrigin | null = null,
+  ): Promise<void> {
+    return this.queue.draftTask(configId, null, () => this.repo.putDraftFile({
+      ...this.draftFileRow(configId, 0, file, seq, origin),
+      threadModel: thread.model,
+      threadId: thread.resId,
+    }));
   }
 
   /** Stores the text typed in a conversation's composer; "" with nothing else in the draft leaves no draft. */
@@ -760,9 +845,14 @@ export class ChatService {
     seq: number,
     origin: ChatFileOrigin | null = null,
   ): Promise<void> {
-    return this.queue.draftTask(configId, channelId, (id) => this.repo.putDraftFile({
+    return this.queue.draftTask(configId, channelId, (id) => this.repo.putDraftFile(this.draftFileRow(configId, id, file, seq, origin)));
+  }
+
+  /** The draft row of a staged file of a composer, at chip position `seq`. */
+  private draftFileRow(configId: string, channelId: number, file: OutgoingFile, seq: number, origin: ChatFileOrigin | null): ChatAttachment {
+    return {
       configId,
-      channelId: id,
+      channelId,
       messageId: null,
       attachmentId: null,
       localUuid: file.localUuid,
@@ -782,7 +872,7 @@ export class ChatService {
       lastOpenedAt: null,
       createdAt: this.now().toISOString(),
       origin,
-    }));
+    };
   }
 
   /**

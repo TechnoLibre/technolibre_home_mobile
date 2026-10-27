@@ -1576,6 +1576,24 @@ export class DatabaseService {
   }
 
   /**
+   * Adds the record of a reply on a record (thread_model, thread_id) to
+   * chat_attachments and chat_drafts created before them; a conversation's
+   * rows keep null there. A column is added only when PRAGMA table_info
+   * does not list it, and only to an existing table: a fresh install (the
+   * tables already have them), a second run and a database without the
+   * chat tables change nothing.
+   */
+  async addChatRecordThreads(): Promise<void> {
+    for (const table of ["chat_attachments", "chat_drafts"]) {
+      const names = ((await this.db.query(`PRAGMA table_info(${table})`)).values ?? []).map((r: any) => r.name as string);
+      if (names.length === 0) continue;
+      for (const [col, def] of [["thread_model", "TEXT"], ["thread_id", "INTEGER"]]) {
+        if (!names.includes(col)) await this.db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+      }
+    }
+  }
+
+  /**
    * Gives search_text (searchTextOf of the body) to the cached messages
    * that have a body and an empty search_text: the rows cached before the
    * column existed. Reads SEARCH_FILL_ROUND rows per query, in id order
@@ -1700,7 +1718,9 @@ export class DatabaseService {
    * is the message the text answers and `edit_of` the message being edited
    * (each a JSON MessageTarget, null for none), `edit_text` the edit's text
    * and `mentions` the people and channels picked in either text (JSON
-   * Mentions).
+   * Mentions). The draft of a reply on a record is keyed
+   * `configId#r<model>#<resId>`, with channel_id 0 and the record in
+   * thread_model / thread_id (null for a conversation's).
    */
   private async createChatDraftsTable(): Promise<void> {
     await this.db.execute(`
@@ -1713,7 +1733,9 @@ export class DatabaseService {
         reply_to   TEXT,
         edit_of    TEXT,
         edit_text  TEXT,
-        mentions   TEXT
+        mentions   TEXT,
+        thread_model TEXT,
+        thread_id  INTEGER
       )
     `);
     await this.db.execute("CREATE INDEX IF NOT EXISTS chat_drafts_config ON chat_drafts (config_id)");
@@ -1722,7 +1744,9 @@ export class DatabaseService {
   /**
    * One row per file of a message, keyed `configId#a<attachmentId>` or
    * `configId#l<localUuid>` (see ChatAttachment). The paths and byte
-   * counts describe the files cached on the phone.
+   * counts describe the files cached on the phone. thread_model /
+   * thread_id name the record of a reply's file (channel_id 0 then), null
+   * for a conversation's.
    */
   private async createChatAttachmentsTable(): Promise<void> {
     await this.db.execute(`
@@ -1748,7 +1772,9 @@ export class DatabaseService {
         error            TEXT,
         last_opened_at   TEXT,
         created_at       TEXT NOT NULL,
-        origin           TEXT
+        origin           TEXT,
+        thread_model     TEXT,
+        thread_id        INTEGER
       )
     `);
     for (const [name, cols] of [

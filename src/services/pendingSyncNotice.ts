@@ -2,7 +2,7 @@ import { Capacitor } from "@capacitor/core";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import type { DatabaseService } from "./databaseService";
 import { CALENDAR_NOTE } from "./activityCalendarService";
-import { CHAT_NOTE, CHAT_POST } from "./chat/chatOutbox";
+import { CHAT_NOTE, CHAT_POST, CHAT_RECORD_POST } from "./chat/chatOutbox";
 import { NoteSyncPlugin } from "../plugins/noteSyncPlugin";
 import { t } from "../i18n";
 
@@ -21,7 +21,8 @@ export interface PendingCounts {
  * calendar's changes waiting in the outbox for a live server (not those of
  * a server removed since, nor blocked ones, which no sync sends), apart
  * the notes in conflict (they wait for the user, not for the network), and
- * apart the chat posts waiting in the outbox under the same rule.
+ * apart the chat posts (replies on records included) waiting in the outbox
+ * under the same rule.
  */
 export async function pendingCounts(db: DatabaseService): Promise<PendingCounts> {
   const statuses = await db.countNotesBySyncStatus();
@@ -29,7 +30,7 @@ export async function pendingCounts(db: DatabaseService): Promise<PendingCounts>
   const waiting = async (noteId: string) => (await db.getOutboxOpsForNote(noteId).catch(() => []))
     .filter((op) => live.has(op.configId) && op.status !== "blocked" && op.status !== "incomplete");
   const calendar = (await waiting(CALENDAR_NOTE)).length;
-  const messages = (await waiting(CHAT_NOTE)).filter((op) => op.kind === CHAT_POST).length;
+  const messages = (await waiting(CHAT_NOTE)).filter((op) => op.kind === CHAT_POST || op.kind === CHAT_RECORD_POST).length;
   return {
     pending: (statuses.pending ?? 0) + (statuses.error ?? 0) + calendar,
     conflicts: statuses.conflict ?? 0,
