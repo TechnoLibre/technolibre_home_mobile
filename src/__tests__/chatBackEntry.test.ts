@@ -83,21 +83,40 @@ describe("BackEntry", () => {
         expect(back).toHaveBeenCalledTimes(1);
     });
 
-    it("leaveAll takes the marks of the open layers off the current entry before the screen moves", () => {
-        const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    it("leaveAll goes back over the open layers' entries, then moves on once the popstate lands", () => {
+        vi.useFakeTimers();
+        const back = vi.spyOn(window.history, "go").mockImplementation(() => {});
         window.history.replaceState({ route: "inbox" }, "");
         const onBack = vi.fn();
         const e = new BackEntry("chatTest", onBack);
         e.open();
-        BackEntry.leaveAll();
-        expect(window.history.state).toEqual({ route: "inbox" });
-        // The screen moved: the layer's later dispose and popstates leave every entry alone
-        window.history.pushState({ route: "next" }, "");
-        e.dispose({ goBack: true });
+        const above = new BackEntry("chatAbove", vi.fn());
+        above.open();
+        const then = vi.fn();
+        BackEntry.leaveAll(then);
+        expect(back).toHaveBeenCalledWith(-2);
+        expect(then).not.toHaveBeenCalled();
         landOn({ route: "inbox" });
-        expect(back).not.toHaveBeenCalled();
+        expect(then).toHaveBeenCalledTimes(1);
+        // The layers going later leave every entry alone, and the timer adds nothing
+        e.dispose({ goBack: true });
+        above.dispose({ goBack: true });
+        vi.advanceTimersByTime(2000);
+        expect(then).toHaveBeenCalledTimes(1);
         expect(onBack).not.toHaveBeenCalled();
-        expect(window.history.state).toEqual({ route: "inbox" });
+        expect(back).toHaveBeenCalledTimes(1);
+        // A popstate that never comes: it moves on after a while; without a layer open, at once
+        const c = new BackEntry("chatTest", vi.fn());
+        c.open();
+        const late = vi.fn();
+        BackEntry.leaveAll(late);
+        vi.advanceTimersByTime(1000);
+        expect(late).toHaveBeenCalledTimes(1);
+        c.dispose();
+        const now = vi.fn();
+        BackEntry.leaveAll(now);
+        expect(now).toHaveBeenCalledTimes(1);
+        vi.useRealTimers();
     });
 
     it("closed without its entry (never opened), close calls onBack at once", () => {

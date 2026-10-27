@@ -15,24 +15,40 @@
  * is going away, the entry stays for it); an entry the screen moved to is
  * left alone.
  */
+/** How long leaveAll waits for the popstate of its back before it goes on. */
+const LEAVE_WAIT_MS = 1000;
+
 export class BackEntry {
     /** The entries opened and not disposed yet, for leaveAll. */
     private static readonly opened = new Set<BackEntry>();
 
     /**
      * The screen navigates away while layers are open (a tap behind them):
-     * the marks of the open entries leave the current entry, which stays
-     * under the next screen as a plain one, so its back lands there and
-     * not on a layer that is gone. The layers' later dispose and popstates
-     * then leave every entry alone.
+     * goes back over the open entries' own entries, then calls `then`
+     * once the popstate has landed on the screen's entry, so the next
+     * screen is pushed in their place and a back from it lands on this
+     * screen, once. The layers' later dispose and popstates leave every
+     * entry alone. Without an entry open, `then` runs at once; a popstate
+     * that never comes runs it after LEAVE_WAIT_MS.
      */
-    static leaveAll(): void {
-        const rest = { ...(window.history.state ?? {}) };
-        for (const e of BackEntry.opened) {
-            delete rest[e.mark];
-            e.inHistory = false;
+    static leaveAll(then: () => void): void {
+        const above = [...BackEntry.opened].filter((e) => e.inHistory).length;
+        for (const e of BackEntry.opened) e.inHistory = false;
+        if (above === 0) {
+            then();
+            return;
         }
-        window.history.replaceState(rest, "");
+        let done = false;
+        const go = () => {
+            if (done) return;
+            done = true;
+            window.removeEventListener("popstate", go);
+            clearTimeout(timer);
+            then();
+        };
+        window.addEventListener("popstate", go);
+        const timer = setTimeout(go, LEAVE_WAIT_MS);
+        window.history.go(-above);
     }
 
     private inHistory = false;

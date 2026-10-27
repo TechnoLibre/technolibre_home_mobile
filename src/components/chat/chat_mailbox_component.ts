@@ -387,9 +387,9 @@ export class ChatMailboxComponent extends EnhancedComponent {
 
     /**
      * A tap on an item: opened by ChatInbox.openItem, nothing marked read.
-     * A reply composer open meanwhile closes as the screen goes, its mark
-     * taken off the entry left (BackEntry.leaveAll), so a back from the
-     * next screen lands on this list.
+     * A reply composer open meanwhile closes as the screen goes: its entry
+     * is gone back over first (BackEntry.leaveAll), so the next screen
+     * takes its place and one back from it lands on this list.
      */
     async onOpen(row: MailboxRow): Promise<void> {
         const src = this.sourceOf(row.configId);
@@ -397,11 +397,9 @@ export class ChatMailboxComponent extends EnhancedComponent {
         this.state.error = "";
         try {
             await this.chatService.inbox.openItem(src, row.item, (url) => {
-                if (this.state.reply) {
-                    BackEntry.leaveAll();
-                    this.state.reply = null;
-                }
-                this.navigate(url);
+                if (!this.state.reply) return this.navigate(url);
+                this.state.reply = null;
+                BackEntry.leaveAll(() => this.navigate(url));
             });
         } catch (e) {
             console.warn("chat mailbox: open failed", e);

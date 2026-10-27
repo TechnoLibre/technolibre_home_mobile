@@ -173,21 +173,26 @@ describe("ChatMailboxComponent", () => {
         expect(source).toMatch(/chat-mailbox__mark"[^>]*\n?[^>]*t-on-click\.stop=/);
     });
 
-    it("an item tapped while a reply composer is open closes it and leaves no marked entry under the next screen", async () => {
+    it("an item tapped while a reply composer is open: one back from it returns to the inbox, no second inbox entry", async () => {
         const chat: any = fakeChat(["a"]);
         chat.inbox.items.mockResolvedValue([item("a", 603), item("a", 602)]);
         const c = make(chat, "/chat/inbox");
         await c.loadCache();
+        const before = window.history.length;
         c.onReply(c.state.rows[1]);
-        // The composer's history entry, as it opens it
-        const entry = new BackEntry("chatReply", vi.fn());
+        // The composer's history entry, as it opens it; its back closes it
+        const entry = new BackEntry("chatReply", () => c.onReplyCancel());
         entry.open();
-        const states: any[] = [];
-        c.navigate = vi.fn(() => states.push(window.history.state));
+        c.navigate = vi.fn((url: string) => window.history.pushState({}, "", url));
         await c.onOpen(c.state.rows[0]);
-        expect(c.navigate).toHaveBeenCalledWith("/note/n-603");
-        expect(states).toEqual([{}]);
         expect(c.state.reply).toBeNull();
+        await vi.waitFor(() => expect(window.location.pathname).toBe("/note/n-603"));
+        expect(c.navigate).toHaveBeenCalledTimes(1);
+        // The composer's entry went: under the item lies the inbox alone
+        expect(window.history.length).toBe(before + 1);
+        window.history.back();
+        await vi.waitFor(() => expect(window.location.pathname).toBe("/chat/inbox"));
+        expect(window.history.state?.chatReply).toBeUndefined();
         entry.dispose({ goBack: true });
     });
 
