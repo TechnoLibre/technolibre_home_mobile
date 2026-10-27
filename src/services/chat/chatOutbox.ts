@@ -2898,8 +2898,9 @@ export class ChatOutbox {
    * Posts a reply on its record (CHAT_RECORD_POST) with the files postFiles
    * gives, as sendPost does for a channel: body of composeBody plus the
    * op's marker, mail.mt_note for a note (mail_post_autofollow false: no
-   * follower added) or mail.mt_comment with email_add_signature (the
-   * user's signature in the followers' emails, as the browser asks), partner_ids of the picks (no
+   * follower added) or mail.mt_comment, email_add_signature as the
+   * browser's composer always sends it (the user's signature in the emails
+   * a message makes), partner_ids of the picks (no
    * special mentions off a channel), parent_id the inbox item's message it
    * answers (as the browser's reply from the inbox), the client uuid with
    * the module. The
@@ -2940,6 +2941,7 @@ export class ChatOutbox {
         await this.outbox.setParams(op.id, { createSentAt: this.now().toISOString() });
         const postData: Record<string, any> = {
           body,
+          email_add_signature: true,
           message_type: "comment",
           subtype_xmlid: note ? "mail.mt_note" : "mail.mt_comment",
         };
@@ -2947,7 +2949,6 @@ export class ChatOutbox {
         if (composed.partnerIds.length > 0) postData.partner_ids = composed.partnerIds;
         if (op.params.useModule) postData.erplibre_client_uuid = op.clientUuid;
         if (typeof op.params.parentId === "number") postData.parent_id = op.params.parentId;
-        if (!note) postData.email_add_signature = true;
         const result = await this.rpc.callWithAuth(creds, (sessionId) =>
           this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/message/post", {
             thread_model: thread.model,

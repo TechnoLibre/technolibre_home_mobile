@@ -199,6 +199,8 @@ describe("record replies", () => {
       thread_id: TASK,
       post_data: {
         body: (await body("Bonjour")) + chatMarker(op.clientUuid), message_type: "comment", subtype_xmlid: "mail.mt_note", parent_id: 60,
+        // As the browser's composer, a note or a message alike
+        email_add_signature: true,
       },
       context: { temporary_id: op.clientUuid, mail_post_autofollow: false },
     }]);

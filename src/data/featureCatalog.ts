@@ -4752,7 +4752,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "assignments) is the conversation's in its pieces: ComposerAttach over the record's draft "
                         + "files, DraftText over its draft text, the emoji picker, @ from the people cache then "
                         + "res.partner.get_mention_suggestions (ChatMentions.forRecord, no @everyone), # as in a "
-                        + "conversation. A message reply also sends email_add_signature; a waiting reply shows under "
+                        + "conversation. Every reply sends email_add_signature, as the browser's composer; a waiting reply shows under "
                         + "its item with its file count.",
                     fr: "ChatOutbox.queueRecordPost met en file chat.record_post, ses fichiers d'abord en opérations "
                         + "chat.upload sur la fiche (/mail/attachment/upload d'Odoo avec thread_model le modèle de la "
@@ -4770,7 +4770,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "pièces : ComposerAttach sur les fichiers de brouillon de la fiche, DraftText sur son texte, "
                         + "le sélecteur d'émojis, @ depuis le cache des personnes puis "
                         + "res.partner.get_mention_suggestions (ChatMentions.forRecord, sans @everyone), # comme dans "
-                        + "une conversation. Une réponse en message envoie aussi email_add_signature ; une réponse en "
+                        + "une conversation. Toute réponse envoie email_add_signature, comme le compositeur du navigateur ; une réponse en "
                         + "attente s'affiche sous son élément avec son nombre de fichiers.",
                 },
                 files: [
