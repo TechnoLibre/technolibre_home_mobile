@@ -458,6 +458,25 @@ describe("ChatListComponent", () => {
         expect(source).toMatch(/t-if="starredTotal\(\) > 0"/);
     });
 
+    it("the inbox entry shows the counter", async () => {
+        const chat: any = fakeChat(["a", "b"], [chan("a", 5), chan("b", 6)]);
+        chat.repo.sourceState = vi.fn(async (id: string) => ({ selfPartnerId: 3, inboxCounter: id === "a" ? 3 : 4 }));
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.inboxTotal()).toBe(7);
+        await c.onFilter("a");
+        expect(c.inboxTotal()).toBe(3);
+        const nav = vi.fn();
+        c.navigate = nav;
+        c.onInbox();
+        expect(nav).toHaveBeenCalledWith("/chat/inbox");
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_list_component.ts"), "utf8");
+        // Above « ★ Favoris »
+        expect(source.indexOf('class="chat-list__inbox"')).toBeGreaterThan(0);
+        expect(source.indexOf('class="chat-list__inbox"')).toBeLessThan(source.indexOf('class="chat-list__starred"'));
+        expect(source).toMatch(/t-if="inboxTotal\(\) > 0"/);
+    });
+
     it("tapping a row navigates to the thread", async () => {
         const c = make(fakeChat(["a b"], [chan("a b", 5)]));
         await c.loadCache();

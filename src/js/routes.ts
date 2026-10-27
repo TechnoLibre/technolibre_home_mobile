@@ -4,6 +4,7 @@ import { OptionsComponent } from "../components/options/options_component";
 import { OptionsDatabaseComponent } from "../components/options/database/options_database_component";
 import { OptionsErplibreComponent } from "../components/options/erplibre/options_erplibre_component";
 import { ChatListComponent } from "../components/chat/chat_list_component";
+import { ChatMailboxComponent } from "../components/chat/chat_mailbox_component";
 import { ChatInfoComponent } from "../components/chat/chat_info_component";
 import { ChatNewComponent } from "../components/chat/chat_new_component";
 import { ChatThreadComponent } from "../components/chat/chat_thread_component";
@@ -43,6 +44,8 @@ export const routes: Route[] = [
 	{ pathname: "/applications/gallery", component: ApplicationsGalleryComponent },
 	{ pathname: "/applications", component: ApplicationsComponent },
 	{ pathname: "/chat/new", component: ChatNewComponent },
+	{ pathname: "/chat/inbox", component: ChatMailboxComponent },
+	{ pathname: "/chat/starred", component: ChatMailboxComponent },
 	{ pathname: "/chat/:source/:channelId/info", component: ChatInfoComponent },
 	{ pathname: "/chat/:source/:channelId", component: ChatThreadComponent },
 	{ pathname: "/chat", component: ChatListComponent },

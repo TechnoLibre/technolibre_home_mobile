@@ -31,6 +31,8 @@ interface ListSource {
     unread: number;
     /** The account's starred messages (starredCounter). */
     starred: number;
+    /** The account's inbox items as Odoo counts them (inboxCounter, its mentions included). */
+    inbox: number;
 }
 
 export interface ChatRow {
@@ -205,6 +207,10 @@ export class ChatListComponent extends EnhancedComponent {
                                     onHit.bind="onHit" onMailbox.bind="onSearchMailbox" onPerson.bind="onSearchPerson"
                                     onJoin.bind="onSearchJoin" onMore.bind="onSearchMore"/>
         <t t-else="">
+        <button type="button" class="chat-list__inbox" t-on-click="onInbox">
+          <span class="chat-list__inbox-label" t-esc="'📥 ' + t('chat.inbox_list')"/>
+          <span t-if="inboxTotal() > 0" class="chat-list__pill chat-list__inbox-count" t-esc="inboxTotal()"/>
+        </button>
         <button type="button" class="chat-list__starred" t-on-click="onStarred">
           <span class="chat-list__starred-label" t-esc="'★ ' + t('chat.starred_list')"/>
           <span t-if="starredTotal() > 0" class="chat-list__pill chat-list__starred-count" t-esc="starredTotal()"/>
@@ -346,6 +352,7 @@ export class ChatListComponent extends EnhancedComponent {
                 label: s.label,
                 unread: await this.chatService.unreadTotal([s.configId]),
                 starred: st.starredCounter ?? 0,
+                inbox: st.inboxCounter ?? 0,
             });
             // Not read yet (no load): offered, the load decides
             if (st.isInternalUser || !st.loadedAt) canCreate = true;
@@ -525,6 +532,18 @@ export class ChatListComponent extends EnhancedComponent {
         return this.state.sources
             .filter((s) => this.state.filter === null || s.configId === this.state.filter)
             .reduce((sum, s) => sum + s.starred, 0);
+    }
+
+    /** The inbox items of the accounts shown (the filter's, else all), as « 📥 Boîte de réception » counts them. */
+    inboxTotal(): number {
+        return this.state.sources
+            .filter((s) => this.state.filter === null || s.configId === this.state.filter)
+            .reduce((sum, s) => sum + s.inbox, 0);
+    }
+
+    /** « 📥 Boîte de réception »: the inbox of every account. */
+    onInbox(): void {
+        this.navigate("/chat/inbox");
     }
 
     /** « ★ Favoris »: the starred messages of every account. */

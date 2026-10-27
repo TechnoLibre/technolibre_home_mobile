@@ -139,7 +139,8 @@
 	margin-left: 0.3rem;
 }
 
-// « ★ Favoris », above the conversations
+// « 📥 Boîte de réception » and « ★ Favoris », above the conversations
+.chat-list__inbox,
 .chat-list__starred {
 	display: flex;
 	align-items: center;

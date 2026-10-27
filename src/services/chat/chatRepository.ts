@@ -876,12 +876,15 @@ export class ChatRepository {
    * Stores a mailbox partial over the row of the same message: the keys it
    * carries replace the stored ones, the others stay, so a partial with
    * only a flag keeps the body. A message not stored yet needs its thread
-   * (the row's NOT NULL columns); without it the partial is dropped.
+   * (the row's NOT NULL columns) and a box: one of needaction, starred or
+   * history true. Without them the partial is dropped, so a record's
+   * message any Store carries (a bus update) makes no row in no box.
    */
   private async upsertMailbox(configId: string, p: Partial<ChatMailboxItem> & { messageId: number }): Promise<void> {
     const stored = await this.row("chat_mailbox", key(configId, `m${p.messageId}`));
     const base: ChatMailboxItem | null = stored ? mailboxFromRow(stored) : null;
     if (!base && (p.threadModel === undefined || p.threadId === undefined)) return;
+    if (!base && !p.needaction && !p.starred && !p.history) return;
     const fresh: ChatMailboxItem = base ?? {
       configId,
       messageId: p.messageId,

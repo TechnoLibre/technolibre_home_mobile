@@ -3231,6 +3231,192 @@ describe("ChatService", () => {
       await chat.deleteMessage(src, GROUP, { messageId: 599, clientUuid: null });
       expect(await shown()).toEqual([700, 600, 590]);
     });
+
+    it("a starred page lowers the counter by the rows it unstars, unless it carries the server's", async () => {
+      await starredBox([590, 595], { starred: true });
+      expect(await counter()).toBe(2);
+      page = [];
+      await chat.refreshStarred(src);
+      expect(await shown()).toEqual([]);
+      expect(await counter()).toBe(0);
+      // A page that carries the server's count: it wins, the stars still queued laid over it
+      await starredBox([590], { starred: true });
+      offline();
+      await chat.star(src, 600, true, GROUP);
+      online();
+      odoo.state.onRoute = async (path) => (path === "/mail/starred/messages"
+        ? { data: { Store: { starred: { counter: 5 } } }, messages: [] } : undefined);
+      await chat.refreshStarred(src);
+      expect(await counter()).toBe(6);
+    });
+  });
+
+  describe("inbox", () => {
+    let odoo: ReturnType<typeof fakeOdoo>;
+    let src: ChatSource;
+    /** The messages the server holds, by id; `unread` the ids still needaction for the user. */
+    let records: Map<number, any>;
+    let unread: Set<number>;
+    const counter = async () => (await chat.repo.sourceState(config)).inboxCounter;
+    const mentions = async () => (await chat.repo.channel(config, MUTED))!.needactionCounter;
+    const shown = async (box: "inbox" | "history" = "inbox") => (await chat.inbox.items([config], box)).map((i) => i.messageId);
+    const record = (id: number, p: Record<string, any> = {}) => ({
+      id, body: `<p>r${id}</p>`, date: "2026-10-25 09:00:00", message_type: "comment",
+      author: { id: BOB, type: "partner" }, thread: { id: 70, model: "res.partner" }, record_name: "Tâche démo", ...p,
+    });
+    const serve = (...ms: any[]) => {
+      for (const m of ms) {
+        records.set(m.id, m);
+        unread.add(m.id);
+      }
+    };
+    const kwArgs = (method: string) => odoo.kw(method).map((c) => c.params.args);
+
+    beforeEach(async () => {
+      odoo = fakeOdoo();
+      records = new Map();
+      unread = new Set();
+      odoo.state.onRoute = async (path, params) => {
+        if (path !== "/mail/inbox/messages" && path !== "/mail/history/messages") return undefined;
+        const inbox = path === "/mail/inbox/messages";
+        const rows = [...records.values()]
+          .filter((m) => unread.has(m.id) === inbox && (params.before === undefined || m.id < params.before))
+          .sort((a, b) => b.id - a.id)
+          .slice(0, params.limit)
+          .map((m) => ({ ...m, needaction: unread.has(m.id) }));
+        return { data: { "mail.message": rows }, messages: rows.map((m) => m.id) };
+      };
+      odoo.state.onKw = async (p) => {
+        if (p.method === "set_message_done") {
+          for (const id of p.args[0]) unread.delete(id);
+          return null;
+        }
+        if (p.method === "mark_all_as_read") {
+          const max = p.args[0].find((d: any[]) => d[0] === "id")[2];
+          const done = [...unread].filter((id) => id <= max);
+          for (const id of done) unread.delete(id);
+          return done;
+        }
+        return undefined;
+      };
+      src = await source();
+      await chat.load(src);
+      // A mention in « Muted » (2 mentions there) and a followed record's message
+      serve({ ...msg(801, MUTED), needaction: true }, record(98));
+    });
+
+    it("a done item and its bus echo lower the count once", async () => {
+      await chat.inbox.refresh(src, "inbox");
+      expect(await shown()).toEqual([801, 98]);
+      expect(await counter()).toBe(4);
+      offline();
+      await chat.markDone(src, [801]);
+      expect(await shown()).toEqual([98]);
+      expect(await shown("history")).toEqual([801]);
+      expect(await counter()).toBe(3);
+      expect(await mentions()).toBe(1);
+      // A load while the done waits: the server still counts it, the phone does not
+      online();
+      await chat.load(src);
+      expect(await counter()).toBe(3);
+      expect(await mentions()).toBe(1);
+      await chat.queue.flush(src.creds);
+      expect(kwArgs("set_message_done")).toEqual([[[801]]]);
+      // The server tells every device of the user, this one included
+      await chat.applyBus(config, [bus(1001, "mail.message/mark_as_read", { message_ids: [801], needaction_inbox_counter: 3 })]);
+      expect(await counter()).toBe(3);
+      expect(await mentions()).toBe(1);
+      expect(odoo.on("/mail/thread/messages")).toEqual([]);
+    });
+
+    it("a read in the browser moves the item to history", async () => {
+      await chat.inbox.refresh(src, "inbox");
+      await chat.applyBus(config, [bus(1001, "mail.message/mark_as_read", { message_ids: [801, 98], needaction_inbox_counter: 2 })]);
+      expect(await shown()).toEqual([]);
+      expect(await shown("history")).toEqual([801, 98]);
+      expect(await counter()).toBe(2);
+      expect(await mentions()).toBe(1);
+    });
+
+    it("a mention on the bus fills the inbox with its conversation", async () => {
+      const mention = { "mail.message": [{ ...msg(802, MUTED), needaction: true }] };
+      await chat.applyBus(config, [bus(1001, "mail.message/inbox", mention)]);
+      expect(await chat.repo.mailboxItem(config, 802)).toMatchObject({
+        threadModel: "discuss.channel", threadId: MUTED, recordName: "Muted", needaction: true,
+      });
+      expect(await counter()).toBe(5);
+      expect(await mentions()).toBe(3);
+      // A replay at or below the last bus id counts nothing and flags nothing
+      await chat.applyBus(config, [bus(1001, "mail.message/inbox", { "mail.message": [{ ...msg(803, MUTED), needaction: true }] })]);
+      expect(await counter()).toBe(5);
+      expect(await chat.repo.mailboxItem(config, 803)).toBeNull();
+    });
+
+    it("a page drops an item the server moved to history", async () => {
+      await chat.inbox.refresh(src, "inbox");
+      // Read in the browser while the phone missed the bus
+      unread.delete(98);
+      await chat.inbox.refresh(src, "inbox");
+      expect(await shown()).toEqual([801]);
+      expect(await shown("history")).toEqual([98]);
+      // A done still waiting keeps its item out of the inbox, the server listing it or not
+      offline();
+      await chat.markDone(src, [801]);
+      online();
+      await chat.inbox.refresh(src, "inbox");
+      expect(await shown()).toEqual([]);
+      expect(kwArgs("set_message_done")).toEqual([]);
+    });
+
+    it("the history tab pages with before", async () => {
+      for (let id = 1; id <= 40; id++) records.set(id, record(id));
+      expect(await chat.inbox.refresh(src, "history")).toMatchObject({ offline: false, more: true, oldestId: 11 });
+      expect(await shown("history")).toHaveLength(30);
+      expect(await chat.inbox.refresh(src, "history", 11)).toMatchObject({ more: false, oldestId: 1 });
+      expect(odoo.on("/mail/history/messages").map((c) => c.params)).toEqual([{ limit: 30 }, { limit: 30, before: 11 }]);
+      expect(await shown("history")).toHaveLength(40);
+      // Read-only: nothing marked
+      expect(kwArgs("set_message_done")).toEqual([]);
+      expect(odoo.on("/mail/thread/messages")).toEqual([]);
+      offline();
+      expect(await chat.inbox.refresh(src, "history")).toMatchObject({ offline: true });
+    });
+
+    it("mark all is bounded by the newest item shown", async () => {
+      await chat.inbox.refresh(src, "inbox");
+      expect(await chat.inbox.maxShown(config)).toBe(801);
+      offline();
+      await chat.markAllDone(src);
+      expect(await shown()).toEqual([]);
+      expect(await counter()).toBe(2);
+      // A mention arrives on the server before the network returns
+      serve({ ...msg(805, MUTED), needaction: true });
+      online();
+      await chat.queue.flush(src.creds);
+      expect(kwArgs("mark_all_as_read")).toEqual([[[["needaction", "=", true], ["id", "<=", 801]]]]);
+      expect([...unread]).toEqual([805]);
+      await chat.inbox.refresh(src, "inbox");
+      expect(await shown()).toEqual([805]);
+    });
+
+    it("an op queued while a load writes its counters still counts", async () => {
+      odoo.state.data.Store.starred = { counter: 2, counter_bus_id: 1000, id: "starred", model: "mail.box" };
+      await chat.inbox.refresh(src, "inbox");
+      await chat.load(src);
+      const apply = chat.repo.applyDelta.bind(chat.repo);
+      let queued: Promise<unknown> | null = null;
+      vi.spyOn(chat.repo, "applyDelta").mockImplementationOnce(async (configId, delta, opts) => {
+        // The load read the queued ops for its overlay: a star and a done queued now come before its write
+        queued = Promise.all([chat.queue.queueStar(config, 600, true, GROUP), chat.queue.queueInboxDone(config, [801])]);
+        await new Promise((r) => setTimeout(r, 20));
+        return apply(configId, delta, opts);
+      });
+      await chat.load(src);
+      await queued;
+      expect((await chat.repo.sourceState(config)).starredCounter).toBe(3);
+      expect(await counter()).toBe(3);
+      expect(await mentions()).toBe(1);
+    });
   });
 
   describe("reactions", () => {

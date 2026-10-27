@@ -1,0 +1,124 @@
+// The inbox and the starred box (/chat/inbox, /chat/starred): tabs, one card per item.
+#chat-mailbox {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	height: 100%;
+	padding: 0 var(--page-gutter, 0.75rem) 1rem;
+	box-sizing: border-box;
+}
+
+.chat-mailbox__tabs {
+	display: flex;
+	gap: 0.4rem;
+	overflow-x: auto;
+}
+
+.chat-mailbox__tab {
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 999px;
+	background: transparent;
+	color: inherit;
+	padding: 0.3rem 0.8rem;
+	white-space: nowrap;
+}
+
+.chat-mailbox__tab--on {
+	background: var(--btn-blue-color, #2563eb);
+	border-color: var(--btn-blue-color, #2563eb);
+	color: #fff;
+}
+
+.chat-mailbox__offline,
+.chat-mailbox__loading,
+.chat-mailbox__empty {
+	margin: 0.2rem 0;
+	font-size: 0.85rem;
+	opacity: 0.75;
+}
+
+.chat-mailbox__error {
+	margin: 0.2rem 0;
+	color: #c0392b;
+	font-size: 0.85rem;
+}
+
+.chat-mailbox__all {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+}
+
+.chat-mailbox__mark-all,
+.chat-mailbox__mark,
+.chat-mailbox__unstar {
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 0.4rem;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 0.85rem;
+	padding: 0.25rem 0.6rem;
+}
+
+.chat-mailbox__list {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.chat-mailbox__item {
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	padding: 0.5rem 0;
+	border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.chat-mailbox__meta {
+	display: flex;
+	align-items: baseline;
+	gap: 0.4rem;
+	min-width: 0;
+}
+
+.chat-mailbox__where {
+	overflow: hidden;
+	font-weight: 600;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chat-mailbox__tag {
+	padding: 0 0.35rem;
+	border-radius: 0.6rem;
+	background: rgba(128, 128, 128, 0.2);
+	font-size: 0.7rem;
+	white-space: nowrap;
+}
+
+.chat-mailbox__time {
+	margin-left: auto;
+	font-size: 0.75rem;
+	opacity: 0.7;
+	white-space: nowrap;
+}
+
+.chat-mailbox__author {
+	font-size: 0.8rem;
+	opacity: 0.8;
+}
+
+.chat-mailbox__preview {
+	overflow-wrap: anywhere;
+	font-size: 0.9rem;
+}
+
+.chat-mailbox__actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 0.4rem;
+}

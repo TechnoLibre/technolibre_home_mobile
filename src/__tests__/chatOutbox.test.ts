@@ -7,7 +7,8 @@ import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS, clientMarker } fro
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
 import {
-  CHAT_NOTE, CHAT_PIN, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_STAR, CHAT_UPLOAD, ChatOutbox, bodyFingerprint, sameTarget,
+  CHAT_INBOX_ALL, CHAT_INBOX_DONE, CHAT_NOTE, CHAT_PIN, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_STAR, CHAT_UPLOAD, ChatOutbox,
+  bodyFingerprint, sameTarget,
   targetKey,
 } from "../services/chat/chatOutbox";
 import { memoryChatFiles } from "../testing/chatFakes";
@@ -1372,6 +1373,98 @@ describe("ChatOutbox", () => {
       expect(await flagged()).toBe(false);
       expect(await chat.queueStar(CONFIG, 40, true, CHANNEL)).toBeNull();
       expect(await starOps()).toEqual([]);
+    });
+  });
+
+  describe("inbox", () => {
+    const counter = async () => (await repo.sourceState(CONFIG)).inboxCounter;
+    const mentions = async () => (await repo.channel(CONFIG, CHANNEL))!.needactionCounter;
+    const inboxOps = async () => (await db.getOutboxOpsForConfig(CONFIG))
+      .filter((o) => o.kind === CHAT_INBOX_DONE || o.kind === CHAT_INBOX_ALL);
+    const sent = (odoo: ReturnType<typeof chatOdoo>, method: string) => odoo.calls
+      .filter((c) => c.path === "/web/dataset/call_kw" && c.params.method === method).map((c) => c.params.args);
+    const item = (messageId: number, p: Record<string, any> = {}) => ({
+      messageId, threadModel: "res.partner", threadId: 70, recordName: "Tâche démo", body: `<p>r${messageId}</p>`,
+      messageType: "comment", needaction: true, ...p,
+    });
+
+    beforeEach(async () => {
+      await repo.applyDelta(CONFIG, {
+        channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], attachments: [], deletedAttachmentIds: [],
+        partners: [], inboxCounter: 3, selfPartnerId: null,
+        mailbox: [item(41), item(42), item(43, { threadModel: "discuss.channel", threadId: CHANNEL, recordName: "Team" })],
+      });
+      await repo.patchChannel(CONFIG, CHANNEL, { needactionCounter: 1 });
+    });
+
+    it("an item done offline is sent once online with set_message_done", async () => {
+      const odoo = chatOdoo();
+      chat.isOnline = async () => false;
+      const op = await chat.queueInboxDone(CONFIG, [43]);
+      expect(op).toMatchObject({ kind: CHAT_INBOX_DONE, params: { messageIds: [43], cleared: [43] } });
+      // Shown at once: the item in the history, the inbox and its conversation's mentions one lower
+      expect(await repo.mailboxItem(CONFIG, 43)).toMatchObject({ needaction: false, history: true });
+      expect(await counter()).toBe(2);
+      expect(await mentions()).toBe(0);
+      await chat.flush(CREDS);
+      expect(sent(odoo, "set_message_done")).toEqual([]);
+      chat.isOnline = async () => true;
+      await chat.flush(CREDS, { force: true });
+      expect(sent(odoo, "set_message_done")).toEqual([[[43]]]);
+      expect(await inboxOps()).toEqual([]);
+      await chat.flush(CREDS, { force: true });
+      expect(sent(odoo, "set_message_done")).toHaveLength(1);
+      expect(await counter()).toBe(2);
+    });
+
+    it("two items done offline go in one call", async () => {
+      const odoo = chatOdoo();
+      chat.isOnline = async () => false;
+      await chat.queueInboxDone(CONFIG, [41]);
+      await chat.queueInboxDone(CONFIG, [42, 41]);
+      const ops = await inboxOps();
+      expect(ops).toHaveLength(1);
+      expect(ops[0].params).toMatchObject({ messageIds: [41, 42], cleared: [41, 42] });
+      // A record's message is no mention: its conversation's count is the channel's alone
+      expect(await counter()).toBe(1);
+      expect(await mentions()).toBe(1);
+      chat.isOnline = async () => true;
+      await chat.flush(CREDS, { force: true });
+      expect(sent(odoo, "set_message_done")).toEqual([[[41, 42]]]);
+    });
+
+    it("mark all sends the bound it was queued with, the larger after a second tap", async () => {
+      const odoo = chatOdoo();
+      chat.isOnline = async () => false;
+      await chat.queueInboxAll(CONFIG, 42);
+      expect((await repo.mailboxItems(CONFIG, "inbox")).map((i) => i.messageId)).toEqual([43]);
+      expect(await counter()).toBe(1);
+      await chat.queueInboxAll(CONFIG, 41);
+      expect((await inboxOps())[0].params).toMatchObject({ maxId: 42, cleared: [41, 42] });
+      chat.isOnline = async () => true;
+      await chat.flush(CREDS, { force: true });
+      expect(sent(odoo, "mark_all_as_read")).toEqual([[[["needaction", "=", true], ["id", "<=", 42]]]]);
+      expect(await inboxOps()).toEqual([]);
+    });
+
+    it("a load laid over by a waiting done keeps the item done and the counters lowered", async () => {
+      chat.isOnline = async () => false;
+      await chat.queueInboxDone(CONFIG, [43]);
+      const delta: any = {
+        channels: [{ channelId: CHANNEL, needactionCounter: 1 }], deletedChannelIds: [], members: [], deletedMemberIds: [],
+        messages: [], attachments: [], deletedAttachmentIds: [], partners: [], inboxCounter: 3, selfPartnerId: null,
+        mailbox: [item(43, { threadModel: "discuss.channel", threadId: CHANNEL })],
+      };
+      await chat.overlayPending(CONFIG, delta);
+      expect(delta.inboxCounter).toBe(2);
+      expect(delta.channels[0].needactionCounter).toBe(0);
+      expect(delta.mailbox[0]).toMatchObject({ needaction: false, history: true });
+      // Done on the server meanwhile (another device): the server's count already leaves it out
+      await chat.forgetCleared(CONFIG, (id) => id === 43);
+      const again: any = { ...delta, channels: [{ channelId: CHANNEL, needactionCounter: 0 }], inboxCounter: 2, mailbox: [] };
+      await chat.overlayPending(CONFIG, again);
+      expect(again.inboxCounter).toBe(2);
+      expect(again.channels[0].needactionCounter).toBe(0);
     });
   });
 

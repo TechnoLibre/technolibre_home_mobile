@@ -1679,6 +1679,17 @@ describe("ChatRepository mailbox cache", () => {
     expect(await repo.mailboxItem(A, 61)).toBeNull();
   });
 
+  it("a partial with no flag set makes no row, and updates one that exists", async () => {
+    // A record's message a bus Store carries, in no box of the user
+    await repo.applyDelta(A, delta({ mailbox: [item(64, { needaction: false })] }));
+    await repo.applyDelta(A, delta({ mailbox: [item(65, { needaction: undefined })] }));
+    expect(await repo.mailboxItem(A, 64)).toBeNull();
+    expect(await repo.mailboxItem(A, 65)).toBeNull();
+    await repo.applyDelta(A, delta({ mailbox: [item(66, { needaction: false, history: true })] }));
+    await repo.applyDelta(A, delta({ mailbox: [item(66, { needaction: undefined, body: "<p>Autre</p>" })] }));
+    expect(await repo.mailboxItem(A, 66)).toMatchObject({ body: "<p>Autre</p>", history: true });
+  });
+
   it("mailboxItems filters on the flag, newest id first, per account", async () => {
     await repo.applyDelta(A, delta({ mailbox: [
       item(60), item(62), item(61, { needaction: false, history: true }), item(63, { needaction: false, starred: true }),

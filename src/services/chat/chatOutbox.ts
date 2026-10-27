@@ -1,7 +1,7 @@
 import {
   messageKeyOf,
   sameTarget,
-  type ChannelType, type ChatAttachment, type ChatMessage, type ChatNotice, type ChatReaction, type MessageTarget,
+  type ChannelType, type ChatAttachment, type ChatMailboxItem, type ChatMessage, type ChatNotice, type ChatReaction, type MessageTarget,
   type OutgoingFile,
 } from "../../models/chat";
 import { attachmentSettings, deviceAttachmentIO } from "../attachmentService";
@@ -162,11 +162,33 @@ export const MESSAGE_KINDS = [CHAT_REACTION, CHAT_EDIT, CHAT_DELETE, CHAT_PIN];
 export const CHAT_STAR = "chat.star";
 
 /**
+ * params { messageIds: number[], cleared: number[] }: inbox items the user
+ * marked read, sent with Odoo's set_message_done (idempotent; a no-op
+ * sends nothing on the bus). One op per account: a later tap adds its ids
+ * (the union). cleared: the ids whose mailbox row the phone moved from the
+ * inbox to the history, each counted one less in inboxCounter (see
+ * overlayInbox).
+ */
+export const CHAT_INBOX_DONE = "chat.inbox_done";
+
+/**
+ * params { maxId: number, cleared: number[] }: « Tout marquer comme lu »,
+ * sent as Odoo's mark_all_as_read over the needaction messages whose id is
+ * at most maxId, the newest the phone showed: a mention arriving after the
+ * tap stays unread. One op per account, the larger bound kept; cleared as
+ * for CHAT_INBOX_DONE.
+ */
+export const CHAT_INBOX_ALL = "chat.inbox_all";
+
+/** The two inbox actions, whose rows lower the inbox counter until sent. */
+const INBOX_KINDS = [CHAT_INBOX_DONE, CHAT_INBOX_ALL];
+
+/**
  * The actions of the account on a message that may have no chat_messages
  * row (a record's, cached in chat_mailbox only), handled by
  * runMailboxAction.
  */
-export const MAILBOX_KINDS = [CHAT_STAR];
+export const MAILBOX_KINDS = [CHAT_STAR, ...INBOX_KINDS];
 
 /** The guarded edit route of the server module (1.3): it writes only over the body whose fingerprint it is given. */
 export const MODULE_EDIT_ROUTE = "/erplibre_mobile_chat/message/update_content";
@@ -278,8 +300,8 @@ interface QueueActionOpts {
   same?: (o: OutboxOp) => boolean;
   /** The params written into an op waiting, from its stored ones; the new params by default. */
   merge?: (stored: Record<string, any>) => Record<string, any>;
-  /** Shows the action on the phone, with the conversation's id as queued. */
-  local?: (channelId: number | null) => Promise<void>;
+  /** Shows the action on the phone, with the conversation's id as queued and the op that holds the value (null when none). */
+  local?: (channelId: number | null, op: OutboxOp | null) => Promise<void>;
   /** The op a new one waits for when no op of the key runs, before the conversation's create. */
   after?: string | null;
   /** Whether merged params leave the server as it stood: nothing is sent. */
@@ -502,10 +524,13 @@ export class ChatOutbox {
   /**
    * Runs `task` once the account's earlier exclusive() tasks settled: a
    * post being queued and a temporary id being swapped never interleave,
-   * so a post never lands under an id the swap already left. Short cache
-   * work only; never awaits serial().
+   * so a post never lands under an id the swap already left. An action
+   * is queued and shown in it (queueAction), so a writer of server values
+   * that lays the queued ops over its delta and writes it in one
+   * exclusive() task never writes over a change queued after its read of
+   * the ops. Short cache work only; never awaits serial().
    */
-  private exclusive<T>(configId: string, task: () => Promise<T>): Promise<T> {
+  exclusive<T>(configId: string, task: () => Promise<T>): Promise<T> {
     const run = (this.locks.get(configId) ?? Promise.resolve()).then(task);
     const tail = run.then(() => undefined, () => undefined);
     this.locks.set(configId, tail);
@@ -1062,7 +1087,7 @@ export class ChatOutbox {
           noteId: CHAT_NOTE, configId, kind, params: values, dependsOn: running?.id ?? opts.after ?? creating,
         });
       }
-      await opts.local?.(id);
+      await opts.local?.(id, op);
       return op;
     });
   }
@@ -1298,6 +1323,89 @@ export class ChatOutbox {
     if (shown === on) return;
     const { starredCounter } = await this.repo.sourceState(configId);
     await this.repo.setSourceState({ configId, starredCounter: Math.max(0, starredCounter + (on ? 1 : -1)) });
+  }
+
+  /**
+   * Queues inbox items marked read (CHAT_INBOX_DONE), the ids added to the
+   * op waiting (union). Shown at once (showDone): the rows still in the
+   * inbox move to the history, and the ids moved join the op's cleared.
+   * Resolves with the op as stored after that.
+   */
+  async queueInboxDone(configId: string, messageIds: number[]): Promise<OutboxOp> {
+    const ids = [...new Set(messageIds)].sort((a, b) => a - b);
+    const wanted = new Set(ids);
+    const op = await this.queueAction(configId, CHAT_INBOX_DONE, null, { messageIds: ids, cleared: [] }, {
+      merge: (stored) => ({ messageIds: [...new Set([...(stored.messageIds ?? []), ...ids])].sort((a, b) => a - b) }),
+      local: (_id, queued) => this.showDone(configId, queued, (item) => wanted.has(item.messageId)),
+    });
+    return (await this.db.getOutboxOp(op.id)) ?? op;
+  }
+
+  /**
+   * Queues « Tout marquer comme lu » up to `maxId` (CHAT_INBOX_ALL), the
+   * larger bound kept. Shown at once (showDone) for the rows in the inbox
+   * at or below the bound. Resolves with the op as stored after that.
+   */
+  async queueInboxAll(configId: string, maxId: number): Promise<OutboxOp> {
+    const op = await this.queueAction(configId, CHAT_INBOX_ALL, null, { maxId, cleared: [] }, {
+      merge: (stored) => ({ maxId: Math.max(stored.maxId ?? 0, maxId) }),
+      local: (_id, queued) => this.showDone(configId, queued, (item) => item.messageId <= maxId),
+    });
+    return (await this.db.getOutboxOp(op.id)) ?? op;
+  }
+
+  /**
+   * Moves the account's inbox rows that `match` takes to the history
+   * (needaction off, history on), inboxCounter one lower per row moved and
+   * a cached channel's needactionCounter one lower per mention of it moved;
+   * the ids moved join the cleared of `op`, which the overlay of a server
+   * count then takes off (overlayInbox). Runs in queueAction's exclusive().
+   */
+  private async showDone(configId: string, op: OutboxOp | null, match: (item: ChatMailboxItem) => boolean): Promise<void> {
+    const moved = (await this.repo.mailboxItems(configId, "inbox")).filter(match);
+    if (moved.length === 0) return;
+    const perChannel = new Map<number, number>();
+    for (const item of moved) {
+      await this.repo.patchMailbox(configId, item.messageId, { needaction: false, history: true });
+      if (item.threadModel === CHANNEL_MODEL) perChannel.set(item.threadId, (perChannel.get(item.threadId) ?? 0) + 1);
+    }
+    for (const [channelId, n] of perChannel) {
+      const channel = await this.repo.channel(configId, channelId);
+      if (channel) await this.repo.patchChannel(configId, channelId, { needactionCounter: Math.max(0, channel.needactionCounter - n) });
+    }
+    const { inboxCounter } = await this.repo.sourceState(configId);
+    await this.repo.setSourceState({ configId, inboxCounter: Math.max(0, inboxCounter - moved.length) });
+    if (op) {
+      const stored = (await this.db.getOutboxOp(op.id))?.params.cleared ?? [];
+      await this.outbox.setParams(op.id, { cleared: [...new Set([...stored, ...moved.map((i) => i.messageId)])].sort((a, b) => a - b) });
+    }
+  }
+
+  /**
+   * The inbox ops of the account not given up (CHAT_INBOX_DONE,
+   * CHAT_INBOX_ALL), and whether one of them covers a message id: listed
+   * by a done, or at or below the bound of a mark all.
+   */
+  async inboxWaiting(configId: string): Promise<{ ops: OutboxOp[]; covers: (messageId: number) => boolean }> {
+    const ops = (await this.db.getOutboxOpsForConfig(configId))
+      .filter((o) => INBOX_KINDS.includes(o.kind) && o.status !== "blocked");
+    const ids = new Set<number>(ops.filter((o) => o.kind === CHAT_INBOX_DONE).flatMap((o) => o.params.messageIds ?? []));
+    const maxId = Math.max(0, ...ops.filter((o) => o.kind === CHAT_INBOX_ALL).map((o) => o.params.maxId ?? 0));
+    return { ops, covers: (id) => ids.has(id) || id <= maxId };
+  }
+
+  /**
+   * Takes the ids `done` names out of the cleared of the waiting inbox
+   * ops: the server holds them read already (its bus said so, or a page
+   * proved it), so its count no longer holds them and the overlay must
+   * not take them off again.
+   */
+  async forgetCleared(configId: string, done: (messageId: number) => boolean): Promise<void> {
+    for (const op of (await this.inboxWaiting(configId)).ops) {
+      const cleared: number[] = op.params.cleared ?? [];
+      const kept = cleared.filter((id) => !done(id));
+      if (kept.length !== cleared.length) await this.outbox.setParams(op.id, { cleared: kept });
+    }
   }
 
   /**
@@ -1608,12 +1716,14 @@ export class ChatOutbox {
    * the message's others; one nobody is left in becomes a deletion. Only
    * the messages whose reactions the delta carries are touched. The
    * bodies first (overlayBodies; `except`: the op whose answer the delta
-   * is), then the pins (overlayPins) and the stars (overlayStars).
+   * is), then the pins (overlayPins), the stars (overlayStars) and the
+   * inbox (overlayInbox).
    */
   async overlayMessages(configId: string, delta: StoreDelta, except?: string): Promise<void> {
     await this.overlayBodies(configId, delta, except);
     await this.overlayPins(configId, delta);
     await this.overlayStars(configId, delta);
+    await this.overlayInbox(configId, delta);
     const carried = new Set([...(delta.reactions ?? []), ...(delta.reactionSets ?? []), ...(delta.deletedReactions ?? [])]
       .map((r) => r.messageId));
     if (carried.size === 0) return;
@@ -1745,6 +1855,36 @@ export class ChatOutbox {
   }
 
   /**
+   * Lays the inbox ops still queued (not given up) over a delta: a mailbox
+   * partial in the inbox that one of them covers (inboxWaiting) shows in
+   * the history, whatever the server says until it is sent. While an op
+   * was not sent (not running, no sentAt), the server still counts the ids
+   * it cleared: the delta's inboxCounter loses one per id, and a channel
+   * whose needactionCounter it carries one per mention of it (its mailbox
+   * row's thread). An op that may have reached the server leaves the
+   * counts as the server gives them.
+   */
+  private async overlayInbox(configId: string, delta: StoreDelta): Promise<void> {
+    const { ops, covers } = await this.inboxWaiting(configId);
+    if (ops.length === 0) return;
+    for (const m of delta.mailbox ?? []) {
+      if (m.needaction && covers(m.messageId)) Object.assign(m, { needaction: false, history: true });
+    }
+    const cleared = [...new Set(ops.filter((o) => o.status !== "running" && !o.params.sentAt)
+      .flatMap((o): number[] => o.params.cleared ?? []))];
+    if (cleared.length === 0) return;
+    if (delta.inboxCounter !== null) delta.inboxCounter = Math.max(0, delta.inboxCounter - cleared.length);
+    const counted = delta.channels.filter((c) => c.needactionCounter !== undefined);
+    if (counted.length === 0) return;
+    const perChannel = new Map<number, number>();
+    for (const id of cleared) {
+      const item = await this.repo.mailboxItem(configId, id);
+      if (item?.threadModel === CHANNEL_MODEL) perChannel.set(item.threadId, (perChannel.get(item.threadId) ?? 0) + 1);
+    }
+    for (const c of counted) c.needactionCounter = Math.max(0, c.needactionCounter! - (perChannel.get(c.channelId) ?? 0));
+  }
+
+  /**
    * Lays the edits and deletes still queued (not given up) over the bodies
    * a delta carries, so the server's older body does not undo what the
    * phone shows until they are sent: per message a queued delete shows "",
@@ -1806,7 +1946,7 @@ export class ChatOutbox {
           error: reason === "refused" ? (o.lastError ?? "") : "",
           count: o.params.count ?? 1,
           label: o.params.label ?? "",
-          ...(MESSAGE_KINDS.includes(o.kind) || MAILBOX_KINDS.includes(o.kind)
+          ...(MESSAGE_KINDS.includes(o.kind) || o.kind === CHAT_STAR
             ? { message: targetOf(o) }
             : {}),
           ...(o.kind === CHAT_EDIT && reason === "changed"
@@ -3259,7 +3399,9 @@ export class ChatOutbox {
    * flag differs from the target. NotFound or MissingError gives the op up
    * as "vanished", another refusal (AccessError) as "refused" (giveUpStar).
    * The answer's Store is applied with the stars still queued laid over it
-   * (overlayMessages), in the account's queue of server writers (serial).
+   * (overlayMessages), in the account's queue of server writers (serial)
+   * and in one exclusive() task with that overlay. An inbox op goes
+   * through runInbox.
    */
   private runMailboxAction(creds: SyncCredentials, op: OutboxOp): Promise<void> {
     return this.outbox.attempt(op.id, async (running) => {
@@ -3267,6 +3409,7 @@ export class ChatOutbox {
       if (!stored) return;
       const act: OutboxOp = { ...running, params: stored.params };
       if (!(await this.isOnline())) throw new RequestNotSentError(`Offline: ${act.kind} waits for the network.`);
+      if (INBOX_KINDS.includes(act.kind)) return this.runInbox(creds, act);
       const { configId } = act;
       const messageId: number = act.params.messageId;
       const message = await this.repo.message(configId, messageId);
@@ -3300,11 +3443,45 @@ export class ChatOutbox {
         // Its account erased while the request was on the wire: nothing is written
         if (!(await this.db.getOutboxOp(act.id)) || result == null) return;
         const delta = parseStore(result, configId, (await this.repo.sourceState(configId)).selfPartnerId);
-        await this.overlayMessages(configId, delta, act.id);
-        await this.repo.applyDelta(configId, delta);
+        await this.exclusive(configId, async () => {
+          await this.overlayMessages(configId, delta, act.id);
+          await this.repo.applyDelta(configId, delta);
+        });
       });
       this.changed(configId, act.params.channelId ?? null);
     });
+  }
+
+  /**
+   * Sends an inbox op as stored: set_message_done of its ids, or
+   * mark_all_as_read of the needaction messages at or below its bound.
+   * Both are idempotent and answer no Store: the server's bus
+   * (mail.message/mark_as_read) brings the count back. The send stamps
+   * sentAt first, given back when the request provably never left; from
+   * then the overlay of a server count no longer takes its cleared ids
+   * off. A refusal gives the op up as "refused", a message gone
+   * (MissingError) as "vanished"; the rows stay where the phone moved them
+   * until a page of the inbox lists them again.
+   */
+  private async runInbox(creds: SyncCredentials, act: OutboxOp): Promise<void> {
+    const sentAt: string | null = act.params.sentAt ?? null;
+    await this.outbox.setParams(act.id, { sentAt: this.now().toISOString() });
+    try {
+      if (act.kind === CHAT_INBOX_DONE) {
+        await this.rpc.callKw(creds, "mail.message", "set_message_done", [act.params.messageIds ?? []]);
+      } else {
+        await this.rpc.callKw(creds, "mail.message", "mark_all_as_read", [[["needaction", "=", true], ["id", "<=", act.params.maxId]]]);
+      }
+    } catch (e: unknown) {
+      if (e instanceof RequestNotSentError) {
+        await this.outbox.setParams(act.id, { sentAt });
+        throw e;
+      }
+      if (isVanished(e)) return this.giveUp(act, "vanished", (e as Error).message);
+      if (!isRefused(e)) throw e;
+      return this.giveUp(act, "refused", (e as Error).message);
+    }
+    this.changed(act.configId, null);
   }
 
   /**

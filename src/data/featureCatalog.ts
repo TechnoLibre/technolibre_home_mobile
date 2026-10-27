@@ -4648,6 +4648,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/chat/chat_thread_component.ts",
                     "src/components/chat/chat_list_component.ts",
                     "src/components/chat/chat_list_component.scss",
+                    "src/components/chat/chat_mailbox_component.ts",
                 ],
                 tests: [
                     "src/__tests__/chatOutbox.test.ts",
@@ -4656,6 +4657,61 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/chatStore.test.ts",
                     "src/__tests__/chatMessageMenu.test.ts",
                     "src/__tests__/chatThreadComponent.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                    "src/__tests__/chatMailboxComponent.test.ts",
+                ],
+            },
+            {
+                id: "chat.inbox",
+                label: { en: "Inbox", fr: "Boîte de réception" },
+                description: {
+                    en: "Odoo's inbox on the phone: mentions, followed records' messages and assignments, mark one or all as read, and the history, from « 📥 Inbox » above the conversations.",
+                    fr: "La boîte de réception d'Odoo sur le téléphone : mentions, messages des fiches suivies et assignations, marquer un ou tout comme lu, et l'historique, depuis « 📥 Boîte de réception » au-dessus des conversations.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.starred"],
+                demo: { kind: "route", url: "/chat/inbox" },
+                howItWorks: {
+                    en: "Pages of /mail/inbox/messages and /mail/history/messages (read-only, nothing marked read) "
+                        + "fill chat_mailbox, a channel message also its conversation's cache when the phone holds "
+                        + "it; an inbox page moves to the history the rows of the id range it covers that it no "
+                        + "longer lists. « Mark as read » queues chat.inbox_done (set_message_done, the ids of the "
+                        + "account's waiting op merged), « Mark all as read » chat.inbox_all (mark_all_as_read up to "
+                        + "the newest item the phone shows, so a newer mention stays unread). Both show at once: the "
+                        + "rows move to the history, the inbox count and the conversation's mentions go down by the "
+                        + "rows moved, kept in the op (cleared). Until it is sent, a server count read meanwhile (a "
+                        + "load, the bus) loses those rows again, in the same exclusive task as the write; the bus "
+                        + "mail.message/mark_as_read lowers a conversation only for a row still in the inbox, so the "
+                        + "phone's change and its echo count once.",
+                    fr: "Les pages de /mail/inbox/messages et /mail/history/messages (en lecture seule, rien n'est "
+                        + "marqué lu) remplissent chat_mailbox, un message de conversation aussi le cache de sa "
+                        + "conversation quand le téléphone la tient ; une page de la boîte de réception passe à "
+                        + "l'historique les lignes de la plage d'identifiants qu'elle couvre et qu'elle ne liste plus. "
+                        + "« Marquer comme lu » met en file chat.inbox_done (set_message_done, les identifiants de "
+                        + "l'opération en attente du compte fusionnés), « Tout marquer comme lu » chat.inbox_all "
+                        + "(mark_all_as_read jusqu'à l'élément le plus récent affiché, donc une mention plus récente "
+                        + "reste non lue). Les deux s'affichent aussitôt : les lignes passent à l'historique, le "
+                        + "compte de la boîte et les mentions de la conversation baissent des lignes déplacées, "
+                        + "gardées dans l'opération (cleared). Tant qu'elle n'est pas envoyée, un compte du serveur "
+                        + "lu entre-temps (un chargement, le bus) perd à nouveau ces lignes, dans la même tâche "
+                        + "exclusive que l'écriture ; le bus mail.message/mark_as_read ne baisse une conversation que "
+                        + "pour une ligne encore dans la boîte, donc le changement du téléphone et son écho comptent "
+                        + "une fois.",
+                },
+                files: [
+                    "src/services/chat/chatInbox.ts",
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/chat/chatRepository.ts",
+                    "src/components/chat/chat_mailbox_component.ts",
+                    "src/components/chat/chat_mailbox_component.scss",
+                    "src/components/chat/chat_list_component.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatInbox.test.ts",
+                    "src/__tests__/chatOutbox.test.ts",
+                    "src/__tests__/chatService.test.ts",
+                    "src/__tests__/chatMailboxComponent.test.ts",
                     "src/__tests__/chatListComponent.test.ts",
                 ],
             },
