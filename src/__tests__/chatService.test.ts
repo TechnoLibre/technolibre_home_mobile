@@ -100,6 +100,8 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
     data: mailData() as any,
     /** The account-wide mute get_session_info reports. */
     sessionMute: (opts.sessionMute ?? false) as string | false,
+    /** The user's notification_preference get_session_info reports; absent when null. */
+    sessionNotification: null as null | "email" | "inbox",
     /** Answers a call_kw first when it returns a value; `{__error: name}` answers a JSON-RPC error. */
     onKw: null as null | ((params: any) => Promise<any>),
     /** Answers a route the fake does not handle itself, same convention as onKw. */
@@ -139,7 +141,10 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
         return ok({
           uid: 2, partner_id: SELF, is_system: false, websocket_worker_version: "18.0-7", is_internal_user: true,
           ...(state.maxUpload !== null ? { max_file_upload_size: state.maxUpload } : {}),
-          storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: state.sessionMute } } },
+          storeData: {
+            Store: { internalUserGroupId: 11, settings: { mute_until_dt: state.sessionMute } },
+            ...(state.sessionNotification ? { "res.partner": [{ id: SELF, notification_preference: state.sessionNotification }] } : {}),
+          },
         });
       case "/mail/data": {
         const answer = JSON.parse(JSON.stringify(state.data));
@@ -3340,6 +3345,57 @@ describe("ChatService", () => {
       await chat.load(src);
       // A mention in « Muted » (2 mentions there) and a followed record's message
       serve({ ...msg(801, MUTED), needaction: true }, record(98));
+    });
+
+    describe("notification type", () => {
+      const typeOf = async () => (await chat.repo.sourceState(config)).notificationType;
+      /** The user's own write of notification_type, as Odoo's self-write: the preference then reads back. */
+      const selfWrite = (answer: () => Promise<any> | any = () => null) => {
+        odoo.state.onKw = async (p) => {
+          if (p.model !== "res.users" || p.method !== "write") return undefined;
+          const r = await answer();
+          if (r === null) odoo.state.sessionNotification = p.args[1].notification_type;
+          return r;
+        };
+      };
+      const writes = () => odoo.kw("write").filter((c) => c.params.model === "res.users");
+
+      it("a load stores the notification type the server reports", async () => {
+        expect(await typeOf()).toBeNull();
+        odoo.state.sessionNotification = "email";
+        await chat.load(src);
+        expect(await typeOf()).toBe("email");
+      });
+
+      it("the switch writes notification_type inbox and stores the type read back", async () => {
+        odoo.state.sessionNotification = "email";
+        await chat.load(src);
+        selfWrite();
+        expect(await chat.switchToInbox(src)).toBe("done");
+        expect(writes().map((c) => c.params.args)).toEqual([[[2], { notification_type: "inbox" }]]);
+        expect(await typeOf()).toBe("inbox");
+      });
+
+      it("offline nothing is sent, and a request that never left answers offline", async () => {
+        odoo.state.sessionNotification = "email";
+        await chat.load(src);
+        selfWrite();
+        offline();
+        expect(await chat.switchToInbox(src)).toBe("offline");
+        expect(writes()).toEqual([]);
+        online();
+        selfWrite(() => { throw new RequestNotSentError("RawHttp error: connection refused"); });
+        expect(await chat.switchToInbox(src)).toBe("offline");
+        expect(await typeOf()).toBe("email");
+      });
+
+      it("a refusal changes nothing and answers refused", async () => {
+        odoo.state.sessionNotification = "email";
+        await chat.load(src);
+        selfWrite(() => ({ __error: "odoo.exceptions.AccessError" }));
+        expect(await chat.switchToInbox(src)).toBe("refused");
+        expect(await typeOf()).toBe("email");
+      });
     });
 
     it("a done item and its bus echo lower the count once", async () => {

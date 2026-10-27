@@ -18,6 +18,13 @@ export interface StoredSession {
   createdAt?: string;
 }
 
+/** The notification type of the session user's partner row in a get_session_info answer. */
+function notificationTypeOf(info: any): "email" | "inbox" | null {
+  const rows: any[] = Array.isArray(info?.storeData?.["res.partner"]) ? info.storeData["res.partner"] : [];
+  const pref = rows.find((r) => Number(r?.id) === Number(info?.partner_id))?.notification_preference;
+  return pref === "email" || pref === "inbox" ? pref : null;
+}
+
 /** Who a session is (see OdooRpcClient.sessionInfo). */
 export interface SessionInfo {
   uid: number;
@@ -36,6 +43,11 @@ export interface SessionInfo {
   globalMuteUntil: string | null;
   /** The user is an internal user, not a portal one. */
   isInternalUser: boolean;
+  /**
+   * How Odoo notifies the user (`notification_preference` of the user's partner in
+   * `storeData["res.partner"]`): by email or in the inbox; null when the server does not say.
+   */
+  notificationType: "email" | "inbox" | null;
   /**
    * Largest request body the server accepts, in bytes (`max_file_upload_size`:
    * the `web.max_file_upload_size` parameter, else 128 MiB). It bounds the
@@ -393,12 +405,13 @@ export class OdooRpcClient {
       internalUserGroupId: Number(store?.internalUserGroupId) || null,
       globalMuteUntil: store?.settings?.mute_until_dt || null,
       isInternalUser: info?.is_internal_user === true,
+      notificationType: notificationTypeOf(info),
       maxUploadSize: Number(info?.max_file_upload_size) > 0 ? Number(info.max_file_upload_size) : DEFAULT_MAX_UPLOAD_SIZE,
     };
     // A fresh read renews only what an administrator or the user changes during a session (the account-wide
-    // mute, the upload limit); the rest stays as cached
+    // mute, the notification type, the upload limit); the rest stays as cached
     const kept = known && opts.fresh
-      ? { ...known, globalMuteUntil: result.globalMuteUntil, maxUploadSize: result.maxUploadSize }
+      ? { ...known, globalMuteUntil: result.globalMuteUntil, notificationType: result.notificationType, maxUploadSize: result.maxUploadSize }
       : result;
     this._sessions.set(key, kept);
     return kept;

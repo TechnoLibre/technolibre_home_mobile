@@ -4687,7 +4687,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "and the counts. A tap opens an item (ChatInbox.openItem, from the inbox, the starred box "
                         + "and the search alike): a mention its conversation at the message, a record's message or an "
                         + "assignment the note linked to the record (note_links), else Odoo's /mail/message/<id> in "
-                        + "the web view (openRecordInApp, http policy kept); nothing is marked read.",
+                        + "the web view (openRecordInApp, http policy kept); nothing is marked read. Each load reads "
+                        + "the user's notification_preference (get_session_info) into chat_sources.notification_type; "
+                        + "for an account notified by email the inbox tab explains why nothing arrives and offers "
+                        + "« Receive my notifications in Odoo » (ChatService.switchToInbox: res.users.write of the "
+                        + "user's own notification_type, online only, not queued; the type is read back before the "
+                        + "notice goes; a refusal offers « Open my preferences »).",
                     fr: "Les pages de /mail/inbox/messages et /mail/history/messages (en lecture seule, rien n'est "
                         + "marqué lu) remplissent chat_mailbox, un message de conversation aussi le cache de sa "
                         + "conversation quand le téléphone la tient ; une page de la boîte de réception passe à "
@@ -4706,7 +4711,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "Un toucher ouvre un élément (ChatInbox.openItem, depuis la boîte, les favoris et la "
                         + "recherche) : une mention sa conversation au message, un message de fiche ou une assignation "
                         + "la note liée à la fiche (note_links), sinon /mail/message/<id> d'Odoo dans la vue web "
-                        + "(openRecordInApp, politique http gardée) ; rien n'est marqué lu.",
+                        + "(openRecordInApp, politique http gardée) ; rien n'est marqué lu. Chaque chargement lit "
+                        + "notification_preference de l'utilisateur (get_session_info) dans "
+                        + "chat_sources.notification_type ; pour un compte notifié par courriel, l'onglet de la boîte "
+                        + "explique pourquoi rien n'arrive et offre « Recevoir mes notifications dans Odoo » "
+                        + "(ChatService.switchToInbox : res.users.write du notification_type de l'utilisateur lui-même, "
+                        + "en ligne seulement, sans file d'attente ; le type est relu avant que l'avis disparaisse ; "
+                        + "un refus offre « Ouvrir mes préférences »).",
                 },
                 files: [
                     "src/services/chat/chatInbox.ts",

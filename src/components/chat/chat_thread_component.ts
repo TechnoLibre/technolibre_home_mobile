@@ -202,7 +202,6 @@ export const NOTICE_MS = 5000;
 /** The edited mark renderBody adds: it alone does not make a body shown. */
 const EDITED_MARK = /<em class="chat-msg__edited">[^<]*<\/em>/g;
 
-
 /** Cheap 32-bit hash (djb2) of a body, so a changed body never reuses a cached render. */
 function bodyHash(body: string): string {
     let h = 5381;

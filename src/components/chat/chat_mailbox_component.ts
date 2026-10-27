@@ -74,6 +74,12 @@ interface MailboxState {
     rows: MailboxRow[];
     /** The accounts with items in the tab shown, each with its « Tout marquer comme lu ». */
     accounts: { configId: string; label: string }[];
+    /** The accounts whose notifications Odoo sends by email, each with its notice (the inbox tab only). */
+    notices: { configId: string; label: string }[];
+    /** The phone has no network: the switch is disabled. */
+    networkOff: boolean;
+    /** What the last switch of an account answered, when it did not succeed. */
+    answers: Record<string, "offline" | "refused">;
     /** A server could not be read: the list is the phone's. */
     offline: boolean;
     loading: boolean;
@@ -99,8 +105,11 @@ interface MailboxState {
  * the reply composer (ChatRecordReplyComponent) at the bottom of the
  * screen; a mention is answered in its conversation and an assignment not
  * at all, as the browser's inbox. The replies to an item still waiting to
- * be sent show under it, ⏳ with their file count. Every text is shown as
- * text.
+ * be sent show under it, ⏳ with their file count. On the inbox tab, an
+ * account whose Odoo notifications go by email gets a notice saying why
+ * nothing arrives here and « Recevoir mes notifications dans Odoo »
+ * (ChatService.switchToInbox; disabled offline); a refusal offers
+ * « Ouvrir mes préférences ». Every text is shown as text.
  */
 export class ChatMailboxComponent extends EnhancedComponent {
     state!: MailboxState;
@@ -125,6 +134,20 @@ export class ChatMailboxComponent extends EnhancedComponent {
                 t-on-click="() => this.onMarkAll(a.configId)"
                 t-esc="t('chat.inbox_mark_all') + (serverShown() ? ' — ' + a.label : '')"/>
       </div>
+      <section t-foreach="state.notices" t-as="n" t-key="n.configId" class="chat-mailbox__notice">
+        <p class="chat-mailbox__notice-text" role="status"
+           t-esc="(serverShown() ? n.label + ' — ' : '') + t('chat.inbox_email_notice')"/>
+        <button type="button" class="chat-mailbox__switch" t-att-disabled="state.networkOff"
+                t-on-click="() => this.onSwitch(n.configId)" t-esc="t('chat.inbox_switch')"/>
+        <p class="chat-mailbox__notice-hint" t-esc="t('chat.inbox_switch_hint')"/>
+        <p t-if="state.networkOff or state.answers[n.configId] === 'offline'" class="chat-mailbox__notice-offline" role="status"
+           t-esc="t('chat.inbox_switch_offline')"/>
+        <t t-if="state.answers[n.configId] === 'refused'">
+          <p class="chat-mailbox__notice-refused" role="alert" t-esc="t('chat.inbox_switch_refused')"/>
+          <button type="button" class="chat-mailbox__prefs" t-on-click="() => this.onPreferences(n.configId)"
+                  t-esc="t('chat.inbox_open_preferences')"/>
+        </t>
+      </section>
       <ul class="chat-mailbox__list" t-on-scroll="onScroll">
         <li t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-mailbox__item" t-on-click="() => this.onOpen(row)">
           <div class="chat-mailbox__meta">
@@ -172,6 +195,9 @@ export class ChatMailboxComponent extends EnhancedComponent {
             tab: "inbox",
             rows: [],
             accounts: [],
+            notices: [],
+            networkOff: false,
+            answers: {},
             offline: false,
             loading: false,
             error: "",
@@ -222,7 +248,14 @@ export class ChatMailboxComponent extends EnhancedComponent {
             names.set(id, new Map((await this.chatService.repo.partners(id)).map((p) => [p.partnerId, p.name])));
             pending.set(id, await this.chatService.pendingRecordReplies(id));
         }
+        const emailed: string[] = [];
+        if (this.state.box === "inbox" && this.state.tab === "inbox") {
+            for (const s of sources) if ((await this.chatService.repo.sourceState(s.configId)).notificationType === "email") emailed.push(s.configId);
+        }
+        const networkOff = emailed.length > 0 && !(await this.chatService.isOnline());
         if (gen !== this._gen) return;
+        this.state.notices = sources.filter((s) => emailed.includes(s.configId)).map((s) => ({ configId: s.configId, label: s.label }));
+        this.state.networkOff = networkOff;
         const tagged = this.serverShown();
         this.state.rows = items.map((i) => ({
             ...this.rowOf(i, names.get(i.configId), tagged ? labels.get(i.configId) ?? "" : ""),
@@ -350,6 +383,38 @@ export class ChatMailboxComponent extends EnhancedComponent {
     /** ✕ or Android's back on the composer: it closes, its draft kept. */
     onReplyCancel(): void {
         this.state.reply = null;
+    }
+
+    /**
+     * « Recevoir mes notifications dans Odoo »: online only. Done, the type
+     * is stored and the notice goes; "offline" or "refused" is kept for the
+     * notice to say so.
+     */
+    async onSwitch(configId: string): Promise<void> {
+        const src = this.sourceOf(configId);
+        if (!src || this.state.networkOff) return;
+        this.state.error = "";
+        delete this.state.answers[configId];
+        try {
+            const answer = await this.chatService.switchToInbox(src);
+            if (answer !== "done") this.state.answers[configId] = answer;
+        } catch (e) {
+            console.warn("chat mailbox: switch failed", e);
+            this.state.error = t("chat.action_error");
+        }
+        await this.loadCache();
+    }
+
+    /** « Ouvrir mes préférences »: the user's own record of the account, in the web view. */
+    async onPreferences(configId: string): Promise<void> {
+        const src = this.sourceOf(configId);
+        if (!src) return;
+        try {
+            await this.chatService.openPreferences(src);
+        } catch (e) {
+            console.warn("chat mailbox: preferences failed", e);
+            this.state.error = t("chat.action_error");
+        }
     }
 
     /** « Marquer comme lu »: the item moves to the history at once. */

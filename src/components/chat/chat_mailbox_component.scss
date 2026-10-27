@@ -49,6 +49,37 @@
 	gap: 0.4rem;
 }
 
+.chat-mailbox__notice {
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 0.4rem;
+	padding: 0.4rem 0.6rem;
+	margin: 0.3rem 0;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 0.3rem;
+
+	p {
+		margin: 0;
+		font-size: 0.85rem;
+	}
+}
+
+.chat-mailbox__notice-hint,
+.chat-mailbox__notice-offline {
+	opacity: 0.75;
+}
+
+.chat-mailbox__notice-refused {
+	color: #c0392b;
+}
+
+.chat-mailbox__switch:disabled {
+	opacity: 0.5;
+}
+
+.chat-mailbox__switch,
+.chat-mailbox__prefs,
 .chat-mailbox__mark-all,
 .chat-mailbox__mark,
 .chat-mailbox__reply,

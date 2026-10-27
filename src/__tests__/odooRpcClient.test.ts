@@ -166,7 +166,7 @@ describe("OdooRpcClient helpers", () => {
     expect(await rpc.sessionInfo(CREDS)).toEqual({
       uid: 7, companies: [{ id: 1, name: "Main" }], currentCompany: 1,
       partnerId: 42, isSystem: true, websocketWorkerVersion: "18.0-7",
-      internalUserGroupId: null, globalMuteUntil: null, isInternalUser: false,
+      internalUserGroupId: null, globalMuteUntil: null, isInternalUser: false, notificationType: null,
       maxUploadSize: 134217728,
     });
     await rpc.sessionInfo(CREDS);
@@ -183,6 +183,28 @@ describe("OdooRpcClient helpers", () => {
     expect(await rpc.sessionInfo(CREDS)).toMatchObject({
       internalUserGroupId: 11, globalMuteUntil: "2026-02-01 10:00:00", isInternalUser: true,
     });
+  });
+
+  it("sessionInfo reads notification_preference", async () => {
+    let pref: string = "email";
+    const calls = server(() => ({
+      result: {
+        uid: 7, partner_id: 42,
+        storeData: { "res.partner": [{ id: 9, notification_preference: "inbox" }, { id: 42, notification_preference: pref }] },
+      },
+    }));
+    expect((await rpc.sessionInfo(CREDS)).notificationType).toBe("email");
+    pref = "inbox";
+    // The cached answer holds until a fresh read, which renews it with the mute and the limit
+    expect((await rpc.sessionInfo(CREDS)).notificationType).toBe("email");
+    expect((await rpc.sessionInfo(CREDS, { fresh: true })).notificationType).toBe("inbox");
+    expect((await rpc.sessionInfo(CREDS)).notificationType).toBe("inbox");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("sessionInfo leaves the notification type unknown when the row or the value is missing", async () => {
+    server(() => ({ result: { uid: 7, partner_id: 42, storeData: { "res.partner": [{ id: 42, notification_preference: "sms" }] } } }));
+    expect((await rpc.sessionInfo(CREDS)).notificationType).toBeNull();
   });
 
   it("sessionInfo fresh renews only the global mute", async () => {

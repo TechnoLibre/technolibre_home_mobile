@@ -39,8 +39,12 @@ function fakeChat(ids: string[]) {
             refresh: vi.fn().mockResolvedValue({ more: false, offline: false, oldestId: null }),
             openItem: vi.fn(async (_src: any, i: any, navigate: (url: string) => void) => navigate("/note/n-" + i.messageId)),
         },
+        isOnline: vi.fn().mockResolvedValue(true),
+        switchToInbox: vi.fn().mockResolvedValue("done"),
+        openPreferences: vi.fn().mockResolvedValue(undefined),
         repo: {
             partners: vi.fn().mockResolvedValue([{ partnerId: 7, name: "Alice Martin" }]),
+            sourceState: vi.fn(async (_c: string) => ({ notificationType: null as string | null })),
         },
     };
 }
@@ -222,5 +226,74 @@ describe("ChatMailboxComponent", () => {
             [],
         ]);
         expect(source).toMatch(/t-foreach="row\.pending"/);
+    });
+
+    describe("email notifications", () => {
+        const emailFor = (chat: any, ...ids: string[]) =>
+            chat.repo.sourceState.mockImplementation(async (c: string) => ({ notificationType: ids.includes(c) ? "email" : "inbox" }));
+
+        it("an email user's inbox shows the notice and the button, an inbox user's nothing", async () => {
+            const chat: any = fakeChat(["a", "b"]);
+            emailFor(chat, "a");
+            const c = make(chat, "/chat/inbox");
+            await c.loadCache();
+            // Even with nothing in the inbox
+            expect(c.state.rows).toEqual([]);
+            expect(c.state.notices.map((n: any) => n.configId)).toEqual(["a"]);
+            expect(c.state.networkOff).toBe(false);
+            expect(source).toMatch(/t\('chat\.inbox_email_notice'\)/);
+            expect(source).toMatch(/t\('chat\.inbox_switch'\)/);
+            expect(source).toMatch(/t\('chat\.inbox_switch_hint'\)/);
+            // The starred box carries none
+            const starred = make(chat, "/chat/starred");
+            await starred.loadCache();
+            expect(starred.state.notices).toEqual([]);
+        });
+
+        it("the switch asks the service, and the notice goes once the type is read back", async () => {
+            const chat: any = fakeChat(["a"]);
+            emailFor(chat, "a");
+            chat.switchToInbox.mockImplementation(async () => { emailFor(chat); return "done"; });
+            const c = make(chat, "/chat/inbox");
+            await c.loadCache();
+            await c.onSwitch("a");
+            expect(chat.switchToInbox).toHaveBeenCalledWith(src("a"));
+            expect(c.state.notices).toEqual([]);
+            expect(c.state.error).toBe("");
+        });
+
+        it("offline the button is disabled and says why; an offline answer says the same", async () => {
+            const chat: any = fakeChat(["a"]);
+            emailFor(chat, "a");
+            chat.isOnline.mockResolvedValue(false);
+            const c = make(chat, "/chat/inbox");
+            await c.loadCache();
+            expect(c.state.networkOff).toBe(true);
+            await c.onSwitch("a");
+            expect(chat.switchToInbox).not.toHaveBeenCalled();
+            expect(source).toMatch(/t-att-disabled="state\.networkOff[^"]*"/);
+            expect(source).toMatch(/t\('chat\.inbox_switch_offline'\)/);
+            chat.isOnline.mockResolvedValue(true);
+            chat.switchToInbox.mockResolvedValue("offline");
+            await c.loadCache();
+            expect(c.state.networkOff).toBe(false);
+            await c.onSwitch("a");
+            expect(c.state.answers.a).toBe("offline");
+            expect(c.state.notices.map((n: any) => n.configId)).toEqual(["a"]);
+        });
+
+        it("a refusal offers the preferences", async () => {
+            const chat: any = fakeChat(["a", "b"]);
+            emailFor(chat, "a", "b");
+            chat.switchToInbox.mockResolvedValue("refused");
+            const c = make(chat, "/chat/inbox");
+            await c.loadCache();
+            await c.onSwitch("b");
+            expect(c.state.answers).toEqual({ b: "refused" });
+            expect(source).toMatch(/t\('chat\.inbox_switch_refused'\)/);
+            await c.onPreferences("b");
+            expect(chat.openPreferences).toHaveBeenCalledWith(src("b"));
+            expect(chat.openPreferences).toHaveBeenCalledTimes(1);
+        });
     });
 });

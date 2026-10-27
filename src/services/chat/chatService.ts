@@ -7,8 +7,9 @@ import { messageKeyOf } from "../../models/chat";
 import { syncConfigIdFor } from "../../models/syncConfig";
 import type { DatabaseService, OutboxOp } from "../databaseService";
 import { networkService } from "../networkService";
+import { openRecordInApp } from "../../utils/openRecordInApp";
 import type { CapabilityService } from "../odoo/capabilityService";
-import { RequestNotSentError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
+import { OdooRpcError, RequestNotSentError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
 import type { OutboxService } from "../outboxService";
 import { nativeChatHttp } from "../../plugins/chatFilePlugin";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
@@ -382,8 +383,11 @@ export class ChatService {
     if (erased()) return;
     // Read fresh after /mail/data: a mute changed before the inbox bus id this load sets is in the
     // value, since its bus event, at or below that id, is no longer applied
-    const mute = (await this.rpc.sessionInfo(creds, { fresh: true })).globalMuteUntil;
+    const fresh = await this.rpc.sessionInfo(creds, { fresh: true });
+    const mute = fresh.globalMuteUntil;
     if (erased()) return;
+    // The notification type has no bus event: each load reads it again
+    await this.repo.setSourceState({ configId, notificationType: fresh.notificationType });
     const lastMuteAt = (await this.repo.sourceState(configId)).globalMuteAt;
     // A bus change newer than this load's start wins over the value read
     const muteIsStale = lastMuteAt !== null && lastMuteAt > startedAt;
@@ -1123,6 +1127,46 @@ export class ChatService {
   async setOnTop(configId: string, channelId: number, on: boolean): Promise<void> {
     await this.repo.setOnTop(configId, channelId, on, this.now());
     this.changed(configId, channelId);
+  }
+
+  /**
+   * Switches the user's Odoo notifications from email to the inbox: a
+   * write of the user's own `notification_type`, which Odoo lets a user
+   * make on their own record. Online only, not an outbox operation: a
+   * preference with an immediate answer. Then the type is read back fresh
+   * and stored, so the notice goes away only if the server holds the
+   * change. "offline": no network, or the request never left; "refused":
+   * Odoo answered with an error (no right to write it, a portal user
+   * whose type must stay email).
+   */
+  async switchToInbox(src: ChatSource): Promise<"done" | "offline" | "refused"> {
+    const { configId, creds } = src;
+    if (!(await this.isOnline())) return "offline";
+    try {
+      const { uid } = await this.rpc.sessionInfo(creds);
+      await this.rpc.callKw(creds, "res.users", "write", [[uid], { notification_type: "inbox" }]);
+    } catch (e: unknown) {
+      if (e instanceof RequestNotSentError) return "offline";
+      if (e instanceof OdooRpcError) return "refused";
+      throw e;
+    }
+    const info = await this.rpc.sessionInfo(creds, { fresh: true });
+    await this.repo.setSourceState({ configId, notificationType: info.notificationType });
+    this.changed(configId, null);
+    return "done";
+  }
+
+  /** Opens the user's own record (res.users) of the account in the web view, where the notification preference is. */
+  async openPreferences(src: ChatSource): Promise<void> {
+    const { uid } = await this.rpc.sessionInfo(src.creds);
+    await openRecordInApp({
+      label: src.label,
+      appUrl: src.app.url,
+      username: src.app.username,
+      password: src.app.password,
+      model: "res.users",
+      resId: uid,
+    });
   }
 
   /** Mutes every conversation of the account for `minutes`, as mute(). */
