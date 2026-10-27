@@ -158,6 +158,9 @@ export class ChatService {
   /** Per account, the end of the queue of serial() tasks; settled tasks leave it. */
   private chains = new Map<string, Promise<void>>();
 
+  /** The accounts whose inbox a load overtook during the bus delivery being applied (applyInbox). */
+  private inboxOvertaken = new Set<string>();
+
   /**
    * Per account, when a message of an unknown channel last reloaded it,
    * and the reload the window holds back.
@@ -2036,11 +2039,22 @@ export class ChatService {
    * server writers; a notification that reloads the account (a channel
    * joined, a message of an unknown channel) runs that load inline. The
    * bus resubscribes at most once per call: when the memberships differ
-   * after it (noteMembershipChange), or after a channel joined.
+   * after it (noteMembershipChange), or after a channel joined. An inbox
+   * delivery a load overtook (applyInbox) then has the first inbox page
+   * read again, once the notifications are applied; its failure is only
+   * logged, the next page read catching up.
    */
-  applyBus(configId: string, notifications: BusNotification[]): Promise<void> {
+  async applyBus(configId: string, notifications: BusNotification[]): Promise<void> {
     const joined = notifications.some((n) => n.message?.type === "discuss.channel/joined");
-    return this.serial(configId, () => this.tracked(configId, () => this.applyBusNow(configId, notifications), joined));
+    await this.serial(configId, () => this.tracked(configId, () => this.applyBusNow(configId, notifications), joined));
+    if (!this.inboxOvertaken.delete(configId)) return;
+    const src = await this.sourceOf(configId);
+    if (!src) return;
+    try {
+      await this.inbox.refresh(src, "inbox");
+    } catch (e: unknown) {
+      console.warn("chat: inbox page not read again after an overtaken delivery", e);
+    }
   }
 
   private async applyBusNow(configId: string, notifications: BusNotification[]): Promise<void> {
@@ -2311,16 +2325,29 @@ export class ChatService {
    * conversation), the inbox counter one up, and its channel's mentions one
    * up unless they are as of this bus id or later. A replay (not `fresh`)
    * applies the Store without its needaction flags and counts nothing: the
-   * load after it holds the count, and the message may be read since.
+   * load after it holds the count, and the message may be read since. A
+   * load that ran between the notification and its delivery makes one
+   * too: when such a delivery names a needaction message the phone has no
+   * mailbox row of, the account goes in inboxOvertaken, and applyBus reads
+   * the first inbox page again, which says whether it still waits.
    */
   private async applyInbox(configId: string, p: any, busId: number, fresh: boolean): Promise<number | null> {
-    const payload = fresh || !Array.isArray(p?.["mail.message"])
+    const notified: any[] = Array.isArray(p?.["mail.message"]) ? p["mail.message"] : [];
+    const payload = fresh || notified.length === 0
       ? p
-      : { ...p, "mail.message": p["mail.message"].map(({ needaction: _n, ...m }: any) => m) };
+      : { ...p, "mail.message": notified.map(({ needaction: _n, ...m }: any) => m) };
     const delta = await this.applyStore(configId, payload, fresh);
     const message = delta.messages.find((m) => m.channelId !== undefined);
     const channelId = message?.channelId ?? null;
-    if (!fresh) return channelId;
+    if (!fresh) {
+      for (const m of notified) {
+        if (m?.needaction && typeof m.id === "number" && !(await this.repo.mailboxItem(configId, m.id))) {
+          this.inboxOvertaken.add(configId);
+          break;
+        }
+      }
+      return channelId;
+    }
     await this.queue.exclusive(configId, async () => {
       if (message) {
         const mention = mailboxPartialsOf(delta, [message.messageId], { needaction: true }) ?? [];

@@ -3473,6 +3473,24 @@ describe("ChatService", () => {
       expect(await chat.repo.mailboxItem(config, 803)).toBeNull();
     });
 
+    it("an item whose bus delivery a load overtook is read from the inbox page", async () => {
+      // Notified before the load, which counts it: its delivery comes at or below the load's bus id (1000)
+      serve(record(99));
+      await chat.applyBus(config, [bus(1000, "mail.message/inbox", { "mail.message": [{ ...record(99), needaction: true }] })]);
+      expect(await chat.repo.mailboxItem(config, 99)).toMatchObject({ threadModel: "res.partner", threadId: 70, needaction: true });
+      expect(odoo.on("/mail/inbox/messages")).toHaveLength(1);
+      expect(await counter()).toBe(4);
+      // A message the phone already holds reads no page; one read since is not listed by the page
+      await chat.applyBus(config, [bus(1000, "mail.message/inbox", { "mail.message": [{ ...record(99), needaction: true }] })]);
+      expect(odoo.on("/mail/inbox/messages")).toHaveLength(1);
+      serve(record(100));
+      markRead([100]);
+      await chat.applyBus(config, [bus(1000, "mail.message/inbox", { "mail.message": [{ ...record(100), needaction: true }] })]);
+      expect(odoo.on("/mail/inbox/messages")).toHaveLength(2);
+      expect(await chat.repo.mailboxItem(config, 100)).toBeNull();
+      expect(await counter()).toBe(4);
+    });
+
     it("a page drops an item the server moved to history", async () => {
       await chat.inbox.refresh(src, "inbox");
       // Read in the browser while the phone missed the bus
