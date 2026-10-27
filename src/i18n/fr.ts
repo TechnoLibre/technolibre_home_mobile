@@ -1281,5 +1281,10 @@ export const translations: Record<string, string> = {
   "chat.pinned": "Épinglé",
   "chat.pinned_failed": "Les messages épinglés n'ont pas pu être lus.",
   "chat.action_pin": "Épinglage",
+  "chat.star": "Favori",
+  "chat.unstar": "Retirer des favoris",
+  "chat.starred": "Favori",
+  "chat.starred_list": "Favoris",
+  "chat.action_star": "Favori",
   "chat.search_hit_failed": "Ce message n'a pas pu être chargé : la conversation s'ouvre à la fin.",
 };

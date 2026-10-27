@@ -29,6 +29,8 @@ interface ListSource {
     configId: string;
     label: string;
     unread: number;
+    /** The account's starred messages (starredCounter). */
+    starred: number;
 }
 
 export interface ChatRow {
@@ -203,6 +205,10 @@ export class ChatListComponent extends EnhancedComponent {
                                     onHit.bind="onHit" onMailbox.bind="onSearchMailbox" onPerson.bind="onSearchPerson"
                                     onJoin.bind="onSearchJoin" onMore.bind="onSearchMore"/>
         <t t-else="">
+        <button type="button" class="chat-list__starred" t-on-click="onStarred">
+          <span class="chat-list__starred-label" t-esc="'★ ' + t('chat.starred_list')"/>
+          <span t-if="starredTotal() > 0" class="chat-list__pill chat-list__starred-count" t-esc="starredTotal()"/>
+        </button>
         <ul class="chat-list__rows">
           <li t-foreach="visibleRows()" t-as="row" t-key="row.configId + ':' + row.channelId"
               class="chat-list__row" t-att-class="{'chat-list__row--bold': row.bold}"
@@ -334,12 +340,13 @@ export class ChatListComponent extends EnhancedComponent {
         const withUnread: ListSource[] = [];
         let canCreate = false;
         for (const s of sources) {
+            const st = await this.chatService.repo.sourceState(s.configId);
             withUnread.push({
                 configId: s.configId,
                 label: s.label,
                 unread: await this.chatService.unreadTotal([s.configId]),
+                starred: st.starredCounter ?? 0,
             });
-            const st = await this.chatService.repo.sourceState(s.configId);
             // Not read yet (no load): offered, the load decides
             if (st.isInternalUser || !st.loadedAt) canCreate = true;
         }
@@ -511,6 +518,18 @@ export class ChatListComponent extends EnhancedComponent {
 
     totalUnread(): number {
         return this.state.sources.reduce((sum, s) => sum + s.unread, 0);
+    }
+
+    /** The starred messages of the accounts shown (the filter's, else all), as « ★ Favoris » counts them. */
+    starredTotal(): number {
+        return this.state.sources
+            .filter((s) => this.state.filter === null || s.configId === this.state.filter)
+            .reduce((sum, s) => sum + s.starred, 0);
+    }
+
+    /** « ★ Favoris »: the starred messages of every account. */
+    onStarred(): void {
+        this.navigate("/chat/starred");
     }
 
     /** The rows whose title or preview contain the search text. */

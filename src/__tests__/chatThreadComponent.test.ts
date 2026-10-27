@@ -108,7 +108,7 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
                 { partnerId: 7, name: "Alice Roy", imStatus: "online" },
                 { partnerId: 8, name: "Bob", imStatus: null },
             ]),
-            sourceState: vi.fn().mockResolvedValue({ selfPartnerId: 1 }),
+            sourceState: vi.fn().mockResolvedValue({ selfPartnerId: 1, isInternalUser: true }),
         },
     };
 }
@@ -1395,11 +1395,11 @@ describe("ChatThreadComponent message actions", () => {
         const c = make(chat);
         await c.open();
         expect(c.state.rows.map((r: any) => r.can)).toEqual([
-            { react: true, reply: true, copy: true, edit: true, delete: true, pin: true },
-            { react: true, reply: true, copy: true, edit: false, delete: false, pin: true },
-            { react: false, reply: false, copy: false, edit: false, delete: false, pin: false },
-            { react: true, reply: true, copy: false, edit: true, delete: true, pin: true },
-            { react: false, reply: false, copy: true, edit: false, delete: true, pin: false },
+            { react: true, reply: true, copy: true, edit: true, delete: true, pin: true, star: true },
+            { react: true, reply: true, copy: true, edit: false, delete: false, pin: true, star: true },
+            { react: false, reply: false, copy: false, edit: false, delete: false, pin: false, star: false },
+            { react: true, reply: true, copy: false, edit: true, delete: true, pin: true, star: true },
+            { react: false, reply: false, copy: true, edit: false, delete: true, pin: false, star: false },
         ]);
         expect(c.state.rows[0].target).toEqual({ messageId: 10, clientUuid: null });
         expect(c.state.rows[4].target).toEqual({ messageId: null, clientUuid: "F1" });
@@ -2839,6 +2839,44 @@ describe("ChatThreadComponent pinned messages", () => {
         await c.refresh();
         expect(c.state.rows).not.toBe(before);
         expect(c.state.rows[0].pinned).toBe(true);
+        c.teardown();
+    });
+});
+
+describe("ChatThreadComponent starred messages", () => {
+    it("Favori stars the menu's message, Retirer des favoris unstars it, and the bubble shows a star", async () => {
+        const list = [msg(10), msg(11, { starred: true, authorPartnerId: 7 })];
+        const chat: any = fakeChat(list);
+        chat.star = vi.fn(async () => {});
+        const c = make(chat);
+        await c.open();
+        expect(c.state.rows.map((r: any) => r.starred)).toEqual([false, true]);
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        expect(source).toMatch(/t-if="row\.starred" class="chat-thread__star"/);
+        c.openActions("m10");
+        expect(c.menuStarred()).toBe(false);
+        await c.onMenuStar();
+        expect(chat.star).toHaveBeenLastCalledWith(expect.objectContaining({ configId: "a" }), 10, true, 5);
+        c.closeActions();
+        c.openActions("m11");
+        expect(c.menuStarred()).toBe(true);
+        await c.onMenuStar();
+        expect(chat.star).toHaveBeenLastCalledWith(expect.objectContaining({ configId: "a" }), 11, false, 5);
+        // A star change repaints the row
+        const before = c.state.rows;
+        list[0] = msg(10, { starred: true });
+        await c.refresh();
+        expect(c.state.rows).not.toBe(before);
+        expect(c.state.rows[0].starred).toBe(true);
+        c.teardown();
+    });
+
+    it("a user who is not internal is offered no star, as Odoo", async () => {
+        const chat: any = fakeChat([msg(10)]);
+        chat.repo.sourceState.mockResolvedValue({ selfPartnerId: 1, isInternalUser: false });
+        const c = make(chat);
+        await c.open();
+        expect(c.state.rows[0].can.star).toBe(false);
         c.teardown();
     });
 });

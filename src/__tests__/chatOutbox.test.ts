@@ -7,7 +7,8 @@ import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS, clientMarker } fro
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
 import {
-  CHAT_NOTE, CHAT_PIN, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_UPLOAD, ChatOutbox, bodyFingerprint, sameTarget, targetKey,
+  CHAT_NOTE, CHAT_PIN, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_STAR, CHAT_UPLOAD, ChatOutbox, bodyFingerprint, sameTarget,
+  targetKey,
 } from "../services/chat/chatOutbox";
 import { memoryChatFiles } from "../testing/chatFakes";
 import type { OutgoingFile } from "../models/chat";
@@ -45,6 +46,11 @@ interface Call { path: string; params: any }
  * `pinDrops` makes the next N set_message_pin calls run on the server and
  * then lose their answer; `pinError` and `editError` answer set_message_pin
  * and /mail/message/update_content (an edit or a delete) with that error.
+ * `starred` holds the ids the user starred on the server: a search_read of
+ * `starred` reads it (no row for an id in `gone`), toggle_message_starred
+ * flips it, and erplibre_set_starred sets it with the module (an
+ * AttributeError without); `starDrops` makes the next N of those two run
+ * and then lose their answer, `starError` answers them with that error.
  */
 function chatOdoo(opts: { module?: boolean } = {}) {
   const messages: Posted[] = [];
@@ -52,6 +58,7 @@ function chatOdoo(opts: { module?: boolean } = {}) {
   const state = {
     dropResponses: 0, failBefore: 0, unsent: 0, postError: null as string | null, nextId: 500, elsewhere: new Set<number>(),
     pinDrops: 0, pinError: null as string | null, editError: null as string | null,
+    starred: new Set<number>(), gone: new Set<number>(), starDrops: 0, starError: null as string | null,
   };
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
@@ -88,6 +95,20 @@ function chatOdoo(opts: { module?: boolean } = {}) {
     }
     if (path === "/web/dataset/call_kw") {
       const { model, method, kwargs } = params;
+      if (model === "mail.message" && method === "search_read" && kwargs.fields?.includes("starred")) {
+        const id: number = kwargs.domain.find((d: any[]) => d[0] === "id")[2];
+        return ok(state.gone.has(id) ? [] : [{ id, starred: state.starred.has(id) }]);
+      }
+      if (model === "mail.message" && (method === "toggle_message_starred" || method === "erplibre_set_starred")) {
+        if (method === "erplibre_set_starred" && !opts.module) return rpcError("builtins.AttributeError");
+        if (state.starError) return rpcError(state.starError);
+        const id: number = params.args[0][0];
+        const on = method === "toggle_message_starred" ? !state.starred.has(id) : !!params.args[1];
+        if (on) state.starred.add(id);
+        else state.starred.delete(id);
+        if (state.starDrops > 0) { state.starDrops--; throw new TypeError("Failed to fetch"); }
+        return ok({ "mail.message": [{ id, starred: on }] });
+      }
       if (model === "mail.message" && method === "search_read") {
         const needle = (kwargs.domain.find((d: any[]) => d[1] === "ilike") ?? [])[2] as string;
         const resId = kwargs.domain.find((d: any[]) => d[0] === "res_id")[2];
@@ -110,6 +131,12 @@ function chatOdoo(opts: { module?: boolean } = {}) {
     messages, calls, state,
     posts: () => calls.filter((c) => c.path === "/mail/message/post"),
     pins: () => calls.filter((c) => c.path === "/web/dataset/call_kw" && c.params.method === "set_message_pin").map((c) => c.params),
+    /** The star writes sent (toggle_message_starred, erplibre_set_starred), as call_kw params. */
+    stars: () => calls.filter((c) => c.path === "/web/dataset/call_kw"
+      && (c.params.method === "toggle_message_starred" || c.params.method === "erplibre_set_starred")).map((c) => c.params),
+    /** The ids of the star re-reads (search_read of `starred`), in order. */
+    starReads: () => calls.filter((c) => c.path === "/web/dataset/call_kw" && c.params.method === "search_read"
+      && c.params.kwargs.fields?.includes("starred")).map((c) => c.params.kwargs.domain.find((d: any[]) => d[0] === "id")[2]),
   };
 }
 
@@ -1160,6 +1187,191 @@ describe("ChatOutbox", () => {
       expect(await pinnedAt()).toBeNull();
       expect(await chat.queuePin(CONFIG, CHANNEL, SENT, true)).toBeNull();
       expect(await pinOps()).toEqual([]);
+    });
+  });
+
+  describe("starred messages", () => {
+    const SENT = { messageId: 40, clientUuid: null };
+    const flagged = async () => (await repo.message(CONFIG, 40))?.starred ?? false;
+    const counter = async () => (await repo.sourceState(CONFIG)).starredCounter;
+    const starOps = async () => (await db.getOutboxOpsForConfig(CONFIG)).filter((o) => o.kind === CHAT_STAR);
+    const delta = (p: Record<string, any>) => ({
+      channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], attachments: [], deletedAttachmentIds: [],
+      partners: [], inboxCounter: null, selfPartnerId: null, messages: [], ...p,
+    });
+
+    beforeEach(async () => {
+      await repo.applyDelta(CONFIG, delta({
+        messages: [{ messageId: 40, channelId: CHANNEL, body: "<p>Réunion demain</p>", authorPartnerId: 9, messageType: "comment", starred: false }],
+      }));
+      await repo.setSourceState({ configId: CONFIG, starredCounter: 2 });
+    });
+
+    it("with the module the star sends erplibre_set_starred", async () => {
+      const odoo = chatOdoo({ module: true });
+      chat.starIdempotent = async () => true;
+      const op = await chat.queueStar(CONFIG, 40, true, CHANNEL);
+      expect(op).toMatchObject({ kind: CHAT_STAR, params: { messageId: 40, starred: true, base: false, channelId: CHANNEL } });
+      // Shown at once, in the thread, the starred box and the counter
+      expect(await flagged()).toBe(true);
+      expect(await counter()).toBe(3);
+      expect(await repo.mailboxItem(CONFIG, 40)).toMatchObject({ threadModel: "discuss.channel", threadId: CHANNEL, starred: true });
+      expect(await chat.flush(CREDS)).toMatchObject({ done: 1, failed: 0, blocked: 0 });
+      expect(odoo.stars()).toEqual([{ model: "mail.message", method: "erplibre_set_starred", args: [[40], true], kwargs: {} }]);
+      expect(odoo.starReads()).toEqual([]);
+      expect(await starOps()).toEqual([]);
+      expect(await counter()).toBe(3);
+      // A lost answer: the same set goes again, idempotent
+      odoo.state.starDrops = 1;
+      await chat.queueStar(CONFIG, 40, false, CHANNEL);
+      expect(await chat.flush(CREDS)).toMatchObject({ failed: 1 });
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
+      expect(odoo.stars().map((c) => c.args)).toEqual([[[40], true], [[40], false], [[40], false]]);
+      expect(odoo.state.starred.has(40)).toBe(false);
+      expect(await flagged()).toBe(false);
+      expect(await counter()).toBe(2);
+    });
+
+    it("a module that answers as missing is probed again and the star retried with a re-read", async () => {
+      const odoo = chatOdoo();
+      let idempotent = true;
+      chat.starIdempotent = async () => idempotent;
+      chat.moduleRefused = vi.fn(async () => { idempotent = false; });
+      await chat.queueStar(CONFIG, 40, true, CHANNEL);
+      expect(await chat.flush(CREDS)).toMatchObject({ failed: 1, blocked: 0 });
+      expect(chat.moduleRefused).toHaveBeenCalledWith(CONFIG);
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
+      expect(odoo.stars().map((c) => c.method)).toEqual(["erplibre_set_starred", "toggle_message_starred"]);
+      expect(odoo.starReads()).toEqual([40]);
+      expect(odoo.state.starred.has(40)).toBe(true);
+    });
+
+    it("without the module a stale base re-reads before toggling", async () => {
+      const odoo = chatOdoo();
+      // Starred in the browser since the phone last read it: the phone still shows it unstarred
+      odoo.state.starred.add(40);
+      await chat.queueStar(CONFIG, 40, true, CHANNEL);
+      expect(await chat.flush(CREDS)).toMatchObject({ done: 1 });
+      expect(odoo.starReads()).toEqual([40]);
+      expect(odoo.stars()).toEqual([]);
+      expect(odoo.state.starred.has(40)).toBe(true);
+      // Where the server differs from the target, one toggle
+      await chat.queueStar(CONFIG, 40, false, CHANNEL);
+      expect(await chat.flush(CREDS)).toMatchObject({ done: 1 });
+      expect(odoo.starReads()).toEqual([40, 40]);
+      expect(odoo.stars()).toEqual([{ model: "mail.message", method: "toggle_message_starred", args: [[40]], kwargs: {} }]);
+      expect(odoo.state.starred.has(40)).toBe(false);
+      expect(await flagged()).toBe(false);
+    });
+
+    it("a replayed star after a lost answer sends no second toggle", async () => {
+      const odoo = chatOdoo();
+      odoo.state.starDrops = 1;
+      await chat.queueStar(CONFIG, 40, true, CHANNEL);
+      expect(await chat.flush(CREDS)).toMatchObject({ failed: 1 });
+      expect((await starOps()).map((o) => [o.status, !!o.params.sentAt])).toEqual([["failed", true]]);
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
+      // The retry read the server first: starred already, nothing toggled back
+      expect(odoo.starReads()).toEqual([40, 40]);
+      expect(odoo.stars().map((c) => c.method)).toEqual(["toggle_message_starred"]);
+      expect(odoo.state.starred.has(40)).toBe(true);
+      // Three taps offline, then sent with the answer lost: the server ends on the last one
+      chat.isOnline = async () => false;
+      await chat.queueStar(CONFIG, 40, false, CHANNEL);
+      expect(await chat.queueStar(CONFIG, 40, true, CHANNEL)).toBeNull();
+      await chat.queueStar(CONFIG, 40, false, CHANNEL);
+      chat.isOnline = async () => true;
+      odoo.state.starDrops = 1;
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ failed: 1 });
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
+      expect(odoo.stars().map((c) => c.method)).toEqual(["toggle_message_starred", "toggle_message_starred"]);
+      expect(odoo.state.starred.has(40)).toBe(false);
+      expect(await flagged()).toBe(false);
+      expect(await counter()).toBe(2);
+    });
+
+    it("star then unstar offline sends nothing", async () => {
+      const odoo = chatOdoo();
+      chat.isOnline = async () => false;
+      await chat.queueStar(CONFIG, 40, true, CHANNEL);
+      expect(await counter()).toBe(3);
+      expect(await chat.queueStar(CONFIG, 40, false, CHANNEL)).toBeNull();
+      expect(await flagged()).toBe(false);
+      expect(await counter()).toBe(2);
+      expect(await starOps()).toEqual([]);
+      chat.isOnline = async () => true;
+      await chat.flush(CREDS, { force: true });
+      expect(odoo.stars()).toEqual([]);
+      expect(odoo.starReads()).toEqual([]);
+      // A message the phone does not hold takes no star
+      await expect(chat.queueStar(CONFIG, 41, true, CHANNEL)).rejects.toThrow();
+    });
+
+    it("a refused star gives its base back with a notice, and a message gone drops it", async () => {
+      const odoo = chatOdoo();
+      odoo.state.starError = "odoo.exceptions.AccessError";
+      await chat.queueStar(CONFIG, 40, true, CHANNEL);
+      expect(await chat.flush(CREDS)).toMatchObject({ blocked: 1 });
+      expect(await flagged()).toBe(false);
+      expect(await counter()).toBe(2);
+      expect(await chat.notices([CONFIG])).toEqual([
+        expect.objectContaining({ kind: CHAT_STAR, reason: "refused", channelId: CHANNEL, message: SENT }),
+      ]);
+      for (const n of await chat.notices([CONFIG])) await chat.dismissNotice(CONFIG, n.id);
+      odoo.state.starError = null;
+      odoo.state.gone.add(40);
+      await chat.queueStar(CONFIG, 40, true, CHANNEL);
+      expect(await chat.flush(CREDS)).toMatchObject({ blocked: 1 });
+      // Only the refused toggle went: the re-read found no message
+      expect(odoo.stars()).toHaveLength(1);
+      expect(await flagged()).toBe(false);
+      expect(await counter()).toBe(2);
+      expect(await chat.notices([CONFIG])).toEqual([expect.objectContaining({ kind: CHAT_STAR, reason: "vanished" })]);
+    });
+
+    it("a delete over a waiting star shows its base again, as Odoo's delete unstars", async () => {
+      const odoo = chatOdoo();
+      chat.isOnline = async () => false;
+      await chat.queueStar(CONFIG, 40, true, CHANNEL);
+      await chat.queueDelete(CONFIG, CHANNEL, SENT);
+      expect(await starOps()).toEqual([]);
+      expect(await flagged()).toBe(false);
+      expect(await counter()).toBe(2);
+      expect((await repo.mailboxItem(CONFIG, 40))?.starred).toBe(false);
+      chat.isOnline = async () => true;
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
+      expect(odoo.stars()).toEqual([]);
+      // A star whose answer was lost may be on the server: a delete over it keeps it shown
+      await repo.applyDelta(CONFIG, delta({ messages: [{ messageId: 40, body: "<p>Réunion demain</p>" }] }));
+      odoo.state.starDrops = 1;
+      await chat.queueStar(CONFIG, 40, true, CHANNEL);
+      await chat.flush(CREDS);
+      chat.isOnline = async () => false;
+      await chat.queueDelete(CONFIG, CHANNEL, SENT);
+      expect(await flagged()).toBe(true);
+    });
+
+    it("a server flag read while a star waits does not undo it, and becomes its base", async () => {
+      chatOdoo();
+      chat.isOnline = async () => false;
+      await chat.queueStar(CONFIG, 40, true, CHANNEL);
+      // An older read says unstarred, with the server's counter: the phone's star stays and stays counted
+      let d: any = delta({ messages: [{ messageId: 40, starred: false }], starredCounter: 2 });
+      await chat.overlayMessages(CONFIG, d);
+      await repo.applyDelta(CONFIG, d);
+      expect(await flagged()).toBe(true);
+      expect(await counter()).toBe(3);
+      // Starred in the browser meanwhile: the base follows the server, which the counter already holds
+      d = delta({ messages: [{ messageId: 40, starred: true }], starredCounter: 3 });
+      await chat.overlayMessages(CONFIG, d);
+      await repo.applyDelta(CONFIG, d);
+      expect((await starOps()).map((o) => o.params.base)).toEqual([true]);
+      expect(await counter()).toBe(3);
+      // A tap to unstar is then laid over the server's star, and a tap back is where the server stands
+      await chat.queueStar(CONFIG, 40, false, CHANNEL);
+      expect(await flagged()).toBe(false);
+      expect(await chat.queueStar(CONFIG, 40, true, CHANNEL)).toBeNull();
+      expect(await starOps()).toEqual([]);
     });
   });
 

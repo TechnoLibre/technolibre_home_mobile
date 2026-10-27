@@ -8,7 +8,8 @@ import { SheetFocus } from "./chatSheetFocus";
  * What the menu offers on a message, as Odoo does: react and reply on a
  * `comment` message, edit and delete on the user's own `comment` messages
  * (sent or still queued), copy on any message whose body has text, pin on
- * a sent `comment` message of a conversation the user writes in.
+ * a sent `comment` message of a conversation the user writes in, star on a
+ * sent message for an internal user.
  */
 export interface MessageCan {
     react: boolean;
@@ -17,13 +18,14 @@ export interface MessageCan {
     edit: boolean;
     delete: boolean;
     pin: boolean;
+    star: boolean;
 }
 
 /**
  * The menu of a long-pressed message, a sheet at the bottom of the
  * thread: the six quick reactions (quickReactions) and « … » for the
- * whole picker, then Reply, Copy, Pin (Unpin when `pinned`), Edit and
- * Delete as `can` allows. The quick emojis the user already put on the
+ * whole picker, then Reply, Copy, Pin (Unpin when `pinned`), Favori
+ * (Retirer des favoris when `starred`), Edit and Delete as `can` allows. The quick emojis the user already put on the
  * message are pressed (`active`).
  * A choice calls its prop at once (copy stays inside the tap, as the
  * clipboard asks), then the menu closes over its own history entry, so
@@ -38,6 +40,7 @@ export class ChatMessageMenuComponent extends EnhancedComponent {
         active: { type: Array, optional: true },
         can: Object,
         pinned: { type: Boolean, optional: true },
+        starred: { type: Boolean, optional: true },
         onReact: Function,
         onMore: Function,
         onReply: Function,
@@ -45,6 +48,7 @@ export class ChatMessageMenuComponent extends EnhancedComponent {
         onEdit: Function,
         onDelete: Function,
         onPin: Function,
+        onStar: Function,
         onClose: Function,
     };
 
@@ -65,6 +69,8 @@ export class ChatMessageMenuComponent extends EnhancedComponent {
                 t-on-click="() => this.choose('onCopy')" t-esc="t('chat.copy')"/>
         <button t-if="props.can.pin" type="button" class="chat-menu__item chat-menu__pin"
                 t-on-click="() => this.choose('onPin')" t-esc="props.pinned ? t('chat.unpin') : t('chat.pin')"/>
+        <button t-if="props.can.star" type="button" class="chat-menu__item chat-menu__star"
+                t-on-click="() => this.choose('onStar')" t-esc="props.starred ? t('chat.unstar') : t('chat.star')"/>
         <button t-if="props.can.edit" type="button" class="chat-menu__item chat-menu__edit"
                 t-on-click="() => this.choose('onEdit')" t-esc="t('chat.edit')"/>
         <button t-if="props.can.delete" type="button" class="chat-menu__item chat-menu__delete"
@@ -111,8 +117,8 @@ export class ChatMessageMenuComponent extends EnhancedComponent {
         this.close();
     }
 
-    /** Reply, Copy, Pin, Edit or Delete: the prop is called, then the menu closes. */
-    choose(action: "onReply" | "onCopy" | "onPin" | "onEdit" | "onDelete"): void {
+    /** Reply, Copy, Pin, Favori, Edit or Delete: the prop is called, then the menu closes. */
+    choose(action: "onReply" | "onCopy" | "onPin" | "onStar" | "onEdit" | "onDelete"): void {
         this.props[action]();
         this.close();
     }

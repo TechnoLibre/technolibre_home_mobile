@@ -198,6 +198,23 @@ export function mailboxPartialsOf(
   return out;
 }
 
+/**
+ * The starred box as a bus Store sends it (`mail.thread` record `mail.box`
+ * "starred", e.g. from `_cleanup_side_records` when a delete empties a
+ * message): its counter, and its `messages` commands as message partials
+ * carrying `starred` (`["DELETE", ids]` unstarred, `["ADD", ids]` starred).
+ */
+function readStarredBox(box: any, delta: StoreDelta): void {
+  if (typeof box.counter === "number") delta.starredCounter = box.counter;
+  for (const command of Array.isArray(box.messages) ? box.messages : []) {
+    if (!Array.isArray(command) || (command[0] !== "DELETE" && command[0] !== "ADD")) continue;
+    for (const ref of Array.isArray(command[1]) ? command[1] : [command[1]]) {
+      const id = relId(ref);
+      if (id !== null) delta.messages.push({ messageId: id, starred: command[0] === "ADD" });
+    }
+  }
+}
+
 /** The flags of a box that carry a value. */
 function flagsOf(flags: Partial<ChatMailboxItem>): Partial<ChatMailboxItem> {
   const out: Partial<ChatMailboxItem> = {};
@@ -369,6 +386,7 @@ export function parseStore(
     if (t && typeof t.id === "number" && typeof t.model === "string" && typeof t.name === "string" && t.name) {
       threadNames.set(`${t.model}#${t.id}`, t.name);
     }
+    if (t && t.model === "mail.box" && t.id === "starred") readStarredBox(t, delta);
   }
 
   const lastByChannel = new Map<number, number>();

@@ -1281,5 +1281,10 @@ export const translations: Record<string, string> = {
   "chat.pinned": "Pinned",
   "chat.pinned_failed": "The pinned messages could not be read.",
   "chat.action_pin": "Pin",
+  "chat.star": "Star",
+  "chat.unstar": "Unstar",
+  "chat.starred": "Starred",
+  "chat.starred_list": "Starred",
+  "chat.action_star": "Star",
   "chat.search_hit_failed": "This message could not be loaded: the conversation opens at the end.",
 };

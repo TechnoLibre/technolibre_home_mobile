@@ -26,6 +26,9 @@ const flag = (v: boolean): number => (v ? 1 : 0);
 /** The key of a row: `configId#<local key>`, so accounts never share a row. */
 const key = (configId: string, local: string | number): string => `${configId}#${local}`;
 
+/** The model of Discuss conversations: a channel message's thread in the mailbox. */
+const CHANNEL_MODEL = "discuss.channel";
+
 /** The key of a server attachment's row, as clearFiles takes it. */
 export const attachmentKey = (configId: string, attachmentId: number): string => key(configId, `a${attachmentId}`);
 
@@ -573,6 +576,10 @@ export class ChatRepository {
     for (const p of d.attachments) await this.upsertAttachment(configId, p);
     await this.applyReactions(configId, d);
     for (const p of d.mailbox ?? []) await this.upsertMailbox(configId, p);
+    // A message's starred flag also moves its mailbox row: a bus Store carries {id, starred} without the thread
+    for (const m of d.messages) {
+      if (m.starred !== undefined) await this.starBox(configId, m.messageId, m.starred, await this.message(configId, m.messageId));
+    }
     for (const set of d.pinnedSets ?? []) await this.keepPinned(configId, set.channelId, set.messageIds);
     if (d.deletedAttachmentIds.length > 0) await this.deleteAttachments(configId, d.deletedAttachmentIds);
     for (const id of d.deletedMessageIds ?? []) await this.deleteMessage(configId, id);
@@ -1237,10 +1244,39 @@ export class ChatRepository {
     return rows.map(messageFromRow);
   }
 
-  /** Sets the starred flag of a cached message; a message not cached is left alone. */
+  /**
+   * Sets the starred flag of a cached message and of its row in the
+   * starred box (starBox); a message cached in neither is left alone.
+   */
   async setStarred(configId: string, messageId: number, on: boolean): Promise<void> {
     const stored = await this.message(configId, messageId);
     if (stored) await this.put("chat_messages", this.messageRow({ ...stored, starred: on }));
+    await this.starBox(configId, messageId, on, stored);
+  }
+
+  /**
+   * The starred flag of a message's mailbox row: an existing row (any
+   * model) takes it, its other flags kept; without one, a cached channel
+   * message (`message`) gets a row when starred, its thread the channel
+   * and its record name the channel's, so the starred box lists it.
+   */
+  private async starBox(configId: string, messageId: number, on: boolean, message: ChatMessage | null): Promise<void> {
+    if (await this.row("chat_mailbox", key(configId, `m${messageId}`))) {
+      await this.upsertMailbox(configId, { messageId, starred: on });
+      return;
+    }
+    if (!on || !message) return;
+    await this.upsertMailbox(configId, {
+      messageId,
+      threadModel: CHANNEL_MODEL,
+      threadId: message.channelId,
+      recordName: (await this.channel(configId, message.channelId))?.name ?? "",
+      authorPartnerId: message.authorPartnerId,
+      body: message.body,
+      date: message.date || null,
+      messageType: message.messageType,
+      starred: true,
+    });
   }
 
   /** The cached messages of a channel that carry pinnedAt, in no order; the server's only (a pin needs an id). */

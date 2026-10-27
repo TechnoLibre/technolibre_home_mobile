@@ -3090,6 +3090,149 @@ describe("ChatService", () => {
     });
   });
 
+  describe("starred messages", () => {
+    let odoo: ReturnType<typeof fakeOdoo>;
+    let src: ChatSource;
+    /** The ids the user starred on the server. */
+    let server: Set<number>;
+    /** What /mail/starred/messages answers, newest first; a page is cut at `before` and `limit`. */
+    let page: any[];
+    const counter = async () => (await chat.repo.sourceState(config)).starredCounter;
+    const flagged = async (id: number) => (await chat.repo.message(config, id))?.starred ?? false;
+    const shown = async () => (await chat.starred([config])).map((i) => i.messageId);
+    const record = (id: number, name: string) => ({
+      id, body: `<p>r${id}</p>`, date: "2026-10-25 09:00:00", message_type: "comment",
+      author: { id: BOB, type: "partner" }, thread: { id: 70, model: "res.partner" }, record_name: name, starred: true,
+    });
+    const starredBox = (ids: number[], flags: Record<string, any>) => chat.repo.applyDelta(config, {
+      ...parseStore({}, config, SELF),
+      mailbox: ids.map((id) => ({ messageId: id, threadModel: "discuss.channel", threadId: GROUP, body: `<p>m${id}</p>`, ...flags })),
+    });
+
+    beforeEach(async () => {
+      odoo = fakeOdoo();
+      server = new Set();
+      page = [];
+      odoo.state.data.Store.starred = { counter: 2, counter_bus_id: 1000, id: "starred", model: "mail.box" };
+      odoo.state.onKw = async (p) => {
+        if (p.model === "mail.message" && p.method === "search_read" && p.kwargs.fields?.includes("starred")) {
+          const id = p.kwargs.domain.find((d: any[]) => d[0] === "id")[2];
+          return [{ id, starred: server.has(id) }];
+        }
+        if (p.method === "toggle_message_starred") {
+          const id = p.args[0][0];
+          if (server.has(id)) server.delete(id);
+          else server.add(id);
+          return { "mail.message": [{ id, starred: server.has(id) }] };
+        }
+        return undefined;
+      };
+      odoo.state.onRoute = async (path, params) => {
+        if (path !== "/mail/starred/messages") return undefined;
+        const rows = page.filter((m) => params.before === undefined || m.id < params.before).slice(0, params.limit);
+        return { data: { "mail.message": rows }, messages: rows.map((m) => m.id) };
+      };
+      src = await source();
+      await chat.load(src);
+    });
+
+    it("the bus echo of an own star moves the counter once", async () => {
+      expect(await counter()).toBe(2);
+      await chat.star(src, 600, true, GROUP);
+      expect(odoo.kw("toggle_message_starred").map((c) => c.params.args)).toEqual([[[600]]]);
+      expect(await flagged(600)).toBe(true);
+      expect(await counter()).toBe(3);
+      // The server tells every device of the user, this one included
+      await chat.applyBus(config, [bus(1001, "mail.message/toggle_star", { message_ids: [600], starred: true })]);
+      expect(await counter()).toBe(3);
+      expect(await flagged(600)).toBe(true);
+      expect(await shown()).toEqual([600]);
+    });
+
+    it("a star from another device counts", async () => {
+      await chat.applyBus(config, [bus(1001, "mail.message/toggle_star", { message_ids: [600], starred: true })]);
+      expect(await flagged(600)).toBe(true);
+      expect(await counter()).toBe(3);
+      // A message the phone does not hold counts too, and a replay at or below the last bus id counts nothing
+      await chat.applyBus(config, [bus(1002, "mail.message/toggle_star", { message_ids: [4242], starred: true })]);
+      expect(await counter()).toBe(4);
+      await chat.applyBus(config, [bus(1002, "mail.message/toggle_star", { message_ids: [4242], starred: true })]);
+      expect(await counter()).toBe(4);
+      await chat.applyBus(config, [bus(1003, "mail.message/toggle_star", { message_ids: [600, 4242], starred: false })]);
+      expect(await flagged(600)).toBe(false);
+      expect(await counter()).toBe(2);
+    });
+
+    it("a message deleted on the server leaves the starred box, with the server's counter", async () => {
+      await chat.applyBus(config, [bus(1001, "mail.message/toggle_star", { message_ids: [600], starred: true })]);
+      // Odoo's delete clears every star of the emptied message and sends the box's count (_cleanup_side_records)
+      const cleared = { "mail.thread": [{ counter: 1, counter_bus_id: 1002, id: "starred", messages: [["DELETE", [600]]], model: "mail.box" }] };
+      await chat.applyBus(config, [bus(1002, "mail.record/insert", cleared)]);
+      expect(await flagged(600)).toBe(false);
+      expect(await counter()).toBe(1);
+      expect(await shown()).toEqual([]);
+      // Replayed: the counter stays
+      await chat.repo.setSourceState({ configId: config, starredCounter: 5 });
+      await chat.applyBus(config, [bus(1002, "mail.record/insert", cleared)]);
+      expect(await counter()).toBe(5);
+    });
+
+    it("the starred page unstars a row it no longer lists", async () => {
+      await starredBox([590, 595], { starred: true });
+      // Starred in the browser: a channel message and a record's message
+      page = [{ ...msg(599, GROUP), starred: true }, record(98, "Tâche démo")];
+      expect(await chat.refreshStarred(src)).toMatchObject({ offline: false, complete: true });
+      expect(odoo.on("/mail/starred/messages").map((c) => c.params)).toEqual([{ limit: 30 }]);
+      // A page shorter than its limit covers every id below it: 590 and 595 are no longer starred
+      expect(await shown()).toEqual([599, 98]);
+      expect(await chat.repo.mailboxItem(config, 98)).toMatchObject({ threadModel: "res.partner", threadId: 70, recordName: "Tâche démo", starred: true });
+      expect(await flagged(599)).toBe(true);
+      // A page before an id proves only the range below it
+      await starredBox([590, 610], { starred: true });
+      page = [];
+      await chat.refreshStarred(src, 600);
+      expect(odoo.on("/mail/starred/messages").at(-1)!.params).toEqual({ limit: 30, before: 600 });
+      expect(await shown()).toEqual([610]);
+      expect(odoo.on("/mail/thread/messages")).toEqual([]);
+    });
+
+    it("a queued star survives a refresh", async () => {
+      offline();
+      await chat.star(src, 600, true, GROUP);
+      expect(await counter()).toBe(3);
+      online();
+      // The server does not hold it yet: its page leaves it out, and the load's counter does not count it
+      page = [{ ...msg(590, GROUP), starred: true }];
+      await chat.refreshStarred(src);
+      expect(await shown()).toEqual([600, 590]);
+      expect(await flagged(600)).toBe(true);
+      await chat.load(src);
+      expect(await counter()).toBe(3);
+      expect((await env.db.getOutboxOpsForConfig(config)).filter((o) => o.kind === "chat.star")).toHaveLength(1);
+      // Offline, the cache answers alone
+      offline();
+      expect(await chat.refreshStarred(src)).toMatchObject({ offline: true });
+      expect(await shown()).toEqual([600, 590]);
+    });
+
+    it("the starred list puts the unread first, then the newest", async () => {
+      await starredBox([590, 599, 600], { starred: true });
+      await chat.repo.applyDelta(config, { ...parseStore({}, config, SELF), mailbox: [
+        { messageId: 700, threadModel: "res.partner", threadId: 70, recordName: "Tâche démo", starred: true },
+        { messageId: 701, threadModel: "res.partner", threadId: 70, recordName: "Tâche démo", needaction: true },
+      ] });
+      // The group is seen up to 598: 599 and 600 are unread, a record's message never is
+      expect(await shown()).toEqual([600, 599, 700, 590]);
+      await chat.repo.patchChannel(config, GROUP, { seenMessageId: 600 });
+      expect(await shown()).toEqual([700, 600, 599, 590]);
+      // A message whose delete waits is hidden at once
+      await chat.repo.applyDelta(config, parseStore({ "mail.message": [{ ...msg(599, GROUP, SELF), starred: true }] }, config, SELF));
+      offline();
+      await chat.deleteMessage(src, GROUP, { messageId: 599, clientUuid: null });
+      expect(await shown()).toEqual([700, 600, 590]);
+    });
+  });
+
   describe("reactions", () => {
     let odoo: ReturnType<typeof fakeOdoo>;
     let server: ReturnType<typeof reactionServer>;

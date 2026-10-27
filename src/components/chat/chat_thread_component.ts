@@ -115,6 +115,8 @@ export interface ThreadRow {
     quote: QuoteView | null;
     /** Pinned in its channel (pinnedAt). */
     pinned: boolean;
+    /** Starred by the user. */
+    starred: boolean;
     /** A notification of the server (`message_type` notification, e.g. a pin notice): a centered line, no menu. */
     system: boolean;
 }
@@ -239,10 +241,11 @@ function utcMs(dt: string | null | undefined): number {
  * `comment` messages, sent or queued (a failed one is not edited); delete
  * on them too, a failed one included (it is dropped with its files); pin
  * on a sent one (a server id), anyone's, as Odoo offers it to any partner
- * of a channel; copy on any message whose text (bodyText) is not blank,
- * but a notification, which offers nothing.
+ * of a channel; star on a sent one for an internal user (`internal`), as
+ * Odoo's canToggleStar, in any conversation; copy on any message whose
+ * text (bodyText) is not blank. A notification offers nothing.
  */
-export function canOf(m: ChatMessage, own: boolean, writable: boolean, text: string): MessageCan {
+export function canOf(m: ChatMessage, own: boolean, writable: boolean, text: string, internal = false): MessageCan {
     const live = writable && m.messageType === "comment";
     const failed = m.status === "failed";
     return {
@@ -252,12 +255,14 @@ export function canOf(m: ChatMessage, own: boolean, writable: boolean, text: str
         edit: live && own && !failed,
         delete: live && own,
         pin: live && !failed && m.messageId !== null,
+        star: internal && m.messageType !== "notification" && m.messageId !== null,
     };
 }
 
-/** The part of a row's signature its chips, menu, pin, kind and quote add: a change repaints the row. */
+/** The part of a row's signature its chips, menu, pin, star, kind and quote add: a change repaints the row. */
 function actionsSig(r: ThreadRow): string {
-    const can = [r.can.react, r.can.reply, r.can.copy, r.can.edit, r.can.delete, r.can.pin, r.pinned, r.system].map(Number).join("");
+    const can = [r.can.react, r.can.reply, r.can.copy, r.can.edit, r.can.delete, r.can.pin, r.can.star, r.pinned, r.starred, r.system]
+        .map(Number).join("");
     const q = r.quote;
     const quote = q ? [q.key ?? "", q.author, q.text, q.state, Number(q.edited)].join(":") : "";
     return can + "|" + r.reactions.map((x) => [x.content, x.count, Number(x.self), x.names.join(",")].join(":")).join(";")
@@ -366,6 +371,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             <button t-if="offers(row)" type="button" class="chat-thread__actions" aria-haspopup="dialog"
                     t-att-aria-label="t('chat.message_actions')" t-on-click="() => this.openActions(row.key)">⋯</button>
             <span t-if="row.pinned" class="chat-thread__pinned" t-att-title="t('chat.pinned')" t-att-aria-label="t('chat.pinned')">📌</span>
+            <span t-if="row.starred" class="chat-thread__star" t-att-title="t('chat.starred')" t-att-aria-label="t('chat.starred')">★</span>
             <span t-esc="row.time"/>
             <span t-if="row.meta === 'sent'" t-att-title="t('chat.sent')">✓</span>
             <span t-if="row.meta === 'seen'" t-att-title="t('chat.seen')">✓✓</span>
@@ -432,8 +438,10 @@ export class ChatThreadComponent extends EnhancedComponent {
         </div>
       </t>
       <ChatMessageMenuComponent t-if="state.actions" quick="quick()" active="activeOf()" can="menuCan()" pinned="menuPinned()"
+                                starred="menuStarred()"
                                 onReact.bind="onMenuReact" onMore.bind="onMenuMore" onReply.bind="onMenuReply" onCopy.bind="onMenuCopy"
-                                onEdit.bind="onMenuEdit" onDelete.bind="onMenuDelete" onPin.bind="onMenuPin" onClose.bind="closeActions"/>
+                                onEdit.bind="onMenuEdit" onDelete.bind="onMenuDelete" onPin.bind="onMenuPin" onStar.bind="onMenuStar"
+                                onClose.bind="closeActions"/>
       <ChatPinnedComponent t-if="state.pinned" items="state.pinned.items" offline="state.pinned.offline"
                            onOpen.bind="onPinnedOpen" onClose.bind="closePinned"/>
       <ChatReactionWhoComponent t-if="state.who" reaction="state.who" onClose.bind="closeWho"/>
@@ -507,6 +515,8 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _members: ChatMember[] = [];
     private _names = new Map<number, string>();
     private _self: number | null = null;
+    /** Whether the account's user is internal, as the last build read it: a star is offered to them only. */
+    private _internal = false;
     /** Set once a history page brought nothing, so the short-history fill stops. */
     private _noMore = false;
     /** How many of the newest server messages build() renders; scrolling up raises it. */
@@ -775,6 +785,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         this._members = members;
         this._names = names;
         this._self = self;
+        this._internal = !!st.isInternalUser;
         this.refreshTyping();
         const el = this.scroller.el as HTMLElement | null;
         const stick = !el || this.atBottom(el);
@@ -963,9 +974,10 @@ export class ChatThreadComponent extends EnhancedComponent {
             messageKey: messageKeyOf(m),
             target: { messageId: m.messageId, clientUuid: m.clientUuid },
             reactions: named ? reactionViews(groups.get(messageKeyOf(m)) ?? [], names, self) : [],
-            can: canOf(m, own, writable, body.text),
+            can: canOf(m, own, writable, body.text, this._internal),
             quote,
             pinned: !!m.pinnedAt,
+            starred: !!m.starred,
             system: m.messageType === "notification",
         };
     }
@@ -1401,12 +1413,17 @@ export class ChatThreadComponent extends EnhancedComponent {
     /** What the open menu offers; nothing once its row is gone. */
     menuCan(): MessageCan {
         const row = this.rowAt(this.state.actions);
-        return row ? row.can : { react: false, reply: false, copy: false, edit: false, delete: false, pin: false };
+        return row ? row.can : { react: false, reply: false, copy: false, edit: false, delete: false, pin: false, star: false };
     }
 
     /** Whether the open menu's message is pinned: its pin choice reads Désépingler. */
     menuPinned(): boolean {
         return this.rowAt(this.state.actions)?.pinned ?? false;
+    }
+
+    /** Whether the open menu's message is starred: its star choice reads Retirer des favoris. */
+    menuStarred(): boolean {
+        return this.rowAt(this.state.actions)?.starred ?? false;
     }
 
     /** The menu's quick bar (quickReactions, from the uses counted on this phone). */
@@ -1517,6 +1534,19 @@ export class ChatThreadComponent extends EnhancedComponent {
             await this.chatService.pin(source, this.channelId, row.target, on);
         } catch (e) {
             console.warn("chat thread: pin", e);
+            this.state.error = t("chat.action_error");
+        }
+    }
+
+    /** Stars the menu's message, or unstars a starred one, without asking, as the browser (ChatService.star). */
+    async onMenuStar(): Promise<void> {
+        const row = this.rowAt(this.state.actions);
+        const source = this.source;
+        if (!row?.can.star || row.target.messageId === null || !source) return;
+        try {
+            await this.chatService.star(source, row.target.messageId, !row.starred, this.channelId);
+        } catch (e) {
+            console.warn("chat thread: star", e);
             this.state.error = t("chat.action_error");
         }
     }

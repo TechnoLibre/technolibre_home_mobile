@@ -17,21 +17,21 @@ function stubStorage(lang = "fr") {
 }
 
 const QUICK = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
-const OWN: MessageCan = { react: true, reply: true, copy: true, edit: true, delete: true, pin: false };
-const OTHERS: MessageCan = { react: true, reply: true, copy: true, edit: false, delete: false, pin: false };
+const OWN: MessageCan = { react: true, reply: true, copy: true, edit: true, delete: true, pin: false, star: false };
+const OTHERS: MessageCan = { react: true, reply: true, copy: true, edit: false, delete: false, pin: false, star: false };
 
 describe("ChatMessageMenuComponent", () => {
     let back: ReturnType<typeof vi.spyOn>;
 
-    async function mounted(can: MessageCan, active: string[] = [], pinned = false) {
+    async function mounted(can: MessageCan, active: string[] = [], pinned = false, starred = false) {
         stubStorage();
         back = vi.spyOn(window.history, "back").mockImplementation(() => {});
         const host = document.createElement("div");
         document.body.appendChild(host);
         const props = {
-            quick: QUICK, active, can, pinned,
+            quick: QUICK, active, can, pinned, starred,
             onReact: vi.fn(), onMore: vi.fn(), onReply: vi.fn(), onCopy: vi.fn(),
-            onEdit: vi.fn(), onDelete: vi.fn(), onPin: vi.fn(), onClose: vi.fn(),
+            onEdit: vi.fn(), onDelete: vi.fn(), onPin: vi.fn(), onStar: vi.fn(), onClose: vi.fn(),
         };
         const component = await mount(ChatMessageMenuComponent as any, host, { props, env: {} } as any);
         const app = { destroy: () => (component as any).__owl__.app.destroy() };
@@ -114,8 +114,25 @@ describe("ChatMessageMenuComponent", () => {
         none.app.destroy();
     });
 
+    it("the menu shows Favori on a sent message", async () => {
+        const labels = (h: HTMLElement) => [...h.querySelectorAll(".chat-menu__item")].map((b) => b.textContent);
+        const plain = await mounted({ ...OTHERS, pin: true, star: true });
+        expect(labels(plain.host)).toEqual(["Répondre", "Copier", "Épingler", "Favori", "Fermer"]);
+        plain.host.querySelector<HTMLElement>(".chat-menu__star")!.click();
+        expect(plain.props.onStar).toHaveBeenCalledTimes(1);
+        expect(back).toHaveBeenCalledTimes(1);
+        plain.app.destroy();
+        const starred = await mounted({ ...OWN, star: true }, [], false, true);
+        expect(labels(starred.host)).toEqual(["Répondre", "Copier", "Retirer des favoris", "Modifier", "Supprimer", "Fermer"]);
+        starred.app.destroy();
+        // Not offered (a message not sent yet, a user who is not internal)
+        const none = await mounted(OWN, [], false, true);
+        expect(none.host.querySelector(".chat-menu__star")).toBeNull();
+        none.app.destroy();
+    });
+
     it("without react, no quick bar; copy alone stays for a notification", async () => {
-        const { host, app } = await mounted({ react: false, reply: false, copy: true, edit: false, delete: false, pin: false });
+        const { host, app } = await mounted({ react: false, reply: false, copy: true, edit: false, delete: false, pin: false, star: false });
         expect(host.querySelector(".chat-menu__quick")).toBeNull();
         expect([...host.querySelectorAll(".chat-menu__item")].map((b) => b.textContent)).toEqual(["Copier", "Fermer"]);
         app.destroy();

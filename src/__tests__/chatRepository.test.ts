@@ -1690,6 +1690,44 @@ describe("ChatRepository mailbox cache", () => {
     expect((await repo.mailboxItems(B, "inbox")).map((i) => i.messageId)).toEqual([70]);
   });
 
+  it("setStarred writes the starred box too: a cached channel message gets its row, a record's row is patched", async () => {
+    await repo.applyDelta(A, delta({
+      channels: [{ channelId: 7, channelType: "group", name: "#général-test", isMember: true }],
+      messages: [{ messageId: 40, channelId: 7, body: "<p>Réunion demain</p>", authorPartnerId: 8, date: "2026-10-26 09:00:00", messageType: "comment" }],
+      mailbox: [item(60)],
+    }));
+    await repo.setStarred(A, 40, true);
+    expect(await repo.mailboxItem(A, 40)).toEqual({
+      configId: A, messageId: 40, threadModel: "discuss.channel", threadId: 7, recordName: "#général-test", authorPartnerId: 8,
+      body: "<p>Réunion demain</p>", date: "2026-10-26 09:00:00", messageType: "comment",
+      needaction: false, starred: true, history: false,
+    });
+    await repo.setStarred(A, 60, true);
+    expect(await repo.mailboxItem(A, 60)).toMatchObject({ threadModel: "project.task", needaction: true, starred: true });
+    await repo.setStarred(A, 40, false);
+    await repo.setStarred(A, 60, false);
+    expect(await repo.mailboxItems(A, "starred")).toEqual([]);
+    expect((await repo.mailboxItem(A, 60))!.needaction).toBe(true);
+    // Neither cached: nothing written
+    await repo.setStarred(A, 99, true);
+    expect(await repo.mailboxItem(A, 99)).toBeNull();
+  });
+
+  it("a message partial carrying starred reaches the starred box, without its thread", async () => {
+    await repo.applyDelta(A, delta({
+      channels: [{ channelId: 7, channelType: "group", name: "#général-test", isMember: true }],
+      messages: [{ messageId: 40, channelId: 7, body: "<p>Réunion demain</p>", messageType: "comment" }],
+      mailbox: [item(60)],
+    }));
+    // A bus Store carries only {id, starred}: the record's row and the channel message both follow it
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 60, starred: true }, { messageId: 40, starred: true }, { messageId: 99, starred: true }] }));
+    expect((await repo.mailboxItems(A, "starred")).map((i) => i.messageId)).toEqual([60, 40]);
+    expect((await repo.message(A, 40))!.starred).toBe(true);
+    expect(await repo.mailboxItem(A, 99)).toBeNull();
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 60, starred: false }, { messageId: 40, starred: false }] }));
+    expect(await repo.mailboxItems(A, "starred")).toEqual([]);
+  });
+
   it("patchMailbox changes the named fields of a cached item only", async () => {
     await repo.applyDelta(A, delta({ mailbox: [item(60)] }));
     await repo.patchMailbox(A, 60, { needaction: false, history: true });

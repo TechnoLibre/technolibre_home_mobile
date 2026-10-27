@@ -395,6 +395,23 @@ describe("parseStore pin, star and the starred counter", () => {
   });
 });
 
+describe("parseStore the starred box", () => {
+  it("reads the starred box a delete sends: its messages unstarred and its counter", () => {
+    // _cleanup_side_records: the box's count and the emptied messages leaving it
+    const d = parseStore({
+      "mail.thread": [
+        { counter: 1, counter_bus_id: 1002, id: "starred", messages: [["DELETE", [70, 71]]], model: "mail.box" },
+        { counter: 9, id: "inbox", model: "mail.box" },
+      ],
+    }, CFG, SELF);
+    expect(d.starredCounter).toBe(1);
+    expect(d.messages).toEqual([{ messageId: 70, starred: false }, { messageId: 71, starred: false }]);
+    const added = parseStore({ "mail.thread": [{ id: "starred", model: "mail.box", messages: [["ADD", [72]]] }] }, CFG, SELF);
+    expect(added.starredCounter).toBeUndefined();
+    expect(added.messages).toEqual([{ messageId: 72, starred: true }]);
+  });
+});
+
 describe("parseStore mailbox pages", () => {
   const task = { id: 5, model: "project.task" };
   const page = {

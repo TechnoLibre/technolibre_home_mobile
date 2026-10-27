@@ -151,6 +151,23 @@ export const CHAT_PIN = "chat.pin";
 /** The actions on one message, handled by runMessageAction, each a target state of its message (and content). */
 export const MESSAGE_KINDS = [CHAT_REACTION, CHAT_EDIT, CHAT_DELETE, CHAT_PIN];
 
+/**
+ * params { messageId: number, starred: boolean, base: boolean, channelId:
+ * number|null }: a message the user starred or not, as a target state. The
+ * star is the user's, on a message of any model: channelId only names the
+ * conversation of a channel message for the screens, the op is keyed by
+ * the message (queueAction with no conversation). base: whether the
+ * server held it starred when the first op of the message was queued.
+ */
+export const CHAT_STAR = "chat.star";
+
+/**
+ * The actions of the account on a message that may have no chat_messages
+ * row (a record's, cached in chat_mailbox only), handled by
+ * runMailboxAction.
+ */
+export const MAILBOX_KINDS = [CHAT_STAR];
+
 /** The guarded edit route of the server module (1.3): it writes only over the body whose fingerprint it is given. */
 export const MODULE_EDIT_ROUTE = "/erplibre_mobile_chat/message/update_content";
 
@@ -169,6 +186,9 @@ export async function bodyFingerprint(body: string): Promise<string> {
 
 /** A route the server answered with a plain 404 (no JSON-RPC answer): the route does not exist there. */
 class RouteMissingError extends Error {}
+
+/** The re-read before a star found no message: it is gone, or no longer readable by the user. */
+class StarTargetGoneError extends Error {}
 
 /**
  * An edit not written because the server's body is no longer the one it
@@ -210,7 +230,7 @@ const ACTION_KINDS = [
 ];
 
 /** The kinds whose blocked rows are notices. */
-const NOTICE_KINDS = [...ACTION_KINDS, ...MESSAGE_KINDS, CHAT_DROPPED, CHAT_FILE_REFUSED];
+const NOTICE_KINDS = [...ACTION_KINDS, ...MESSAGE_KINDS, ...MAILBOX_KINDS, CHAT_DROPPED, CHAT_FILE_REFUSED];
 
 /** The kinds drain leaves to the upload lane (pumpUploads). */
 const LANE_KINDS = new Set([CHAT_UPLOAD]);
@@ -331,12 +351,14 @@ export function targetOf(op: Pick<OutboxOp, "params">): MessageTarget {
  * The key an action is queued under: its kind, conversation, person
  * removed, message (the client uuid of its post when it has one, else its
  * id) and content. Ops of one key are one action, a later one superseding
- * an earlier.
+ * an earlier. A star is the account's, keyed by its message alone: the
+ * conversation it names is only for the screens.
  */
 export function targetKey(op: Pick<OutboxOp, "kind" | "params">): string {
   const p = op.params;
   const message = p.clientUuid ? `u${p.clientUuid}` : p.messageId != null ? `m${p.messageId}` : "";
-  return JSON.stringify([op.kind, p.channelId ?? null, p.partnerId ?? null, message, p.content ?? null]);
+  const channel = op.kind === CHAT_STAR ? null : p.channelId ?? null;
+  return JSON.stringify([op.kind, channel, p.partnerId ?? null, message, p.content ?? null]);
 }
 
 /**
@@ -427,6 +449,11 @@ export class ChatOutbox {
    * than a re-read before Odoo's; ChatService points it at its features.
    */
   editGuard: (configId: string) => Promise<boolean> = async () => false;
+  /**
+   * Whether a star takes the module's idempotent set (1.4) rather than a
+   * re-read before Odoo's toggle; ChatService points it at its features.
+   */
+  starIdempotent: (configId: string) => Promise<boolean> = async () => false;
   /** The app's chat files: the outgoing ones this outbox owns. ChatService sets it with the transfer. */
   files: ChatFiles = deviceChatFiles;
   /** Uploads the files; ChatService sets it. Without one an upload fails and waits for its retry. */
@@ -469,6 +496,7 @@ export class ChatOutbox {
     outbox.registerHandler(CHAT_UPLOAD, (creds, op) => this.runUpload(creds, op));
     for (const kind of ACTION_KINDS) outbox.registerHandler(kind, (creds, op) => this.runAction(creds, op));
     for (const kind of MESSAGE_KINDS) outbox.registerHandler(kind, (creds, op) => this.runMessageAction(creds, op));
+    for (const kind of MAILBOX_KINDS) outbox.registerHandler(kind, (creds, op) => this.runMailboxAction(creds, op));
   }
 
   /**
@@ -1230,6 +1258,49 @@ export class ChatOutbox {
   }
 
   /**
+   * Queues a message starred (`starred`) or not, as the target state of
+   * the message for the account (queueAction with no conversation, keyed
+   * by the message id): the op waiting takes the new value and keeps its
+   * base, the flag cached when the first op was queued (the mailbox row's,
+   * else the chat message's); a value equal to its base cancels the
+   * waiting ops and queues nothing (null). Shown at once (showStar).
+   * `channelId` names the conversation of a channel message for the
+   * screens; null for a record's message. Rejects for a message cached in
+   * neither table.
+   */
+  async queueStar(configId: string, messageId: number, starred: boolean, channelId: number | null): Promise<OutboxOp | null> {
+    const base = await this.starredOf(configId, messageId);
+    if (base === null) throw new Error("The message to star is not cached.");
+    return this.queueAction(configId, CHAT_STAR, null, { messageId, starred, base, channelId }, {
+      same: (o) => o.params.messageId === messageId,
+      merge: () => ({ starred }),
+      noop: (merged) => !!merged.starred === !!merged.base,
+      local: () => this.showStar(configId, messageId, starred),
+    });
+  }
+
+  /** The starred flag the phone shows for a message: its mailbox row's, else its chat message's; null when neither is cached. */
+  async starredOf(configId: string, messageId: number): Promise<boolean | null> {
+    const item = await this.repo.mailboxItem(configId, messageId);
+    if (item) return item.starred;
+    const message = await this.repo.message(configId, messageId);
+    return message ? !!message.starred : null;
+  }
+
+  /**
+   * Shows a cached message starred or not (ChatRepository.setStarred); a
+   * change of the flag shown moves the account's starredCounter by one.
+   */
+  private async showStar(configId: string, messageId: number, on: boolean): Promise<void> {
+    const shown = await this.starredOf(configId, messageId);
+    if (shown === null) return;
+    await this.repo.setStarred(configId, messageId, on);
+    if (shown === on) return;
+    const { starredCounter } = await this.repo.sourceState(configId);
+    await this.repo.setSourceState({ configId, starredCounter: Math.max(0, starredCounter + (on ? 1 : -1)) });
+  }
+
+  /**
    * Queues an edit of the user's own message to `text` with the people
    * and channels picked (`mentions`). A message not sent yet whose post has
    * not started (postStarted) takes the text into its post instead, its
@@ -1310,10 +1381,14 @@ export class ChatOutbox {
    * Odoo's delete does, shown at once (body ""). A message not sent yet
    * whose post has not started never reaches the server: its post, its
    * uploads and every action on it are cancelled, its row and its files
-   * go (dropPendingMessage), and null is returned. Otherwise the edits and
-   * reactions and pins of the message still waiting are cancelled, and one
-   * delete waits for what still runs on it (an edit, a reaction, a pin, its
-   * post). A reaction or a pin cancelled with none of its key left running
+   * go (dropPendingMessage), and null is returned. Otherwise the edits,
+   * reactions, pins and stars of the message still waiting are cancelled,
+   * and one delete waits for what still runs on it (an edit, a reaction, a
+   * pin, a star, its post). A star cancelled shows the server's flag again
+   * (its base), the counter following, unless one of its ops runs or may
+   * have reached the server (sentAt); an accepted delete clears it on the
+   * server, which sends the starred box without it (_cleanup_side_records).
+   * A reaction or a pin cancelled with none of its key left running
    * shows again as the server held it (base; a pin at baseAt), so a refused
    * delete leaves the message as the server has it; an accepted one comes
    * back with pinned_at cleared, as Odoo unpins an emptied message. Unless
@@ -1340,10 +1415,12 @@ export class ChatOutbox {
         && sameTarget(targetOf(o), named));
       const queued = mine.find((o) => o.kind === CHAT_DELETE);
       if (queued) return queued;
+      const stars = dependencyOrder(all.filter((o) => o.kind === CHAT_STAR && o.status !== "blocked"
+        && message.messageId !== null && o.params.messageId === message.messageId));
       const baseBody = baseBodyOf(message, mine);
-      const running = mine.find((o) => o.status === "running");
+      const running = mine.find((o) => o.status === "running") ?? stars.find((o) => o.status === "running");
       const cancelled = dependencyOrder(mine.filter((o) => o.status !== "running"));
-      for (const o of cancelled) await this.outbox.cancel(o.id);
+      for (const o of [...cancelled, ...stars.filter((o) => o.status !== "running")]) await this.outbox.cancel(o.id);
       const editSent = cancelled.some((o) => o.kind === CHAT_EDIT && !!o.params.sentAt);
       const op = await this.outbox.enqueue({
         noteId: CHAT_NOTE,
@@ -1353,6 +1430,10 @@ export class ChatOutbox {
         dependsOn: running?.id ?? post?.id ?? null,
       });
       await this.showBody(configId, named, "");
+      // A star cancelled shows the server's flag again (base), as Odoo's delete clears the stars of what it empties
+      if (stars.length > 0 && stars.every((o) => o.status !== "running" && !o.params.sentAt)) {
+        await this.showStar(configId, message.messageId!, !!stars[0].params.base);
+      }
       // The first cancelled op of a reaction's or a pin's key holds the server's state before any of them (base)
       const shown = new Set<string>();
       for (const o of cancelled) {
@@ -1527,11 +1608,12 @@ export class ChatOutbox {
    * the message's others; one nobody is left in becomes a deletion. Only
    * the messages whose reactions the delta carries are touched. The
    * bodies first (overlayBodies; `except`: the op whose answer the delta
-   * is), then the pins (overlayPins).
+   * is), then the pins (overlayPins) and the stars (overlayStars).
    */
   async overlayMessages(configId: string, delta: StoreDelta, except?: string): Promise<void> {
     await this.overlayBodies(configId, delta, except);
     await this.overlayPins(configId, delta);
+    await this.overlayStars(configId, delta);
     const carried = new Set([...(delta.reactions ?? []), ...(delta.reactionSets ?? []), ...(delta.deletedReactions ?? [])]
       .map((r) => r.messageId));
     if (carried.size === 0) return;
@@ -1627,6 +1709,42 @@ export class ChatOutbox {
   }
 
   /**
+   * Lays the stars still queued (not given up) over the starred flags a
+   * delta carries (its messages and mailbox partials) and over its
+   * starredCounter, so the server's older state does not undo what the
+   * phone shows until they are sent. Per message the newest op counts:
+   * the delta's flag becomes its target. While none of a message's ops was
+   * sent (none running, no sentAt), the delta's flag is the server's state
+   * for sure and becomes their base, and the counter, the server's count,
+   * gains the op's change from that base (±1). An op that may have reached
+   * the server leaves the counter as the server counts.
+   */
+  private async overlayStars(configId: string, delta: StoreDelta): Promise<void> {
+    const carried = [...delta.messages, ...(delta.mailbox ?? [])].filter((m) => m.starred !== undefined);
+    const counted = delta.starredCounter != null;
+    if (carried.length === 0 && !counted) return;
+    const byMessage = new Map<number, OutboxOp[]>();
+    for (const op of dependencyOrder(await this.db.getOutboxOpsForConfig(configId))) {
+      if (op.kind !== CHAT_STAR || op.status === "blocked" || typeof op.params.messageId !== "number") continue;
+      byMessage.set(op.params.messageId, [...(byMessage.get(op.params.messageId) ?? []), op]);
+    }
+    let change = 0;
+    for (const [messageId, ops] of byMessage) {
+      const items = carried.filter((m) => m.messageId === messageId);
+      const unsent = ops.every((o) => o.status !== "running" && !o.params.sentAt);
+      let base = !!ops[0].params.base;
+      if (items.length > 0 && unsent) {
+        base = !!items[0].starred;
+        for (const o of ops) if (!!o.params.base !== base) await this.outbox.setParams(o.id, { base });
+      }
+      const on = !!ops[ops.length - 1].params.starred;
+      for (const m of items) m.starred = on;
+      if (unsent && on !== base) change += on ? 1 : -1;
+    }
+    if (counted) delta.starredCounter = Math.max(0, delta.starredCounter! + change);
+  }
+
+  /**
    * Lays the edits and deletes still queued (not given up) over the bodies
    * a delta carries, so the server's older body does not undo what the
    * phone shows until they are sent: per message a queued delete shows "",
@@ -1688,7 +1806,7 @@ export class ChatOutbox {
           error: reason === "refused" ? (o.lastError ?? "") : "",
           count: o.params.count ?? 1,
           label: o.params.label ?? "",
-          ...(MESSAGE_KINDS.includes(o.kind)
+          ...(MESSAGE_KINDS.includes(o.kind) || MAILBOX_KINDS.includes(o.kind)
             ? { message: targetOf(o) }
             : {}),
           ...(o.kind === CHAT_EDIT && reason === "changed"
@@ -3123,6 +3241,102 @@ export class ChatOutbox {
     const server = parseStore(result, op.configId, null).messages.find((m) => m.messageId === messageId)?.body ?? "";
     if (bodyText(server) === sends) return result;
     throw new EditConflictError(result.erplibre_conflict === "deleted" ? "deleted" : "changed", result, null);
+  }
+
+  /**
+   * Sends one action of the account on a message (MAILBOX_KINDS) with the
+   * params stored when it starts; a row gone when the handler reads it was
+   * cancelled: nothing is sent. Offline it waits (RequestNotSentError). A
+   * cached channel message emptied (isEmptyMessage: deleted in Discuss) is
+   * not starred: given up as "vanished". The send stamps sentAt first,
+   * given back when the request provably never left or the module's method
+   * is missing. With starIdempotent the module's erplibre_set_starred sets
+   * the target; an AttributeError (the module gone) probes the module
+   * again (moduleRefused) and fails the attempt for a plain retry, which
+   * re-reads. Without it the server's flag is read first, on every
+   * attempt, a replay after a lost answer included: no row means the
+   * message is gone ("vanished"), and Odoo's toggle goes only when the
+   * flag differs from the target. NotFound or MissingError gives the op up
+   * as "vanished", another refusal (AccessError) as "refused" (giveUpStar).
+   * The answer's Store is applied with the stars still queued laid over it
+   * (overlayMessages), in the account's queue of server writers (serial).
+   */
+  private runMailboxAction(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, async (running) => {
+      const stored = await this.db.getOutboxOp(running.id);
+      if (!stored) return;
+      const act: OutboxOp = { ...running, params: stored.params };
+      if (!(await this.isOnline())) throw new RequestNotSentError(`Offline: ${act.kind} waits for the network.`);
+      const { configId } = act;
+      const messageId: number = act.params.messageId;
+      const message = await this.repo.message(configId, messageId);
+      if (message) {
+        const files = (await this.repo.attachmentsOf(configId, message.channelId, [messageId], [])).get(`m${messageId}`)?.length ?? 0;
+        if (isEmptyMessage(message.body, files)) return this.giveUpStar(act, "vanished", `The message of ${act.kind} is gone.`);
+      }
+      const sentAt: string | null = act.params.sentAt ?? null;
+      await this.outbox.setParams(act.id, { sentAt: this.now().toISOString() });
+      let result: any;
+      try {
+        result = await this.sendStar(creds, act, messageId);
+      } catch (e: unknown) {
+        const moduleMissing = e instanceof OdooRpcError && e.odooName === "builtins.AttributeError";
+        // Nothing of this attempt changed the server: the stamp goes back to the earlier one
+        if (e instanceof RequestNotSentError || moduleMissing) await this.outbox.setParams(act.id, { sentAt });
+        if (moduleMissing) {
+          try {
+            await this.moduleRefused(configId);
+          } catch (probe) {
+            console.warn("chat: module probe after a refusal failed", probe);
+          }
+          throw new Error(`${act.kind}: the module's set is missing, retried without it.`);
+        }
+        if (e instanceof RequestNotSentError) throw e;
+        if (e instanceof StarTargetGoneError || isVanished(e)) return this.giveUpStar(act, "vanished", (e as Error).message);
+        if (!isRefused(e)) throw e;
+        return this.giveUpStar(act, "refused", (e as Error).message);
+      }
+      await this.serial(configId, async () => {
+        // Its account erased while the request was on the wire: nothing is written
+        if (!(await this.db.getOutboxOp(act.id)) || result == null) return;
+        const delta = parseStore(result, configId, (await this.repo.sourceState(configId)).selfPartnerId);
+        await this.overlayMessages(configId, delta, act.id);
+        await this.repo.applyDelta(configId, delta);
+      });
+      this.changed(configId, act.params.channelId ?? null);
+    });
+  }
+
+  /**
+   * Sends a star (params.starred) of the message `messageId`; resolves
+   * with the server's answer (a Store), or null when the server already
+   * holds the target. Rejects with StarTargetGoneError when the re-read
+   * finds no message.
+   */
+  private async sendStar(creds: SyncCredentials, op: OutboxOp, messageId: number): Promise<any> {
+    const starred = !!op.params.starred;
+    if (await this.starIdempotent(op.configId)) {
+      return this.rpc.callKw(creds, "mail.message", "erplibre_set_starred", [[messageId], starred]);
+    }
+    // Odoo's toggle flips whatever the server holds: it goes only where the server differs from the target
+    const rows = await this.rpc.searchRead<{ id: number; starred: boolean }>(
+      creds, "mail.message", [["id", "=", messageId]], ["starred"]);
+    if (rows.length === 0) throw new StarTargetGoneError(`The message of ${op.kind} is gone.`);
+    if (!!rows[0].starred === starred) return null;
+    return this.rpc.callKw(creds, "mail.message", "toggle_message_starred", [[messageId]]);
+  }
+
+  /**
+   * Gives a star up (giveUp): with no later op of its message queued, the
+   * message shows again as the server held it (base), the counter
+   * following (showStar).
+   */
+  private async giveUpStar(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
+    const key = targetKey(op);
+    const later = (await this.db.getOutboxOpsForConfig(op.configId))
+      .some((o) => o.id !== op.id && o.status !== "blocked" && targetKey(o) === key);
+    if (!later) await this.showStar(op.configId, op.params.messageId, !!op.params.base);
+    return this.giveUp(op, reason, message);
   }
 
   /**

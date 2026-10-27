@@ -4602,6 +4602,64 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.starred",
+                label: { en: "Starred messages", fr: "Messages favoris" },
+                description: {
+                    en: "Star or unstar a message from its long-press menu, a ★ on its bubble, and « ★ Starred » above the conversations with the count of the accounts shown.",
+                    fr: "Mettre un message en favori ou l'en retirer depuis son menu d'appui long, une ★ sur sa bulle, et « ★ Favoris » au-dessus des conversations avec le compte des serveurs affichés.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.message-actions"],
+                demo: { kind: "route", url: "/chat" },
+                howItWorks: {
+                    en: "A star is the account's target state of a message, of a channel or of a record, queued in "
+                        + "the outbox (chat.star) with the flag cached when it was queued (base); a tap back to it "
+                        + "sends nothing. With module 1.4 erplibre_set_starred sets the target, idempotent. Without "
+                        + "it Odoo's toggle_message_starred flips whatever the server holds, so the server's flag is "
+                        + "read before every send, a replay after a lost answer included, and the toggle goes only "
+                        + "when it differs from the target. The star shows at once in the thread, in the starred "
+                        + "box (chat_mailbox) and in the counter; the bus mail.message/toggle_star moves the counter "
+                        + "only for a flag shown that changed or a message the phone does not hold, so the echo of "
+                        + "the phone's own star counts nothing. A page of /mail/starred/messages (read-only) unstars "
+                        + "the cached rows in the id range it covers that it no longer lists, unless a star waits. "
+                        + "A delete cancels the waiting star of its message, as Odoo's delete clears the stars of "
+                        + "the message it empties and sends the starred box without it.",
+                    fr: "Un favori est l'état visé d'un message pour le compte, d'une conversation ou d'un "
+                        + "enregistrement, mis en file dans la boîte d'envoi (chat.star) avec l'indicateur en cache "
+                        + "au moment de la mise en file (base) ; une touche qui y ramène n'envoie rien. Avec le "
+                        + "module 1.4, erplibre_set_starred pose la cible, idempotent. Sans lui, toggle_message_starred "
+                        + "d'Odoo inverse ce que le serveur tient : l'indicateur du serveur est relu avant chaque "
+                        + "envoi, une reprise après une réponse perdue comprise, et la bascule ne part que s'il "
+                        + "diffère de la cible. Le favori s'affiche aussitôt dans le fil, dans la boîte des favoris "
+                        + "(chat_mailbox) et dans le compteur ; le bus mail.message/toggle_star ne déplace le "
+                        + "compteur que pour un indicateur affiché qui change ou un message que le téléphone n'a "
+                        + "pas, donc l'écho du favori du téléphone ne compte rien. Une page de "
+                        + "/mail/starred/messages (en lecture seule) retire des favoris les lignes en cache de la "
+                        + "plage d'identifiants qu'elle couvre et qu'elle ne liste plus, sauf favori en attente. "
+                        + "Une suppression annule le favori en attente de son message, comme la suppression d'Odoo "
+                        + "efface les favoris du message qu'elle vide et envoie la boîte des favoris sans lui.",
+                },
+                files: [
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/chat/chatRepository.ts",
+                    "src/services/chat/chatStore.ts",
+                    "src/components/chat/chat_message_menu_component.ts",
+                    "src/components/chat/chat_thread_component.ts",
+                    "src/components/chat/chat_list_component.ts",
+                    "src/components/chat/chat_list_component.scss",
+                ],
+                tests: [
+                    "src/__tests__/chatOutbox.test.ts",
+                    "src/__tests__/chatService.test.ts",
+                    "src/__tests__/chatRepository.test.ts",
+                    "src/__tests__/chatStore.test.ts",
+                    "src/__tests__/chatMessageMenu.test.ts",
+                    "src/__tests__/chatThreadComponent.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                ],
+            },
+            {
                 id: "chat.emoji",
                 label: { en: "Chat emoji", fr: "Émojis du clavardage" },
                 description: {

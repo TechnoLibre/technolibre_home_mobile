@@ -1,7 +1,7 @@
 import type { Application } from "../../models/application";
 import type {
-  BusNotification, ChatAttachment, ChatChannel, ChatFileOrigin, ChatMember, ChatMessage, ChatModuleState, ChatNotice,
-  ChatReaction, MessageTarget, OutgoingFile,
+  BusNotification, ChatAttachment, ChatChannel, ChatFileOrigin, ChatMailboxItem, ChatMember, ChatMessage, ChatModuleState,
+  ChatNotice, ChatReaction, MessageTarget, OutgoingFile,
 } from "../../models/chat";
 import { messageKeyOf } from "../../models/chat";
 import { syncConfigIdFor } from "../../models/syncConfig";
@@ -20,14 +20,14 @@ import { ChatCsrf } from "./chatCsrf";
 import { countEmojiUse } from "./chatEmoji";
 import { deviceChatFiles, type ChatFiles, type ChatHttp } from "./chatFiles";
 import { ChatModuleLevel, effectiveLevel, levelAtLeast, moduleProbe } from "./chatModule";
-import { CHAT_DELETE, CHAT_EDIT, ChatOutbox, sameTarget, targetOf, type CreateMode } from "./chatOutbox";
+import { CHAT_DELETE, CHAT_EDIT, CHAT_STAR, ChatOutbox, sameTarget, targetOf, type CreateMode } from "./chatOutbox";
 import { ChatMentions } from "./chatMentions";
 import { ChatPeople } from "./chatPeople";
 import { ChatRepository, type ChatDraft } from "./chatRepository";
 import { ChatSearch } from "./chatSearch";
 import { chatSettings } from "./chatSettings";
 import { CHAT_MAJOR, parseOdooMajor, sourceLabels, type ChatSource } from "./chatSources";
-import { parseStore, type StoreDelta } from "./chatStore";
+import { mailboxPartialsOf, parseStore, type StoreDelta } from "./chatStore";
 import { ChatTransfer } from "./chatTransfer";
 import { sortConversations, totalUnread } from "./chatUnread";
 
@@ -98,6 +98,9 @@ const maxDt = (a: string | null, b: string | null | undefined): string | null =>
 export function unreadPin(m: ChatMessage, seenMessageId: number | null): boolean {
   return m.messageId !== null && m.messageId > (seenMessageId ?? 0);
 }
+
+/** How many starred messages a page of /mail/starred/messages asks for. */
+export const STARRED_PAGE = 30;
 
 export interface QueuedOpts {
   background?: boolean;
@@ -208,6 +211,7 @@ export class ChatService {
     this.queue.changed = (configId, channelId) => this.changed(configId, channelId);
     this.queue.moduleRefused = (configId) => this.probeModule(configId);
     this.queue.editGuard = async (configId) => (await this.features(configId)).guardedEdit;
+    this.queue.starIdempotent = async (configId) => (await this.features(configId)).idempotentStar;
     this.useFileIO({ files: deviceChatFiles, http: nativeChatHttp() });
   }
 
@@ -1125,6 +1129,130 @@ export class ChatService {
   }
 
   /**
+   * Stars a message, or unstars it (see ChatOutbox.queueStar): shown at
+   * once with the counter, sent when online. `channelId` names the
+   * conversation of a channel message for the screens; null for a
+   * record's message.
+   */
+  async star(src: ChatSource, messageId: number, on: boolean, channelId: number | null): Promise<void> {
+    await this.queue.queueStar(src.configId, messageId, on, channelId);
+    await this.afterAction(src, channelId);
+  }
+
+  /**
+   * The starred messages of the given accounts as the phone holds them
+   * (the mailbox rows flagged starred), a channel message emptied with no
+   * file or with a delete queued left out: the unread first (a channel
+   * message above its cached channel's seenMessageId, as unreadPin), then
+   * the newest id.
+   */
+  async starred(configIds: string[]): Promise<ChatMailboxItem[]> {
+    const out: { item: ChatMailboxItem; unread: boolean }[] = [];
+    for (const configId of configIds) {
+      const items = await this.repo.mailboxItems(configId, "starred");
+      if (items.length === 0) continue;
+      const deletes = (await this.db.getOutboxOpsForConfig(configId))
+        .filter((o) => o.kind === CHAT_DELETE && o.status !== "blocked")
+        .map(targetOf);
+      // Per channel, its cached row: undefined when the channel is not cached, which leaves its messages read
+      const channels = new Map<number, ChatChannel | undefined>();
+      for (const item of items) {
+        let unread = false;
+        if (item.threadModel === CHANNEL_MODEL) {
+          const message = await this.repo.message(configId, item.messageId);
+          if (message && deletes.some((d) => sameTarget(d, message))) continue;
+          if (message && isEmptyMessage(message.body, 0)) {
+            const files = await this.repo.attachmentsOf(configId, message.channelId, [item.messageId], []);
+            if (isEmptyMessage(message.body, files.get(`m${item.messageId}`)?.length ?? 0)) continue;
+          }
+          if (!channels.has(item.threadId)) channels.set(item.threadId, (await this.repo.channel(configId, item.threadId)) ?? undefined);
+          const channel = channels.get(item.threadId);
+          unread = !!channel && item.messageId > (channel.seenMessageId ?? 0);
+        }
+        out.push({ item, unread });
+      }
+    }
+    out.sort((a, b) => Number(b.unread) - Number(a.unread) || b.item.messageId - a.item.messageId);
+    return out.map((x) => x.item);
+  }
+
+  /**
+   * Reads a page of the server's starred messages (/mail/starred/messages,
+   * STARRED_PAGE of them below `before`; read-only, nothing marked read)
+   * into the cache, in the account's queue of server writers, with the
+   * stars still queued laid over it (overlayMessages): a record's message
+   * as its mailbox row, a channel message as its mailbox row and, for a
+   * cached channel, its chat message. A page proves the id range it
+   * covers, from its smallest id (from 0 when it is shorter than asked) up
+   * to `before`: a cached starred row in that range the page does not
+   * list, with no chat.star op waiting, is unstarred. Offline, or when the
+   * request never left, nothing is read and `offline` says so; another
+   * failure rejects. `oldestId` is the page's smallest id, the `before` of
+   * the next page; `complete` says no older page exists.
+   */
+  async refreshStarred(src: ChatSource, before?: number): Promise<{ offline: boolean; oldestId: number | null; complete: boolean }> {
+    const { configId, creds } = src;
+    if (!(await this.isOnline())) return { offline: true, oldestId: null, complete: false };
+    try {
+      return await this.serial(configId, async () => {
+        const erased = this.erasedSince(configId);
+        const result = await this.rpc.callWithAuth(creds, (sessionId) =>
+          this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/starred/messages",
+            { limit: STARRED_PAGE, ...(before !== undefined ? { before } : {}) }));
+        if (erased()) return { offline: false, oldestId: null, complete: false };
+        const parsed = parseStore(result?.data, configId, (await this.repo.sourceState(configId)).selfPartnerId);
+        const ids: number[] = (Array.isArray(result?.messages) ? result.messages : [])
+          .map((v: any) => (typeof v === "number" ? v : v?.id))
+          .filter((v: any): v is number => typeof v === "number");
+        const listed = new Set(ids);
+        // A chat message row only in a cached channel: the page's messages of other channels are mailbox rows alone
+        const kept = new Set<number>();
+        for (const m of parsed.messages) {
+          if (listed.has(m.messageId) && m.channelId !== undefined && (await this.repo.channel(configId, m.channelId))) kept.add(m.messageId);
+        }
+        const messages = parsed.messages.filter((m) => kept.has(m.messageId));
+        const files = new Set(messages.flatMap((m) => m.attachmentIds ?? []));
+        const delta: StoreDelta = {
+          ...emptyDelta(),
+          partners: parsed.partners,
+          messages,
+          attachments: parsed.attachments.filter((a) => files.has(a.attachmentId)),
+          reactions: (parsed.reactions ?? []).filter((r) => kept.has(r.messageId)),
+          reactionSets: (parsed.reactionSets ?? []).filter((r) => kept.has(r.messageId)),
+          mailbox: [
+            ...(parsed.mailbox ?? []).filter((m) => listed.has(m.messageId)).map((m) => ({ ...m, starred: true })),
+            ...(mailboxPartialsOf(parsed, ids, { starred: true }) ?? []),
+          ],
+        };
+        // A channel the Store does not name: its cached name stands for the record name
+        for (const m of delta.mailbox!) {
+          if (m.threadModel !== CHANNEL_MODEL || m.recordName) continue;
+          const name = (await this.repo.channel(configId, m.threadId!))?.name;
+          if (name) m.recordName = name;
+        }
+        await this.queue.overlayMessages(configId, delta);
+        await this.repo.applyDelta(configId, delta);
+        // The range the page proves: nothing starred in it but what it lists
+        const complete = ids.length < STARRED_PAGE;
+        const low = complete ? 0 : Math.min(...ids);
+        const waiting = new Set((await this.db.getOutboxOpsForConfig(configId))
+          .filter((o) => o.kind === CHAT_STAR && o.status !== "blocked")
+          .map((o) => o.params.messageId));
+        for (const item of await this.repo.mailboxItems(configId, "starred")) {
+          const id = item.messageId;
+          if (id >= low && (before === undefined || id < before) && !listed.has(id) && !waiting.has(id)) {
+            await this.repo.setStarred(configId, id, false);
+          }
+        }
+        return { offline: false, oldestId: ids.length > 0 ? Math.min(...ids) : null, complete };
+      }).finally(() => this.changed(configId, null));
+    } catch (e: unknown) {
+      if (e instanceof RequestNotSentError) return { offline: true, oldestId: null, complete: false };
+      throw e;
+    }
+  }
+
+  /**
    * The text and picks the composer starts from to edit a message, null
    * when it is not cached. A message not sent yet, or one whose edit still
    * waits, gives the text and picks queued. A sent one gives its body as
@@ -1792,6 +1920,8 @@ export class ChatService {
       }
       case "mail.message/inbox":
         return this.applyInbox(configId, p, busId, fresh);
+      case "mail.message/toggle_star":
+        return this.applyToggleStar(configId, p, fresh);
       case "mail.message/mark_as_read":
         return this.applyMarkAsRead(configId, p, busId, fresh);
       case "bus.bus/im_status_updated": {
@@ -1828,6 +1958,8 @@ export class ChatService {
       if (c.channelType !== undefined || cached) kept.push(c);
     }
     delta.channels = kept;
+    // A replayed starred box (a delete's _cleanup_side_records) is older than the load that set the counter
+    if (!fresh) delete delta.starredCounter;
     // The user's reactions still to be sent win over the server's older groups
     await this.queue.overlayMessages(configId, delta);
     await this.repo.applyDelta(configId, delta, { fromBus: true });
@@ -1913,6 +2045,44 @@ export class ChatService {
     }
     await this.repo.patchChannel(configId, channelId, patch);
     return channelId;
+  }
+
+  /**
+   * Messages the user starred or unstarred, on any device (`fresh` only:
+   * the load after a replayed one counted it). Each id's cached flags (the
+   * chat message and its mailbox row) take the payload's value, with the
+   * stars still queued laid over it (overlayMessages: a waiting op keeps
+   * its target and takes the server's flag as its base). starredCounter
+   * moves by one per id whose flag shown changed, and per id the phone
+   * does not hold (a star from another device): the echo of the phone's
+   * own star, shown since it was queued, counts nothing.
+   */
+  private async applyToggleStar(configId: string, p: any, fresh: boolean): Promise<number | null | undefined> {
+    if (!fresh) return undefined;
+    const ids: number[] = (Array.isArray(p.message_ids) ? p.message_ids : []).map(Number).filter(Number.isInteger);
+    if (ids.length === 0) return undefined;
+    const starred = !!p.starred;
+    const before = new Map<number, boolean | null>();
+    const channels = new Set<number>();
+    for (const id of ids) {
+      before.set(id, await this.queue.starredOf(configId, id));
+      const message = await this.repo.message(configId, id);
+      if (message) channels.add(message.channelId);
+    }
+    const delta: StoreDelta = { ...emptyDelta(), messages: ids.map((messageId) => ({ messageId, starred })) };
+    await this.queue.overlayMessages(configId, delta);
+    await this.repo.applyDelta(configId, delta, { fromBus: true });
+    let change = 0;
+    for (const m of delta.messages) {
+      const was = before.get(m.messageId);
+      if (was === null) change += starred ? 1 : -1;
+      else if (was !== m.starred) change += m.starred ? 1 : -1;
+    }
+    if (change !== 0) {
+      const { starredCounter } = await this.repo.sourceState(configId);
+      await this.repo.setSourceState({ configId, starredCounter: Math.max(0, starredCounter + change) });
+    }
+    return channels.size === 1 ? [...channels][0] : null;
   }
 
   /**

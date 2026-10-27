@@ -440,6 +440,24 @@ describe("ChatListComponent", () => {
         expect(c.visibleRows().map((r: any) => r.channelId)).toEqual([1]);
     });
 
+    it("the list entry shows the counter", async () => {
+        const chat: any = fakeChat(["a", "b"], [chan("a", 5), chan("b", 6)]);
+        chat.repo.sourceState = vi.fn(async (id: string) => ({ selfPartnerId: 3, starredCounter: id === "a" ? 2 : 5 }));
+        const c = make(chat);
+        await c.loadCache();
+        expect(c.starredTotal()).toBe(7);
+        // The accounts shown: a filter keeps one
+        await c.onFilter("b");
+        expect(c.starredTotal()).toBe(5);
+        const nav = vi.fn();
+        c.navigate = nav;
+        c.onStarred();
+        expect(nav).toHaveBeenCalledWith("/chat/starred");
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_list_component.ts"), "utf8");
+        expect(source).toMatch(/class="chat-list__starred"/);
+        expect(source).toMatch(/t-if="starredTotal\(\) > 0"/);
+    });
+
     it("tapping a row navigates to the thread", async () => {
         const c = make(fakeChat(["a b"], [chan("a b", 5)]));
         await c.loadCache();

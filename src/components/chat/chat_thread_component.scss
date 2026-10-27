@@ -130,6 +130,11 @@
 	font-size: 0.75rem;
 }
 
+.chat-thread__star {
+	font-size: 0.75rem;
+	color: #e0a800;
+}
+
 // The message whose menu is open
 .chat-thread__bubble--pressed {
 	outline: 2px solid rgba(46, 158, 79, 0.6);
