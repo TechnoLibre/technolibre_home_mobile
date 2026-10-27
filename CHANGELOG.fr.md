@@ -100,6 +100,39 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   réponses, destinataires) et 2026102608 (réponse, modification et mentions
   du brouillon). Le kit de test est à `HARNESS_API` 4 et le crochet appareil
   à `DEVICE_HOOK_API` 5.
+- **Clavardage, lot 5 : retrouver et boîte de réception** — les conversations
+  gardées en tête restent en haut de la liste ; Options › Clavardage › « Ordre
+  de la liste » choisit « Épinglées d'abord » (par défaut) ou « Non lues
+  d'abord ». Le champ de recherche de la liste fouille désormais messages,
+  personnes, conversations, noms de fichiers, boîte de réception et favoris sur
+  le téléphone, même hors ligne (un index sur le téléphone là où sa base le
+  permet, un simple balayage sinon), puis demande au serveur davantage en ligne,
+  dans les seules conversations de l'utilisateur, sans rien marquer lu ; un
+  résultat ouvre sa conversation au message. Un message s'épingle ou se
+  désépingle depuis son menu, et « Messages épinglés » dans le menu de la
+  conversation les liste ; une notice d'épingle renvoie au message. Un message
+  se met en favori (Favori), et la liste a une boîte Favoris. La nouvelle boîte
+  de réception apporte les mentions, les commentaires des enregistrements suivis
+  et les assignations, avec son historique ; « Marquer comme lu » lit un
+  élément, « Tout marquer lu » ceux affichés, et un élément ouvre sa
+  conversation au message, la note de l'enregistrement dans l'app, ou la page de
+  l'enregistrement. Une réponse dans le fil d'un enregistrement accepte texte,
+  photos, fichiers, voix et mentions, est une note interne sauf si l'on
+  confirme « Envoyer comme message aux abonnés », et attend hors ligne comme
+  tout message. Un utilisateur dont Odoo notifie par courriel, et dont la boîte
+  est donc vide, apprend pourquoi et peut passer à « Recevoir mes notifications
+  dans Odoo » d'un appui (en ligne). Le module serveur 1.4 évite tout doublon ;
+  sans lui, l'app cherche avant d'envoyer. Migrations 2026102701 à 2026102704 ;
+  le banc de test est à `HARNESS_API` 5 et le crochet d'appareil à
+  `DEVICE_HOOK_API` 6.
+- **Clavardage : auteurs sur les bulles** — dans les groupes et les canaux, les
+  messages des autres montrent le nom de l'auteur au-dessus de la bulle et son
+  avatar à gauche, une fois par suite de messages comme le client web d'Odoo ;
+  les siens, les conversations directes et les lignes système n'en montrent
+  pas. Les avatars sont chargés quand l'auteur est à l'écran, gardés sur le
+  téléphone par compte (comptés et vidés avec le cache du clavardage), et des
+  initiales les remplacent le temps du chargement ou hors ligne. Migration
+  2026102705.
 - **Points d'entrée des tests de synchro** — `src/testing/syncTestKit.ts`
   (versionné par `HARNESS_API`) prépare le code de synchro pour les tests
   d'intégration d'ERPLibre contre de vrais Odoo ; une construction de
@@ -169,6 +202,11 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ramènent la compilation de 43 s à 22 s
 
 ### Corrigé
+- **La boîte de réception reçoit le commentaire qu'un chargement a devancé** —
+  quand un chargement de la boîte survenait entre l'annonce d'un commentaire
+  d'un enregistrement suivi et sa livraison, la livraison était prise pour un
+  rejeu et n'écrivait rien : de deux commentaires, seul le second apparaissait.
+  Une telle livraison relit désormais la première page de la boîte.
 - **L'interface revient après chaque redémarrage** — un lancement sur deux
   laissait l'application sur son écran de démarrage : le JavaScript allait au
   bout, le fil principal restait inactif dans sa boucle, et rien n'était jamais

@@ -89,6 +89,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (reactions, replies, recipients) and 2026102608 (reply, edit and mentions
   of the draft). The test kit is at `HARNESS_API` 4 and the device hook at
   `DEVICE_HOOK_API` 5.
+- **Chat, lot 5: finding things and the inbox** — conversations kept on top
+  stay at the top of the list; Options › Chat › « Ordre de la liste » chooses
+  « Épinglées d'abord » (the default) or « Non lues d'abord ». The search box of
+  the list now looks through messages, people, conversations, file names, the
+  inbox and the favourites on the phone, even offline (an index on the phone
+  where its database allows it, a plain scan otherwise), then asks the server
+  for more when online, in the conversations the user belongs to only, without
+  marking anything read; a result opens its conversation at the message. A
+  message can be pinned or unpinned from its menu, and « Messages épinglés » in
+  the conversation's menu lists them; a pin notice links to the message. A
+  message can be starred (Favori), and the list has a Favoris box. The new
+  Inbox box brings the mentions, the comments on followed records and the
+  assignments, with its history; « Marquer comme lu » reads one item, « Tout
+  marquer lu » those shown, and an item opens its conversation at the message,
+  the record's note in the app, or the record's page. A reply in a record's
+  chatter takes text, photos, files, voice and mentions, is an internal note
+  unless one confirms « Envoyer comme message aux abonnés », and waits offline
+  like any message. A user whose Odoo notifies by email, who therefore has an
+  empty inbox, is told why and can switch to « Recevoir mes notifications dans
+  Odoo » with one tap (online). Needs the server module 1.4 to be fully safe
+  against doubles; without it the app falls back to searching before it
+  sends. Migrations 2026102701 to 2026102704; the test kit is at `HARNESS_API`
+  5 and the device hook at `DEVICE_HOOK_API` 6.
+- **Chat: authors on bubbles** — in groups and channels, other people's
+  messages show the author's name above the bubble and their avatar to its
+  left, once per run of messages as the Odoo web client does; own messages,
+  direct chats and system lines show neither. Avatars are fetched when the
+  author is on screen, kept on the phone per account (counted and cleared with
+  the chat cache), and initials stand in while they load or offline. Migration
+  2026102705.
 - **Sync test entry points** — `src/testing/syncTestKit.ts` (versioned by
   `HARNESS_API`) sets the sync code up for ERPLibre's integration tests
   against real Odoo servers; a development build also exposes
@@ -153,6 +183,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   having: 41 763 fewer files takes the build from 43 s to 22 s
 
 ### Fixed
+- **The inbox gets the comment a load overtook** — when a load of the inbox
+  came between the announcement of a followed record's comment and its
+  delivery, the delivery was taken for a replay and wrote nothing: of two
+  comments, only the second showed. Such a delivery now re-reads the first
+  page of the inbox.
 - **The interface comes back after every restart** — one launch in two left the
   application on its starting screen: JavaScript ran to the end, the main thread
   sat idle in its loop, and nothing was ever painted. `launchAutoHide: false`
