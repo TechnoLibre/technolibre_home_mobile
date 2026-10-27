@@ -56,10 +56,10 @@ export const CHAT_POST = "chat.post";
 /**
  * params { thread: RecordThread, parentId, text, mentions: Mentions, note,
  * useModule, files?, drafts?, draftText?, createSentAt?, reuploaded? }: a
- * reply in a record's chatter, from the inbox item of message parentId,
- * posted on the record by /mail/message/post as an internal note (note:
- * mail.mt_note, no follower added) or a message to the followers
- * (mail.mt_comment). One op per reply, never merged; a reply waits for the
+ * reply in a record's chatter, from the inbox item of message parentId
+ * (sent as its parent_id), posted on the record by /mail/message/post as
+ * an internal note (note: mail.mt_note, no follower added) or a message
+ * to the followers (mail.mt_comment). One op per reply, never merged; a reply waits for the
  * reply on the same record queued before it. Its files are uploaded on the
  * record as a post's are (CHAT_UPLOAD ops before it, naming the record in
  * place of a channel) and linked the same way (postFiles). useModule:
@@ -2893,7 +2893,9 @@ export class ChatOutbox {
    * gives, as sendPost does for a channel: body of composeBody plus the
    * op's marker, mail.mt_note for a note (mail_post_autofollow false: no
    * follower added) or mail.mt_comment, partner_ids of the picks (no
-   * special mentions off a channel), the client uuid with the module. The
+   * special mentions off a channel), parent_id the inbox item's message it
+   * answers (as the browser's reply from the inbox), the client uuid with
+   * the module. The
    * send stamps createSentAt and a retry, past the quiet window, first
    * looks for the reply by its marker on the record (findSent). A file the
    * record refused (its upload answered "refused" or "not_found", rows
@@ -2937,6 +2939,7 @@ export class ChatOutbox {
         if (ids.length > 0) postData.attachment_ids = ids;
         if (composed.partnerIds.length > 0) postData.partner_ids = composed.partnerIds;
         if (op.params.useModule) postData.erplibre_client_uuid = op.clientUuid;
+        if (typeof op.params.parentId === "number") postData.parent_id = op.params.parentId;
         const result = await this.rpc.callWithAuth(creds, (sessionId) =>
           this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/message/post", {
             thread_model: thread.model,

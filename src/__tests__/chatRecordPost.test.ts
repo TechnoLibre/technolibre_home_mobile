@@ -197,11 +197,31 @@ describe("record replies", () => {
     expect(odoo.posts().map((c) => c.params)).toEqual([{
       thread_model: "project.task",
       thread_id: TASK,
-      post_data: { body: (await body("Bonjour")) + chatMarker(op.clientUuid), message_type: "comment", subtype_xmlid: "mail.mt_note" },
+      post_data: {
+        body: (await body("Bonjour")) + chatMarker(op.clientUuid), message_type: "comment", subtype_xmlid: "mail.mt_note", parent_id: 60,
+      },
       context: { temporary_id: op.clientUuid, mail_post_autofollow: false },
     }]);
     expect(await ops()).toEqual([]);
     expect(await chat.pendingRecordReplies(config)).toEqual(new Map());
+  });
+
+  it("a record reply carries the inbox item as parent_id", async () => {
+    odoo.state.dropPost = 1;
+    const op = await chat.replyOnRecord(src, item(config), "Suite", EMPTY_MENTIONS, [], false);
+    expect(odoo.posts()[0].params.post_data).toMatchObject({ parent_id: 60 });
+    // The retry's marker search names the record alone, whatever the parent
+    advance(CREATE_QUIET_WINDOW_MS + 1);
+    await chat.flushAll({ force: true });
+    const [search] = odoo.searches("mail.message");
+    expect(search.params.kwargs.domain).toEqual([
+      ["model", "=", "project.task"],
+      ["res_id", "=", TASK],
+      ["author_id", "=", SELF],
+      ["body", "ilike", expect.stringContaining(op.clientUuid)],
+    ]);
+    expect(odoo.posts()).toHaveLength(1);
+    expect(await ops()).toEqual([]);
   });
 
   it("a reply as message sends mt_comment", async () => {
@@ -213,6 +233,7 @@ describe("record replies", () => {
       message_type: "comment",
       subtype_xmlid: "mail.mt_comment",
       partner_ids: [BOB],
+      parent_id: 60,
     });
     expect(post.params.context).toEqual({ temporary_id: op.clientUuid, mail_post_autofollow: true });
   });
