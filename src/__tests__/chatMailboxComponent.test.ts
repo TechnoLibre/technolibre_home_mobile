@@ -192,6 +192,11 @@ describe("ChatMailboxComponent", () => {
         c.onReply(c.state.rows[2]);
         c.onReplyCancel();
         expect(c.state.reply).toBeNull();
+        // The history tab of the inbox offers it too, as the browser's history
+        chat.inbox.items.mockImplementation(async (_ids: string[], box: string) =>
+            box === "history" ? [item("a", 590, { needaction: false, history: true })] : []);
+        await c.onTab("history");
+        expect(c.state.rows.map((r: any) => [r.messageId, r.canReply])).toEqual([[590, true]]);
         // The starred box offers none
         chat.starred.mockResolvedValue([{ ...item("a", 602), starred: true }]);
         const starred = make(chat, "/chat/starred");

@@ -11,9 +11,6 @@ vi.mock("capacitor-voice-recorder", () => ({ VoiceRecorder: {} }));
 import { ChatRecordReplyComponent } from "../components/chat/chat_record_reply_component";
 import { EventBus } from "@odoo/owl";
 import { App } from "@capacitor/app";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 function stubLocale(lang = "en") {
     const store: Record<string, string> = { app_lang: lang };
@@ -103,10 +100,6 @@ function fakeAttachments(c: any, answer = true) {
 /** Types `value` in the field, the caret at its end. */
 const type = (c: any, value: string) => c.onInput({ target: { value, selectionStart: value.length } });
 
-const source = readFileSync(
-    resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_record_reply_component.ts"), "utf8",
-);
-
 afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
@@ -141,7 +134,6 @@ describe("ChatRecordReplyComponent", () => {
         const again = make(fakeChat());
         await again.open();
         expect(await again.onSend()).toBe(false);
-        expect(source).toMatch(/<ChatComposerAttachComponent attach="attach"\/>/);
     });
 
     it("a reply refused before its queue gives the text and the picks back, with the error", async () => {
@@ -184,8 +176,47 @@ describe("ChatRecordReplyComponent", () => {
         c.attachState.chips.push({ key: "k1", file: outFile("plan.jpg"), origin: "file", seq: 0 });
         await c.onSend();
         expect(chat.replyOnRecord).toHaveBeenLastCalledWith(SRC, ITEM, "Pour les abonnés", EMPTY, [outFile("plan.jpg")], false, "Pour les abonnés");
-        expect(source).toMatch(/t\('chat\.record_reply_as_message'\)/);
-        expect(source).toMatch(/role="switch"/);
+    });
+
+    it("a failed send keeps the « message » choice", async () => {
+        const chat = fakeChat();
+        chat.replyOnRecord.mockRejectedValueOnce(new Error("disk full"));
+        const c = make(chat);
+        fakeAttachments(c, true);
+        await c.open();
+        await c.onToggleMessage();
+        type(c, "Aux abonnés");
+        await c.onSend();
+        expect(c.state.error).toBe("Could not send the message. Try again.");
+        expect(c.state.asMessage).toBe(true);
+        await c.onSend();
+        expect(chat.replyOnRecord).toHaveBeenLastCalledWith(SRC, ITEM, "Aux abonnés", EMPTY, [], false, "Aux abonnés");
+    });
+
+    it("✕ and Android's back close the composer over its history entry, the draft kept", async () => {
+        const chat = fakeChat();
+        const c = make(chat);
+        fakeAttachments(c);
+        window.history.replaceState({}, "", "/chat/inbox");
+        await c.open();
+        expect(window.history.state).toMatchObject({ chatReply: true });
+        type(c, "À garder");
+        c.close();
+        c.close();
+        await vi.waitFor(() => expect(c.props.onCancel).toHaveBeenCalledTimes(1));
+        expect(window.history.state?.chatReply).toBeUndefined();
+        // The inbox takes the composer away: the text waiting is stored
+        c.teardown();
+        expect(chat.store.text).toBe("À garder");
+        // Android's back goes over the entry the same way
+        const back = make(chat);
+        fakeAttachments(back);
+        await back.open();
+        expect(back.state.text).toBe("À garder");
+        window.history.back();
+        await vi.waitFor(() => expect(back.props.onCancel).toHaveBeenCalled());
+        back.teardown();
+        expect(window.location.pathname).toBe("/chat/inbox");
     });
 
     it("the draft of a reply survives leaving the inbox and a restart", async () => {
@@ -259,6 +290,5 @@ describe("ChatRecordReplyComponent", () => {
         // A draft file first, so a refused reply keeps it
         expect(chat.keepRecordDraftFile).toHaveBeenCalledWith("a", THREAD, voice, 0, "voice");
         expect(chat.replyOnRecord).toHaveBeenCalledWith(SRC, ITEM, "Écoute", EMPTY, [voice], true, "Écoute");
-        expect(source).toMatch(/t-on-click="\(\) => this\.attach\.mic\(\)"/);
     });
 });

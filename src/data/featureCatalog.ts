@@ -4752,7 +4752,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "assignments) is the conversation's in its pieces: ComposerAttach over the record's draft "
                         + "files, DraftText over its draft text, the emoji picker, @ from the people cache then "
                         + "res.partner.get_mention_suggestions (ChatMentions.forRecord, no @everyone), # as in a "
-                        + "conversation. Every reply sends email_add_signature, as the browser's composer; a waiting reply shows under "
+                        + "conversation; its field and suggestions are the thread's MentionField. Every reply sends "
+                        + "email_add_signature, as the browser's composer; a waiting reply shows under "
                         + "its item with its file count.",
                     fr: "ChatOutbox.queueRecordPost met en file chat.record_post, ses fichiers d'abord en opérations "
                         + "chat.upload sur la fiche (/mail/attachment/upload d'Odoo avec thread_model le modèle de la "
@@ -4770,7 +4771,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "pièces : ComposerAttach sur les fichiers de brouillon de la fiche, DraftText sur son texte, "
                         + "le sélecteur d'émojis, @ depuis le cache des personnes puis "
                         + "res.partner.get_mention_suggestions (ChatMentions.forRecord, sans @everyone), # comme dans "
-                        + "une conversation. Toute réponse envoie email_add_signature, comme le compositeur du navigateur ; une réponse en "
+                        + "une conversation ; son champ et ses suggestions sont le MentionField du fil. Toute réponse "
+                        + "envoie email_add_signature, comme le compositeur du navigateur ; une réponse en "
                         + "attente s'affiche sous son élément avec son nombre de fichiers.",
                 },
                 files: [
@@ -4788,6 +4790,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 tests: [
                     "src/__tests__/chatRecordPost.test.ts",
                     "src/__tests__/chatRecordReply.test.ts",
+                    "src/__tests__/chatRecordReplyMount.test.ts",
                     "src/__tests__/chatMentions.test.ts",
                     "src/__tests__/chatMailboxComponent.test.ts",
                     "src/__tests__/chatOutbox.test.ts",
@@ -4859,7 +4862,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "(and the people cache in a public channel) at once, then merges the server's "
                         + "get_mention_suggestions 250 ms after the last keystroke; a chat, a group or a "
                         + "channel with an access group offers members only, as the browser does. A pick "
-                        + "is tracked by place (adjustPicks) and goes with the post while its text is whole.",
+                        + "is tracked by place (adjustPicks) and goes with the post while its text is whole. "
+                        + "mentionField.ts (MentionField) is the field's input, suggestions, picks and emoji "
+                        + "insertion, shared by the conversation's composer and the record reply's.",
                     fr: "chatCompose.ts porte prettifyMessageContent du format.js d'Odoo sur des chaînes : "
                         + "échappement et compactage, mentions (la plus longue d'abord, première place "
                         + "seulement), @everyone, conversions d'émojis, puis l'expression d'URL d'Odoo avec "
@@ -4872,7 +4877,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "les get_mention_suggestions du serveur 250 ms après la dernière frappe ; une "
                         + "conversation, un groupe ou un canal à groupe d'accès n'offre que ses membres, comme "
                         + "le navigateur. Un choix est suivi par sa place (adjustPicks) et part avec le "
-                        + "message tant que son texte est entier.",
+                        + "message tant que son texte est entier. mentionField.ts (MentionField) est la saisie "
+                        + "du champ, ses suggestions, ses choix et l'insertion d'émojis, partagés par le "
+                        + "compositeur d'une conversation et celui d'une réponse sur une fiche.",
                 },
                 files: [
                     "src/services/chat/chatCompose.ts",
@@ -4880,6 +4887,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatMentions.ts",
                     "src/components/chat/chat_suggestions_component.ts",
                     "src/components/chat/chat_suggestions_component.scss",
+                    "src/components/chat/mentionField.ts",
                     "src/__tests__/fixtures/composer-cases.json",
                     "src/__tests__/fixtures/composer-golden.json",
                     "src/__tests__/fixtures/PROVENANCE.md",
@@ -4887,6 +4895,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 tests: [
                     "src/__tests__/chatCompose.test.ts", "src/__tests__/chatBody.test.ts", "src/__tests__/chatBodyNode.test.ts",
                     "src/__tests__/chatMentions.test.ts", "src/__tests__/chatSuggestions.test.ts",
+                    "src/__tests__/mentionField.test.ts",
                 ],
             },
             {

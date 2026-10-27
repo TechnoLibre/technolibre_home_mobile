@@ -15,7 +15,7 @@ import type {
 } from "../../models/chat";
 import { EMPTY_MENTIONS, joinMentions, validMentions, type Mentions } from "../../services/chat/chatCompose";
 import {
-    adjustPicks, applySuggestion, mentionQuery, picksOf, picksToMentions, type MentionPick, type MentionQuery, type Suggestion,
+    adjustPicks, picksOf, picksToMentions, type MentionPick, type Suggestion,
 } from "../../services/chat/chatMentions";
 import type { ChatDraft } from "../../services/chat/chatRepository";
 import { quickReactions } from "../../services/chat/chatEmoji";
@@ -45,17 +45,14 @@ import { ChatReactionsComponent, ChatReactionWhoComponent, reactionViews, type R
 import { LongPress } from "./chatLongPress";
 import { ChatComposerBannerComponent, type ComposerMode } from "./chat_composer_banner_component";
 import { ChatSuggestionsComponent } from "./chat_suggestions_component";
+import { MentionField, composerRows } from "./mentionField";
 
 /** Quiet period that folds a burst of CHAT_CHANGED into one refresh. */
 const CHANGE_DEBOUNCE_MS = 150;
 /** A member counts as typing for this long after the server's timestamp. */
 const TYPING_FRESH_MS = 60000;
-/** Quiet time after the last keystroke before the server is asked for suggestions (Odoo's FETCH_SUGGESTIONS_DELAY). */
-const SUGGEST_FETCH_MS = 250;
 /** Distance from the edge, in px, that counts as "at the top" or "at the bottom". */
 const EDGE_PX = 40;
-/** The composer grows to this many lines, then scrolls. */
-const MAX_INPUT_ROWS = 5;
 /** Server messages rendered at open: the newest ones, however long the cached history. */
 export const THREAD_WINDOW = 100;
 /** Cached messages a scroll to the top adds to the rendered ones before the server is asked. */
@@ -205,15 +202,6 @@ export const NOTICE_MS = 5000;
 /** The edited mark renderBody adds: it alone does not make a body shown. */
 const EDITED_MARK = /<em class="chat-msg__edited">[^<]*<\/em>/g;
 
-/** One query as a string: its delimiter, its place and its term. */
-function queryKey(q: MentionQuery): string {
-    return q.kind + q.start + ":" + q.term;
-}
-
-/** Rows the composer shows for a text, from 1 up to MAX_INPUT_ROWS. */
-function rowsOf(text: string): number {
-    return Math.min(MAX_INPUT_ROWS, text.split("\n").length);
-}
 
 /** Cheap 32-bit hash (djb2) of a body, so a changed body never reuses a cached render. */
 function bodyHash(body: string): string {
@@ -468,11 +456,8 @@ export class ChatThreadComponent extends EnhancedComponent {
     picks: MentionPick[] = [];
     /** The conversation as the last build read it; the suggestions need it. */
     private _channel: ChatChannel | null = null;
-    /** Counts the suggestion queries, so an answer to an older one is never shown. */
-    private _suggestSeq = 0;
-    private _suggestTimer: ReturnType<typeof setTimeout> | null = null;
-    /** The query the list was last asked for (kind, place, term); null when none. */
-    private _queryKey: string | null = null;
+    /** The field's input and its @ and # suggestions (MentionField over ChatMentions). */
+    mention!: MentionField;
     /**
      * The picker's callbacks, the same functions every render: a new one
      * (a .bind in the template) would render its 1455 buttons again on
@@ -586,6 +571,29 @@ export class ChatThreadComponent extends EnhancedComponent {
         const u = query.get("u");
         this._target = Number.isInteger(m) && m > 0 ? { messageId: m, clientUuid: null } : u ? { messageId: null, clientUuid: u } : null;
         this.attachState = useState(newComposerAttachState());
+        this.mention = new MentionField({
+            field: () => this.input.el as HTMLTextAreaElement | null,
+            text: () => this.state.text,
+            view: this.state,
+            ask: () => {
+                const source = this.source;
+                const channel = this._channel;
+                if (!source || !channel) return null;
+                return {
+                    local: (q) => this.chatService.mentions.local(source, channel, q),
+                    remote: (q) => this.chatService.mentions.remote(source, channel, q),
+                };
+            },
+            busy: () => this.state.sending,
+            gone: () => this.destroyed,
+            setText: (value) => this.setText(value),
+            picked: (pick, s) => {
+                this.picks = [...this.picks, pick];
+                if (s.kind !== "special") this.mentions = joinMentions(this.mentions, picksToMentions([pick]));
+                this.storeMentions();
+            },
+            label: "chat thread",
+        });
         document.addEventListener("selectionchange", this._onSelection);
         // Draft calls name the screen's id at call time; the service maps a settled temporary id itself
         this.attach = new ComposerAttach(this.attachState, deviceComposerDeps({
@@ -642,7 +650,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
         if (this._debounce !== null) clearTimeout(this._debounce);
         if (this._typingTimer !== null) clearTimeout(this._typingTimer);
-        if (this._suggestTimer !== null) clearTimeout(this._suggestTimer);
+        this.mention.dispose();
         document.removeEventListener("selectionchange", this._onSelection);
         if (this._flashTimer !== null) clearTimeout(this._flashTimer);
         this.cancelDeferredScroll();
@@ -1895,13 +1903,13 @@ export class ChatThreadComponent extends EnhancedComponent {
     private showText(text: string): void {
         this.showValue(text);
         this.picks = picksOf(text, this.mentions);
-        this.closeSuggestions();
+        this.mention.close();
     }
 
     /** Shows a text in the field, its height following its lines. */
     private showValue(text: string): void {
         this.state.text = text;
-        this.state.inputRows = rowsOf(text);
+        this.state.inputRows = composerRows(text);
     }
 
     private focusInput(): void {
@@ -2192,28 +2200,14 @@ export class ChatThreadComponent extends EnhancedComponent {
         return (groups.get(messageKeyOf(m))?.length ?? 0) > 0;
     }
 
-    /**
-     * While a send runs, an edit of the field is refused before it happens
-     * (one the IME does not let cancel is undone by onInput). The field
-     * keeps no disabled or readonly attribute: either one, set while its
-     * text is emptied, makes Android close the keyboard.
-     */
+    /** While a send runs, an edit of the field is refused before it happens (MentionField.beforeInput). */
     onBeforeInput(ev: Event): void {
-        if (this.state.sending && ev.cancelable) ev.preventDefault();
+        this.mention.beforeInput(ev);
     }
 
-    /**
-     * The text typed. An input that still comes while a send runs is
-     * undone, the field showing the composer's text again.
-     */
+    /** The text typed, then its suggestions (MentionField.input); undone while a send runs. */
     onInput(ev: Event): void {
-        const field = ev.target as HTMLTextAreaElement;
-        if (this.state.sending) {
-            field.value = this.state.text;
-            return;
-        }
-        this.setText(field.value);
-        this.suggest(field.selectionStart ?? field.value.length);
+        this.mention.input(ev);
     }
 
     /**
@@ -2260,107 +2254,23 @@ export class ChatThreadComponent extends EnhancedComponent {
             .catch((e: unknown) => console.warn("chat thread: picks not stored", e));
     }
 
-    /**
-     * The suggestions of the word the caret ends (mentionQuery): the
-     * cache's at once (ChatMentions.local), then SUGGEST_FETCH_MS after
-     * the last keystroke those of the server with them (remote), which take
-     * their place. A server that fails or does not answer leaves the
-     * cache's; an answer to a query since replaced is not shown. The list
-     * shown stays until the new one answers; no query closes it.
-     */
-    private suggest(caret: number): void {
-        const q = mentionQuery(this.state.text, caret);
-        const source = this.source;
-        const channel = this._channel;
-        if (!q || !source || !channel) {
-            this.closeSuggestions();
-            return;
-        }
-        const seq = ++this._suggestSeq;
-        if (this._suggestTimer !== null) clearTimeout(this._suggestTimer);
-        this._queryKey = queryKey(q);
-        const mentions = this.chatService.mentions;
-        let merged = false;
-        const show = (list: Suggestion[]) => {
-            if (seq === this._suggestSeq && !this.destroyed) this.state.suggestions = list;
-        };
-        mentions.local(source, channel, q)
-            .then((list: Suggestion[]) => { if (!merged) show(list); })
-            .catch((e: unknown) => console.warn("chat thread: suggestions", e));
-        this._suggestTimer = setTimeout(() => {
-            this._suggestTimer = null;
-            mentions.remote(source, channel, q)
-                .then((list: Suggestion[]) => {
-                    merged = true;
-                    show(list);
-                })
-                .catch(() => {
-                    // The cache's list stays
-                });
-        }, SUGGEST_FETCH_MS);
-    }
-
-    /** Hides the suggestions, and voids the answers still to come and the server request still waiting. */
-    private closeSuggestions(): void {
-        this._suggestSeq++;
-        this._queryKey = null;
-        if (this._suggestTimer !== null) clearTimeout(this._suggestTimer);
-        this._suggestTimer = null;
-        if (this.state.suggestions.length) this.state.suggestions = [];
-    }
-
-    /**
-     * The caret moved without an input (a tap in the field, an arrow key, a
-     * drag of its handle): a selection or a caret that ends no query closes
-     * the list, a caret that ends another query asks for its suggestions,
-     * and the query already asked for is left as it is.
-     */
+    /** The caret moved without an input: the list follows the query it ends (MentionField.caret). */
     onCaret(): void {
-        if (this.state.sending || this.destroyed) return;
-        const field = this.input.el as HTMLTextAreaElement | null;
-        if (!field) return;
-        const start = field.selectionStart ?? this.state.text.length;
-        if (start !== (field.selectionEnd ?? start)) {
-            this.closeSuggestions();
-            return;
-        }
-        const q = mentionQuery(this.state.text, start);
-        if (q && queryKey(q) === this._queryKey) return;
-        this.suggest(start);
+        this.mention.caret();
     }
 
     /** What the live region says: how many suggestions the list shows; "" while it is closed. */
     suggestionsLive(): string {
-        const count = this.state.suggestions.length;
-        return count ? t("chat.suggestions_shown", { count }) : "";
+        return this.mention.live();
     }
 
     /**
-     * A suggestion picked: the query the caret ends is replaced by its text
-     * and a space (applySuggestion), the caret after it, the focus kept in
-     * the field. The text is stored at once, then the pick with the
-     * composer's (a special one links from the text alone). Refused while a
-     * send runs, as typing is, and when the caret no longer ends a query of
-     * the suggestion's kind.
+     * A suggestion picked (MentionField.pick): written over its query, the
+     * text stored at once, then the pick with the composer's (a special one
+     * links from the text alone).
      */
     onSuggestion(s: Suggestion): void {
-        if (this.state.sending || this.destroyed) return;
-        const field = this.input.el as HTMLTextAreaElement | null;
-        const text = this.state.text;
-        const caret = Math.min(field?.selectionStart ?? text.length, text.length);
-        const q = mentionQuery(text, caret);
-        this.closeSuggestions();
-        if (!q || q.kind !== (s.kind === "channel" ? "#" : "@")) return;
-        const picked = applySuggestion(text, q, caret, s);
-        this.setText(picked.text);
-        this.picks = [...this.picks, picked.pick];
-        if (s.kind !== "special") this.mentions = joinMentions(this.mentions, picksToMentions([picked.pick]));
-        this.storeMentions();
-        if (field) {
-            field.value = picked.text;
-            field.setSelectionRange(picked.caret, picked.caret);
-            field.focus?.();
-        }
+        this.mention.pick(s);
     }
 
     /** The composer's 😊, and the picker's close: the picker opens to type, or closes whatever it was for. */
@@ -2372,27 +2282,15 @@ export class ChatThreadComponent extends EnhancedComponent {
     /**
      * An emoji picked. Opened from a message's « … », it reacts to that
      * message (pickReaction). Otherwise it is inserted at the caret,
-     * replacing the selection, and kept in the draft like typed text; the
-     * caret ends after it. Refused while a send runs, as typing is.
+     * replacing the selection, and kept in the draft like typed text
+     * (MentionField.insert); refused while a send runs, as typing is.
      */
     onEmoji(codepoints: string): void {
         if (this.state.reactTo !== null) {
             this.pickReaction(codepoints);
             return;
         }
-        if (this.state.sending) return;
-        const field = this.input.el as HTMLTextAreaElement | null;
-        const text = this.state.text;
-        const start = Math.min(field?.selectionStart ?? text.length, text.length);
-        const end = Math.min(field?.selectionEnd ?? start, text.length);
-        const value = text.slice(0, start) + codepoints + text.slice(end);
-        this.setText(value);
-        const caret = start + codepoints.length;
-        if (field) {
-            field.value = value;
-            field.setSelectionRange(caret, caret);
-        }
-        this.suggest(caret);
+        this.mention.insert(codepoints);
     }
 
     /**
