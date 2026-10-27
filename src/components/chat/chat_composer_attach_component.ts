@@ -54,12 +54,19 @@ export type ComposerRecorder = Pick<
     "onAutoStop" | "onBackground" | "start" | "remainingMs" | "stop" | "discard"
 >;
 
-/** The conversation's draft files, as the composer keeps them (ChatService.keepDraftFile, dropDraftFile). */
+/** The composer's draft files, a conversation's or a record's, as it keeps them (ChatService.keepDraftFile or keepRecordDraftFile, dropDraftFile). */
 export interface ComposerDraft {
     /** Stores a staged file as a draft file at chip position seq, with its origin (a reduced photo replaces its own). */
     keep: (file: OutgoingFile, seq: number, origin: ChipOrigin) => Promise<void>;
     /** Removes a draft file and deletes its staged file. */
     drop: (file: OutgoingFile) => Promise<void>;
+}
+
+/** The title and the two buttons of a yes / no question. */
+export interface ConfirmLabels {
+    title: string;
+    ok: string;
+    cancel: string;
 }
 
 export interface ComposerAttachDeps {
@@ -72,8 +79,12 @@ export interface ComposerAttachDeps {
     uploadLimit: () => Promise<number | null>;
     /** The « ask to compress » setting. */
     askCompress: () => boolean;
-    /** Asks a yes / no question. */
-    confirm: (message: string) => Promise<boolean>;
+    /**
+     * Asks a yes / no question, under labels (the « ask to compress »
+     * question's when none are given): the composer's own questions and
+     * those of the screen around it go through it.
+     */
+    confirm: (message: string, labels?: ConfirmLabels) => Promise<boolean>;
     /**
      * Sends the composer: its text, its chips (take()) and these files
      * after them. false: the send was not taken (another one runs), the
@@ -446,7 +457,7 @@ export class ComposerAttach {
     }
 }
 
-/** The device's dependencies of a composer, around the thread's own (account, send, draft). */
+/** The device's dependencies of a composer, around its screen's own (account, send, draft): a thread's or a record reply's. */
 export function deviceComposerDeps(
     own: Pick<ComposerAttachDeps, "fileDir" | "uploadLimit" | "send" | "draft">,
 ): ComposerAttachDeps {
@@ -454,12 +465,12 @@ export function deviceComposerDeps(
         capture: new ChatCapture(),
         recorder: sharedVoiceRecorder(),
         askCompress: () => chatSettings().askCompress,
-        confirm: async (message) =>
+        confirm: async (message, labels) =>
             (await Dialog.confirm({
-                title: t("chat.compress_title"),
+                title: labels?.title ?? t("chat.compress_title"),
                 message,
-                okButtonTitle: t("chat.compress_yes"),
-                cancelButtonTitle: t("chat.compress_no"),
+                okButtonTitle: labels?.ok ?? t("chat.compress_yes"),
+                cancelButtonTitle: labels?.cancel ?? t("chat.compress_no"),
             })).value,
         ...own,
     };

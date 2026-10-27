@@ -109,6 +109,8 @@ export interface QueuedOpts {
 
 /** The record of a reply's draft, without its name. */
 const draftThread = (thread: RecordThread): DraftThread => ({ model: thread.model, resId: thread.resId });
+/** The key of a record's sends in sendsRunning; a conversation's is "configId#channelId". */
+const recordSendKey = (configId: string, thread: RecordThread): string => `${configId}#${thread.model}#${thread.resId}`;
 
 /**
  * The chat as the screens and the app lifecycle use it, over the cache
@@ -725,7 +727,11 @@ export class ChatService {
 
   // ─── Drafts ───────────────────────────────────────────────────────────────
 
-  /** Per "configId#channelId", the composer sends between their tap and their post queued (sendStarted). */
+  /**
+   * The composer sends between their tap and their post queued, per
+   * "configId#channelId" (sendStarted) or "configId#model#resId" of a
+   * record (recordSendStarted).
+   */
   private sendsRunning = new Map<string, Set<Promise<void>>>();
 
   /**
@@ -736,7 +742,19 @@ export class ChatService {
    * again the text and the files a send is taking.
    */
   sendStarted(configId: string, channelId: number): () => void {
-    const k = `${configId}#${channelId}`;
+    return this.startSend(`${configId}#${channelId}`);
+  }
+
+  /**
+   * sendStarted for the reply composer of a record: from the tap until the
+   * reply is queued or refused, recordDraft() of that record waits.
+   */
+  recordSendStarted(configId: string, thread: RecordThread): () => void {
+    return this.startSend(recordSendKey(configId, thread));
+  }
+
+  /** Registers one running send under `k` in sendsRunning; the function returned ends it, once. */
+  private startSend(k: string): () => void {
     let end!: () => void;
     const running = new Promise<void>((resolve) => { end = resolve; });
     const set = this.sendsRunning.get(k) ?? new Set<Promise<void>>();
@@ -786,9 +804,11 @@ export class ChatService {
   /**
    * What the composer of a reply on a record kept: its text, picks and
    * draft files in chip order, as draft() reads a conversation's (a file
-   * whose staged copy is gone dropped, named in `lost`).
+   * whose staged copy is gone dropped, named in `lost`), read once the
+   * record's sends still before their queue have ended (recordSendStarted).
    */
-  recordDraft(configId: string, thread: RecordThread): Promise<ChatDraft & { lost: string[] }> {
+  async recordDraft(configId: string, thread: RecordThread): Promise<ChatDraft & { lost: string[] }> {
+    await Promise.all([...(this.sendsRunning.get(recordSendKey(configId, thread)) ?? [])]);
     return this.queue.draftTask(configId, null, () => this.draftNow(configId, draftThread(thread)));
   }
 

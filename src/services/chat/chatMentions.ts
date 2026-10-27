@@ -162,12 +162,13 @@ export function picksOf(text: string, m: Mentions): MentionPick[] {
 type Scope = "members" | "group" | "public";
 
 /**
- * The @ and # suggestions of a conversation's composer. local() reads the
- * cache only, for the list shown at once; remote() asks the server and
- * gives the cache's suggestions and the server's together, or the cache's
- * alone offline, for a temporary conversation, or when the request never
- * left (RequestNotSentError). Other errors propagate. Nothing is written
- * to the cache.
+ * The @ and # suggestions of a composer: a conversation's, or with a null
+ * channel a reply's in a record's chatter. local() reads the cache only,
+ * for the list shown at once; remote() asks the server and gives the
+ * cache's suggestions and the server's together, or the cache's alone
+ * offline, for a temporary conversation, or when the request never left
+ * (RequestNotSentError); forRecord() is remote() of a record's chatter.
+ * Other errors propagate. Nothing is written to the cache.
  */
 export class ChatMentions {
   constructor(
@@ -177,20 +178,30 @@ export class ChatMentions {
     private isOnline: () => Promise<boolean>,
   ) {}
 
-  local(src: ChatSource, channel: ChatChannel, q: MentionQuery): Promise<Suggestion[]> {
-    return q.kind === "@" ? this.partners(src.configId, channel, q.term, null) : this.channels(src.configId, q.term, []);
+  local(src: ChatSource, channel: ChatChannel | null, q: MentionQuery): Promise<Suggestion[]> {
+    if (q.kind === "#") return this.channels(src.configId, q.term, []);
+    return channel ? this.partners(src.configId, channel, q.term, null) : this.recordPartners(src.configId, q.term, null);
   }
 
   /**
    * `@`: `res.partner.get_mention_suggestions_from_channel`, a Store of the
-   * matching members and users; `#`: `discuss.channel.get_mention_suggestions`,
-   * the user's matching channels. The term goes folded, as the browser sends it.
+   * matching members and users, or in a record's chatter
+   * `res.partner.get_mention_suggestions`, a Store of the matching partners,
+   * as the browser's chatter asks (`mail/models/res_partner.py`); `#`:
+   * `discuss.channel.get_mention_suggestions`, the user's matching
+   * channels. The term goes folded, as the browser sends it.
    */
-  async remote(src: ChatSource, channel: ChatChannel, q: MentionQuery): Promise<Suggestion[]> {
-    if (channel.channelId <= 0 || !(await this.isOnline())) return this.local(src, channel, q);
+  async remote(src: ChatSource, channel: ChatChannel | null, q: MentionQuery): Promise<Suggestion[]> {
+    if ((channel && channel.channelId <= 0) || !(await this.isOnline())) return this.local(src, channel, q);
     const search = fold(q.term);
     try {
-      if (q.kind === "@") {
+      if (q.kind === "@" && !channel) {
+        const result = await this.rpc.callKw(src.creds, "res.partner", "get_mention_suggestions", [], {
+          search, limit: SUGGESTION_LIMIT,
+        });
+        return await this.recordPartners(src.configId, q.term, result);
+      }
+      if (q.kind === "@" && channel) {
         const result = await this.rpc.callKw(src.creds, "res.partner", "get_mention_suggestions_from_channel", [], {
           channel_id: channel.channelId, search, limit: SUGGESTION_LIMIT,
         });
@@ -204,6 +215,39 @@ export class ChatMentions {
       if (e instanceof RequestNotSentError) return this.local(src, channel, q);
       throw e;
     }
+  }
+
+  /** The suggestions of a reply's composer in a record's chatter: remote() with no conversation. */
+  forRecord(src: ChatSource, q: MentionQuery): Promise<Suggestion[]> {
+    return this.remote(src, null, q);
+  }
+
+  /**
+   * The people to offer in a record's chatter: the people cache's whose
+   * name holds `term` (ChatPeople.searchCached, self left out), then the
+   * server's answer (`store`, null for none), its partners kept as it
+   * matched them, by name or email. A name that starts with the term
+   * first, then by name and id; no special mention off a conversation.
+   */
+  private async recordPartners(configId: string, term: string, store: any): Promise<Suggestion[]> {
+    const needle = fold(term);
+    const found = new Map<number, string>();
+    for (const p of await this.people.searchCached(configId, term, SUGGESTION_LIMIT)) found.set(p.partnerId, p.name);
+    if (store) {
+      const [state, cached] = await Promise.all([this.repo.sourceState(configId), this.repo.partners(configId)]);
+      const names = new Map(cached.map((p) => [p.partnerId, p.name]));
+      for (const p of parseStore(store, configId, state.selfPartnerId).partners) {
+        const name = p.name ?? names.get(p.partnerId);
+        if (name) found.set(p.partnerId, name);
+      }
+    }
+    return [...found]
+      .sort(([ia, a], [ib, b]) =>
+        Number(fold(b).startsWith(needle)) - Number(fold(a).startsWith(needle)) ||
+        fold(a).localeCompare(fold(b)) ||
+        ia - ib)
+      .slice(0, SUGGESTION_LIMIT)
+      .map(([id, name]) => ({ kind: "partner", id, name }));
   }
 
   private async scopeOf(configId: string, channel: ChatChannel): Promise<Scope> {

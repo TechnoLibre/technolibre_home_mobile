@@ -9,8 +9,11 @@ import { bodyPreview } from "../../services/chat/chatBody";
 import type { InboxBox } from "../../services/chat/chatInbox";
 import type { ChatSource } from "../../services/chat/chatSources";
 import { formatListTime } from "./chat_list_component";
+import { ChatRecordReplyComponent } from "./chat_record_reply_component";
 
 const PREVIEW_MAX = 120;
+/** Characters of a waiting reply's text its line shows. */
+const PENDING_PREVIEW_MAX = 60;
 /** Quiet period that folds a burst of CHAT_CHANGED into one rebuild. */
 const CHANGE_DEBOUNCE_MS = 150;
 /** How close to the bottom of the list (px) a scroll asks for the next page. */
@@ -41,6 +44,19 @@ export interface MailboxRow {
     serverLabel: string;
     /** The cached item the row shows, which a tap opens. */
     item: ChatMailboxItem;
+    /** « Répondre » is offered: an inbox item of a followed record (not a mention, not an assignment). */
+    canReply: boolean;
+    /** One line per reply to it still waiting to be sent: ⏳, note or message, the start of its text, its files. */
+    pending: string[];
+}
+
+/** The line of a reply waiting to be sent (ChatService.pendingRecordReplies). */
+export function pendingLine(r: { text: string; note: boolean; files: number }): string {
+    const text = r.text.trim();
+    let line = "⏳ " + t(r.note ? "chat.record_reply_waiting_note" : "chat.record_reply_waiting_message");
+    if (text) line += " — " + (text.length > PENDING_PREVIEW_MAX ? text.slice(0, PENDING_PREVIEW_MAX - 1) + "…" : text);
+    if (r.files > 0) line += " · 📎 " + t(r.files === 1 ? "chat.record_reply_files_one" : "chat.record_reply_files_other", { count: r.files });
+    return line;
 }
 
 /** Where the next page of an account starts, and whether there is one. */
@@ -62,6 +78,8 @@ interface MailboxState {
     offline: boolean;
     loading: boolean;
     error: string;
+    /** The row whose reply composer is open; null when none is. */
+    reply: MailboxRow | null;
 }
 
 /**
@@ -77,12 +95,17 @@ interface MailboxState {
  * comme lu »; a starred one ☆ to unstar. A tap on an item opens it
  * (ChatInbox.openItem: its conversation at the message, the note linked to
  * its record, or the message in the web view), marking nothing read.
- * Every text is shown as text.
+ * An inbox item of a followed record offers « Répondre », which opens
+ * the reply composer (ChatRecordReplyComponent) at the bottom of the
+ * screen; a mention is answered in its conversation and an assignment not
+ * at all, as the browser's inbox. The replies to an item still waiting to
+ * be sent show under it, ⏳ with their file count. Every text is shown as
+ * text.
  */
 export class ChatMailboxComponent extends EnhancedComponent {
     state!: MailboxState;
 
-    static components = { HeadingComponent };
+    static components = { HeadingComponent, ChatRecordReplyComponent };
 
     static template = xml`
     <div id="chat-mailbox" class="chat-mailbox">
@@ -112,7 +135,10 @@ export class ChatMailboxComponent extends EnhancedComponent {
           </div>
           <div class="chat-mailbox__author" t-esc="row.author"/>
           <div class="chat-mailbox__preview" t-esc="row.preview"/>
+          <p t-foreach="row.pending" t-as="line" t-key="line_index" class="chat-mailbox__pending" role="status" t-esc="line"/>
           <div class="chat-mailbox__actions">
+            <button t-if="row.canReply" type="button" class="chat-mailbox__reply"
+                    t-on-click.stop="() => this.onReply(row)" t-esc="t('chat.record_reply')"/>
             <button t-if="state.box === 'inbox' and state.tab === 'inbox'" type="button" class="chat-mailbox__mark"
                     t-on-click.stop="() => this.onMarkRead(row)" t-esc="t('chat.inbox_mark_read')"/>
             <button t-if="state.box === 'starred'" type="button" class="chat-mailbox__unstar"
@@ -122,6 +148,8 @@ export class ChatMailboxComponent extends EnhancedComponent {
       </ul>
       <p t-if="state.loading" class="chat-mailbox__loading" t-esc="t('chat.loading')"/>
       <p t-if="!state.loading and state.rows.length === 0" class="chat-mailbox__empty" t-esc="emptyText()"/>
+      <ChatRecordReplyComponent t-if="state.reply" t-key="state.reply.key" src="replySource()" item="state.reply.item"
+                                onDone.bind="onReplyDone" onCancel.bind="onReplyCancel"/>
     </div>`;
 
     private _sources: ChatSource[] = [];
@@ -147,6 +175,7 @@ export class ChatMailboxComponent extends EnhancedComponent {
             offline: false,
             loading: false,
             error: "",
+            reply: null,
         });
         onMounted(async () => {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
@@ -188,12 +217,17 @@ export class ChatMailboxComponent extends EnhancedComponent {
             : this.state.box === "starred" ? await this.chatService.starred(ids) : await this.chatService.inbox.items(ids, this.state.tab);
         const labels = new Map(sources.map((s) => [s.configId, s.label]));
         const names = new Map<string, Map<number, string>>();
+        const pending = new Map<string, Map<number, { text: string; note: boolean; files: number }[]>>();
         for (const id of new Set(items.map((i) => i.configId))) {
             names.set(id, new Map((await this.chatService.repo.partners(id)).map((p) => [p.partnerId, p.name])));
+            pending.set(id, await this.chatService.pendingRecordReplies(id));
         }
         if (gen !== this._gen) return;
         const tagged = this.serverShown();
-        this.state.rows = items.map((i) => this.rowOf(i, names.get(i.configId), tagged ? labels.get(i.configId) ?? "" : ""));
+        this.state.rows = items.map((i) => ({
+            ...this.rowOf(i, names.get(i.configId), tagged ? labels.get(i.configId) ?? "" : ""),
+            pending: (pending.get(i.configId)?.get(i.messageId) ?? []).map(pendingLine),
+        }));
         this.state.accounts = sources
             .filter((s) => items.some((i) => i.configId === s.configId))
             .map((s) => ({ configId: s.configId, label: s.label }));
@@ -215,6 +249,8 @@ export class ChatMailboxComponent extends EnhancedComponent {
             time: formatListTime(i.date),
             serverLabel,
             item: i,
+            canReply: this.state.box === "inbox" && kind === "record",
+            pending: [],
         };
     }
 
@@ -292,6 +328,28 @@ export class ChatMailboxComponent extends EnhancedComponent {
             console.warn("chat mailbox: open failed", e);
             this.state.error = t("chat.action_error");
         }
+    }
+
+    /** The account of the row whose reply composer is open. */
+    replySource(): ChatSource | undefined {
+        return this.state.reply ? this.sourceOf(this.state.reply.configId) : undefined;
+    }
+
+    /** « Répondre » on an item that offers it: its composer opens, in place of another one (whose draft stays). */
+    onReply(row: MailboxRow): void {
+        if (!row.canReply || !this.sourceOf(row.configId)) return;
+        this.state.reply = row;
+    }
+
+    /** The reply is queued: the composer closes, the list shows it waiting under its item. */
+    async onReplyDone(): Promise<void> {
+        this.state.reply = null;
+        await this.loadCache();
+    }
+
+    /** ✕ or Android's back on the composer: it closes, its draft kept. */
+    onReplyCancel(): void {
+        this.state.reply = null;
     }
 
     /** « Marquer comme lu »: the item moves to the history at once. */

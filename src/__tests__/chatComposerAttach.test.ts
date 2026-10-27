@@ -9,9 +9,11 @@ vi.mock("capacitor-voice-recorder", () => ({ VoiceRecorder: {} }));
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Dialog } from "@capacitor/dialog";
 import {
     ComposerAttach,
     countdownLine,
+    deviceComposerDeps,
     limitLine,
     newComposerAttachState,
     type ComposerAttachDeps,
@@ -647,5 +649,27 @@ describe("ComposerAttach", () => {
         expect(h.state.chips).toEqual([]);
         expect([...h.drafts.keys()]).toEqual([staged!.localUuid]);
         expect(h.files.bytes(staged!.path)).toBeDefined();
+    });
+});
+
+describe("deviceComposerDeps", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("asks with the labels given, the compress question's by default", async () => {
+        stubLocale();
+        const deps = deviceComposerDeps({
+            fileDir: async () => FILE_DIR,
+            uploadLimit: async () => null,
+            send: async () => {},
+            draft: { keep: async () => {}, drop: async () => {} },
+        });
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: false });
+        expect(await deps.confirm("Compress?")).toBe(false);
+        expect(Dialog.confirm).toHaveBeenLastCalledWith({
+            title: "Photos", message: "Compress?", okButtonTitle: "Compress", cancelButtonTitle: "Send the originals",
+        });
+        (Dialog.confirm as any).mockResolvedValueOnce({ value: true });
+        expect(await deps.confirm("Send?", { title: "Reply", ok: "Send", cancel: "Keep" })).toBe(true);
+        expect(Dialog.confirm).toHaveBeenLastCalledWith({ title: "Reply", message: "Send?", okButtonTitle: "Send", cancelButtonTitle: "Keep" });
     });
 });

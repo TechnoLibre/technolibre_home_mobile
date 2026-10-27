@@ -33,6 +33,7 @@ function fakeChat(ids: string[]) {
         star: vi.fn().mockResolvedValue(undefined),
         markDone: vi.fn().mockResolvedValue(undefined),
         markAllDone: vi.fn().mockResolvedValue(undefined),
+        pendingRecordReplies: vi.fn(async (_c: string): Promise<Map<number, any[]>> => new Map()),
         inbox: {
             items: vi.fn().mockResolvedValue([]),
             refresh: vi.fn().mockResolvedValue({ more: false, offline: false, oldestId: null }),
@@ -165,5 +166,56 @@ describe("ChatMailboxComponent", () => {
         expect(c.state.error).toBe("Could not do it. Try again.");
         expect(source).toMatch(/class="chat-mailbox__item"[^>]*t-on-click="\(\) => this\.onOpen\(row\)"/);
         expect(source).toMatch(/chat-mailbox__mark"[^>]*\n?[^>]*t-on-click\.stop=/);
+    });
+
+    it("no reply is offered on an assignment", async () => {
+        const chat: any = fakeChat(["a"]);
+        chat.inbox.items.mockResolvedValue([
+            item("a", 605, { threadModel: "discuss.channel", threadId: 11, recordName: "#général-test" }),
+            item("a", 603, { messageType: "user_notification", authorPartnerId: null }),
+            item("a", 602),
+        ]);
+        const c = make(chat, "/chat/inbox");
+        await c.loadCache();
+        // A mention is answered in its conversation, an assignment not at all, as the browser
+        expect(c.state.rows.map((r: any) => [r.messageId, r.canReply])).toEqual([[605, false], [603, false], [602, true]]);
+        c.onReply(c.state.rows[2]);
+        expect(c.state.reply).toMatchObject({ messageId: 602 });
+        expect(c.replySource()).toEqual(src("a"));
+        c.onReply(c.state.rows[1]);
+        expect(c.state.reply).toMatchObject({ messageId: 602 });
+        // Sent: the composer closes and the list is read again
+        chat.inbox.items.mockClear();
+        await c.onReplyDone();
+        expect(c.state.reply).toBeNull();
+        expect(chat.inbox.items).toHaveBeenCalled();
+        c.onReply(c.state.rows[2]);
+        c.onReplyCancel();
+        expect(c.state.reply).toBeNull();
+        // The starred box offers none
+        chat.starred.mockResolvedValue([{ ...item("a", 602), starred: true }]);
+        const starred = make(chat, "/chat/starred");
+        await starred.loadCache();
+        expect(starred.state.rows[0].canReply).toBe(false);
+        expect(source).toMatch(/t-if="row\.canReply"[^>]*t-on-click\.stop="\(\) => this\.onReply\(row\)"/);
+        expect(source).toMatch(/<ChatRecordReplyComponent t-if="state\.reply"/);
+    });
+
+    it("a reply waiting to be sent shows under its item with ⏳ and its file count", async () => {
+        const chat: any = fakeChat(["a"]);
+        chat.inbox.items.mockResolvedValue([item("a", 602), item("a", 601)]);
+        chat.pendingRecordReplies.mockResolvedValue(new Map([[602, [
+            { text: "Merci, je regarde", note: true, files: 2 },
+            { text: "", note: false, files: 1 },
+            { text: "Vu", note: true, files: 0 },
+        ]]]));
+        const c = make(chat, "/chat/inbox");
+        await c.loadCache();
+        expect(chat.pendingRecordReplies).toHaveBeenCalledWith("a");
+        expect(c.state.rows.map((r: any) => r.pending)).toEqual([
+            ["⏳ Note waiting to be sent — Merci, je regarde · 📎 2 files", "⏳ Message waiting to be sent · 📎 1 file", "⏳ Note waiting to be sent — Vu"],
+            [],
+        ]);
+        expect(source).toMatch(/t-foreach="row\.pending"/);
     });
 });

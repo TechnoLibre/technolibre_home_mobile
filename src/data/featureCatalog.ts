@@ -4731,12 +4731,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.record-reply",
                 label: { en: "Reply on a record", fr: "Réponse sur une fiche" },
                 description: {
-                    en: "A reply in the chatter of a task, a lead or any record of an inbox item, as an internal note or a message to its followers, with text, mentions and files, queued offline, never lost nor doubled.",
-                    fr: "Une réponse dans le fil de discussion d'une tâche, d'une piste ou de toute fiche d'un élément de la boîte de réception, en note interne ou en message aux abonnés, avec texte, mentions et fichiers, en file hors ligne, jamais perdue ni doublée.",
+                    en: "« Reply » on an inbox item of a followed record: a composer with files, voice, emoji, @ and # mentions and a kept draft, posting in the record's chatter as an internal note, or as a message to its followers after a confirmation, queued offline, never lost nor doubled.",
+                    fr: "« Répondre » sur un élément de la boîte de réception d'une fiche suivie : un compositeur avec fichiers, vocal, émojis, mentions @ et # et brouillon gardé, qui publie dans le fil de la fiche en note interne, ou en message aux abonnés après une confirmation, en file hors ligne, jamais perdu ni doublé.",
                 },
                 status: "experimental",
-                dependsOn: ["chat.inbox"],
-                demo: NONE_PLUMBING,
+                dependsOn: ["chat.inbox", "chat.compose", "chat.drafts"],
+                demo: { kind: "route", url: "/chat/inbox" },
                 howItWorks: {
                     en: "ChatOutbox.queueRecordPost queues chat.record_post, its files first as chat.upload ops on the "
                         + "record (Odoo's /mail/attachment/upload with thread_model the record's model, or the module "
@@ -4747,7 +4747,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "answer is found as the user's pending attachment. A refusal (no right to post, record gone, "
                         + "its file refused) blocks the reply as a notice that keeps its text and files until "
                         + "dismissed. Its files and draft rows carry the record (thread_model, thread_id) and "
-                        + "channel_id 0, so no conversation's draft, list or space counts them.",
+                        + "channel_id 0, so no conversation's draft, list or space counts them. The composer "
+                        + "(ChatRecordReplyComponent, offered on record items only, not on mentions nor "
+                        + "assignments) is the conversation's in its pieces: ComposerAttach over the record's draft "
+                        + "files, DraftText over its draft text, the emoji picker, @ from the people cache then "
+                        + "res.partner.get_mention_suggestions (ChatMentions.forRecord, no @everyone), # as in a "
+                        + "conversation. A message reply also sends email_add_signature; a waiting reply shows under "
+                        + "its item with its file count.",
                     fr: "ChatOutbox.queueRecordPost met en file chat.record_post, ses fichiers d'abord en opérations "
                         + "chat.upload sur la fiche (/mail/attachment/upload d'Odoo avec thread_model le modèle de la "
                         + "fiche, ou la route du module 1.4 avec un identifiant client), puis /mail/message/post sur "
@@ -4759,7 +4765,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "fichier refusé) bloque la réponse en avis qui garde son texte et ses fichiers jusqu'à ce "
                         + "qu'il soit fermé. Ses lignes de fichiers et de brouillon portent la fiche (thread_model, "
                         + "thread_id) et channel_id 0 : aucun brouillon, aucune liste ni aucun espace de conversation "
-                        + "ne les compte.",
+                        + "ne les compte. Le compositeur (ChatRecordReplyComponent, offert sur les éléments de fiche "
+                        + "seulement, ni sur les mentions ni sur les assignations) est celui d'une conversation en ses "
+                        + "pièces : ComposerAttach sur les fichiers de brouillon de la fiche, DraftText sur son texte, "
+                        + "le sélecteur d'émojis, @ depuis le cache des personnes puis "
+                        + "res.partner.get_mention_suggestions (ChatMentions.forRecord, sans @everyone), # comme dans "
+                        + "une conversation. Une réponse en message envoie aussi email_add_signature ; une réponse en "
+                        + "attente s'affiche sous son élément avec son nombre de fichiers.",
                 },
                 files: [
                     "src/services/chat/chatOutbox.ts",
@@ -4767,10 +4779,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/chat/chatRepository.ts",
                     "src/services/chat/chatTransfer.ts",
                     "src/services/migrations/addChatRecordThreads.ts",
+                    "src/services/chat/chatMentions.ts",
+                    "src/components/chat/chat_record_reply_component.ts",
+                    "src/components/chat/chat_record_reply_component.scss",
+                    "src/components/chat/chat_mailbox_component.ts",
                     "src/components/chat/chat_list_component.ts",
                 ],
                 tests: [
                     "src/__tests__/chatRecordPost.test.ts",
+                    "src/__tests__/chatRecordReply.test.ts",
+                    "src/__tests__/chatMentions.test.ts",
+                    "src/__tests__/chatMailboxComponent.test.ts",
                     "src/__tests__/chatOutbox.test.ts",
                     "src/__tests__/chatRepository.test.ts",
                     "src/__tests__/chatTransfer.test.ts",

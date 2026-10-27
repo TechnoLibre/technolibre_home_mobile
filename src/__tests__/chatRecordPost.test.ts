@@ -234,6 +234,7 @@ describe("record replies", () => {
       subtype_xmlid: "mail.mt_comment",
       partner_ids: [BOB],
       parent_id: 60,
+      email_add_signature: true,
     });
     expect(post.params.context).toEqual({ temporary_id: op.clientUuid, mail_post_autofollow: true });
   });
@@ -388,5 +389,120 @@ describe("record replies", () => {
     await chat.replyOnRecord(src, item(config), "Brouillon", mentions, [photo], true, "Brouillon");
     expect(await chat.recordDraft(config, thread)).toMatchObject({ text: "", files: [], mentions: EMPTY_MENTIONS });
     expect(await chat.repo.outgoingFile(config, photo.localUuid)).toMatchObject({ state: "queued", channelId: 0, threadModel: "project.task" });
+  });
+
+  it("a reply on a conversation's item is refused: a mention replies in its conversation", async () => {
+    const mention = { ...item(config), threadModel: "discuss.channel", threadId: 11, recordName: "#général-test" };
+    await expect(chat.replyOnRecord(src, mention, "Non", EMPTY_MENTIONS, [stage("photo.jpg")])).rejects.toThrow(/discuss\.channel/);
+    expect(await ops()).toEqual([]);
+    expect(odoo.posts()).toEqual([]);
+  });
+
+  it("a record's file refused as missing or too big names the record in its notice", async () => {
+    offline();
+    // Staged, then gone from the phone before its upload
+    const gone: OutgoingFile = { localUuid: uuidv4(), path: outgoingPath(fileDir, "absent", "plan.pdf"), name: "plan.pdf", mimetype: "application/pdf", size: 3, voice: false };
+    await chat.replyOnRecord(src, item(config), "Voici", EMPTY_MENTIONS, [gone], true);
+    online();
+    await chat.flushAll();
+    await idle();
+    const [notice] = (await chat.notices([config])).filter((n) => n.kind === CHAT_FILE_REFUSED);
+    expect(notice).toMatchObject({ channelId: null, label: "Tâche démo", file: { name: "plan.pdf", reason: "missing" } });
+    // The reply went without it
+    expect(odoo.posts()).toHaveLength(1);
+  });
+
+  it("a record draft waits for the record's sends still before their queue", async () => {
+    const thread = { model: "project.task", resId: TASK, recordName: "Tâche démo" };
+    await chat.saveRecordDraftText(config, thread, "En cours");
+    const ended = chat.recordSendStarted(config, thread);
+    // Another record's draft and a conversation's are not held
+    await chat.recordDraft(config, { ...thread, resId: TASK + 1 });
+    await chat.draft(config, 0);
+    let read: string | null = null;
+    const reading = chat.recordDraft(config, thread).then((d) => { read = d.text; });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(read).toBeNull();
+    // The send queued its reply: the draft no longer holds its text
+    await chat.saveRecordDraftText(config, thread, "");
+    ended();
+    ended();
+    await reading;
+    expect(read).toBe("");
+  });
+
+  describe("a reply cut by a kill while it is queued", () => {
+    const thread = { model: "project.task", resId: TASK, recordName: "Tâche démo" };
+    const TEXT = "Texte de la fiche";
+
+    /** The app started again over the same database and files: a new service, its interrupted rows repaired. */
+    const restart = async () => {
+      chat.dispose();
+      const rpc = new OdooRpcClient();
+      chat = new ChatService(env.db, rpc, new OutboxService(env.db, () => clock), new CapabilityService(env.db, rpc), () => clock);
+      chat.useFileIO({ files: odoo.files, http: odoo.http });
+      return chat.queue.recoverIncomplete();
+    };
+
+    /**
+     * Queues a reply of the record's draft (its text, a draft photo) with a
+     * fresh photo, offline; `hang` makes one step of the queue never end,
+     * as a process killed there; then the app starts again.
+     */
+    const cut = async (hang: () => { mockRestore: () => void; mock: { calls: unknown[] } }) => {
+      offline();
+      const kept = stage("garde.jpg");
+      await chat.keepRecordDraftFile(config, thread, kept, 0, "camera");
+      await chat.saveRecordDraftText(config, thread, TEXT);
+      const fresh = stage("neuve.jpg");
+      const spy = hang();
+      void chat.replyOnRecord(src, item(config), TEXT, EMPTY_MENTIONS, [kept, fresh], true, TEXT);
+      await vi.waitFor(() => expect(spy.mock.calls.length).toBeGreaterThan(0));
+      spy.mockRestore();
+      return { kept, fresh, queued: await restart() };
+    };
+
+    /** Nothing was queued: the draft holds the text once and the draft photo, the fresh one is gone; a new reply sends both once. */
+    const expectBackInDraft = async (r: { kept: OutgoingFile; fresh: OutgoingFile; queued: number }) => {
+      expect(r.queued).toBe(0);
+      expect(await ops()).toEqual([]);
+      expect(await chat.pendingRecordReplies(config)).toEqual(new Map());
+      const draft = await chat.recordDraft(config, thread);
+      expect(draft.text).toBe(TEXT);
+      expect(draft.files.map((f) => [f.localUuid, f.state, f.postClientUuid])).toEqual([[r.kept.localUuid, "draft", null]]);
+      expect(await odoo.files.size(r.kept.path)).toBe(3);
+      expect(await odoo.files.size(r.fresh.path)).toBeNull();
+      online();
+      await chat.replyOnRecord(src, item(config), draft.text, EMPTY_MENTIONS, [r.kept, stage("autre.jpg")], true, draft.text);
+      await idle();
+      expect(odoo.posts()).toHaveLength(1);
+      expect(odoo.messages).toMatchObject([{ attachment_ids: [900, 901] }]);
+      expect((await chat.recordDraft(config, thread)).text).toBe("");
+    };
+
+    it("at the rows step: the draft keeps its text and photo, the fresh photo goes", async () => {
+      await expectBackInDraft(await cut(() => vi.spyOn(chat.repo, "putOutgoing").mockImplementation(() => new Promise(() => {}))));
+    });
+
+    it("while the draft photo is given to the reply: the same", async () => {
+      await expectBackInDraft(await cut(() => vi.spyOn(chat.repo, "queueDrafts").mockImplementation(() => new Promise(() => {}))));
+    });
+
+    it("once every row is written, before the ops are complete: the reply goes once, the draft emptied", async () => {
+      const outbox = (chat.queue as any).outbox;
+      const r = await cut(() => vi.spyOn(outbox, "complete").mockImplementation(() => new Promise(() => {})));
+      expect(r.queued).toBe(1);
+      expect((await ops()).map((o) => [o.kind, o.status]).sort()).toEqual([[CHAT_RECORD_POST, "queued"], [CHAT_UPLOAD, "queued"], [CHAT_UPLOAD, "queued"]]);
+      expect(await chat.pendingRecordReplies(config)).toEqual(new Map([[60, [{ text: TEXT, note: true, files: 2 }]]]));
+      const draft = await chat.recordDraft(config, thread);
+      expect([draft.text, draft.files]).toEqual(["", []]);
+      online();
+      await chat.flushAll();
+      await idle();
+      expect(odoo.posts()).toHaveLength(1);
+      expect(odoo.messages).toMatchObject([{ model: "project.task", res_id: TASK, attachment_ids: [900, 901] }]);
+      expect(await ops()).toEqual([]);
+      expect(await odoo.files.size(r.kept.path)).toBeNull();
+    });
   });
 });

@@ -51,6 +51,7 @@
 
 .chat-mailbox__mark-all,
 .chat-mailbox__mark,
+.chat-mailbox__reply,
 .chat-mailbox__unstar {
 	border: 1px solid var(--text-greyed-out);
 	border-radius: 0.4rem;
@@ -122,4 +123,12 @@
 	display: flex;
 	justify-content: flex-end;
 	gap: 0.4rem;
+}
+
+// A reply to the item still waiting to be sent, one line each
+.chat-mailbox__pending {
+	margin: 0;
+	font-size: 0.8rem;
+	opacity: 0.8;
+	overflow-wrap: anywhere;
 }

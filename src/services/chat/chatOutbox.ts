@@ -79,11 +79,12 @@ export const CHAT_RECORD_POST = "chat.record_post";
  */
 export const CHAT_UPLOAD = "chat.upload";
 /**
- * params { channelId, localUuid, name, reason, limit? }: a notice, never
- * sent. A file of a post was not sent ("too_big": over `limit`, the
+ * params { channelId, localUuid, name, reason, limit?, label? }: a notice,
+ * never sent. A file of a post was not sent ("too_big": over `limit`, the
  * session's size limit, or answered 413 without one; "missing": no longer
  * on the phone; "refused", "not_found": the server's answer); the post
- * went without it.
+ * went without it. label: the record's name for a file of a reply on a
+ * record (no channelId).
  */
 export const CHAT_FILE_REFUSED = "chat.file_refused";
 /** Uploads one account runs at a time, beside its other ops. */
@@ -824,7 +825,9 @@ export class ChatOutbox {
    * (the module upload route on the record, the client uuid in the post).
    * draftText is the composer's text as the record's draft holds it,
    * removed from that draft once the reply is stored (best-effort, as for a
-   * post). Returns the reply's op.
+   * post). Returns the reply's op. An item of a conversation (discuss.channel)
+   * is refused before anything is stored: a mention is answered in its
+   * conversation, by a post.
    */
   queueRecordPost(
     configId: string,
@@ -835,6 +838,9 @@ export class ChatOutbox {
     note: boolean,
     opts: { idempotent: boolean; draftText?: string },
   ): Promise<OutboxOp> {
+    if (item.threadModel === "discuss.channel") {
+      return Promise.reject(new Error("A discuss.channel item is answered by a post in its conversation, not a record reply."));
+    }
     return this.exclusive(configId, () => this.queueRecordPostNow(configId, item, text, mentions, files, note, opts));
   }
 
@@ -2098,7 +2104,7 @@ export class ChatOutbox {
             reason: "refused",
             error: "",
             count: 1,
-            label: "",
+            label: o.params.label ?? "",
             file: { name: o.params.name ?? "", reason: o.params.reason, limit: o.params.limit ?? null },
           });
           continue;
@@ -2892,7 +2898,8 @@ export class ChatOutbox {
    * Posts a reply on its record (CHAT_RECORD_POST) with the files postFiles
    * gives, as sendPost does for a channel: body of composeBody plus the
    * op's marker, mail.mt_note for a note (mail_post_autofollow false: no
-   * follower added) or mail.mt_comment, partner_ids of the picks (no
+   * follower added) or mail.mt_comment with email_add_signature (the
+   * user's signature in the followers' emails, as the browser asks), partner_ids of the picks (no
    * special mentions off a channel), parent_id the inbox item's message it
    * answers (as the browser's reply from the inbox), the client uuid with
    * the module. The
@@ -2940,6 +2947,7 @@ export class ChatOutbox {
         if (composed.partnerIds.length > 0) postData.partner_ids = composed.partnerIds;
         if (op.params.useModule) postData.erplibre_client_uuid = op.clientUuid;
         if (typeof op.params.parentId === "number") postData.parent_id = op.params.parentId;
+        if (!note) postData.email_add_signature = true;
         const result = await this.rpc.callWithAuth(creds, (sessionId) =>
           this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/message/post", {
             thread_model: thread.model,
@@ -3203,18 +3211,23 @@ export class ChatOutbox {
   /**
    * Refuses a file for good: its row turns "refused" with the reason, a
    * CHAT_FILE_REFUSED notice (blocked, until dismissed) names it, and the
-   * op ends, so its post goes without it.
+   * op ends, so its post goes without it. A file of a reply on a record
+   * names the record in its notice (label), no conversation standing for it.
    */
   private async refuseFile(op: OutboxOp, reason: FileRefusal, limit?: number): Promise<void> {
     const { configId } = op;
     const { channelId, localUuid, name } = op.params;
+    const thread: RecordThread | undefined = op.params.thread;
     await this.repo.setRefused(configId, localUuid, reason);
     // Written blocked in one statement: no drain ever sees it queued
     await this.outbox.enqueue({
       noteId: CHAT_NOTE,
       configId,
       kind: CHAT_FILE_REFUSED,
-      params: { channelId, localUuid, name, reason, ...(limit ? { limit } : {}), blockedReason: "refused", candidates: [] },
+      params: {
+        channelId, localUuid, name, reason, ...(limit ? { limit } : {}), ...(thread ? { label: thread.recordName } : {}),
+        blockedReason: "refused", candidates: [],
+      },
       status: "blocked",
       lastError: `File ${name} not sent: ${reason}.`,
     });

@@ -236,4 +236,40 @@ describe("ChatMentions", () => {
     answers.get_mention_suggestions_from_channel = new Error("server");
     await expect(mentions.remote(SRC, await ch(20), mentionQuery("@b", 2)!)).rejects.toThrow("server");
   });
+
+  describe("in a record's chatter (no conversation)", () => {
+    it("@ offers the people cache at once, then the server's chatter suggestions with it", async () => {
+      // The cache: a name that starts with the term first; self is not offered
+      expect(names(await mentions.local(SRC, null, mentionQuery("@el", 3)!))).toEqual(["Élodie", "Abel"]);
+      expect(names(await mentions.local(SRC, null, mentionQuery("@ali", 4)!))).toEqual([]);
+      expect(kw).toEqual([]);
+      answers.get_mention_suggestions = { "res.partner": [{ id: 9, name: "Elise Server" }, { id: 5, name: "Élodie" }] };
+      expect(names(await mentions.forRecord(SRC, mentionQuery("@él", 3)!))).toEqual(["Elise Server", "Élodie", "Abel"]);
+      expect(kw).toEqual([{ model: "res.partner", method: "get_mention_suggestions", args: [], kwargs: { search: "el", limit: 8 } }]);
+      // Kept as the server matched them (by email), the special mention never offered
+      answers.get_mention_suggestions = { "res.partner": [{ id: 9, name: "Zed Quill" }] };
+      expect(names(await mentions.forRecord(SRC, mentionQuery("@zq@", 4)!))).toEqual(["Zed Quill"]);
+      answers.get_mention_suggestions = { "res.partner": [] };
+      expect(names(await mentions.forRecord(SRC, mentionQuery("@everyone", 9)!))).toEqual([]);
+      expect(names(await mentions.local(SRC, null, mentionQuery("@tout", 5)!))).toEqual([]);
+    });
+
+    it("offline, or a request that never left, answers from the people cache", async () => {
+      online = false;
+      expect(names(await mentions.forRecord(SRC, mentionQuery("@b", 2)!))).toEqual(["Bob Lane", "Abel"]);
+      expect(kw).toEqual([]);
+      online = true;
+      answers.get_mention_suggestions = new RequestNotSentError("offline");
+      expect(names(await mentions.forRecord(SRC, mentionQuery("@b", 2)!))).toEqual(["Bob Lane", "Abel"]);
+    });
+
+    it("# lists the channels as in a conversation", async () => {
+      online = false;
+      expect(names(await mentions.local(SRC, null, mentionQuery("#", 1)!))).toEqual(["général-test", "privé", "sous-fil"]);
+      online = true;
+      answers.get_mention_suggestions = [{ id: 30, model: "discuss.channel", name: "generic", channel_type: "channel", parent_channel_id: false }];
+      expect(names(await mentions.forRecord(SRC, mentionQuery("#gen", 4)!))).toEqual(["général-test", "generic"]);
+      expect(kw.at(-1)).toMatchObject({ model: "discuss.channel", method: "get_mention_suggestions", kwargs: { search: "gen", limit: 8 } });
+    });
+  });
 });
