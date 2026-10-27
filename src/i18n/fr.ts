@@ -1315,7 +1315,7 @@ export const translations: Record<string, string> = {
   "chat.inbox_switch": "Recevoir mes notifications dans Odoo",
   "chat.inbox_switch_hint": "Vous ne recevrez plus ces courriels.",
   "chat.inbox_switch_offline": "Il faut être en ligne pour changer ce réglage.",
-  "chat.inbox_switch_refused": "Odoo n'a pas accepté ce changement. Vous pouvez le faire dans vos préférences.",
+  "chat.inbox_switch_refused": "Odoo n'a pas accepté ce changement. Vos préférences dans Odoo indiquent ce qui est possible.",
   "chat.inbox_open_preferences": "Ouvrir mes préférences",
   "chat.history_empty": "Rien de lu pour l'instant.",
   "chat.starred_empty": "Aucun message favori.",

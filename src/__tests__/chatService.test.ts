@@ -3389,6 +3389,14 @@ describe("ChatService", () => {
         expect(await typeOf()).toBe("email");
       });
 
+      it("a write accepted but not applied answers refused", async () => {
+        odoo.state.sessionNotification = "email";
+        await chat.load(src);
+        odoo.state.onKw = async (p) => (p.model === "res.users" && p.method === "write" ? null : undefined);
+        expect(await chat.switchToInbox(src)).toBe("refused");
+        expect(await typeOf()).toBe("email");
+      });
+
       it("a refusal changes nothing and answers refused", async () => {
         odoo.state.sessionNotification = "email";
         await chat.load(src);

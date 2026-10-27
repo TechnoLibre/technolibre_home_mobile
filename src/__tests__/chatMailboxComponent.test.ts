@@ -282,6 +282,23 @@ describe("ChatMailboxComponent", () => {
             expect(c.state.notices.map((n: any) => n.configId)).toEqual(["a"]);
         });
 
+        it("a second tap while the switch runs sends nothing", async () => {
+            const chat: any = fakeChat(["a"]);
+            emailFor(chat, "a");
+            let release!: (v: string) => void;
+            chat.switchToInbox.mockImplementation(() => new Promise((r) => { release = r; }));
+            const c = make(chat, "/chat/inbox");
+            await c.loadCache();
+            const first = c.onSwitch("a");
+            expect(c.state.switching.a).toBe(true);
+            await c.onSwitch("a");
+            expect(chat.switchToInbox).toHaveBeenCalledTimes(1);
+            expect(source).toMatch(/t-att-disabled="state\.networkOff or state\.switching\[n\.configId\]"/);
+            release("done");
+            await first;
+            expect(c.state.switching.a).toBeFalsy();
+        });
+
         it("a refusal offers the preferences", async () => {
             const chat: any = fakeChat(["a", "b"]);
             emailFor(chat, "a", "b");

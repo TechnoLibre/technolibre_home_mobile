@@ -1137,7 +1137,7 @@ export class ChatService {
    * and stored, so the notice goes away only if the server holds the
    * change. "offline": no network, or the request never left; "refused":
    * Odoo answered with an error (no right to write it, a portal user
-   * whose type must stay email).
+   * whose type must stay email), or the read-back still says email.
    */
   async switchToInbox(src: ChatSource): Promise<"done" | "offline" | "refused"> {
     const { configId, creds } = src;
@@ -1153,7 +1153,8 @@ export class ChatService {
     const info = await this.rpc.sessionInfo(creds, { fresh: true });
     await this.repo.setSourceState({ configId, notificationType: info.notificationType });
     this.changed(configId, null);
-    return "done";
+    // An accepted write the server does not show applied is not a switch
+    return info.notificationType === "email" ? "refused" : "done";
   }
 
   /** Opens the user's own record (res.users) of the account in the web view, where the notification preference is. */

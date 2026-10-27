@@ -80,6 +80,8 @@ interface MailboxState {
     networkOff: boolean;
     /** What the last switch of an account answered, when it did not succeed. */
     answers: Record<string, "offline" | "refused">;
+    /** The accounts whose switch is running: its button is disabled until the answer. */
+    switching: Record<string, boolean>;
     /** A server could not be read: the list is the phone's. */
     offline: boolean;
     loading: boolean;
@@ -137,7 +139,7 @@ export class ChatMailboxComponent extends EnhancedComponent {
       <section t-foreach="state.notices" t-as="n" t-key="n.configId" class="chat-mailbox__notice">
         <p class="chat-mailbox__notice-text" role="status"
            t-esc="(serverShown() ? n.label + ' — ' : '') + t('chat.inbox_email_notice')"/>
-        <button type="button" class="chat-mailbox__switch" t-att-disabled="state.networkOff"
+        <button type="button" class="chat-mailbox__switch" t-att-disabled="state.networkOff or state.switching[n.configId]"
                 t-on-click="() => this.onSwitch(n.configId)" t-esc="t('chat.inbox_switch')"/>
         <p class="chat-mailbox__notice-hint" t-esc="t('chat.inbox_switch_hint')"/>
         <p t-if="state.networkOff or state.answers[n.configId] === 'offline'" class="chat-mailbox__notice-offline" role="status"
@@ -198,6 +200,7 @@ export class ChatMailboxComponent extends EnhancedComponent {
             notices: [],
             networkOff: false,
             answers: {},
+            switching: {},
             offline: false,
             loading: false,
             error: "",
@@ -392,15 +395,18 @@ export class ChatMailboxComponent extends EnhancedComponent {
      */
     async onSwitch(configId: string): Promise<void> {
         const src = this.sourceOf(configId);
-        if (!src || this.state.networkOff) return;
+        if (!src || this.state.networkOff || this.state.switching[configId]) return;
         this.state.error = "";
         delete this.state.answers[configId];
+        this.state.switching[configId] = true;
         try {
             const answer = await this.chatService.switchToInbox(src);
             if (answer !== "done") this.state.answers[configId] = answer;
         } catch (e) {
             console.warn("chat mailbox: switch failed", e);
             this.state.error = t("chat.action_error");
+        } finally {
+            this.state.switching[configId] = false;
         }
         await this.loadCache();
     }
