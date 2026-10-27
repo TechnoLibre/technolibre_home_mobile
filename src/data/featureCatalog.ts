@@ -4314,6 +4314,38 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
             },
             {
+                id: "chat.authors",
+                label: { en: "Message authors", fr: "Auteurs des messages" },
+                description: {
+                    en: "In a group or a channel, others' bubbles show their author's name and avatar, as the browser.",
+                    fr: "Dans un groupe ou un canal, les bulles des autres montrent le nom et l'avatar de leur auteur, comme le navigateur.",
+                },
+                status: "experimental",
+                demo: { kind: "route", url: "/chat" },
+                howItWorks: {
+                    en: "A run of messages follows Odoo 18's isSquashed (same author, the previous one neither a "
+                        + "notification nor empty, not a note, under 5 minutes): its first bubble has the name above "
+                        + "and the round avatar on the left, its others the same indent. The avatar is Odoo's "
+                        + "/web/image/res.partner/<id>/avatar_128, its write date as unique, fetched with the session "
+                        + "once on screen, two at a time, whatever the network, and cached under the account's chat "
+                        + "directory with its bytes in SQLite; until then, or when it fails, the initials show on a "
+                        + "colour of the partner id. It counts in the chat's space and goes with « Remove all downloaded files ».",
+                    fr: "Une suite de messages suit isSquashed d'Odoo 18 (même auteur, le précédent ni une "
+                        + "notification ni vide, pas une note, moins de 5 minutes) : sa première bulle porte le nom "
+                        + "au-dessus et l'avatar rond à gauche, les autres le même retrait. L'avatar est "
+                        + "/web/image/res.partner/<id>/avatar_128 d'Odoo, sa date d'écriture en unique, téléchargé "
+                        + "avec la session une fois à l'écran, deux à la fois, quel que soit le réseau, et gardé dans "
+                        + "le répertoire de clavardage du compte avec ses octets dans SQLite ; d'ici là, ou en cas "
+                        + "d'échec, les initiales s'affichent sur une couleur tirée de l'id du partenaire. Il compte "
+                        + "dans l'espace du clavardage et part avec « Retirer tous les fichiers téléchargés ».",
+                },
+                files: [
+                    "src/services/chat/chatAvatars.ts",
+                    "src/components/chat/chat_avatar_component.ts",
+                    "src/services/migrations/addChatAvatars.ts",
+                ],
+            },
+            {
                 id: "chat.body",
                 label: { en: "Message body", fr: "Corps des messages" },
                 description: {

@@ -37,6 +37,7 @@ import { addChatMessageSearch } from "./addChatMessageSearch";
 import { addChatMailbox } from "./addChatMailbox";
 import { addChatOnTop } from "./addChatOnTop";
 import { addChatRecordThreads } from "./addChatRecordThreads";
+import { addChatAvatars } from "./addChatAvatars";
 
 /**
  * The app's database migrations, in version order: runMigrations runs at
@@ -233,5 +234,10 @@ export const APP_MIGRATIONS: Migration[] = [
 		version: 2026102704,
 		description: "Clavardage : fichiers et brouillons des réponses aux enregistrements",
 		run: addChatRecordThreads,
+	},
+	{
+		version: 2026102705,
+		description: "Clavardage : nom et avatar des auteurs",
+		run: addChatAvatars,
 	},
 ];

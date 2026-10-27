@@ -5,7 +5,7 @@ import { APP_MIGRATIONS } from "../services/migrations";
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
 import type { StoreDelta } from "../services/chat/chatStore";
-import type { ChatAttachment, ChatMessage } from "../models/chat";
+import type { ChatAttachment, ChatAvatar, ChatMessage } from "../models/chat";
 
 const A = "https://odoo.example.com|alice|db1";
 const B = "https://odoo.example.com|bob|db1";
@@ -266,7 +266,7 @@ describe("ChatRepository", () => {
       partners: [{ configId: A, partnerId: 3, name: "Zoe", imStatus: "online" }],
       members: [{ memberId: 1, channelId: 7, partnerId: 3, isTyping: true }],
     }));
-    expect(await repo.partners(A)).toEqual([{ configId: A, partnerId: 3, name: "Zoe", imStatus: "online" }]);
+    expect(await repo.partners(A)).toEqual([{ configId: A, partnerId: 3, name: "Zoe", imStatus: "online", writeDate: null }]);
     expect((await repo.members(A, 7))[0]).toMatchObject({ memberId: 1, partnerId: 3, isTyping: true });
   });
 
@@ -2143,5 +2143,118 @@ describe("ChatRepository record threads", () => {
     expect(await repo.attachmentBytes(A)).toBe(2000);
     expect(await repo.outgoingFile(A, "r1")).toMatchObject({ channelId: 0, threadModel: "project.task", threadId: 5 });
     expect(await repo.outgoingFile(A, "c1")).toMatchObject({ threadModel: null, threadId: null });
+  });
+});
+
+describe("migration 2026102705", () => {
+  let db: DatabaseService;
+  const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102705)!;
+  const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+  const AVATAR_COLS = ["id", "config_id", "partner_id", "unique_key", "path", "bytes", "fetched_at"];
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+  });
+
+  it("follows 2026102704, makes the avatars table and the columns once, keeping the rows", async () => {
+    const versions = APP_MIGRATIONS.map((m) => m.version);
+    expect(versions[versions.indexOf(2026102705) - 1]).toBe(2026102704);
+    expect(migration().description).toBe("Clavardage : nom et avatar des auteurs");
+    await (db as any).db.execute("CREATE TABLE IF NOT EXISTS chat_partners (id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL, partner_id INTEGER NOT NULL, name TEXT NOT NULL, im_status TEXT)");
+    await (db as any).db.execute(`CREATE TABLE IF NOT EXISTS chat_messages (id TEXT PRIMARY KEY NOT NULL, config_id TEXT NOT NULL,
+      channel_id INTEGER NOT NULL, body TEXT NOT NULL)`);
+    await db.rawRun("INSERT INTO chat_partners (id, config_id, partner_id, name) VALUES (?, ?, ?, ?)", ["a#8", "a", 8, "Alice Martin"]);
+    await migration().run(db);
+    await migration().run(db);
+    expect(await colsOf("chat_avatars")).toEqual(AVATAR_COLS);
+    expect((await colsOf("chat_partners")).filter((c) => c === "write_date")).toHaveLength(1);
+    expect((await colsOf("chat_messages")).filter((c) => c === "is_note")).toHaveLength(1);
+    expect(await db.rawQuery("SELECT id, name, write_date FROM chat_partners")).toEqual([{ id: "a#8", name: "Alice Martin", write_date: null }]);
+  });
+
+  it("a fresh install has them, and a database without the chat tables gets only the avatars table", async () => {
+    await migration().run(db);
+    expect(await colsOf("chat_partners")).toEqual([]);
+    expect(await colsOf("chat_avatars")).toEqual(AVATAR_COLS);
+    for (const m of APP_MIGRATIONS) {
+      if (![2026031801, 2026032401].includes(m.version)) await m.run(db);
+    }
+    expect(await colsOf("chat_partners")).toContain("write_date");
+    expect(await colsOf("chat_messages")).toContain("is_note");
+  });
+});
+
+describe("ChatRepository authors", () => {
+  let db: DatabaseService;
+  let repo: ChatRepository;
+  let released: string[][];
+  const avatar = (configId: string, partnerId: number, over: Partial<ChatAvatar> = {}): ChatAvatar => ({
+    configId, partnerId, uniqueKey: "2026-10-20 08:00:00", path: `chat/dir/avatars/${partnerId}_20261020080000.svg`,
+    bytes: 900, fetchedAt: "2026-10-26T10:00:00.000Z", ...over,
+  });
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await addChatTables(db);
+    repo = new ChatRepository(db);
+    released = [];
+    repo.onFilesReleased = (paths) => { released.push(paths); };
+  });
+
+  it("a partner keeps its write date, which a record without one leaves as it is", async () => {
+    await repo.applyDelta(A, delta({ partners: [{ partnerId: 8, name: "Alice Martin", writeDate: "2026-10-20 08:00:00" }] }));
+    await repo.applyDelta(A, delta({ partners: [{ partnerId: 8, imStatus: "online" }] }));
+    expect(await repo.partners(A)).toEqual([
+      { configId: A, partnerId: 8, name: "Alice Martin", imStatus: "online", writeDate: "2026-10-20 08:00:00" },
+    ]);
+    await repo.applyDelta(A, delta({ partners: [{ partnerId: 8, writeDate: "2026-10-21 09:00:00" }] }));
+    expect((await repo.partners(A))[0].writeDate).toBe("2026-10-21 09:00:00");
+  });
+
+  it("a message keeps whether it is a note", async () => {
+    await repo.applyDelta(A, delta({ messages: [{ messageId: 1, channelId: 7, body: "x", isNote: true }, { messageId: 2, channelId: 7, body: "y" }] }));
+    expect((await repo.messages(A, 7)).map((m) => [m.messageId, m.isNote])).toEqual([[1, true], [2, false]]);
+  });
+
+  it("an avatar round trips; a new file for the partner releases the old one", async () => {
+    await repo.putAvatar(avatar(A, 8));
+    await repo.putAvatar(avatar(A, 9, { bytes: 100 }));
+    await repo.putAvatar(avatar(B, 8, { bytes: 50 }));
+    expect(await repo.avatars(A)).toEqual([avatar(A, 8), avatar(A, 9, { bytes: 100 })]);
+    const next = avatar(A, 8, { uniqueKey: "2026-10-21 09:00:00", path: "chat/dir/avatars/8_20261021090000.png", bytes: 700 });
+    await repo.putAvatar(next);
+    expect(released).toEqual([["chat/dir/avatars/8_20261020080000.svg"]]);
+    expect(await repo.avatars(A)).toEqual([next, avatar(A, 9, { bytes: 100 })]);
+    expect(await repo.avatarBytes(A)).toBe(800);
+    expect(await repo.avatarBytes()).toBe(850);
+  });
+
+  it("clearAvatars forgets an account's avatars, or all, and releases their files", async () => {
+    await repo.putAvatar(avatar(A, 8));
+    await repo.putAvatar(avatar(B, 9));
+    await repo.clearAvatars(A);
+    expect(await repo.avatars(A)).toEqual([]);
+    expect(await repo.avatars(B)).toHaveLength(1);
+    await repo.clearAvatars();
+    expect(await repo.avatarBytes()).toBe(0);
+    expect(released).toEqual([["chat/dir/avatars/8_20261020080000.svg"], ["chat/dir/avatars/9_20261020080000.svg"]]);
+  });
+
+  it("dropSource removes the avatars of that account and their files; a rename re-keys them", async () => {
+    const C = "https://odoo.example.com|alice2|db1";
+    await repo.putAvatar(avatar(A, 8));
+    await repo.putAvatar(avatar(B, 9));
+    await db.renameSyncConfigId(A, C);
+    expect(await repo.avatars(A)).toEqual([]);
+    expect(await repo.avatars(C)).toEqual([avatar(C, 8)]);
+    expect(await db.rawQuery("SELECT id FROM chat_avatars WHERE config_id = ?", [C])).toEqual([{ id: `${C}#p8` }]);
+    await repo.dropSource(C);
+    expect(await repo.avatars(C)).toEqual([]);
+    expect(await repo.avatars(B)).toHaveLength(1);
+    expect(released).toEqual([["chat/dir/avatars/8_20261020080000.svg"]]);
   });
 });

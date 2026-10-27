@@ -275,6 +275,8 @@ export function parseStore(
       partnerNames.set(p.id, p.name);
     }
     if ("im_status" in p) row.imStatus = typeof p.im_status === "string" ? p.im_status : null;
+    // Sent beside avatar_128 only: a record without it keeps the stored key
+    if (typeof p.write_date === "string" && p.write_date) row.writeDate = p.write_date;
     delta.partners.push(row);
   }
 
@@ -428,6 +430,7 @@ export function parseStore(
     );
     copy(msg, m, "pinned_at", "pinnedAt", (v) => v || null);
     copy(msg, m, "starred", "starred", (v) => !!v);
+    copy(msg, m, "is_note", "isNote", (v) => !!v);
     if ("reactions" in m) readReactions(m.id, m.reactions, delta);
     delta.messages.push(msg);
   }

@@ -6,7 +6,8 @@ vi.mock("@capacitor/camera", () => ({ Camera: {} }));
 vi.mock("@capacitor/filesystem", () => ({ Filesystem: {}, Directory: { Data: "DATA", External: "EXTERNAL" } }));
 vi.mock("capacitor-voice-recorder", () => ({ VoiceRecorder: {} }));
 
-import { ChatThreadComponent, NOTICE_MS, THREAD_PAGE, THREAD_WINDOW, typingLine } from "../components/chat/chat_thread_component";
+import { ChatThreadComponent, NOTICE_MS, THREAD_PAGE, THREAD_WINDOW, isSquashed, typingLine } from "../components/chat/chat_thread_component";
+import { avatarHue } from "../services/chat/chatAvatars";
 import { EventBus } from "@odoo/owl";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -109,6 +110,10 @@ function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: 
                 { partnerId: 8, name: "Bob", imStatus: null },
             ]),
             sourceState: vi.fn().mockResolvedValue({ selfPartnerId: 1, isInternalUser: true }),
+            avatars: vi.fn(async (_c: string): Promise<any[]> => []),
+        },
+        avatars: {
+            fetch: vi.fn(async (_s: any, _p: number, _k: string): Promise<string | null> => null),
         },
     };
 }
@@ -2878,5 +2883,154 @@ describe("ChatThreadComponent starred messages", () => {
         await c.open();
         expect(c.state.rows[0].can.star).toBe(false);
         c.teardown();
+    });
+});
+
+describe("ChatThreadComponent authors", () => {
+    const at = (min: number, sec = 0) => `2026-10-26 10:${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+    const others = (id: number, author: number, min: number, p: any = {}) => msg(id, { authorPartnerId: author, date: at(min), ...p });
+    const group = channel({ channelType: "group", name: "Équipe démo", correspondentPartnerId: null });
+    const PARTNERS = [
+        { partnerId: 7, name: "Alice Martin", imStatus: "online", writeDate: "2026-10-20 08:00:00" },
+        { partnerId: 8, name: "Bruno Lefort", imStatus: null, writeDate: null },
+    ];
+    const view = (c: any) => c.state.rows.map((r: any) => [r.key, r.author ? r.author.name : null, r.indent]);
+
+    function groupChat(messages: any[], ch: any = group) {
+        const chat = fakeChat(messages, [member(1), member(7), member(8)], ch);
+        chat.repo.partners.mockResolvedValue(PARTNERS);
+        return chat;
+    }
+
+    it("isSquashed is Odoo's: same author, previous neither a notification nor empty, not a note, under 5 min", () => {
+        const a = others(10, 7, 0);
+        expect(isSquashed(others(11, 7, 4, { date: at(4, 59) }), a, 0)).toBe(true);
+        expect(isSquashed(others(11, 7, 5), a, 0)).toBe(false);
+        expect(isSquashed(others(11, 8, 1), a, 0)).toBe(false);
+        expect(isSquashed(others(11, 7, 1), null, 0)).toBe(false);
+        expect(isSquashed(others(11, 7, 1), { ...a, messageType: "notification" }, 0)).toBe(false);
+        expect(isSquashed(others(11, 7, 1), { ...a, body: "" }, 0)).toBe(false);
+        expect(isSquashed(others(11, 7, 1), { ...a, body: "" }, 1)).toBe(true);
+        expect(isSquashed(others(11, 7, 1, { isNote: true }), a, 0)).toBe(false);
+        expect(isSquashed(others(11, null as any, 1), { ...a, authorPartnerId: null }, 0)).toBe(false);
+    });
+
+    it("in a group, a run's first bubble of others has the name and avatar, the run's others the indent", async () => {
+        const c = make(groupChat([
+            others(10, 7, 0), others(11, 7, 2), others(12, 8, 3), others(13, 8, 9),
+            others(14, 1, 10), others(15, 7, 10), msg(null, { authorPartnerId: 1, date: at(11) }),
+        ]));
+        await c.open();
+        expect(view(c).slice(0, 6)).toEqual([
+            ["m10", "Alice Martin", false], ["m11", null, true], ["m12", "Bruno Lefort", false],
+            ["m13", "Bruno Lefort", false], ["m14", null, false], ["m15", "Alice Martin", false],
+        ]);
+        // The queued own bubble is untouched
+        expect(c.state.rows[6]).toMatchObject({ own: true, author: null, indent: false });
+        expect(c.state.rows[0].author).toEqual({ partnerId: 7, name: "Alice Martin", initials: "AM", hue: avatarHue(7), avatar: null });
+        c.teardown();
+    });
+
+    it("a system line breaks the run and has no author; a note opens a run of its own", async () => {
+        const c = make(groupChat([
+            others(10, 7, 0), others(11, 7, 1, { messageType: "notification", body: "<div>épinglé</div>" }), others(12, 7, 2),
+            others(13, 7, 3, { isNote: true }), others(14, 7, 4),
+        ]));
+        await c.open();
+        expect(view(c)).toEqual([
+            ["m10", "Alice Martin", false], ["m11", null, false], ["m12", "Alice Martin", false],
+            ["m13", "Alice Martin", false], ["m14", null, true],
+        ]);
+        c.teardown();
+    });
+
+    it("an emptied message is hidden as Odoo hides it: the run goes on over it", async () => {
+        const c = make(groupChat([others(10, 7, 0), others(11, 7, 1, { body: "" }), others(12, 7, 2)]));
+        await c.open();
+        expect(view(c)).toEqual([["m10", "Alice Martin", false], ["m12", null, true]]);
+        c.teardown();
+    });
+
+    it("an edited message keeps the header of the run it opens", async () => {
+        const c = make(groupChat([others(10, 7, 0, { body: '<p>hi</p><span class="o-mail-Message-edited"></span>' }), others(11, 7, 1)]));
+        await c.open();
+        expect(view(c)).toEqual([["m10", "Alice Martin", false], ["m11", null, true]]);
+        c.teardown();
+    });
+
+    it("no header in a direct chat, nor on own bubbles", async () => {
+        const c = make(fakeChat([others(10, 7, 0), others(11, 1, 1), others(12, 7, 9)]));
+        await c.open();
+        expect(view(c)).toEqual([["m10", null, false], ["m11", null, false], ["m12", null, false]]);
+        c.teardown();
+    });
+
+    it("in a channel too, and a partner unknown to the cache reads « Someone », never « ? »", async () => {
+        const c = make(groupChat([others(10, 9, 0), others(11, null as any, 1)], channel({ channelType: "channel", name: "général-test" })));
+        await c.open();
+        expect(c.state.rows.map((r: any) => [r.author?.name, r.author?.initials])).toEqual([["Someone", "S"], ["Someone", "S"]]);
+        c.teardown();
+    });
+
+    it("initials until the image is cached, then the image: the render signature moves, one fetch per partner and key", async () => {
+        const chat = groupChat([others(10, 7, 0), others(11, 8, 1), others(12, 7, 9), others(13, 7, 20)]);
+        let land!: (p: string | null) => void;
+        chat.avatars.fetch.mockImplementation((_s: any, p: number) => (p === 7 ? new Promise((r) => { land = r; }) : Promise.resolve(null)));
+        const c = make(chat);
+        await c.open();
+        expect(c.state.rows[0].author.avatar).toBeNull();
+        const before = c._sig;
+        for (const p of [7, 8, 7, 7]) c.avatars.seen(p);
+        expect(chat.avatars.fetch.mock.calls.map((x: any[]) => [x[1], x[2]])).toEqual([[7, "2026-10-20 08:00:00"], [8, ""]]);
+        land("chat/d/avatars/7_20261020080000.svg");
+        await vi.waitFor(() => expect(c.state.rows[0].author.avatar).toBe("http://localhost/_capacitor_file_/data/chat/d/avatars/7_20261020080000.svg"));
+        expect(c.state.rows[2].author.avatar).toBe(c.state.rows[0].author.avatar);
+        expect(c.state.rows[1].author.avatar).toBeNull();
+        expect(c._sig).not.toBe(before);
+        // A failure stays initials: not asked again on this screen
+        await c.refresh();
+        c.avatars.seen(8);
+        expect(chat.avatars.fetch).toHaveBeenCalledTimes(2);
+        c.teardown();
+    });
+
+    it("a cached avatar shows at once; a changed key asks again and keeps the old image meanwhile", async () => {
+        const chat = groupChat([others(10, 7, 0)]);
+        chat.repo.avatars.mockResolvedValue([
+            { configId: "a", partnerId: 7, uniqueKey: "2026-10-20 08:00:00", path: "chat/d/avatars/7_1.svg", bytes: 9, fetchedAt: "x" },
+        ]);
+        const c = make(chat);
+        await c.open();
+        const old = "http://localhost/_capacitor_file_/data/chat/d/avatars/7_1.svg";
+        expect(c.state.rows[0].author.avatar).toBe(old);
+        c.avatars.seen(7);
+        expect(chat.avatars.fetch).not.toHaveBeenCalled();
+        chat.repo.partners.mockResolvedValue([{ ...PARTNERS[0], writeDate: "2026-10-21 09:00:00" }]);
+        await c.refresh();
+        expect(chat.avatars.fetch.mock.calls.map((x: any[]) => x[2])).toEqual(["2026-10-21 09:00:00"]);
+        expect(c.state.rows[0].author.avatar).toBe(old);
+        c.teardown();
+    });
+
+    it("an image that does not display falls back to the initials and is fetched again", async () => {
+        const chat = groupChat([others(10, 7, 0)]);
+        chat.repo.avatars.mockResolvedValue([
+            { configId: "a", partnerId: 7, uniqueKey: "2026-10-20 08:00:00", path: "chat/d/avatars/7_1.svg", bytes: 9, fetchedAt: "x" },
+        ]);
+        const c = make(chat);
+        await c.open();
+        c.avatars.seen(7);
+        c.avatars.broken(7);
+        await vi.waitFor(() => expect(c.state.rows[0].author.avatar).toBeNull());
+        expect(chat.avatars.fetch).toHaveBeenCalledTimes(1);
+        c.teardown();
+    });
+
+    it("the template hides the avatar from readers and gives the name as text", () => {
+        const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat");
+        const thread = readFileSync(resolve(dir, "chat_thread_component.ts"), "utf8");
+        const avatar = readFileSync(resolve(dir, "chat_avatar_component.ts"), "utf8");
+        expect(thread).toMatch(/<span class="chat-thread__author-name" t-esc="row\.author\.name"\/>/);
+        expect(avatar).toMatch(/class="chat-thread__author-avatar" aria-hidden="true"/);
     });
 });

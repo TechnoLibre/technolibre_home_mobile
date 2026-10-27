@@ -126,6 +126,54 @@
 	opacity: 0.85;
 }
 
+// Others' bubbles in a group or a channel: the run's first one carries the
+// author's name above it and the avatar on its left, outside the bubble;
+// the run's others keep the same indent
+.chat-thread__bubble--head,
+.chat-thread__bubble--indent {
+	margin-left: 2.5rem;
+	max-width: calc(80% - 2.5rem);
+}
+
+.chat-thread__bubble--head {
+	margin-top: 1.1rem;
+}
+
+.chat-thread__author-avatar {
+	position: absolute;
+	top: 0;
+	left: -2.5rem;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 2rem;
+	height: 2rem;
+	overflow: hidden;
+	border-radius: 50%;
+	color: #fff;
+	font-size: 0.75rem;
+}
+
+.chat-thread__author-img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.chat-thread__author-name {
+	position: absolute;
+	bottom: 100%;
+	left: 0.6rem;
+	max-width: 70vw;
+	overflow: hidden;
+	font-size: 0.75rem;
+	font-weight: 600;
+	line-height: 1.1rem;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	opacity: 0.8;
+}
+
 .chat-thread__pinned {
 	font-size: 0.75rem;
 }

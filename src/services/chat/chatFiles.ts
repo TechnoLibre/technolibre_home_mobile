@@ -161,6 +161,16 @@ export function previewPath(fileDir: string, attachmentId: number): string {
 }
 
 /**
+ * A cached avatar without its extension: `avatars/<partnerId>_<key>`, the
+ * key's letters and digits only, so a new key names a new file (the web
+ * view never shows the old one from its own cache).
+ */
+export function avatarBasePath(fileDir: string, partnerId: number, uniqueKey: string): string {
+    if (!Number.isInteger(partnerId) || partnerId <= 0) throw new Error(`invalid partner id: ${partnerId}`);
+    return `${sourceDir(fileDir)}/avatars/${partnerId}_${uniqueKey.replace(/[^A-Za-z0-9]/g, "") || "0"}`;
+}
+
+/**
  * The directory a chat file owns alone: `out/<localUuid>/` of a file to
  * send, `files/<attachmentId>/` of an original; null for a preview, whose
  * thumbs/ directory every preview shares.

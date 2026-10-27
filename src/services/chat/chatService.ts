@@ -14,6 +14,7 @@ import type { OutboxService } from "../outboxService";
 import { nativeChatHttp } from "../../plugins/chatFilePlugin";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
 import { ChatAttachmentCache } from "./chatAttachmentCache";
+import { ChatAvatars } from "./chatAvatars";
 import { bodyText, isEmptyMessage, mentionAnchors } from "./chatBody";
 import { EMPTY_MENTIONS, joinMentions, type Mentions } from "./chatCompose";
 import { joinDraftText } from "./chatDraft";
@@ -193,6 +194,9 @@ export class ChatService {
   /** The attachments' files on the phone: previews, downloads, space, purge (made by useFileIO). */
   attachments!: ChatAttachmentCache;
 
+  /** The authors' avatars on the phone (made by useFileIO). */
+  avatars!: ChatAvatars;
+
   constructor(
     private db: DatabaseService,
     private rpc: OdooRpcClient,
@@ -256,6 +260,7 @@ export class ChatService {
       this.repo, io.files, this.queue.transfer, this.queue.onWifi, (configId) => this.db.getOutboxOpsForConfig(configId), this.now,
     );
     this.attachments.setProgressSource((fn) => io.http.onProgress(fn));
+    this.avatars = new ChatAvatars(this.repo, io.files, this.queue.transfer, this.now);
     this.repo.onFilesReleased = (paths) => this.attachments.release(paths);
   }
 
@@ -1846,6 +1851,7 @@ export class ChatService {
   /** The account's ops leave the outbox, then its files, then its rows. */
   private async erase(configId: string): Promise<void> {
     await this.queue.dropAll(configId);
+    await this.avatars.erase(configId);
     await this.attachments.erase(configId);
     await this.repo.dropSource(configId);
   }

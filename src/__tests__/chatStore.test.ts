@@ -479,3 +479,24 @@ describe("mailboxKindOf", () => {
     expect(mailboxKindOf({ ...base, threadModel: "discuss.channel", messageType: "user_notification" })).toBe("mention");
   });
 });
+
+describe("parseStore authors", () => {
+  it("keeps a partner's write date (its avatar's cache key) and a message's note flag", () => {
+    const d = parseStore({
+      "res.partner": [
+        { id: 8, name: "Alice Martin", avatar_128_access_token: "t", write_date: "2026-10-20 08:00:00" },
+        { id: 9, name: "Bruno Lefort" },
+      ],
+      "mail.message": [
+        { id: 60, body: "<p>a</p>", date: "2026-10-26 10:00:00", message_type: "comment", thread: thread(2), author: partner(8), is_note: false },
+        { id: 61, body: "<p>b</p>", date: "2026-10-26 10:01:00", message_type: "comment", thread: thread(2), author: partner(8), is_note: true },
+        { id: 62, body: "<p>c</p>", date: "2026-10-26 10:02:00", message_type: "comment", thread: thread(2), author: partner(9) },
+      ],
+    }, CFG, SELF);
+    expect(d.partners).toEqual([
+      { configId: CFG, partnerId: 8, name: "Alice Martin", writeDate: "2026-10-20 08:00:00" },
+      { configId: CFG, partnerId: 9, name: "Bruno Lefort" },
+    ]);
+    expect(d.messages.map((m) => m.isNote)).toEqual([false, true, undefined]);
+  });
+});

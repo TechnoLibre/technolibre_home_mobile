@@ -276,6 +276,12 @@ class MockDBConnection {
         const total = rows.reduce((sum, row) => sum + (row[a] ?? 0) + (row[b] ?? 0), 0);
         return { values: [{ [alias]: total }] };
       }
+      // COALESCE(SUM(a), 0) AS alias
+      const sumOne = colList.match(/^COALESCE\(SUM\((\w+)\), 0\) AS (\w+)$/i);
+      if (sumOne) {
+        const [, a, alias] = sumOne;
+        return { values: [{ [alias]: rows.reduce((sum, row) => sum + (row[a] ?? 0), 0) }] };
+      }
 
       // Project specific columns
       const requestedCols = colList.split(",").map((c) => c.trim());

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { DatabaseService } from "../databaseService";
 import type {
   ChatAttachment,
+  ChatAvatar,
   ChatChannel,
   ChatMailboxItem,
   ChatMember,
@@ -218,6 +219,18 @@ function messageFromRow(r: Row): ChatMessage {
     recipientIds: idList(r.recipient_ids),
     pinnedAt: r.pinned_at ?? null,
     starred: bool(r.starred),
+    isNote: bool(r.is_note),
+  };
+}
+
+function avatarFromRow(r: Row): ChatAvatar {
+  return {
+    configId: r.config_id,
+    partnerId: r.partner_id,
+    uniqueKey: r.unique_key,
+    path: r.path,
+    bytes: Number(r.bytes ?? 0),
+    fetchedAt: r.fetched_at,
   };
 }
 
@@ -470,6 +483,7 @@ export class ChatRepository {
       search_text: searchTextOf(m.body),
       pinned_at: m.pinnedAt ?? null,
       starred: flag(!!m.starred),
+      is_note: flag(!!m.isNote),
     };
   }
 
@@ -839,9 +853,10 @@ export class ChatRepository {
 
   /**
    * A partner record overlays only the keys it carries: one without
-   * `im_status` keeps the stored presence, one without `name` updates the
-   * other keys of a known partner. A partner never seen and nameless is
-   * stored with an empty name, which displayNameOf skips.
+   * `im_status` keeps the stored presence, one without `write_date` the
+   * stored avatar key, one without `name` updates the other keys of a
+   * known partner. A partner never seen and nameless is stored with an
+   * empty name, which displayNameOf skips.
    */
   private async upsertPartner(configId: string, p: StoreDelta["partners"][number]): Promise<void> {
     const stored = (await this.rows("chat_partners", { id: key(configId, p.partnerId) }))[0];
@@ -851,6 +866,7 @@ export class ChatRepository {
       partner_id: p.partnerId,
       name: p.name ?? stored?.name ?? "",
       im_status: p.imStatus !== undefined ? p.imStatus : (stored?.im_status ?? null),
+      write_date: p.writeDate ?? stored?.write_date ?? null,
     });
   }
 
@@ -1438,6 +1454,7 @@ export class ChatRepository {
       partnerId: r.partner_id,
       name: r.name,
       imStatus: r.im_status ?? null,
+      writeDate: r.write_date ?? null,
     }));
   }
 
@@ -1798,9 +1815,53 @@ export class ChatRepository {
     return paths;
   }
 
-  /** Removes every cached row of one account, its drafts included, leaving the others. */
+  // ─── Avatars ──────────────────────────────────────────────────────────────
+
+  /** The account's cached avatars, by partner id. */
+  async avatars(configId: string): Promise<ChatAvatar[]> {
+    return (await this.rows("chat_avatars", { config_id: configId }))
+      .map(avatarFromRow)
+      .sort((a, b) => a.partnerId - b.partnerId);
+  }
+
+  /** Records a partner's cached avatar, in place of the one before; the file of the one before is released when it differs. */
+  async putAvatar(a: ChatAvatar): Promise<void> {
+    const id = key(a.configId, `p${a.partnerId}`);
+    const before = await this.row("chat_avatars", id);
+    await this.put("chat_avatars", {
+      id,
+      config_id: a.configId,
+      partner_id: a.partnerId,
+      unique_key: a.uniqueKey,
+      path: a.path,
+      bytes: a.bytes,
+      fetched_at: a.fetchedAt,
+    });
+    if (before && before.path !== a.path) await this.release([before.path]);
+  }
+
+  /** Bytes of the cached avatars of one account, or of all. */
+  async avatarBytes(configId?: string): Promise<number> {
+    const rows = await this.db.rawQuery(
+      "SELECT COALESCE(SUM(bytes), 0) AS bytes FROM chat_avatars" + (configId !== undefined ? " WHERE config_id = ?" : ""),
+      configId !== undefined ? [configId] : [],
+    );
+    return Number(rows[0]?.bytes ?? 0);
+  }
+
+  /** Forgets the cached avatars of one account, or of all, and releases their files. */
+  async clearAvatars(configId?: string): Promise<void> {
+    const rows = configId !== undefined
+      ? await this.rows("chat_avatars", { config_id: configId })
+      : await this.db.rawQuery("SELECT * FROM chat_avatars");
+    for (const r of rows) await this.del("chat_avatars", { id: r.id });
+    await this.release(rows.map((r) => r.path as string));
+  }
+
+  /** Removes every cached row of one account, its drafts and avatars included, leaving the others. */
   async dropSource(configId: string): Promise<void> {
     await this.dropAttachmentRows({ config_id: configId });
+    await this.clearAvatars(configId);
     for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_on_top", "chat_sources"]) {
       await this.del(t, { config_id: configId });
     }

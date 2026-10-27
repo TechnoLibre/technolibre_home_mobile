@@ -1278,7 +1278,8 @@ export class DatabaseService {
         recipient_ids     TEXT,
         search_text       TEXT NOT NULL DEFAULT '',
         pinned_at         TEXT,
-        starred           INTEGER NOT NULL DEFAULT 0
+        starred           INTEGER NOT NULL DEFAULT 0,
+        is_note           INTEGER NOT NULL DEFAULT 0
       )
     `);
     await this.db.execute(
@@ -1304,7 +1305,8 @@ export class DatabaseService {
         config_id  TEXT NOT NULL,
         partner_id INTEGER NOT NULL,
         name       TEXT NOT NULL,
-        im_status  TEXT
+        im_status  TEXT,
+        write_date TEXT
       )
     `);
     await this.db.execute(`
@@ -1335,6 +1337,7 @@ export class DatabaseService {
     await this.createChatAttachmentsTable();
     await this.createChatDraftsTable();
     await this.createChatReactionsTable();
+    await this.createChatAvatarsTable();
     for (const [table, col] of [
       ["chat_channels", "config_id"],
       ["chat_messages", "config_id, channel_id"],
@@ -1594,6 +1597,46 @@ export class DatabaseService {
   }
 
   /**
+   * The authors' avatars cached on the phone: one row per partner and
+   * account, keyed `configId#p<partnerId>`, with the `unique` key the file
+   * was fetched with, its path under the account's chat directory and its
+   * bytes. The IF NOT EXISTS makes it safe to call from the migration and
+   * from createChatTables.
+   */
+  async createChatAvatarsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_avatars (
+        id         TEXT PRIMARY KEY NOT NULL,
+        config_id  TEXT NOT NULL,
+        partner_id INTEGER NOT NULL,
+        unique_key TEXT NOT NULL,
+        path       TEXT NOT NULL,
+        bytes      INTEGER NOT NULL,
+        fetched_at TEXT NOT NULL
+      )
+    `);
+    await this.db.execute("CREATE INDEX IF NOT EXISTS idx_chat_avatars_config ON chat_avatars(config_id)");
+  }
+
+  /**
+   * Creates the avatars table and adds chat_partners.write_date and
+   * chat_messages.is_note to tables created before them. A column is added
+   * only when PRAGMA table_info does not list it, and only to an existing
+   * table: a fresh install (createChatTables already has them), a second
+   * run and a database without the chat tables change nothing more.
+   */
+  async addChatAvatars(): Promise<void> {
+    await this.createChatAvatarsTable();
+    for (const [table, col, def] of [
+      ["chat_partners", "write_date", "TEXT"],
+      ["chat_messages", "is_note", "INTEGER NOT NULL DEFAULT 0"],
+    ]) {
+      const names = ((await this.db.query(`PRAGMA table_info(${table})`)).values ?? []).map((r: any) => r.name as string);
+      if (names.length > 0 && !names.includes(col)) await this.db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+    }
+  }
+
+  /**
    * Gives search_text (searchTextOf of the body) to the cached messages
    * that have a body and an empty search_text: the rows cached before the
    * column existed. Reads SEARCH_FILL_ROUND rows per query, in id order
@@ -1808,7 +1851,7 @@ export class DatabaseService {
    * column and the `configId#` prefix of the key. A table not created yet is skipped.
    */
   private async renameChatRows(oldId: string, newId: string): Promise<void> {
-    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_on_top", "chat_sources"]) {
+    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_on_top", "chat_avatars", "chat_sources"]) {
       try {
         const keyed = table !== "chat_sources";
         const key = keyed ? "id" : "config_id";

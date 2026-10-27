@@ -46,11 +46,15 @@ import { LongPress } from "./chatLongPress";
 import { ChatComposerBannerComponent, type ComposerMode } from "./chat_composer_banner_component";
 import { ChatSuggestionsComponent } from "./chat_suggestions_component";
 import { MentionField, composerRows } from "./mentionField";
+import { ChatAvatarComponent, ThreadAvatars, type AuthorView } from "./chat_avatar_component";
+import { avatarHue } from "../../services/chat/chatAvatars";
 
 /** Quiet period that folds a burst of CHAT_CHANGED into one refresh. */
 const CHANGE_DEBOUNCE_MS = 150;
 /** A member counts as typing for this long after the server's timestamp. */
 const TYPING_FRESH_MS = 60000;
+/** Two messages of one author at most this far apart share a run (Odoo's isSquashed). */
+const SQUASH_MS = 5 * 60 * 1000;
 /** Distance from the edge, in px, that counts as "at the top" or "at the bottom". */
 const EDGE_PX = 40;
 /** Server messages rendered at open: the newest ones, however long the cached history. */
@@ -116,6 +120,14 @@ export interface ThreadRow {
     starred: boolean;
     /** A notification of the server (`message_type` notification, e.g. a pin notice): a centered line, no menu. */
     system: boolean;
+    /**
+     * The author shown over the bubble (name above, avatar on the left): on
+     * the first bubble of a run of others' messages in a group or a channel
+     * (isSquashed), null everywhere else.
+     */
+    author: AuthorView | null;
+    /** A later bubble of such a run: no author, the avatar's indent. */
+    indent: boolean;
 }
 
 interface ThreadState {
@@ -246,14 +258,29 @@ export function canOf(m: ChatMessage, own: boolean, writable: boolean, text: str
     };
 }
 
-/** The part of a row's signature its chips, menu, pin, star, kind and quote add: a change repaints the row. */
+/**
+ * Whether msg joins the run of prev, as Odoo 18's `isSquashed`
+ * (`thread.js`): the same author (a known partner), prev neither a
+ * notification nor empty (`isEmpty`: an empty body and no file, prevFiles
+ * being its files' count), msg not a note, and less than 5 minutes after
+ * prev. All the messages of a thread screen share its thread.
+ */
+export function isSquashed(msg: ChatMessage, prev: ChatMessage | null, prevFiles: number): boolean {
+    if (!prev || prev.messageType === "notification" || isEmptyMessage(prev.body, prevFiles)) return false;
+    if (msg.authorPartnerId === null || msg.authorPartnerId !== prev.authorPartnerId) return false;
+    if (msg.isNote) return false;
+    return utcMs(msg.date) - utcMs(prev.date) < SQUASH_MS;
+}
+
+/** The part of a row's signature its chips, menu, pin, star, kind, quote and author add: a change repaints the row. */
 function actionsSig(r: ThreadRow): string {
-    const can = [r.can.react, r.can.reply, r.can.copy, r.can.edit, r.can.delete, r.can.pin, r.can.star, r.pinned, r.starred, r.system]
+    const can = [r.can.react, r.can.reply, r.can.copy, r.can.edit, r.can.delete, r.can.pin, r.can.star, r.pinned, r.starred, r.system, r.indent]
         .map(Number).join("");
     const q = r.quote;
     const quote = q ? [q.key ?? "", q.author, q.text, q.state, Number(q.edited)].join(":") : "";
+    const author = r.author ? [r.author.partnerId ?? "", r.author.name].join(":") : "";
     return can + "|" + r.reactions.map((x) => [x.content, x.count, Number(x.self), x.names.join(",")].join(":")).join(";")
-        + "|" + quote;
+        + "|" + quote + "|" + author;
 }
 
 /**
@@ -305,7 +332,7 @@ export class ChatThreadComponent extends EnhancedComponent {
     static components = {
         HeadingComponent, ChatComposerAttachComponent, ChatAttachmentsComponent, ChatImageViewerComponent, ChatEmojiPickerComponent,
         ChatMessageMenuComponent, ChatReactionsComponent, ChatReactionWhoComponent, ChatComposerBannerComponent,
-        ChatSuggestionsComponent, ChatPinnedComponent,
+        ChatSuggestionsComponent, ChatPinnedComponent, ChatAvatarComponent,
     };
 
     static template = xml`
@@ -339,10 +366,14 @@ export class ChatThreadComponent extends EnhancedComponent {
       </div>
       <div class="chat-thread__scroll" t-ref="scroller" t-on-scroll="onScroll">
         <div t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-thread__bubble" t-att-data-key="row.key"
-             t-att-class="{'chat-thread__bubble--own': row.own and !row.system, 'chat-thread__bubble--system': row.system, 'chat-thread__bubble--pressed': state.actions === row.key, 'chat-thread__bubble--highlight': state.highlight === row.key}"
+             t-att-class="{'chat-thread__bubble--own': row.own and !row.system, 'chat-thread__bubble--system': row.system, 'chat-thread__bubble--pressed': state.actions === row.key, 'chat-thread__bubble--highlight': state.highlight === row.key, 'chat-thread__bubble--head': !!row.author, 'chat-thread__bubble--indent': row.indent}"
              t-on-pointerdown="(ev) => this.onPressDown(row, ev)" t-on-pointermove="onPressMove"
              t-on-pointerup="onPressUp" t-on-pointercancel="onPressCancel"
              t-on-contextmenu.prevent="">
+          <t t-if="row.author">
+            <ChatAvatarComponent author="row.author" avatars="avatars"/>
+            <span class="chat-thread__author-name" t-esc="row.author.name"/>
+          </t>
           <button t-if="row.quote" type="button" class="chat-thread__quote" t-att-class="'chat-thread__quote--' + row.quote.state"
                   t-att-aria-disabled="row.quote.key ? null : 'true'" t-att-tabindex="row.quote.key ? null : '-1'"
                   t-on-click="() => this.onQuote(row)">
@@ -473,6 +504,8 @@ export class ChatThreadComponent extends EnhancedComponent {
     private _appState: Promise<{ remove: () => Promise<void> }> | undefined;
     /** The files of the shown messages: their views, previews, opening and polling. */
     attachments!: ThreadAttachments;
+    /** The avatars of the authors shown, fetched once on screen. */
+    avatars!: ThreadAvatars;
     private configId = "";
     private channelId = 0;
     private source: ChatSource | null = null;
@@ -625,6 +658,13 @@ export class ChatThreadComponent extends EnhancedComponent {
             onReload: () => void this.refresh(),
             root: () => this.scroller.el,
         });
+        this.avatars = new ThreadAvatars({
+            avatars: () => this.chatService.avatars,
+            cached: (configId) => this.chatService.repo.avatars(configId),
+            files: () => this.chatService.queue.files,
+            onTick: () => this.retick(),
+            root: () => this.scroller.el,
+        });
         onMounted(async () => {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
             await this.open();
@@ -646,6 +686,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         void Promise.resolve(this._appState).then((h) => h?.remove()).catch(() => {});
         void this.attach.dispose();
         this.attachments.dispose();
+        this.avatars.dispose();
         this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
         if (this._debounce !== null) clearTimeout(this._debounce);
         if (this._typingTimer !== null) clearTimeout(this._typingTimer);
@@ -672,6 +713,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.source = sources.find((s) => s.configId === this.configId) ?? null;
         if (this.destroyed) return;
         this.attachments.source = this.source;
+        this.avatars.source = this.source;
         if (this.source) void this.attach.start();
         this.state.serverLabel = this.source?.label ?? "";
         const draft = this.showDraft();
@@ -756,10 +798,13 @@ export class ChatThreadComponent extends EnhancedComponent {
         const opsRead = cachedMessages.some((m) => m.status === "pending" || isEmptyBody(m.body));
         const ops: RowOp[] = opsRead ? await this.databaseService.getOutboxOpsForConfig(this.configId) : [];
         const keys = inRange.filter((m) => m.messageId !== null || m.clientUuid).map(messageKeyOf);
+        // Authors show in groups and channels; a direct chat's header names the person
+        const grouped = channel.channelType !== "chat";
         const [groups, , outside] = await Promise.all([
             keys.length ? this.chatService.reactions(this.configId, this.channelId, keys) : new Map<string, ChatReaction[]>(),
             this.loadAttachments(cachedMessages, ops),
             this.parentsOutside(cachedMessages),
+            grouped ? this.avatars.load(this.configId, new Map(partners.map((p) => [p.partnerId, p.writeDate ?? ""]))) : null,
         ]);
         if (this.destroyed) return;
         // A parent read outside the window may be emptied by a delete the ops of this build did not cover
@@ -800,6 +845,7 @@ export class ChatThreadComponent extends EnhancedComponent {
         this._metaBase.clear();
         const quotes = this.quotesOf(messages, cachedMessages, outside, deleting, names, self, floor, channel.historyComplete);
         const rows = messages.map((m, i) => this.rowOf(m, channel!, members, self, ops, groups, names, quotes[i]));
+        if (grouped) this.markRuns(rows, messages, names);
         // A change of members or typing alone leaves the rows, and the DOM, untouched
         const base = rows.map((r, i) => [r.key, r.time, r.opId, this.htmlKey(messages[i]), actionsSig(r)].join("|"));
         const sig = this.sigOf(base, rows);
@@ -841,23 +887,54 @@ export class ChatThreadComponent extends EnhancedComponent {
         await this.attachments.load(groups, { pendingRows, heldUploads });
     }
 
-    /** The rows' signature: what a render shows of each, the files' state included. */
+    /** The rows' signature: what a render shows of each, the files' state and the author's avatar included. */
     private sigOf(base: string[], rows: ThreadRow[]): string {
-        return rows.map((r, i) => base[i] + "|" + r.meta + "|" + viewSig(r.attachments)).join("\n");
+        return rows.map((r, i) => base[i] + "|" + r.meta + "|" + viewSig(r.attachments) + "|" + (r.author?.avatar ?? "")).join("\n");
     }
 
     /**
-     * Recomputes the rows' files and Wi-Fi marks from memory (no cache
-     * read), on a ThreadAttachments tick: a row whose files did not change
-     * keeps its object, so its part of the screen is not rendered again.
+     * Gives the author to the first bubble of each run of others' messages
+     * (isSquashed over the shown messages, as Odoo runs it over the
+     * non-empty ones) and the indent to the run's other bubbles; own
+     * bubbles and system lines get neither and break no rule of their own:
+     * the next message is compared with them as with any other.
+     */
+    private markRuns(rows: ThreadRow[], messages: ChatMessage[], names: Map<number, string>): void {
+        rows.forEach((r, i) => {
+            if (r.own || r.system) return;
+            const prev = i > 0 ? messages[i - 1] : null;
+            if (isSquashed(messages[i], prev, prev ? this.attachments.views(this.keyOf(prev)).length : 0)) r.indent = true;
+            else r.author = this.authorOf(messages[i].authorPartnerId, names);
+        });
+    }
+
+    /** The author view of a partner: the cached name, else « Someone »; its avatar while one is on the phone. */
+    private authorOf(partnerId: number | null, names: Map<number, string>): AuthorView {
+        const name = (partnerId !== null && names.get(partnerId)) || t("chat.someone");
+        return {
+            partnerId,
+            name,
+            initials: initialsOf(name),
+            hue: partnerId !== null ? avatarHue(partnerId) : 0,
+            avatar: partnerId !== null ? this.avatars.url(partnerId) : null,
+        };
+    }
+
+    /**
+     * Recomputes the rows' files, Wi-Fi marks and authors' avatars from
+     * memory (no cache read), on a ThreadAttachments or ThreadAvatars tick:
+     * a row whose files and avatar did not change keeps its object, so its
+     * part of the screen is not rendered again.
      */
     retick(): void {
         if (this.destroyed) return;
         const rows = this._rows.map((r) => {
             const attachments = this.attachments.views(r.key);
             const meta = this.wifiMeta(r.key, r.meta);
-            if (meta === r.meta && viewSig(attachments) === viewSig(r.attachments)) return r;
-            return { ...r, attachments, meta };
+            const avatar = r.author?.partnerId != null ? this.avatars.url(r.author.partnerId) : null;
+            const author = r.author && avatar !== r.author.avatar ? { ...r.author, avatar } : r.author;
+            if (meta === r.meta && author === r.author && viewSig(attachments) === viewSig(r.attachments)) return r;
+            return { ...r, attachments, meta, author };
         });
         const sig = this.sigOf(this._base, rows);
         if (sig !== this._sig) {
@@ -986,6 +1063,8 @@ export class ChatThreadComponent extends EnhancedComponent {
             pinned: !!m.pinnedAt,
             starred: !!m.starred,
             system: m.messageType === "notification",
+            author: null,
+            indent: false,
         };
     }
 

@@ -412,22 +412,31 @@ export class ChatAttachmentCache {
 
   /**
    * Bytes of the chat's files on the phone (cached and waiting to be sent),
-   * per conversation, account or in all. A conversation is named with its
-   * account: channel ids repeat across accounts.
+   * per conversation, account or in all; an account's and the total count
+   * its authors' avatars too, a conversation's does not (an avatar serves
+   * every conversation). A conversation is named with its account: channel
+   * ids repeat across accounts.
    */
   async space(configId?: string, channelId?: number): Promise<number> {
     assertScope(configId, channelId);
-    return this.repo.attachmentBytes(configId, channelId);
+    const files = await this.repo.attachmentBytes(configId, channelId);
+    return channelId === undefined ? files + (await this.repo.avatarBytes(configId)) : files;
   }
 
   /** Whether the chat's files reach CACHE_WARN_RATIO of the limit, the purge on or off. */
   async warning(): Promise<boolean> {
-    return (await this.repo.attachmentBytes()) >= CACHE_WARN_RATIO * chatSettings().cacheLimitMb * MB;
+    return (await this.space()) >= CACHE_WARN_RATIO * chatSettings().cacheLimitMb * MB;
   }
 
-  /** Removes the cached originals and previews of one conversation (with its account), one account or all; the rows stay. */
+  /**
+   * Removes the cached originals and previews of one conversation (with
+   * its account), one account or all; the rows stay. An account's clear and
+   * the clear of all also forget its cached avatars, which are fetched
+   * again when shown.
+   */
   async clear(scope: { configId?: string; channelId?: number }): Promise<void> {
     assertScope(scope.configId, scope.channelId);
+    if (scope.channelId === undefined) await this.repo.clearAvatars(scope.configId);
     const keys = (await this.repo.cachedRows())
       .filter((a) => scope.configId === undefined || a.configId === scope.configId)
       .filter((a) => scope.channelId === undefined || a.channelId === scope.channelId)
@@ -455,7 +464,7 @@ export class ChatAttachmentCache {
     const settings = chatSettings();
     if (!settings.cachePurge) return { freed: 0 };
     const limit = settings.cacheLimitMb * MB;
-    let total = await this.repo.attachmentBytes();
+    let total = await this.space();
     let freed = 0;
     const rows = await this.repo.cachedRows();
     for (const what of ["original", "preview"] as const) {

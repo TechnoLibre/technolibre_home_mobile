@@ -90,6 +90,8 @@ export interface ChatMessage {
   pinnedAt?: string | null;
   /** Whether the user starred the message (`starred`, per user on the server). */
   starred?: boolean;
+  /** Posted as an internal note (`is_note`: the subtype is mail.mt_note): it never joins its author's run. */
+  isNote?: boolean;
 }
 
 /** A message as an action names it: by server id once it has one, else by the client uuid of its post. */
@@ -147,6 +149,26 @@ export interface ChatPartner {
   partnerId: number;
   name: string;
   imStatus: string | null;
+  /**
+   * The partner's `write_date` as the Store carries it beside its avatar
+   * (`res_partner.py` `_to_store`): the `unique` key of its avatar URL, as
+   * the browser's `avatarUrl`. Null while no Store gave it.
+   */
+  writeDate?: string | null;
+}
+
+/**
+ * A partner's avatar cached on the phone (`/web/image/res.partner/<id>/avatar_128`),
+ * one per partner and account: the `unique` key it was fetched with, its
+ * file (relative to Directory.Data) and its size.
+ */
+export interface ChatAvatar {
+  configId: string;
+  partnerId: number;
+  uniqueKey: string;
+  path: string;
+  bytes: number;
+  fetchedAt: string;
 }
 
 /**
