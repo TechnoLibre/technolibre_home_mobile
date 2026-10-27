@@ -22,6 +22,7 @@ describe("ChatAvatarComponent mounted", () => {
             avatars: () => ({ fetch: vi.fn(async () => null) }),
             cached: async () => [],
             files: () => ({ webUrl: async (rel: string) => "http://localhost/" + rel }),
+            isOnline: async () => true,
             onTick: vi.fn(),
         });
         const observe = vi.spyOn(avatars, "observe");

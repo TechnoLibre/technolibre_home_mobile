@@ -29,6 +29,8 @@ export interface ThreadAvatarDeps {
     /** The account's cached avatars (ChatRepository.avatars). */
     cached: (configId: string) => Promise<ChatAvatar[]>;
     files: () => Pick<ChatFiles, "webUrl">;
+    /** Whether a server may answer (ChatService.isOnline), read at each load. */
+    isOnline: () => Promise<boolean>;
     /** An avatar landed or stopped displaying: the thread recomputes its rows from memory. */
     onTick: () => void;
     /** The thread's scroll element, the root rows are seen within; the viewport while it is unknown. */
@@ -43,9 +45,10 @@ export interface ThreadAvatarDeps {
  *   answers from memory. A cached avatar shows whatever its key, until a
  *   newer one lands.
  * - An avatar is asked only for an author on screen (observe(), an
- *   IntersectionObserver), and only when the cached one is missing, of
- *   another key, or did not display; each partner and key once per screen,
- *   so a failure stays initials until the conversation opens again.
+ *   IntersectionObserver), only online (as the last load() read the
+ *   network), and only when the cached one is missing, of another key, or
+ *   did not display; each partner and key once per screen, so a failure
+ *   stays initials until the conversation opens again.
  */
 export class ThreadAvatars {
     source: ChatSource | null = null;
@@ -62,11 +65,14 @@ export class ThreadAvatars {
     private observer: IntersectionObserver | null = null;
     private observed = new WeakMap<Element, number>();
     private disposed = false;
+    /** The network as the last load() read it: offline, nothing is asked. */
+    private online = false;
 
     constructor(private deps: ThreadAvatarDeps) {}
 
     /** Takes the authors' keys and the account's cached avatars; authors on screen ask what they miss. */
     async load(configId: string, keys: Map<number, string>): Promise<void> {
+        const online = this.deps.isOnline().catch(() => false);
         const rows = new Map((await this.deps.cached(configId)).map((a) => [a.partnerId, a]));
         for (const [partnerId, a] of this.fetched) rows.set(partnerId, a);
         const urls = new Map<string, string>();
@@ -81,6 +87,7 @@ export class ThreadAvatars {
                 }
             }
         }));
+        this.online = await online;
         if (this.disposed) return;
         this.keys = keys;
         this.rows = rows;
@@ -129,7 +136,8 @@ export class ThreadAvatars {
         const a = this.rows.get(partnerId);
         if (a && a.uniqueKey === key && !this.failed.has(a.path)) return;
         const ask = `${partnerId}#${key}`;
-        if (this.asked.has(ask) || !this.source) return;
+        // Offline nothing is asked, nor counted as asked: the next load, online, asks the authors on screen
+        if (this.asked.has(ask) || !this.source || !this.online) return;
         this.asked.add(ask);
         const src = this.source;
         void this.deps.avatars().fetch(src, partnerId, key).then(async (path) => {

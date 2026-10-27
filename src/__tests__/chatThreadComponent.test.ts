@@ -52,6 +52,7 @@ function cached(list: any[], opts: { beforeId?: number; limit?: number } = {}) {
 function fakeChat(messages: any[], members: any[] = [member(1), member(7)], ch: any = channel()) {
     return {
         sources: vi.fn().mockResolvedValue([{ configId: "a", label: "Srv", creds: {} }]),
+        isOnline: vi.fn(async () => true),
         messages: vi.fn(async (_c: string, _ch: number, opts?: any) => cached(messages, opts)),
         loadOlder: vi.fn().mockResolvedValue(3),
         loadAll: vi.fn(async (_s: any, _c: number, on?: (n: number) => void) => { on?.(4); return 4; }),
@@ -401,7 +402,13 @@ describe("ChatThreadComponent", () => {
         expect(chat.markRead).toHaveBeenCalledTimes(1);
         expect(c.state.title).toBe("Alice Roy");
         expect(c.state.presence).toBe("online");
-        expect(c.state.serverLabel).toBe("Srv");
+        // One account: no server to tell apart in the header
+        expect(c.state.serverLabel).toBe("");
+        const several: any = fakeChat([msg(10)]);
+        several.sources = vi.fn().mockResolvedValue([{ configId: "a", label: "Srv", creds: {} }, { configId: "b", label: "Autre", creds: {} }]);
+        const d = make(several);
+        await d.open();
+        expect(d.state.serverLabel).toBe("Srv");
     });
 
     it("pending behind an unfinished post waits; failed offers retry", async () => {
@@ -2565,6 +2572,14 @@ describe("ChatThreadComponent mention suggestions", () => {
     });
 });
 
+describe("ChatThreadComponent bubble marks", () => {
+    it("the 📌 and ★ marks of a bubble are images named for a screen reader", () => {
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_thread_component.ts"), "utf8");
+        expect(source).toMatch(/class="chat-thread__pinned" role="img" t-att-title="t\('chat\.pinned'\)" t-att-aria-label="t\('chat\.pinned'\)"/);
+        expect(source).toMatch(/class="chat-thread__star" role="img" t-att-title="t\('chat\.starred'\)" t-att-aria-label="t\('chat\.starred'\)"/);
+    });
+});
+
 describe("ChatThreadComponent open at a search hit", () => {
     afterEach(() => {
         window.history.replaceState({}, "", "/");
@@ -2609,6 +2624,8 @@ describe("ChatThreadComponent open at a search hit", () => {
             expect(el.scrollTop).toBe(0);
             expect(chat.markRead).not.toHaveBeenCalled();
             expect(chat.loadUntil).not.toHaveBeenCalled();
+            // The hit is taken from the address once gone to: back on this entry, the thread opens as usual
+            expect(window.location.pathname + window.location.search).toBe("/chat/a/5");
             c.teardown();
         }
     });
@@ -2658,6 +2675,36 @@ describe("ChatThreadComponent open at a search hit", () => {
         c.teardown();
     });
 
+    it("a scroll that lands at the bottom while an old hit loads marks nothing read", async () => {
+        const list = [msg(50), msg(51), msg(52)];
+        const ch = channel({ oldestLoadedId: 50, lastMessageId: 52, seenMessageId: 40 });
+        at("?m=20");
+        const chat: any = fakeChat(list, undefined, ch);
+        chat.repo.messageOf.mockImplementation(async (_c: string, t: any) => list.find((m) => m.messageId === t.messageId) ?? null);
+        chat.isOnline = vi.fn(async () => true);
+        let loaded!: (v: boolean) => void;
+        chat.loadUntil = vi.fn(() => new Promise<boolean>((r) => { loaded = r; }));
+        const c = make(chat);
+        const { el, bubbles } = scroller(["m20"]);
+        c.scroller = { el };
+        const keep = vi.spyOn(c as any, "keepPosition");
+        const opened = c.open();
+        await vi.waitFor(() => expect(chat.loadUntil).toHaveBeenCalled());
+        // The first build of an empty screen queues no re-anchoring that would land at the bottom
+        expect(keep).not.toHaveBeenCalled();
+        // The scroll event of a layout settling at the bottom, the hit still loading
+        el.scrollTop = 4500;
+        await c.onScroll();
+        expect(chat.markRead).not.toHaveBeenCalled();
+        list.unshift(...Array.from({ length: 30 }, (_, i) => msg(20 + i)));
+        ch.oldestLoadedId = 20;
+        loaded(true);
+        await opened;
+        expect(bubbles.get("m20").scrollIntoView).toHaveBeenCalled();
+        expect(chat.markRead).not.toHaveBeenCalled();
+        c.teardown();
+    });
+
     it("open at a hit offline shows the notice", async () => {
         at("?m=20");
         const chat: any = fakeChat([msg(50), msg(51)], undefined, channel({ oldestLoadedId: 50, lastMessageId: 51 }));
@@ -2669,7 +2716,7 @@ describe("ChatThreadComponent open at a search hit", () => {
         localStorage.setItem("app_lang", "fr");
         await c.open();
         expect(chat.loadUntil).not.toHaveBeenCalled();
-        expect(c.state.notice).toBe("Ce message n'est pas encore sur le téléphone : il s'affichera une fois en ligne.");
+        expect(c.state.notice).toBe("Ce message n'est pas encore sur le téléphone : touchez à nouveau le résultat une fois en ligne.");
         // The usual bottom, read as usual
         expect(el.scrollTop).toBe(5000);
         expect(chat.markRead).toHaveBeenCalledTimes(1);
@@ -2692,6 +2739,39 @@ describe("ChatThreadComponent open at a search hit", () => {
         expect(c.state.notice).toBe("Ce message n'a pas pu être chargé : la conversation s'ouvre à la fin.");
         expect(el.scrollTop).toBe(5000);
         expect(chat.markRead).toHaveBeenCalledTimes(1);
+        c.teardown();
+    });
+
+    it("a jump from inside the thread that fails leaves the reader where they are", async () => {
+        const ch = channel({ oldestLoadedId: 50, lastMessageId: 51 });
+        const chat: any = fakeChat([msg(50), msg(51)], undefined, ch);
+        chat.loadUntil = vi.fn(async () => { throw new Error("RPC /discuss/channel/messages (HTTP 500)"); });
+        const c = make(chat);
+        const { el } = scroller([]);
+        c.scroller = { el };
+        await c.open();
+        localStorage.setItem("app_lang", "fr");
+        chat.markRead.mockClear();
+        const read = () => chat.markRead.mock.calls.length;
+        for (const [online, notice] of [
+            [false, "Ce message n'est pas encore sur le téléphone : touchez-le à nouveau une fois en ligne."],
+            [true, "Ce message n'a pas pu être chargé."],
+        ] as const) {
+            chat.isOnline = vi.fn(async () => online);
+            el.scrollTop = 1200;
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+            await c.jumpTo({ messageId: 20, clientUuid: null }, true);
+            warn.mockRestore();
+            expect(c.state.notice).toBe(notice);
+            expect(el.scrollTop).toBe(1200);
+        }
+        // A message no history holds any more
+        ch.historyComplete = true;
+        await c.refresh();
+        await c.jumpTo({ messageId: 20, clientUuid: null }, true);
+        expect(c.state.notice).toBe("Ce message n'est plus dans la conversation.");
+        expect(el.scrollTop).toBe(1200);
+        expect(read()).toBe(0);
         c.teardown();
     });
 
@@ -2768,7 +2848,7 @@ describe("ChatThreadComponent pinned messages", () => {
         const ev = tap(highlight);
         await c.onBodyClick(ev);
         expect(ev.preventDefault).toHaveBeenCalled();
-        expect(jump).toHaveBeenCalledWith({ messageId: 10, clientUuid: null });
+        expect(jump).toHaveBeenCalledWith({ messageId: 10, clientUuid: null }, true);
         // « See all pinned messages » opens the panel
         await c.onBodyClick(tap(menu));
         expect(chat.pinnedMessages).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 5);
@@ -2800,7 +2880,7 @@ describe("ChatThreadComponent pinned messages", () => {
         });
         const jump = vi.spyOn(c, "jumpTo").mockResolvedValue(undefined);
         c.onPinnedOpen("m12");
-        expect(jump).toHaveBeenCalledWith({ messageId: 12, clientUuid: null });
+        expect(jump).toHaveBeenCalledWith({ messageId: 12, clientUuid: null }, true);
         c.closePinned();
         expect(c.state.pinned).toBeNull();
         // A failure to read them says so
@@ -2991,6 +3071,19 @@ describe("ChatThreadComponent authors", () => {
         await c.refresh();
         c.avatars.seen(8);
         expect(chat.avatars.fetch).toHaveBeenCalledTimes(2);
+        c.teardown();
+    });
+
+    it("offline no avatar is asked; the first load online asks the authors on screen", async () => {
+        const chat: any = groupChat([others(10, 7, 0)]);
+        chat.isOnline = vi.fn(async () => false);
+        const c = make(chat);
+        await c.open();
+        c.avatars.seen(7);
+        expect(chat.avatars.fetch).not.toHaveBeenCalled();
+        chat.isOnline.mockResolvedValue(true);
+        await c.refresh();
+        expect(chat.avatars.fetch.mock.calls.map((x: any[]) => x[1])).toEqual([7]);
         c.teardown();
     });
 

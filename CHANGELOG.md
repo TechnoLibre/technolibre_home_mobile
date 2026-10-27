@@ -93,7 +93,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stay at the top of the list; Options › Chat › « Ordre de la liste » chooses
   « Épinglées d'abord » (the default) or « Non lues d'abord ». The search box of
   the list now looks through messages, people, conversations, file names, the
-  inbox and the favourites on the phone, even offline (an index on the phone
+  inbox and the starred messages on the phone, even offline (an index on the phone
   where its database allows it, a plain scan otherwise), then asks the server
   for more when online, in the conversations the user belongs to only, without
   marking anything read; a result opens its conversation at the message. A

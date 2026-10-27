@@ -1288,7 +1288,7 @@ export const translations: Record<string, string> = {
   "chat.search_server_count_one": "{count} message trouvé sur le serveur",
   "chat.search_server_count_other": "{count} messages trouvés sur le serveur",
   "chat.search_more": "Plus de résultats",
-  "chat.search_hit_offline": "Ce message n'est pas encore sur le téléphone : il s'affichera une fois en ligne.",
+  "chat.search_hit_offline": "Ce message n'est pas encore sur le téléphone : touchez à nouveau le résultat une fois en ligne.",
   "chat.pin": "Épingler",
   "chat.unpin": "Désépingler",
   "chat.pinned_messages": "Messages épinglés",
@@ -1324,4 +1324,7 @@ export const translations: Record<string, string> = {
   "chat.action_inbox_done": "Marquer comme lu",
   "chat.action_inbox_all": "Tout marquer comme lu",
   "chat.search_hit_failed": "Ce message n'a pas pu être chargé : la conversation s'ouvre à la fin.",
+  "chat.jump_offline": "Ce message n'est pas encore sur le téléphone : touchez-le à nouveau une fois en ligne.",
+  "chat.jump_failed": "Ce message n'a pas pu être chargé.",
+  "chat.jump_gone": "Ce message n'est plus dans la conversation.",
 };

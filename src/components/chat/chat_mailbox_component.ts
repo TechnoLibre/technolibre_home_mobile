@@ -6,8 +6,10 @@ import { Events } from "../../constants/events";
 import { t } from "../../i18n";
 import { mailboxKindOf, type ChatMailboxItem, type MailboxKind } from "../../models/chat";
 import { bodyPreview } from "../../services/chat/chatBody";
+import { networkService } from "../../services/networkService";
 import type { InboxBox } from "../../services/chat/chatInbox";
 import type { ChatSource } from "../../services/chat/chatSources";
+import { BackEntry } from "./chatBackEntry";
 import { formatListTime } from "./chat_list_component";
 import { ChatRecordReplyComponent } from "./chat_record_reply_component";
 
@@ -178,6 +180,8 @@ export class ChatMailboxComponent extends EnhancedComponent {
     </div>`;
 
     private _sources: ChatSource[] = [];
+    /** The app has more than one account, whichever the box shows. */
+    private _several = false;
     private _pages = new Map<string, Pages>();
     /** Bumped by every tab change; an answer started under an older value is dropped. */
     private _gen = 0;
@@ -208,14 +212,33 @@ export class ChatMailboxComponent extends EnhancedComponent {
         });
         onMounted(async () => {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
+            void this.watchNetwork();
             await this.loadCache();
             await this.refreshOnline();
         });
         onWillUnmount(() => {
+            this.unwatchNetwork();
             this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
             if (this._debounce !== null) clearTimeout(this._debounce);
             this._gen++;
         });
+    }
+
+    /** The network's reconnect callbacks; tests give their own. */
+    network: Pick<typeof networkService, "onReconnect"> = networkService;
+    private _unwatch: Promise<() => void> | null = null;
+
+    /** The network back: the rows and notices read again, so « Recevoir mes notifications dans Odoo » is enabled again. */
+    watchNetwork(): Promise<() => void> {
+        this._unwatch ??= this.network.onReconnect(() => void this.loadCache());
+        return this._unwatch;
+    }
+
+    /** Stops watchNetwork, once its listener is in place when it was not yet. */
+    unwatchNetwork(): void {
+        const pending = this._unwatch;
+        this._unwatch = null;
+        void pending?.then((stop) => stop());
     }
 
     title(): string {
@@ -229,11 +252,20 @@ export class ChatMailboxComponent extends EnhancedComponent {
 
     /** Whether the rows carry their server's tag: the app has more than one server. */
     serverShown(): boolean {
-        return this._sources.length > 1;
+        return this._several;
     }
 
+    /**
+     * The accounts the box shows: the one `?s=<configId>` names (the list
+     * kept to that server, as its counter), else every account, as when the
+     * one named is gone.
+     */
     private async sources(): Promise<ChatSource[]> {
-        this._sources = await this.chatService.sources({ online: false });
+        const all = await this.chatService.sources({ online: false });
+        const only = new URLSearchParams(window.location.search).get("s");
+        const kept = only !== null ? all.filter((s) => s.configId === only) : [];
+        this._several = all.length > 1;
+        this._sources = kept.length > 0 ? kept : all;
         return this._sources;
     }
 
@@ -353,13 +385,24 @@ export class ChatMailboxComponent extends EnhancedComponent {
         return this._sources.find((s) => s.configId === configId);
     }
 
-    /** A tap on an item: opened by ChatInbox.openItem, nothing marked read. */
+    /**
+     * A tap on an item: opened by ChatInbox.openItem, nothing marked read.
+     * A reply composer open meanwhile closes as the screen goes, its mark
+     * taken off the entry left (BackEntry.leaveAll), so a back from the
+     * next screen lands on this list.
+     */
     async onOpen(row: MailboxRow): Promise<void> {
         const src = this.sourceOf(row.configId);
         if (!src) return;
         this.state.error = "";
         try {
-            await this.chatService.inbox.openItem(src, row.item, (url) => this.navigate(url));
+            await this.chatService.inbox.openItem(src, row.item, (url) => {
+                if (this.state.reply) {
+                    BackEntry.leaveAll();
+                    this.state.reply = null;
+                }
+                this.navigate(url);
+            });
         } catch (e) {
             console.warn("chat mailbox: open failed", e);
             this.state.error = t("chat.action_error");

@@ -21,7 +21,7 @@ const KIND_LABELS = { mention: "chat.search_kind_mention", record: "chat.search_
 /**
  * The results of a search, in place of the conversation list: the
  * conversations, the people, the channels to join, the messages, the files
- * and the inbox and favourite items, each section hidden when empty. A
+ * and the inbox and starred items, each section hidden when empty. A
  * hit names its author and its conversation, with the server's tag when
  * the list shows servers; every place of the term is in a `<mark>`, as
  * text nodes only. A status line says how the server part stands;

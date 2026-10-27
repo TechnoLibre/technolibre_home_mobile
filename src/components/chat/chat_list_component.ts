@@ -210,11 +210,11 @@ export class ChatListComponent extends EnhancedComponent {
                                     onHit.bind="onHit" onMailbox.bind="onSearchMailbox" onPerson.bind="onSearchPerson"
                                     onJoin.bind="onSearchJoin" onMore.bind="onSearchMore"/>
         <t t-else="">
-        <button type="button" class="chat-list__inbox" t-on-click="onInbox">
+        <button type="button" class="chat-list__inbox" t-att-aria-label="inboxLabel()" t-on-click="onInbox">
           <span class="chat-list__inbox-label" t-esc="'📥 ' + t('chat.inbox_list')"/>
           <span t-if="inboxTotal() > 0" class="chat-list__pill chat-list__inbox-count" t-esc="inboxTotal()"/>
         </button>
-        <button type="button" class="chat-list__starred" t-on-click="onStarred">
+        <button type="button" class="chat-list__starred" t-att-aria-label="starredLabel()" t-on-click="onStarred">
           <span class="chat-list__starred-label" t-esc="'★ ' + t('chat.starred_list')"/>
           <span t-if="starredTotal() > 0" class="chat-list__pill chat-list__starred-count" t-esc="starredTotal()"/>
         </button>
@@ -553,14 +553,31 @@ export class ChatListComponent extends EnhancedComponent {
             .reduce((sum, s) => sum + s.inbox, 0);
     }
 
-    /** « 📥 Boîte de réception »: the inbox of every account. */
-    onInbox(): void {
-        this.navigate("/chat/inbox");
+    /** The name the « 📥 » button gives a screen reader: the box, then its count when there is one. */
+    inboxLabel(): string {
+        const n = this.inboxTotal();
+        return n > 0 ? t("chat.inbox_list") + ", " + n : t("chat.inbox_list");
     }
 
-    /** « ★ Favoris »: the starred messages of every account. */
+    /** The name the « ★ » button gives a screen reader: the box, then its count when there is one. */
+    starredLabel(): string {
+        const n = this.starredTotal();
+        return n > 0 ? t("chat.starred_list") + ", " + n : t("chat.starred_list");
+    }
+
+    /** The accounts the box shows: `?s=<configId>` while the list keeps one server (as its counter), else every account. */
+    private boxQuery(): string {
+        return this.state.filter === null ? "" : "?s=" + encodeURIComponent(this.state.filter);
+    }
+
+    /** « 📥 Boîte de réception »: the inbox of the accounts counted (boxQuery). */
+    onInbox(): void {
+        this.navigate("/chat/inbox" + this.boxQuery());
+    }
+
+    /** « ★ Favoris »: the starred messages of the accounts counted (boxQuery). */
     onStarred(): void {
-        this.navigate("/chat/starred");
+        this.navigate("/chat/starred" + this.boxQuery());
     }
 
     /** The rows whose title or preview contain the search text. */

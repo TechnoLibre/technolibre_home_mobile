@@ -4323,21 +4323,25 @@ export const FEATURE_TREE: FeatureNode[] = [
                 status: "experimental",
                 demo: { kind: "route", url: "/chat" },
                 howItWorks: {
-                    en: "A run of messages follows Odoo 18's isSquashed (same author, the previous one neither a "
-                        + "notification nor empty, not a note, under 5 minutes): its first bubble has the name above "
+                    en: "A run of messages follows Odoo 18's isSquashed (same author, the previous one not a "
+                        + "notification, not a note, under 5 minutes; emptied messages are not shown, so they never "
+                        + "end a run): its first bubble has the name above "
                         + "and the round avatar on the left, its others the same indent. The avatar is Odoo's "
                         + "/web/image/res.partner/<id>/avatar_128, its write date as unique, fetched with the session "
-                        + "once on screen, two at a time, whatever the network, and cached under the account's chat "
+                        + "once on screen and online, two at a time, Wi-Fi or not, and cached under the account's chat "
                         + "directory with its bytes in SQLite; until then, or when it fails, the initials show on a "
-                        + "colour of the partner id. It counts in the chat's space and goes with « Remove all downloaded files ».",
-                    fr: "Une suite de messages suit isSquashed d'Odoo 18 (même auteur, le précédent ni une "
-                        + "notification ni vide, pas une note, moins de 5 minutes) : sa première bulle porte le nom "
+                        + "colour of the partner id. It counts in the chat's space (not in what the purge weighs, as it never "
+                        + "removes it) and goes with « Remove all downloaded files ».",
+                    fr: "Une suite de messages suit isSquashed d'Odoo 18 (même auteur, le précédent pas une "
+                        + "notification, pas une note, moins de 5 minutes ; un message vidé n'est pas affiché, il "
+                        + "n'interrompt donc jamais une suite) : sa première bulle porte le nom "
                         + "au-dessus et l'avatar rond à gauche, les autres le même retrait. L'avatar est "
                         + "/web/image/res.partner/<id>/avatar_128 d'Odoo, sa date d'écriture en unique, téléchargé "
-                        + "avec la session une fois à l'écran, deux à la fois, quel que soit le réseau, et gardé dans "
+                        + "avec la session une fois à l'écran et en ligne, deux à la fois, en Wi-Fi ou non, et gardé dans "
                         + "le répertoire de clavardage du compte avec ses octets dans SQLite ; d'ici là, ou en cas "
                         + "d'échec, les initiales s'affichent sur une couleur tirée de l'id du partenaire. Il compte "
-                        + "dans l'espace du clavardage et part avec « Retirer tous les fichiers téléchargés ».",
+                        + "dans l'espace du clavardage (pas dans ce que la purge pèse : elle ne le retire jamais) et part "
+                        + "avec « Retirer tous les fichiers téléchargés ».",
                 },
                 files: [
                     "src/services/chat/chatAvatars.ts",
@@ -4652,8 +4656,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "when it differs from the target. The star shows at once in the thread, in the starred "
                         + "box (chat_mailbox) and in the counter; the bus mail.message/toggle_star moves the counter "
                         + "only for a flag shown that changed or a message the phone does not hold, so the echo of "
-                        + "the phone's own star counts nothing. A page of /mail/starred/messages (read-only) unstars "
-                        + "the cached rows in the id range it covers that it no longer lists, unless a star waits. "
+                        + "the phone's own star counts nothing; a replay sets the flag and counts nothing. A page of "
+                        + "/mail/starred/messages (read-only) unstars the cached rows in the id range it covers that "
+                        + "it no longer lists, unless a star waits; only a complete first page sets the counter (the "
+                        + "starred rows left). « ★ Starred » opens on the accounts its count counts (?s= while the "
+                        + "list keeps one server). "
                         + "A delete cancels the waiting star of its message, as Odoo's delete clears the stars of "
                         + "the message it empties and sends the starred box without it.",
                     fr: "Un favori est l'état visé d'un message pour le compte, d'une conversation ou d'un "
@@ -4665,9 +4672,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "diffère de la cible. Le favori s'affiche aussitôt dans le fil, dans la boîte des favoris "
                         + "(chat_mailbox) et dans le compteur ; le bus mail.message/toggle_star ne déplace le "
                         + "compteur que pour un indicateur affiché qui change ou un message que le téléphone n'a "
-                        + "pas, donc l'écho du favori du téléphone ne compte rien. Une page de "
-                        + "/mail/starred/messages (en lecture seule) retire des favoris les lignes en cache de la "
-                        + "plage d'identifiants qu'elle couvre et qu'elle ne liste plus, sauf favori en attente. "
+                        + "pas, donc l'écho du favori du téléphone ne compte rien ; une reprise pose l'indicateur "
+                        + "sans compter. Une page de /mail/starred/messages (en lecture seule) retire des favoris les "
+                        + "lignes en cache de la plage d'identifiants qu'elle couvre et qu'elle ne liste plus, sauf "
+                        + "favori en attente ; seule une première page complète fixe le compteur (les favoris "
+                        + "restants). « ★ Favoris » s'ouvre sur les serveurs que son compte compte (?s= quand la "
+                        + "liste n'en garde qu'un). "
                         + "Une suppression annule le favori en attente de son message, comme la suppression d'Odoo "
                         + "efface les favoris du message qu'elle vide et envoie la boîte des favoris sans lui.",
                 },
@@ -4717,14 +4727,16 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "phone's change and its echo count once. Once sent, the account is loaded again (a done of "
                         + "an item read elsewhere sends no bus event); refused or gone, its rows go back to the inbox "
                         + "and the counts. A tap opens an item (ChatInbox.openItem, from the inbox, the starred box "
-                        + "and the search alike): a mention its conversation at the message, a record's message or an "
+                        + "and the search alike; « 📥 Inbox » opens on the accounts its count counts, ?s= while the "
+                        + "list keeps one server): a mention its conversation at the message, a record's message or an "
                         + "assignment the note linked to the record (note_links), else Odoo's /mail/message/<id> in "
                         + "the web view (openRecordInApp, http policy kept); nothing is marked read. Each load reads "
                         + "the user's notification_preference (get_session_info) into chat_sources.notification_type; "
                         + "for an account notified by email the inbox tab explains why nothing arrives and offers "
                         + "« Receive my notifications in Odoo » (ChatService.switchToInbox: res.users.write of the "
                         + "user's own notification_type, online only, not queued; the type is read back before the "
-                        + "notice goes; a refusal offers « Open my preferences »).",
+                        + "notice goes; a refusal offers « Open my preferences »; the button comes back with the "
+                        + "network).",
                     fr: "Les pages de /mail/inbox/messages et /mail/history/messages (en lecture seule, rien n'est "
                         + "marqué lu) remplissent chat_mailbox, un message de conversation aussi le cache de sa "
                         + "conversation quand le téléphone la tient ; une page de la boîte de réception passe à "
@@ -4741,7 +4753,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "une fois. Une fois envoyée, le compte est rechargé (un élément déjà lu ailleurs n'envoie "
                         + "rien sur le bus) ; refusée ou disparue, ses lignes reviennent dans la boîte et les comptes. "
                         + "Un toucher ouvre un élément (ChatInbox.openItem, depuis la boîte, les favoris et la "
-                        + "recherche) : une mention sa conversation au message, un message de fiche ou une assignation "
+                        + "recherche ; « 📥 Boîte de réception » s'ouvre sur les serveurs que son compte compte, ?s= "
+                        + "quand la liste n'en garde qu'un) : une mention sa conversation au message, un message de fiche ou une assignation "
                         + "la note liée à la fiche (note_links), sinon /mail/message/<id> d'Odoo dans la vue web "
                         + "(openRecordInApp, politique http gardée) ; rien n'est marqué lu. Chaque chargement lit "
                         + "notification_preference de l'utilisateur (get_session_info) dans "
@@ -4749,7 +4762,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "explique pourquoi rien n'arrive et offre « Recevoir mes notifications dans Odoo » "
                         + "(ChatService.switchToInbox : res.users.write du notification_type de l'utilisateur lui-même, "
                         + "en ligne seulement, sans file d'attente ; le type est relu avant que l'avis disparaisse ; "
-                        + "un refus offre « Ouvrir mes préférences »).",
+                        + "un refus offre « Ouvrir mes préférences » ; le bouton revient avec le réseau).",
                 },
                 files: [
                     "src/services/chat/chatInbox.ts",
@@ -5357,7 +5370,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.search",
                 label: { en: "Chat search", fr: "Recherche du clavardage" },
                 description: {
-                    en: "Search from the list's field: conversations, people, messages, files and the inbox and favourite items cached on the phone, then the servers' messages, people and channels to join.",
+                    en: "Search from the list's field: conversations, people, messages, files and the inbox and starred items cached on the phone, then the servers' messages, people and channels to join.",
                     fr: "Recherche depuis le champ de la liste : conversations, personnes, messages, fichiers et éléments de la boîte de réception et des favoris gardés sur le téléphone, puis les messages, personnes et canaux à joindre des serveurs.",
                 },
                 status: "experimental",
@@ -5369,9 +5382,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "index narrows the messages first where SQLite has it. Files match by name, "
                         + "conversations by their display name, people from the cache. Online, each server is then "
                         + "asked a page of 30 over the user's member channels only (module 1.4 route, else a "
-                        + "search_read whose body term is HTML-escaped), merged once per message after the phone's "
-                        + "hits, with its count and « More results »; nothing is marked read. A hit opens its "
-                        + "conversation at the message, paging older history with `around` when needed.",
+                        + "search_read whose body term is HTML-escaped). Both match the stored HTML, so a message is "
+                        + "kept only when its shown text, a file's name or its subject holds the term (never the "
+                        + "client marker nor a link's address); the next page starts past the ones left out, and the "
+                        + "server's count shows only while none was. The hits merge once per message after the "
+                        + "phone's, with « More results »; nothing is marked read. A hit opens its conversation at "
+                        + "the message, paging older history with `around` when needed; reaching the bottom marks "
+                        + "nothing read while it loads.",
                     fr: "Dès deux caractères tapés (sans accents ni casse), le téléphone cherche 200 ms après la "
                         + "dernière touche et les résultats remplacent les lignes. Messages et éléments de la "
                         + "boîte sont un LIKE sur leur texte replié, les mots du terme dans l'ordre, % et _ "
@@ -5379,10 +5396,14 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "Les fichiers se trouvent par leur nom, les conversations par leur nom affiché, les "
                         + "personnes depuis le cache. En ligne, chaque serveur est ensuite interrogé par pages de 30 "
                         + "sur les seuls canaux dont l'utilisateur est membre (route du module 1.4, sinon un "
-                        + "search_read dont le terme du corps est échappé en HTML), fusionnées une fois par message "
-                        + "après celles du téléphone, avec leur nombre et « Plus de résultats » ; rien n'est marqué "
-                        + "lu. Un résultat ouvre sa conversation au message, en chargeant l'historique plus ancien "
-                        + "avec `around` au besoin.",
+                        + "search_read dont le terme du corps est échappé en HTML). Les deux cherchent dans le HTML "
+                        + "stocké : un message n'est gardé que si son texte affiché, le nom d'un fichier ou son sujet "
+                        + "contient le terme (jamais le marqueur client ni l'adresse d'un lien) ; la page suivante "
+                        + "part après ceux écartés, et le nombre du serveur ne s'affiche que tant qu'aucun ne l'a été. "
+                        + "Les résultats se fusionnent une fois par message après ceux du téléphone, avec « Plus de "
+                        + "résultats » ; rien n'est marqué lu. Un résultat ouvre sa conversation au message, en "
+                        + "chargeant l'historique plus ancien avec `around` au besoin ; atteindre le bas pendant ce "
+                        + "chargement ne marque rien lu.",
                 },
                 demo: { kind: "route", url: "/chat" },
                 files: [

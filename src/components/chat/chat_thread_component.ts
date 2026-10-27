@@ -263,7 +263,9 @@ export function canOf(m: ChatMessage, own: boolean, writable: boolean, text: str
  * (`thread.js`): the same author (a known partner), prev neither a
  * notification nor empty (`isEmpty`: an empty body and no file, prevFiles
  * being its files' count), msg not a note, and less than 5 minutes after
- * prev. All the messages of a thread screen share its thread.
+ * prev. All the messages of a thread screen share its thread. An emptied
+ * (deleted) message is not shown, as Odoo's `nonEmptyMessages`, so it is
+ * never prev and never ends a run.
  */
 export function isSquashed(msg: ChatMessage, prev: ChatMessage | null, prevFiles: number): boolean {
     if (!prev || prev.messageType === "notification" || isEmptyMessage(prev.body, prevFiles)) return false;
@@ -388,8 +390,8 @@ export class ChatThreadComponent extends EnhancedComponent {
           <div class="chat-thread__meta">
             <button t-if="offers(row)" type="button" class="chat-thread__actions" aria-haspopup="dialog"
                     t-att-aria-label="t('chat.message_actions')" t-on-click="() => this.openActions(row.key)">⋯</button>
-            <span t-if="row.pinned" class="chat-thread__pinned" t-att-title="t('chat.pinned')" t-att-aria-label="t('chat.pinned')">📌</span>
-            <span t-if="row.starred" class="chat-thread__star" t-att-title="t('chat.starred')" t-att-aria-label="t('chat.starred')">★</span>
+            <span t-if="row.pinned" class="chat-thread__pinned" role="img" t-att-title="t('chat.pinned')" t-att-aria-label="t('chat.pinned')">📌</span>
+            <span t-if="row.starred" class="chat-thread__star" role="img" t-att-title="t('chat.starred')" t-att-aria-label="t('chat.starred')">★</span>
             <span t-esc="row.time"/>
             <span t-if="row.meta === 'sent'" t-att-title="t('chat.sent')">✓</span>
             <span t-if="row.meta === 'seen'" t-att-title="t('chat.seen')">✓✓</span>
@@ -662,6 +664,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             avatars: () => this.chatService.avatars,
             cached: (configId) => this.chatService.repo.avatars(configId),
             files: () => this.chatService.queue.files,
+            isOnline: () => this.chatService.isOnline(),
             onTick: () => this.retick(),
             root: () => this.scroller.el,
         });
@@ -715,12 +718,18 @@ export class ChatThreadComponent extends EnhancedComponent {
         this.attachments.source = this.source;
         this.avatars.source = this.source;
         if (this.source) void this.attach.start();
-        this.state.serverLabel = this.source?.label ?? "";
+        // The server is named only when there are several to tell apart, as the list's tags
+        this.state.serverLabel = sources.length > 1 ? this.source?.label ?? "" : "";
         const draft = this.showDraft();
         await this.refresh();
         const target = this._target;
-        if (target) await this.jumpTo(target);
-        else await this.toBottom();
+        if (target) {
+            // Gone to once: the entry keeps the conversation alone, so coming back to it opens at the bottom as usual
+            if (window.location.search && decodeURIComponent(window.location.pathname) === "/chat/" + this.configId + "/" + this.channelId) {
+                window.history.replaceState(window.history.state, "", window.location.pathname);
+            }
+            await this.jumpTo(target);
+        } else await this.toBottom();
         await draft;
         await this.resumeAsked();
     }
@@ -853,16 +862,18 @@ export class ChatThreadComponent extends EnhancedComponent {
         if (sig === this._sig) return;
         this._sig = sig;
         this._base = base;
+        const first = this._rows.length === 0;
         this._rows = rows;
         this._messages = new Map(messages.map((m) => [this.keyOf(m), m]));
         this.state.rows = rows;
         // Hidden ones count: the next page starts below the oldest message of the window, shown or not
         this._oldestShown = inRange.find((m) => m.messageId !== null)?.messageId ?? null;
         this.pruneHtml(messages);
-        // Prepended history keeps the viewport on the same message; new ones follow the bottom
+        // Prepended history keeps the viewport on the same message; new ones follow the bottom. The first rows
+        // of a screen opened at a message keep nothing: re-anchoring an empty scroller lands at the bottom
         if (el) {
             if (stick && !this._target) this.scrollToBottomSoon();
-            else this.keepPosition(before);
+            else if (!(first && this._target)) this.keepPosition(before);
             this.fillShortHistory();
         }
         // Rows changed where the user looks (bottom in view, or nothing to scroll): read up to the last one
@@ -1282,7 +1293,8 @@ export class ChatThreadComponent extends EnhancedComponent {
         const el = this.scroller.el as HTMLElement | null;
         if (!el || !this.source) return;
         if (el.scrollTop <= EDGE_PX) await this.loadOlder();
-        if (this.atBottom(el)) await this.markRead();
+        // While a jump to a message runs (`_target`), the bottom a layout passes through is not the user's
+        if (this.atBottom(el) && !this._target) await this.markRead();
     }
 
     /**
@@ -1673,7 +1685,7 @@ export class ChatThreadComponent extends EnhancedComponent {
     /** A message tapped in the pinned panel: the screen goes to it (jumpTo); the panel closes itself. */
     onPinnedOpen(key: string): void {
         const id = Number(key.slice(1));
-        if (key.startsWith("m") && Number.isInteger(id)) void this.jumpTo({ messageId: id, clientUuid: null });
+        if (key.startsWith("m") && Number.isInteger(id)) void this.jumpTo({ messageId: id, clientUuid: null }, true);
     }
 
     /** The panel went (its history entry with it). */
@@ -1787,51 +1799,60 @@ export class ChatThreadComponent extends EnhancedComponent {
      * is found by its server id. While it runs a build neither scrolls to
      * the bottom nor marks read (`_target`); nothing is marked read here
      * unless the screen ends at the bottom: reading the rest waits for a
-     * scroll to it (onScroll). A pin notice and the pinned panel go to a
-     * message the same way.
+     * scroll to it (onScroll).
+     *
+     * `inThread`: a pin notice or the pinned panel goes to a message the
+     * same way, but a jump that fails leaves the reader where they are,
+     * with chat.jump_offline, chat.jump_failed or chat.jump_gone.
      */
-    async jumpTo(target: MessageTarget): Promise<void> {
+    async jumpTo(target: MessageTarget, inThread = false): Promise<void> {
         this._target = target;
+        let failed: "offline" | "failed" | "gone";
         try {
-            if (await this.reach(target)) return;
+            const reached = await this.reach(target);
+            if (reached === "shown") return;
+            failed = reached;
         } catch (e) {
-            if (e instanceof RequestNotSentError) this.showNotice(t("chat.search_hit_offline"));
+            if (e instanceof RequestNotSentError) failed = "offline";
             else {
                 console.warn("chat thread: search hit not loaded", e);
-                this.showNotice(t("chat.search_hit_failed"));
+                failed = "failed";
             }
         } finally {
             this._target = null;
         }
-        if (!this.destroyed) await this.toBottom();
+        if (this.destroyed) return;
+        if (inThread) {
+            this.showNotice(t(failed === "offline" ? "chat.jump_offline" : failed === "failed" ? "chat.jump_failed" : "chat.jump_gone"));
+            return;
+        }
+        if (failed !== "gone") this.showNotice(t(failed === "offline" ? "chat.search_hit_offline" : "chat.search_hit_failed"));
+        await this.toBottom();
     }
 
-    /** Renders and scrolls to the target (jumpTo); false when it is not shown. */
-    private async reach(target: MessageTarget): Promise<boolean> {
+    /** Renders and scrolls to the target (jumpTo): "shown", else why not ("offline" without asking, "gone" when no history holds it). */
+    private async reach(target: MessageTarget): Promise<"shown" | "offline" | "gone"> {
         const repo = this.chatService.repo;
         let id = target.messageId;
         if (id === null) {
-            if (this.scrollToKey("u" + target.clientUuid)) return true;
+            if (this.scrollToKey("u" + target.clientUuid)) return "shown";
             id = (await repo.messageOf(this.configId, target))?.messageId ?? null;
-            if (id === null) return false;
+            if (id === null) return "gone";
         }
         const key = "m" + id;
-        if (this.scrollToKey(key)) return true;
+        if (this.scrollToKey(key)) return "shown";
         const cached = await repo.messageOf(this.configId, { messageId: id, clientUuid: null });
         if (!cached || (this._floor !== null && id < this._floor)) {
-            if (this.state.historyComplete || !this.source || this.destroyed) return false;
-            if (!(await this.chatService.isOnline())) {
-                this.showNotice(t("chat.search_hit_offline"));
-                return false;
-            }
-            if (!(await this.chatService.loadUntil(this.source, this.channelId, id))) return false;
+            if (this.state.historyComplete || !this.source || this.destroyed) return "gone";
+            if (!(await this.chatService.isOnline())) return "offline";
+            if (!(await this.chatService.loadUntil(this.source, this.channelId, id))) return "gone";
         }
-        if (this.destroyed) return false;
+        if (this.destroyed) return "gone";
         const from = (await this.chatService.messages(this.configId, this.channelId))
             .filter((m) => m.messageId !== null && m.messageId >= id!).length;
         this._window = Math.max(this._window, from + THREAD_PAGE);
         await this.refresh();
-        return !this.destroyed && this.scrollToKey(key);
+        return !this.destroyed && this.scrollToKey(key) ? "shown" : "gone";
     }
 
     /** Scrolls to the original a quote tap asked for and highlights it, once its bubble is in the DOM. */
@@ -1867,7 +1888,7 @@ export class ChatThreadComponent extends EnhancedComponent {
             ev.preventDefault();
             if (pin.classList.contains("chat-msg__pin-menu")) return this.openPinned();
             const id = Number(pin.getAttribute("data-oe-id"));
-            if (Number.isInteger(id) && id > 0) await this.jumpTo({ messageId: id, clientUuid: null });
+            if (Number.isInteger(id) && id > 0) await this.jumpTo({ messageId: id, clientUuid: null }, true);
             return;
         }
         const a = target?.closest?.("a[data-oe-model][data-oe-id]");

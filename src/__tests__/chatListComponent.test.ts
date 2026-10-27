@@ -482,8 +482,14 @@ describe("ChatListComponent", () => {
         expect(c.starredTotal()).toBe(5);
         const nav = vi.fn();
         c.navigate = nav;
+        // The box opens on the accounts the counter counts
         c.onStarred();
-        expect(nav).toHaveBeenCalledWith("/chat/starred");
+        expect(nav).toHaveBeenLastCalledWith("/chat/starred?s=b");
+        localStorage.setItem("app_lang", "fr");
+        expect(c.starredLabel()).toBe("Favoris, 5");
+        await c.onFilter(null);
+        c.onStarred();
+        expect(nav).toHaveBeenLastCalledWith("/chat/starred");
         const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_list_component.ts"), "utf8");
         expect(source).toMatch(/class="chat-list__starred"/);
         expect(source).toMatch(/t-if="starredTotal\(\) > 0"/);
@@ -500,12 +506,20 @@ describe("ChatListComponent", () => {
         const nav = vi.fn();
         c.navigate = nav;
         c.onInbox();
-        expect(nav).toHaveBeenCalledWith("/chat/inbox");
+        expect(nav).toHaveBeenLastCalledWith("/chat/inbox?s=a");
+        // The button says its count, the pill being hidden from the reader
+        localStorage.setItem("app_lang", "fr");
+        expect(c.inboxLabel()).toBe("Boîte de réception, 3");
+        await c.onFilter(null);
+        c.onInbox();
+        expect(nav).toHaveBeenLastCalledWith("/chat/inbox");
         const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "chat", "chat_list_component.ts"), "utf8");
         // Above « ★ Favoris »
         expect(source.indexOf('class="chat-list__inbox"')).toBeGreaterThan(0);
         expect(source.indexOf('class="chat-list__inbox"')).toBeLessThan(source.indexOf('class="chat-list__starred"'));
         expect(source).toMatch(/t-if="inboxTotal\(\) > 0"/);
+        expect(source).toMatch(/class="chat-list__inbox" t-att-aria-label="inboxLabel\(\)"/);
+        expect(source).toMatch(/class="chat-list__starred" t-att-aria-label="starredLabel\(\)"/);
     });
 
     it("tapping a row navigates to the thread", async () => {

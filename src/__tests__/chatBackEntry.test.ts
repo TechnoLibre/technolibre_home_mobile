@@ -44,6 +44,24 @@ describe("BackEntry", () => {
         e.dispose();
     });
 
+    it("a close while a layer above is open goes back over both: the layer closes, then this one", () => {
+        const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+        const onBack = vi.fn();
+        const e = new BackEntry("chatTest", onBack);
+        e.open();
+        const own = window.history.state;
+        window.history.pushState({ ...own, chatAbove: true }, "");
+        e.close();
+        expect(back).toHaveBeenCalledTimes(1);
+        // The first back lands on its own entry, the layer above gone: once more, over its own
+        landOn(own);
+        expect(onBack).not.toHaveBeenCalled();
+        expect(back).toHaveBeenCalledTimes(2);
+        landOn({});
+        expect(onBack).toHaveBeenCalledTimes(1);
+        e.dispose();
+    });
+
     it("dispose strips its mark, or goes back over it with goBack; an entry the screen moved to is left alone", () => {
         const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
         window.history.replaceState({ kept: 1 }, "");
@@ -63,6 +81,23 @@ describe("BackEntry", () => {
         c.dispose({ goBack: true });
         expect(window.history.state).toEqual({ route: "next" });
         expect(back).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaveAll takes the marks of the open layers off the current entry before the screen moves", () => {
+        const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+        window.history.replaceState({ route: "inbox" }, "");
+        const onBack = vi.fn();
+        const e = new BackEntry("chatTest", onBack);
+        e.open();
+        BackEntry.leaveAll();
+        expect(window.history.state).toEqual({ route: "inbox" });
+        // The screen moved: the layer's later dispose and popstates leave every entry alone
+        window.history.pushState({ route: "next" }, "");
+        e.dispose({ goBack: true });
+        landOn({ route: "inbox" });
+        expect(back).not.toHaveBeenCalled();
+        expect(onBack).not.toHaveBeenCalled();
+        expect(window.history.state).toEqual({ route: "inbox" });
     });
 
     it("closed without its entry (never opened), close calls onBack at once", () => {

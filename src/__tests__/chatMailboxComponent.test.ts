@@ -4,6 +4,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 // vitest.config.ts aliases @odoo/owl to src/__mocks__: hooks are no-ops, so
 // setup() then the loaders are called by hand.
 import { ChatMailboxComponent } from "../components/chat/chat_mailbox_component";
+import { BackEntry } from "../components/chat/chatBackEntry";
 import { EventBus } from "@odoo/owl";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -64,7 +65,7 @@ const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ChatMailboxComponent", () => {
-    it("the starred box lists favourites with unread first and unstars one", async () => {
+    it("the starred box lists starred messages with unread first and unstars one", async () => {
         const chat: any = fakeChat(["a"]);
         // The service's order: the unread first
         chat.starred.mockResolvedValue([
@@ -172,6 +173,38 @@ describe("ChatMailboxComponent", () => {
         expect(source).toMatch(/chat-mailbox__mark"[^>]*\n?[^>]*t-on-click\.stop=/);
     });
 
+    it("an item tapped while a reply composer is open closes it and leaves no marked entry under the next screen", async () => {
+        const chat: any = fakeChat(["a"]);
+        chat.inbox.items.mockResolvedValue([item("a", 603), item("a", 602)]);
+        const c = make(chat, "/chat/inbox");
+        await c.loadCache();
+        c.onReply(c.state.rows[1]);
+        // The composer's history entry, as it opens it
+        const entry = new BackEntry("chatReply", vi.fn());
+        entry.open();
+        const states: any[] = [];
+        c.navigate = vi.fn(() => states.push(window.history.state));
+        await c.onOpen(c.state.rows[0]);
+        expect(c.navigate).toHaveBeenCalledWith("/note/n-603");
+        expect(states).toEqual([{}]);
+        expect(c.state.reply).toBeNull();
+        entry.dispose({ goBack: true });
+    });
+
+    it("opened from a list kept to one server (?s=), the box shows that account alone", async () => {
+        const chat: any = fakeChat(["a", "b"]);
+        chat.inbox.items.mockImplementation(async (ids: string[]) => ids.map((id: string) => item(id, id === "a" ? 600 : 601)));
+        chat.starred.mockImplementation(async (ids: string[]) => ids.map((id: string) => item(id, 700, { starred: true, needaction: false })));
+        for (const [path, ids] of [["/chat/inbox?s=b", ["b"]], ["/chat/starred?s=b", ["b"]], ["/chat/inbox", ["a", "b"]], ["/chat/inbox?s=gone", ["a", "b"]]] as const) {
+            const c = make(chat, path);
+            await c.loadCache();
+            expect(c.state.rows.map((r: any) => r.configId)).toEqual(ids);
+            // The rows still name their server: the app has several
+            expect(c.state.rows[0].serverLabel).toBe(ids[0]);
+        }
+        expect(chat.inbox.items).toHaveBeenCalledWith(["b"], "inbox");
+    });
+
     it("no reply is offered on an assignment", async () => {
         const chat: any = fakeChat(["a"]);
         chat.inbox.items.mockResolvedValue([
@@ -260,6 +293,24 @@ describe("ChatMailboxComponent", () => {
             expect(chat.switchToInbox).toHaveBeenCalledWith(src("a"));
             expect(c.state.notices).toEqual([]);
             expect(c.state.error).toBe("");
+        });
+
+        it("the button comes back by itself when the network does", async () => {
+            const chat: any = fakeChat(["a"]);
+            emailFor(chat, "a");
+            chat.isOnline.mockResolvedValue(false);
+            const c = make(chat, "/chat/inbox");
+            let back!: () => void;
+            const stop = vi.fn();
+            c.network = { onReconnect: vi.fn(async (cb: () => void) => { back = cb; return stop; }) };
+            await c.watchNetwork();
+            await c.loadCache();
+            expect(c.state.networkOff).toBe(true);
+            chat.isOnline.mockResolvedValue(true);
+            back();
+            await vi.waitFor(() => expect(c.state.networkOff).toBe(false));
+            c.unwatchNetwork();
+            await vi.waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
         });
 
         it("offline the button is disabled and says why; an offline answer says the same", async () => {
