@@ -29,9 +29,11 @@ import type { ChatSource } from "../services/chat/chatSources";
 import { CHAT_FILE_CANCELLED, CHAT_FILE_UNSENT, transportError } from "../plugins/chatFilePlugin";
 import { memoryChatFiles, type MemoryChatFiles } from "./chatFakes";
 import { composeBody, EMPTY_MENTIONS, type Mentions } from "../services/chat/chatCompose";
-import { bodyText, isEmptyMessage } from "../services/chat/chatBody";
+import { bodyText, foldText, isEmptyMessage } from "../services/chat/chatBody";
 import { emojiConversions } from "../services/chat/chatEmoji";
-import type { MessageTarget } from "../models/chat";
+import { mailboxKindOf, type ChatMailboxItem, type MessageTarget } from "../models/chat";
+import { htmlTerm, type SearchResults } from "../services/chat/chatSearch";
+import { noteForRecord } from "../services/chat/chatInbox";
 
 export { memoryChatFiles };
 export type { MemoryChatFiles };
@@ -44,8 +46,17 @@ export type { MemoryChatFiles };
  */
 export { composeBody, EMPTY_MENTIONS, bodyText, isEmptyMessage, emojiConversions };
 export type { Mentions, MessageTarget };
+/**
+ * The finding rules of the chat, for a test to say what the app should
+ * find and where it opens: foldText (the text local search compares,
+ * case and accents folded), htmlTerm (a term as the server search
+ * matches a stored body), mailboxKindOf (an inbox item's kind: mention,
+ * record, assignment), noteForRecord (the note an inbox item opens).
+ */
+export { foldText, htmlTerm, mailboxKindOf, noteForRecord };
+export type { ChatMailboxItem, SearchResults };
 
-export const HARNESS_API = 4;
+export const HARNESS_API = 5;
 
 /** Migrations that read what an older install left (secure storage, video files): none on a new database. */
 const SKIPPED_MIGRATIONS = new Set([2026031801, 2026032401]);

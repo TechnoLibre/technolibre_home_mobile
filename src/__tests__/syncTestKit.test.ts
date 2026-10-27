@@ -8,6 +8,7 @@ import {
 	HARNESS_API, createSyncEnv, nodeTransport, installLocalStorage, memoryAttachmentIO, resetMocks,
 	restartSyncEnv, setOnline, setNetwork, chatTitle, memoryChatFiles, nodeChatHttp, stageChatFile, stageChatVoice,
 	composeBody, bodyText, emojiConversions, isEmptyMessage, EMPTY_MENTIONS,
+	foldText, htmlTerm, mailboxKindOf, noteForRecord,
 } from "../testing/syncTestKit";
 import { syncSessionKey } from "../services/syncService";
 import { isHttpAllowed } from "../services/odoo/httpPolicy";
@@ -23,8 +24,23 @@ describe("syncTestKit", () => {
 		resetMocks();
 	});
 
-	it("is at API 4", () => {
-		expect(HARNESS_API).toBe(4);
+	it("is at API 5", () => {
+		expect(HARNESS_API).toBe(5);
+	});
+
+	it("gives the chat's finding rules: folded text, the server's body term, inbox kinds, the note of a record", () => {
+		expect(foldText("Café CRÈME")).toBe("cafe creme");
+		expect(htmlTerm("l'eau & co 100%")).toBe("l'eau%&amp;%co%100\\%");
+		const item = {
+			configId: "c", messageId: 1, threadModel: "project.task", threadId: 5, recordName: "Tâche démo",
+			authorPartnerId: null, body: "", date: null, messageType: "comment", needaction: true, starred: false, history: false,
+		};
+		expect(mailboxKindOf(item)).toBe("record");
+		expect(mailboxKindOf({ ...item, messageType: "user_notification" })).toBe("assignment");
+		expect(mailboxKindOf({ ...item, threadModel: "discuss.channel" })).toBe("mention");
+		const link = { noteId: "n1", configId: "c", kind: "create", model: "project.task", resId: 5, remoteState: "ok" } as any;
+		expect(noteForRecord([link], "c", "project.task", 5)?.noteId).toBe("n1");
+		expect(noteForRecord([link], "c", "project.task", 6)).toBeNull();
 	});
 
 	it("gives the chat's body rules: a composed body reads back as its text, an emptied one is hidden", async () => {

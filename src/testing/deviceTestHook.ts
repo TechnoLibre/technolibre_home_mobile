@@ -20,10 +20,15 @@ import type { NoteService } from "../services/note/noteService";
 import type { NotificationService } from "../services/notificationService";
 import { SyncService } from "../services/syncService";
 import { ChatCapture } from "../services/chat/chatCapture";
-import { messageKeyOf, type ChatAttachment, type ChatReaction, type MessageTarget } from "../models/chat";
+import {
+	messageKeyOf, type ChatAttachment, type ChatMailboxItem, type ChatMessage, type ChatReaction, type MessageTarget,
+	type OutgoingFile,
+} from "../models/chat";
 import { EMPTY_MENTIONS, type Mentions } from "../services/chat/chatCompose";
+import type { SearchResults, ServerResults } from "../services/chat/chatSearch";
+import type { ChatSource } from "../services/chat/chatSources";
 
-export const DEVICE_HOOK_API = 5;
+export const DEVICE_HOOK_API = 6;
 
 /** The stage limit the composer takes while the server's is unknown: Odoo's default. */
 const DEFAULT_STAGE_LIMIT = 128 * 1024 * 1024;
@@ -55,6 +60,30 @@ async function chatSourceOf(env: DeviceHookEnv, configId: string) {
 	const src = (await env.syncService.chat.sources()).find((s) => s.configId === configId);
 	if (!src) throw new Error(`No chat source for ${configId}`);
 	return src;
+}
+
+/** The cached mailbox row of a message (inbox, history or starred); throws when the phone holds none. */
+async function mailboxItemOf(env: DeviceHookEnv, configId: string, messageId: number): Promise<ChatMailboxItem> {
+	const item = await env.syncService.chat.repo.mailboxItem(configId, messageId);
+	if (!item) throw new Error(`No mailbox item ${messageId} for ${configId}`);
+	return item;
+}
+
+/**
+ * The file at path (relative to Directory.Data, put there by the test)
+ * as the composer stages it once the picker answered: read as the web
+ * view's File, staged by ChatCapture.stage under the account's directory
+ * against the server's limit. A file over the limit throws.
+ */
+async function stagedFile(env: DeviceHookEnv, src: ChatSource, path: string, name: string, mimetype: string): Promise<OutgoingFile> {
+	const chat = env.syncService.chat;
+	const { uri } = await Filesystem.getUri({ path, directory: Directory.Data });
+	const blob = await (await fetch(Capacitor.convertFileSrc(uri))).blob();
+	const file = new File([blob], name, { type: mimetype });
+	const limit = (await chat.uploadLimit(src)) ?? DEFAULT_STAGE_LIMIT;
+	const staged = await new ChatCapture().stage(await chat.fileDirOf(src.configId), file, { maxUploadSize: limit });
+	if ("refused" in staged) throw new Error(`${name} refused: over the ${staged.limit}-byte limit`);
+	return staged;
 }
 
 export function deviceTestHook(env: DeviceHookEnv) {
@@ -165,15 +194,9 @@ export function deviceTestHook(env: DeviceHookEnv) {
 		 * the pending message's clientUuid; a file over the limit throws.
 		 */
 		async chatSendFile(configId: string, channelId: number, path: string, name: string, mimetype: string): Promise<string> {
-			const chat = env.syncService.chat;
 			const src = await chatSourceOf(env, configId);
-			const { uri } = await Filesystem.getUri({ path, directory: Directory.Data });
-			const blob = await (await fetch(Capacitor.convertFileSrc(uri))).blob();
-			const file = new File([blob], name, { type: mimetype });
-			const limit = (await chat.uploadLimit(src)) ?? DEFAULT_STAGE_LIMIT;
-			const staged = await new ChatCapture().stage(await chat.fileDirOf(configId), file, { maxUploadSize: limit });
-			if ("refused" in staged) throw new Error(`${name} refused: over the ${staged.limit}-byte limit`);
-			const message = await chat.send(src, channelId, "", [staged]);
+			const staged = await stagedFile(env, src, path, name, mimetype);
+			const message = await env.syncService.chat.send(src, channelId, "", [staged]);
 			return message.clientUuid as string;
 		},
 		/** The attachment rows of the channel's cached messages and queued posts, oldest message first. */
@@ -189,6 +212,112 @@ export function deviceTestHook(env: DeviceHookEnv) {
 		/** Bytes the chat's files take on the phone: the account's, or every account's. */
 		chatSpace(configId?: string): Promise<number> {
 			return env.syncService.chat.attachments.space(configId);
+		},
+		/**
+		 * The phone's answer to a term over every chat source, as the
+		 * list's search shows it before the servers answer
+		 * (ChatSearch.local: cache only, nothing marked read).
+		 */
+		async chatSearch(term: string): Promise<SearchResults> {
+			const chat = env.syncService.chat;
+			return chat.search.local((await chat.sources()).map((s) => s.configId), term);
+		},
+		/** The first page of the server's matches for a term on configId (ChatSearch.server: nothing marked read). */
+		async chatSearchServer(configId: string, term: string): Promise<ServerResults> {
+			return env.syncService.chat.search.server(await chatSourceOf(env, configId), term);
+		},
+		/** Shows the conversation opened at the message, as a tap on a search hit does (`?m=<id>`). */
+		chatOpenAt(configId: string, channelId: number, messageId: number): void {
+			env.eventBus.trigger(Events.ROUTER_NAVIGATION, {
+				url: `/chat/${encodeURIComponent(configId)}/${channelId}?m=${messageId}`,
+			});
+		},
+		/** How message search runs on the phone's database: "fts5" (the FTS5 trigram index) or "like". */
+		chatSearchEngine(): Promise<"fts5" | "like"> {
+			return env.databaseService.chatSearchEngine();
+		},
+		/**
+		 * SQLite's integrity check of the FTS5 search index (an
+		 * `integrity-check` command, which raises when the index and
+		 * chat_messages disagree): "ok", the error's message, or "like"
+		 * when the database has no index to check.
+		 */
+		async chatSearchIntegrity(): Promise<string> {
+			if ((await env.databaseService.chatSearchEngine()) !== "fts5") return "like";
+			try {
+				await env.databaseService.rawRun("INSERT INTO chat_search_fts(chat_search_fts) VALUES ('integrity-check')");
+				return "ok";
+			} catch (e) {
+				return e instanceof Error ? e.message : String(e);
+			}
+		},
+		/** Pins the sent message messageId in its channel (on) or unpins it, as the menu's Épingler once confirmed. */
+		async chatPin(configId: string, channelId: number, messageId: number, on: boolean): Promise<void> {
+			await env.syncService.chat.pin(await chatSourceOf(env, configId), channelId, sent(messageId), on);
+		},
+		/** The channel's pinned messages as « Messages épinglés » lists them (the server's list read first when online). */
+		async chatPinned(configId: string, channelId: number): Promise<{ messages: ChatMessage[]; offline: boolean }> {
+			return env.syncService.chat.pinnedMessages(await chatSourceOf(env, configId), channelId);
+		},
+		/** Stars the message messageId (on) or unstars it, as the menu's Favori; its conversation from the cache, if any. */
+		async chatStar(configId: string, messageId: number, on: boolean): Promise<void> {
+			const chat = env.syncService.chat;
+			const cached = await chat.repo.message(configId, messageId);
+			await chat.star(await chatSourceOf(env, configId), messageId, on, cached?.channelId ?? null);
+		},
+		/** The starred messages of configId as the starred box shows them, its first page read from the server first. */
+		async chatStarred(configId: string): Promise<ChatMailboxItem[]> {
+			const chat = env.syncService.chat;
+			await chat.refreshStarred(await chatSourceOf(env, configId));
+			return chat.starred([configId]);
+		},
+		/** The inbox items of configId as the inbox tab shows them, its first page read from the server first. */
+		async chatInbox(configId: string): Promise<ChatMailboxItem[]> {
+			const chat = env.syncService.chat;
+			await chat.inbox.refresh(await chatSourceOf(env, configId), "inbox");
+			return chat.inbox.items([configId], "inbox");
+		},
+		/** Marks the inbox item messageId read, as its « Marquer comme lu ». */
+		async chatMarkDone(configId: string, messageId: number): Promise<void> {
+			await env.syncService.chat.markDone(await chatSourceOf(env, configId), [messageId]);
+		},
+		/**
+		 * Replies to the inbox item messageId in its record's chatter, as the
+		 * reply composer's ➤: an internal note unless note is false, with the
+		 * file at path (relative to Directory.Data, staged as chatSendFile
+		 * stages it) when given. Returns the reply's client uuid.
+		 */
+		async chatReplyOnRecord(
+			configId: string,
+			messageId: number,
+			text: string,
+			opts: { note?: boolean; path?: string; name?: string; mimetype?: string } = {},
+		): Promise<string> {
+			const src = await chatSourceOf(env, configId);
+			const item = await mailboxItemOf(env, configId, messageId);
+			const files = opts.path
+				? [await stagedFile(env, src, opts.path, opts.name ?? opts.path.split("/").pop()!, opts.mimetype ?? "")]
+				: [];
+			const op = await env.syncService.chat.replyOnRecord(src, item, text, EMPTY_MENTIONS, files, opts.note ?? true);
+			return op.clientUuid;
+		},
+		/**
+		 * Keeps the file at path (relative to Directory.Data) as a draft file
+		 * of the reply composer of the inbox item messageId, as a pick does
+		 * once the picker answered: the composer opened on that record shows
+		 * it as a chip, and its ➤ sends it.
+		 */
+		async chatRecordDraftFile(configId: string, messageId: number, path: string, name: string, mimetype: string): Promise<void> {
+			const chat = env.syncService.chat;
+			const src = await chatSourceOf(env, configId);
+			const item = await mailboxItemOf(env, configId, messageId);
+			const staged = await stagedFile(env, src, path, name, mimetype);
+			const thread = { model: item.threadModel, resId: item.threadId, recordName: item.recordName };
+			await chat.keepRecordDraftFile(configId, thread, staged, 0, null);
+		},
+		/** The user's Odoo notification type of configId as the phone last read it: "email", "inbox", or null unknown. */
+		async chatNotificationType(configId: string): Promise<"email" | "inbox" | null> {
+			return (await env.syncService.chat.repo.sourceState(configId)).notificationType;
 		},
 		note(id: string) {
 			return env.databaseService.getNoteById(id);
