@@ -39,6 +39,8 @@ export interface MailboxRow {
     time: string;
     /** The server's tag, "" when the app has one server. */
     serverLabel: string;
+    /** The cached item the row shows, which a tap opens. */
+    item: ChatMailboxItem;
 }
 
 /** Where the next page of an account starts, and whether there is one. */
@@ -72,7 +74,10 @@ interface MailboxState {
  * record, 👤 an assignment), its record or conversation, its author, the
  * start of its text, its date and, with several servers, its server's tag.
  * An inbox item offers « Marquer comme lu », each account « Tout marquer
- * comme lu »; a starred one ☆ to unstar. Every text is shown as text.
+ * comme lu »; a starred one ☆ to unstar. A tap on an item opens it
+ * (ChatInbox.openItem: its conversation at the message, the note linked to
+ * its record, or the message in the web view), marking nothing read.
+ * Every text is shown as text.
  */
 export class ChatMailboxComponent extends EnhancedComponent {
     state!: MailboxState;
@@ -98,7 +103,7 @@ export class ChatMailboxComponent extends EnhancedComponent {
                 t-esc="t('chat.inbox_mark_all') + (serverShown() ? ' — ' + a.label : '')"/>
       </div>
       <ul class="chat-mailbox__list" t-on-scroll="onScroll">
-        <li t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-mailbox__item">
+        <li t-foreach="state.rows" t-as="row" t-key="row.key" class="chat-mailbox__item" t-on-click="() => this.onOpen(row)">
           <div class="chat-mailbox__meta">
             <span t-if="state.box === 'inbox'" class="chat-mailbox__kind" role="img" t-att-aria-label="row.kindLabel" t-esc="row.kindIcon"/>
             <span class="chat-mailbox__where" t-esc="row.where"/>
@@ -109,9 +114,9 @@ export class ChatMailboxComponent extends EnhancedComponent {
           <div class="chat-mailbox__preview" t-esc="row.preview"/>
           <div class="chat-mailbox__actions">
             <button t-if="state.box === 'inbox' and state.tab === 'inbox'" type="button" class="chat-mailbox__mark"
-                    t-on-click="() => this.onMarkRead(row)" t-esc="t('chat.inbox_mark_read')"/>
+                    t-on-click.stop="() => this.onMarkRead(row)" t-esc="t('chat.inbox_mark_read')"/>
             <button t-if="state.box === 'starred'" type="button" class="chat-mailbox__unstar"
-                    t-att-aria-label="t('chat.unstar')" t-on-click="() => this.onUnstar(row)" t-esc="'☆ ' + t('chat.unstar')"/>
+                    t-att-aria-label="t('chat.unstar')" t-on-click.stop="() => this.onUnstar(row)" t-esc="'☆ ' + t('chat.unstar')"/>
           </div>
         </li>
       </ul>
@@ -209,6 +214,7 @@ export class ChatMailboxComponent extends EnhancedComponent {
             preview: bodyPreview(i.body, PREVIEW_MAX),
             time: formatListTime(i.date),
             serverLabel,
+            item: i,
         };
     }
 
@@ -273,6 +279,19 @@ export class ChatMailboxComponent extends EnhancedComponent {
 
     private sourceOf(configId: string): ChatSource | undefined {
         return this._sources.find((s) => s.configId === configId);
+    }
+
+    /** A tap on an item: opened by ChatInbox.openItem, nothing marked read. */
+    async onOpen(row: MailboxRow): Promise<void> {
+        const src = this.sourceOf(row.configId);
+        if (!src) return;
+        this.state.error = "";
+        try {
+            await this.chatService.inbox.openItem(src, row.item, (url) => this.navigate(url));
+        } catch (e) {
+            console.warn("chat mailbox: open failed", e);
+            this.state.error = t("chat.action_error");
+        }
     }
 
     /** « Marquer comme lu »: the item moves to the history at once. */

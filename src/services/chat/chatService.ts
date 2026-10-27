@@ -216,11 +216,16 @@ export class ChatService {
     this.queue.moduleRefused = (configId) => this.probeModule(configId);
     this.queue.editGuard = async (configId) => (await this.features(configId)).guardedEdit;
     this.queue.starIdempotent = async (configId) => (await this.features(configId)).idempotentStar;
+    this.queue.inboxSent = async (configId) => {
+      const src = await this.sourceOf(configId);
+      if (src) await this.load(src);
+    };
     this.inbox = new ChatInbox(this.repo, rpc, () => this.isOnline());
     this.inbox.serial = (configId, task) => this.serial(configId, task);
     this.inbox.queue = this.queue;
     this.inbox.erasedSince = (configId) => this.erasedSince(configId);
     this.inbox.changed = (configId) => this.changed(configId, null);
+    this.inbox.noteLinks = (configId) => this.db.getNoteLinksForConfig(configId);
     this.useFileIO({ files: deviceChatFiles, http: nativeChatHttp() });
   }
 
@@ -584,9 +589,12 @@ export class ChatService {
       page.includes(m) || (parents.has(m.messageId) && m.channelId === channelId));
     let added = 0;
     for (const m of page) if (!(await this.repo.message(configId, m.messageId))) added++;
-    // The user's reactions still to be sent win over the server's older groups
-    await this.queue.overlayMessages(configId, delta);
-    await this.repo.applyDelta(configId, delta);
+    // The user's actions still to be sent win over the server's older state; in one exclusive() task
+    // with the write, so an action queued after the overlay read the ops is not written over
+    await this.queue.exclusive(configId, async () => {
+      await this.queue.overlayMessages(configId, delta);
+      await this.repo.applyDelta(configId, delta);
+    });
     const ids = page.map((m) => m.messageId);
     const patch: Partial<ChatChannel> = {};
     if (ids.length > 0) patch.oldestLoadedId = Math.min(...ids, channel.oldestLoadedId ?? Infinity);
@@ -1093,8 +1101,9 @@ export class ChatService {
    * Online the server's list (/discuss/channel/pinned_messages: a bare
    * Store, read-only, nothing marked read) is written first, in the
    * account's queue of server writers, with the pins still queued laid
-   * over it (overlayMessages); the channel's cached messages it does not
-   * name lose pinnedAt (pinnedSets). A message below the loaded history is
+   * over it (overlayMessages, in one exclusive() task with the write);
+   * the channel's cached messages it does not name lose pinnedAt
+   * (pinnedSets). A message below the loaded history is
    * cached and the thread does not show it as a row, as a reply's parent.
    * Offline, or when the request never left, the cache answers alone and
    * `offline` says so; another failure rejects. Then the cached pinned
@@ -1116,8 +1125,10 @@ export class ChatService {
           // A reply's parent comes along in the Store: only the messages pinned are the list
           const messageIds = delta.messages.filter((m) => m.channelId === channelId && !!m.pinnedAt).map((m) => m.messageId);
           delta.pinnedSets = [{ channelId, messageIds }];
-          await this.queue.overlayMessages(configId, delta);
-          await this.repo.applyDelta(configId, delta);
+          await this.queue.exclusive(configId, async () => {
+            await this.queue.overlayMessages(configId, delta);
+            await this.repo.applyDelta(configId, delta);
+          });
         });
         this.changed(configId, channelId);
       } catch (e: unknown) {

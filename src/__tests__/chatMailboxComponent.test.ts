@@ -36,6 +36,7 @@ function fakeChat(ids: string[]) {
         inbox: {
             items: vi.fn().mockResolvedValue([]),
             refresh: vi.fn().mockResolvedValue({ more: false, offline: false, oldestId: null }),
+            openItem: vi.fn(async (_src: any, i: any, navigate: (url: string) => void) => navigate("/note/n-" + i.messageId)),
         },
         repo: {
             partners: vi.fn().mockResolvedValue([{ partnerId: 7, name: "Alice Martin" }]),
@@ -139,5 +140,30 @@ describe("ChatMailboxComponent", () => {
         await c.refreshOnline();
         expect(c.state.offline).toBe(true);
         expect(source).toMatch(/t-esc="t\('chat\.mailbox_offline'\)"/);
+    });
+
+    it("a tapped item opens through ChatInbox.openItem, in the inbox and the starred box alike", async () => {
+        const chat: any = fakeChat(["a"]);
+        const task = item("a", 603);
+        chat.inbox.items.mockResolvedValue([task]);
+        chat.starred.mockResolvedValue([{ ...task, starred: true, needaction: false }]);
+        for (const path of ["/chat/inbox", "/chat/starred"]) {
+            const c = make(chat, path);
+            c.navigate = vi.fn();
+            await c.loadCache();
+            await c.onOpen(c.state.rows[0]);
+            expect(chat.inbox.openItem).toHaveBeenLastCalledWith(src("a"), expect.objectContaining({ configId: "a", messageId: 603 }), expect.any(Function));
+            expect(c.navigate).toHaveBeenCalledWith("/note/n-603");
+        }
+        // Opening marks nothing read
+        expect(chat.markDone).not.toHaveBeenCalled();
+        // A failure shows the action error, the list kept
+        const c = make(chat, "/chat/inbox");
+        await c.loadCache();
+        chat.inbox.openItem.mockRejectedValueOnce(new Error("no table"));
+        await c.onOpen(c.state.rows[0]);
+        expect(c.state.error).toBe("Could not do it. Try again.");
+        expect(source).toMatch(/class="chat-mailbox__item"[^>]*t-on-click="\(\) => this\.onOpen\(row\)"/);
+        expect(source).toMatch(/chat-mailbox__mark"[^>]*\n?[^>]*t-on-click\.stop=/);
     });
 });

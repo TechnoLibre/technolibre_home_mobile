@@ -4665,8 +4665,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.inbox",
                 label: { en: "Inbox", fr: "Boîte de réception" },
                 description: {
-                    en: "Odoo's inbox on the phone: mentions, followed records' messages and assignments, mark one or all as read, and the history, from « 📥 Inbox » above the conversations.",
-                    fr: "La boîte de réception d'Odoo sur le téléphone : mentions, messages des fiches suivies et assignations, marquer un ou tout comme lu, et l'historique, depuis « 📥 Boîte de réception » au-dessus des conversations.",
+                    en: "Odoo's inbox on the phone: mentions, followed records' messages and assignments, opened at the message, in the linked note or in Odoo, mark one or all as read, and the history, from « 📥 Inbox » above the conversations.",
+                    fr: "La boîte de réception d'Odoo sur le téléphone : mentions, messages des fiches suivies et assignations, ouverts au message, dans la note liée ou dans Odoo, marquer un ou tout comme lu, et l'historique, depuis « 📥 Boîte de réception » au-dessus des conversations.",
                 },
                 status: "experimental",
                 dependsOn: ["chat.starred"],
@@ -4682,7 +4682,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "rows moved, kept in the op (cleared). Until it is sent, a server count read meanwhile (a "
                         + "load, the bus) loses those rows again, in the same exclusive task as the write; the bus "
                         + "mail.message/mark_as_read lowers a conversation only for a row still in the inbox, so the "
-                        + "phone's change and its echo count once.",
+                        + "phone's change and its echo count once. Once sent, the account is loaded again (a done of "
+                        + "an item read elsewhere sends no bus event); refused or gone, its rows go back to the inbox "
+                        + "and the counts. A tap opens an item (ChatInbox.openItem, from the inbox, the starred box "
+                        + "and the search alike): a mention its conversation at the message, a record's message or an "
+                        + "assignment the note linked to the record (note_links), else Odoo's /mail/message/<id> in "
+                        + "the web view (openRecordInApp, http policy kept); nothing is marked read.",
                     fr: "Les pages de /mail/inbox/messages et /mail/history/messages (en lecture seule, rien n'est "
                         + "marqué lu) remplissent chat_mailbox, un message de conversation aussi le cache de sa "
                         + "conversation quand le téléphone la tient ; une page de la boîte de réception passe à "
@@ -4696,7 +4701,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "lu entre-temps (un chargement, le bus) perd à nouveau ces lignes, dans la même tâche "
                         + "exclusive que l'écriture ; le bus mail.message/mark_as_read ne baisse une conversation que "
                         + "pour une ligne encore dans la boîte, donc le changement du téléphone et son écho comptent "
-                        + "une fois.",
+                        + "une fois. Une fois envoyée, le compte est rechargé (un élément déjà lu ailleurs n'envoie "
+                        + "rien sur le bus) ; refusée ou disparue, ses lignes reviennent dans la boîte et les comptes. "
+                        + "Un toucher ouvre un élément (ChatInbox.openItem, depuis la boîte, les favoris et la "
+                        + "recherche) : une mention sa conversation au message, un message de fiche ou une assignation "
+                        + "la note liée à la fiche (note_links), sinon /mail/message/<id> d'Odoo dans la vue web "
+                        + "(openRecordInApp, politique http gardée) ; rien n'est marqué lu.",
                 },
                 files: [
                     "src/services/chat/chatInbox.ts",
@@ -4706,6 +4716,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/chat/chat_mailbox_component.ts",
                     "src/components/chat/chat_mailbox_component.scss",
                     "src/components/chat/chat_list_component.ts",
+                    "src/utils/openRecordInApp.ts",
                 ],
                 tests: [
                     "src/__tests__/chatInbox.test.ts",
@@ -4713,6 +4724,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/chatService.test.ts",
                     "src/__tests__/chatMailboxComponent.test.ts",
                     "src/__tests__/chatListComponent.test.ts",
+                    "src/__tests__/openRecordInApp.test.ts",
                 ],
             },
             {

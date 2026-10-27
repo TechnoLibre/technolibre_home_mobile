@@ -1,4 +1,6 @@
-import type { ChatMailboxItem } from "../../models/chat";
+import { mailboxKindOf, type ChatMailboxItem } from "../../models/chat";
+import { openRecordInApp } from "../../utils/openRecordInApp";
+import type { NoteLink } from "../databaseService";
 import { RequestNotSentError, type OdooRpcClient } from "../odoo/odooRpcClient";
 import type { ChatRepository } from "./chatRepository";
 import type { ChatSource } from "./chatSources";
@@ -27,6 +29,27 @@ export interface InboxQueue {
   forgetCleared(configId: string, done: (messageId: number) => boolean): Promise<void>;
 }
 
+/**
+ * The note of the phone that stands for a record (model, resId) of the
+ * account: among its live links (remoteState "ok"), a "create" link names
+ * the record by its own model and id, a "message" or an "activity" link by
+ * the record it is on (params.resModel, params.resId). A create link comes
+ * first, else the newest createdAt; null when no link names the record.
+ */
+export function noteForRecord(links: NoteLink[], configId: string, model: string, resId: number): NoteLink | null {
+  const recordOf = (l: NoteLink) => (l.kind === "create"
+    ? { model: l.model, resId: l.resId }
+    : { model: l.params?.resModel, resId: l.params?.resId });
+  const matching = links.filter((l) => {
+    if (l.configId !== configId || l.remoteState !== "ok") return false;
+    const r = recordOf(l);
+    return r.model === model && r.resId === resId;
+  });
+  if (matching.length === 0) return null;
+  return matching.find((l) => l.kind === "create")
+    ?? [...matching].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0];
+}
+
 const emptyDelta = (): StoreDelta => ({
   channels: [],
   deletedChannelIds: [],
@@ -47,7 +70,7 @@ const emptyDelta = (): StoreDelta => ({
  * read-only routes /mail/inbox/messages and /mail/history/messages: reading
  * them marks nothing read. Reading is the outbox's chat.inbox_done and
  * chat.inbox_all. ChatService points the hooks (serial, queue, erasedSince,
- * changed) at its own; their defaults run a page alone.
+ * changed, noteLinks) at its own; their defaults run a page alone.
  */
 export class ChatInbox {
   /** Runs a page in the account's queue of server writers (ChatService.serial). */
@@ -63,6 +86,8 @@ export class ChatInbox {
   erasedSince: (configId: string) => () => boolean = () => () => false;
   /** Called once a page was written or failed: the screens rebuild. */
   changed: (configId: string) => void = () => {};
+  /** The account's note links (DatabaseService.getNoteLinksForConfig); without one, no item has a note. */
+  noteLinks: (configId: string) => Promise<NoteLink[]> = async () => [];
 
   constructor(
     private repo: ChatRepository,
@@ -176,5 +201,42 @@ export class ChatInbox {
   async maxShown(configId: string): Promise<number | null> {
     const items = await this.repo.mailboxItems(configId, "inbox");
     return items.length > 0 ? Math.max(...items.map((i) => i.messageId)) : null;
+  }
+
+  /**
+   * Opens an item, the same from the inbox, the history, the starred box
+   * and the search. A mention of a conversation the phone holds opens its
+   * thread at the message (`navigate`, /chat/<configId>/<channelId>?m=<id>).
+   * A followed record's message or an assignment opens the phone's note
+   * linked to the record (noteForRecord, /note/<noteId>). Anything else —
+   * a record with no note, a mention whose conversation the phone dropped —
+   * opens Odoo's /mail/message/<id> in the web view (openRecordInApp, its
+   * http policy and login kept), which Odoo redirects to the record with
+   * the message highlighted, or to Discuss when the record is out of the
+   * user's reach. Nothing is marked read.
+   */
+  async openItem(src: ChatSource, item: ChatMailboxItem, navigate: (url: string) => void): Promise<void> {
+    const { configId } = src;
+    const kind = mailboxKindOf(item);
+    if (kind === "mention" && (await this.repo.channel(configId, item.threadId))) {
+      navigate("/chat/" + encodeURIComponent(configId) + "/" + item.threadId + "?m=" + item.messageId);
+      return;
+    }
+    if (kind !== "mention") {
+      const note = noteForRecord(await this.noteLinks(configId), configId, item.threadModel, item.threadId);
+      if (note) {
+        navigate("/note/" + encodeURIComponent(note.noteId));
+        return;
+      }
+    }
+    await openRecordInApp({
+      label: item.recordName || src.label,
+      appUrl: src.app.url,
+      username: src.app.username,
+      password: src.app.password,
+      model: item.threadModel,
+      resId: item.threadId,
+      path: "/mail/message/" + item.messageId,
+    });
   }
 }

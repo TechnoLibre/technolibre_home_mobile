@@ -3088,6 +3088,32 @@ describe("ChatService", () => {
       ]);
       expect((await chat.repo.message(config, 600))?.pinnedAt).toBeNull();
     });
+
+    it("an action queued while the pinned list or a history page writes is not undone by it", async () => {
+      await cache(599, "2026-10-24 09:00:00");
+      pinned = [pinnedMsg(599, "2026-10-24 09:00:00")];
+      await chat.repo.applyDelta(config, parseStore({ "mail.message": [msg(70, CHAT)] }, config, SELF));
+      odoo.state.pageRecord = () => ({ starred: false });
+      const apply = chat.repo.applyDelta.bind(chat.repo);
+      let queued: Promise<unknown>[] = [];
+      const queueDuringWrite = (queue: () => Promise<unknown>) =>
+        vi.spyOn(chat.repo, "applyDelta").mockImplementationOnce(async (configId, delta, opts) => {
+          // The overlay read the queued ops: an action queued now comes before the write
+          queued.push(queue());
+          await new Promise((r) => setTimeout(r, 20));
+          return apply(configId, delta, opts);
+        });
+      queueDuringWrite(() => chat.queue.queuePin(config, GROUP, { messageId: 599, clientUuid: null }, false));
+      await chat.pinnedMessages(src, GROUP);
+      await Promise.all(queued);
+      expect((await chat.repo.message(config, 599))?.pinnedAt).toBeNull();
+      queued = [];
+      queueDuringWrite(() => chat.queue.queueStar(config, 70, true, CHAT));
+      await chat.loadOlder(src, CHAT);
+      await Promise.all(queued);
+      expect(odoo.on("/discuss/channel/messages").length).toBeGreaterThan(0);
+      expect((await chat.repo.message(config, 70))?.starred).toBe(true);
+    });
   });
 
   describe("starred messages", () => {
@@ -3271,6 +3297,19 @@ describe("ChatService", () => {
       }
     };
     const kwArgs = (method: string) => odoo.kw(method).map((c) => c.params.args);
+    /** The server reads the messages still unread among `ids`: its inbox count and their channels' mentions go down. */
+    const markRead = (ids: number[]) => {
+      const done = ids.filter((id) => unread.delete(id));
+      const box = odoo.state.data.Store.inbox;
+      box.counter = Math.max(0, box.counter - done.length);
+      for (const id of done) {
+        const thread = records.get(id)?.thread;
+        const channel = thread?.model === "discuss.channel"
+          ? odoo.state.data["discuss.channel"].find((c: any) => c.id === thread.id) : undefined;
+        if (channel) channel.message_needaction_counter = Math.max(0, channel.message_needaction_counter - 1);
+      }
+      return done;
+    };
 
     beforeEach(async () => {
       odoo = fakeOdoo();
@@ -3288,14 +3327,12 @@ describe("ChatService", () => {
       };
       odoo.state.onKw = async (p) => {
         if (p.method === "set_message_done") {
-          for (const id of p.args[0]) unread.delete(id);
+          markRead(p.args[0]);
           return null;
         }
         if (p.method === "mark_all_as_read") {
           const max = p.args[0].find((d: any[]) => d[0] === "id")[2];
-          const done = [...unread].filter((id) => id <= max);
-          for (const id of done) unread.delete(id);
-          return done;
+          return markRead([...unread].filter((id) => id <= max));
         }
         return undefined;
       };
@@ -3327,6 +3364,26 @@ describe("ChatService", () => {
       expect(await counter()).toBe(3);
       expect(await mentions()).toBe(1);
       expect(odoo.on("/mail/thread/messages")).toEqual([]);
+    });
+
+    it("a done of an item read in the browser meanwhile ends on the server's count", async () => {
+      await chat.inbox.refresh(src, "inbox");
+      expect(await counter()).toBe(4);
+      offline();
+      await chat.markDone(src, [98]);
+      expect(await counter()).toBe(3);
+      // Read in the browser while the phone was offline: its bus never reached the phone
+      markRead([98]);
+      online();
+      await chat.load(src);
+      // The waiting done still takes it off a count that no longer holds it
+      expect(await counter()).toBe(2);
+      await chat.queue.flush(src.creds);
+      expect(kwArgs("set_message_done")).toEqual([[[98]]]);
+      // Odoo's set_message_done of a read item sends nothing on the bus: the counts are read again after the send
+      expect(await counter()).toBe(3);
+      expect(await mentions()).toBe(2);
+      expect(await shown("history")).toEqual([98]);
     });
 
     it("a read in the browser moves the item to history", async () => {

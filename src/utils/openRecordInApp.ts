@@ -10,14 +10,16 @@ export interface RecordInApp {
 	password: string;
 	model: string;
 	resId: number;
+	/** A page of the server to open instead of the record's form ("/mail/message/42"), from its root. */
+	path?: string;
 }
 
 /**
- * Opens a record's form in the web view (in-app browser on mobile, a
- * window on desktop), with a script that fills and submits the login form
- * when the page asks for it. An http url the user did not allow is
- * refused with a dialog, as sync requests are: the script types the
- * password into the page.
+ * Opens a record's form, or the server's page at `path`, in the web view
+ * (in-app browser on mobile, a window on desktop), with a script that
+ * fills and submits the login form when the page asks for it. An http url
+ * the user did not allow is refused with a dialog before anything opens,
+ * as sync requests are: the script types the password into the page.
  */
 export async function openRecordInApp(app: RecordInApp): Promise<void> {
 	const baseUrl = /^https?:\/\//i.test(app.appUrl) ? app.appUrl : "https://" + app.appUrl;
@@ -28,7 +30,9 @@ export async function openRecordInApp(app: RecordInApp): Promise<void> {
 		await Dialog.alert({ message: e instanceof Error ? e.message : String(e) });
 		return;
 	}
-	const taskUrl = `${baseUrl}/web#id=${app.resId}&model=${encodeURIComponent(app.model)}&view_type=form`;
+	const taskUrl = app.path !== undefined
+		? baseUrl.replace(/\/+$/, "") + app.path
+		: `${baseUrl}/web#id=${app.resId}&model=${encodeURIComponent(app.model)}&view_type=form`;
 
 	const username = app.username.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 	const password = app.password.replace(/\\/g, "\\\\").replace(/"/g, '\\"');

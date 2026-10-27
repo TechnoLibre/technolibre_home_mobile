@@ -617,7 +617,7 @@ describe("ChatListComponent search", () => {
         expect(c.navigate.mock.calls).toEqual([["/chat/a/5?m=60"], ["/chat/a/5?u=u-1"]]);
     });
 
-    it("a person opens the direct conversation, a conversation its thread, a channel mention its message", async () => {
+    it("a person opens the direct conversation, a conversation its thread", async () => {
         const chat = searching();
         chat.startDirect = vi.fn().mockResolvedValue({ configId: "a", channelId: 12 });
         const c = make(chat);
@@ -626,10 +626,30 @@ describe("ChatListComponent search", () => {
         await c.onSearchPerson("a", 7);
         expect(chat.startDirect).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 7, { background: true });
         c.onSearchConversation("a", 5);
+        expect(c.navigate.mock.calls).toEqual([["/chat/a/12"], ["/chat/a/5"]]);
+    });
+
+    it("a mailbox search hit on a record opens like the inbox item", async () => {
+        const chat = searching();
+        // ChatInbox.openItem's rule: a mention at its message, a record's message its note
+        chat.inbox = {
+            openItem: vi.fn(async (_src: any, i: any, navigate: (url: string) => void) =>
+                navigate(i.threadModel === "discuss.channel" ? "/chat/a/5?m=" + i.messageId : "/note/n-task")),
+        };
+        const c = make(chat);
+        await c.loadCache();
+        c.navigate = vi.fn();
         const item = { configId: "a", messageId: 90, threadModel: "discuss.channel", threadId: 5 };
-        c.onSearchMailbox(item);
-        c.onSearchMailbox({ ...item, threadModel: "project.task" });
-        expect(c.navigate.mock.calls).toEqual([["/chat/a/12"], ["/chat/a/5"], ["/chat/a/5?m=90"]]);
+        await c.onSearchMailbox(item);
+        await c.onSearchMailbox({ ...item, messageId: 91, threadModel: "project.task" });
+        expect(chat.inbox.openItem.mock.calls.map((a: any[]) => [a[0].configId, a[1].messageId])).toEqual([["a", 90], ["a", 91]]);
+        expect(c.navigate.mock.calls).toEqual([["/chat/a/5?m=90"], ["/note/n-task"]]);
+        // An account the phone no longer has opens nothing; a failure shows the action error
+        await c.onSearchMailbox({ ...item, configId: "gone" });
+        expect(chat.inbox.openItem).toHaveBeenCalledTimes(2);
+        chat.inbox.openItem.mockRejectedValueOnce(new Error("no table"));
+        await c.onSearchMailbox(item);
+        expect(c.state.error).toBe("Could not do it. Try again.");
     });
 
     it("a filter change while the search runs drops the old filter's answer", async () => {

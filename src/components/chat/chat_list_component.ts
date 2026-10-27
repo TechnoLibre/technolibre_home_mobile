@@ -770,14 +770,22 @@ export class ChatListComponent extends EnhancedComponent {
         this.openThread(configId, channelId);
     }
 
-    /** A channel's item opens its conversation at the message; a record's goes to onMailbox. */
-    onSearchMailbox(item: ChatMailboxItem): void {
-        if (item.threadModel === "discuss.channel") this.openThread(item.configId, item.threadId, "?m=" + item.messageId);
-        else this.onMailbox(item);
+    /**
+     * An inbox, history or starred item found opens as on the inbox screen
+     * (ChatInbox.openItem: a mention at its message, a record's message its
+     * note or the web view); a failure shows a notice.
+     */
+    async onSearchMailbox(item: ChatMailboxItem): Promise<void> {
+        this.state.error = "";
+        try {
+            const src = (await this.chatService.sources({ online: false })).find((s) => s.configId === item.configId);
+            if (!src) return;
+            await this.chatService.inbox.openItem(src, item, (url) => this.navigate(url));
+        } catch (e) {
+            console.warn("chat list: mailbox item not opened", e);
+            this.state.error = t("chat.action_error");
+        }
     }
-
-    /** Opens a record's mailbox item; nothing opens one yet. */
-    onMailbox(_item: ChatMailboxItem): void {}
 
     /** The person's direct conversation (startDirect), then its thread; a failure to queue shows a notice. */
     async onSearchPerson(configId: string, partnerId: number): Promise<void> {

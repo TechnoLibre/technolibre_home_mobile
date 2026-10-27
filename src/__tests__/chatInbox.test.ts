@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
-import { DatabaseService } from "../services/databaseService";
+import { DatabaseService, type NoteLink } from "../services/databaseService";
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
-import { ChatInbox, INBOX_PAGE } from "../services/chat/chatInbox";
+
+const opened = vi.hoisted(() => ({ openRecordInApp: vi.fn(async (_app: any) => {}) }));
+vi.mock("../utils/openRecordInApp", () => opened);
+
+import { ChatInbox, INBOX_PAGE, noteForRecord } from "../services/chat/chatInbox";
 import { RequestNotSentError } from "../services/odoo/odooRpcClient";
 import { mailboxKindOf } from "../models/chat";
 import type { StoreDelta } from "../services/chat/chatStore";
@@ -23,6 +27,44 @@ const message = (id: number, thread: { id: number; model: string }, p: Record<st
   author: { id: 4, type: "partner" }, thread, needaction: true, ...p,
 });
 
+const link = (p: Partial<NoteLink>): NoteLink => ({
+  id: "l-" + Math.random(), noteId: "note-1", configId: A, model: "project.task", resId: 5, kind: "create",
+  remoteState: "ok", createdAt: "2026-10-20T10:00:00.000Z", lastSyncedAt: null, ...p,
+});
+
+describe("noteForRecord", () => {
+  it("a create link names the record by its own model and id", () => {
+    const l = link({ noteId: "n-create" });
+    expect(noteForRecord([l], A, "project.task", 5)).toBe(l);
+    expect(noteForRecord([l], A, "project.task", 6)).toBeNull();
+  });
+
+  it("a message link names it by its params", () => {
+    const l = link({ noteId: "n-msg", kind: "message", model: "mail.message", resId: 900, params: { resModel: "project.task", resId: 5 } });
+    expect(noteForRecord([l], A, "project.task", 5)).toBe(l);
+    expect(noteForRecord([l], A, "mail.message", 900)).toBeNull();
+  });
+
+  it("an activity link names it by its params", () => {
+    const l = link({ noteId: "n-act", kind: "activity", model: "mail.activity", resId: 31, params: { resModel: "res.partner", resId: 70 } });
+    expect(noteForRecord([l], A, "res.partner", 70)).toBe(l);
+  });
+
+  it("a dismissed link and another account's are ignored", () => {
+    expect(noteForRecord([link({ remoteState: "dismissed" })], A, "project.task", 5)).toBeNull();
+    expect(noteForRecord([link({ remoteState: "deleted" })], A, "project.task", 5)).toBeNull();
+    expect(noteForRecord([link({ configId: B })], A, "project.task", 5)).toBeNull();
+  });
+
+  it("a create link wins over a newer message link, else the newest", () => {
+    const created = link({ noteId: "n-create", createdAt: "2026-10-20T10:00:00.000Z" });
+    const older = link({ noteId: "n-old", kind: "message", model: "mail.message", resId: 900, createdAt: "2026-10-21T10:00:00.000Z", params: { resModel: "project.task", resId: 5 } });
+    const newer = link({ noteId: "n-new", kind: "message", model: "mail.message", resId: 901, createdAt: "2026-10-22T10:00:00.000Z", params: { resModel: "project.task", resId: 5 } });
+    expect(noteForRecord([older, newer, created], A, "project.task", 5)).toBe(created);
+    expect(noteForRecord([older, newer], A, "project.task", 5)).toBe(newer);
+  });
+});
+
 describe("ChatInbox", () => {
   let db: DatabaseService;
   let repo: ChatRepository;
@@ -31,7 +73,8 @@ describe("ChatInbox", () => {
   let answer: (path: string, params: any) => any;
   let routes: { path: string; params: any }[];
 
-  const src = (configId = A) => ({ configId, label: "odoo", app: {} as any, creds: { odooUrl: "https://odoo.example.com" } as any });
+  const app = { url: "https://odoo.example.com", username: "alice", password: "pw-demo", database: "db1" } as any;
+  const src = (configId = A) => ({ configId, label: "odoo", app, creds: { odooUrl: "https://odoo.example.com" } as any });
 
   beforeEach(async () => {
     SecureStoragePlugin._store.clear();
@@ -121,5 +164,69 @@ describe("ChatInbox", () => {
     await repo.applyDelta(A, delta({ mailbox: [{ messageId: 10, threadModel: "res.partner", threadId: 1, date: "2026-10-26 08:00:00", needaction: true }] }));
     await repo.applyDelta(B, delta({ mailbox: [{ messageId: 3, threadModel: "res.partner", threadId: 1, date: "2026-10-26 09:00:00", needaction: true }] }));
     expect((await inbox.items([A, B], "inbox")).map((i) => [i.configId, i.messageId])).toEqual([[B, 3], [A, 10]]);
+  });
+
+  describe("openItem", () => {
+    let navigate: ReturnType<typeof vi.fn>;
+    const row = (messageId: number, p: Record<string, any>) => ({
+      messageId, threadModel: "project.task", threadId: 5, recordName: "Tâche démo", needaction: true, ...p,
+    });
+    const item = async (messageId: number) => (await repo.mailboxItem(A, messageId))!;
+
+    beforeEach(async () => {
+      navigate = vi.fn();
+      opened.openRecordInApp.mockClear();
+      await repo.applyDelta(A, delta({ mailbox: [
+        row(605, { threadModel: "discuss.channel", threadId: CACHED, recordName: "#général-test" }),
+        row(604, { threadModel: "discuss.channel", threadId: OTHER, recordName: "#autre-test" }),
+        row(603, { messageType: "user_notification" }),
+        row(602, { threadModel: "res.partner", threadId: 70, recordName: "Fiche démo" }),
+      ] }));
+    });
+
+    it("a mention opens the conversation at the message", async () => {
+      await inbox.openItem(src(), await item(605), navigate);
+      expect(navigate).toHaveBeenCalledWith("/chat/" + encodeURIComponent(A) + "/" + CACHED + "?m=605");
+      expect(opened.openRecordInApp).not.toHaveBeenCalled();
+    });
+
+    it("a mention of a conversation the phone no longer holds opens the message in the web view", async () => {
+      await inbox.openItem(src(), await item(604), navigate);
+      expect(navigate).not.toHaveBeenCalled();
+      expect(opened.openRecordInApp).toHaveBeenCalledWith({
+        label: "#autre-test", appUrl: "https://odoo.example.com", username: "alice", password: "pw-demo",
+        model: "discuss.channel", resId: OTHER, path: "/mail/message/604",
+      });
+    });
+
+    it("a record item with a note opens the note", async () => {
+      const asked: string[] = [];
+      inbox.noteLinks = async (configId) => {
+        asked.push(configId);
+        return [link({ noteId: "n-task" }), link({ noteId: "n-partner", kind: "message", model: "mail.message", resId: 900, params: { resModel: "res.partner", resId: 70 } })];
+      };
+      // An assignment opens by the same rule as a followed record's message
+      await inbox.openItem(src(), await item(603), navigate);
+      await inbox.openItem(src(), await item(602), navigate);
+      expect(navigate.mock.calls).toEqual([["/note/n-task"], ["/note/n-partner"]]);
+      expect(asked).toEqual([A, A]);
+      expect(opened.openRecordInApp).not.toHaveBeenCalled();
+    });
+
+    it("a record item without a note opens /mail/message/<id>", async () => {
+      inbox.noteLinks = async () => [link({ noteId: "n-other", resId: 6 })];
+      await inbox.openItem(src(), await item(602), navigate);
+      expect(navigate).not.toHaveBeenCalled();
+      expect(opened.openRecordInApp).toHaveBeenCalledWith({
+        label: "Fiche démo", appUrl: "https://odoo.example.com", username: "alice", password: "pw-demo",
+        model: "res.partner", resId: 70, path: "/mail/message/602",
+      });
+    });
+
+    it("opening marks nothing read", async () => {
+      for (const id of [605, 604, 603, 602]) await inbox.openItem(src(), await item(id), navigate);
+      expect(routes).toEqual([]);
+      expect((await inbox.items([A], "inbox")).map((i) => i.messageId)).toEqual([605, 604, 603, 602]);
+    });
   });
 });

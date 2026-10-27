@@ -476,6 +476,12 @@ export class ChatOutbox {
    * re-read before Odoo's toggle; ChatService points it at its features.
    */
   starIdempotent: (configId: string) => Promise<boolean> = async () => false;
+  /**
+   * Called once the server took an inbox op, to read its counters again
+   * (ChatService loads the account): a done of an item already read
+   * elsewhere changes nothing on the server and sends no bus event.
+   */
+  inboxSent: (configId: string) => Promise<void> = async () => {};
   /** The app's chat files: the outgoing ones this outbox owns. ChatService sets it with the transfer. */
   files: ChatFiles = deviceChatFiles;
   /** Uploads the files; ChatService sets it. Without one an upload fails and waits for its retry. */
@@ -1383,12 +1389,13 @@ export class ChatOutbox {
 
   /**
    * The inbox ops of the account not given up (CHAT_INBOX_DONE,
-   * CHAT_INBOX_ALL), and whether one of them covers a message id: listed
-   * by a done, or at or below the bound of a mark all.
+   * CHAT_INBOX_ALL), the op `except` names left out, and whether one of
+   * them covers a message id: listed by a done, or at or below the bound
+   * of a mark all.
    */
-  async inboxWaiting(configId: string): Promise<{ ops: OutboxOp[]; covers: (messageId: number) => boolean }> {
+  async inboxWaiting(configId: string, except?: string): Promise<{ ops: OutboxOp[]; covers: (messageId: number) => boolean }> {
     const ops = (await this.db.getOutboxOpsForConfig(configId))
-      .filter((o) => INBOX_KINDS.includes(o.kind) && o.status !== "blocked");
+      .filter((o) => INBOX_KINDS.includes(o.kind) && o.status !== "blocked" && o.id !== except);
     const ids = new Set<number>(ops.filter((o) => o.kind === CHAT_INBOX_DONE).flatMap((o) => o.params.messageIds ?? []));
     const maxId = Math.max(0, ...ops.filter((o) => o.kind === CHAT_INBOX_ALL).map((o) => o.params.maxId ?? 0));
     return { ops, covers: (id) => ids.has(id) || id <= maxId };
@@ -3455,13 +3462,17 @@ export class ChatOutbox {
   /**
    * Sends an inbox op as stored: set_message_done of its ids, or
    * mark_all_as_read of the needaction messages at or below its bound.
-   * Both are idempotent and answer no Store: the server's bus
-   * (mail.message/mark_as_read) brings the count back. The send stamps
-   * sentAt first, given back when the request provably never left; from
-   * then the overlay of a server count no longer takes its cleared ids
-   * off. A refusal gives the op up as "refused", a message gone
-   * (MissingError) as "vanished"; the rows stay where the phone moved them
-   * until a page of the inbox lists them again.
+   * Both are idempotent and answer no Store. The send stamps sentAt first,
+   * given back when the request provably never left; from then the
+   * overlay of a server count no longer takes its cleared ids off. Once
+   * the server took it, the ids it covers leave the cleared of every
+   * waiting inbox op, its own included (forgetCleared), and the counters
+   * are read again (inboxSent): the bus (mail.message/mark_as_read) speaks
+   * only for the items the call changed, so an item read elsewhere
+   * meanwhile, taken off a server count that no longer held it, would
+   * leave the count one low. A failure of that read leaves the counts to
+   * the next load or bus event. A refusal gives the op up as "refused", a
+   * message gone (MissingError) as "vanished" (giveUpInbox).
    */
   private async runInbox(creds: SyncCredentials, act: OutboxOp): Promise<void> {
     const sentAt: string | null = act.params.sentAt ?? null;
@@ -3477,11 +3488,56 @@ export class ChatOutbox {
         await this.outbox.setParams(act.id, { sentAt });
         throw e;
       }
-      if (isVanished(e)) return this.giveUp(act, "vanished", (e as Error).message);
+      if (isVanished(e)) return this.giveUpInbox(act, "vanished", (e as Error).message);
       if (!isRefused(e)) throw e;
-      return this.giveUp(act, "refused", (e as Error).message);
+      return this.giveUpInbox(act, "refused", (e as Error).message);
+    }
+    // The server holds what the op covers read: no waiting op's cleared counts it any more, this one's included
+    const ids = new Set<number>(act.params.messageIds ?? []);
+    const maxId: number = act.kind === CHAT_INBOX_ALL ? act.params.maxId ?? 0 : 0;
+    await this.exclusive(act.configId, () => this.forgetCleared(act.configId, (id) => ids.has(id) || id <= maxId));
+    try {
+      await this.inboxSent(act.configId);
+    } catch (e: unknown) {
+      console.warn("chat: counters not read again after an inbox op", e);
     }
     this.changed(act.configId, null);
+  }
+
+  /**
+   * Gives an inbox op up (giveUp), its cleared rows put back as the server
+   * still holds them: in the inbox again (needaction on, history off),
+   * inboxCounter one higher per row and a cached channel's
+   * needactionCounter one higher per mention of it, as showDone lowered
+   * them. A row another waiting inbox op covers stays where it is, that op
+   * counting it. In one exclusive() task, as the other counter writers.
+   */
+  private async giveUpInbox(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
+    const { configId } = op;
+    await this.exclusive(configId, async () => {
+      const cleared: number[] = (await this.db.getOutboxOp(op.id))?.params.cleared ?? [];
+      const { covers } = await this.inboxWaiting(configId, op.id);
+      const back: ChatMailboxItem[] = [];
+      for (const id of cleared) {
+        if (covers(id)) continue;
+        const item = await this.repo.mailboxItem(configId, id);
+        if (item) back.push(item);
+      }
+      if (back.length === 0) return;
+      const perChannel = new Map<number, number>();
+      for (const item of back) {
+        await this.repo.patchMailbox(configId, item.messageId, { needaction: true, history: false });
+        if (item.threadModel === CHANNEL_MODEL) perChannel.set(item.threadId, (perChannel.get(item.threadId) ?? 0) + 1);
+      }
+      for (const [channelId, n] of perChannel) {
+        const channel = await this.repo.channel(configId, channelId);
+        if (channel) await this.repo.patchChannel(configId, channelId, { needactionCounter: channel.needactionCounter + n });
+      }
+      const { inboxCounter } = await this.repo.sourceState(configId);
+      await this.repo.setSourceState({ configId, inboxCounter: inboxCounter + back.length });
+      await this.outbox.setParams(op.id, { cleared: [] });
+    });
+    return this.giveUp(op, reason, message);
   }
 
   /**

@@ -1447,6 +1447,42 @@ describe("ChatOutbox", () => {
       expect(await inboxOps()).toEqual([]);
     });
 
+    it("a refused or vanished inbox op puts its rows back in the inbox and the counts", async () => {
+      chatOdoo();
+      const callKw = rpc.callKw.bind(rpc);
+      let failing: { method: string; error: string } | null = { method: "set_message_done", error: "odoo.exceptions.AccessError" };
+      vi.spyOn(rpc, "callKw").mockImplementation(async (creds, model, method, ...rest) => {
+        if (failing && method === failing.method) throw new OdooRpcError("no", failing.error);
+        return callKw(creds, model, method, ...rest);
+      });
+      const inbox = async () => (await repo.mailboxItems(CONFIG, "inbox")).map((i) => i.messageId).sort();
+      chat.isOnline = async () => false;
+      await chat.queueInboxDone(CONFIG, [43, 41]);
+      expect(await counter()).toBe(1);
+      expect(await mentions()).toBe(0);
+      chat.isOnline = async () => true;
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ blocked: 1 });
+      // As the server still holds them: in the inbox, counted, the conversation's mention back
+      expect(await inbox()).toEqual([41, 42, 43]);
+      expect(await repo.mailboxItem(CONFIG, 43)).toMatchObject({ needaction: true, history: false });
+      expect(await counter()).toBe(3);
+      expect(await mentions()).toBe(1);
+      expect(await chat.notices([CONFIG])).toEqual([expect.objectContaining({ kind: CHAT_INBOX_DONE, reason: "refused" })]);
+      for (const n of await chat.notices([CONFIG])) await chat.dismissNotice(CONFIG, n.id);
+      // A mark all gone: its rows come back, but one a waiting done covers stays done, counted by that done
+      failing = { method: "mark_all_as_read", error: "odoo.exceptions.MissingError" };
+      chat.isOnline = async () => false;
+      await chat.queueInboxAll(CONFIG, 42);
+      await chat.queueInboxDone(CONFIG, [41]);
+      expect(await inbox()).toEqual([43]);
+      expect(await counter()).toBe(1);
+      chat.isOnline = async () => true;
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ blocked: 1 });
+      expect(await inbox()).toEqual([42, 43]);
+      expect(await counter()).toBe(2);
+      expect(await chat.notices([CONFIG])).toEqual([expect.objectContaining({ kind: CHAT_INBOX_ALL, reason: "vanished" })]);
+    });
+
     it("a load laid over by a waiting done keeps the item done and the counters lowered", async () => {
       chat.isOnline = async () => false;
       await chat.queueInboxDone(CONFIG, [43]);
