@@ -1180,6 +1180,36 @@ describe("ChatOutbox", () => {
       expect(await chat.notices([CONFIG])).toEqual([expect.objectContaining({ kind: CHAT_PIN, reason: "refused" })]);
     });
 
+    it("a load landing while a refused unpin is given up does not lay its target back", async () => {
+      const odoo = chatOdoo();
+      const BASE_AT = "2026-10-24 08:00:00";
+      const at = (pinnedAt: string | null): any => ({
+        channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], attachments: [], deletedAttachmentIds: [],
+        partners: [], inboxCounter: null, selfPartnerId: null, messages: [{ messageId: 40, pinnedAt }],
+      });
+      await repo.applyDelta(CONFIG, at(BASE_AT));
+      odoo.state.pinError = "odoo.exceptions.AccessError";
+      await chat.queuePin(CONFIG, CHANNEL, SENT, false);
+      let load: Promise<void> | null = null;
+      const applyDelta = repo.applyDelta.bind(repo);
+      const spy = vi.spyOn(repo, "applyDelta").mockImplementation(async (...args: Parameters<typeof repo.applyDelta>) => {
+        await applyDelta(...args);
+        // The give-up's write of the base, then a load's overlay and write before the op is marked blocked
+        if (args[1].messages.some((m) => m.messageId === 40 && m.pinnedAt === BASE_AT)) {
+          load ??= chat.exclusive(CONFIG, async () => {
+            const d = at(BASE_AT);
+            await chat.overlayMessages(CONFIG, d);
+            await applyDelta(CONFIG, d);
+          });
+        }
+      });
+      expect(await chat.flush(CREDS)).toMatchObject({ blocked: 1 });
+      await load;
+      spy.mockRestore();
+      expect(load).not.toBeNull();
+      expect(await pinnedAt()).toBe(BASE_AT);
+    });
+
     it("a server pinned_at read while a pin waits does not undo it, and becomes its base", async () => {
       chatOdoo();
       const SERVER_AT = "2026-10-24 08:00:00";
@@ -1349,6 +1379,28 @@ describe("ChatOutbox", () => {
       expect(await flagged()).toBe(false);
       expect(await counter()).toBe(2);
       expect(await chat.notices([CONFIG])).toEqual([expect.objectContaining({ kind: CHAT_STAR, reason: "vanished" })]);
+    });
+
+    it("a load landing while a refused star is given up does not lay its target back", async () => {
+      const odoo = chatOdoo();
+      odoo.state.starError = "odoo.exceptions.AccessError";
+      await chat.queueStar(CONFIG, 40, true, CHANNEL);
+      // A load's overlay and write starts right after the base is shown again, before the op is marked blocked
+      let load: Promise<void> | null = null;
+      const setStarred = repo.setStarred.bind(repo);
+      vi.spyOn(repo, "setStarred").mockImplementation(async (...args: Parameters<typeof repo.setStarred>) => {
+        await setStarred(...args);
+        load ??= chat.exclusive(CONFIG, async () => {
+          const d = delta({ messages: [{ messageId: 40, starred: false }], starredCounter: 2 });
+          await chat.overlayMessages(CONFIG, d);
+          await repo.applyDelta(CONFIG, d);
+          await repo.setSourceState({ configId: CONFIG, starredCounter: d.starredCounter });
+        });
+      });
+      expect(await chat.flush(CREDS)).toMatchObject({ blocked: 1 });
+      await load;
+      expect(await flagged()).toBe(false);
+      expect(await counter()).toBe(2);
     });
 
     it("a delete over a waiting star shows its base again, as Odoo's delete unstars", async () => {

@@ -128,6 +128,8 @@ export const APP_MIGRATIONS: Migration[] = [
 	{
 		version: 2026041201,
 		description: "Création de la table des tags et migration des tags existants",
+		// A second run after a stop between the tag rows and the notes' rewrite would make each tag twice
+		versionFirst: true,
 		run: addTagsTable,
 	},
 	{
@@ -148,6 +150,8 @@ export const APP_MIGRATIONS: Migration[] = [
 	{
 		version: 2026102201,
 		description: "Table note_links : un record distant par note et par serveur",
+		// A second run after a stop past the backfill would no longer see the global « pending » to convert
+		versionFirst: true,
 		run: addNoteLinksTable,
 	},
 	{

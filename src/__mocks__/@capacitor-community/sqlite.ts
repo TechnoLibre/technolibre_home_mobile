@@ -4,7 +4,8 @@
  * Simulates a SQLite database in memory using Maps.
  * Handles basic CREATE TABLE, INSERT, SELECT, UPDATE, DELETE. A SELECT
  * takes `col = ?`, `col != ?`, `col > ?`, `col < ?`,
- * `col LIKE ? ESCAPE '\'` and `col IS NULL` conditions joined by AND, then
+ * `col LIKE ? ESCAPE '\'`, `col IS NULL` and `(a = 1 OR b = 1 …)` (integer
+ * literals) conditions joined by AND, then
  * an optional `ORDER BY col [ASC|DESC][, col [ASC|DESC]]…` (`rowid` is the row's
  * place in the table) and `LIMIT n` or `LIMIT ?`. Anything else (a
  * virtual table, a trigger, sqlite_master) is accepted and does nothing.
@@ -230,10 +231,15 @@ class MockDBConnection {
             .map((c) => {
               const isNull = c.trim().match(/^(\w+)\s+IS\s+NULL$/i);
               if (isNull) return { col: isNull[1], op: "IS NULL", escape: "", at: -1 };
+              const anyOf = c.trim().match(/^\((\w+\s*=\s*\d+(?:\s+OR\s+\w+\s*=\s*\d+)*)\)$/i);
+              if (anyOf) {
+                const pairs = anyOf[1].split(/\s+OR\s+/i).map((x) => x.split("=").map((y) => y.trim()));
+                return { col: "", op: "ANY", escape: "", at: -1, pairs: pairs.map(([k, v]) => [k, Number(v)] as [string, number]) };
+              }
               const m = c.trim().match(/^(\w+)\s*(!=|>|<|=|LIKE)\s*\?(?:\s+ESCAPE\s+'(.)')?$/i);
               return m ? { col: m[1], op: m[2].toUpperCase(), escape: m[3] ?? "", at: 0 } : { col: "", op: "=", escape: "", at: 0 };
             })
-        : [];
+        : [] as { col: string; op: string; escape: string; at: number; pairs?: [string, number][] }[];
       // Each `?` condition takes the next value; `IS NULL` takes none
       let bound = 0;
       for (const c of conds) if (c.at >= 0) c.at = bound++;
@@ -241,7 +247,9 @@ class MockDBConnection {
         const test = (v: any, c: { op: string; escape: string }, x: any): boolean =>
           c.op === "IS NULL" ? v === null || v === undefined
             : c.op === "=" ? v === x : c.op === "!=" ? v !== x : c.op === ">" ? v > x : c.op === "<" ? v < x : sqliteLike(v, x, c.escape);
-        rows = rows.filter((row) => conds.every((c) => test(row[c.col], c, c.at >= 0 ? values?.[c.at] : undefined)));
+        rows = rows.filter((row) => conds.every((c) => c.op === "ANY"
+          ? c.pairs!.some(([k, v]) => row[k] === v)
+          : test(row[c.col], c, c.at >= 0 ? values?.[c.at] : undefined)));
       }
       if (orderMatch) {
         const keys = orderMatch[1].split(",").map((k) => {

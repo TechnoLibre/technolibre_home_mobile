@@ -92,9 +92,10 @@ class ErasedError extends Error {}
  *   original waits (voice included) until resumeWaiting() finds Wi-Fi, or
  *   until open(…, {anyNetwork: true}) takes that one file now. A second
  *   open of a file being downloaded joins the download.
- * - space(), warning(), clear(), purge() count every chat byte of the phone
- *   (the files waiting to be sent too) and free only the files of posted
- *   rows: a file an outbox op reads is never touched.
+ * - space(), warning() and clear() count every chat byte of the phone
+ *   (the files waiting to be sent and the avatars too), purge() the files
+ *   alone; they free only the files of posted rows: a file an outbox op
+ *   reads is never touched.
  * - sweep() drops the files of the phone nothing needs any more,
  *   sweepStaged() the staged directories no row names; erase() removes an
  *   account's directory and stops its transfers.
@@ -445,9 +446,10 @@ export class ChatAttachmentCache {
   }
 
   /**
-   * With cachePurge on and the chat's files over cacheLimitMb: removes
-   * cached originals, least recently opened first, then previews in the
-   * same order, until they are back at the limit. Stamps LAST_PURGE_KEY.
+   * With cachePurge on and the chat's files (avatars aside: never freed
+   * here, they are not weighed) over cacheLimitMb: removes cached
+   * originals, least recently opened first, then previews in the same
+   * order, until they are back at the limit. Stamps LAST_PURGE_KEY.
    * Returns the bytes freed (0 with the purge off). A call made while a
    * purge runs joins it and gets its result.
    */
@@ -464,7 +466,8 @@ export class ChatAttachmentCache {
     const settings = chatSettings();
     if (!settings.cachePurge) return { freed: 0 };
     const limit = settings.cacheLimitMb * MB;
-    let total = await this.space();
+    // The files it may free: the avatars, which it never frees, would only make it free every file
+    let total = await this.repo.attachmentBytes();
     let freed = 0;
     const rows = await this.repo.cachedRows();
     for (const what of ["original", "preview"] as const) {

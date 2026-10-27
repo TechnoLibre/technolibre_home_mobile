@@ -863,9 +863,10 @@ export class ChatOutbox {
     const all = await this.db.getOutboxOpsForConfig(configId);
     const onRecord = (o: OutboxOp) => o.kind === CHAT_RECORD_POST && o.params.thread?.model === thread.model
       && o.params.thread?.resId === thread.resId;
-    // The tail of the record's chain: its unfinished reply no other reply or upload waits for
+    // The tail of the record's chain: its unfinished reply no other reply or upload waits for; a refused
+    // one (blocked, a notice) holds nothing back
     const previous = all
-      .filter(onRecord)
+      .filter((c) => onRecord(c) && c.status !== "blocked")
       .filter((c) => !all.some((o) => o.dependsOn === c.id && (o.kind === CHAT_RECORD_POST || o.kind === CHAT_UPLOAD)))
       .at(-1);
     const uploads: OutboxOp[] = [];
@@ -3851,11 +3852,12 @@ export class ChatOutbox {
    * inboxCounter one higher per row and a cached channel's
    * needactionCounter one higher per mention of it, as showDone lowered
    * them. A row another waiting inbox op covers stays where it is, that op
-   * counting it. In one exclusive() task, as the other counter writers.
+   * counting it. The restore and the blocked mark in one exclusive() task
+   * (giveUpRestoring), as the other counter writers.
    */
   private async giveUpInbox(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
     const { configId } = op;
-    await this.exclusive(configId, async () => {
+    return this.giveUpRestoring(op, reason, message, async () => {
       const cleared: number[] = (await this.db.getOutboxOp(op.id))?.params.cleared ?? [];
       const { covers } = await this.inboxWaiting(configId, op.id);
       const back: ChatMailboxItem[] = [];
@@ -3878,7 +3880,6 @@ export class ChatOutbox {
       await this.repo.setSourceState({ configId, inboxCounter: inboxCounter + back.length });
       await this.outbox.setParams(op.id, { cleared: [] });
     });
-    return this.giveUp(op, reason, message);
   }
 
   /**
@@ -3901,22 +3902,21 @@ export class ChatOutbox {
   }
 
   /**
-   * Gives a star up (giveUp): with no later op of its message queued, the
-   * message shows again as the server held it (base), the counter
-   * following (showStar).
+   * Gives a star up (giveUpRestoring): with no later op of its message
+   * queued, the message shows again as the server held it (base), the
+   * counter following (showStar).
    */
   private async giveUpStar(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
-    const key = targetKey(op);
-    const later = (await this.db.getOutboxOpsForConfig(op.configId))
-      .some((o) => o.id !== op.id && o.status !== "blocked" && targetKey(o) === key);
-    if (!later) await this.showStar(op.configId, op.params.messageId, !!op.params.base);
-    return this.giveUp(op, reason, message);
+    return this.giveUpRestoring(op, reason, message, async () => {
+      if (!(await this.laterOfKey(op))) await this.showStar(op.configId, op.params.messageId, !!op.params.base);
+    });
   }
 
   /**
    * Gives an action on a message up (giveUp). A reaction or a pin no later
    * op of its key follows is shown again as the server held it (base, a
-   * pin at baseAt). An edit
+   * pin at baseAt), through giveUpRestoring: the loads lay the queued
+   * reactions and pins over what they write. An edit
    * or a delete with no other edit or delete of the message queued shows
    * the message as the server has it: hidden ("") when it vanished, as a
    * re-read that finds no message leaves it; the body it was made against
@@ -3930,16 +3930,45 @@ export class ChatOutbox {
         && (o.kind === CHAT_EDIT || o.kind === CHAT_DELETE) && o.status !== "blocked" && sameTarget(targetOf(o), target));
       if (!later) await this.showBody(op.configId, target, shown);
     }
-    if (op.kind === CHAT_REACTION || op.kind === CHAT_PIN) {
-      const key = targetKey(op);
-      const later = (await this.db.getOutboxOpsForConfig(op.configId))
-        .some((o) => o.id !== op.id && o.status !== "blocked" && targetKey(o) === key);
-      if (!later && op.kind === CHAT_REACTION) await this.showReaction(op.configId, target, op.params.content, !!op.params.base);
-      if (!later && op.kind === CHAT_PIN && target.messageId !== null) {
-        await this.showPin(op.configId, target.messageId, op.params.base ? op.params.baseAt ?? odooDate(this.now()) : null);
-      }
+    if (op.kind === CHAT_REACTION) {
+      return this.giveUpRestoring(op, reason, message, async () => {
+        if (!(await this.laterOfKey(op))) await this.showReaction(op.configId, target, op.params.content, !!op.params.base);
+      });
+    }
+    if (op.kind === CHAT_PIN && target.messageId !== null) {
+      const messageId = target.messageId;
+      return this.giveUpRestoring(op, reason, message, async () => {
+        if (!(await this.laterOfKey(op))) {
+          await this.showPin(op.configId, messageId, op.params.base ? op.params.baseAt ?? odooDate(this.now()) : null);
+        }
+      });
     }
     return this.giveUp(op, reason, message);
+  }
+
+  /** Whether an op of the same key (targetKey) other than `op`, not given up, is queued. */
+  private async laterOfKey(op: OutboxOp): Promise<boolean> {
+    const key = targetKey(op);
+    return (await this.db.getOutboxOpsForConfig(op.configId))
+      .some((o) => o.id !== op.id && o.status !== "blocked" && targetKey(o) === key);
+  }
+
+  /**
+   * giveUp with `restore` (the shown state put back as the server holds
+   * it) and the blocked mark written in one exclusive() task: a writer
+   * that lays the queued ops over its delta in its own exclusive() task
+   * finds the op waiting before the restore or blocked after it, never in
+   * between, so it never lays the op's target back over the restored state.
+   */
+  private async giveUpRestoring(op: OutboxOp, reason: ChatNotice["reason"], message: string, restore: () => Promise<void>): Promise<void> {
+    const blocked = await this.exclusive(op.configId, async () => {
+      await restore();
+      const e = await this.blockedOf(op, reason, message);
+      if (e) await this.outbox.markBlocked(op.id, e);
+      return e;
+    });
+    this.changed(op.configId, op.params.channelId ?? null);
+    if (blocked) throw blocked;
   }
 
   /**
@@ -3951,14 +3980,17 @@ export class ChatOutbox {
    * supersedes nothing: this op becomes a notice of its own.
    */
   private async giveUp(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
-    const key = targetKey(op);
-    const later = (await this.db.getOutboxOpsForConfig(op.configId))
-      .some((o) => o.id !== op.id && o.status !== "blocked" && targetKey(o) === key);
+    const blocked = await this.blockedOf(op, reason, message);
     this.changed(op.configId, op.params.channelId ?? null);
-    if (later) return;
+    if (blocked) throw blocked;
+  }
+
+  /** The error giveUp throws for `op`; null when a later op of its key supersedes it or its conversation is being left. */
+  private async blockedOf(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<OutboxBlockedError | null> {
+    if (await this.laterOfKey(op)) return null;
     // An action of a conversation being left goes with it: a blocked one would hold the leave back
-    if (op.kind !== CHAT_LEAVE && op.params.channelId != null && (await this.leaving(op.configId, op.params.channelId))) return;
-    throw new OutboxBlockedError(message, reason, [], op.kind, op.id);
+    if (op.kind !== CHAT_LEAVE && op.params.channelId != null && (await this.leaving(op.configId, op.params.channelId))) return null;
+    return new OutboxBlockedError(message, reason, [], op.kind, op.id);
   }
 
   private runRead(creds: SyncCredentials, op: OutboxOp): Promise<void> {

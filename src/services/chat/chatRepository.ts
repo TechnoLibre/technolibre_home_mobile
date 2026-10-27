@@ -41,6 +41,35 @@ function defined<T extends object>(p: T): Partial<T> {
   return out;
 }
 
+/** A field name as its column: `counterBusId` → `counter_bus_id`. */
+function snakeOf(field: string): string {
+  return field.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
+}
+
+/** The sync state of an account nothing was stored for. */
+function defaultSource(configId: string): ChatSourceState {
+  return {
+    configId,
+    selfPartnerId: null,
+    lastBusId: 0,
+    busSeenAt: null,
+    wsVersion: null,
+    isSystem: false,
+    moduleState: "unknown",
+    inboxCounter: 0,
+    loadedAt: null,
+    counterBusId: 0,
+    internalUserGroupId: null,
+    globalMuteUntil: null,
+    globalMuteAt: null,
+    isInternalUser: false,
+    fileDir: null,
+    moduleLevel: null,
+    starredCounter: 0,
+    notificationType: null,
+  };
+}
+
 /** The keys of a row that carry a value: not null, "", 0 or [] (a column the source never filled). */
 function meaningful<T extends object>(p: T): Partial<T> {
   const out: Partial<T> = {};
@@ -951,13 +980,15 @@ export class ChatRepository {
   /**
    * The cached mailbox items of the account whose search_text (record
    * name and text) holds the words of `term` in order (likePattern),
-   * whatever their boxes: inbox, history and starred alike. Newest message
+   * whatever their boxes: inbox, history and starred alike; a row in no
+   * box (its last star taken off) is not an item. Newest message
    * first, at most `limit`; a term without a word finds nothing.
    */
   async searchMailbox(configId: string, term: string, limit = 50): Promise<ChatMailboxItem[]> {
     if (termWords(term).length === 0) return [];
     const rows = await this.db.rawQuery(
-      "SELECT * FROM chat_mailbox WHERE config_id = ? AND search_text LIKE ? ESCAPE '\\' ORDER BY message_id DESC LIMIT ?",
+      "SELECT * FROM chat_mailbox WHERE config_id = ? AND (needaction = 1 OR history = 1 OR starred = 1)"
+        + " AND search_text LIKE ? ESCAPE '\\' ORDER BY message_id DESC LIMIT ?",
       [configId, likePattern(term), limit],
     );
     return rows.map(mailboxFromRow);
@@ -1461,27 +1492,7 @@ export class ChatRepository {
   /** The sync state of one account; defaults while nothing is stored. */
   async sourceState(configId: string): Promise<ChatSourceState> {
     const row = (await this.rows("chat_sources", { config_id: configId }))[0];
-    if (row) return sourceFromRow(row);
-    return {
-      configId,
-      selfPartnerId: null,
-      lastBusId: 0,
-      busSeenAt: null,
-      wsVersion: null,
-      isSystem: false,
-      moduleState: "unknown",
-      inboxCounter: 0,
-      loadedAt: null,
-      counterBusId: 0,
-      internalUserGroupId: null,
-      globalMuteUntil: null,
-      globalMuteAt: null,
-      isInternalUser: false,
-      fileDir: null,
-      moduleLevel: null,
-      starredCounter: 0,
-      notificationType: null,
-    };
+    return row ? sourceFromRow(row) : defaultSource(configId);
   }
 
   /** Whether a sync state was ever stored for the account, i.e. it was once a chat source. */
@@ -1489,9 +1500,30 @@ export class ChatRepository {
     return (await this.rows("chat_sources", { config_id: configId })).length > 0;
   }
 
+  /**
+   * Writes the given fields of the account's sync state, and only those:
+   * the default row is inserted first when none is stored (INSERT OR
+   * IGNORE), then one UPDATE sets the given columns. Two writers of
+   * different fields never write each other's back, whatever they read
+   * before.
+   */
   async setSourceState(s: Partial<ChatSourceState> & { configId: string }): Promise<void> {
-    const base = await this.sourceState(s.configId);
-    await this.put("chat_sources", this.sourceRow({ ...base, ...defined(s) }));
+    const given = defined(s);
+    const fresh = this.sourceRow(defaultSource(s.configId));
+    const full = this.sourceRow({ ...defaultSource(s.configId), ...given });
+    const keys = new Set(Object.keys(given).filter((k) => k !== "configId").map(snakeOf));
+    const cols = Object.keys(full).filter((c) => keys.has(c));
+    if (cols.length !== keys.size) throw new Error("A sync state field without its column: " + [...keys].filter((k) => !(k in full)).join(", "));
+    const names = Object.keys(fresh);
+    await this.db.rawRun(
+      `INSERT OR IGNORE INTO chat_sources (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
+      names.map((c) => fresh[c]),
+    );
+    if (cols.length === 0) return;
+    await this.db.rawRun(
+      `UPDATE chat_sources SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE config_id = ?`,
+      [...cols.map((c) => full[c]), s.configId],
+    );
   }
 
   /** In-flight fileDirOf calls, so two concurrent first calls share one id. */

@@ -1629,6 +1629,7 @@ export class DatabaseService {
     await this.createChatAvatarsTable();
     for (const [table, col, def] of [
       ["chat_partners", "write_date", "TEXT"],
+      // No backfill: a note cached before the column reads as a message, so it may join a run, until it is read again
       ["chat_messages", "is_note", "INTEGER NOT NULL DEFAULT 0"],
     ]) {
       const names = ((await this.db.query(`PRAGMA table_info(${table})`)).values ?? []).map((r: any) => r.name as string);

@@ -58,6 +58,12 @@ export interface MigrationHistoryEntry {
 export type Migration = {
   version: number;
   description?: string;
+  /**
+   * The version is written before the run instead of after it: for a
+   * migration whose second run, after a stop midway, would do harm (write
+   * a second copy, skip a step). A stop then leaves it never run again.
+   */
+  versionFirst?: boolean;
   run: (db: DatabaseService) => Promise<MigrationResult | void>;
 };
 
@@ -107,6 +113,12 @@ async function appendMigrationHistory(entry: MigrationHistoryEntry): Promise<voi
 /**
  * Runs the pending migrations, then hands back a summary of what ran.
  *
+ * Each migration's version is written once its run succeeded, so a
+ * migration stopped midway runs again at the next start: every migration
+ * is written to be run twice (a column added only when PRAGMA table_info
+ * lacks it, IF NOT EXISTS, rows already converted skipped), except those
+ * marked versionFirst. A failed run leaves the version before it.
+ *
  * `annoncer` receives that summary, or nothing is shown. It MUST NOT wait for
  * the user: boot calls this before the interface is painted, and a modal
  * dialog raised there sits behind the splash window, which no one can reach.
@@ -133,7 +145,8 @@ export async function runMigrations(
   for (const migration of pending) {
     const fromVersion = await getSchemaVersion();
     const startMs = Date.now();
-    await setSchemaVersion(migration.version);
+    // Written once the run succeeded: a migration stopped midway (the app killed) stays pending and runs again
+    if (migration.versionFirst) await setSchemaVersion(migration.version);
 
     let result: MigrationResult | void;
     try {
@@ -143,6 +156,7 @@ export async function runMigrations(
       console.error(`Migration v${migration.version} failed:`, error);
       throw error;
     }
+    if (!migration.versionFirst) await setSchemaVersion(migration.version);
 
     const durationMs = Date.now() - startMs;
     const counts = (result as MigrationResult)?.counts ?? {};

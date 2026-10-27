@@ -1392,10 +1392,13 @@ export class ChatService {
    * cached channel, its chat message. A page proves the id range it
    * covers, from its smallest id (from 0 when it is shorter than asked) up
    * to `before`: a cached starred row in that range the page does not
-   * list, with no chat.star op waiting, is unstarred, and starredCounter
-   * loses one per row unstarred unless the page carries the server's
-   * count, which is taken instead. The overlay, the write and the proof
-   * run in one exclusive() task. Offline, or when the
+   * list, with no chat.star op waiting, is unstarred. starredCounter takes
+   * the server's count when the page carries one; else a complete first
+   * page (no `before`, shorter than asked) proves every star, and the
+   * counter becomes the starred rows left, the stars queued laid over
+   * them; any other page leaves the counter to the load and the bus,
+   * which a row unstarred here may already have counted. The overlay, the
+   * write and the proof run in one exclusive() task. Offline, or when the
    * request never left, nothing is read and `offline` says so; another
    * failure rejects. `oldestId` is the page's smallest id, the `before` of
    * the next page; `complete` says no older page exists.
@@ -1452,18 +1455,16 @@ export class ChatService {
           const waiting = new Set((await this.db.getOutboxOpsForConfig(configId))
             .filter((o) => o.kind === CHAT_STAR && o.status !== "blocked")
             .map((o) => o.params.messageId));
-          let unstarred = 0;
           for (const item of await this.repo.mailboxItems(configId, "starred")) {
             const id = item.messageId;
             if (id >= low && (before === undefined || id < before) && !listed.has(id) && !waiting.has(id)) {
               await this.repo.setStarred(configId, id, false);
-              unstarred++;
             }
           }
-          // Without the server's count, the stored one loses the rows the page unstarred
-          if (unstarred > 0 && delta.starredCounter == null) {
-            const { starredCounter } = await this.repo.sourceState(configId);
-            await this.repo.setSourceState({ configId, starredCounter: Math.max(0, starredCounter - unstarred) });
+          // Without the server's count, only a page that proves every star sets the counter
+          if (delta.starredCounter == null && complete && before === undefined) {
+            const starredCounter = (await this.repo.mailboxItems(configId, "starred")).length;
+            await this.repo.setSourceState({ configId, starredCounter });
           }
         });
         return { offline: false, oldestId: ids.length > 0 ? Math.min(...ids) : null, complete };
@@ -2132,18 +2133,8 @@ export class ChatService {
         await this.sweep(configId);
         return ids.length === 1 ? ids[0] : null;
       }
-      case "mail.message/delete": {
-        // mail.message.unlink sends it to the partners it notified; a delete in Discuss is an emptying edit instead
-        const ids: number[] = (Array.isArray(p.message_ids) ? p.message_ids : []).map(Number).filter(Number.isInteger);
-        const channels = new Set<number>();
-        for (const id of ids) {
-          const cached = await this.repo.message(configId, id);
-          if (cached) channels.add(cached.channelId);
-        }
-        if (channels.size === 0) return undefined;
-        await this.repo.applyDelta(configId, { ...emptyDelta(), deletedMessageIds: ids });
-        return channels.size === 1 ? [...channels][0] : null;
-      }
+      case "mail.message/delete":
+        return this.applyMessageDelete(configId, p, fresh);
       case "ir.attachment/delete":
       {
         const id = Number(p.id);
@@ -2284,17 +2275,58 @@ export class ChatService {
   }
 
   /**
-   * Messages the user starred or unstarred, on any device (`fresh` only:
-   * the load after a replayed one counted it). Each id's cached flags (the
-   * chat message and its mailbox row) take the payload's value, with the
-   * stars still queued laid over it (overlayMessages: a waiting op keeps
-   * its target and takes the server's flag as its base). starredCounter
-   * moves by one per id whose flag shown changed, and per id the phone
-   * does not hold (a star from another device): the echo of the phone's
-   * own star, shown since it was queued, counts nothing.
+   * Messages unlinked on the server (mail.message.unlink sends it to the
+   * partners it notified; a delete in Discuss is an emptying edit
+   * instead): each cached chat message or mailbox row leaves the cache. As
+   * the browser does (mail_core_web_service.js), a `fresh` one lowers
+   * inboxCounter per row shown in the inbox and starredCounter per message
+   * shown starred (starredOf: the stars queued already shown); a replay
+   * counts nothing, the load after it counted. One exclusive() task from
+   * the flags read to the counters written, as the other counter writers.
+   */
+  private async applyMessageDelete(configId: string, p: any, fresh: boolean): Promise<number | null | undefined> {
+    const ids: number[] = (Array.isArray(p.message_ids) ? p.message_ids : []).map(Number).filter(Number.isInteger);
+    return this.queue.exclusive(configId, async () => {
+      const channels = new Set<number>();
+      let held = false;
+      let inbox = 0;
+      let starred = 0;
+      for (const id of ids) {
+        const cached = await this.repo.message(configId, id);
+        const item = await this.repo.mailboxItem(configId, id);
+        if (cached) channels.add(cached.channelId);
+        if (!cached && !item) continue;
+        held = true;
+        if (item?.needaction) inbox++;
+        if (await this.queue.starredOf(configId, id)) starred++;
+      }
+      if (!held) return undefined;
+      await this.repo.applyDelta(configId, { ...emptyDelta(), deletedMessageIds: ids });
+      if (fresh && (inbox > 0 || starred > 0)) {
+        const state = await this.repo.sourceState(configId);
+        await this.repo.setSourceState({
+          configId,
+          ...(inbox > 0 ? { inboxCounter: Math.max(0, state.inboxCounter - inbox) } : {}),
+          ...(starred > 0 ? { starredCounter: Math.max(0, state.starredCounter - starred) } : {}),
+        });
+      }
+      return channels.size === 1 ? [...channels][0] : null;
+    });
+  }
+
+  /**
+   * Messages the user starred or unstarred, on any device. Each id's cached
+   * flags (the chat message and its mailbox row) take the payload's value,
+   * with the stars still queued laid over it (overlayMessages: a waiting op
+   * keeps its target and takes the server's flag as its base). A `fresh`
+   * one moves starredCounter by one per id whose flag shown changed, and
+   * per id the phone does not hold (a star from another device): the echo
+   * of the phone's own star, shown since it was queued, counts nothing. A
+   * replayed one (not `fresh`) sets the flags and counts nothing: the load
+   * after its bus id counted it, and replays come in bus order, so the
+   * last flag of a message is the one that stays.
    */
   private async applyToggleStar(configId: string, p: any, fresh: boolean): Promise<number | null | undefined> {
-    if (!fresh) return undefined;
     const ids: number[] = (Array.isArray(p.message_ids) ? p.message_ids : []).map(Number).filter(Number.isInteger);
     if (ids.length === 0) return undefined;
     const starred = !!p.starred;
@@ -2310,6 +2342,7 @@ export class ChatService {
       const delta: StoreDelta = { ...emptyDelta(), messages: ids.map((messageId) => ({ messageId, starred })) };
       await this.queue.overlayMessages(configId, delta);
       await this.repo.applyDelta(configId, delta, { fromBus: true });
+      if (!fresh) return;
       let change = 0;
       for (const m of delta.messages) {
         const was = before.get(m.messageId);

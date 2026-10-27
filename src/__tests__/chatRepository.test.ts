@@ -261,6 +261,20 @@ describe("ChatRepository", () => {
     expect(await repo.sourceState(A)).toMatchObject({ inboxCounter: 4, selfPartnerId: 3, lastBusId: 9 });
   });
 
+  it("setSourceState writes only the columns it is given, so concurrent writers keep each other's", async () => {
+    await repo.setSourceState({ configId: A, inboxCounter: 2 });
+    // Both writers start from the same stored row: neither may write the other's column back
+    await Promise.all([
+      repo.setSourceState({ configId: A, inboxCounter: 3 }),
+      repo.setSourceState({ configId: A, counterBusId: 9 }),
+      repo.setSourceState({ configId: B, starredCounter: 4 }),
+      repo.setSourceState({ configId: B, lastBusId: 7 }),
+    ]);
+    expect(await repo.sourceState(A)).toMatchObject({ inboxCounter: 3, counterBusId: 9 });
+    // A first write of an account starts from the defaults
+    expect(await repo.sourceState(B)).toMatchObject({ starredCounter: 4, lastBusId: 7, moduleState: "unknown", inboxCounter: 0 });
+  });
+
   it("stores partners and members", async () => {
     await repo.applyDelta(A, delta({
       partners: [{ configId: A, partnerId: 3, name: "Zoe", imStatus: "online" }],
@@ -1958,6 +1972,9 @@ describe("ChatRepository search", () => {
     ] }));
     expect((await repo.searchMailbox(A, "demo")).map((i) => i.messageId)).toEqual([92, 91, 90]);
     expect((await repo.searchMailbox(A, "demo", 1)).map((i) => i.messageId)).toEqual([92]);
+    // A row whose last box was left (unstarred, never in the inbox) is in no box: not found
+    await repo.setStarred(A, 91, false);
+    expect((await repo.searchMailbox(A, "demo")).map((i) => i.messageId)).toEqual([92, 90]);
   });
 });
 

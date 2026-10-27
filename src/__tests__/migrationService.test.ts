@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { DatabaseService } from "../services/databaseService";
 import { getSchemaVersion, setSchemaVersion, runMigrations, versionToDisplay } from "../services/migrationService";
+import { APP_MIGRATIONS } from "../services/migrations";
 
 describe("MigrationService — versionToDisplay", () => {
   it("shows YYYY.MM.DD.NN format", () => {
@@ -126,13 +127,43 @@ describe("MigrationService — migration runner", () => {
     expect(calls).toEqual([1, 2, 3]);
   });
 
-  it("should update the version after each migration step", async () => {
+  it("writes a migration's version once it has run, so one stopped midway runs again", async () => {
     const versions: number[] = [];
     const migrations = [
       { version: 1, run: async () => { versions.push(await getSchemaVersion()); } },
       { version: 2, run: async () => { versions.push(await getSchemaVersion()); } },
     ];
     await runMigrations(db, migrations);
-    expect(versions).toEqual([1, 2]);
+    // While each runs, the stored version is still the one before it: a kill there leaves it pending
+    expect(versions).toEqual([0, 1]);
+    expect(await getSchemaVersion()).toBe(2);
+  });
+
+  it("a migration marked versionFirst has its version written before it runs", async () => {
+    const versions: number[] = [];
+    const migrations = [
+      { version: 1, run: async () => { versions.push(await getSchemaVersion()); } },
+      { version: 2, versionFirst: true, run: async () => { versions.push(await getSchemaVersion()); } },
+    ];
+    await runMigrations(db, migrations);
+    expect(versions).toEqual([0, 2]);
+    expect(await getSchemaVersion()).toBe(2);
+  });
+
+  it("a migration that fails leaves the version before it", async () => {
+    const migrations = [
+      { version: 1, run: async () => {} },
+      { version: 2, run: async () => { throw new Error("disk full"); } },
+      { version: 3, versionFirst: true, run: async () => {} },
+    ];
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(runMigrations(db, migrations)).rejects.toThrow("disk full");
+    error.mockRestore();
+    expect(await getSchemaVersion()).toBe(1);
+  });
+
+  it("every app migration but the two data rewrites runs again after a stop", () => {
+    // A re-run of these would write a second copy (addTagsTable) or skip a step (addNoteLinksTable): see their entries
+    expect(APP_MIGRATIONS.filter((m) => m.versionFirst).map((m) => m.version)).toEqual([2026041201, 2026102201]);
   });
 });

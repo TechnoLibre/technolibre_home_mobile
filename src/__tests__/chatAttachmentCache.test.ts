@@ -450,6 +450,17 @@ describe("ChatAttachmentCache", () => {
     expect(await chat.attachments.space()).toBe(2 * P);
   });
 
+  it("the purge weighs the files it may free, not the avatars it never frees", async () => {
+    await stored(54);
+    await cached(54, { original: MB, opened: "2026-10-20T00:00:00.000Z" });
+    await chat.repo.putAvatar({ configId: config, partnerId: 7, uniqueKey: "k7", path: "chat/avatar-7.png", bytes: 2 * MB, fetchedAt: "2026-10-20T00:00:00.000Z" });
+    setChatSettings({ ...chatSettings(), cachePurge: true, cacheLimitMb: 2 });
+    // The space the user sees counts the avatars; the files alone are under the limit, so nothing goes
+    expect(await chat.attachments.space()).toBe(3 * MB);
+    expect(await chat.attachments.purge()).toEqual({ freed: 0 });
+    expect((await chat.repo.attachment(config, 54))!.originalPath).not.toBeNull();
+  });
+
   it("maybePurge runs once per 24 h", async () => {
     await stored(61);
     setChatSettings({ ...chatSettings(), cachePurge: true, cacheLimitMb: 1 });

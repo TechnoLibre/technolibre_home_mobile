@@ -358,6 +358,22 @@ describe("record replies", () => {
     expect(await odoo.files.size(photo.path)).toBeNull();
   });
 
+  it("a second reply on a record whose first was refused goes at once, not after the notice", async () => {
+    odoo.state.postError = "odoo.exceptions.AccessError";
+    const first = await chat.replyOnRecord(src, item(config), "Refusé", EMPTY_MENTIONS, [], true);
+    await idle();
+    expect(await chat.notices([config])).toEqual([expect.objectContaining({ id: first.id, reason: "refused" })]);
+    odoo.state.postError = null;
+    const second = await chat.replyOnRecord(src, item(config), "Accepté", EMPTY_MENTIONS, [], true);
+    await idle();
+    // The refused reply stays a notice; the new one waits for nothing and leaves
+    expect(second.dependsOn).toBeNull();
+    expect(odoo.posts().map((c) => c.params.post_data.body)).toEqual([
+      (await body("Refusé")) + chatMarker(first.clientUuid), (await body("Accepté")) + chatMarker(second.clientUuid),
+    ]);
+    expect((await ops()).map((o) => o.id)).toEqual([first.id]);
+  });
+
   it("a reply whose upload the record refuses keeps its text and files, and posts nothing", async () => {
     odoo.state.uploadStatus = 404;
     const photo = stage("photo.jpg");

@@ -707,7 +707,10 @@ describe("ChatListComponent search", () => {
     it("server hits merge with the phone's, once each, and « More results » asks below the smallest server id", async () => {
         vi.useFakeTimers();
         const chat = searching(async () => ({ ...empty(), messages: [hit({ messageId: 60, date: "2026-10-26 10:00:00" })] }));
-        const page = (hits: any[], p: any = {}) => ({ hits, joinable: [], people: [], count: 5, more: true, offline: false, ...p });
+        const page = (hits: any[], p: any = {}) => ({
+            hits, joinable: [], people: [], count: 5, more: true, offline: false,
+            oldestId: hits.length ? Math.min(...hits.map((h) => h.messageId)) : null, scanned: hits.length, dropped: 0, ...p,
+        });
         chat.search.server = vi.fn()
             .mockResolvedValueOnce(page([
                 hit({ messageId: 62, date: "2026-10-26 11:00:00", origin: "server", snippet: "le café" }),
@@ -742,12 +745,33 @@ describe("ChatListComponent search", () => {
         expect([c.state.server, c.state.serverCount, c.state.serverMore]).toEqual(["done", 5, false]);
     });
 
+    it("a page whose messages ChatSearch left out pages on past them and hides the server's count", async () => {
+        vi.useFakeTimers();
+        const chat = searching(async () => empty());
+        const page = (hits: any[], p: any) => ({ hits, joinable: [], people: [], count: 40, more: true, offline: false, ...p });
+        chat.search.server = vi.fn()
+            .mockResolvedValueOnce(page([], { oldestId: 70, scanned: 30, dropped: 0 }))
+            .mockResolvedValueOnce(page([hit({ messageId: 45, origin: "server" })], { oldestId: 41, scanned: 10, dropped: 9 }));
+        const c = make(chat);
+        await c.loadCache();
+        typed(c, "ca");
+        await vi.advanceTimersByTimeAsync(200);
+        // Nothing left out yet: the count shows; a page of no shown hit still offers the next one
+        expect([c.state.server, c.state.serverCount, c.state.serverMore]).toEqual(["done", 40, true]);
+        await c.onSearchMore();
+        expect(chat.search.server).toHaveBeenLastCalledWith(expect.objectContaining({ configId: "a" }), "ca", 70);
+        // 40 of 40 held, nine left out: no next page, and no count the list would contradict
+        expect(c.state.results.messages.map((h: any) => h.messageId)).toEqual([45]);
+        expect([c.state.server, c.state.serverCount, c.state.serverMore]).toEqual(["done", null, false]);
+    });
+
     it("an account whose next page is refused shows the server error status", async () => {
         vi.useFakeTimers();
         const chat = searching();
         chat.sources = vi.fn().mockResolvedValue([src("a"), src("b")]);
         const page = (configId: string, messageId: number) => ({
             hits: [hit({ configId, messageId, origin: "server" })], joinable: [], people: [], count: 4, more: true, offline: false,
+            oldestId: messageId, scanned: 1, dropped: 0,
         });
         chat.search.server = vi.fn(async (s: any, _t: string, before?: number) => {
             if (before !== undefined && s.configId === "b") throw new Error("RPC (HTTP 500)");

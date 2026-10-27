@@ -67,11 +67,14 @@ interface NoticeRow {
 /** The server pages of one account for the current search: where the next one starts and whether there is one. */
 interface ServerPages {
     src: ChatSource;
-    /** Smallest server id shown, the `before` of the next page; null before any hit. */
+    /** Smallest server id the pages held (shown or left out), the `before` of the next page; null before any. */
     before: number | null;
+    /** The messages the pages held as the server answered them, the ones left out included. */
     shown: number;
     count: number | null;
     more: boolean;
+    /** Messages the pages held and left out (the term only in their markup): the server's count is then no longer shown. */
+    dropped: number;
 }
 
 interface ChatListState {
@@ -658,13 +661,15 @@ export class ChatListComponent extends EnhancedComponent {
      * Asks each account's server for a page (ChatSearch.server) side by
      * side and merges what answers into the shown results: the messages
      * and the files after the phone's, once each (mergeHits), the people
-     * and channels to join not shown yet. An account counts its hits
-     * shown: Odoo may answer a page short of SERVER_PAGE while more match,
-     * so a next page is offered while a page brings hits and fewer than its
-     * count are shown. The status: « error » when an account asked failed
-     * (its next page still offered when it had one), else « done » once an
-     * account has answered, else « offline ». An answer of an
-     * older query or filter (`gen`) is dropped.
+     * and channels to join not shown yet. An account counts the messages
+     * its pages held, the ones ChatSearch left out included: Odoo may answer
+     * a page short of SERVER_PAGE while more match, so a next page is
+     * offered while a page brings messages and fewer than its count were
+     * held. The server's count shows only while no page left a message out
+     * (a count the list contradicts is not shown). The status: « error »
+     * when an account asked failed (its next page still offered when it had
+     * one), else « done » once an account has answered, else « offline ».
+     * An answer of an older query or filter (`gen`) is dropped.
      */
     private async serverPages(gen: number, term: string, asks: { src: ChatSource; before: number | undefined }[]): Promise<void> {
         this.state.server = "loading";
@@ -685,12 +690,12 @@ export class ChatListComponent extends EnhancedComponent {
             if (r.offline) return;
             found.push(r);
             answered.push(src.configId);
-            const page = this._pages.get(src.configId) ?? { src, before: null, shown: 0, count: null, more: false };
-            const ids = r.hits.map((h) => h.messageId).filter((v): v is number => v !== null);
-            if (ids.length > 0) page.before = Math.min(page.before ?? Infinity, ...ids);
-            page.shown += r.hits.length;
+            const page = this._pages.get(src.configId) ?? { src, before: null, shown: 0, count: null, more: false, dropped: 0 };
+            if (r.oldestId !== null) page.before = Math.min(page.before ?? Infinity, r.oldestId);
+            page.shown += r.scanned;
+            page.dropped += r.dropped;
             page.count = r.count;
-            page.more = r.hits.length > 0 && page.count !== null && page.shown < page.count;
+            page.more = r.scanned > 0 && page.count !== null && page.shown < page.count;
             this._pages.set(src.configId, page);
         });
         const shown = this.state.results;
@@ -720,7 +725,9 @@ export class ChatListComponent extends EnhancedComponent {
         this.state.results = results;
         const pages = [...this._pages.values()];
         this.state.server = failed ? "error" : pages.length > 0 ? "done" : "offline";
-        this.state.serverCount = pages.length > 0 ? pages.reduce((sum, p) => sum + (p.count ?? 0), 0) : null;
+        this.state.serverCount = pages.length > 0 && pages.every((p) => p.dropped === 0)
+            ? pages.reduce((sum, p) => sum + (p.count ?? 0), 0)
+            : null;
         this.state.serverMore = pages.some((p) => p.more);
     }
 

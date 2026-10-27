@@ -211,10 +211,16 @@ export interface ServerResults {
   hits: SearchHit[];
   joinable: JoinableChannel[];
   people: ChatPartner[];
-  /** Every match on the server, whatever the page; null when not asked. */
+  /** Every match on the server, whatever the page; null when not asked. An upper bound once `dropped` is above 0. */
   count: number | null;
-  /** The page brought hits and fewer than `count`: a next page (before the smallest id) may hold more. */
+  /** The page as the server answered it brought messages, fewer than `count`: a next page (before `oldestId`) may hold more. */
   more: boolean;
+  /** The smallest id of the page as the server answered it, before the filter; null for an empty page. */
+  oldestId: number | null;
+  /** The messages of the page as the server answered it, before the filter. */
+  scanned: number;
+  /** The messages of the page left out of `hits`: the term is only in their markup (the client marker, a link's address). */
+  dropped: number;
   /** Not asked: no network, or the request never left. */
   offline: boolean;
 }
@@ -227,6 +233,14 @@ interface ServerMessage {
   date: string;
   authorPartnerId: number | null;
   fileNames: string[];
+  subject: string;
+}
+
+/** One server page as the search reads it: its messages, the ids the server listed, the server's count. */
+interface ServerPage {
+  messages: ServerMessage[];
+  ids: number[];
+  count: number;
 }
 
 /** A route the server answered with a plain 404 (no JSON-RPC answer): the module is gone or older. */
@@ -322,6 +336,13 @@ export class ChatSearch {
    * channel history route). A hit is a file hit (`fileName`) when its text
    * does not hold the term and one of its files' names does.
    *
+   * Both paths match the stored HTML, so the client marker comment or a
+   * link's address can hold the term where the shown text does not: a
+   * message is kept only when its text (searchableText), one of its files'
+   * names or its subject holds the term. `more` and `oldestId` come from the
+   * page as answered, so the next page starts after the messages left out;
+   * `dropped` says how many were, `count` being then only an upper bound.
+   *
    * The hits stay in memory; only the authors' names are cached
    * (chat_partners). Odoo drops the rows the user may not read after its
    * limit, so a page short of SERVER_PAGE is not the end: `more` compares
@@ -333,7 +354,7 @@ export class ChatSearch {
   async server(src: ChatSource, term: string, before?: number): Promise<ServerResults> {
     const q = term.trim();
     const answer = (p: Partial<ServerResults>): ServerResults => ({
-      hits: [], joinable: [], people: [], count: null, more: false, offline: false, ...p,
+      hits: [], joinable: [], people: [], count: null, more: false, oldestId: null, scanned: 0, dropped: 0, offline: false, ...p,
     });
     if (!isSearchTerm(q)) return answer({});
     if (!(await this.isOnline())) return answer({ offline: true });
@@ -341,8 +362,12 @@ export class ChatSearch {
       const names = before === undefined ? this.names(src, q) : Promise.resolve({ people: [], joinable: [] });
       const page = ((await this.features(src.configId)).serverSearch ? await this.viaModule(src, q, before) : null)
         ?? (await this.viaDomain(src, q, before));
-      const hits = page.messages.map((m) => serverHit(src.configId, m, q));
-      return answer({ ...(await names), hits, count: page.count, more: hits.length > 0 && hits.length < page.count });
+      const hits = page.messages.filter((m) => holdsTerm(m, q)).map((m) => serverHit(src.configId, m, q));
+      const scanned = page.ids.length;
+      return answer({
+        ...(await names), hits, count: page.count, more: scanned > 0 && scanned < page.count,
+        oldestId: scanned > 0 ? Math.min(...page.ids) : null, scanned, dropped: scanned - hits.length,
+      });
     } catch (e) {
       if (e instanceof RequestNotSentError) return answer({ offline: true });
       throw e;
@@ -363,7 +388,7 @@ export class ChatSearch {
   }
 
   /** The module's page, or null when its route answers 404 (the module probed again). */
-  private async viaModule(src: ChatSource, q: string, before?: number): Promise<{ messages: ServerMessage[]; count: number } | null> {
+  private async viaModule(src: ChatSource, q: string, before?: number): Promise<ServerPage | null> {
     const { configId, creds } = src;
     let result: any;
     try {
@@ -393,6 +418,8 @@ export class ChatSearch {
     await this.repo.applyDelta(configId, partnersOnly(delta.partners, self));
     const fileNames = new Map(delta.attachments.map((a) => [a.attachmentId, a.name ?? ""]));
     const byId = new Map(delta.messages.map((m) => [m.messageId, m]));
+    const raw: any[] = Array.isArray(result?.data?.["mail.message"]) ? result.data["mail.message"] : [];
+    const subjects = new Map(raw.filter((m) => typeof m?.id === "number").map((m) => [m.id as number, typeof m.subject === "string" ? m.subject : ""]));
     const ids: number[] = Array.isArray(result?.messages)
       ? result.messages.map((v: any) => (typeof v === "number" ? v : v?.id)).filter((v: any) => typeof v === "number")
       : [];
@@ -403,17 +430,18 @@ export class ChatSearch {
       messages.push({
         messageId: id, channelId: m.channelId, body: m.body ?? "", date: m.date ?? "", authorPartnerId: m.authorPartnerId ?? null,
         fileNames: (m.attachmentIds ?? []).map((a) => fileNames.get(a) ?? "").filter(Boolean),
+        subject: subjects.get(id) ?? "",
       });
     }
-    return { messages, count: Number(result?.count) || 0 };
+    return { messages, ids, count: Number(result?.count) || 0 };
   }
 
   /** The search_read page over the member channels, with its count. */
-  private async viaDomain(src: ChatSource, q: string, before?: number): Promise<{ messages: ServerMessage[]; count: number }> {
+  private async viaDomain(src: ChatSource, q: string, before?: number): Promise<ServerPage> {
     const { configId, creds } = src;
     const channels = await this.rpc.searchRead<{ id: number }>(creds, "discuss.channel", [["is_member", "=", true]], ["id"]);
     const ids = channels.map((c) => c.id);
-    if (ids.length === 0) return { messages: [], count: 0 };
+    if (ids.length === 0) return { messages: [], ids: [], count: 0 };
     const domain: any[] = [
       ["model", "=", "discuss.channel"],
       ["res_id", "in", ids],
@@ -429,7 +457,7 @@ export class ChatSearch {
         creds,
         "mail.message",
         before !== undefined ? [...domain, ["id", "<", before]] : domain,
-        ["id", "body", "date", "author_id", "res_id", "attachment_ids"],
+        ["id", "body", "date", "author_id", "res_id", "attachment_ids", "subject"],
         { limit: SERVER_PAGE, order: "id desc" },
       ),
       this.rpc.callKw<number>(creds, "mail.message", "search_count", [domain]),
@@ -455,19 +483,30 @@ export class ChatSearch {
       date: r.date || "",
       authorPartnerId: Array.isArray(r.author_id) ? (r.author_id[0] as number) : null,
       fileNames: (Array.isArray(r.attachment_ids) ? r.attachment_ids : []).map((a: number) => names.get(a) ?? "").filter(Boolean),
+      subject: typeof r.subject === "string" ? r.subject : "",
     }));
-    return { messages, count: Number(count) || 0 };
+    return { messages, ids: messages.map((m) => m.messageId), count: Number(count) || 0 };
   }
+}
+
+/** Whether the shown parts of a server message hold the term: its text (searchableText), a file's name or its subject. */
+function holdsTerm(m: ServerMessage, term: string): boolean {
+  return matchesTerm(foldText(searchableText(m.body)), term)
+    || m.fileNames.some((n) => matchesTerm(foldText(n), term))
+    || matchesTerm(foldText(m.subject), term);
 }
 
 /**
  * The hit of a server message: a message hit quoting its text when the
- * text holds the term (or when no file name does), else a file hit on the
- * first file whose name holds it.
+ * text holds the term, else a file hit on the first file whose name holds
+ * it, else a message hit quoting its subject when it holds the term (its
+ * text when not).
  */
 function serverHit(configId: string, m: ServerMessage, term: string): SearchHit {
   const text = searchableText(m.body);
-  const file = matchesTerm(foldText(text), term) ? undefined : m.fileNames.find((n) => matchesTerm(foldText(n), term));
+  const inText = matchesTerm(foldText(text), term);
+  const file = inText ? undefined : m.fileNames.find((n) => matchesTerm(foldText(n), term));
+  const quoted = inText || file || !matchesTerm(foldText(m.subject), term) ? text : m.subject;
   return {
     configId,
     channelId: m.channelId,
@@ -475,7 +514,7 @@ function serverHit(configId: string, m: ServerMessage, term: string): SearchHit 
     clientUuid: null,
     authorPartnerId: m.authorPartnerId,
     date: m.date,
-    snippet: snippetOf(file ?? text, term),
+    snippet: snippetOf(file ?? quoted, term),
     fileName: file ?? null,
     origin: "server",
   };

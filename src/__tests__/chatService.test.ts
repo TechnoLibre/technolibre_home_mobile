@@ -2907,6 +2907,36 @@ describe("ChatService", () => {
       markedNothing();
     });
 
+    it("a message whose term is only in the client marker is left out, the next page past it", async () => {
+      await withModule();
+      const marker = "<!-- erplibre-mobile:0f3a-mobile-77 -->";
+      odoo.state.onRoute = async (path) => path !== MODULE_SEARCH_ROUTE ? undefined : {
+        count: 3,
+        messages: [503, 502, 501],
+        data: {
+          "mail.message": [
+            msg(503, GROUP, SELF, `<p>Bonjour</p>${marker}`),
+            msg(502, GROUP, BOB, "<p>Le mobile est prêt</p>"),
+            { ...msg(501, GENERAL, BOB, "<p>Voir le plan</p>"), subject: "Plan mobile" },
+          ],
+        },
+      };
+      const r = await chat.search.server(src, "mobile");
+      expect(r.hits.map((h) => [h.messageId, h.snippet])).toEqual([[502, "Le mobile est prêt"], [501, "Plan mobile"]]);
+      expect(r).toMatchObject({ count: 3, more: false, oldestId: 501, scanned: 3, dropped: 1 });
+      // The search_read fallback leaves out the same messages: the marker and a link's address are not shown text
+      odoo.state.onRoute = async (path) => (path === MODULE_SEARCH_ROUTE ? { __status: 404 } : undefined);
+      rows = [
+        row(605, GROUP, `<p>Salut</p>${marker}`),
+        row(604, GROUP, '<p><a href="https://mobile.example.test/x">le lien</a></p>'),
+        row(603, GENERAL, "<p>texte</p>", { subject: "Le mobile" }),
+      ];
+      count = 50;
+      const f = await chat.search.server(src, "mobile");
+      expect(f.hits.map((h) => [h.messageId, h.snippet])).toEqual([[603, "Le mobile"]]);
+      expect(f).toMatchObject({ count: 50, more: true, oldestId: 603, scanned: 3, dropped: 2 });
+    });
+
     it("a 404 of the module route falls back", async () => {
       await withModule();
       odoo.state.onRoute = async (path) => (path === MODULE_SEARCH_ROUTE ? { __status: 404 } : undefined);
@@ -2953,7 +2983,7 @@ describe("ChatService", () => {
         "|", "|", ["body", "ilike", HTML], ["subject", "ilike", RAW], ["attachment_ids.name", "ilike", RAW],
       ];
       expect(messageReads().map((c) => c.params.kwargs)).toEqual([{
-        domain, fields: ["id", "body", "date", "author_id", "res_id", "attachment_ids"], limit: SERVER_PAGE, order: "id desc",
+        domain, fields: ["id", "body", "date", "author_id", "res_id", "attachment_ids", "subject"], limit: SERVER_PAGE, order: "id desc",
       }]);
       expect(odoo.kw("search_count").map((c) => c.params.args)).toEqual([[domain]]);
       expect(r.hits.map((h) => [h.messageId, h.fileName])).toEqual([[502, "l'eau & co.ods"], [501, null]]);
@@ -2996,7 +3026,9 @@ describe("ChatService", () => {
       await withModule();
       const before = odoo.calls.length;
       offline();
-      expect(await chat.search.server(src, TERM)).toEqual({ hits: [], joinable: [], people: [], count: null, more: false, offline: true });
+      expect(await chat.search.server(src, TERM)).toEqual({
+        hits: [], joinable: [], people: [], count: null, more: false, oldestId: null, scanned: 0, dropped: 0, offline: true,
+      });
       online();
       expect(odoo.calls.length).toBe(before);
     });
@@ -3261,6 +3293,51 @@ describe("ChatService", () => {
       offline();
       await chat.deleteMessage(src, GROUP, { messageId: 599, clientUuid: null });
       expect(await shown()).toEqual([700, 600, 590]);
+    });
+
+    it("a record's message unlinked on the server leaves the boxes, its counts lowered once", async () => {
+      await chat.repo.applyDelta(config, { ...parseStore({}, config, SELF), mailbox: [
+        { messageId: 700, threadModel: "res.partner", threadId: 70, recordName: "Tâche démo", needaction: true, starred: true },
+        { messageId: 701, threadModel: "res.partner", threadId: 70, recordName: "Tâche démo", history: true },
+      ] });
+      await chat.repo.setSourceState({ configId: config, inboxCounter: 3, starredCounter: 2 });
+      expect(await chat.repo.mailboxItem(config, 700)).toMatchObject({ needaction: true, starred: true });
+      expect(await chat.repo.mailboxItem(config, 701)).toMatchObject({ history: true });
+      // No chat message is cached for either: the mailbox rows go all the same
+      await chat.applyBus(config, [bus(1001, "mail.message/delete", { message_ids: [700, 701] })]);
+      expect(await chat.repo.mailboxItem(config, 700)).toBeNull();
+      expect(await chat.repo.mailboxItem(config, 701)).toBeNull();
+      expect(await chat.repo.sourceState(config)).toMatchObject({ inboxCounter: 2, starredCounter: 1 });
+      // A replay at or below the last bus id counts nothing
+      await chat.repo.applyDelta(config, { ...parseStore({}, config, SELF), mailbox: [
+        { messageId: 702, threadModel: "res.partner", threadId: 70, recordName: "Tâche démo", needaction: true },
+      ] });
+      await chat.applyBus(config, [bus(1001, "mail.message/delete", { message_ids: [702] })]);
+      expect(await chat.repo.mailboxItem(config, 702)).toBeNull();
+      expect(await chat.repo.sourceState(config)).toMatchObject({ inboxCounter: 2, starredCounter: 1 });
+    });
+
+    it("a replayed star sets the flag without counting, and only a complete first page sets the counter", async () => {
+      await starredBox([590, 600], { starred: true });
+      // Unstarred in the browser while the phone was closed: the load already counts it
+      await chat.repo.setSourceState({ configId: config, starredCounter: 1, counterBusId: 1005 });
+      await chat.applyBus(config, [bus(1004, "mail.message/toggle_star", { message_ids: [600], starred: false })]);
+      expect(await chat.repo.mailboxItem(config, 600)).toMatchObject({ starred: false });
+      expect(await counter()).toBe(1);
+      // A page that is not the whole list unstars what it proves but leaves the counter to the load
+      await starredBox([600], { starred: true });
+      page = [{ ...msg(590, GROUP), starred: true }];
+      await chat.refreshStarred(src, 650);
+      expect(await shown()).toEqual([590]);
+      expect(await counter()).toBe(1);
+      // A complete first page: the counter is the starred rows left, a queued star laid over them
+      await chat.repo.setSourceState({ configId: config, starredCounter: 0 });
+      offline();
+      await chat.star(src, 600, true, GROUP);
+      online();
+      await chat.refreshStarred(src);
+      expect(await shown()).toEqual([600, 590]);
+      expect(await counter()).toBe(2);
     });
 
     it("a starred page lowers the counter by the rows it unstars, unless it carries the server's", async () => {

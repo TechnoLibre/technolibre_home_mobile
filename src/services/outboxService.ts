@@ -275,20 +275,30 @@ export class OutboxService {
     await this.db.updateOutboxOp(opId, { params: { ...op.params, ...values }, updatedAt: this.now().toISOString() });
   }
 
+  /**
+   * Writes a row blocked as a handler's OutboxBlockedError leaves it: its
+   * reason and candidates in the params read fresh, no next attempt. For a
+   * handler that must show the row blocked inside a task of its own, then
+   * throws the same error (written again, the same).
+   */
+  async markBlocked(opId: string, e: OutboxBlockedError): Promise<void> {
+    const op = await this.db.getOutboxOp(opId);
+    if (!op) return;
+    const { heldFor: _heldFor, ...params } = op.params;
+    await this.db.updateOutboxOp(opId, {
+      status: "blocked",
+      lastError: e.message,
+      nextAttemptAt: null,
+      params: { ...params, blockedReason: e.reason, candidates: e.candidates },
+      updatedAt: this.now().toISOString(),
+    });
+  }
+
   private async recordFailure(stored: OutboxOp, op: OutboxOp, e: unknown): Promise<void> {
+    if (e instanceof OutboxBlockedError) return this.markBlocked(op.id, e);
     const message = e instanceof Error ? e.message : String(e);
     const at = this.now();
     const { heldFor: _heldFor, ...params } = (await this.db.getOutboxOp(op.id))?.params ?? op.params;
-    if (e instanceof OutboxBlockedError) {
-      await this.db.updateOutboxOp(op.id, {
-        status: "blocked",
-        lastError: message,
-        nextAttemptAt: null,
-        params: { ...params, blockedReason: e.reason, candidates: e.candidates },
-        updatedAt: at.toISOString(),
-      });
-      return;
-    }
     if (e instanceof OutboxHeldError) {
       // Written as queued, not left running: a kill after this point must not make the row look interrupted
       await this.db.updateOutboxOp(op.id, {
