@@ -5689,27 +5689,38 @@ export const FEATURE_TREE: FeatureNode[] = [
                         id: "chat.notifications.settings",
                         label: { en: "Notification bridge", fr: "Pont des notifications" },
                         description: {
-                            en: "TypeScript bridge to the native chat push: settings mirror, ntfy servers, subscriptions, session copies, health, tap to open and QR decoding.",
-                            fr: "Pont TypeScript vers la poussée native du clavardage : miroir des réglages, serveurs ntfy, abonnements, copies de session, santé, ouverture au toucher et décodage de QR.",
+                            en: "TypeScript bridge to the native chat push (settings mirror, ntfy servers, subscriptions, session copies, health, tap to open, QR decoding), and the per-account ntfy: setup link, registration with Odoo, unregistering on removal.",
+                            fr: "Pont TypeScript vers la poussée native du clavardage (miroir des réglages, serveurs ntfy, abonnements, copies de session, santé, ouverture au toucher, décodage de QR), et le ntfy par compte : lien de configuration, enregistrement auprès d'Odoo, désinscription au retrait.",
                         },
                         status: "experimental",
                         howItWorks: {
                             en: "Each call goes to the native ChatPushPlugin; state changes run there "
                                 + "one at a time in call order, and a refusal comes back as an Error "
                                 + "naming the method. A notification tap carries a per-install secret "
-                                + "and one of three app paths, and is ignored otherwise.",
+                                + "and one of three app paths, and is ignored otherwise. Each account "
+                            + "has its chat_push row: the link stores the token natively, the "
+                            + "subscription gives the endpoint mail.push.device registers once per "
+                            + "foreground session, and a removal unregisters it online or leaves it "
+                            + "to native code offline.",
                             fr: "Chaque appel passe au ChatPushPlugin natif ; les changements d'état "
                                 + "y passent un à la fois dans l'ordre des appels, et un refus revient "
                                 + "en Error qui nomme la méthode. Le toucher d'une notification porte "
                                 + "un secret propre à l'installation et l'un de trois chemins de "
-                                + "l'app, sans quoi il est ignoré.",
+                                + "l'app, sans quoi il est ignoré. Chaque compte a sa ligne chat_push : "
+                            + "le lien applique le jeton côté natif, l'abonnement donne le point de "
+                            + "terminaison que mail.push.device enregistre une fois par session au "
+                            + "premier plan, et un retrait le désinscrit en ligne ou le laisse au "
+                            + "natif hors ligne.",
                         },
                         demo: { kind: "none", reason: { en: "Native only, used by the chat notification settings.", fr: "Natif seulement, utilisé par les réglages des notifications du clavardage." } },
                         files: [
                             "src/plugins/chatPushPlugin.ts",
                             "src/__mocks__/chatPushNative.ts",
+                            "src/services/chat/chatPush.ts",
+                            "src/services/chat/chatPushLink.ts",
+                            "src/services/migrations/addChatPush.ts",
                         ],
-                        tests: ["src/__tests__/chatPushPlugin.test.ts"],
+                        tests: ["src/__tests__/chatPushPlugin.test.ts", "src/__tests__/chatPush.test.ts", "src/__tests__/chatPushLink.test.ts"],
                     },
                 ],
             },

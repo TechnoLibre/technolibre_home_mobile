@@ -80,8 +80,12 @@ export function fakeChatPushNative(): FakeChatPushNative {
         async publishSettings(o) {
             await record("publishSettings", o);
             fake.settings = o;
-            const ids = new Set(o.accounts.map((a) => a.configId));
-            fake.shownTags = fake.shownTags.filter((t) => ids.has(t.split(":")[1]));
+            // A tag is "<kind>:<configId>[:...]" and a config id holds ":" itself ("https://...")
+            const ids = o.accounts.map((a) => a.configId);
+            fake.shownTags = fake.shownTags.filter((t) => {
+                const rest = t.slice(t.indexOf(":") + 1);
+                return ids.some((id) => rest === id || rest.startsWith(id + ":"));
+            });
         },
         async setNtfy(o) {
             await record("setNtfy", o);

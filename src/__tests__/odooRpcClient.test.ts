@@ -52,6 +52,40 @@ describe("OdooRpcClient authenticate over fetch", () => {
   });
 });
 
+describe("OdooRpcClient session hooks", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    SecureStoragePlugin._store.clear();
+  });
+
+  it("onSessionStored gets the credentials and the session once SecureStorage holds it", async () => {
+    server(() => ({ result: { uid: 2, session_id: "sid-new", server_version_info: [18, 0, 0, "final", 0] } }));
+    const rpc = new OdooRpcClient();
+    const seen: any[] = [];
+    rpc.onSessionStored = (creds, stored) => {
+      seen.push([creds, stored.sessionId, stored.odooMajorVersion, SecureStoragePlugin._store.has(syncSessionKey(creds))]);
+    };
+    await rpc.authenticate(CREDS);
+    expect(seen).toEqual([[CREDS, "sid-new", 18, true]]);
+  });
+
+  it("storedSession reads the stored session without logging in, null when absent, stale or expired", async () => {
+    const calls = server(() => ({ result: { uid: 2, session_id: "sid-new", server_version_info: [18, 0, 0, "final", 0] } }));
+    const rpc = new OdooRpcClient();
+    expect(await rpc.storedSession(CREDS)).toBeNull();
+    await storeSession(18);
+    expect(await rpc.storedSession(CREDS)).toMatchObject({ sessionId: "sid", odooMajorVersion: 18 });
+    await SecureStoragePlugin.set({ key: syncSessionKey(CREDS), value: "plain-sid" });
+    expect(await rpc.storedSession(CREDS)).toBeNull();
+    await SecureStoragePlugin.set({
+      key: syncSessionKey(CREDS),
+      value: JSON.stringify({ sessionId: "sid", odooMajorVersion: 18, createdAt: new Date(Date.now() - 25 * 3600 * 1000).toISOString() }),
+    });
+    expect(await rpc.storedSession(CREDS)).toBeNull();
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("OdooRpcClient helpers", () => {
   let rpc: OdooRpcClient;
 

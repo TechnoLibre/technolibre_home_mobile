@@ -38,6 +38,7 @@ import { addChatMailbox } from "./addChatMailbox";
 import { addChatOnTop } from "./addChatOnTop";
 import { addChatRecordThreads } from "./addChatRecordThreads";
 import { addChatAvatars } from "./addChatAvatars";
+import { addChatPush } from "./addChatPush";
 
 /**
  * The app's database migrations, in version order: runMigrations runs at
@@ -243,5 +244,10 @@ export const APP_MIGRATIONS: Migration[] = [
 		version: 2026102705,
 		description: "Clavardage : nom et avatar des auteurs",
 		run: addChatAvatars,
+	},
+	{
+		version: 2026102801,
+		description: "Clavardage : notifications par ntfy, par compte",
+		run: addChatPush,
 	},
 ];

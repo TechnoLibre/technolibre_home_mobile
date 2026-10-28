@@ -259,34 +259,50 @@ export class OdooRpcClient {
     const odooMajorVersion: number = json.result?.server_version_info?.[0] ?? 18;
     const stored: StoredSession = { sessionId, odooMajorVersion, createdAt: new Date().toISOString() };
     await SecureStoragePlugin.set({ key: syncSessionKey(creds), value: JSON.stringify(stored) });
+    try {
+      this.onSessionStored?.(creds, stored);
+    } catch (e) {
+      console.warn("[sync] session listener failed:", e instanceof Error ? e.message : e);
+    }
     const legacyKey = this.legacySessionKey(creds);
     if (legacyKey) await SecureStoragePlugin.remove({ key: legacyKey }).catch(() => {});
     return stored;
   }
 
   /**
-   * Returns the stored session. If missing or in the old plain-string format,
-   * re-authenticates so the Odoo version is also captured.
+   * Called by authenticate once the new session is in SecureStorage, with
+   * the credentials it was opened for; the native chat push copies it from
+   * there. Synchronous: a listener with work to do queues it.
+   */
+  onSessionStored: ((creds: SyncCredentials, stored: StoredSession) => void) | null = null;
+
+  /**
+   * The session SecureStorage holds for the credentials, without logging
+   * in: null when there is none, it is in the old plain-string format, or
+   * it is older than SESSION_MAX_AGE_MS (then it is removed).
+   */
+  async storedSession(creds: SyncCredentials): Promise<StoredSession | null> {
+    let parsed: any;
+    try {
+      parsed = JSON.parse((await SecureStoragePlugin.get({ key: syncSessionKey(creds) })).value);
+    } catch {
+      return null;
+    }
+    if (!parsed?.sessionId || !parsed?.odooMajorVersion) return null;
+    if (parsed.createdAt && Date.now() - new Date(parsed.createdAt).getTime() > SESSION_MAX_AGE_MS) {
+      await SecureStoragePlugin.remove({ key: syncSessionKey(creds) }).catch(() => {});
+      return null;
+    }
+    return parsed as StoredSession;
+  }
+
+  /**
+   * Returns the stored session (storedSession). If missing, expired or in
+   * the old plain-string format, re-authenticates so the Odoo version is
+   * also captured.
    */
   async getSession(creds: SyncCredentials): Promise<StoredSession> {
-    try {
-      const result = await SecureStoragePlugin.get({ key: syncSessionKey(creds) });
-      const parsed = JSON.parse(result.value);
-      if (!parsed?.sessionId || !parsed?.odooMajorVersion) throw new Error("stale format");
-
-      // Enforce local session expiry
-      if (parsed.createdAt) {
-        const age = Date.now() - new Date(parsed.createdAt).getTime();
-        if (age > SESSION_MAX_AGE_MS) {
-          await SecureStoragePlugin.remove({ key: syncSessionKey(creds) }).catch(() => {});
-          throw new Error("session expired locally");
-        }
-      }
-
-      return parsed as StoredSession;
-    } catch {
-      return this.authenticate(creds);
-    }
+    return (await this.storedSession(creds)) ?? this.authenticate(creds);
   }
 
   /**

@@ -11,6 +11,15 @@ export const DEFAULT_CACHE_LIMIT_MB = 2048;
 export type ListOrder = "on_top_first" | "unread_first";
 
 /**
+ * How the closed-app notifications run: 1 and 2 realtime (a permanent
+ * service), 3 a check every 15 minutes, 4 every hour, 5 off.
+ */
+export type NotifyLevel = 1 | 2 | 3 | 4 | 5;
+
+/** The level of an install that never chose one: every 15 minutes, no permanent service. */
+export const DEFAULT_NOTIFY_LEVEL: NotifyLevel = 3;
+
+/**
  * What the chat tells the server about the user: sendRead marks
  * conversations read and fetched, sendTyping announces typing. Posting a
  * message marks its conversation read whatever sendRead holds.
@@ -18,6 +27,8 @@ export type ListOrder = "on_top_first" | "unread_first";
  * The attachment cache: cachePurge lets the purge remove cached files once
  * the chat's files pass cacheLimitMb (MB); askCompress asks before
  * sending a photo whether to compress it.
+ *
+ * notifyLevel: the level of the closed-app notifications (NotifyLevel).
  */
 export interface ChatSettings {
   sendRead: boolean;
@@ -26,6 +37,7 @@ export interface ChatSettings {
   cacheLimitMb: number;
   askCompress: boolean;
   listOrder: ListOrder;
+  notifyLevel: NotifyLevel;
 }
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
@@ -35,6 +47,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   cacheLimitMb: DEFAULT_CACHE_LIMIT_MB,
   askCompress: false,
   listOrder: "on_top_first",
+  notifyLevel: DEFAULT_NOTIFY_LEVEL,
 };
 
 /** A limit in MB: a finite number above 0, else the default. */
@@ -43,10 +56,18 @@ function limitOf(value: unknown): number {
   return Number.isFinite(mb) && mb > 0 ? mb : DEFAULT_CACHE_LIMIT_MB;
 }
 
+/** A stored level: an integer from 1 to 5, else the default. */
+function levelOf(value: unknown): NotifyLevel {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 5
+    ? (value as NotifyLevel)
+    : DEFAULT_NOTIFY_LEVEL;
+}
+
 /**
  * The settings stored, or the defaults; unreadable storage counts as the
  * defaults. A missing sendRead or sendTyping counts as on, a missing
- * cachePurge or askCompress as off.
+ * cachePurge or askCompress as off, a level other than 1 to 5 as
+ * DEFAULT_NOTIFY_LEVEL.
  */
 export function chatSettings(): ChatSettings {
   try {
@@ -59,6 +80,7 @@ export function chatSettings(): ChatSettings {
       cacheLimitMb: limitOf(raw.cacheLimitMb),
       askCompress: raw.askCompress === true,
       listOrder: raw.listOrder === "unread_first" ? "unread_first" : "on_top_first",
+      notifyLevel: levelOf(raw.notifyLevel),
     };
   } catch {
     return DEFAULT_CHAT_SETTINGS;

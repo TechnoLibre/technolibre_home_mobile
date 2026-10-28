@@ -35,6 +35,7 @@ import {
   SyncCredentials,
 } from "./odoo/odooRpcClient";
 import { v4 as uuidv4 } from "uuid";
+import { chatPushNative } from "../plugins/chatPushPlugin";
 
 export {
   OdooRpcError,
@@ -825,7 +826,7 @@ export class SyncService {
     this._recordSearches.set(PARTNER_MODEL, this.partners);
     this.activityTypes = new ActivityTypeService(db, rpc);
     this.calendar = new ActivityCalendarService(db, rpc, outbox);
-    this.chat = new ChatService(db, rpc, outbox, this.capabilities);
+    this.chat = new ChatService(db, rpc, outbox, this.capabilities, undefined, { native: chatPushNative });
     this.outbox.onRetryScheduled = (at) => this.onRetryScheduled?.(at);
     for (const kind of TARGET_KINDS) {
       // drain already found the operation due: its retry delay is over or forced

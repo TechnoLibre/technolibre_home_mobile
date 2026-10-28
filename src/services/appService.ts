@@ -55,6 +55,13 @@ export class AppService {
    * logged and does not fail the edit.
    */
   afterRename: RenameHook | null = null;
+  /**
+   * Awaited before the row of an application with a database is deleted
+   * (delete and clear), with its sync config id: the chat push
+   * unregisters the phone from that server while it still has the
+   * credentials. A hook that fails is logged and the delete goes on.
+   */
+  beforeDelete: ((configId: string) => Promise<void>) | null = null;
 
   constructor(db: DatabaseService) {
     this._db = db;
@@ -97,6 +104,16 @@ export class AppService {
     await this.notify({ kind: "delete", configId, realtimeRelevant: configId !== null });
   }
 
+  private async runBeforeDelete(app: Application): Promise<void> {
+    const configId = configIdOf(app);
+    if (configId === null) return;
+    try {
+      await this.beforeDelete?.(configId);
+    } catch (e) {
+      console.warn("[appService] delete hook failed:", e);
+    }
+  }
+
   private async notify(change: ApplicationsChange): Promise<void> {
     try {
       await this.onChanged?.(change);
@@ -115,6 +132,7 @@ export class AppService {
   public async clear(): Promise<boolean> {
     const apps = await this.getApps();
     for (const app of apps) {
+      await this.runBeforeDelete(app);
       await this._db.deleteApplication(app.url, app.username);
       await this.notifyDelete(app);
     }
@@ -140,6 +158,7 @@ export class AppService {
       throw new NoAppMatchError();
     }
 
+    await this.runBeforeDelete(matchingApp);
     await this._db.deleteApplication(matchingApp.url, matchingApp.username);
     // Its per-server entries no longer count in the notes' global status
     await this._db.refreshAllNoteSyncStatuses();

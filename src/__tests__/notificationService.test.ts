@@ -430,12 +430,15 @@ describe("NotificationService", () => {
             startSourceRealtime: vi.fn().mockResolvedValue(undefined),
             stopSourceRealtime: vi.fn(),
             forgetSource: vi.fn().mockResolvedValue(undefined),
+            push: { start: vi.fn().mockResolvedValue(undefined), newSession: vi.fn() },
         }) as any;
 
         it("going inactive stops realtime, active starts it", async () => {
             makeServices([]);
             const chat = fakeChat();
             await new ChatLifecycle(chat).start();
+            expect(chat.push.start).toHaveBeenCalledTimes(1);
+            expect(chat.push.newSession).toHaveBeenCalledTimes(1);
             expect(chat.startRealtime).toHaveBeenCalledTimes(1);
             expect(chat.startRealtime).toHaveBeenCalledWith(nativeTransport);
 

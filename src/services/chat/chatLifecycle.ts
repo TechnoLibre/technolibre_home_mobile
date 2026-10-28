@@ -9,7 +9,9 @@ import type { ChatService } from "./chatService";
  * Ties the chat's realtime to the app state and to the application list:
  * the buses run while the app is in the foreground and are stopped when it
  * goes to the background. Coming to the foreground, at the launch too, also
- * lets the attachment cache run its due purge. The bus of an application
+ * lets the attachment cache run its due purge and starts a new session of
+ * the closed-app notifications (each account registers again at its next
+ * load); the start begins them (ChatPush.start). The bus of an application
  * that is added, edited or deleted stops and starts again on its own, the
  * others left running. Realtime is native only; off a native platform
  * start() does nothing, while a deleted application's chat data is still
@@ -32,6 +34,7 @@ export class ChatLifecycle {
   async start(): Promise<void> {
     if (!Capacitor.isNativePlatform()) return;
     this.native = true;
+    this.chat.push.start().catch((e) => console.warn("[chat] push start failed:", e instanceof Error ? e.message : e));
     let reported = false;
     void App.addListener("appStateChange", ({ isActive }) => {
       reported = true;
@@ -49,6 +52,7 @@ export class ChatLifecycle {
   private follow(isActive: boolean): void {
     this.active = isActive;
     if (isActive) {
+      this.chat.push.newSession();
       this.startRealtime();
       this.chat.attachments?.maybePurge().catch((e) => console.warn("[chat] cache purge failed:", e));
     } else this.chat.stopRealtime();

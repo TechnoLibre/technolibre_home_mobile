@@ -12,6 +12,7 @@ import type { CapabilityService } from "../odoo/capabilityService";
 import { OdooRpcError, RequestNotSentError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
 import type { OutboxService } from "../outboxService";
 import { nativeChatHttp } from "../../plugins/chatFilePlugin";
+import type { ChatPushNative } from "../../plugins/chatPushPlugin";
 import { BUS_VERSION_FALLBACK, ChatBus, type BusTransport } from "./chatBus";
 import { ChatAttachmentCache } from "./chatAttachmentCache";
 import { ChatAvatars } from "./chatAvatars";
@@ -26,6 +27,7 @@ import { CHAT_DELETE, CHAT_EDIT, CHAT_STAR, ChatOutbox, sameTarget, targetOf, ty
 import { ChatInbox } from "./chatInbox";
 import { ChatMentions } from "./chatMentions";
 import { ChatPeople } from "./chatPeople";
+import { ChatPush } from "./chatPush";
 import { ChatRepository, type ChatDraft, type DraftThread } from "./chatRepository";
 import { ChatSearch } from "./chatSearch";
 import { chatSettings } from "./chatSettings";
@@ -197,16 +199,26 @@ export class ChatService {
   /** The authors' avatars on the phone (made by useFileIO). */
   avatars!: ChatAvatars;
 
+  /**
+   * The closed-app notifications over the native side given at
+   * construction (none: every method does nothing); each load registers
+   * the account with Odoo, clears what was read elsewhere and publishes.
+   */
+  push: ChatPush;
+
   constructor(
     private db: DatabaseService,
     private rpc: OdooRpcClient,
     outbox: OutboxService,
     private capabilities: CapabilityService,
     private now: () => Date = () => new Date(),
-    opts: { moduleMode?: "auto" | "ignore" } = {},
+    opts: { moduleMode?: "auto" | "ignore"; native?: ChatPushNative | null } = {},
   ) {
     this.moduleMode = opts.moduleMode ?? "auto";
     this.repo = new ChatRepository(db, now);
+    this.push = new ChatPush(this.repo, rpc, opts.native ?? null, () => this.sources({ online: false }), now);
+    this.push.isOnline = () => this.isOnline();
+    this.push.conversations = (configId) => this.conversations([configId]);
     this.people = new ChatPeople(rpc, this.repo, () => this.isOnline());
     this.mentions = new ChatMentions(this.repo, rpc, this.people, () => this.isOnline());
     this.search = new ChatSearch(this.repo, this.people, rpc, (configId) => this.features(configId), () => this.isOnline());
@@ -462,6 +474,28 @@ export class ChatService {
       loadedAt: this.now().toISOString(),
     });
     this.changed(configId, null);
+    await this.pushAfterLoad(src);
+  }
+
+  /**
+   * The closed-app notifications after a load: the account registers with
+   * Odoo (once per foreground session), the notifications of what was
+   * read elsewhere go, and the mirror follows the conversations. A failure
+   * is logged and never fails the load.
+   */
+  private async pushAfterLoad(src: ChatSource): Promise<void> {
+    const steps = [
+      () => this.push.ensureRegistered(src),
+      () => this.push.reconcileShown(src.configId),
+      () => this.push.publish(),
+    ];
+    for (const step of steps) {
+      try {
+        await step();
+      } catch (e) {
+        console.warn("[chat] push after a load failed:", e instanceof Error ? e.message : e);
+      }
+    }
   }
 
   /**
@@ -1818,6 +1852,8 @@ export class ChatService {
     this.unknownReloadAt.delete(configId);
     this.generations.set(configId, (this.generations.get(configId) ?? 0) + 1);
     await this.erase(configId);
+    // The account is out of the mirror once its rows are gone
+    await this.push.publish().catch((e) => console.warn("chat: publish after an erase failed", e instanceof Error ? e.message : e));
     const gen = this.generations.get(configId);
     this.serial(configId, async () => {
       // An account added again meanwhile owns its rows now: they stay

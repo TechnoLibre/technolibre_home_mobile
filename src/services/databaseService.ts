@@ -1338,6 +1338,7 @@ export class DatabaseService {
     await this.createChatDraftsTable();
     await this.createChatReactionsTable();
     await this.createChatAvatarsTable();
+    await this.createChatPushTable();
     for (const [table, col] of [
       ["chat_channels", "config_id"],
       ["chat_messages", "config_id, channel_id"],
@@ -1619,6 +1620,38 @@ export class DatabaseService {
   }
 
   /**
+   * The closed-app notifications of each account (ChatPushRow): one row
+   * per config id with its ntfy, its Web Push subscription's public key
+   * and auth secret, the endpoint registered with Odoo, the endpoints left
+   * to unregister (a JSON array) and the lock-screen choice. The private
+   * key and the ntfy token stay in native code. The IF NOT EXISTS makes it
+   * safe to call from the migration and from createChatTables.
+   */
+  async createChatPushTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_push (
+        config_id       TEXT PRIMARY KEY NOT NULL,
+        ntfy_url        TEXT,
+        odoo_ntfy_url   TEXT,
+        prefix          TEXT,
+        topic           TEXT,
+        endpoint        TEXT,
+        p256dh          TEXT,
+        auth            TEXT,
+        vapid_key       TEXT,
+        registered_at   TEXT,
+        stale_endpoints TEXT NOT NULL DEFAULT '[]',
+        lock_screen     TEXT NOT NULL DEFAULT 'hidden_locked'
+      )
+    `);
+  }
+
+  /** Migration 2026102801: the chat_push table, made once (createChatPushTable). */
+  async addChatPush(): Promise<void> {
+    await this.createChatPushTable();
+  }
+
+  /**
    * Creates the avatars table and adds chat_partners.write_date and
    * chat_messages.is_note to tables created before them. A column is added
    * only when PRAGMA table_info does not list it, and only to an existing
@@ -1848,13 +1881,15 @@ export class DatabaseService {
   }
 
   /**
-   * Moves the chat rows of one config id under another: both the `config_id`
-   * column and the `configId#` prefix of the key. A table not created yet is skipped.
+   * Moves the chat rows of one config id under another: the `config_id`
+   * column, and the `configId#` prefix of the key in a table keyed so
+   * (chat_sources and chat_push are keyed by the config id). A table not
+   * created yet is skipped.
    */
   private async renameChatRows(oldId: string, newId: string): Promise<void> {
-    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_on_top", "chat_avatars", "chat_sources"]) {
+    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_on_top", "chat_avatars", "chat_sources", "chat_push"]) {
       try {
-        const keyed = table !== "chat_sources";
+        const keyed = table !== "chat_sources" && table !== "chat_push";
         const key = keyed ? "id" : "config_id";
         const result = await this.db.query(`SELECT * FROM ${table} WHERE config_id = ?`, [oldId]);
         for (const row of result.values ?? []) {

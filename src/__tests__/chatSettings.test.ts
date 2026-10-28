@@ -18,14 +18,14 @@ describe("chatSettings", () => {
   it("defaults when missing or unreadable", () => {
     expect(chatSettings()).toEqual({
       sendRead: true, sendTyping: true, cachePurge: false, cacheLimitMb: 2048, askCompress: false,
-      listOrder: "on_top_first",
+      listOrder: "on_top_first", notifyLevel: 3,
     });
     localStorage.setItem(CHAT_SETTINGS_KEY, "{bad");
     expect(chatSettings()).toEqual(DEFAULT_CHAT_SETTINGS);
   });
 
   it("round-trips", () => {
-    const settings = { sendRead: false, sendTyping: true, cachePurge: true, cacheLimitMb: 512, askCompress: true, listOrder: "unread_first" as const };
+    const settings = { sendRead: false, sendTyping: true, cachePurge: true, cacheLimitMb: 512, askCompress: true, listOrder: "unread_first" as const, notifyLevel: 1 as const };
     setChatSettings(settings);
     expect(chatSettings()).toEqual(settings);
     expect(CHAT_SETTINGS_KEY).toBe("options.chat");
@@ -49,5 +49,16 @@ describe("chatSettings", () => {
     }
     localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify({ listOrder: "unread_first" }));
     expect(chatSettings().listOrder).toBe("unread_first");
+  });
+
+  it("the notification level reads 1 to 5, anything else as 3", () => {
+    for (const bad of [0, 6, 2.5, "2", null, "x"]) {
+      localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify({ notifyLevel: bad }));
+      expect(chatSettings().notifyLevel).toBe(3);
+    }
+    for (const level of [1, 2, 3, 4, 5]) {
+      localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify({ notifyLevel: level }));
+      expect(chatSettings().notifyLevel).toBe(level);
+    }
   });
 });

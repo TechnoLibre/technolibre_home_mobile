@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
-import { assertUrlAllowed, InsecureHttpError, isHttpAllowed, setHttpAllowed } from "../services/odoo/httpPolicy";
+import { assertUrlAllowed, InsecureHttpError, isHttpAllowed, onHttpPolicyChange, setHttpAllowed } from "../services/odoo/httpPolicy";
 import { OdooRpcClient, syncSessionKey } from "../services/odoo/odooRpcClient";
 
 /** In-memory localStorage for the node test environment. */
@@ -29,6 +29,16 @@ describe("http policy", () => {
     expect(() => assertUrlAllowed("http://odoo.example.com")).not.toThrow();
     setHttpAllowed(false);
     expect(() => assertUrlAllowed("http://odoo.example.com")).toThrow(InsecureHttpError);
+  });
+
+  it("tells its listeners each time the option is set, until they unsubscribe", () => {
+    const seen: boolean[] = [];
+    const stop = onHttpPolicyChange((allowed) => seen.push(allowed));
+    setHttpAllowed(true);
+    setHttpAllowed(false);
+    stop();
+    setHttpAllowed(true);
+    expect(seen).toEqual([true, false]);
   });
 
   it("counts unreadable storage as off", () => {

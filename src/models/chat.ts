@@ -357,3 +357,30 @@ export interface BusNotification {
   id: number;
   message: { type: string; payload: any };
 }
+
+/** What an account's notifications show on the lock screen: hidden while locked (the default), never, always. */
+export type LockScreen = "hidden_locked" | "never" | "always";
+
+/**
+ * An account's closed-app notifications (table chat_push). ntfyUrl null:
+ * no ntfy, the account is only polled from Odoo. topic, p256dh and auth
+ * are the Web Push subscription native code drew on that ntfy; endpoint
+ * is the topic's URL as Odoo reaches it (odooNtfyUrl, else ntfyUrl).
+ * vapidKey and registeredAt are those of the last register_devices that
+ * Odoo accepted. staleEndpoints are endpoints this phone left that Odoo
+ * may still push to: each is unregistered, then dropped from the list.
+ */
+export interface ChatPushRow {
+  configId: string;
+  ntfyUrl: string | null;
+  odooNtfyUrl: string | null;
+  prefix: string | null;
+  topic: string | null;
+  endpoint: string | null;
+  p256dh: string | null;
+  auth: string | null;
+  vapidKey: string | null;
+  registeredAt: string | null;
+  staleEndpoints: string[];
+  lockScreen: LockScreen;
+}

@@ -229,6 +229,35 @@ describe("AppService with SQLite", () => {
       expect(rename).toHaveBeenCalledTimes(1);
     });
 
+    it("beforeDelete runs before the application row goes, in delete and in clear", async () => {
+      const app = baseApp({ database: "db1" });
+      const other = baseApp({ url: "https://bureau.exemple.test", database: "db2" });
+      await appService.add(app);
+      await appService.add(other);
+      const seen: any[] = [];
+      const remove = vi.spyOn(db, "deleteApplication");
+      appService.beforeDelete = async (configId) => {
+        seen.push([configId, remove.mock.calls.length, (await appService.getApps()).length]);
+      };
+      await appService.delete({ url: app.url, username: app.username });
+      expect(seen).toEqual([["https://erp.example.com|admin|db1", 0, 2]]);
+      await appService.clear();
+      expect(seen[1]).toEqual(["https://bureau.exemple.test|admin|db2", 1, 1]);
+      expect(await appService.getApps()).toEqual([]);
+    });
+
+    it("a failing beforeDelete is logged and the delete goes on; no hook for an app without a database", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const hook = vi.fn(async () => { throw new Error("hook"); });
+      appService.beforeDelete = hook;
+      await appService.add(baseApp({ database: "db1" }));
+      await appService.add(baseApp({ url: "https://bureau.exemple.test", database: "" }));
+      await expect(appService.delete({ url: baseApp().url, username: baseApp().username })).resolves.toBe(true);
+      await appService.clear();
+      expect(hook).toHaveBeenCalledTimes(1);
+      expect(await appService.getApps()).toEqual([]);
+    });
+
     it("afterRename runs once the sync rows moved, a failed move included, and its failure does not fail the edit", async () => {
       const app = baseApp({ database: "db1" });
       await appService.add(app);

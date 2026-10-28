@@ -8,8 +8,10 @@ import type {
   ChatMember,
   ChatMessage,
   ChatPartner,
+  ChatPushRow,
   ChatReaction,
   ChatSourceState,
+  LockScreen,
   MessageTarget,
   OutgoingFile,
 } from "../../models/chat";
@@ -343,6 +345,56 @@ function memberFromRow(r: Row): ChatMember {
     isTyping: bool(r.is_typing),
     typingAt: r.typing_at ?? null,
     createDate: r.create_date ?? null,
+  };
+}
+
+const LOCK_SCREENS: LockScreen[] = ["hidden_locked", "never", "always"];
+
+function defaultPush(configId: string): ChatPushRow {
+  return {
+    configId, ntfyUrl: null, odooNtfyUrl: null, prefix: null, topic: null, endpoint: null, p256dh: null, auth: null,
+    vapidKey: null, registeredAt: null, staleEndpoints: [], lockScreen: "hidden_locked",
+  };
+}
+
+/** A stored push row; a stale list that does not read as an array of strings counts as empty, an unknown lock screen as the default. */
+function pushFromRow(r: Row): ChatPushRow {
+  let stale: unknown = [];
+  try {
+    stale = JSON.parse(r.stale_endpoints ?? "[]");
+  } catch {
+    stale = [];
+  }
+  return {
+    configId: r.config_id,
+    ntfyUrl: r.ntfy_url ?? null,
+    odooNtfyUrl: r.odoo_ntfy_url ?? null,
+    prefix: r.prefix ?? null,
+    topic: r.topic ?? null,
+    endpoint: r.endpoint ?? null,
+    p256dh: r.p256dh ?? null,
+    auth: r.auth ?? null,
+    vapidKey: r.vapid_key ?? null,
+    registeredAt: r.registered_at ?? null,
+    staleEndpoints: Array.isArray(stale) ? stale.filter((e): e is string => typeof e === "string") : [],
+    lockScreen: LOCK_SCREENS.includes(r.lock_screen) ? r.lock_screen : "hidden_locked",
+  };
+}
+
+function pushToRow(p: ChatPushRow): Row {
+  return {
+    config_id: p.configId,
+    ntfy_url: p.ntfyUrl,
+    odoo_ntfy_url: p.odooNtfyUrl,
+    prefix: p.prefix,
+    topic: p.topic,
+    endpoint: p.endpoint,
+    p256dh: p.p256dh,
+    auth: p.auth,
+    vapid_key: p.vapidKey,
+    registered_at: p.registeredAt,
+    stale_endpoints: JSON.stringify(p.staleEndpoints),
+    lock_screen: p.lockScreen,
   };
 }
 
@@ -1847,6 +1899,40 @@ export class ChatRepository {
     return paths;
   }
 
+  // ─── Push ─────────────────────────────────────────────────────────────────
+
+  /** The account's closed-app notifications; no ntfy and hidden when locked while nothing is stored. */
+  async pushRow(configId: string): Promise<ChatPushRow> {
+    const row = (await this.rows("chat_push", { config_id: configId }))[0];
+    return row ? pushFromRow(row) : defaultPush(configId);
+  }
+
+  /** Every stored push row, in no particular order. */
+  async pushRows(): Promise<ChatPushRow[]> {
+    return (await this.db.rawQuery("SELECT * FROM chat_push")).map(pushFromRow);
+  }
+
+  /**
+   * Writes the given fields of the account's push row, and only those, as
+   * setSourceState does: the default row first when none is stored, then
+   * one UPDATE of the given columns.
+   */
+  async setPushRow(p: Partial<ChatPushRow> & { configId: string }): Promise<void> {
+    const fresh = pushToRow(defaultPush(p.configId));
+    const full = pushToRow({ ...defaultPush(p.configId), ...defined(p) });
+    const cols = Object.keys(defined(p)).filter((k) => k !== "configId").map(snakeOf);
+    const names = Object.keys(fresh);
+    await this.db.rawRun(
+      `INSERT OR IGNORE INTO chat_push (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
+      names.map((c) => fresh[c]),
+    );
+    if (cols.length === 0) return;
+    await this.db.rawRun(
+      `UPDATE chat_push SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE config_id = ?`,
+      [...cols.map((c) => full[c]), p.configId],
+    );
+  }
+
   // ─── Avatars ──────────────────────────────────────────────────────────────
 
   /** The account's cached avatars, by partner id. */
@@ -1894,7 +1980,7 @@ export class ChatRepository {
   async dropSource(configId: string): Promise<void> {
     await this.dropAttachmentRows({ config_id: configId });
     await this.clearAvatars(configId);
-    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_on_top", "chat_sources"]) {
+    for (const t of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_on_top", "chat_sources", "chat_push"]) {
       await this.del(t, { config_id: configId });
     }
   }

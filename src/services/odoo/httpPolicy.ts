@@ -20,11 +20,32 @@ export function isHttpAllowed(): boolean {
   }
 }
 
+const listeners = new Set<(allowed: boolean) => void>();
+
+/**
+ * Calls `listener` with the value each time setHttpAllowed sets the
+ * option (the native chat push mirrors it); returns the unsubscribe. A
+ * listener that throws is logged and the others still run.
+ */
+export function onHttpPolicyChange(listener: (allowed: boolean) => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 export function setHttpAllowed(allowed: boolean): void {
   try {
     globalThis.localStorage?.setItem(ALLOW_HTTP_KEY, allowed ? "true" : "false");
   } catch {
     // Storage unavailable: the option stays off
+  }
+  for (const listener of [...listeners]) {
+    try {
+      listener(allowed);
+    } catch (e) {
+      console.warn("[http policy] listener failed:", e);
+    }
   }
 }
 

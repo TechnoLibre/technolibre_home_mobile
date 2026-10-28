@@ -8,6 +8,7 @@ function fake(maybePurge: any = vi.fn().mockResolvedValue(null)) {
         startRealtime: vi.fn().mockResolvedValue(undefined),
         stopRealtime: vi.fn(),
         attachments: { maybePurge },
+        push: { newSession: vi.fn() },
     } as any;
 }
 
@@ -17,6 +18,15 @@ describe("ChatLifecycle purge schedule", () => {
         (new ChatLifecycle(chat) as any).follow(true);
         expect(chat.attachments.maybePurge).toHaveBeenCalledTimes(1);
         expect(chat.startRealtime).toHaveBeenCalled();
+    });
+
+    it("coming to the foreground starts a new push session, going to the background does not", () => {
+        const chat = fake();
+        const lifecycle = new ChatLifecycle(chat) as any;
+        lifecycle.follow(false);
+        expect(chat.push.newSession).not.toHaveBeenCalled();
+        lifecycle.follow(true);
+        expect(chat.push.newSession).toHaveBeenCalledTimes(1);
     });
 
     it("going to the background does not", () => {
