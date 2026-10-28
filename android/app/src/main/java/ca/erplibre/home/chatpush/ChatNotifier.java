@@ -5,6 +5,7 @@ import android.app.NotificationChannelGroup;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.os.Build;
+import android.provider.Settings;
 import android.service.notification.StatusBarNotification;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.Person;
@@ -125,14 +126,20 @@ final class ChatNotifier implements PushEngine.Notifier {
             b.setContentTitle(n.conversationTitle);
             if (!n.text.isEmpty()) b.setContentText(n.text);
         }
-        if (n.privateVisibility) {
-            b.setVisibility(NotificationCompat.VISIBILITY_PRIVATE);
-            b.setPublicVersion(new NotificationCompat.Builder(context, n.channelId)
-                    .setSmallIcon(android.R.drawable.stat_notify_chat)
-                    .setContentTitle(n.publicTitle)
-                    .build());
-        } else {
-            b.setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
+        switch (NotificationModel.visibility(n, redaction())) {
+            case PRIVATE:
+                b.setVisibility(NotificationCompat.VISIBILITY_PRIVATE);
+                b.setPublicVersion(new NotificationCompat.Builder(context, n.channelId)
+                        .setSmallIcon(android.R.drawable.stat_notify_chat)
+                        .setContentTitle(n.publicTitle)
+                        .build());
+                break;
+            case SECRET:
+                b.setVisibility(NotificationCompat.VISIBILITY_SECRET);
+                break;
+            default:
+                b.setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
+                break;
         }
         if (NotificationModel.STATUS_CHANNEL.equals(n.channelId)) {
             b.setPriority(NotificationCompat.PRIORITY_LOW);
@@ -141,6 +148,24 @@ final class ChatNotifier implements PushEngine.Notifier {
         }
         if (n.silent) b.setOnlyAlertOnce(true).setSilent(true);
         manager.notify(n.tag, ID, b.build());
+    }
+
+    /**
+     * The lock-screen redaction of the user's settings, read at each post
+     * (the user may change it at any time); a setting that cannot be read
+     * counts as unknown.
+     */
+    private NotificationModel.Redaction redaction() {
+        return NotificationModel.redactionOf(secureInt("lock_screen_show_notifications"),
+                secureInt("lock_screen_allow_private_notifications"));
+    }
+
+    private Integer secureInt(String name) {
+        try {
+            return Settings.Secure.getInt(context.getContentResolver(), name);
+        } catch (Settings.SettingNotFoundException | RuntimeException e) {
+            return null;
+        }
     }
 
     private static boolean repeatsLast(NotificationCompat.MessagingStyle style, NotificationModel.Shown n) {

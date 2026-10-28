@@ -104,6 +104,47 @@ public class NotificationModelTest {
     }
 
     @Test
+    public void hiddenWhenLockedIsPrivateOnlyWhereAndroidHidesSensitiveContent() throws Exception {
+        NotificationModel.Shown s = NotificationModel.chat(account(LockScreenMode.HIDDEN_LOCKED),
+                payload("Alice Martin", "Secret", "discuss.channel", 4, "x"), FR);
+        assertEquals(NotificationModel.Visibility.PRIVATE,
+                NotificationModel.visibility(s, NotificationModel.Redaction.HIDDEN));
+        // Android would draw the private text on the locked screen: nothing is drawn there at all
+        assertEquals(NotificationModel.Visibility.SECRET,
+                NotificationModel.visibility(s, NotificationModel.Redaction.ALLOWED));
+        assertEquals(NotificationModel.Visibility.SECRET,
+                NotificationModel.visibility(s, NotificationModel.Redaction.UNKNOWN));
+    }
+
+    @Test
+    public void neverAlwaysAndTheSummaryArePublicWhateverTheRedaction() throws Exception {
+        PushPayload p = payload("Alice Martin", "Secret", "discuss.channel", 4, "x");
+        NotificationModel.Shown[] shown = {
+            NotificationModel.chat(account(LockScreenMode.NEVER), p, FR),
+            NotificationModel.chat(account(LockScreenMode.ALWAYS), p, FR),
+            NotificationModel.summary(account(LockScreenMode.HIDDEN_LOCKED), 2, FR),
+        };
+        for (NotificationModel.Shown s : shown) {
+            for (NotificationModel.Redaction r : NotificationModel.Redaction.values()) {
+                assertEquals(NotificationModel.Visibility.PUBLIC, NotificationModel.visibility(s, r));
+            }
+        }
+    }
+
+    @Test
+    public void theRedactionComesFromTheTwoLockScreenSettings() {
+        // lock_screen_show_notifications, lock_screen_allow_private_notifications; null: unreadable
+        assertEquals(NotificationModel.Redaction.HIDDEN, NotificationModel.redactionOf(1, 0));
+        assertEquals(NotificationModel.Redaction.HIDDEN, NotificationModel.redactionOf(0, 1));
+        assertEquals(NotificationModel.Redaction.HIDDEN, NotificationModel.redactionOf(0, null));
+        assertEquals(NotificationModel.Redaction.ALLOWED, NotificationModel.redactionOf(1, 1));
+        assertEquals(NotificationModel.Redaction.UNKNOWN, NotificationModel.redactionOf(1, null));
+        assertEquals(NotificationModel.Redaction.UNKNOWN, NotificationModel.redactionOf(null, null));
+        assertEquals(NotificationModel.Redaction.UNKNOWN, NotificationModel.redactionOf(null, 1));
+        assertEquals(NotificationModel.Redaction.HIDDEN, NotificationModel.redactionOf(null, 0));
+    }
+
+    @Test
     public void neverShownSaysNewMessageEvenUnlocked() throws Exception {
         NotificationModel.Shown s = NotificationModel.chat(account(LockScreenMode.NEVER),
                 payload("Alice Martin", "Secret", "discuss.channel", 4, "x"), FR);

@@ -27,12 +27,49 @@ final class NotificationModel {
         String openUrl = "";
         /** Drawn as a conversation (author, text) rather than a plain title and text. */
         boolean messaging;
-        /** Android VISIBILITY_PRIVATE: publicTitle on the locked screen. False is VISIBILITY_PUBLIC. */
+        /**
+         * Hidden when locked: the text never on a locked screen, publicTitle
+         * at most (see visibility). False is VISIBILITY_PUBLIC.
+         */
         boolean privateVisibility;
         /** An update of a notification already drawn: no sound, no vibration, no heads-up. */
         boolean silent;
         /** Epoch ms the message was sent, 0 when unknown (the notifier then dates it when drawn). */
         long at;
+    }
+
+    /** Whether Android draws a notification's private content on the locked screen. */
+    enum Redaction { ALLOWED, HIDDEN, UNKNOWN }
+
+    /** Android's lock-screen visibility of a notification. */
+    enum Visibility { PUBLIC, PRIVATE, SECRET }
+
+    /**
+     * The redaction the user's lock-screen settings give: notifications off
+     * on the lock screen (lock_screen_show_notifications 0) or sensitive
+     * content hidden (lock_screen_allow_private_notifications 0) is HIDDEN,
+     * both on is ALLOWED. null is a setting that could not be read; one
+     * that hides decides alone, else the answer is UNKNOWN.
+     */
+    static Redaction redactionOf(Integer showNotifications, Integer allowPrivate) {
+        if ((showNotifications != null && showNotifications == 0) || (allowPrivate != null && allowPrivate == 0)) {
+            return Redaction.HIDDEN;
+        }
+        if (showNotifications == null || allowPrivate == null) return Redaction.UNKNOWN;
+        return Redaction.ALLOWED;
+    }
+
+    /**
+     * How n is posted for the redaction read at that moment. A « masqué si
+     * verrouillé » notification is PRIVATE (its public version, publicTitle,
+     * on the locked screen) only where Android hides private content; where
+     * Android would draw the private content, or the setting is unknown, it
+     * is SECRET: nothing on the locked screen, all of it once unlocked. The
+     * others are PUBLIC.
+     */
+    static Visibility visibility(Shown n, Redaction r) {
+        if (!n.privateVisibility) return Visibility.PUBLIC;
+        return r == Redaction.HIDDEN ? Visibility.PRIVATE : Visibility.SECRET;
     }
 
     /** The channel shared by every server's status notifications. */
