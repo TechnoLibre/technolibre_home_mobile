@@ -444,6 +444,18 @@ public class PushEngineTest {
     }
 
     @Test
+    public void aShownMessageCarriesItsNtfyTime() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + push(a, "m1", 42, "Alice Martin", "vu")));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertEquals(1, notifier.shown.size());
+        assertEquals(1_790_000_000_000L, notifier.shown.get(0).at);
+    }
+
+    @Test
     public void nothingShowsWhileTheAppIsInTheForeground() throws Exception {
         mirror(1, true, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);

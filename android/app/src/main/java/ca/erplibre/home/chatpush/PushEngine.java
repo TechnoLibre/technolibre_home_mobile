@@ -518,7 +518,9 @@ final class PushEngine {
             return;
         }
         PushStrings s = settings.strings();
-        notifier.show(p.isChat() ? NotificationModel.chat(a, p, s) : NotificationModel.inbox(a, p, s));
+        NotificationModel.Shown n = p.isChat() ? NotificationModel.chat(a, p, s) : NotificationModel.inbox(a, p, s);
+        n.at = m.time * 1000L;
+        notifier.show(n);
     }
 
     /**

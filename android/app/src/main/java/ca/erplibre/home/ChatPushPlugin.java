@@ -10,6 +10,7 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import com.google.android.gms.tasks.Task;
 import com.google.mlkit.vision.barcode.BarcodeScanner;
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions;
 import com.google.mlkit.vision.barcode.BarcodeScanning;
@@ -254,24 +255,29 @@ public class ChatPushPlugin extends Plugin {
             InputImage image = InputImage.fromFilePath(getContext(), uri);
             final BarcodeScanner scanner = BarcodeScanning.getClient(new BarcodeScannerOptions.Builder()
                     .setBarcodeFormats(Barcode.FORMAT_QR_CODE).build());
-            scanner.process(image)
-                    .addOnSuccessListener((List<Barcode> codes) -> {
-                        String text = null;
-                        for (Barcode b : codes) {
-                            if (b.getRawValue() != null) {
-                                text = b.getRawValue();
-                                break;
-                            }
-                        }
-                        JSObject out = new JSObject();
-                        out.put("text", text == null ? JSONObject.NULL : text);
-                        c.resolve(out);
-                        scanner.close();
-                    })
-                    .addOnFailureListener(e -> {
-                        c.reject("decodeQr failed");
-                        scanner.close();
-                    });
+            Task<List<Barcode>> task;
+            try {
+                task = scanner.process(image);
+            } catch (RuntimeException e) {
+                scanner.close();
+                throw e;
+            }
+            task.addOnSuccessListener((List<Barcode> codes) -> {
+                String text = null;
+                for (Barcode b : codes) {
+                    if (b.getRawValue() != null) {
+                        text = b.getRawValue();
+                        break;
+                    }
+                }
+                JSObject out = new JSObject();
+                out.put("text", text == null ? JSONObject.NULL : text);
+                c.resolve(out);
+                scanner.close();
+            }).addOnFailureListener(e -> {
+                c.reject("decodeQr failed");
+                scanner.close();
+            });
         });
     }
 

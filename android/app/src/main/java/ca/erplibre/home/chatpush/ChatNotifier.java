@@ -85,8 +85,9 @@ final class ChatNotifier implements PushEngine.Notifier {
     /**
      * Posts n under its tag. A conversation is drawn as MessagingStyle: the
      * style of the notification of the same tag still shown is taken back
-     * and the new message appended, so the stack survives a process death.
-     * A silent n updates without sound, vibration or heads-up.
+     * and the new message appended, so the stack survives a process death;
+     * a replay of the last message is not appended twice. A silent n
+     * updates without sound, vibration or heads-up.
      */
     @Override
     public void show(NotificationModel.Shown n) {
@@ -94,12 +95,13 @@ final class ChatNotifier implements PushEngine.Notifier {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager.getNotificationChannel(n.channelId) == null) {
             syncChannels(settings.accounts(), settings.strings());
         }
+        long when = n.at > 0 ? n.at : System.currentTimeMillis();
         NotificationCompat.Builder b = new NotificationCompat.Builder(context, n.channelId)
                 .setSmallIcon(android.R.drawable.stat_notify_chat)
                 .setContentIntent(ChatPushOpen.intent(context, n.openUrl))
                 .setAutoCancel(true)
                 .setShowWhen(true)
-                .setWhen(System.currentTimeMillis());
+                .setWhen(when);
         if (n.groupId != null) b.setGroup(n.groupId);
         if (n.messaging) {
             NotificationCompat.MessagingStyle style = previousStyle(n.tag);
@@ -109,8 +111,13 @@ final class ChatNotifier implements PushEngine.Notifier {
             }
             style.setConversationTitle(n.conversationTitle);
             style.setGroupConversation(!n.conversationTitle.equals(n.author));
-            Person author = new Person.Builder().setName(n.author.isEmpty() ? n.conversationTitle : n.author).build();
-            style.addMessage(new NotificationCompat.MessagingStyle.Message(n.text, System.currentTimeMillis(), author));
+            if (repeatsLast(style, n)) {
+                // drawn again as it was, without alerting a second time
+                b.setOnlyAlertOnce(true);
+            } else {
+                Person author = new Person.Builder().setName(authorOf(n)).build();
+                style.addMessage(new NotificationCompat.MessagingStyle.Message(n.text, when, author));
+            }
             b.setStyle(style).setCategory(NotificationCompat.CATEGORY_MESSAGE);
         } else {
             b.setContentTitle(n.conversationTitle);
@@ -134,6 +141,14 @@ final class ChatNotifier implements PushEngine.Notifier {
         manager.notify(n.tag, ID, b.build());
     }
 
+    private static boolean repeatsLast(NotificationCompat.MessagingStyle style, NotificationModel.Shown n) {
+        List<NotificationCompat.MessagingStyle.Message> messages = style.getMessages();
+        if (messages.isEmpty()) return false;
+        NotificationCompat.MessagingStyle.Message last = messages.get(messages.size() - 1);
+        Person p = last.getPerson();
+        return repeats(last.getText(), p == null ? null : p.getName(), last.getTimestamp(), n);
+    }
+
     /** The MessagingStyle of the notification drawn under tag, or null. */
     private NotificationCompat.MessagingStyle previousStyle(String tag) {
         for (StatusBarNotification sbn : active()) {
@@ -142,6 +157,20 @@ final class ChatNotifier implements PushEngine.Notifier {
             }
         }
         return null;
+    }
+
+    /**
+     * Whether n is the message last appended to the stack (same text, author
+     * and send time): a message replayed after a death between the drawing
+     * and the saving of its id. A message without a send time is never one.
+     */
+    static boolean repeats(CharSequence lastText, CharSequence lastAuthor, long lastAt, NotificationModel.Shown n) {
+        if (n.at <= 0 || lastAt != n.at || lastText == null || lastAuthor == null) return false;
+        return lastText.toString().equals(n.text) && lastAuthor.toString().equals(authorOf(n));
+    }
+
+    private static String authorOf(NotificationModel.Shown n) {
+        return n.author.isEmpty() ? n.conversationTitle : n.author;
     }
 
     @Override

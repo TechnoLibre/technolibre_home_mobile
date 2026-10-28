@@ -33,6 +33,8 @@ final class NotificationModel {
         boolean privateVisibility;
         /** An update of a notification already drawn: no sound, no vibration, no heads-up. */
         boolean silent;
+        /** Epoch ms the message was sent, 0 when unknown (the notifier then dates it when drawn). */
+        long at;
     }
 
     /** The channel shared by every server's status notifications. */

@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -24,8 +25,29 @@ final class PushSettingsStore {
 
     private final KeyValue kv;
 
+    /**
+     * This process's identity, drawn once when the class loads: every store
+     * of the process shares it and no later process has it, even one that
+     * gets the same pid.
+     */
+    private static final String PROCESS = drawProcess();
+
+    private final Supplier<String> process;
+
     PushSettingsStore(KeyValue kv) {
+        this(kv, () -> PROCESS);
+    }
+
+    /** process gives the identity the foreground flag is stored under. */
+    PushSettingsStore(KeyValue kv, Supplier<String> process) {
         this.kv = kv;
+        this.process = process;
+    }
+
+    private static String drawProcess() {
+        byte[] b = new byte[12];
+        RANDOM.nextBytes(b);
+        return B64.encode(b, true);
     }
 
     /** Replaces the whole mirror in one pass. */
@@ -100,12 +122,20 @@ final class PushSettingsStore {
         return out;
     }
 
+    /**
+     * Whether the app is in the foreground. The flag is stored as the
+     * identity of the process that set it, so a process that died in the
+     * foreground (crash, force-stop, kill without a pause) leaves a flag
+     * the next process reads as background.
+     */
     boolean foreground() {
-        return Boolean.parseBoolean(kv.get("foreground"));
+        String v = kv.get("foreground");
+        return v != null && v.equals(process.get());
     }
 
     void setForeground(boolean f) {
-        kv.put("foreground", Boolean.toString(f));
+        if (f) kv.put("foreground", process.get());
+        else kv.remove("foreground");
     }
 
     void beat(long at) {

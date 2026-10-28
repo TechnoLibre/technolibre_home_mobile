@@ -63,4 +63,32 @@ public class PushSettingsStoreTest {
         s.setEngineState("sum:cfg1", null);
         assertNull(s.engineState("sum:cfg1"));
     }
+
+    @Test
+    public void theForegroundFlagHoldsOnlyForTheProcessThatSetIt() {
+        MapKeyValue kv = new MapKeyValue();
+        PushSettingsStore first = new PushSettingsStore(kv, () -> "p1");
+        first.setForeground(true);
+        assertTrue(first.foreground());
+        assertTrue(new PushSettingsStore(kv, () -> "p1").foreground());
+        // a later process reads the flag a dead one left as background
+        assertFalse(new PushSettingsStore(kv, () -> "p2").foreground());
+        first.setForeground(false);
+        assertFalse(first.foreground());
+        assertNull(kv.get("foreground"));
+    }
+
+    @Test
+    public void anOldTrueFlagReadsAsBackground() {
+        MapKeyValue kv = new MapKeyValue();
+        kv.put("foreground", "true");
+        assertFalse(new PushSettingsStore(kv, () -> "p1").foreground());
+    }
+
+    @Test
+    public void storesOfOneProcessShareItsIdentity() {
+        MapKeyValue kv = new MapKeyValue();
+        new PushSettingsStore(kv).setForeground(true);
+        assertTrue(new PushSettingsStore(kv).foreground());
+    }
 }
