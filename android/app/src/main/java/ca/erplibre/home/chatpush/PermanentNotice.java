@@ -64,21 +64,43 @@ public final class PermanentNotice {
      */
     public static boolean hold(final Service s, Holder h, String line) {
         synchronized (LOCK) {
-            boolean held = SERVICES.get(h) == s;
-            STATE.hold(h, line);
-            SERVICES.put(h, s);
-            final Notification n = build(s);
-            if (held) {
-                notify(s, n);
-                return true;
-            }
-            String refusal = tryForeground(() -> startForeground(s, n), null);
+            String refusal = hold(STATE, SERVICES, s, h, line, (svc, held) -> {
+                Notification n = build(svc);
+                if (held) notify(svc, n);
+                else startForeground(svc, n);
+            });
             if (refusal == null) return true;
             Log.w(TAG, "hold refused: " + refusal);
-            SERVICES.remove(h);
-            STATE.release(h);
             return false;
         }
+    }
+
+    /** Draws the notice for s: a plain post when s already held it, else a foreground start that may throw. */
+    interface Poster<S> {
+        void post(S s, boolean held);
+    }
+
+    /**
+     * The decision of hold(), apart from Android: records h's line and
+     * service, then posts. A refused foreground start (IllegalStateException)
+     * of a service not yet holding is undone, service and line, and its
+     * class name returned; null when the hold went through.
+     */
+    static <S> String hold(State st, Map<Holder, S> services, final S s, Holder h, String line,
+            final Poster<S> poster) {
+        boolean held = services.get(h) == s;
+        st.hold(h, line);
+        services.put(h, s);
+        if (held) {
+            poster.post(s, true);
+            return null;
+        }
+        String refusal = tryForeground(() -> poster.post(s, false), null);
+        if (refusal != null) {
+            services.remove(h);
+            st.release(h);
+        }
+        return refusal;
     }
 
     /** Replaces the line of h while s holds the notice; a service that no longer holds it changes nothing. */

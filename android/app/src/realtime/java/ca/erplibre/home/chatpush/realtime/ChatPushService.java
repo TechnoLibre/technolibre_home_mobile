@@ -13,6 +13,7 @@ import android.os.IBinder;
 import android.util.Log;
 import ca.erplibre.home.chatpush.ChatPushRuntime;
 import ca.erplibre.home.chatpush.PermanentNotice;
+import ca.erplibre.home.chatpush.PolicyReread;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -32,8 +33,10 @@ import java.util.concurrent.RejectedExecutionException;
  * reports it dead. The level is re-read at each start, when wifi comes or
  * goes (level 2 listens in realtime on wifi or charger only) and when the
  * charger is plugged or unplugged; a returning network only reopens the
- * waiting streams. A level that no longer wants the service stops it, with
- * stopSelfResult on the latest start id so a newer start is never lost.
+ * waiting streams. A level that no longer wants the service stops it, by
+ * stopSelfResult on the start id current when the re-read was asked
+ * (PolicyReread): Android refuses that id once a newer start has arrived,
+ * so a start delivered while a re-read blocks is never lost.
  *
  * No wakelock is held while waiting: the device sleeps between messages,
  * and a permanent wakelock is what vendor app killers act on. The engine
@@ -50,7 +53,7 @@ public class ChatPushService extends Service {
     private ConnectivityManager.NetworkCallback networkCallback;
     private BroadcastReceiver powerReceiver;
     private boolean started;
-    private volatile int lastStartId;
+    private final PolicyReread reread = new PolicyReread();
     /** Whether the default network was wifi or ethernet at the last callback; null before the first. */
     private Boolean onWifi;
 
@@ -62,7 +65,7 @@ public class ChatPushService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        lastStartId = startId;
+        reread.started(startId);
         // the first start holds with an empty line: the runtime is built after the deadline is met
         String line = runtime == null ? "" : runtime.permanentLine();
         if (!PermanentNotice.hold(this, PermanentNotice.Holder.CHAT, line)) {
@@ -113,11 +116,13 @@ public class ChatPushService extends Service {
         return null;
     }
 
-    /** Applies the level on the worker (leaving realtime polls, on the network); stops when it is not wanted. */
+    /**
+     * Applies the level on the worker (leaving realtime polls, on the
+     * network) and stops when it is not wanted, with the start id current at
+     * this call: a start delivered while the re-read blocks keeps the service.
+     */
     private void reapply() {
-        submit(() -> {
-            if (!runtime.applyRealtime()) stopSelfResult(lastStartId);
-        });
+        submit(reread.reread(runtime::applyRealtime, this::stopSelfResult));
     }
 
     private void submit(Runnable r) {

@@ -5679,6 +5679,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "android/app/src/main/java/ca/erplibre/home/BatteryExemption.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/PermanentNotice.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/RealtimeHost.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PolicyReread.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushJob.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushBootReceiver.java",
                             "android/app/src/realtime/java/ca/erplibre/home/chatpush/realtime/ChatPushService.java",

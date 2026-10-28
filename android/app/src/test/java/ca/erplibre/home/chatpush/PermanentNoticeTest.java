@@ -8,7 +8,9 @@ import static org.junit.Assert.assertTrue;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import org.junit.Test;
 
 public class PermanentNoticeTest {
@@ -101,5 +103,26 @@ public class PermanentNoticeTest {
         assertEquals(PermanentNotice.Holder.SMS, s.release(PermanentNotice.Holder.CHAT));
         assertEquals(Collections.singletonList("En service"), s.lines());
         assertEquals("Passerelle SMS ERPLibre", s.title());
+    }
+
+    @Test
+    public void aRefusedHoldLeavesNeitherItsServiceNorItsLine() {
+        PermanentNotice.State st = new PermanentNotice.State();
+        Map<PermanentNotice.Holder, String> services = new EnumMap<>(PermanentNotice.Holder.class);
+        List<String> posts = new ArrayList<>();
+        assertNull(PermanentNotice.hold(st, services, "sms", PermanentNotice.Holder.SMS, "En service",
+                (s, held) -> posts.add(s + (held ? ":notify" : ":start"))));
+        String refusal = PermanentNotice.hold(st, services, "chat", PermanentNotice.Holder.CHAT,
+                "En attente du réseau", (s, held) -> {
+                    throw new IllegalStateException("startForeground not allowed");
+                });
+        assertEquals("IllegalStateException", refusal);
+        assertEquals(Collections.singletonMap(PermanentNotice.Holder.SMS, "sms"), services);
+        assertEquals(Collections.singletonList("En service"), st.lines());
+        assertEquals("Passerelle SMS ERPLibre", st.title());
+        // the holder that kept the notice only updates its line afterwards
+        assertNull(PermanentNotice.hold(st, services, "sms", PermanentNotice.Holder.SMS, "Serveur injoignable…",
+                (s, held) -> posts.add(s + (held ? ":notify" : ":start"))));
+        assertEquals(Arrays.asList("sms:start", "sms:notify"), posts);
     }
 }

@@ -92,7 +92,18 @@ public class SmsWatchdogJob extends JobService {
         journal.warn(SmsJournal.CAT_SERVICE,
                 "Surveillance : passerelle activee mais service absent,"
                         + " relance automatique", null);
-        SmsGatewayService.start(this);
+        try {
+            SmsGatewayService.start(this);
+        } catch (IllegalStateException e) {
+            // Android 12+ refuse un demarrage au premier plan depuis
+            // l'arriere-plan sans dispense de batterie
+            // (ForegroundServiceStartNotAllowedException) : le prochain
+            // reveil reessaie, sans faire tomber le processus.
+            Log.w(TAG, "Relance refusee : " + e.getClass().getSimpleName());
+            journal.warn(SmsJournal.CAT_SERVICE,
+                    "Surveillance : relance refusee par Android, nouvel essai"
+                            + " au prochain reveil", null);
+        }
         return false;
     }
 
