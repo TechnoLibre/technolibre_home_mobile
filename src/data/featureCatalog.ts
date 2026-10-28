@@ -5623,6 +5623,40 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/chatpush/SecretBox.java",
                     "android/app/src/main/java/ca/erplibre/home/chatpush/KeystoreKeys.java",
                 ],
+                children: [
+                    {
+                        id: "chat.notifications.native",
+                        label: { en: "Native ntfy client", fr: "Client ntfy natif" },
+                        description: {
+                            en: "Java client of the ntfy server: live stream, poll from a cursor, read check, message and push parsing, de-duplication.",
+                            fr: "Client Java du serveur ntfy : flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage.",
+                        },
+                        status: "experimental",
+                        howItWorks: {
+                            en: "One bearer-authenticated request reads the JSON events of several "
+                                + "topics. Each event is parsed, its body decoded from base64, and "
+                                + "failures are sorted into kinds (unauthorized, unreachable, cleartext "
+                                + "blocked...) so the caller can react. A set of the last message ids "
+                                + "drops the replays ntfy sends around a cursor.",
+                            fr: "Une requête authentifiée par jeton lit les événements JSON de "
+                                + "plusieurs sujets. Chaque événement est analysé, son corps décodé "
+                                + "du base64, et les échecs sont classés par genre (non autorisé, "
+                                + "injoignable, clair bloqué...) pour que l'appelant réagisse. Un "
+                                + "ensemble des derniers identifiants écarte les rejeux que ntfy "
+                                + "envoie autour d'un curseur.",
+                        },
+                        demo: { kind: "options" },
+                        files: [
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/HttpPolicy.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/NtfyServer.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/NtfyMessage.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/NtfyException.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/NtfyClient.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/SeenIds.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PushPayload.java",
+                        ],
+                    },
+                ],
             },
         ],
     },
