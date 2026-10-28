@@ -21,14 +21,17 @@ import type { NotificationService } from "../services/notificationService";
 import { SyncService } from "../services/syncService";
 import { ChatCapture } from "../services/chat/chatCapture";
 import {
-	messageKeyOf, type ChatAttachment, type ChatMailboxItem, type ChatMessage, type ChatReaction, type MessageTarget,
+	messageKeyOf, type ChatAttachment, type ChatPushRow, type LockScreen, type ChatMailboxItem, type ChatMessage, type ChatReaction, type MessageTarget,
 	type OutgoingFile,
 } from "../models/chat";
 import { EMPTY_MENTIONS, type Mentions } from "../services/chat/chatCompose";
 import type { SearchResults, ServerResults } from "../services/chat/chatSearch";
 import type { ChatSource } from "../services/chat/chatSources";
+import { parseNtfyLink } from "../services/chat/chatPushLink";
+import type { NotifyLevel } from "../services/chat/chatSettings";
+import type { ChatPushNative, PushHealth } from "../plugins/chatPushPlugin";
 
-export const DEVICE_HOOK_API = 6;
+export const DEVICE_HOOK_API = 7;
 
 /** The stage limit the composer takes while the server's is unknown: Odoo's default. */
 const DEFAULT_STAGE_LIMIT = 128 * 1024 * 1024;
@@ -60,6 +63,13 @@ async function chatSourceOf(env: DeviceHookEnv, configId: string) {
 	const src = (await env.syncService.chat.sources()).find((s) => s.configId === configId);
 	if (!src) throw new Error(`No chat source for ${configId}`);
 	return src;
+}
+
+/** The native side of the chat notifications; throws off a native build. */
+function pushNativeOf(env: DeviceHookEnv): ChatPushNative {
+	const native = env.syncService.chat.push.native;
+	if (!native) throw new Error("No native chat push in this build");
+	return native;
 }
 
 /** The cached mailbox row of a message (inbox, history or starred); throws when the phone holds none. */
@@ -318,6 +328,41 @@ export function deviceTestHook(env: DeviceHookEnv) {
 		/** The user's Odoo notification type of configId as the phone last read it: "email", "inbox", or null unknown. */
 		async chatNotificationType(configId: string): Promise<"email" | "inbox" | null> {
 			return (await env.syncService.chat.repo.sourceState(configId)).notificationType;
+		},
+		/**
+		 * Applies the setup link (the text the QR carries) to the account,
+		 * as the notification settings do once it is pasted
+		 * (ChatPush.applyLink); a link that does not parse answers
+		 * reason "invalid_link" and changes nothing.
+		 */
+		async chatPushApply(configId: string, link: string): Promise<{ ok: boolean; reason: string | null; registered: string[] }> {
+			const parsed = parseNtfyLink(link);
+			if (!parsed) return { ok: false, reason: "invalid_link", registered: [] };
+			return env.syncService.chat.push.applyLink([configId], parsed);
+		},
+		/** Sets the notification level (1 realtime to 5 off), as the settings' choice. */
+		chatPushLevel(level: NotifyLevel): Promise<void> {
+			return env.syncService.chat.push.setLevel(level);
+		},
+		/** What the account's notifications show on the lock screen, as the settings' choice. */
+		chatPushLockScreen(configId: string, mode: LockScreen): Promise<void> {
+			return env.syncService.chat.push.setLockScreen(configId, mode);
+		},
+		/** Takes the account off its ntfy, as the settings' « Retirer ». */
+		chatPushRemove(configId: string): Promise<void> {
+			return env.syncService.chat.push.removeNtfy(configId);
+		},
+		/** The native engine's health, as the status panel reads it. */
+		chatPushStatus(): Promise<PushHealth> {
+			return pushNativeOf(env).status();
+		},
+		/** One run of the periodic job now (ntfy poll, Odoo-direct summary); resolves once it is done. */
+		chatPushCheckNow(): Promise<void> {
+			return pushNativeOf(env).checkNow();
+		},
+		/** The account's chat_push row (ntfy, topic, endpoint, lock screen), null when it has none. */
+		async chatPushRow(configId: string): Promise<ChatPushRow | null> {
+			return (await env.syncService.chat.repo.pushRows()).find((r) => r.configId === configId) ?? null;
 		},
 		note(id: string) {
 			return env.databaseService.getNoteById(id);

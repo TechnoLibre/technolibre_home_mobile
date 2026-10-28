@@ -34,6 +34,10 @@ import { emojiConversions } from "../services/chat/chatEmoji";
 import { mailboxKindOf, type ChatMailboxItem, type MessageTarget } from "../models/chat";
 import { htmlTerm, type SearchResults } from "../services/chat/chatSearch";
 import { noteForRecord } from "../services/chat/chatInbox";
+import type { ChatPush } from "../services/chat/chatPush";
+import { parseNtfyLink, type NtfyLink } from "../services/chat/chatPushLink";
+import { decryptWebPush } from "./webPushNode";
+import { pollNtfy, pushNodeNative, type NodeSubscription, type NtfyMessage, type PushNodeNative } from "./pushNodeNative";
 
 export { memoryChatFiles };
 export type { MemoryChatFiles };
@@ -56,7 +60,17 @@ export type { Mentions, MessageTarget };
 export { foldText, htmlTerm, mailboxKindOf, noteForRecord };
 export type { ChatMailboxItem, SearchResults };
 
-export const HARNESS_API = 5;
+/**
+ * The closed-app chat notifications, for a test to run them against a real
+ * ntfy: parseNtfyLink (the setup link the operator's tool prints),
+ * pushNodeNative (the phone's native side in Node, its keys at hand),
+ * pollNtfy (what a topic holds) and decryptWebPush (a pushed body back to
+ * Odoo's JSON).
+ */
+export { parseNtfyLink, decryptWebPush, pollNtfy, pushNodeNative };
+export type { NtfyLink, NodeSubscription, NtfyMessage, PushNodeNative };
+
+export const HARNESS_API = 6;
 
 /** Migrations that read what an older install left (secure storage, video files): none on a new database. */
 const SKIPPED_MIGRATIONS = new Set([2026031801, 2026032401]);
@@ -80,6 +94,10 @@ export interface SyncEnv {
 	configIds: string[];
 	/** The chat's files (Directory.Data in memory), which nodeChatHttp uploads from and downloads into. */
 	chatFiles: MemoryChatFiles;
+	/** The chat's closed-app notifications (chat.push), over pushNative. */
+	push: ChatPush;
+	/** The phone's native side of the notifications, in Node; it outlives restartSyncEnv as native code outlives the app. */
+	pushNative: PushNodeNative;
 }
 
 /**
@@ -88,7 +106,9 @@ export interface SyncEnv {
  * until a sync runs. chatModule "ignore" makes chat posts take the marker
  * path and uploads Odoo's own route even where the server module is
  * installed. The chat's files live in chatFiles (new and empty when not
- * given) and cross the network through nodeChatHttp over them.
+ * given) and cross the network through nodeChatHttp over them. The chat's
+ * notifications run over a new pushNodeNative: nothing reaches an ntfy
+ * until a test applies a link (push.applyLink).
  */
 export async function createSyncEnv(
 	targets: SyncTarget[],
@@ -107,7 +127,8 @@ export async function createSyncEnv(
 		} as any);
 		creds.push({ odooUrl: target.url, username: target.username, password: target.password, database: target.database });
 	}
-	const sync = new SyncService(db);
+	const pushNative = pushNodeNative();
+	const sync = new SyncService(db, undefined, undefined, pushNative);
 	sync.chat.moduleMode = opts.chatModule ?? "auto";
 	const chatFiles = opts.chatFiles ?? memoryChatFiles();
 	sync.chat.useFileIO({ files: chatFiles, http: nodeChatHttp(chatFiles) });
@@ -119,6 +140,8 @@ export async function createSyncEnv(
 		creds,
 		configIds: creds.map(syncConfigIdOf),
 		chatFiles,
+		push: sync.chat.push,
+		pushNative,
 	};
 }
 
@@ -126,17 +149,18 @@ export async function createSyncEnv(
  * The app killed and started again over env's database: a new sync service
  * (the chat's module mode and files carried over), then the startup repair
  * the app runs (OutboxService.recoverInterrupted, ChatService.recover). The
- * stored sessions and the network state stay as they were; the old chat
- * service is disposed (its bus and typing timers stop).
+ * stored sessions, the network state and the native side of the
+ * notifications (pushNative) stay as they were; the old chat service is
+ * disposed (its bus and typing timers stop).
  */
 export async function restartSyncEnv(env: SyncEnv): Promise<SyncEnv> {
 	env.chat.dispose();
-	const sync = new SyncService(env.db);
+	const sync = new SyncService(env.db, undefined, undefined, env.pushNative);
 	sync.chat.moduleMode = env.chat.moduleMode;
 	sync.chat.useFileIO({ files: env.chatFiles, http: nodeChatHttp(env.chatFiles) });
 	await sync.outbox.recoverInterrupted();
 	await sync.chat.recover();
-	return { ...env, sync, chat: sync.chat, notes: new NoteService(new EventBus(), env.db) };
+	return { ...env, sync, chat: sync.chat, push: sync.chat.push, notes: new NoteService(new EventBus(), env.db) };
 }
 
 /**

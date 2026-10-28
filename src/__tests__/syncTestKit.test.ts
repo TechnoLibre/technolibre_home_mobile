@@ -9,6 +9,7 @@ import {
 	restartSyncEnv, setOnline, setNetwork, chatTitle, memoryChatFiles, nodeChatHttp, stageChatFile, stageChatVoice,
 	composeBody, bodyText, emojiConversions, isEmptyMessage, EMPTY_MENTIONS,
 	foldText, htmlTerm, mailboxKindOf, noteForRecord,
+	parseNtfyLink, decryptWebPush, pollNtfy, pushNodeNative,
 } from "../testing/syncTestKit";
 import { syncSessionKey } from "../services/syncService";
 import { isHttpAllowed } from "../services/odoo/httpPolicy";
@@ -24,8 +25,8 @@ describe("syncTestKit", () => {
 		resetMocks();
 	});
 
-	it("is at API 5", () => {
-		expect(HARNESS_API).toBe(5);
+	it("is at API 6", () => {
+		expect(HARNESS_API).toBe(6);
 	});
 
 	it("gives the chat's finding rules: folded text, the server's body term, inbox kinds, the note of a record", () => {
@@ -363,6 +364,124 @@ describe("syncTestKit", () => {
 				file: { uri: "file:///memory/files/none", name: "none", mimetype: "text/plain" },
 			})).rejects.toBeInstanceOf(RequestNotSentError);
 			expect(seen.length).toBe(before);
+		});
+	});
+	describe("chat push", () => {
+		let server: http.Server;
+		let base: string;
+		/** Topics the fake ntfy lets the token read, and the events it answers per topic. */
+		const readable = new Set<string>();
+		const events = new Map<string, string[]>();
+		const seen: { url: string; auth: string | undefined }[] = [];
+		const TOKEN = "tk_exempleexempleexempleexemple";
+
+		beforeAll(async () => {
+			server = http.createServer((req, res) => {
+				seen.push({ url: req.url!, auth: req.headers.authorization });
+				const url = new URL(req.url!, "http://x");
+				const topics = url.pathname.split("/")[1].split(",");
+				if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+					res.writeHead(401).end('{"code":40101}');
+				} else if (!topics.every((t) => readable.has(t))) {
+					res.writeHead(403).end('{"code":40301}');
+				} else {
+					res.writeHead(200, { "content-type": "application/x-ndjson" });
+					res.end(topics.flatMap((t) => events.get(t) ?? []).map((e) => e + "\n").join(""));
+				}
+			});
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+		});
+		afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+		it("parses the setup link the operator's tool prints", () => {
+			const link = parseNtfyLink(
+				"erplibre-ntfy:setup?v=1&url=http%3A%2F%2Fntfy.exemple.test%3A8080&token=tk_exempleexempleexempleexemple"
+					+ "&prefix=upab12cd34&cache=43200&odoo=http%3A%2F%2Fodoo-ntfy.exemple.test%3A8080",
+			);
+			expect(link).toEqual({
+				url: "http://ntfy.exemple.test:8080", token: TOKEN, prefix: "upab12cd34", cacheSeconds: 43200,
+				odooUrl: "http://odoo-ntfy.exemple.test:8080",
+			});
+		});
+
+		it("pushNodeNative stores an ntfy only once its token reads <prefix>check", async () => {
+			const native = pushNodeNative();
+			await native.publishSettings({ level: 3, allowHttp: true, strings: {}, accounts: [] });
+			expect(await native.setNtfy({ url: base, token: TOKEN, prefix: "upab12cd34", cacheSeconds: 43200 }))
+				.toEqual({ ok: false, reason: "forbidden" });
+			expect(await native.setNtfy({ url: base, token: "tk_autre", prefix: "upab12cd34", cacheSeconds: 43200 }))
+				.toEqual({ ok: false, reason: "unauthorized" });
+			await expect(native.subscribe({ configId: "c", ntfyUrl: base, renew: false })).rejects.toThrow(/ChatPushPlugin.subscribe/);
+			readable.add("upab12cd34check");
+			expect(await native.setNtfy({ url: base, token: TOKEN, prefix: "upab12cd34", cacheSeconds: 43200 }))
+				.toEqual({ ok: true, reason: null });
+			expect(seen.at(-1)).toEqual({ url: "/upab12cd34check/json?poll=1&since=all", auth: `Bearer ${TOKEN}` });
+			const closed = await native.setNtfy({ url: "http://127.0.0.1:1", token: TOKEN, prefix: "upab12cd34", cacheSeconds: 60 });
+			expect(closed).toEqual({ ok: false, reason: "unreachable" });
+		});
+
+		it("pushNodeNative subscribes with an R4 topic and a P-256 key pair, kept until renewed", async () => {
+			readable.add("upab12cd34check");
+			const native = pushNodeNative();
+			await native.publishSettings({ level: 3, allowHttp: true, strings: {}, accounts: [] });
+			await native.setNtfy({ url: base, token: TOKEN, prefix: "upab12cd34", cacheSeconds: 43200 });
+			const sub = await native.subscribe({ configId: "c", ntfyUrl: base, renew: false });
+			expect(sub.topic).toMatch(/^upab12cd34[a-z0-9]{22}$/);
+			const keys = native.keysOf("c");
+			expect(keys.topic).toBe(sub.topic);
+			expect(Buffer.from(sub.p256dh, "base64url")).toEqual(Buffer.from(keys.publicKey));
+			expect(keys.publicKey.length).toBe(65);
+			expect(keys.publicKey[0]).toBe(4);
+			expect(Buffer.from(sub.auth, "base64url")).toEqual(Buffer.from(keys.auth));
+			expect(keys.auth.length).toBe(16);
+			expect(keys.privateKey.asymmetricKeyDetails?.namedCurve).toBe("prime256v1");
+			expect(await native.subscribe({ configId: "c", ntfyUrl: base, renew: false })).toEqual(sub);
+			const renewed = await native.subscribe({ configId: "c", ntfyUrl: base, renew: true });
+			expect(renewed.topic).not.toBe(sub.topic);
+			expect(renewed.p256dh).not.toBe(sub.p256dh);
+			await native.unsubscribe({ configId: "c", pendingEndpoint: null });
+			expect(() => native.keysOf("c")).toThrow();
+			expect(native.calls.map((c) => c.method)).toEqual(["publishSettings", "setNtfy", "subscribe", "subscribe", "subscribe", "unsubscribe"]);
+		});
+
+		it("pushNodeNative refuses an http ntfy until the mirror allows http", async () => {
+			readable.add("upab12cd34check");
+			const native = pushNodeNative();
+			await native.publishSettings({ level: 3, allowHttp: false, strings: {}, accounts: [] });
+			expect(await native.setNtfy({ url: base, token: TOKEN, prefix: "upab12cd34", cacheSeconds: 60 }))
+				.toEqual({ ok: false, reason: "http_refused" });
+			await native.publishSettings({ level: 3, allowHttp: true, strings: {}, accounts: [] });
+			expect((await native.setNtfy({ url: base, token: TOKEN, prefix: "upab12cd34", cacheSeconds: 60 })).ok).toBe(true);
+		});
+
+		it("pollNtfy reads the messages of several topics, base64 bodies as bytes", async () => {
+			readable.add("upab12cd34aaa").add("upab12cd34bbb");
+			events.set("upab12cd34aaa", [
+				JSON.stringify({ id: "m1", event: "open", topic: "upab12cd34aaa" }),
+				JSON.stringify({ id: "m2", event: "message", topic: "upab12cd34aaa", message: "AQID", encoding: "base64" }),
+			]);
+			events.set("upab12cd34bbb", [JSON.stringify({ id: "m3", event: "message", topic: "upab12cd34bbb", message: "texte" })]);
+			const got = await pollNtfy({ url: base, token: TOKEN }, ["upab12cd34aaa", "upab12cd34bbb"], "m0");
+			expect(seen.at(-1)!.url).toBe("/upab12cd34aaa,upab12cd34bbb/json?poll=1&since=m0");
+			expect(got.map((m) => [m.id, m.topic, [...m.body]])).toEqual([
+				["m2", "upab12cd34aaa", [1, 2, 3]],
+				["m3", "upab12cd34bbb", [...Buffer.from("texte")]],
+			]);
+			const refused = await pollNtfy({ url: base, token: TOKEN }, ["upzz99yy88"], "all").catch((e) => e);
+			expect(refused).toMatchObject({ status: 403 });
+		});
+
+		it("createSyncEnv gives the chat a ChatPush over the node native, which restartSyncEnv keeps", async () => {
+			installLocalStorage({ allowHttp: true });
+			const env = await createSyncEnv([TARGET]);
+			expect(env.push).toBe(env.chat.push);
+			expect(env.push.native).toBe(env.pushNative);
+			const after = await restartSyncEnv(env);
+			expect(after.push).toBe(after.chat.push);
+			expect(after.push).not.toBe(env.push);
+			expect(after.pushNative).toBe(env.pushNative);
+			expect(typeof decryptWebPush).toBe("function");
 		});
 	});
 });

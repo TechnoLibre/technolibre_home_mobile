@@ -35,7 +35,7 @@ import {
   SyncCredentials,
 } from "./odoo/odooRpcClient";
 import { v4 as uuidv4 } from "uuid";
-import { chatPushNative } from "../plugins/chatPushPlugin";
+import { chatPushNative, type ChatPushNative } from "../plugins/chatPushPlugin";
 
 export {
   OdooRpcError,
@@ -811,10 +811,16 @@ export class SyncService {
    */
   onNotePulled: ((noteId: string) => void) | null = null;
 
+  /**
+   * pushNative is the native side of the closed-app chat notifications
+   * (the device's plugin by default, none off a native platform; the test
+   * kit gives its own).
+   */
   constructor(
     db: DatabaseService,
     rpc: OdooRpcClient = new OdooRpcClient(),
-    outbox: OutboxService = new OutboxService(db)
+    outbox: OutboxService = new OutboxService(db),
+    pushNative: ChatPushNative | null = chatPushNative,
   ) {
     this.db = db;
     this.rpc = rpc;
@@ -826,7 +832,7 @@ export class SyncService {
     this._recordSearches.set(PARTNER_MODEL, this.partners);
     this.activityTypes = new ActivityTypeService(db, rpc);
     this.calendar = new ActivityCalendarService(db, rpc, outbox);
-    this.chat = new ChatService(db, rpc, outbox, this.capabilities, undefined, { native: chatPushNative });
+    this.chat = new ChatService(db, rpc, outbox, this.capabilities, undefined, { native: pushNative });
     this.outbox.onRetryScheduled = (at) => this.onRetryScheduled?.(at);
     for (const kind of TARGET_KINDS) {
       // drain already found the operation due: its retry delay is over or forced
