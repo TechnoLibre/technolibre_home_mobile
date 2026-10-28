@@ -3916,19 +3916,23 @@ export class ChatOutbox {
    * Gives an action on a message up (giveUp). A reaction or a pin no later
    * op of its key follows is shown again as the server held it (base, a
    * pin at baseAt), through giveUpRestoring: the loads lay the queued
-   * reactions and pins over what they write. An edit
-   * or a delete with no other edit or delete of the message queued shows
-   * the message as the server has it: hidden ("") when it vanished, as a
-   * re-read that finds no message leaves it; the body it was made against
-   * (baseBody) when refused; a conflict wrote the server's body already.
+   * reactions and pins over what they write. An edit or a delete with no
+   * other edit or delete of the message queued shows the message as the
+   * server has it, through giveUpRestoring too (the loads lay the queued
+   * edits and deletes over the bodies they write): hidden ("") when it
+   * vanished, as a re-read that finds no message leaves it; the body it
+   * was made against (baseBody) when refused. A conflict wrote the
+   * server's body already: a plain giveUp.
    */
   private async giveUpMessage(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
     const target = targetOf(op);
     const shown = reason === "vanished" ? "" : reason === "refused" ? op.params.baseBody : undefined;
     if ((op.kind === CHAT_EDIT || op.kind === CHAT_DELETE) && typeof shown === "string") {
-      const later = (await this.db.getOutboxOpsForConfig(op.configId)).some((o) => o.id !== op.id
-        && (o.kind === CHAT_EDIT || o.kind === CHAT_DELETE) && o.status !== "blocked" && sameTarget(targetOf(o), target));
-      if (!later) await this.showBody(op.configId, target, shown);
+      return this.giveUpRestoring(op, reason, message, async () => {
+        const later = (await this.db.getOutboxOpsForConfig(op.configId)).some((o) => o.id !== op.id
+          && (o.kind === CHAT_EDIT || o.kind === CHAT_DELETE) && o.status !== "blocked" && sameTarget(targetOf(o), target));
+        if (!later) await this.showBody(op.configId, target, shown);
+      });
     }
     if (op.kind === CHAT_REACTION) {
       return this.giveUpRestoring(op, reason, message, async () => {

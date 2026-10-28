@@ -7,14 +7,14 @@ import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS, clientMarker } fro
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
 import {
-  CHAT_INBOX_ALL, CHAT_INBOX_DONE, CHAT_NOTE, CHAT_PIN, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_RECORD_POST, CHAT_STAR, CHAT_UPLOAD, ChatOutbox,
+  CHAT_DELETE, CHAT_EDIT, CHAT_INBOX_ALL, CHAT_INBOX_DONE, CHAT_NOTE, CHAT_PIN, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_RECORD_POST, CHAT_STAR, CHAT_UPLOAD, ChatOutbox,
   bodyFingerprint, sameTarget,
   targetKey,
 } from "../services/chat/chatOutbox";
 import { memoryChatFiles } from "../testing/chatFakes";
 import type { OutgoingFile } from "../models/chat";
 import { chatMarker } from "../services/chat/chatBody";
-import { composeBody, type Mentions } from "../services/chat/chatCompose";
+import { EMPTY_MENTIONS, composeBody, type Mentions } from "../services/chat/chatCompose";
 import { emojiConversions } from "../services/chat/chatEmoji";
 import { createHash } from "node:crypto";
 
@@ -46,7 +46,8 @@ interface Call { path: string; params: any }
  * search_read answers it as `parent_id` (`[id, name]` or false).
  * `pinDrops` makes the next N set_message_pin calls run on the server and
  * then lose their answer; `pinError` and `editError` answer set_message_pin
- * and /mail/message/update_content (an edit or a delete) with that error.
+ * and the update_content routes, Odoo's and the module's (an edit or a
+ * delete), with that error.
  * `starred` holds the ids the user starred on the server: a search_read of
  * `starred` reads it (no row for an id in `gone`), toggle_message_starred
  * flips it, and erplibre_set_starred sets it with the module (an
@@ -124,7 +125,9 @@ function chatOdoo(opts: { module?: boolean } = {}) {
       return ok(method === "search_read" ? [] : true);
     }
     if (path === "/web/session/get_session_info") return ok({ uid: 2, partner_id: 3, is_system: false });
-    if (path === "/mail/message/update_content" && state.editError) return rpcError(state.editError);
+    if ((path === "/mail/message/update_content" || path === "/erplibre_mobile_chat/message/update_content") && state.editError) {
+      return rpcError(state.editError);
+    }
     return ok(true);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -1446,6 +1449,65 @@ describe("ChatOutbox", () => {
       expect(await flagged()).toBe(false);
       expect(await chat.queueStar(CONFIG, 40, true, CHANNEL)).toBeNull();
       expect(await starOps()).toEqual([]);
+    });
+  });
+
+  describe("edits and deletes given up", () => {
+    const SENT = { messageId: 40, clientUuid: null };
+    const BASE = "<p>Réunion demain</p>";
+    const body = async () => (await repo.message(CONFIG, 40))?.body;
+    const at = (b: string): any => ({
+      channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], attachments: [], deletedAttachmentIds: [],
+      partners: [], inboxCounter: null, selfPartnerId: null, messages: [{ messageId: 40, channelId: CHANNEL, body: b }],
+    });
+
+    beforeEach(async () => {
+      await repo.applyDelta(CONFIG, {
+        ...at(BASE), messages: [{ messageId: 40, channelId: CHANNEL, body: BASE, authorPartnerId: 3, messageType: "comment" }],
+      });
+    });
+
+    /**
+     * Flushes the queued op of message 40, refused, while a load's overlay
+     * and write start right after the give-up shows the base again, before
+     * the op is marked blocked; resolves once both are done.
+     */
+    const refusedUnderLoad = async () => {
+      const odoo = chatOdoo();
+      odoo.state.editError = "odoo.exceptions.AccessError";
+      let load: Promise<void> | null = null;
+      const applyDelta = repo.applyDelta.bind(repo);
+      const spy = vi.spyOn(repo, "applyDelta").mockImplementation(async (...args: Parameters<typeof repo.applyDelta>) => {
+        await applyDelta(...args);
+        if (args[1].messages.some((m) => m.messageId === 40 && m.body === BASE)) {
+          load ??= chat.exclusive(CONFIG, async () => {
+            const d = at(BASE);
+            await chat.overlayMessages(CONFIG, d);
+            await applyDelta(CONFIG, d);
+          });
+        }
+      });
+      expect(await chat.flush(CREDS)).toMatchObject({ blocked: 1 });
+      await load;
+      spy.mockRestore();
+      expect(load).not.toBeNull();
+    };
+
+    it("a load landing while a refused edit is given up keeps the original body", async () => {
+      chat.editGuard = async () => true;
+      await chat.queueEdit(CONFIG, CHANNEL, SENT, "Réunion jeudi", EMPTY_MENTIONS);
+      expect(await body()).not.toBe(BASE);
+      await refusedUnderLoad();
+      expect(await body()).toBe(BASE);
+      expect(await chat.notices([CONFIG])).toEqual([expect.objectContaining({ kind: CHAT_EDIT, reason: "refused" })]);
+    });
+
+    it("a load landing while a refused delete is given up keeps the original body", async () => {
+      await chat.queueDelete(CONFIG, CHANNEL, SENT);
+      expect(await body()).toBe("");
+      await refusedUnderLoad();
+      expect(await body()).toBe(BASE);
+      expect(await chat.notices([CONFIG])).toEqual([expect.objectContaining({ kind: CHAT_DELETE, reason: "refused" })]);
     });
   });
 
