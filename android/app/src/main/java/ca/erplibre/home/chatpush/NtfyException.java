@@ -40,7 +40,9 @@ final class NtfyException extends Exception {
     static NtfyException forIo(java.io.IOException e) {
         Kind k;
         if (e instanceof java.net.UnknownServiceException) k = Kind.CLEARTEXT_BLOCKED;
-        else if (e instanceof java.net.ConnectException
+        else if (e instanceof java.io.EOFException
+                || e instanceof java.net.ProtocolException
+                || e instanceof java.net.ConnectException
                 || e instanceof java.net.UnknownHostException
                 || e instanceof java.net.NoRouteToHostException
                 || e instanceof java.net.SocketException

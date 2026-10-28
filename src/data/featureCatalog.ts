@@ -5614,22 +5614,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "Keystore d'Android.",
                 },
                 demo: { kind: "options" },
-                files: [
-                    "android/app/src/main/java/ca/erplibre/home/chatpush/B64.java",
-                    "android/app/src/main/java/ca/erplibre/home/chatpush/Hkdf.java",
-                    "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushKeys.java",
-                    "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushDecrypt.java",
-                    "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushException.java",
-                    "android/app/src/main/java/ca/erplibre/home/chatpush/SecretBox.java",
-                    "android/app/src/main/java/ca/erplibre/home/chatpush/KeystoreKeys.java",
-                ],
                 children: [
                     {
                         id: "chat.notifications.native",
                         label: { en: "Native ntfy client", fr: "Client ntfy natif" },
                         description: {
-                            en: "Java client of the ntfy server: live stream, poll from a cursor, read check, message and push parsing, de-duplication.",
-                            fr: "Client Java du serveur ntfy : flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage.",
+                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication).",
+                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage).",
                         },
                         status: "experimental",
                         howItWorks: {
@@ -5647,6 +5638,13 @@ export const FEATURE_TREE: FeatureNode[] = [
                         },
                         demo: { kind: "options" },
                         files: [
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/B64.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/Hkdf.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushKeys.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushDecrypt.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushException.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/SecretBox.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/KeystoreKeys.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/HttpPolicy.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/NtfyServer.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/NtfyMessage.java",

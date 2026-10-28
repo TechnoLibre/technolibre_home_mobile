@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -35,7 +36,13 @@ final class NtfyClient {
      */
     static final int STREAM_READ_TIMEOUT_SECONDS = 120;
 
-    /** Callbacks of a stream, all on OkHttp's thread. */
+    /**
+     * Callbacks of a stream. Every one runs on an OkHttp thread, never on the
+     * caller's, including the refusal reported when stream() declines to send
+     * a request. onClosed comes exactly once, last. It gets null both for a
+     * clean end by the server and for a cancel by the caller: a caller that
+     * must tell them apart keeps its own "I cancelled" flag.
+     */
     interface Listener {
         void onOpen();
 
@@ -47,6 +54,12 @@ final class NtfyClient {
         void onClosed(NtfyException cause);
     }
 
+    private interface EventSink {
+        void accept(NtfyMessage m) throws NtfyException;
+    }
+
+    private static final Pattern TOPIC = Pattern.compile("[-_A-Za-z0-9]+");
+
     private final OkHttpClient client;
 
     NtfyClient(OkHttpClient base) {
@@ -55,26 +68,36 @@ final class NtfyClient {
 
     /**
      * Opens GET &lt;url&gt;/&lt;t1&gt;,&lt;t2&gt;/json?since=&lt;since&gt; and
-     * returns at once; events reach the listener as lines arrive. A null or
-     * empty since opens the stream from now. A refused policy reports
-     * HTTP_REFUSED to the listener and returns an already cancelled call,
-     * so the caller always has a call to cancel.
+     * returns at once; events reach the listener as lines arrive, and none
+     * after cancel() on the returned call. A null or empty since opens the
+     * stream from now. A refusal before any request (policy, bad URL) is
+     * reported to the listener from an OkHttp thread, and the returned call
+     * is already cancelled, so the caller always has a call to cancel. A
+     * listener that throws ends the stream with PROTOCOL.
      */
     Call stream(NtfyServer s, List<String> topics, String since, boolean allowHttp, final Listener l) {
         checkTopics(topics);
+        HttpUrl.Builder b = null;
+        NtfyException refusal = null;
         if (!HttpPolicy.allowed(s.url, allowHttp)) {
-            Call dead = client.newCall(new Request.Builder().url("http://localhost/").build());
-            dead.cancel();
-            l.onClosed(new NtfyException(NtfyException.Kind.HTTP_REFUSED));
-            return dead;
+            refusal = new NtfyException(NtfyException.Kind.HTTP_REFUSED);
+        } else {
+            try {
+                b = base(s, topics, "json");
+            } catch (NtfyException e) {
+                refusal = e;
+            }
         }
-        HttpUrl.Builder b;
-        try {
-            b = base(s, topics, "json");
-        } catch (NtfyException e) {
+        if (refusal != null) {
+            final NtfyException cause = refusal;
             Call dead = client.newCall(new Request.Builder().url("http://localhost/").build());
             dead.cancel();
-            l.onClosed(e);
+            client.dispatcher().executorService().execute(new Runnable() {
+                @Override
+                public void run() {
+                    l.onClosed(cause);
+                }
+            });
             return dead;
         }
         if (since != null && !since.isEmpty()) b.addQueryParameter("since", since);
@@ -89,41 +112,59 @@ final class NtfyClient {
             }
 
             @Override
-            public void onResponse(Call c, Response r) {
+            public void onResponse(final Call c, Response r) {
+                final boolean[] listenerFailed = {false};
                 try (Response resp = r) {
                     if (!resp.isSuccessful()) {
                         l.onClosed(NtfyException.forStatus(resp.code()));
                         return;
                     }
-                    ResponseBody body = resp.body();
-                    BufferedSource src = body.source();
-                    String line;
-                    while ((line = src.readUtf8Line()) != null) {
-                        if (line.isEmpty()) continue;
-                        NtfyMessage m = NtfyMessage.parse(line);
-                        switch (m.event) {
-                            case "open":
-                                l.onOpen();
-                                break;
-                            case "keepalive":
-                                l.onKeepalive();
-                                break;
-                            case "message":
-                                l.onMessage(m);
-                                break;
-                            default:
-                                break;
+                    readEvents(c, resp.body().source(), new EventSink() {
+                        @Override
+                        public void accept(NtfyMessage m) throws NtfyException {
+                            try {
+                                switch (m.event) {
+                                    case "open":
+                                        l.onOpen();
+                                        break;
+                                    case "keepalive":
+                                        l.onKeepalive();
+                                        break;
+                                    case "message":
+                                        l.onMessage(m);
+                                        break;
+                                    default:
+                                        break;
+                                }
+                            } catch (RuntimeException e) {
+                                listenerFailed[0] = true;
+                                c.cancel();
+                                throw new NtfyException(NtfyException.Kind.PROTOCOL, "listener failed", null);
+                            }
                         }
-                    }
+                    });
                     l.onClosed(null);
                 } catch (NtfyException e) {
-                    l.onClosed(e);
+                    l.onClosed(listenerFailed[0] || !c.isCanceled() ? e : null);
                 } catch (IOException e) {
                     l.onClosed(c.isCanceled() ? null : NtfyException.forIo(e));
                 }
             }
         });
         return call;
+    }
+
+    /**
+     * Reads event lines until the body ends or the call is cancelled. A last
+     * line without its newline (a body cut mid-event) is an EOFException, not
+     * an event.
+     */
+    private static void readEvents(Call c, BufferedSource src, EventSink sink) throws IOException, NtfyException {
+        while (!c.isCanceled() && !src.exhausted()) {
+            String line = src.readUtf8LineStrict();
+            if (line.isEmpty()) continue;
+            sink.accept(NtfyMessage.parse(line));
+        }
     }
 
     /**
@@ -137,16 +178,16 @@ final class NtfyClient {
         if (since == null || since.isEmpty()) throw new IllegalArgumentException("since is required");
         checkPolicy(s, allowHttp);
         HttpUrl url = base(s, topics, "json").addQueryParameter("poll", "1").addQueryParameter("since", since).build();
-        List<NtfyMessage> out = new ArrayList<>();
-        try (Response r = client.newCall(request(s, url)).execute()) {
+        final List<NtfyMessage> out = new ArrayList<>();
+        final Call call = client.newCall(request(s, url));
+        try (Response r = call.execute()) {
             if (!r.isSuccessful()) throw NtfyException.forStatus(r.code());
-            BufferedSource src = r.body().source();
-            String line;
-            while ((line = src.readUtf8Line()) != null) {
-                if (line.isEmpty()) continue;
-                NtfyMessage m = NtfyMessage.parse(line);
-                if ("message".equals(m.event)) out.add(m);
-            }
+            readEvents(call, r.body().source(), new EventSink() {
+                @Override
+                public void accept(NtfyMessage m) {
+                    if ("message".equals(m.event)) out.add(m);
+                }
+            });
         } catch (IOException e) {
             throw NtfyException.forIo(e);
         }
@@ -158,6 +199,7 @@ final class NtfyClient {
         checkPolicy(s, allowHttp);
         List<String> one = new ArrayList<>();
         one.add(topic);
+        checkTopics(one);
         HttpUrl url = base(s, one, "auth").build();
         try (Response r = client.newCall(request(s, url)).execute()) {
             if (!r.isSuccessful()) throw NtfyException.forStatus(r.code());
@@ -169,6 +211,9 @@ final class NtfyClient {
     private static void checkTopics(List<String> topics) {
         if (topics == null || topics.isEmpty()) throw new IllegalArgumentException("no topic");
         if (topics.size() > MAX_TOPICS) throw new IllegalArgumentException("more than " + MAX_TOPICS + " topics");
+        for (String t : topics) {
+            if (t == null || !TOPIC.matcher(t).matches()) throw new IllegalArgumentException("bad topic");
+        }
     }
 
     private static void checkPolicy(NtfyServer s, boolean allowHttp) throws NtfyException {

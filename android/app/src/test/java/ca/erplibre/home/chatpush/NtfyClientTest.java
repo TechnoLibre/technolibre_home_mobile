@@ -51,7 +51,7 @@ public class NtfyClientTest {
     }
 
     /** Events as the listener saw them, in order, plus the close cause. */
-    private static final class Recorder implements NtfyClient.Listener {
+    private static class Recorder implements NtfyClient.Listener {
         final List<String> events = new java.util.concurrent.CopyOnWriteArrayList<>();
         final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
         final BlockingQueue<NtfyMessage> messages = new LinkedBlockingQueue<>();
@@ -300,6 +300,128 @@ public class NtfyClientTest {
         waitFor(r);
         assertTrue(r.cleanClose);
         assertNull(r.closed.poll());
+    }
+
+    @Test
+    public void nothingIsDeliveredAfterCancelEvenWithEventsBuffered() throws Exception {
+        StringBuilder body = new StringBuilder(event("o1", "open", null, false));
+        for (int i = 1; i <= 20; i++) body.append(event("m" + i, "message", "x", false));
+        server.enqueue(new MockResponse().setBody(body.toString()));
+        final java.util.concurrent.CountDownLatch ready = new java.util.concurrent.CountDownLatch(1);
+        final Call[] holder = new Call[1];
+        Recorder r = new Recorder() {
+            @Override
+            public void onMessage(NtfyMessage m) {
+                super.onMessage(m);
+                try {
+                    ready.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                holder[0].cancel();
+            }
+        };
+        holder[0] = client.stream(ntfy, topics("upab12cd34aa"), "all", true, r);
+        ready.countDown();
+        waitFor(r);
+        Thread.sleep(300);
+        assertEquals(Arrays.asList("open", "message:m1", "closed"), new ArrayList<>(r.events));
+        assertTrue(r.cleanClose);
+        assertNull(r.closed.poll());
+    }
+
+    @Test
+    public void aRefusalIsReportedOnAnotherThreadAfterStreamReturned() throws Exception {
+        final Thread caller = Thread.currentThread();
+        final java.util.concurrent.atomic.AtomicReference<Thread> seen = new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicBoolean returned = new java.util.concurrent.atomic.AtomicBoolean();
+        final java.util.concurrent.atomic.AtomicBoolean afterReturn = new java.util.concurrent.atomic.AtomicBoolean();
+        final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        NtfyClient.Listener l = new NtfyClient.Listener() {
+            public void onOpen() {}
+            public void onMessage(NtfyMessage m) {}
+            public void onKeepalive() {}
+            public void onClosed(NtfyException cause) {
+                seen.set(Thread.currentThread());
+                afterReturn.set(returned.get());
+                done.countDown();
+            }
+        };
+        // hold the callback until stream() has returned, so the order is observable
+        final java.util.concurrent.CountDownLatch gate = new java.util.concurrent.CountDownLatch(1);
+        NtfyClient.Listener gated = new NtfyClient.Listener() {
+            public void onOpen() {}
+            public void onMessage(NtfyMessage m) {}
+            public void onKeepalive() {}
+            public void onClosed(NtfyException cause) {
+                try {
+                    gate.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                l.onClosed(cause);
+            }
+        };
+        client.stream(ntfy, topics("upab12cd34aa"), "m0", false, gated);
+        returned.set(true);
+        gate.countDown();
+        assertTrue(done.await(5, TimeUnit.SECONDS));
+        assertTrue(afterReturn.get());
+        assertTrue(seen.get() != caller);
+    }
+
+    @Test
+    public void aPartialLastLineEndsAsUnreachableAndDeliversNothingOfIt() throws Exception {
+        server.enqueue(new MockResponse().setBody(event("m1", "message", "a", false) + "{\"id\":\"m9\",\"ev"));
+        Recorder r = new Recorder();
+        client.stream(ntfy, topics("upab12cd34aa"), "all", true, r);
+        waitFor(r);
+        assertEquals(NtfyException.Kind.UNREACHABLE, r.closed.take().kind());
+        assertEquals(Arrays.asList("message:m1", "closed"), new ArrayList<>(r.events));
+        server.enqueue(new MockResponse().setBody(event("m1", "message", "a", false) + "{\"id\":\"m9\""));
+        try {
+            client.poll(ntfy, topics("upab12cd34aa"), "m0", true);
+            fail("partial line");
+        } catch (NtfyException e) {
+            assertEquals(NtfyException.Kind.UNREACHABLE, e.kind());
+        }
+    }
+
+    @Test
+    public void aThrowingListenerEndsTheStreamOnceWithProtocol() throws Exception {
+        server.enqueue(new MockResponse().setBody(event("m1", "message", "a", false)
+                + event("m2", "message", "b", false)));
+        Recorder r = new Recorder() {
+            @Override
+            public void onMessage(NtfyMessage m) {
+                super.onMessage(m);
+                throw new IllegalStateException("boom");
+            }
+        };
+        client.stream(ntfy, topics("upab12cd34aa"), "all", true, r);
+        waitFor(r);
+        Thread.sleep(200);
+        assertEquals(NtfyException.Kind.PROTOCOL, r.closed.take().kind());
+        assertEquals(Arrays.asList("message:m1", "closed"), new ArrayList<>(r.events));
+    }
+
+    @Test
+    public void topicsOutsideTheAlphabetAreRefused() throws Exception {
+        for (String bad : new String[] {"a/b", "a,b", "a b", "", "a?x=1", "../x"}) {
+            try {
+                client.poll(ntfy, topics(bad), "m0", true);
+                fail("topic " + bad);
+            } catch (IllegalArgumentException expected) {
+                // refused
+            }
+        }
+        try {
+            client.checkRead(ntfy, "a/b", true);
+            fail("checkRead topic");
+        } catch (IllegalArgumentException expected) {
+            // refused
+        }
+        assertEquals(0, server.getRequestCount());
     }
 
     @Test
