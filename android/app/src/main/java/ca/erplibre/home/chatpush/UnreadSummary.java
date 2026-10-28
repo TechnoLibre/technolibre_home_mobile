@@ -33,17 +33,27 @@ final class UnreadSummary {
         this.readChannelIds = Collections.unmodifiableSet(readChannelIds);
     }
 
+    /** of() for a /mail/data whose Store names its self partner. */
+    static UnreadSummary of(JSONObject mailData, String globalMuteUntil, long nowMs) {
+        return of(mailData, -1, globalMuteUntil, nowMs);
+    }
+
     /**
      * @param mailData the "result" of /mail/data
+     * @param sessionSelf the self partner as the session info gives it, -1
+     *     unknown; Odoo 18's /mail/data names it neither in its Store nor
+     *     in its channels (selfMember), and the self member rows are found
+     *     by it. A Store "self" wins over it.
      * @param globalMuteUntil Odoo "YYYY-MM-DD HH:MM:SS" UTC, or null
      * @param nowMs epoch ms the mutes are compared with
      */
-    static UnreadSummary of(JSONObject mailData, String globalMuteUntil, long nowMs) {
+    static UnreadSummary of(JSONObject mailData, long sessionSelf, String globalMuteUntil, long nowMs) {
         JSONObject res = mailData == null ? new JSONObject() : mailData;
         JSONObject store = res.optJSONObject("Store");
         if (store == null) store = new JSONObject();
 
         long selfPartner = idOf(store.opt("self"));
+        if (selfPartner < 0) selfPartner = sessionSelf;
         int inboxCounter = 0;
         JSONObject inbox = store.optJSONObject("inbox");
         if (inbox != null) inboxCounter = inbox.optInt("counter", 0);

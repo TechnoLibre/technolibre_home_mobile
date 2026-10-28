@@ -68,6 +68,34 @@ public class OdooDirectTest {
         assertTrue(params.has("init_messaging"));
     }
 
+    /**
+     * /mail/data as Odoo 18 answers it: neither its Store nor its channels
+     * name the self partner or member (no self, no selfMember); the
+     * session info does.
+     */
+    private static String mailDataWithoutSelf() throws Exception {
+        JSONObject d = new JSONObject(mailData());
+        d.getJSONObject("Store").remove("self");
+        org.json.JSONArray channels = d.getJSONArray("discuss.channel");
+        for (int i = 0; i < channels.length(); i++) channels.getJSONObject(i).remove("selfMember");
+        return d.toString();
+    }
+
+    @Test
+    public void theSelfPartnerComesFromTheSessionInfoStore() throws Exception {
+        server.enqueue(rpc("{\"partner_id\":99,\"storeData\":{\"Store\":{\"self\":{\"id\":7,\"type\":\"partner\"},"
+                + "\"settings\":{\"mute_until_dt\":false}}}}"));
+        server.enqueue(rpc(mailDataWithoutSelf()));
+        assertEquals(12, odoo.check(session, true, NOW).total);
+    }
+
+    @Test
+    public void theSelfPartnerFallsBackToTheSessionPartnerId() throws Exception {
+        server.enqueue(rpc("{\"partner_id\":7}"));
+        server.enqueue(rpc(mailDataWithoutSelf()));
+        assertEquals(12, odoo.check(session, true, NOW).total);
+    }
+
     @Test
     public void theGlobalMuteOfSessionInfoSilencesTheCount() throws Exception {
         server.enqueue(rpc("{\"storeData\":{\"Store\":{\"settings\":{\"mute_until_dt\":\"9999-12-31 23:59:59\"}}}}"));

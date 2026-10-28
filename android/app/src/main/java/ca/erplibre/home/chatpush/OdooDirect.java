@@ -27,7 +27,7 @@ final class OdooDirect {
         this.client = base.newBuilder().followRedirects(false).followSslRedirects(false).build();
     }
 
-    /** Reads the account-wide mute, then the member channels' counters, and counts them. */
+    /** Reads the account-wide mute and the self partner, then the member channels' counters, and counts them. */
     UnreadSummary check(NativeSession s, boolean allowHttp, long nowMs) throws OdooDirectException {
         requireAllowed(s, allowHttp);
         JSONObject info = asObject(call(s, "/web/session/get_session_info", new JSONObject()));
@@ -46,7 +46,16 @@ final class OdooDirect {
             throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, null);
         }
         JSONObject mailData = asObject(call(s, "/mail/data", params));
-        return UnreadSummary.of(mailData, mute, nowMs);
+        return UnreadSummary.of(mailData, selfPartnerOf(info, store), mute, nowMs);
+    }
+
+    /** The session's own partner: its Store's self, else partner_id; -1 when neither says. */
+    private static long selfPartnerOf(JSONObject info, JSONObject store) {
+        JSONObject self = store == null ? null : store.optJSONObject("self");
+        if (self != null && self.opt("id") instanceof Number && "partner".equals(self.optString("type", "partner"))) {
+            return self.optLong("id");
+        }
+        return info.opt("partner_id") instanceof Number ? info.optLong("partner_id") : -1;
     }
 
     /** Asks Odoo to forget the push endpoint (no partner check on its side). */
