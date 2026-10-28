@@ -33,11 +33,11 @@ public final class ChatPushOpen {
     private static final Pattern CHANNEL = Pattern.compile("/chat/" + SEGMENT + "/[0-9]+");
     /**
      * The app's configId once decoded, "&lt;url&gt;|&lt;username&gt;|&lt;database&gt;":
-     * an http(s) URL, a username that may be empty, a database; no part
-     * holds a "|", a space or a control character.
+     * an http(s) URL, a login that may be empty or hold spaces, a database;
+     * no part holds a "|" or a control character, and only the login a space.
      */
     private static final Pattern CONFIG_ID = Pattern.compile(
-            "https?://[^|\\s\\p{Cntrl}]+\\|[^|\\s\\p{Cntrl}]*\\|[^|\\s\\p{Cntrl}]+");
+            "https?://[^|\\s\\p{Cntrl}]+\\|[^|\\p{Cntrl}]*\\|[^|\\s\\p{Cntrl}]+");
 
     private static final Object KEY_LOCK = new Object();
 
