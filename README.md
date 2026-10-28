@@ -230,9 +230,12 @@ none); the phone registers itself with Odoo, under its own session.
    ntfy for ERPLibre mobile`, on that machine or over ssh. The command sets
    the access rules (Odoo writes without an account on `up*`, each phone reads
    only its own prefix with one read-only token) and prints a link and its QR
-   code. « Revoke a phone » in the same menu deletes a phone's account and
-   token; « Remove ntfy » in the app forgets the link and unregisters the
-   phone from Odoo.
+   code. A phone name already prepared is refused: pick another one, or
+   revoke that phone and prepare it again. « Revoke a phone » in the same menu
+   deletes a phone's account and token: that phone's token stops working at
+   once, but Odoo keeps its devices and goes on publishing to their topics
+   until the app removes the account or applies a new link. « Remove ntfy » in
+   the app forgets the link and unregisters the phone from Odoo.
 2. **Scan the QR code or paste the link** in Options › Chat notifications, for
    each account. The link carries two addresses when Odoo reaches ntfy
    differently from the phone (the phone through the local network, Odoo through
@@ -261,8 +264,11 @@ none); the phone registers itself with Odoo, under its own session.
    changes the Android setting, until it is posted again. « Never shown » and
    « Always shown » do what they say.
 
-What rings is Odoo's own setting (all, mentions, nothing, per conversation). Odoo never retries a push, and nothing marks a
-message read: a phone silent for longer than the ntfy cache, or an account
+What rings follows Odoo's own settings: the general one (all, mentions,
+nothing) and a conversation's mute. Chat and group pushes ignore a
+conversation's own notification setting; only a mute stops them. Odoo never
+retries a push, and nothing marks a message read: a phone silent for longer
+than the ntfy cache, or an account
 without ntfy, gets one summary per server, counted from Odoo's unread counters.
 Odoo publishes inside the request that posts the message (when fewer than 5
 devices are among the recipients), so a ntfy that accepts the connection and

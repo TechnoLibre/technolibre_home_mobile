@@ -441,9 +441,12 @@ none); the phone registers itself with Odoo, under its own session.
    ntfy for ERPLibre mobile`, on that machine or over ssh. The command sets
    the access rules (Odoo writes without an account on `up*`, each phone reads
    only its own prefix with one read-only token) and prints a link and its QR
-   code. « Revoke a phone » in the same menu deletes a phone's account and
-   token; « Remove ntfy » in the app forgets the link and unregisters the
-   phone from Odoo.
+   code. A phone name already prepared is refused: pick another one, or
+   revoke that phone and prepare it again. « Revoke a phone » in the same menu
+   deletes a phone's account and token: that phone's token stops working at
+   once, but Odoo keeps its devices and goes on publishing to their topics
+   until the app removes the account or applies a new link. « Remove ntfy » in
+   the app forgets the link and unregisters the phone from Odoo.
 2. **Scan the QR code or paste the link** in Options › Chat notifications, for
    each account. The link carries two addresses when Odoo reaches ntfy
    differently from the phone (the phone through the local network, Odoo through
@@ -472,8 +475,11 @@ none); the phone registers itself with Odoo, under its own session.
    changes the Android setting, until it is posted again. « Never shown » and
    « Always shown » do what they say.
 
-What rings is Odoo's own setting (all, mentions, nothing, per conversation). Odoo never retries a push, and nothing marks a
-message read: a phone silent for longer than the ntfy cache, or an account
+What rings follows Odoo's own settings: the general one (all, mentions,
+nothing) and a conversation's mute. Chat and group pushes ignore a
+conversation's own notification setting; only a mute stops them. Odoo never
+retries a push, and nothing marks a message read: a phone silent for longer
+than the ntfy cache, or an account
 without ntfy, gets one summary per server, counted from Odoo's unread counters.
 Odoo publishes inside the request that posts the message (when fewer than 5
 devices are among the recipients), so a ntfy that accepts the connection and
@@ -499,8 +505,12 @@ s'enregistre lui-même auprès d'Odoo, sous sa propre session.
    › Préparer ntfy pour ERPLibre mobile`, sur cette machine ou par ssh. La
    commande pose les règles d'accès (Odoo écrit sans compte sur `up*`, chaque
    téléphone ne lit que son préfixe avec un jeton en lecture seule) et affiche
-   un lien et son code QR. « Révoquer un téléphone », dans le même menu,
-   supprime le compte et le jeton d'un téléphone ; « Retirer ntfy », dans l'app,
+   un lien et son code QR. Un nom de téléphone déjà préparé est refusé : en
+   choisir un autre, ou révoquer ce téléphone et le préparer de nouveau.
+   « Révoquer un téléphone », dans le même menu, supprime le compte et le jeton
+   d'un téléphone : son jeton cesse aussitôt de fonctionner, mais Odoo garde
+   ses appareils et continue de publier sur leurs sujets jusqu'à ce que l'app
+   retire le compte ou applique un nouveau lien. « Retirer ntfy », dans l'app,
    oublie le lien et désenregistre le téléphone d'Odoo.
 2. **Scanner le code QR ou coller le lien** dans Options › Notifications du
    clavardage, pour chaque compte. Le lien porte deux adresses quand Odoo
@@ -531,8 +541,10 @@ s'enregistre lui-même auprès d'Odoo, sous sa propre session.
    réglage d'Android, jusqu'à ce qu'elle soit affichée de nouveau. « Jamais
    affiché » et « Toujours affiché » font ce qu'ils disent.
 
-Ce qui sonne suit le réglage d'Odoo (tout, mentions, rien, par conversation).
-Odoo ne réessaie jamais un push, et
+Ce qui sonne suit les réglages d'Odoo : le réglage général (tout, mentions,
+rien) et la sourdine d'une conversation. Les push d'un clavardage ou d'un
+groupe ignorent le réglage de notification propre à la conversation ; seule la
+sourdine les arrête. Odoo ne réessaie jamais un push, et
 rien ne marque un message comme lu : un téléphone muet plus longtemps que le
 cache de ntfy, ou un compte sans ntfy, reçoit un sommaire par serveur, compté
 sur les compteurs de non lus d'Odoo. Odoo publie dans la requête qui poste le

@@ -231,8 +231,12 @@ s'enregistre lui-même auprès d'Odoo, sous sa propre session.
    › Préparer ntfy pour ERPLibre mobile`, sur cette machine ou par ssh. La
    commande pose les règles d'accès (Odoo écrit sans compte sur `up*`, chaque
    téléphone ne lit que son préfixe avec un jeton en lecture seule) et affiche
-   un lien et son code QR. « Révoquer un téléphone », dans le même menu,
-   supprime le compte et le jeton d'un téléphone ; « Retirer ntfy », dans l'app,
+   un lien et son code QR. Un nom de téléphone déjà préparé est refusé : en
+   choisir un autre, ou révoquer ce téléphone et le préparer de nouveau.
+   « Révoquer un téléphone », dans le même menu, supprime le compte et le jeton
+   d'un téléphone : son jeton cesse aussitôt de fonctionner, mais Odoo garde
+   ses appareils et continue de publier sur leurs sujets jusqu'à ce que l'app
+   retire le compte ou applique un nouveau lien. « Retirer ntfy », dans l'app,
    oublie le lien et désenregistre le téléphone d'Odoo.
 2. **Scanner le code QR ou coller le lien** dans Options › Notifications du
    clavardage, pour chaque compte. Le lien porte deux adresses quand Odoo
@@ -263,8 +267,10 @@ s'enregistre lui-même auprès d'Odoo, sous sa propre session.
    réglage d'Android, jusqu'à ce qu'elle soit affichée de nouveau. « Jamais
    affiché » et « Toujours affiché » font ce qu'ils disent.
 
-Ce qui sonne suit le réglage d'Odoo (tout, mentions, rien, par conversation).
-Odoo ne réessaie jamais un push, et
+Ce qui sonne suit les réglages d'Odoo : le réglage général (tout, mentions,
+rien) et la sourdine d'une conversation. Les push d'un clavardage ou d'un
+groupe ignorent le réglage de notification propre à la conversation ; seule la
+sourdine les arrête. Odoo ne réessaie jamais un push, et
 rien ne marque un message comme lu : un téléphone muet plus longtemps que le
 cache de ntfy, ou un compte sans ntfy, reçoit un sommaire par serveur, compté
 sur les compteurs de non lus d'Odoo. Odoo publie dans la requête qui poste le
