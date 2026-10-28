@@ -1933,6 +1933,21 @@ export class ChatRepository {
     );
   }
 
+  /**
+   * Writes the given fields of the account's push row when one is stored,
+   * nothing otherwise: a caller that started before a rename moved the
+   * row to another id does not re-create one under the old id.
+   */
+  async updatePushRow(p: Partial<ChatPushRow> & { configId: string }): Promise<void> {
+    const full = pushToRow({ ...defaultPush(p.configId), ...defined(p) });
+    const cols = Object.keys(defined(p)).filter((k) => k !== "configId").map(snakeOf);
+    if (cols.length === 0) return;
+    await this.db.rawRun(
+      `UPDATE chat_push SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE config_id = ?`,
+      [...cols.map((c) => full[c]), p.configId],
+    );
+  }
+
   // ─── Avatars ──────────────────────────────────────────────────────────────
 
   /** The account's cached avatars, by partner id. */

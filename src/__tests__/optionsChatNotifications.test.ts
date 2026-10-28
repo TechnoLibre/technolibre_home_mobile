@@ -6,10 +6,16 @@ import { fileURLToPath } from "node:url";
 import { Dialog } from "@capacitor/dialog";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { Camera } from "@capacitor/camera";
+import { Directory, Filesystem } from "@capacitor/filesystem";
 
 import { OptionsChatNotificationsComponent } from "../components/options/chat_notifications/options_chat_notifications_component";
 import { fakeChatPushNative, type FakeChatPushNative } from "../__mocks__/chatPushNative";
 import { chatSettings } from "../services/chat/chatSettings";
+
+vi.mock("@capacitor/filesystem", () => ({
+    Filesystem: { deleteFile: vi.fn().mockResolvedValue(undefined) },
+    Directory: { External: "EXTERNAL", Cache: "CACHE", Data: "DATA" },
+}));
 
 vi.mock("@capacitor/camera", () => ({
     Camera: { getPhoto: vi.fn() },
@@ -175,6 +181,39 @@ describe("OptionsChatNotificationsComponent", () => {
         (Camera.getPhoto as any).mockRejectedValue(new Error("User cancelled photos app"));
         await c.onScan(A);
         expect(push.applyLink).not.toHaveBeenCalled();
+    });
+
+    it("the photo of a QR code and its original are deleted once read, whatever the answer", async () => {
+        const { c, native } = setup();
+        await c.load();
+        const photo = "file:///data/user/0/ca.erplibre.home/cache/JPEG_20261028_101500_123.jpg";
+        (Camera.getPhoto as any).mockResolvedValue({ path: photo });
+        const deleted = () => (Filesystem.deleteFile as any).mock.calls.map((call: any[]) => call[0]);
+        native.qrText = null;
+        await c.onScan(A);
+        expect(deleted()).toEqual([
+            { path: photo },
+            { path: "Pictures/JPEG_20261028_101500_123.jpg", directory: Directory.External },
+        ]);
+        (Filesystem.deleteFile as any).mockClear();
+        (Filesystem.deleteFile as any).mockRejectedValue(new Error("File does not exist"));
+        native.failNext("decodeQr");
+        await c.onScan(A);
+        expect(deleted()).toHaveLength(2);
+        expect(c.state.message).toBe("The change failed. Try again.");
+    });
+
+    it("the account's ntfy line is one sentence of the language", () => {
+        expect(source).not.toMatch(/push_account_ntfy'\)"\/> :/);
+        expect(source).toContain("t('chat.push_account_ntfy', { url: a.ntfyUrl || t('chat.push_ntfy_none') })");
+    });
+
+    it("the status panel says Odoo for an Odoo-direct account Odoo does not answer", async () => {
+        const { c, native } = setup();
+        await c.load();
+        native.health = { accounts: [{ configId: A, via: "odoo", state: "error", reason: "unreachable", lastCheckAt: 0 }] };
+        await c.refreshStatus();
+        expect(c.statusLines().join("\n")).toContain("Odoo unreachable");
     });
 
     it("the lock-screen choice is saved and published", async () => {

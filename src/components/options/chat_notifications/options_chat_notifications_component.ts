@@ -1,5 +1,6 @@
 import { onMounted, onWillUnmount, useState, xml } from "@odoo/owl";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
+import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Dialog } from "@capacitor/dialog";
 import { LocalNotifications } from "@capacitor/local-notifications";
 
@@ -10,7 +11,7 @@ import type { LockScreen } from "../../../models/chat";
 import type { PushHealth } from "../../../plugins/chatPushPlugin";
 import { chatSettings, type NotifyLevel } from "../../../services/chat/chatSettings";
 import { parseNtfyLink } from "../../../services/chat/chatPushLink";
-import { reasonText } from "../../../services/chat/chatPushOpen";
+import { accountReason, reasonText } from "../../../services/chat/chatPushOpen";
 
 /** How often the status panel reads the native state while it is shown. */
 export const STATUS_POLL_MS = 5000;
@@ -35,6 +36,24 @@ interface AccountCard {
     /** The link typed or pasted, and whether its field is open. */
     paste: string;
     pasteOpen: boolean;
+}
+
+/**
+ * Deletes a camera photo: the copy the camera plugin answers (in the
+ * cache) and the original it keeps under the app's external Pictures
+ * directory, which bears the same file name. A file already gone is no
+ * failure.
+ */
+async function forgetPhoto(path: string): Promise<void> {
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    const targets = [{ path }, ...(name ? [{ path: `Pictures/${name}`, directory: Directory.External }] : [])];
+    for (const target of targets) {
+        try {
+            await Filesystem.deleteFile(target);
+        } catch {
+            // Already gone, or never there
+        }
+    }
 }
 
 const word = (state: string): string => t(STATE_WORDS.has(state) ? "chat.push_state_" + state : "chat.push_state_unknown");
@@ -85,9 +104,7 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
           </label>
           <section t-foreach="state.accounts" t-as="a" t-key="a.configId" class="chat-notifications__card">
             <h4 t-esc="a.label"/>
-            <p class="options-sync__info">
-              <t t-esc="t('chat.push_account_ntfy')"/> : <t t-esc="a.ntfyUrl || t('chat.push_ntfy_none')"/>
-            </p>
+            <p class="options-sync__info" t-esc="t('chat.push_account_ntfy', { url: a.ntfyUrl || t('chat.push_ntfy_none') })"/>
             <p t-if="a.ntfyUrl" class="options-sync__info"
                t-esc="a.registeredAt ? t('chat.push_registered') : t('chat.push_not_registered')"/>
             <div class="chat-new__chips">
@@ -301,7 +318,11 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
         await this.applyText(configId, card.paste);
     }
 
-    /** Reads a QR code from a photo (the camera's) and applies the link it carries. */
+    /**
+     * Reads a QR code from a photo (the camera's) and applies the link it
+     * carries. The photo holds the token: it goes once read, whatever the
+     * answer (forgetPhoto).
+     */
     async onScan(configId: string): Promise<void> {
         const native = this.native;
         if (!native || this.state.busy) return;
@@ -320,6 +341,8 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
         } catch (e) {
             this.fail(e);
             return;
+        } finally {
+            await forgetPhoto(path);
         }
         if (text === null) {
             this.state.message = t("chat.push_qr_none");
@@ -459,7 +482,7 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
         }
         for (const a of h.accounts) {
             const failing = a.state === "error" || a.state === "session_expired" || a.state === "no_session";
-            lines.push(reasoned(t("chat.push_status_account", { server: labelOf(a.configId), state: word(a.state) }), a.reason ?? (failing ? a.state : null), failing));
+            lines.push(reasoned(t("chat.push_status_account", { server: labelOf(a.configId), state: word(a.state) }), accountReason(a) ?? (failing ? a.state : null), failing));
         }
         if (h.faults > 0) lines.push(t("chat.push_status_faults", { n: String(h.faults) }));
         if (h.undecryptable > 0) lines.push(t("chat.push_status_undecryptable", { n: String(h.undecryptable) }));

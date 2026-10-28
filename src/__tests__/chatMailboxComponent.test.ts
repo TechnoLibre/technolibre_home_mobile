@@ -419,6 +419,20 @@ describe("ChatMailboxComponent", () => {
         expect(chat.inbox.openItem).not.toHaveBeenCalled();
     });
 
+    it("a tap on an inbox notification while the inbox is shown opens the item", async () => {
+        const chat: any = fakeChat(["a", "b"]);
+        chat.inbox.items.mockResolvedValue([item("a", 605, { threadModel: "res.partner", threadId: 70 })]);
+        const c = make(chat, "/chat/inbox");
+        await c.start();
+        expect(chat.inbox.openItem).not.toHaveBeenCalled();
+        // The route stays /chat/inbox: only the query changes, the screen is not mounted again
+        const url = "/chat/inbox?s=a&thread=res.partner,70";
+        window.history.pushState({}, "", url);
+        c.env.eventBus.trigger("routernav", { url });
+        await vi.waitFor(() => expect(chat.inbox.openItem).toHaveBeenCalledTimes(1));
+        expect(chat.inbox.openItem.mock.calls[0][1].messageId).toBe(605);
+    });
+
     it("a thread parameter waits for the server read and opens the newest item then", async () => {
         const chat: any = fakeChat(["a"]);
         chat.inbox.items.mockResolvedValue([item("a", 603, { threadModel: "res.partner", threadId: 70 })]);

@@ -320,7 +320,7 @@ export class ChatPush {
       this.done.delete(configId);
       this.mirrored.delete(configId);
       this.leaving.add(configId);
-      await this.repo.setPushRow({ configId, ...NO_NTFY, staleEndpoints: [] });
+      await this.repo.updatePushRow({ configId, ...NO_NTFY, staleEndpoints: [] });
       if (row.ntfyUrl) await this.dropUnusedNtfy(row.ntfyUrl);
       await this.publishNow();
     });
@@ -480,12 +480,32 @@ export class ChatPush {
     this.done.delete(row.configId);
   }
 
+  /**
+   * registerOnce between two copies of the account's stored session: the
+   * second takes the session a login of the registration stored, so it
+   * reaches native code before the caller's next publish.
+   */
   private async registerNow(src: ChatSource): Promise<RegisterResult> {
+    await this.copyQuietly(src);
+    const result = await this.registerOnce(src);
+    await this.copyQuietly(src);
+    return result;
+  }
+
+  private async copyQuietly(src: ChatSource): Promise<void> {
     try {
       await this.copyStored(src);
     } catch (e) {
       console.warn("[chat push] session copy failed:", messageOf(e));
     }
+  }
+
+  /**
+   * Registers the account's endpoint unless this session did; the row is
+   * updated only while it is still stored under this id (a rename may
+   * have moved it during the calls).
+   */
+  private async registerOnce(src: ChatSource): Promise<RegisterResult> {
     const known = this.done.get(src.configId);
     if (known) return known;
     const row = await this.repo.pushRow(src.configId);
@@ -501,7 +521,7 @@ export class ChatPush {
         vapid_public_key: vapid,
         expirationTime: null,
       });
-      await this.repo.setPushRow({ configId: src.configId, vapidKey: String(vapid), registeredAt: this.now().toISOString() });
+      await this.repo.updatePushRow({ configId: src.configId, vapidKey: String(vapid), registeredAt: this.now().toISOString() });
       this.done.set(src.configId, "registered");
       return "registered";
     } catch (e) {
@@ -521,20 +541,30 @@ export class ChatPush {
     return Promise.race([this.rpc.callKw(src.creds, PUSH_DEVICE, method, [], kwargs), late]).finally(() => clearTimeout(timer));
   }
 
-  /** Unregisters the account's stale endpoints one by one, each dropped from the list once Odoo answered. */
+  /**
+   * Unregisters the account's stale endpoints one by one, each dropped from
+   * the list once Odoo answered (a row moved meanwhile is not written).
+   */
   private async unregisterStale(src: ChatSource): Promise<void> {
     for (const endpoint of (await this.repo.pushRow(src.configId)).staleEndpoints) {
       await this.kw(src, "unregister_devices", { endpoint });
       const now = (await this.repo.pushRow(src.configId)).staleEndpoints;
-      await this.repo.setPushRow({ configId: src.configId, staleEndpoints: now.filter((e) => e !== endpoint) });
+      await this.repo.updatePushRow({ configId: src.configId, staleEndpoints: now.filter((e) => e !== endpoint) });
     }
   }
 
-  /** Unregisters each endpoint in turn; returns, in order, those not unregistered within UNREGISTER_BOUND_MS. */
+  /**
+   * Unregisters each endpoint in turn; returns, in order, those not
+   * unregistered within UNREGISTER_BOUND_MS. At the bound no further call
+   * starts: the endpoints left go to native code, and the account is on
+   * its way out.
+   */
   private async unregisterWithin(src: ChatSource, endpoints: string[]): Promise<string[]> {
     const left = new Set(endpoints);
+    let bound = false;
     const all = (async () => {
       for (const endpoint of endpoints) {
+        if (bound) return;
         try {
           await this.kw(src, "unregister_devices", { endpoint });
           left.delete(endpoint);
@@ -546,6 +576,7 @@ export class ChatPush {
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([all, new Promise<void>((resolve) => { timer = setTimeout(resolve, UNREGISTER_BOUND_MS); })]);
     clearTimeout(timer);
+    bound = true;
     return endpoints.filter((e) => left.has(e));
   }
 

@@ -117,8 +117,9 @@ describe("opening from a tap", () => {
   });
 });
 
+// A realtime build applies the level chosen: effectiveLevel follows level unless the case says otherwise
 const health = (over: Partial<PushHealth> = {}): PushHealth => ({
-  at: 0, level: 3, effectiveLevel: 3, mode: "poll_15", realtimeBuild: true, serviceAlive: true,
+  at: 0, level: 3, effectiveLevel: over.level ?? 3, mode: "poll_15", realtimeBuild: true, serviceAlive: true,
   ntfys: [], accounts: [], undecryptable: 0, faults: 0, notificationsAllowed: true, batteryExempt: true, ...over,
 });
 const row = (configId: string, ntfyUrl: string | null): ChatPushRow => ({
@@ -164,6 +165,21 @@ describe("listeningOf", () => {
     expect(listeningOf(health({ ntfys: [ntfy] }), [row(A, "https://ntfy.exemple.test")]).alarms)
       .toEqual([{ configId: A, reason: "unauthorized" }]);
     expect(listeningOf(health({ ntfys: [{ ...ntfy, state: "connected", reason: null }] }), []).alarms).toEqual([]);
+  });
+
+  it("a build without the realtime service never reports it dead", () => {
+    const r = listeningOf(health({ level: 1, effectiveLevel: 3, realtimeBuild: false, serviceAlive: false, batteryExempt: false }), []);
+    expect(r).toEqual({ off: false, alarms: [], warnings: [] });
+  });
+
+  it("an Odoo-direct account Odoo does not answer says Odoo, not ntfy", () => {
+    const acc = (via: "odoo" | "ntfy", reason: string | null) => ({ configId: A, via, state: "error" as const, reason, lastCheckAt: 0 });
+    expect(listeningOf(health({ accounts: [acc("odoo", "unreachable")] }), []).alarms)
+      .toEqual([{ configId: A, reason: "odoo_unreachable" }]);
+    expect(listeningOf(health({ accounts: [acc("odoo", null)] }), []).alarms)
+      .toEqual([{ configId: A, reason: "odoo_unreachable" }]);
+    expect(listeningOf(health({ accounts: [acc("ntfy", "unreachable")] }), []).alarms)
+      .toEqual([{ configId: A, reason: "unreachable" }]);
   });
 
   it("no battery exemption at levels 1 and 2 is a warning only", () => {

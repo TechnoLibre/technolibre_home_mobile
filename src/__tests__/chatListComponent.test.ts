@@ -846,6 +846,13 @@ describe("ChatListComponent listening banner", () => {
         expect(blocked.state.listeningText).toBe("The phone is not listening: http blocked by this version of the app");
     });
 
+    it("several reasons are joined as the language writes a list", async () => {
+        const ntfy = { url: "http://ntfy.exemple.test:8080", state: "error", reason: "http_refused", lastContactAt: 0, configIds: [A] };
+        const c = withPush({ notificationsAllowed: false, ntfys: [ntfy] });
+        await c.loadListening();
+        expect(c.state.listeningText).toBe("The phone is not listening: notifications not allowed; http not allowed");
+    });
+
     it("a tap on the banner opens the notification options", async () => {
         const c = withPush({ notificationsAllowed: false });
         const urls: string[] = [];

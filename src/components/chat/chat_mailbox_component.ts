@@ -179,9 +179,15 @@ export class ChatMailboxComponent extends EnhancedComponent {
                                 onDone.bind="onReplyDone" onCancel.bind="onReplyCancel"/>
     </div>`;
 
-    /** Follows the changes, shows the cache, reads the server, then opens the record `?thread=` asks for. */
+    /**
+     * Follows the changes, shows the cache, reads the server, then opens the
+     * record `?thread=` asks for. A navigation that keeps this route and
+     * brings a `?thread=` (a notification tapped while the inbox is shown:
+     * the screen is not mounted again) runs the same three steps.
+     */
     async start(): Promise<void> {
         this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
+        this.eventBus.addEventListener(Events.ROUTER_NAVIGATION, this._onNavigated);
         void this.watchNetwork();
         await this.loadCache();
         await this.refreshOnline();
@@ -196,6 +202,14 @@ export class ChatMailboxComponent extends EnhancedComponent {
     private _gen = 0;
     private _paging = false;
     private _debounce: ReturnType<typeof setTimeout> | null = null;
+    private _onNavigated = () => {
+        if (!new URLSearchParams(window.location.search).has("thread")) return;
+        void (async () => {
+            await this.loadCache();
+            await this.refreshOnline();
+            await this.openRequestedThread();
+        })();
+    };
     private _onChanged = () => {
         if (this._debounce !== null) clearTimeout(this._debounce);
         this._debounce = setTimeout(() => {
@@ -223,6 +237,7 @@ export class ChatMailboxComponent extends EnhancedComponent {
         onWillUnmount(() => {
             this.unwatchNetwork();
             this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
+            this.eventBus.removeEventListener(Events.ROUTER_NAVIGATION, this._onNavigated);
             if (this._debounce !== null) clearTimeout(this._debounce);
             this._gen++;
         });

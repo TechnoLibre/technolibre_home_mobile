@@ -1,5 +1,5 @@
 import type { ChatPushRow } from "../../models/chat";
-import type { ChatPushNative, PushHealth } from "../../plugins/chatPushPlugin";
+import type { ChatPushNative, PushHealth, PushHealthAccount } from "../../plugins/chatPushPlugin";
 import { t } from "../../i18n";
 
 /*
@@ -126,13 +126,24 @@ export interface Listening {
 }
 
 /**
+ * An account's reason key: the native one, unreachable for an error
+ * without one; an account checked against Odoo directly (no ntfy) that
+ * Odoo does not answer is odoo_unreachable, not ntfy's unreachable.
+ */
+export function accountReason(a: PushHealthAccount): string | null {
+  const reason = a.reason ?? (a.state === "error" ? "unreachable" : null);
+  return a.via === "odoo" && reason === "unreachable" ? "odoo_unreachable" : reason;
+}
+
+/**
  * What the native health says about listening. Level 5 is off. Otherwise
- * an alarm for each of: notifications not allowed; levels 1 and 2 with the
- * permanent service dead; an account in error, with an expired session or
- * with none; an ntfy in error. Levels 1 and 2 without the battery
- * exemption only warn. The reason of an alarm is the native key
- * (unauthorized, unreachable, http_refused...) or one of
- * notifications_denied, service_dead, no_session.
+ * an alarm for each of: notifications not allowed; levels 1 and 2 applied
+ * (effectiveLevel: a build without the realtime service applies 3) with
+ * the permanent service dead; an account in error, with an expired session
+ * or with none; an ntfy in error. Levels 1 and 2 applied without the
+ * battery exemption only warn. The reason of an alarm is the native key
+ * (unauthorized, unreachable, http_refused...), accountReason's for an
+ * account, or one of notifications_denied, service_dead, no_session.
  */
 export function listeningOf(h: PushHealth, rows: ChatPushRow[]): Listening {
   if (h.level === 5) return { off: true, alarms: [], warnings: [] };
@@ -141,10 +152,10 @@ export function listeningOf(h: PushHealth, rows: ChatPushRow[]): Listening {
     if (!alarms.some((a) => a.configId === configId && a.reason === reason)) alarms.push({ configId, reason });
   };
   if (!h.notificationsAllowed) add(null, "notifications_denied");
-  if (h.level <= 2 && !h.serviceAlive) add(null, "service_dead");
+  if (h.effectiveLevel <= 2 && !h.serviceAlive) add(null, "service_dead");
   for (const a of h.accounts) {
     if (a.state === "error" || a.state === "session_expired" || a.state === "no_session") {
-      add(a.configId, a.reason ?? (a.state === "error" ? "unreachable" : a.state));
+      add(a.configId, accountReason(a) ?? a.state);
     }
   }
   for (const n of h.ntfys) {
@@ -152,7 +163,7 @@ export function listeningOf(h: PushHealth, rows: ChatPushRow[]): Listening {
     const owner = rows.find((r) => r.ntfyUrl === n.url)?.configId ?? n.configIds[0] ?? null;
     add(owner, n.reason ?? "unreachable");
   }
-  const warnings = h.level <= 2 && !h.batteryExempt ? ["battery_not_exempt"] : [];
+  const warnings = h.effectiveLevel <= 2 && !h.batteryExempt ? ["battery_not_exempt"] : [];
   return { off: false, alarms, warnings };
 }
 

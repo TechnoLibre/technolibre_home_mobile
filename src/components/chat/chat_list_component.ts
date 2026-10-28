@@ -336,7 +336,7 @@ export class ChatListComponent extends EnhancedComponent {
                 const listening = listeningOf(await native.status(), await this.chatService.repo.pushRows());
                 off = listening.off;
                 const reasons = [...new Set(listening.alarms.map((a) => reasonText(a.reason)))];
-                if (reasons.length > 0) text = t("chat.push_not_listening", { reason: reasons.join(" ; ") });
+                if (reasons.length > 0) text = t("chat.push_not_listening", { reason: reasons.join(t("chat.push_reasons_separator")) });
             } catch (e) {
                 console.warn("chat list: listening state unreadable", e instanceof Error ? e.message : String(e));
                 // An unreadable state is not a listening phone

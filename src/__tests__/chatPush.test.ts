@@ -95,6 +95,10 @@ function fakeOdoo() {
     hang: false,
     /** register_devices on this host stays on the wire. */
     hangRegister: null as string | null,
+    /** register_devices answers once this settles. */
+    registerGate: null as Promise<void> | null,
+    /** unregister_devices answers after this many ms. */
+    unregisterDelayMs: 0,
     /** Called as /mail/data is read. */
     onMailData: null as (() => void) | null,
   };
@@ -126,12 +130,14 @@ function fakeOdoo() {
           if (method === "get_web_push_vapid_public_key") return ok(state.vapid);
           if (method === "register_devices") {
             if (state.hangRegister === u.hostname) return new Promise<Response>(() => {});
+            if (state.registerGate) await state.registerGate;
             if (kwargs.vapid_public_key !== state.vapid) return rpcError("odoo.addons.mail.tools.jwt.InvalidVapidError");
             if (!state.devices.has(kwargs.endpoint)) state.devices.set(kwargs.endpoint, { keys: kwargs.keys, host: u.hostname });
             return ok(null);
           }
           if (method === "unregister_devices") {
             if (state.hang) return new Promise<Response>(() => {});
+            if (state.unregisterDelayMs) await new Promise((r) => setTimeout(r, state.unregisterDelayMs));
             state.devices.delete(kwargs.endpoint);
             return ok(null);
           }
@@ -436,6 +442,10 @@ describe("ChatPush", () => {
     expect(odoo.kw("register_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${NTFY}/upab12cd34fake2`]);
     expect(await chat.repo.pushRow(renamed)).toMatchObject({ endpoint: `${NTFY}/upab12cd34fake2`, staleEndpoints: [], vapidKey: VAPID });
     expect(native.callsOf("mirrorSession")).toEqual([{ configId: renamed, odooUrl: `${A.url}/`, database: "db1", sessionId: "sid-odoo.exemple.test" }]);
+    // The new id's session is copied before the first mirror that names it
+    const named = indexOf("publishSettings", (o) => o.accounts.some((a: any) => a.configId === renamed));
+    expect(named).toBeGreaterThanOrEqual(0);
+    expect(indexOf("mirrorSession", (o) => o.configId === renamed)).toBeLessThan(named);
     // The old id goes before the mirror that drops it; the new one is in the last mirror
     const drop = indexOf("publishSettings", (o) => !o.accounts.some((a: any) => a.configId === ids[0]));
     expect(drop).toBeGreaterThanOrEqual(0);
@@ -710,6 +720,43 @@ describe("ChatPush", () => {
     odoo.state.data = counted(0);
     await load(src);
     expect(native.shownTags).toEqual([]);
+  });
+
+  it("a registration that lands after a rename writes no row for the old id", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    chat.push.newSession();
+    let release!: () => void;
+    odoo.state.registerGate = new Promise<void>((r) => { release = r; });
+    const late = chat.push.ensureRegistered(await sourceOf(ids[0]));
+    await vi.waitFor(() => expect(odoo.kw("register_devices")).toHaveLength(2));
+    const app = (await env.db.getAllApplications())[0];
+    const renamed = `${A.url}/|alice|db1`;
+    await env.db.updateApplication(A.url, A.username, { ...app, url: `${A.url}/` });
+    await env.db.renameSyncConfigId(ids[0], renamed);
+    const moved = chat.push.rekey(ids[0], renamed);
+    release();
+    await late;
+    await moved;
+    expect((await chat.repo.pushRows()).map((r) => r.configId)).not.toContain(ids[0]);
+    expect(native.callsOf("subscribe")).toContainEqual({ configId: renamed, ntfyUrl: NTFY, renew: true });
+    expect((await chat.repo.pushRow(renamed)).endpoint).toBe(`${NTFY}/upab12cd34fake2`);
+  });
+
+  it("an unregister that answers after the 5 s bound starts no other", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    setNetwork({ connected: false, wifi: false });
+    await chat.push.applyLink([ids[0]], link({ prefix: "upcd34ef56" }));
+    setNetwork({ connected: true, wifi: true });
+    odoo.state.unregisterDelayMs = 6000;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const done = chat.push.forget(ids[0]);
+    await vi.waitFor(() => expect(odoo.kw("unregister_devices")).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(5000);
+    await done;
+    expect(native.callsOf("unsubscribe")).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(odoo.kw("unregister_devices")).toHaveLength(1);
   });
 
   it("a push failure never fails the load", async () => {
