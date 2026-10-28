@@ -1,7 +1,5 @@
 package ca.erplibre.home.chatpush;
 
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -178,11 +176,24 @@ final class NotificationModel {
         return m;
     }
 
-    private static String encode(String v) {
-        try {
-            return URLEncoder.encode(v, "UTF-8").replace("+", "%20");
-        } catch (UnsupportedEncodingException e) {
-            throw new IllegalStateException(e);
+    private static final String HEX = "0123456789ABCDEF";
+
+    /**
+     * v as encodeURIComponent writes it, as the app builds its own chat
+     * routes: A-Z a-z 0-9 - _ . ! ~ * ' ( ) kept, every other UTF-8 byte
+     * escaped as %XX in upper case.
+     */
+    static String encode(String v) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : v.getBytes(StandardCharsets.UTF_8)) {
+            int c = b & 0xff;
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                    || "-_.!~*'()".indexOf(c) >= 0) {
+                sb.append((char) c);
+            } else {
+                sb.append('%').append(HEX.charAt(c >> 4)).append(HEX.charAt(c & 0xf));
+            }
         }
+        return sb.toString();
     }
 }
