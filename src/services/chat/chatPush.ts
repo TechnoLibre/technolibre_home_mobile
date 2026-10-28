@@ -1,5 +1,5 @@
 import { getCurrentLocale, t } from "../../i18n";
-import type { ChatChannel, ChatPushRow, LockScreen } from "../../models/chat";
+import type { ChatChannel, ChatMailboxItem, ChatPushRow, LockScreen } from "../../models/chat";
 import { sameServerUrl, syncConfigIdFor } from "../../models/syncConfig";
 import type { ChatPushNative, PushSettingsMirror } from "../../plugins/chatPushPlugin";
 import { isHttpAllowed, onHttpPolicyChange } from "../odoo/httpPolicy";
@@ -403,31 +403,51 @@ export class ChatPush {
   }
 
   /**
-   * After a load: removes the shown notifications of the account's
-   * conversations whose counted unread is 0 now (read elsewhere, muted, or
-   * no longer in the list), and the account's summary.
+   * After a load that started at loadedFrom (epoch ms): removes the shown
+   * notifications of the account's conversations whose counted unread is
+   * 0 now (read elsewhere, muted, or no longer in the list), its inbox
+   * notifications of a record read, and its summary. A record is read
+   * when the inbox counter the load read is 0, or when the phone holds its
+   * items and none is left in the inbox: a record the phone never saw is
+   * not known to be read. Native code removes only what was posted at or
+   * before loadedFrom: a notification posted meanwhile is news the load
+   * did not count.
    */
-  reconcileShown(configId: string): Promise<void> {
+  reconcileShown(configId: string, loadedFrom: number): Promise<void> {
     const native = this.native;
     if (!native) return Promise.resolve();
     return this.run(async () => {
+      const before = loadedFrom;
+      const tags = (await native.shown()).map((s) => s.tag);
       const prefix = `chat:${configId}:`;
-      const ids = (await native.shown())
-        .map((s) => s.tag)
+      const ids = tags
         .filter((tag) => tag.startsWith(prefix))
         .map((tag) => Number(tag.slice(prefix.length)))
         .filter((id) => Number.isInteger(id));
+      const state = await this.repo.sourceState(configId);
       if (ids.length > 0) {
         const channels = new Map((await this.conversations(configId)).map((c) => [c.channelId, c]));
-        const mute = (await this.repo.sourceState(configId)).globalMuteUntil;
         const now = this.now();
         for (const id of ids) {
           const c = channels.get(id);
-          const counted = c && !c.leftUnsent && !isMuted(c, now, mute) ? unreadOf(c) : 0;
-          if (counted === 0) await native.clear({ configId, channelId: id });
+          const counted = c && !c.leftUnsent && !isMuted(c, now, state.globalMuteUntil) ? unreadOf(c) : 0;
+          if (counted === 0) await native.clear({ configId, channelId: id, before });
         }
       }
-      await native.clear({ configId, summary: true });
+      const records = tags.filter((tag) => tag.startsWith(`inbox:${configId}:`))
+        .map((tag) => recordOf(tag.slice(`inbox:${configId}:`.length)))
+        .filter((r): r is { model: string; resId: number } => r !== null);
+      if (records.length > 0) {
+        const waiting = await this.repo.mailboxItems(configId, "inbox");
+        const read = await this.repo.mailboxItems(configId, "history");
+        for (const { model, resId } of records) {
+          const of = (i: ChatMailboxItem) => i.threadModel === model && i.threadId === resId;
+          if (state.inboxCounter === 0 || (read.some(of) && !waiting.some(of))) {
+            await native.clear({ configId, inbox: true, model, resId, before });
+          }
+        }
+      }
+      await native.clear({ configId, summary: true, before });
     });
   }
 
@@ -612,6 +632,13 @@ function sameOdoo(a: string, b: string): boolean {
   const url = (id: string) => id.slice(0, id.indexOf("|"));
   const database = (id: string) => id.slice(id.lastIndexOf("|") + 1);
   return sameServerUrl(url(a), url(b)) && database(a) === database(b);
+}
+
+/** The record an inbox tag's tail "<model>:<resId>" names, or null when malformed. */
+function recordOf(tail: string): { model: string; resId: number } | null {
+  const at = tail.lastIndexOf(":");
+  const resId = Number(tail.slice(at + 1));
+  return at > 0 && Number.isInteger(resId) ? { model: tail.slice(0, at), resId } : null;
 }
 
 /** The list with the endpoint first when it is set and not in it yet. */

@@ -104,10 +104,20 @@ export interface ChatPushNative {
     checkNow(): Promise<void>;
     /**
      * Removes the account's notifications: the conversation channelId,
-     * every inbox one (inbox), the summary (summary); with none of them,
-     * all three kinds. The status notification stays.
+     * every inbox one (inbox), only the record's with model and resId, the
+     * summary (summary); with none of them, all three kinds. The status
+     * notification stays. With before (epoch ms), only those posted at or
+     * before it go.
      */
-    clear(o: { configId: string; channelId?: number; inbox?: boolean; summary?: boolean }): Promise<void>;
+    clear(o: {
+        configId: string;
+        channelId?: number;
+        inbox?: boolean;
+        model?: string;
+        resId?: number;
+        summary?: boolean;
+        before?: number;
+    }): Promise<void>;
     /** The tags of the chat notifications shown ("chat:<configId>:<id>", "inbox:...", "summary:...", "status:..."). */
     shown(): Promise<{ tag: string }[]>;
     /** The app path of the notification tap that launched the app, once; null afterwards. */

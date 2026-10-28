@@ -9,8 +9,10 @@ import android.provider.Settings;
 import android.service.notification.StatusBarNotification;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.Person;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -221,6 +223,15 @@ final class ChatNotifier implements PushEngine.Notifier {
         Set<String> out = new HashSet<>();
         for (StatusBarNotification sbn : active()) {
             if (sbn.getId() == ID && sbn.getTag() != null) out.add(sbn.getTag());
+        }
+        return out;
+    }
+
+    /** When each notification of shownTags was last posted, epoch ms. */
+    Map<String, Long> shownAt() {
+        Map<String, Long> out = new HashMap<>();
+        for (StatusBarNotification sbn : active()) {
+            if (sbn.getId() == ID && sbn.getTag() != null) out.put(sbn.getTag(), sbn.getPostTime());
         }
         return out;
     }

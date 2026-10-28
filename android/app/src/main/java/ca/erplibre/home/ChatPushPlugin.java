@@ -114,6 +114,11 @@ public class ChatPushPlugin extends Plugin {
         });
     }
 
+    /** The number at key, or null when absent or null. */
+    private static Long optLong(PluginCall call, String key) throws org.json.JSONException {
+        return call.getData().has(key) && !call.getData().isNull(key) ? call.getData().getLong(key) : null;
+    }
+
     private static String required(PluginCall call, String key) {
         String v = call.getString(key);
         if (v == null || v.isEmpty()) throw new IllegalArgumentException(key);
@@ -224,11 +229,9 @@ public class ChatPushPlugin extends Plugin {
     @PluginMethod
     public void clear(PluginCall call) {
         on(serial, call, "clear", c -> {
-            Long channelId = c.getData().has("channelId") && !c.getData().isNull("channelId")
-                    ? c.getData().getLong("channelId") : null;
-            runtime().clear(required(c, "configId"), channelId,
-                    Boolean.TRUE.equals(c.getBoolean("inbox", false)),
-                    Boolean.TRUE.equals(c.getBoolean("summary", false)));
+            runtime().clear(required(c, "configId"), optLong(c, "channelId"),
+                    Boolean.TRUE.equals(c.getBoolean("inbox", false)), c.getString("model"), optLong(c, "resId"),
+                    Boolean.TRUE.equals(c.getBoolean("summary", false)), optLong(c, "before"));
             c.resolve();
         });
     }

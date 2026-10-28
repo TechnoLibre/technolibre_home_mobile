@@ -333,21 +333,12 @@ public final class ChatPushRuntime {
         return PushLevelPolicy.resolve(level, powerState(c), REALTIME_BUILD, PushLevelPolicy.NO_CLIMB);
     }
 
-    /**
-     * Removes notifications of the account: the conversation channelId when
-     * given, every inbox notification when inbox, the summary when summary.
-     * With none of the three, every chat, inbox and summary notification of
-     * the account; its status notification stays.
-     */
-    public void clear(String configId, Long channelId, boolean inbox, boolean summary) {
-        boolean all = channelId == null && !inbox && !summary;
-        for (String tag : notifier.shownTags()) {
-            boolean hit = false;
-            if (channelId != null && tag.equals("chat:" + configId + ":" + channelId)) hit = true;
-            if ((inbox || all) && tag.startsWith("inbox:" + configId + ":")) hit = true;
-            if ((summary || all) && tag.equals("summary:" + configId)) hit = true;
-            if (all && tag.startsWith("chat:" + configId + ":")) hit = true;
-            if (hit) notifier.cancel(tag);
+    /** Removes the account's notifications NotificationModel.Clear names, by their post time. */
+    public void clear(String configId, Long channelId, boolean inbox, String model, Long resId, boolean summary,
+            Long before) {
+        NotificationModel.Clear c = new NotificationModel.Clear(configId, channelId, inbox, model, resId, summary, before);
+        for (Map.Entry<String, Long> shown : notifier.shownAt().entrySet()) {
+            if (c.matches(shown.getKey(), shown.getValue())) notifier.cancel(shown.getKey());
         }
     }
 

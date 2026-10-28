@@ -20,6 +20,7 @@ import { APP_MIGRATIONS } from "../services/migrations";
 import { ChatRepository } from "../services/chat/chatRepository";
 import { t } from "../i18n";
 import type { PushSettingsMirror } from "../plugins/chatPushPlugin";
+import type { StoreDelta } from "../services/chat/chatStore";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -94,6 +95,8 @@ function fakeOdoo() {
     hang: false,
     /** register_devices on this host stays on the wire. */
     hangRegister: null as string | null,
+    /** Called as /mail/data is read. */
+    onMailData: null as (() => void) | null,
   };
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }), headers: { forEach: () => {} },
@@ -115,6 +118,7 @@ function fakeOdoo() {
           storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: false } } },
         });
       case "/mail/data":
+        state.onMailData?.();
         return ok(JSON.parse(JSON.stringify(state.data)));
       case "/web/dataset/call_kw": {
         const { model, method, kwargs } = params;
@@ -652,12 +656,60 @@ describe("ChatPush", () => {
     native.shownTags = [`chat:${ids[0]}:${CHAT}`, `chat:${ids[0]}:${GROUP}`, `chat:${ids[0]}:${GENERAL}`, `summary:${ids[0]}`, `chat:${ids[1]}:${CHAT}`];
     odoo.state.data = mailData({ chatUnread: 0, groupUnread: 2, mentions: 0 });
     await load(await sourceOf(ids[0]));
+    const start = clock.getTime();
     expect(native.callsOf("clear")).toEqual([
-      { configId: ids[0], channelId: CHAT },
-      { configId: ids[0], channelId: GENERAL },
-      { configId: ids[0], summary: true },
+      { configId: ids[0], channelId: CHAT, before: start },
+      { configId: ids[0], channelId: GENERAL, before: start },
+      { configId: ids[0], summary: true, before: start },
     ]);
     expect(native.shownTags).toEqual([`chat:${ids[0]}:${GROUP}`, `chat:${ids[1]}:${CHAT}`]);
+  });
+
+  it("a load leaves what was posted after it started", async () => {
+    const start = clock.getTime();
+    const chatTag = `chat:${ids[0]}:${CHAT}`;
+    const summary = `summary:${ids[0]}`;
+    native.shownTags = [chatTag, summary];
+    // Posted while the load read the server: the load did not see them
+    native.shownAt.set(chatTag, start + 1000);
+    native.shownAt.set(summary, start + 1000);
+    odoo.state.onMailData = () => { clock = new Date(start + 60000); };
+    odoo.state.data = mailData({ chatUnread: 0 });
+    await load(await sourceOf(ids[0]));
+    expect(native.callsOf("clear")).toEqual([
+      { configId: ids[0], channelId: CHAT, before: start },
+      { configId: ids[0], summary: true, before: start },
+    ]);
+    expect(native.shownTags).toEqual([chatTag, summary]);
+  });
+
+  it("a load clears the inbox notifications of records read, every one once the inbox is empty", async () => {
+    const start = clock.getTime();
+    const tag = (model: string, id: number) => `inbox:${ids[0]}:${model}:${id}`;
+    native.shownTags = [tag("res.partner", 70), tag("project.task", 7), tag("res.partner", 71)];
+    const delta: StoreDelta = {
+      channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], partners: [], attachments: [],
+      deletedAttachmentIds: [], inboxCounter: null, selfPartnerId: null,
+      mailbox: [
+        { messageId: 501, threadModel: "res.partner", threadId: 70, needaction: false, history: true },
+        { messageId: 502, threadModel: "project.task", threadId: 7, needaction: true },
+        { messageId: 499, threadModel: "project.task", threadId: 7, needaction: false, history: true },
+      ],
+    };
+    await chat.repo.applyDelta(ids[0], delta);
+    const counted = (counter: number) => ({ ...mailData(), Store: { inbox: { counter, counter_bus_id: 1000, id: "inbox", model: "mail.box" } } });
+    // Read in the app: the record's items are in the history, none in the inbox; a record the phone never saw stays
+    odoo.state.data = counted(2);
+    const src = await sourceOf(ids[0]);
+    await load(src);
+    expect(native.callsOf("clear").filter((o: any) => o.inbox)).toEqual([
+      { configId: ids[0], inbox: true, model: "res.partner", resId: 70, before: start },
+    ]);
+    expect(native.shownTags).toEqual([tag("project.task", 7), tag("res.partner", 71)]);
+    // Read elsewhere: an empty inbox takes every inbox notification
+    odoo.state.data = counted(0);
+    await load(src);
+    expect(native.shownTags).toEqual([]);
   });
 
   it("a push failure never fails the load", async () => {

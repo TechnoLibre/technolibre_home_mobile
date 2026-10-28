@@ -474,20 +474,21 @@ export class ChatService {
       loadedAt: this.now().toISOString(),
     });
     this.changed(configId, null);
-    this.pushAfterLoad(src);
+    this.pushAfterLoad(src, Date.parse(startedAt));
   }
 
   /**
    * The closed-app notifications after a load, queued in ChatPush's order
    * and not awaited, so the account's other server writers never wait on
    * them: the account registers with Odoo (once per foreground session),
-   * the notifications of what was read elsewhere go, and the mirror
-   * follows the conversations. A failure is logged and never fails the load.
+   * the notifications of what was read elsewhere go (those posted before
+   * the load started at loadedFrom), and the mirror follows the
+   * conversations. A failure is logged and never fails the load.
    */
-  private pushAfterLoad(src: ChatSource): void {
+  private pushAfterLoad(src: ChatSource, loadedFrom: number): void {
     const failed = (e: unknown) => console.warn("[chat] push after a load failed:", e instanceof Error ? e.message : e);
     this.push.ensureRegistered(src).catch(failed);
-    this.push.reconcileShown(src.configId).catch(failed);
+    this.push.reconcileShown(src.configId, loadedFrom).catch(failed);
     this.push.publish().catch(failed);
   }
 

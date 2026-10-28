@@ -38,6 +38,48 @@ final class NotificationModel {
         long at;
     }
 
+    /**
+     * What ChatPushRuntime.clear removes of one account's notifications: the
+     * conversation channelId, every inbox one (only the record model/resId's
+     * when both are set), the summary; with none of the three, every chat,
+     * inbox and summary one. The status one stays. With before set (epoch
+     * ms), only a notification posted at or before it goes: one posted
+     * after a load started is news the load did not see.
+     */
+    static final class Clear {
+        final String configId;
+        final Long channelId;
+        final boolean inbox;
+        final String model;
+        final Long resId;
+        final boolean summary;
+        final Long before;
+
+        Clear(String configId, Long channelId, boolean inbox, String model, Long resId, boolean summary, Long before) {
+            this.configId = configId;
+            this.channelId = channelId;
+            this.inbox = inbox;
+            this.model = model;
+            this.resId = resId;
+            this.summary = summary;
+            this.before = before;
+        }
+
+        /** Whether the notification tagged tag, posted at postedAt (epoch ms), goes. */
+        boolean matches(String tag, long postedAt) {
+            if (before != null && postedAt > before) return false;
+            boolean all = channelId == null && !inbox && !summary;
+            if (channelId != null && tag.equals("chat:" + configId + ":" + channelId)) return true;
+            if (inbox && model != null && resId != null) {
+                if (tag.equals("inbox:" + configId + ":" + model + ":" + resId)) return true;
+            } else if ((inbox || all) && tag.startsWith("inbox:" + configId + ":")) {
+                return true;
+            }
+            if ((summary || all) && tag.equals("summary:" + configId)) return true;
+            return all && tag.startsWith("chat:" + configId + ":");
+        }
+    }
+
     /** Whether Android draws a notification's private content on the locked screen. */
     enum Redaction { ALLOWED, HIDDEN, UNKNOWN }
 

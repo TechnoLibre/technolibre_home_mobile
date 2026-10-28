@@ -244,4 +244,33 @@ public class NotificationModelTest {
         assertEquals(LockScreenMode.ALWAYS, LockScreenMode.fromKey("always"));
         assertEquals(LockScreenMode.HIDDEN_LOCKED, LockScreenMode.fromKey(null));
     }
+
+    @Test
+    public void aClearTakesWhatItNamesOfItsAccountPostedUpToItsBound() {
+        String chat = "chat:" + CONFIG + ":4";
+        String inbox = "inbox:" + CONFIG + ":res.partner:70";
+        String summary = "summary:" + CONFIG;
+        NotificationModel.Clear one = new NotificationModel.Clear(CONFIG, 4L, false, null, null, false, 1000L);
+        assertTrue(one.matches(chat, 1000L));
+        assertFalse("posted after the bound", one.matches(chat, 1001L));
+        assertFalse(one.matches("chat:" + CONFIG + ":5", 0L));
+        assertFalse(one.matches(inbox, 0L));
+
+        NotificationModel.Clear record = new NotificationModel.Clear(CONFIG, null, true, "res.partner", 70L, false, 1000L);
+        assertTrue(record.matches(inbox, 999L));
+        assertFalse(record.matches(inbox, 2000L));
+        assertFalse("another record", record.matches("inbox:" + CONFIG + ":res.partner:71", 0L));
+        assertFalse(record.matches(chat, 0L));
+
+        NotificationModel.Clear sum = new NotificationModel.Clear(CONFIG, null, false, null, null, true, 1000L);
+        assertTrue(sum.matches(summary, 1000L));
+        assertFalse(sum.matches(summary, 1001L));
+
+        NotificationModel.Clear all = new NotificationModel.Clear(CONFIG, null, false, null, null, false, null);
+        assertTrue(all.matches(chat, Long.MAX_VALUE));
+        assertTrue(all.matches(inbox, 0L));
+        assertTrue(all.matches(summary, 0L));
+        assertFalse("the status one stays", all.matches("status:" + CONFIG, 0L));
+        assertFalse("another account", all.matches("chat:" + CONFIG + "x:4", 0L));
+    }
 }

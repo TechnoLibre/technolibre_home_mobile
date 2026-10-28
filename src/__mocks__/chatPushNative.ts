@@ -20,6 +20,8 @@ export interface FakeChatPushNative extends ChatPushNative {
     sessions: Map<string, { odooUrl: string; database: string; sessionId: string }>;
     pending: { configId: string; endpoint: string }[];
     shownTags: string[];
+    /** When a shown tag was posted, epoch ms; a tag absent from it was posted at 0. */
+    shownAt: Map<string, number>;
     launchUrl: string | null;
     qrText: string | null;
     exempt: boolean;
@@ -57,6 +59,7 @@ export function fakeChatPushNative(): FakeChatPushNative {
         sessions: new Map(),
         pending: [],
         shownTags: [],
+        shownAt: new Map(),
         launchUrl: null,
         qrText: null,
         exempt: false,
@@ -152,9 +155,15 @@ export function fakeChatPushNative(): FakeChatPushNative {
         async clear(o) {
             await record("clear", o);
             const all = o.channelId === undefined && !o.inbox && !o.summary;
+            const oneRecord = o.model !== undefined && o.resId !== undefined;
             fake.shownTags = fake.shownTags.filter((t) => {
+                if (o.before !== undefined && (fake.shownAt.get(t) ?? 0) > o.before) return true;
                 if (o.channelId !== undefined && t === `chat:${o.configId}:${o.channelId}`) return false;
-                if ((o.inbox || all) && t.startsWith(`inbox:${o.configId}:`)) return false;
+                if (o.inbox && oneRecord) {
+                    if (t === `inbox:${o.configId}:${o.model}:${o.resId}`) return false;
+                } else if ((o.inbox || all) && t.startsWith(`inbox:${o.configId}:`)) {
+                    return false;
+                }
                 if ((o.summary || all) && t === `summary:${o.configId}`) return false;
                 if (all && t.startsWith(`chat:${o.configId}:`)) return false;
                 return true;
