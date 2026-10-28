@@ -97,6 +97,57 @@ public class WebPushDecryptTest {
     }
 
     @Test
+    public void aBodyCutAtTheRecordBoundaryIsBadPadding() throws Exception {
+        KeyPair ua = WebPushKeys.generate();
+        byte[] pub = WebPushKeys.encodePublic((ECPublicKey) ua.getPublic());
+        byte[] auth = WebPushKeys.newAuthSecret();
+        byte[] plain = "twenty bytes of text".getBytes(StandardCharsets.UTF_8);
+        byte[] body = WebPushTestEncrypt.encrypt(plain, pub, auth, 32);
+        expect(WebPushException.Reason.BAD_PADDING, Arrays.copyOf(body, 86 + 32),
+                (ECPrivateKey) ua.getPrivate(), pub, auth);
+    }
+
+    @Test
+    public void aLastRecordEndingIn0x01IsBadPadding() throws Exception {
+        KeyPair ua = WebPushKeys.generate();
+        byte[] pub = WebPushKeys.encodePublic((ECPublicKey) ua.getPublic());
+        byte[] auth = WebPushKeys.newAuthSecret();
+        byte[] body = WebPushTestEncrypt.encryptRecords(
+                new byte[][] {{'a', 'b', 1}}, pub, auth, 4096);
+        expect(WebPushException.Reason.BAD_PADDING, body,
+                (ECPrivateKey) ua.getPrivate(), pub, auth);
+    }
+
+    @Test
+    public void anAllZeroRecordIsBadPadding() throws Exception {
+        KeyPair ua = WebPushKeys.generate();
+        byte[] pub = WebPushKeys.encodePublic((ECPublicKey) ua.getPublic());
+        byte[] auth = WebPushKeys.newAuthSecret();
+        byte[] body = WebPushTestEncrypt.encryptRecords(
+                new byte[][] {new byte[5]}, pub, auth, 4096);
+        expect(WebPushException.Reason.BAD_PADDING, body,
+                (ECPrivateKey) ua.getPrivate(), pub, auth);
+    }
+
+    @Test
+    public void anOffCurveKeyidIsBadHeader() throws Exception {
+        KeyPair ua = WebPushKeys.generate();
+        byte[] pub = WebPushKeys.encodePublic((ECPublicKey) ua.getPublic());
+        byte[] auth = WebPushKeys.newAuthSecret();
+        byte[] body = WebPushTestEncrypt.encrypt(new byte[] {1}, pub, auth, 4096);
+        body[85] ^= 0x01;
+        expect(WebPushException.Reason.BAD_HEADER, body,
+                (ECPrivateKey) ua.getPrivate(), pub, auth);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void decodePublicRefusesAnOffCurvePoint() {
+        byte[] pub = WebPushKeys.encodePublic((ECPublicKey) WebPushKeys.generate().getPublic());
+        pub[64] ^= 0x01;
+        WebPushKeys.decodePublic(pub);
+    }
+
+    @Test
     public void aWrongAuthSecretFailsWithAuthFailed() throws Exception {
         KeyPair ua = WebPushKeys.generate();
         byte[] pub = WebPushKeys.encodePublic((ECPublicKey) ua.getPublic());

@@ -105,7 +105,8 @@ final class WebPushDecrypt {
         } catch (AEADBadTagException e) {
             throw new WebPushException(WebPushException.Reason.AUTH_FAILED);
         } catch (GeneralSecurityException e) {
-            throw new WebPushException(WebPushException.Reason.AUTH_FAILED);
+            // A missing cipher or a rejected key is a platform fault, not a bad message.
+            throw new IllegalStateException("AES-GCM unavailable");
         }
     }
 

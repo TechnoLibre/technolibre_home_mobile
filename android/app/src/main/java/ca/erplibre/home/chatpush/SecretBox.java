@@ -1,6 +1,5 @@
 package ca.erplibre.home.chatpush;
 
-import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
@@ -19,6 +18,7 @@ final class SecretBox {
 
     private static final String PREFIX = "v1:";
     private static final int TAG_BITS = 128;
+    private static final int IV_LEN = 12;
 
     private final KeyProvider provider;
 
@@ -48,13 +48,9 @@ final class SecretBox {
         } catch (IllegalArgumentException e) {
             throw new GeneralSecurityException("malformed seal");
         }
+        if (iv.length != IV_LEN) throw new GeneralSecurityException("malformed seal");
         Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
         c.init(Cipher.DECRYPT_MODE, provider.key(), new GCMParameterSpec(TAG_BITS, iv));
         return c.doFinal(ct);
-    }
-
-    /** Convenience for text secrets. */
-    String sealText(String text) throws GeneralSecurityException {
-        return seal(text.getBytes(StandardCharsets.UTF_8));
     }
 }

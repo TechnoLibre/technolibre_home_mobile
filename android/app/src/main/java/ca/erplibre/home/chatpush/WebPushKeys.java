@@ -8,6 +8,7 @@ import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
+import java.security.spec.ECFieldFp;
 import java.security.spec.ECGenParameterSpec;
 import java.security.spec.ECParameterSpec;
 import java.security.spec.ECPoint;
@@ -23,6 +24,7 @@ final class WebPushKeys {
     static final int PUBLIC_LEN = 65;
     static final int AUTH_LEN = 16;
     private static final SecureRandom RANDOM = new SecureRandom();
+    private static final ECParameterSpec PARAMS = curveParams();
 
     private WebPushKeys() {}
 
@@ -45,15 +47,22 @@ final class WebPushKeys {
         return out;
     }
 
-    /** Throws IllegalArgumentException on a wrong length, prefix or a point off the curve. */
+    /**
+     * Throws IllegalArgumentException on a wrong length, prefix, a
+     * coordinate outside the field or a point off the curve (checked
+     * explicitly: y^2 = x^3 - 3x + b mod p).
+     */
     static ECPublicKey decodePublic(byte[] raw) {
         if (raw == null || raw.length != PUBLIC_LEN || raw[0] != 0x04) {
             throw new IllegalArgumentException("not an uncompressed P-256 point");
         }
         try {
-            ECPoint w = new ECPoint(
-                    new BigInteger(1, java.util.Arrays.copyOfRange(raw, 1, 33)),
-                    new BigInteger(1, java.util.Arrays.copyOfRange(raw, 33, 65)));
+            BigInteger x = new BigInteger(1, java.util.Arrays.copyOfRange(raw, 1, 33));
+            BigInteger y = new BigInteger(1, java.util.Arrays.copyOfRange(raw, 33, 65));
+            if (!onCurve(x, y)) {
+                throw new IllegalArgumentException("not a P-256 point");
+            }
+            ECPoint w = new ECPoint(x, y);
             return (ECPublicKey) KeyFactory.getInstance("EC")
                     .generatePublic(new ECPublicKeySpec(w, params()));
         } catch (GeneralSecurityException e) {
@@ -87,10 +96,28 @@ final class WebPushKeys {
         return B64.decode(s);
     }
 
-    static ECParameterSpec params() throws GeneralSecurityException {
-        KeyPairGenerator g = KeyPairGenerator.getInstance("EC");
-        g.initialize(new ECGenParameterSpec("secp256r1"));
-        return ((ECPublicKey) g.generateKeyPair().getPublic()).getParams();
+    /** The secp256r1 parameters, read once from a generated key. */
+    static ECParameterSpec params() {
+        return PARAMS;
+    }
+
+    private static ECParameterSpec curveParams() {
+        try {
+            KeyPairGenerator g = KeyPairGenerator.getInstance("EC");
+            g.initialize(new ECGenParameterSpec("secp256r1"));
+            return ((ECPublicKey) g.generateKeyPair().getPublic()).getParams();
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("P-256 unavailable");
+        }
+    }
+
+    private static boolean onCurve(BigInteger x, BigInteger y) {
+        BigInteger p = ((ECFieldFp) PARAMS.getCurve().getField()).getP();
+        BigInteger b = PARAMS.getCurve().getB();
+        if (x.compareTo(p) >= 0 || y.compareTo(p) >= 0) return false;
+        BigInteger lhs = y.multiply(y).mod(p);
+        BigInteger rhs = x.pow(3).subtract(x.multiply(BigInteger.valueOf(3))).add(b).mod(p);
+        return lhs.equals(rhs);
     }
 
     private static void copyFixed(BigInteger v, byte[] out, int at) {

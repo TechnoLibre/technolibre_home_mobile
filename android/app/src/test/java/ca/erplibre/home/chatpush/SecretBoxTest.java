@@ -32,13 +32,26 @@ public class SecretBoxTest {
     @Test
     public void aTamperedSealFails() throws Exception {
         String sealed = box.seal(secret);
-        int last = sealed.length() - 1;
-        char c = sealed.charAt(last) == 'A' ? 'B' : 'A';
+        int mid = sealed.lastIndexOf(':') + 1 + (sealed.length() - sealed.lastIndexOf(':') - 1) / 2;
+        char c = sealed.charAt(mid) == 'A' ? 'B' : 'A';
         try {
-            box.open(sealed.substring(0, last) + c);
+            box.open(sealed.substring(0, mid) + c + sealed.substring(mid + 1));
             fail("expected GeneralSecurityException");
         } catch (GeneralSecurityException expected) {
             // the tag no longer matches
+        }
+    }
+
+    @Test
+    public void aShortIvFails() throws Exception {
+        String sealed = box.seal(secret);
+        String[] parts = sealed.substring(3).split(":");
+        String shortIv = B64.encode(new byte[8], false);
+        try {
+            box.open("v1:" + shortIv + ":" + parts[1]);
+            fail("expected GeneralSecurityException");
+        } catch (GeneralSecurityException expected) {
+            // the iv must be 12 bytes
         }
     }
 
