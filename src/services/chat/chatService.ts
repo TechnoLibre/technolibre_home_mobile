@@ -474,28 +474,21 @@ export class ChatService {
       loadedAt: this.now().toISOString(),
     });
     this.changed(configId, null);
-    await this.pushAfterLoad(src);
+    this.pushAfterLoad(src);
   }
 
   /**
-   * The closed-app notifications after a load: the account registers with
-   * Odoo (once per foreground session), the notifications of what was
-   * read elsewhere go, and the mirror follows the conversations. A failure
-   * is logged and never fails the load.
+   * The closed-app notifications after a load, queued in ChatPush's order
+   * and not awaited, so the account's other server writers never wait on
+   * them: the account registers with Odoo (once per foreground session),
+   * the notifications of what was read elsewhere go, and the mirror
+   * follows the conversations. A failure is logged and never fails the load.
    */
-  private async pushAfterLoad(src: ChatSource): Promise<void> {
-    const steps = [
-      () => this.push.ensureRegistered(src),
-      () => this.push.reconcileShown(src.configId),
-      () => this.push.publish(),
-    ];
-    for (const step of steps) {
-      try {
-        await step();
-      } catch (e) {
-        console.warn("[chat] push after a load failed:", e instanceof Error ? e.message : e);
-      }
-    }
+  private pushAfterLoad(src: ChatSource): void {
+    const failed = (e: unknown) => console.warn("[chat] push after a load failed:", e instanceof Error ? e.message : e);
+    this.push.ensureRegistered(src).catch(failed);
+    this.push.reconcileShown(src.configId).catch(failed);
+    this.push.publish().catch(failed);
   }
 
   /**
@@ -1831,6 +1824,7 @@ export class ChatService {
 
   /** Cancels the pending typing stops; nothing more is sent for them. */
   dispose(): void {
+    this.push.dispose();
     this.stopRealtime();
     for (const state of this.typingState.values()) {
       if (state.stop) clearTimeout(state.stop);

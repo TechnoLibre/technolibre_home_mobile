@@ -1,6 +1,6 @@
 import { getCurrentLocale, t } from "../../i18n";
 import type { ChatChannel, ChatPushRow, LockScreen } from "../../models/chat";
-import { syncConfigIdFor } from "../../models/syncConfig";
+import { sameServerUrl, syncConfigIdFor } from "../../models/syncConfig";
 import type { ChatPushNative, PushSettingsMirror } from "../../plugins/chatPushPlugin";
 import { isHttpAllowed, onHttpPolicyChange } from "../odoo/httpPolicy";
 import { OdooRpcError, type OdooRpcClient, type StoredSession, type SyncCredentials } from "../odoo/odooRpcClient";
@@ -27,6 +27,13 @@ export const PUSH_STRING_KEYS = [
 
 /** How long a removal waits for Odoo to unregister the account's endpoints before leaving them to native code. */
 export const UNREGISTER_BOUND_MS = 5000;
+
+/**
+ * How long one mail.push.device call may take before it counts as
+ * offline: a server that never answers holds the queue, and so the other
+ * accounts, no longer than this.
+ */
+export const PUSH_RPC_TIMEOUT_MS = 15000;
 
 const PUSH_DEVICE = "mail.push.device";
 
@@ -86,6 +93,8 @@ export class ChatPush {
   /** The JSON of the last mirror native code accepted; an equal one is not sent again. */
   private lastMirror: string | null = null;
   private started = false;
+  /** Stops following « Autoriser http » (set by start). */
+  private stopHttp: (() => void) | null = null;
 
   constructor(
     private repo: ChatRepository,
@@ -120,13 +129,20 @@ export class ChatPush {
     this.rpc.onSessionStored = (creds, stored) => {
       this.mirrorSession(creds, stored).catch((e) => console.warn("[chat push] session copy failed:", messageOf(e)));
     };
-    onHttpPolicyChange(() => {
+    this.stopHttp = onHttpPolicyChange(() => {
       this.publish().catch((e) => console.warn("[chat push] publish failed:", messageOf(e)));
     });
     await this.run(async () => {
       await this.mirrorAllNow();
       await this.publishNow();
     });
+  }
+
+  /** Stops following « Autoriser http » and the stored sessions; queued tasks still run. */
+  dispose(): void {
+    this.stopHttp?.();
+    this.stopHttp = null;
+    if (this.started) this.rpc.onSessionStored = null;
   }
 
   /** A new foreground session: each account registers and copies its session again at its next load. */
@@ -311,6 +327,49 @@ export class ChatPush {
   }
 
   /**
+   * After an edit moved the account's rows from oldId to newId (the same
+   * server, user and database under another spelling of the url; a rename
+   * that failed leaves the row under oldId and changes nothing). Native
+   * code keys everything by config id, so the old id lets go first: on
+   * the same Odoo (url and database) its subscription and session copy go
+   * and its endpoints stay stale for the new id to unregister; on another
+   * Odoo each of them is handed to native code as pending, unregistered
+   * there with the old session copy. The new id then gets a new
+   * subscription and endpoint, registers at once when online, copies its
+   * stored session, and the mirror follows.
+   */
+  rekey(oldId: string, newId: string): Promise<void> {
+    const native = this.native;
+    if (!native || oldId === newId) return Promise.resolve();
+    return this.run(async () => {
+      if ((await this.repo.pushRows()).some((r) => r.configId === oldId)) return;
+      const row = await this.repo.pushRow(newId);
+      const pending = sameOdoo(oldId, newId) ? [] : withEndpoint(row.staleEndpoints, row.endpoint);
+      if (pending.length === 0) {
+        await native.unsubscribe({ configId: oldId, pendingEndpoint: null });
+        await native.forgetSession({ configId: oldId });
+      } else {
+        for (const endpoint of pending) await native.unsubscribe({ configId: oldId, pendingEndpoint: endpoint });
+      }
+      for (const id of [oldId, newId]) {
+        this.done.delete(id);
+        this.mirrored.delete(id);
+      }
+      if (row.ntfyUrl) {
+        const sub = await native.subscribe({ configId: newId, ntfyUrl: row.ntfyUrl, renew: true });
+        // Endpoints handed to native code are no longer this account's to unregister
+        const from = pending.length > 0 ? { ...row, endpoint: null, staleEndpoints: [] } : row;
+        await this.moveEndpoint(from, {
+          ntfyUrl: row.ntfyUrl, odooNtfyUrl: row.odooNtfyUrl, prefix: row.prefix, topic: sub.topic, p256dh: sub.p256dh, auth: sub.auth,
+        });
+      }
+      const src = (await this.liveSources()).find((s) => s.configId === newId);
+      if (src) await this.registerNow(src);
+      await this.publishNow();
+    });
+  }
+
+  /**
    * After OdooRpcClient stored a new session: copied to native code when
    * it is an Odoo 18 session of a chat account and the level is 1 to 4,
    * then the mirror follows.
@@ -415,8 +474,8 @@ export class ChatPush {
     try {
       await this.unregisterStale(src);
       if (!row.endpoint || !row.p256dh || !row.auth) return "none";
-      const vapid = await this.rpc.callKw(src.creds, PUSH_DEVICE, "get_web_push_vapid_public_key", [], {});
-      await this.rpc.callKw(src.creds, PUSH_DEVICE, "register_devices", [], {
+      const vapid = await this.kw(src, "get_web_push_vapid_public_key", {});
+      await this.kw(src, "register_devices", {
         endpoint: row.endpoint,
         keys: { p256dh: row.p256dh, auth: row.auth },
         vapid_public_key: vapid,
@@ -433,10 +492,19 @@ export class ChatPush {
     }
   }
 
+  /** mail.push.device.<method>(**kwargs) for the account; rejects after PUSH_RPC_TIMEOUT_MS without an answer. */
+  private kw(src: ChatSource, method: string, kwargs: Record<string, unknown>): Promise<any> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${PUSH_DEVICE}.${method}: no answer within ${PUSH_RPC_TIMEOUT_MS} ms`)), PUSH_RPC_TIMEOUT_MS);
+    });
+    return Promise.race([this.rpc.callKw(src.creds, PUSH_DEVICE, method, [], kwargs), late]).finally(() => clearTimeout(timer));
+  }
+
   /** Unregisters the account's stale endpoints one by one, each dropped from the list once Odoo answered. */
   private async unregisterStale(src: ChatSource): Promise<void> {
     for (const endpoint of (await this.repo.pushRow(src.configId)).staleEndpoints) {
-      await this.rpc.callKw(src.creds, PUSH_DEVICE, "unregister_devices", [], { endpoint });
+      await this.kw(src, "unregister_devices", { endpoint });
       const now = (await this.repo.pushRow(src.configId)).staleEndpoints;
       await this.repo.setPushRow({ configId: src.configId, staleEndpoints: now.filter((e) => e !== endpoint) });
     }
@@ -448,7 +516,7 @@ export class ChatPush {
     const all = (async () => {
       for (const endpoint of endpoints) {
         try {
-          await this.rpc.callKw(src.creds, PUSH_DEVICE, "unregister_devices", [], { endpoint });
+          await this.kw(src, "unregister_devices", { endpoint });
           left.delete(endpoint);
         } catch (e) {
           console.warn("[chat push] unregister failed:", messageOf(e));
@@ -532,6 +600,13 @@ export class ChatPush {
     await this.native!.publishSettings(mirror);
     this.lastMirror = text;
   }
+}
+
+/** Whether two config ids ("url|username|database") name the same Odoo: the same server and database. */
+function sameOdoo(a: string, b: string): boolean {
+  const url = (id: string) => id.slice(0, id.indexOf("|"));
+  const database = (id: string) => id.slice(id.lastIndexOf("|") + 1);
+  return sameServerUrl(url(a), url(b)) && database(a) === database(b);
 }
 
 /** The list with the endpoint first when it is set and not in it yet. */

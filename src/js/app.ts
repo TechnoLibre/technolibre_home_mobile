@@ -246,9 +246,7 @@ async function startApp() {
 	syncService.chat.onChange = (configId, channelId) =>
 		eventBus.trigger(Events.CHAT_CHANGED, { configId, channelId });
 	const chatLifecycle = new ChatLifecycle(syncService.chat);
-	appService.onChanged = (change) => chatLifecycle.applicationsChanged(change);
-	appService.beforeRename = (oldConfigId, newConfigId) => syncService.chat.pauseUploads(oldConfigId, newConfigId);
-	appService.afterRename = (oldConfigId, newConfigId) => syncService.chat.resumeUploads(oldConfigId, newConfigId);
+	chatLifecycle.followApplications(appService);
 	void chatLifecycle.start();
 
 	// Re-schedule any reminders whose notification batch is expiring

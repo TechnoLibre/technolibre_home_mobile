@@ -2,7 +2,7 @@ import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 
 import { nativeTransport } from "../../plugins/chatSocketPlugin";
-import type { ApplicationsChange } from "../appService";
+import type { AppService, ApplicationsChange } from "../appService";
 import type { ChatService } from "./chatService";
 
 /**
@@ -56,6 +56,23 @@ export class ChatLifecycle {
       this.startRealtime();
       this.chat.attachments?.maybePurge().catch((e) => console.warn("[chat] cache purge failed:", e));
     } else this.chat.stopRealtime();
+  }
+
+  /**
+   * Hooks the chat to the application list: each change reaches
+   * applicationsChanged; an edit that renames the account holds its
+   * uploads while the rows move, then the closed-app notifications move
+   * to the new id (ChatPush.rekey, queued, not awaited); a delete lets
+   * them go (ChatPush.forget) while the application still exists.
+   */
+  followApplications(apps: AppService): void {
+    apps.onChanged = (change) => this.applicationsChanged(change);
+    apps.beforeRename = (oldConfigId, newConfigId) => this.chat.pauseUploads(oldConfigId, newConfigId);
+    apps.afterRename = async (oldConfigId, newConfigId) => {
+      await this.chat.resumeUploads(oldConfigId, newConfigId);
+      this.chat.push.rekey(oldConfigId, newConfigId).catch((e) => console.warn("[chat] push rekey failed:", e instanceof Error ? e.message : e));
+    };
+    apps.beforeDelete = (configId) => this.chat.push.forget(configId);
   }
 
   /**
