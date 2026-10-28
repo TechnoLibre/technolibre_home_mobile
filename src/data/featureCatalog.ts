@@ -5620,8 +5620,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         id: "chat.notifications.native",
                         label: { en: "Native ntfy client", fr: "Client ntfy natif" },
                         description: {
-                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication), and the engine: one connection per ntfy, reconnect backoff, Odoo-direct summary, status and health; then the Android side: per-server channels, conversation notifications, tap to open, the plugin and QR decoding.",
-                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage), et le moteur : une connexion par ntfy, reconnexion espacée, sommaire direct d'Odoo, état et santé ; puis le côté Android : canaux par serveur, notifications de conversation, ouverture au toucher, le plugin et le décodage de QR.",
+                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication), and the engine: one connection per ntfy, reconnect backoff, Odoo-direct summary, status and health; then the Android side: per-server channels, conversation notifications, tap to open, the plugin and QR decoding; and the permanent service of levels 1 and 2 (left out by -PnoChatRealtime), its 15-minute job, the boot restart, and one permanent notification shared with the SMS gateway.",
+                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage), et le moteur : une connexion par ntfy, reconnexion espacée, sommaire direct d'Odoo, état et santé ; puis le côté Android : canaux par serveur, notifications de conversation, ouverture au toucher, le plugin et le décodage de QR ; et le service permanent des niveaux 1 et 2 (retiré par -PnoChatRealtime), sa tâche aux 15 minutes, la relance au démarrage et une seule notification permanente partagée avec la passerelle SMS.",
                         },
                         status: "experimental",
                         howItWorks: {
@@ -5677,6 +5677,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushRuntime.java",
                             "android/app/src/main/java/ca/erplibre/home/ChatPushPlugin.java",
                             "android/app/src/main/java/ca/erplibre/home/BatteryExemption.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PermanentNotice.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/RealtimeHost.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushJob.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushBootReceiver.java",
+                            "android/app/src/realtime/java/ca/erplibre/home/chatpush/realtime/ChatPushService.java",
                         ],
                     },
                     {

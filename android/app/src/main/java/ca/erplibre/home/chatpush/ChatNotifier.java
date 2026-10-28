@@ -11,6 +11,7 @@ import androidx.core.app.Person;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Draws what PushEngine decides, through the NotificationManager. Every
@@ -33,6 +34,7 @@ final class ChatNotifier implements PushEngine.Notifier {
     private final Context context;
     private final NotificationManager manager;
     private final PushSettingsStore settings;
+    private volatile Consumer<HealthSnapshot> statusSink;
 
     ChatNotifier(Context context, PushSettingsStore settings) {
         this.context = context.getApplicationContext();
@@ -198,9 +200,20 @@ final class ChatNotifier implements PushEngine.Notifier {
         return out;
     }
 
-    /** The permanent notification line belongs to the permanent service; this notifier draws none. */
+    /**
+     * Sets who receives the engine's state; null drops it. The sink runs with
+     * the engine's monitor held, as status() does.
+     */
+    void onStatus(Consumer<HealthSnapshot> sink) {
+        statusSink = sink;
+    }
+
+    /** The permanent notification line belongs to the permanent service: the state goes to its sink, if any. */
     @Override
-    public void status(HealthSnapshot h) {}
+    public void status(HealthSnapshot h) {
+        Consumer<HealthSnapshot> sink = statusSink;
+        if (sink != null) sink.accept(h);
+    }
 
     /** Whether the user lets the app post notifications at all. */
     boolean allowed() {

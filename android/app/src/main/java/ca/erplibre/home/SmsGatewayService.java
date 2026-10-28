@@ -1,8 +1,5 @@
 package ca.erplibre.home;
 
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.AlarmManager;
 import android.app.Service;
@@ -11,7 +8,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
-import android.content.pm.ServiceInfo;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.os.BatteryManager;
@@ -23,7 +19,7 @@ import android.telephony.SmsManager;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 
-import androidx.core.app.NotificationCompat;
+import ca.erplibre.home.chatpush.PermanentNotice;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -87,9 +83,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SmsGatewayService extends Service {
 
     private static final String TAG = "SmsGatewayService";
-
-    private static final String CHANNEL_ID = "erplibre_sms_gateway";
-    private static final int NOTIF_ID = 9101;
 
     public static final String ACTION_STOP = "ca.erplibre.home.SMS_GATEWAY_STOP";
     public static final String ACTION_KICK = "ca.erplibre.home.SMS_GATEWAY_KICK";
@@ -163,7 +156,6 @@ public class SmsGatewayService extends Service {
         worker = Executors.newSingleThreadExecutor();
         calls = new PhoneCalls(this);
         registerCallListener();
-        createNotificationChannel();
     }
 
     @Override
@@ -266,6 +258,7 @@ public class SmsGatewayService extends Service {
             worker.shutdownNow();
             worker = null;
         }
+        PermanentNotice.release(this, PermanentNotice.Holder.SMS);
         super.onDestroy();
     }
 
@@ -289,58 +282,25 @@ public class SmsGatewayService extends Service {
     // ------------------------------------------------------------------
     // Notification
     // ------------------------------------------------------------------
-    private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            return;
-        }
-        NotificationManager manager = getSystemService(NotificationManager.class);
-        if (manager == null || manager.getNotificationChannel(CHANNEL_ID) != null) {
-            return;
-        }
-        NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID, "Passerelle SMS", NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription("Maintient l'envoi des SMS du studio.");
-        channel.setShowBadge(false);
-        manager.createNotificationChannel(channel);
-    }
-
+    /**
+     * La notification permanente est partagée avec les notifications du
+     * clavardage (PermanentNotice) : un seul avis, dont la passerelle tient
+     * une ligne, avec son action « Arrêter » tant qu'elle le tient.
+     */
     private void startForegroundCompat() {
-        Notification notification = buildNotification();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIF_ID, notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-        } else {
-            startForeground(NOTIF_ID, notification);
-        }
+        PermanentNotice.hold(this, PermanentNotice.Holder.SMS, statusLine());
     }
 
-    private Notification buildNotification() {
+    private String statusLine() {
         int pending = outbox.countPending();
-        String text = connected
+        return connected
                 ? (pending == 0 ? "En service" : pending + " SMS en attente d'envoi")
                 : "Serveur injoignable…";
-
-        Intent stopIntent = new Intent(this, SmsGatewayService.class).setAction(ACTION_STOP);
-        PendingIntent stopPending = PendingIntent.getService(
-                this, 1, stopIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-        return new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("Passerelle SMS ERPLibre")
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.stat_sys_upload)
-                .setOngoing(true)
-                .setSilent(true)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Arrêter", stopPending)
-                .build();
     }
 
+    /** Sans effet une fois la notification rendue : un cycle qui finit après l'arrêt ne la ranime pas. */
     private void refreshNotification() {
-        NotificationManager manager = getSystemService(NotificationManager.class);
-        if (manager != null) {
-            manager.notify(NOTIF_ID, buildNotification());
-        }
+        PermanentNotice.update(this, PermanentNotice.Holder.SMS, statusLine());
     }
 
     // ------------------------------------------------------------------

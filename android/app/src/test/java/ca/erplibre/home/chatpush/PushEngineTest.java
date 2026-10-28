@@ -385,6 +385,24 @@ public class PushEngineTest {
     }
 
     @Test
+    public void aStreamedMessageIsProcessedInsideTheWakeHold() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + event("k1", "keepalive", a.topic)
+                + push(a, "m1", 42, "Alice Martin", "Bonjour")));
+        List<String> log = new CopyOnWriteArrayList<>();
+        notifier.log = log;
+        engine().setWake(new PushEngine.Wake() {
+            public void acquire() { log.add("acquire"); }
+            public void release() { log.add("release"); }
+        });
+        engine().startRealtime();
+        awaitClosed(1);
+        assertEquals(Arrays.asList("acquire", "show:Bonjour", "release"), log);
+    }
+
+    @Test
     public void aReplayAfterReconnectShowsEachMessageOnce() throws Exception {
         mirror(1, true, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);

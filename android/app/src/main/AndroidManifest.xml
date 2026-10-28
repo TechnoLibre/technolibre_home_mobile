@@ -143,6 +143,28 @@
             android:permission="android.permission.BIND_JOB_SERVICE"
             android:exported="false" />
 
+        <!-- Releve periodique des notifications du clavardage, application
+             fermee ; releve aussi leur service permanent quand il est tombe. -->
+        <service
+            android:name=".chatpush.ChatPushJob"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
+
+        <!-- Reapplique le niveau des notifications du clavardage apres un
+             redemarrage ou une mise a jour : la mise a jour arrete le service
+             permanent sans le relancer. -->
+        <receiver
+            android:name=".chatpush.ChatPushBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <receiver
             android:name=".SmsInboundReceiver"
             android:exported="true"

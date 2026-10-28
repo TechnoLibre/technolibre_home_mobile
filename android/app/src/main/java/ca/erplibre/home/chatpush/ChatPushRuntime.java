@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities;
 import android.os.BatteryManager;
 import android.os.PowerManager;
 import android.util.Log;
+import ca.erplibre.home.BuildConfig;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -17,6 +18,8 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import okhttp3.OkHttpClient;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -28,6 +31,13 @@ import org.json.JSONObject;
  * process. The public methods are what the Capacitor plugin calls; each
  * one that changes what the engine reads (settings, ntfy servers,
  * subscriptions) ends with engine.onSettingsChanged().
+ *
+ * The permanent service (ca.erplibre.home.chatpush.realtime, present only
+ * in a realtime build) drives the engine through serviceStarted,
+ * applyRealtime, onNetworkAvailable and serviceStopped; while it runs, the
+ * engine's state reaches it as the permanent notification line, and the
+ * heartbeat that health reports as serviceAlive is written at most every
+ * BEAT_EVERY_MS.
  *
  * Ordering the caller keeps: the engine forgets the session copy of an
  * account absent from the last mirror unless the copy was saved after that
@@ -43,10 +53,18 @@ public final class ChatPushRuntime {
     static final String KEY_ALIAS = "erplibre_chat_push";
 
     /** Whether this build carries the permanent realtime service; health and the level policy read it. */
-    static final boolean REALTIME_BUILD = true;
+    static final boolean REALTIME_BUILD = BuildConfig.CHAT_REALTIME;
+
+    /** The heartbeat is written at most this often; health counts it alive for PushEngine.BEAT_MAX_AGE_MS. */
+    static final long BEAT_EVERY_MS = 5L * 60 * 1000;
+
+    /** The partial wakelock taken around a streamed message lapses after this, whatever happens. */
+    static final long MESSAGE_WAKE_MS = 10_000L;
 
     private static final String TAG = "ChatPushRuntime";
     private static ChatPushRuntime instance;
+    /** Set while a permanent service of this process runs, between serviceStarted and serviceStopped. */
+    private static volatile boolean serviceRunning;
 
     private final Context context;
     private final PushStore store;
@@ -56,6 +74,9 @@ public final class ChatPushRuntime {
     private final ChatNotifier notifier;
     private final PushEngine.Clock clock;
     private final PushEngine engine;
+    private final AtomicLong beatAt = new AtomicLong();
+    /** Whether applyRealtime opened the streams. Guarded by this. */
+    private boolean realtimeOn;
 
     private ChatPushRuntime(Context c) {
         context = c.getApplicationContext();
@@ -79,6 +100,7 @@ public final class ChatPushRuntime {
         notifier.syncChannels(settings.accounts(), settings.strings());
         engine = new PushEngine(store, settings, sessions, ntfy, new OdooDirect(http), notifier, clock,
                 new ExecutorScheduler(), REALTIME_BUILD);
+        engine.setWake(new MessageWake(context));
     }
 
     /** The process's runtime, built on the first call. */
@@ -206,9 +228,88 @@ public final class ChatPushRuntime {
         sessions.forget(configId);
     }
 
-    /** HealthSnapshot.toJson() plus notificationsAllowed. */
+    /**
+     * HealthSnapshot.toJson() plus notificationsAllowed. A permanent service
+     * running in this process beats first, so a heartbeat older than the
+     * last write period never reads as a dead service.
+     */
     public JSONObject health() throws JSONException {
+        if (serviceRunning) beat(false);
         return engine.health().toJson().put("notificationsAllowed", notifier.allowed());
+    }
+
+    // ---- the permanent service ----
+
+    /** Whether a permanent service runs in this process now. */
+    static boolean serviceRunning() {
+        return serviceRunning;
+    }
+
+    /** The chat line of the permanent notification for the engine's state now. */
+    public String permanentLine() {
+        return engine.health().permanentLine(settings.strings(), settings.accounts());
+    }
+
+    /**
+     * The permanent service started: it is counted alive, beats, and gets
+     * each later line through line. line runs with the engine's monitor
+     * held, on any thread: it only draws.
+     */
+    public void serviceStarted(final Consumer<String> line) {
+        serviceRunning = true;
+        beat(true);
+        notifier.onStatus(h -> {
+            beat(false);
+            line.accept(h.permanentLine(settings.strings(), settings.accounts()));
+        });
+    }
+
+    /** The permanent service stops: no more lines, the streams close, it is no longer counted alive. */
+    public void serviceStopped() {
+        notifier.onStatus(null);
+        serviceRunning = false;
+        boolean wasOn;
+        synchronized (this) {
+            wasOn = realtimeOn;
+            realtimeOn = false;
+        }
+        if (wasOn) engine.stopRealtime();
+    }
+
+    /**
+     * Re-reads the level and the power state: realtime opens the streams,
+     * any other mode closes them, and leaving realtime polls once at once
+     * so what arrived meanwhile is caught up. Blocks on the network then.
+     * Returns whether the permanent service is still wanted.
+     */
+    public boolean applyRealtime() {
+        PushLevelPolicy.Effective e = effective();
+        boolean left = false;
+        synchronized (this) {
+            if (e.mode == PushLevelPolicy.Mode.REALTIME) {
+                realtimeOn = true;
+                engine.startRealtime();
+            } else if (realtimeOn) {
+                realtimeOn = false;
+                engine.stopRealtime();
+                left = true;
+            }
+        }
+        if (left && e.mode != PushLevelPolicy.Mode.OFF) engine.runDue(e);
+        return e.permanentService;
+    }
+
+    /** The network came back: streams waiting for their backoff reopen now. */
+    public void onNetworkAvailable() {
+        engine.onNetworkAvailable();
+    }
+
+    /** Writes the heartbeat when forced or when the last one is BEAT_EVERY_MS old. */
+    private void beat(boolean force) {
+        long now = clock.now();
+        long last = beatAt.get();
+        if (!force && now - last < BEAT_EVERY_MS) return;
+        if (beatAt.compareAndSet(last, now)) settings.beat(now);
     }
 
     /** One run of the periodic job at the level the settings and the power state give; blocks on the network. */
@@ -219,6 +320,12 @@ public final class ChatPushRuntime {
     PushLevelPolicy.Effective effective() {
         return PushLevelPolicy.resolve(settings.level(), powerState(context), REALTIME_BUILD,
                 PushLevelPolicy.NO_CLIMB);
+    }
+
+    /** effective() read from the settings file alone, without building the runtime. */
+    static PushLevelPolicy.Effective effective(Context c) {
+        int level = new PushSettingsStore(new PrefsKeyValue(c, SETTINGS_FILE)).level();
+        return PushLevelPolicy.resolve(level, powerState(c), REALTIME_BUILD, PushLevelPolicy.NO_CLIMB);
     }
 
     /**
@@ -267,6 +374,37 @@ public final class ChatPushRuntime {
         PowerManager pm = c.getSystemService(PowerManager.class);
         if (pm != null) saver = pm.isPowerSaveMode();
         return new PushLevelPolicy.PowerState(wifi, charging, saver, pct);
+    }
+
+    /**
+     * A partial wakelock held while at least one streamed message is being
+     * processed, re-armed for MESSAGE_WAKE_MS at each acquire. None is held
+     * otherwise: a permanent wakelock is what vendor app killers act on.
+     */
+    private static final class MessageWake implements PushEngine.Wake {
+
+        private final PowerManager.WakeLock lock;
+        private int inFlight;
+
+        MessageWake(Context c) {
+            PowerManager pm = c.getSystemService(PowerManager.class);
+            lock = pm == null ? null : pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "erplibre:chat-message");
+            if (lock != null) lock.setReferenceCounted(false);
+        }
+
+        @Override
+        public synchronized void acquire() {
+            if (lock == null) return;
+            inFlight++;
+            lock.acquire(MESSAGE_WAKE_MS);
+        }
+
+        @Override
+        public synchronized void release() {
+            if (lock == null) return;
+            inFlight = Math.max(0, inFlight - 1);
+            if (inFlight == 0 && lock.isHeld()) lock.release();
+        }
     }
 
     /**

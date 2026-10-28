@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import ca.erplibre.home.chatpush.ChatPushJob;
 import ca.erplibre.home.chatpush.ChatPushOpen;
 import ca.erplibre.home.chatpush.ChatPushRuntime;
 
@@ -40,6 +41,10 @@ import ca.erplibre.home.chatpush.ChatPushRuntime;
  * Capacitor thread and a subscribe that follows it sees the stored server.
  * checkNow and decodeQr run on a second worker. A rejection names the step
  * that failed, never a token, a session id, a URL or an exception message.
+ *
+ * publishSettings ends by aligning the 15-minute job and the permanent
+ * service with the new level (ChatPushJob.apply): the app is in the
+ * foreground then, when Android lets it start a foreground service.
  *
  * The foreground flag is written on the main thread at resume and pause,
  * without waiting for the JavaScript. A notification tap reaching the
@@ -133,6 +138,7 @@ public class ChatPushPlugin extends Plugin {
             }
             runtime().publishSettings(c.getInt("level", 3), Boolean.TRUE.equals(c.getBoolean("allowHttp", false)),
                     strings, accounts);
+            ChatPushJob.apply(getContext());
             c.resolve();
         });
     }

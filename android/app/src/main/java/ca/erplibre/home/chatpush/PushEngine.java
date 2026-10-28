@@ -60,6 +60,25 @@ final class PushEngine {
     }
 
     /**
+     * Keeps the device awake while a streamed message is processed: acquire
+     * before, release after, on the stream's reader thread. Called without
+     * the engine's monitor; two streams may overlap their holds.
+     */
+    interface Wake {
+        void acquire();
+
+        void release();
+    }
+
+    private static final Wake NO_WAKE = new Wake() {
+        @Override
+        public void acquire() {}
+
+        @Override
+        public void release() {}
+    };
+
+    /**
      * Delayed work. schedule() is called with the engine's monitor held: it
      * never runs r on the calling thread, and runs it on a thread that may
      * block on the network (r can be an Odoo check).
@@ -126,6 +145,7 @@ final class PushEngine {
     private final Clock clock;
     private final Scheduler scheduler;
     private final boolean realtimeBuild;
+    private volatile Wake wake = NO_WAKE;
 
     private final Object lock = new Object();
     private final Object runLock = new Object();
@@ -161,6 +181,11 @@ final class PushEngine {
             allowHttp = settings.allowHttp();
             syncLinks(false);
         }
+    }
+
+    /** Sets the hold taken around each streamed message; null takes none. */
+    void setWake(Wake w) {
+        wake = w == null ? NO_WAKE : w;
     }
 
     // ---- entry points ----
@@ -333,9 +358,15 @@ final class PushEngine {
 
         @Override
         public void onMessage(NtfyMessage m) {
-            synchronized (lock) {
-                if (stale()) return;
-                handle(link, m);
+            Wake w = wake;
+            w.acquire();
+            try {
+                synchronized (lock) {
+                    if (stale()) return;
+                    handle(link, m);
+                }
+            } finally {
+                w.release();
             }
         }
 

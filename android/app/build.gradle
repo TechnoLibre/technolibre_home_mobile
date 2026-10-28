@@ -11,6 +11,7 @@ apply plugin: 'com.android.application'
 //                            another ~50% off the native libs.
 def skipWhisper = System.getenv("BUNDLE_SKIP_WHISPER") == "1"
 def allAbis = System.getenv("ALL_ABIS") == "1"
+def chatRealtime = !project.hasProperty('noChatRealtime')
 
 android {
     namespace = "ca.erplibre.home"
@@ -26,6 +27,12 @@ android {
         versionName "2026.08.24.01"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "boolean", "SKIP_WHISPER", "${skipWhisper}"
+        // `-PnoChatRealtime` retire le service permanent des notifications du
+        // clavardage (src/realtime/ : la classe et son entrée de manifeste),
+        // pour une distribution qui refuse un service specialUse. Les niveaux
+        // 1 et 2 deviennent alors le niveau 3 ; le reste de l'app ne joint le
+        // service que par son nom de classe.
+        buildConfigField "boolean", "CHAT_REALTIME", "${chatRealtime}"
 
         // `-PlanCleartext` produit un APK de DEMONSTRATION qui tolere le HTTP
         // en clair, pour joindre un Odoo du reseau local en Wi-Fi.
@@ -110,6 +117,20 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~' +
                     (slim ? ':repos:repo' : '')
         }
+    }
+    if (chatRealtime) {
+        sourceSets {
+            debug {
+                java.srcDirs += 'src/realtime/java'
+                manifest.srcFile 'src/realtime/AndroidManifest.xml'
+            }
+            release {
+                java.srcDirs += 'src/realtime/java'
+                manifest.srcFile 'src/realtime/AndroidManifest.xml'
+            }
+        }
+    } else {
+        logger.lifecycle("noChatRealtime : service permanent du clavardage exclu de l'APK")
     }
     buildTypes {
         release {

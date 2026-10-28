@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fusionné seulement dans une construction faite sans -PnoChatRealtime
+     (app/build.gradle) : avec l'option, l'APK ne porte ni la classe ni cette
+     entrée. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- Notifications du clavardage, niveaux 1 et 2 : connexion permanente
+             au ntfy de l'utilisateur.
+
+             Le type est "specialUse" et non "dataSync" : Android 15 plafonne
+             dataSync à six heures par période de vingt-quatre heures, ce qui
+             est incompatible avec une connexion qui doit rester ouverte. -->
+        <service
+            android:name="ca.erplibre.home.chatpush.realtime.ChatPushService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Messagerie : garde ouverte la connexion permanente
+                    au serveur ntfy de l'utilisateur, par laquelle son propre
+                    serveur ERPLibre lui pousse les messages de clavardage. Doit
+                    rester active en continu pour qu'un message arrive dès qu'il
+                    est envoyé, application fermée." />
+        </service>
+    </application>
+</manifest>

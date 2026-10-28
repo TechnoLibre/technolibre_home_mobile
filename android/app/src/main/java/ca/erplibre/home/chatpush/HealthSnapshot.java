@@ -1,7 +1,10 @@
 package ca.erplibre.home.chatpush;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -82,6 +85,34 @@ final class HealthSnapshot {
         this.accounts = new ArrayList<>(accounts);
         this.undecryptable = undecryptable;
         this.faults = faults;
+    }
+
+    /**
+     * The chat line of the permanent notification (R10): the first mirrored
+     * account in error or with an expired session, named by its label, with
+     * the reason; else the 15-minute check when the engine polls or has no
+     * ntfy; else the count of connected ntfys, or the wait for the network
+     * when none is connected.
+     */
+    String permanentLine(PushStrings s, List<AccountView> views) {
+        for (AccountView v : views) {
+            for (Account a : accounts) {
+                if (!a.configId.equals(v.configId)) continue;
+                if (!"error".equals(a.state) && !"session_expired".equals(a.state)) continue;
+                Map<String, String> vars = new HashMap<>();
+                vars.put("server", v.label.isEmpty() ? v.configId : v.label);
+                vars.put("reason", s.get("reason_" + (a.reason == null ? "protocol" : a.reason)));
+                return s.format("permanent_failing", vars);
+            }
+        }
+        if (!"realtime".equals(mode) || ntfys.isEmpty()) return s.get("permanent_polling");
+        int connected = 0;
+        for (Ntfy n : ntfys) {
+            if ("connected".equals(n.state)) connected++;
+        }
+        if (connected == 0) return s.get("permanent_waiting");
+        if (connected == 1) return s.get("permanent_listening_one");
+        return s.format("permanent_listening", Collections.singletonMap("n", Integer.toString(connected)));
     }
 
     JSONObject toJson() {
