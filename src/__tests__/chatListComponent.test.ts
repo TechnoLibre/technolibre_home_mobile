@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Events } from "../constants/events";
+import { fakeChatPushNative } from "../__mocks__/chatPushNative";
 
 function stubLocale() {
     const store: Record<string, string> = { app_lang: "en" };
@@ -821,5 +822,55 @@ describe("ChatListComponent search", () => {
         warn.mockRestore();
         expect(c.state.server).toBe("error");
         expect(c.state.results.messages).toHaveLength(1);
+    });
+});
+
+describe("ChatListComponent listening banner", () => {
+    const A = "https://odoo.exemple.test|alice|demo";
+    const withPush = (health: Record<string, unknown>) => {
+        const chat: any = fakeChat(["a"], []);
+        const native = fakeChatPushNative();
+        native.health = health as any;
+        chat.push = { native };
+        chat.repo.pushRows = vi.fn().mockResolvedValue([]);
+        return make(chat);
+    };
+
+    it("the banner names the http reason", async () => {
+        const ntfy = (reason: string) => ({ url: "http://ntfy.exemple.test:8080", state: "error", reason, lastContactAt: 0, configIds: [A] });
+        const refused = withPush({ ntfys: [ntfy("http_refused")] });
+        await refused.loadListening();
+        expect(refused.state.listeningText).toBe("The phone is not listening: http not allowed");
+        const blocked = withPush({ ntfys: [ntfy("cleartext_blocked")] });
+        await blocked.loadListening();
+        expect(blocked.state.listeningText).toBe("The phone is not listening: http blocked by this version of the app");
+    });
+
+    it("a tap on the banner opens the notification options", async () => {
+        const c = withPush({ notificationsAllowed: false });
+        const urls: string[] = [];
+        c.env.eventBus.addEventListener(Events.ROUTER_NAVIGATION, (ev: any) => urls.push(ev.detail.url));
+        await c.loadListening();
+        expect(c.state.listeningText).toContain("notifications not allowed");
+        c.onNotListening();
+        expect(urls).toEqual(["/options#chat-notifications"]);
+    });
+
+    it("no banner when listening", async () => {
+        const c = withPush({});
+        await c.loadListening();
+        expect([c.state.listeningText, c.state.listeningOff]).toEqual(["", false]);
+    });
+
+    it("level 5 shows the quiet line and no banner", async () => {
+        const c = withPush({ level: 5, notificationsAllowed: false });
+        await c.loadListening();
+        expect([c.state.listeningText, c.state.listeningOff]).toEqual(["", true]);
+    });
+
+    it("without native push neither shows", async () => {
+        const c = make(fakeChat(["a"], []));
+        await c.loadListening();
+        expect([c.state.listeningText, c.state.listeningOff]).toEqual(["", false]);
     });
 });

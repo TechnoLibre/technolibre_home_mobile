@@ -15,6 +15,7 @@ import {
 } from "./chat_search_results_component";
 import { CHAT_DELETE, sameTarget, targetOf } from "../../services/chat/chatOutbox";
 import { formatBytes } from "../../utils/formatBytes";
+import { listeningOf, reasonText } from "../../services/chat/chatPushOpen";
 
 const FILTER_KEY = "chat.filter";
 const PREVIEW_MAX = 80;
@@ -100,6 +101,10 @@ interface ChatListState {
     error: string;
     /** The chat's files near the cache limit; read at each build, never at a render. */
     cacheWarn: boolean;
+    /** The « the phone is not listening » banner text; empty when it listens. */
+    listeningText: string;
+    /** The level is 5: a quiet line says the notifications are off. */
+    listeningOff: boolean;
 }
 
 /** Epoch ms of an Odoo "YYYY-MM-DD HH:MM:SS" UTC string; NaN when unreadable. */
@@ -195,6 +200,9 @@ export class ChatListComponent extends EnhancedComponent {
           <button t-if="state.cacheWarn" class="chat-list__cache-warning" t-on-click="onCacheWarning"
                   t-esc="'⚠️ ' + t('chat.list_cache_warning')"/>
         </div>
+        <button t-if="state.listeningText" type="button" class="chat-list__not-listening" role="alert"
+                t-on-click="onNotListening" t-esc="'⚠️ ' + state.listeningText"/>
+        <p t-if="state.listeningOff" class="chat-list__push-off" role="status" t-esc="t('chat.push_off')"/>
         <p t-if="state.refreshing" class="chat-list__refreshing" t-esc="t('chat.loading')"/>
         <p t-if="state.error" class="chat-list__failed" role="alert" t-esc="state.error"/>
         <ul t-if="state.notices.length" class="chat-list__notices" role="alert">
@@ -286,10 +294,13 @@ export class ChatListComponent extends EnhancedComponent {
             canCreate: true,
             error: "",
             cacheWarn: false,
+            listeningText: "",
+            listeningOff: false,
         });
         onMounted(async () => {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
             await this.loadCache();
+            await this.loadListening();
             await this.refreshOnline();
         });
         onWillUnmount(() => {
@@ -298,6 +309,34 @@ export class ChatListComponent extends EnhancedComponent {
             if (this._searchTimer !== null) clearTimeout(this._searchTimer);
             this._searchGen++;
         });
+    }
+
+    /**
+     * Reads whether the phone listens while the app is closed (the native
+     * health): a banner naming the reasons, or at level 5 a quiet line.
+     * Off a native platform, or when native code does not answer, neither shows.
+     */
+    async loadListening(): Promise<void> {
+        const native = this.chatService.push?.native;
+        let text = "";
+        let off = false;
+        if (native) {
+            try {
+                const listening = listeningOf(await native.status(), await this.chatService.repo.pushRows());
+                off = listening.off;
+                const reasons = [...new Set(listening.alarms.map((a) => reasonText(a.reason)))];
+                if (reasons.length > 0) text = t("chat.push_not_listening", { reason: reasons.join(" ; ") });
+            } catch (e) {
+                console.warn("chat list: listening state unreadable", e instanceof Error ? e.message : String(e));
+            }
+        }
+        this.state.listeningText = text;
+        this.state.listeningOff = off;
+    }
+
+    /** A tap on the banner opens the notification options. */
+    onNotListening(): void {
+        this.navigate("/options#chat-notifications");
     }
 
     private readFilter(): string | null {

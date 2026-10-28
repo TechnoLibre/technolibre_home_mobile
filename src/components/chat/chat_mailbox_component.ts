@@ -214,7 +214,9 @@ export class ChatMailboxComponent extends EnhancedComponent {
             this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
             void this.watchNetwork();
             await this.loadCache();
+            await this.openRequestedThread();
             await this.refreshOnline();
+            await this.openRequestedThread();
         });
         onWillUnmount(() => {
             this.unwatchNetwork();
@@ -267,6 +269,32 @@ export class ChatMailboxComponent extends EnhancedComponent {
         this._several = all.length > 1;
         this._sources = kept.length > 0 ? kept : all;
         return this._sources;
+    }
+
+    /**
+     * `?s=<configId>&thread=<model>,<resId>` (a tap on an inbox
+     * notification): opens the newest item of that record in the inbox
+     * through ChatInbox.openItem. Without such an item the inbox stays,
+     * kept to the server `s` names. The address is rewritten without the
+     * parameter before opening, so a return to this screen does not open
+     * the item again; a malformed parameter is ignored. Runs again after
+     * the first read of the server, since the cache may not hold the item yet.
+     */
+    async openRequestedThread(): Promise<void> {
+        const params = new URLSearchParams(window.location.search);
+        const m = /^([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*),([0-9]+)$/.exec(params.get("thread") ?? "");
+        const only = params.get("s");
+        if (!m || only === null || this.state.box !== "inbox" || this.state.tab !== "inbox") return;
+        const src = this.sourceOf(only);
+        if (!src) return;
+        const resId = Number(m[2]);
+        const rows = this.state.rows
+            .filter((r: MailboxRow) => r.configId === only && r.item.threadModel === m[1] && r.item.threadId === resId)
+            .sort((a: MailboxRow, b: MailboxRow) => b.messageId - a.messageId);
+        if (rows.length === 0) return;
+        params.delete("thread");
+        window.history.replaceState({}, "", window.location.pathname + (params.toString() ? "?" + params.toString() : ""));
+        await this.onOpen(rows[0]);
     }
 
     /** Builds the rows of the box (and tab) from the cache; no network call. */

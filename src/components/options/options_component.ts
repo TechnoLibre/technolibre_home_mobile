@@ -17,6 +17,7 @@ import { OptionsPermissionsComponent } from "./permissions/options_permissions_c
 import { OptionsMigrationHistoryComponent } from "./migration_history/options_migration_history_component";
 import { OptionsSyncComponent } from "./sync/options_sync_component";
 import { OptionsChatComponent } from "./chat/options_chat_component";
+import { OptionsChatNotificationsComponent } from "./chat_notifications/options_chat_notifications_component";
 import { OptionsRemindersComponent } from "./reminders/options_reminders_component";
 import { OptionsGraphicComponent } from "./graphic/options_graphic_component";
 import { OptionsCodeStyleComponent } from "./code_style/options_code_style_component";
@@ -51,6 +52,7 @@ export class OptionsComponent extends EnhancedComponent {
         <OptionsSyncComponent />
         <OptionsRemindersComponent />
         <OptionsChatComponent />
+        <OptionsChatNotificationsComponent />
         <OptionsGraphicComponent />
         <OptionsCodeStyleComponent />
         <OptionsChangelogComponent />
@@ -166,6 +168,7 @@ export class OptionsComponent extends EnhancedComponent {
 		OptionsMigrationHistoryComponent,
 		OptionsSyncComponent,
 		OptionsChatComponent,
+		OptionsChatNotificationsComponent,
 		OptionsRemindersComponent,
 		OptionsGraphicComponent,
 		OptionsCodeStyleComponent,

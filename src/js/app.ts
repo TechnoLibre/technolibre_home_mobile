@@ -41,6 +41,8 @@ import { Events } from "../constants/events";
 import { t } from "../i18n";
 import { replanFromCache } from "../services/calendarReminders";
 import { loadSyncConfigs } from "../models/syncConfig";
+import { chatPushNative } from "../plugins/chatPushPlugin";
+import { wirePushOpen } from "../services/chat/chatPushOpen";
 
 const eventBus = new EventBus();
 
@@ -269,6 +271,10 @@ async function startApp() {
 
 	setBootStep(t("boot.mounting_interface"));
 	await mount(RootComponent, document.body, { env });
+	// The tap that launched the app, and those that follow, once the routes are mounted
+	wirePushOpen(chatPushNative, (url) => eventBus.trigger(Events.ROUTER_NAVIGATION, { url })).catch((e) =>
+		console.warn("[boot] notification taps not followed:", e)
+	);
 	defineCustomElements(window);
 	hideBootScreen();
 }

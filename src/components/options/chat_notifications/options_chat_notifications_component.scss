@@ -1,0 +1,65 @@
+.chat-notifications__levels {
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+}
+
+.chat-notifications__level {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	width: 100%;
+	padding: 0.5rem 0.7rem;
+	border: 1px solid currentColor;
+	border-radius: 0.4rem;
+	background: transparent;
+	color: inherit;
+	text-align: left;
+	opacity: 0.8;
+}
+
+.chat-notifications__level--on {
+	opacity: 1;
+	border-width: 2px;
+	font-weight: 600;
+}
+
+.chat-notifications__level-desc {
+	font-size: 0.85em;
+	font-weight: 400;
+}
+
+.chat-notifications__alarm {
+	color: #c0392b;
+}
+
+.chat-notifications__card {
+	margin: 0.8rem 0;
+	padding-top: 0.4rem;
+	border-top: 1px solid rgba(128, 128, 128, 0.4);
+}
+
+.chat-notifications__label {
+	display: block;
+	margin: 0.4rem 0 0.2rem;
+	font-size: 0.9em;
+}
+
+.chat-notifications__field {
+	width: 100%;
+	box-sizing: border-box;
+}
+
+.chat-notifications__paste {
+	display: flex;
+	gap: 0.4rem;
+	margin: 0.4rem 0;
+}
+
+.chat-notifications__status {
+	list-style: none;
+	margin: 0 0 0.5rem;
+	padding: 0;
+	font-size: 0.9em;
+	overflow-wrap: anywhere;
+}

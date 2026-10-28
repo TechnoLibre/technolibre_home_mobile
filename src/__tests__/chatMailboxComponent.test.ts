@@ -369,4 +369,53 @@ describe("ChatMailboxComponent", () => {
             expect(chat.openPreferences).toHaveBeenCalledTimes(1);
         });
     });
+
+    it("a thread parameter opens the newest item of that record", async () => {
+        const chat: any = fakeChat(["a", "b"]);
+        chat.inbox.items.mockResolvedValue([
+            item("a", 610, { threadModel: "project.task", threadId: 7 }),
+            item("a", 605, { threadModel: "res.partner", threadId: 70 }),
+            item("a", 603, { threadModel: "res.partner", threadId: 70 }),
+            item("a", 601, { threadModel: "res.partner", threadId: 71 }),
+        ]);
+        const c = make(chat, "/chat/inbox?s=a&thread=res.partner,70");
+        const urls: string[] = [];
+        c.env.eventBus.addEventListener("routernav", (ev: any) => urls.push(ev.detail.url));
+        await c.loadCache();
+        expect(chat.inbox.items).toHaveBeenLastCalledWith(["a"], "inbox");
+        await c.openRequestedThread();
+        expect(chat.inbox.openItem).toHaveBeenCalledTimes(1);
+        expect(chat.inbox.openItem.mock.calls[0][0]).toEqual(src("a"));
+        expect(chat.inbox.openItem.mock.calls[0][1].messageId).toBe(605);
+        expect(urls).toEqual(["/note/n-605"]);
+        // the address no longer asks for it, so coming back does not open it again
+        expect(window.location.search).toBe("?s=a");
+        await c.openRequestedThread();
+        expect(chat.inbox.openItem).toHaveBeenCalledTimes(1);
+    });
+
+    it("a thread with no item leaves the inbox filtered on the server", async () => {
+        const chat: any = fakeChat(["a", "b"]);
+        chat.inbox.items.mockResolvedValue([item("a", 610, { threadModel: "project.task", threadId: 7 })]);
+        const c = make(chat, "/chat/inbox?s=a&thread=res.partner,70");
+        await c.loadCache();
+        await c.openRequestedThread();
+        expect(chat.inbox.openItem).not.toHaveBeenCalled();
+        expect(c.state.rows.map((r: any) => r.messageId)).toEqual([610]);
+        expect(chat.inbox.items).toHaveBeenLastCalledWith(["a"], "inbox");
+    });
+
+    it("a malformed thread parameter is ignored", async () => {
+        const chat: any = fakeChat(["a"]);
+        chat.inbox.items.mockResolvedValue([item("a", 610)]);
+        for (const q of ["thread=res.partner", "thread=Res/Partner,70", "thread=res.partner,x"]) {
+            const c = make(chat, "/chat/inbox?s=a&" + q);
+            await c.loadCache();
+            await c.openRequestedThread();
+        }
+        const c = make(chat, "/chat/inbox?thread=res.partner,70");
+        await c.loadCache();
+        await c.openRequestedThread();
+        expect(chat.inbox.openItem).not.toHaveBeenCalled();
+    });
 });

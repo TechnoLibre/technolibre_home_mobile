@@ -5689,8 +5689,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         id: "chat.notifications.settings",
                         label: { en: "Notification bridge", fr: "Pont des notifications" },
                         description: {
-                            en: "TypeScript bridge to the native chat push (settings mirror, ntfy servers, subscriptions, session copies, health, tap to open, QR decoding), and the per-account ntfy: setup link, registration with Odoo, unregistering on removal.",
-                            fr: "Pont TypeScript vers la poussée native du clavardage (miroir des réglages, serveurs ntfy, abonnements, copies de session, santé, ouverture au toucher, décodage de QR), et le ntfy par compte : lien de configuration, enregistrement auprès d'Odoo, désinscription au retrait.",
+                            en: "TypeScript bridge to the native chat push (settings mirror, ntfy servers, subscriptions, session copies, health, tap to open, QR decoding), the per-account ntfy (setup link, registration with Odoo, unregistering on removal), and the settings screen: levels, link by QR or paste, lock screen, live status, the « not listening » banner in the chat list, opening from a tap.",
+                            fr: "Pont TypeScript vers la poussée native du clavardage (miroir des réglages, serveurs ntfy, abonnements, copies de session, santé, ouverture au toucher, décodage de QR), le ntfy par compte (lien de configuration, enregistrement auprès d'Odoo, désinscription au retrait) et l'écran de réglages : niveaux, lien par QR ou collé, écran verrouillé, état en direct, bandeau « le téléphone n'écoute pas » dans la liste, ouverture au toucher.",
                         },
                         status: "experimental",
                         howItWorks: {
@@ -5719,8 +5719,11 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "src/services/chat/chatPush.ts",
                             "src/services/chat/chatPushLink.ts",
                             "src/services/migrations/addChatPush.ts",
+                            "src/services/chat/chatPushOpen.ts",
+                            "src/components/options/chat_notifications/options_chat_notifications_component.ts",
+                            "src/components/options/chat_notifications/options_chat_notifications_component.scss",
                         ],
-                        tests: ["src/__tests__/chatPushPlugin.test.ts", "src/__tests__/chatPush.test.ts", "src/__tests__/chatPushLink.test.ts"],
+                        tests: ["src/__tests__/chatPushPlugin.test.ts", "src/__tests__/chatPush.test.ts", "src/__tests__/chatPushLink.test.ts", "src/__tests__/chatPushOpen.test.ts", "src/__tests__/optionsChatNotifications.test.ts"],
                     },
                 ],
             },

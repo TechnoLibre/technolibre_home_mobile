@@ -99,7 +99,7 @@ export class ChatPush {
   constructor(
     private repo: ChatRepository,
     private rpc: OdooRpcClient,
-    private native: ChatPushNative | null,
+    readonly native: ChatPushNative | null,
     private sources: () => Promise<ChatSource[]>,
     private now: () => Date,
   ) {
