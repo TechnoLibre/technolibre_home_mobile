@@ -9,6 +9,8 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -44,20 +46,38 @@ public final class ChatPushOpen {
     private ChatPushOpen() {}
 
     /**
-     * The content intent of a notification opening url. The url is part of
-     * the intent's action, which PendingIntent matching compares on every
+     * The content intent of a notification opening url. Its action is
+     * actionFor(url), which PendingIntent matching compares on every
      * Android version: two urls never share a PendingIntent, so one
      * notification's extras never replace another's. Notifications that
-     * open the same url share one, with the same extras. No other part of
-     * the app reads this action.
+     * open the same url share one, with the same extras. The url itself
+     * travels only in the extras. No other part of the app reads this
+     * action.
      */
     static PendingIntent intent(Context c, String url) {
         Intent i = new Intent(c, ca.erplibre.home.MainActivity.class)
-                .setAction(ACTION_PREFIX + url)
+                .setAction(actionFor(url))
                 .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(EXTRA_URL, url)
                 .putExtra(EXTRA_KEY, openKey(c));
         return PendingIntent.getActivity(c, 0, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    /**
+     * ACTION_PREFIX followed by the SHA-256 of url in hex. The system logs
+     * an activity start with its action (logcat, dumpsys), so the action
+     * tells urls apart without spelling the configId, whose server URL,
+     * login and database stay out of those logs.
+     */
+    static String actionFor(String url) {
+        try {
+            byte[] d = MessageDigest.getInstance("SHA-256").digest(url.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(ACTION_PREFIX);
+            for (byte b : d) sb.append(String.format(Locale.ROOT, "%02x", b & 0xff));
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /**
