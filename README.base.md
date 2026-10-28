@@ -427,3 +427,122 @@ https://forum.ionicframework.com/t/ionic-capacitor-failed-ios-build/177400/2
 ## Documentation Odoo Owl
 
 [Dépôt GitHub officiel d'Odoo Owl](https://github.com/odoo/owl/tree/master?tab=readme-ov-file#documentation)
+
+<!-- [en] -->
+## Chat notifications
+
+Options › Chat notifications makes the phone ring for a chat message while the
+app is closed, on Android. Odoo 18 publishes an encrypted push to a topic of a
+ntfy server that you run; the phone reads it, decrypts it, and draws the
+notification. The `erplibre_mobile_chat` module is not needed (version 1.4 or
+none); the phone registers itself with Odoo, under its own session.
+
+1. **Prepare ntfy** on the machine that runs it, in `TODO › Deploy › Prepare
+   ntfy for ERPLibre mobile`, on that machine or over ssh. The command sets
+   the access rules (Odoo writes without an account on `up*`, each phone reads
+   only its own prefix with one read-only token) and prints a link and its QR
+   code. « Revoke a phone » in the same menu deletes a phone's account and
+   token; « Remove ntfy » in the app forgets the link and unregisters the
+   phone from Odoo.
+2. **Scan the QR code or paste the link** in Options › Chat notifications, for
+   each account. The link carries two addresses when Odoo reaches ntfy
+   differently from the phone (the phone through the local network, Odoo through
+   its own loopback or an internal name): the second goes in « ntfy address as
+   Odoo reaches it » and is what Odoo publishes to; leave it empty when both are
+   the same.
+3. **A ntfy in http on the local network** needs two things: « Allow http »
+   in Options › Odoo sync, and an APK built with `-PlanCleartext`
+   (`./gradlew :app:assembleDebug -PlanCleartext`), because Android blocks http
+   otherwise. A ntfy behind https needs neither.
+4. **Pick a level** (an install that never chose runs level 3):
+   1 realtime (a permanent connection), 2 realtime on Wi-Fi or while charging
+   and every 15 minutes otherwise, 3 every 15 minutes, 4 every hour, 5 off.
+   Levels 1 and 2 ask Android to leave the app out of battery optimisation; if
+   the user refuses, the app says so and offers level 3. One permanent
+   notification, shared with the SMS gateway (its former « Passerelle SMS »
+   channel is replaced) and at the minimum priority, shows while a permanent
+   connection runs.
+5. **The lock screen**, per server: « Hidden when locked » (the default) is a
+   guarantee. When Android hides sensitive content on the lock screen, the
+   notification shows « Nouveau message — <server> » there, and the author and
+   text once unlocked; when Android shows all content, or the app cannot read
+   that setting, the notification does not appear on the lock screen at all and
+   shows normally once unlocked. The choice is made each time a notification is
+   posted: one drawn while Android hid content keeps that form if the user later
+   changes the Android setting, until it is posted again. « Never shown » and
+   « Always shown » do what they say.
+
+What rings is Odoo's own setting (all, mentions, nothing, per conversation); the
+phone can only be stricter. Odoo never retries a push, and nothing marks a
+message read: a phone silent for longer than the ntfy cache, or an account
+without ntfy, gets one summary per server, counted from Odoo's unread counters.
+Odoo publishes inside the request that posts the message (when fewer than 5
+devices are among the recipients), so a ntfy that accepts the connection and
+never answers delays a post by up to 5 seconds per device; a closed port fails
+at once. Until module 1.5, ntfy answers 200 where Odoo expects 201, so each
+successful push logs an Odoo warning that carries the topic: treat that log as
+sensitive.
+
+The build property `-PnoChatRealtime` leaves the permanent service out of the
+APK (a build without levels 1 and 2, for a store that refuses it).
+
+<!-- [fr] -->
+## Notifications du clavardage
+
+Options › Notifications du clavardage fait sonner le téléphone pour un message
+du clavardage quand l'app est fermée, sur Android. Odoo 18 publie un push
+chiffré sur un sujet d'un serveur ntfy que vous faites tourner ; le téléphone
+le lit, le déchiffre et affiche la notification. Le module
+`erplibre_mobile_chat` n'est pas requis (version 1.4 ou aucun) ; le téléphone
+s'enregistre lui-même auprès d'Odoo, sous sa propre session.
+
+1. **Préparer ntfy** sur la machine qui le fait tourner, dans `TODO › Déployer
+   › Préparer ntfy pour ERPLibre mobile`, sur cette machine ou par ssh. La
+   commande pose les règles d'accès (Odoo écrit sans compte sur `up*`, chaque
+   téléphone ne lit que son préfixe avec un jeton en lecture seule) et affiche
+   un lien et son code QR. « Révoquer un téléphone », dans le même menu,
+   supprime le compte et le jeton d'un téléphone ; « Retirer ntfy », dans l'app,
+   oublie le lien et désenregistre le téléphone d'Odoo.
+2. **Scanner le code QR ou coller le lien** dans Options › Notifications du
+   clavardage, pour chaque compte. Le lien porte deux adresses quand Odoo
+   atteint ntfy autrement que le téléphone (le téléphone par le réseau local,
+   Odoo par sa boucle locale ou un nom interne) : la seconde va dans « Adresse
+   de ntfy vue d'Odoo » et c'est celle sur laquelle Odoo publie ; la laisser
+   vide quand les deux sont identiques.
+3. **Un ntfy en http sur le réseau local** demande deux choses : « Autoriser
+   http » dans Options › Synchronisation Odoo, et un APK construit avec
+   `-PlanCleartext` (`./gradlew :app:assembleDebug -PlanCleartext`), car Android
+   bloque le http autrement. Un ntfy en https n'a besoin ni de l'un ni de l'autre.
+4. **Choisir un niveau** (une installation qui n'a jamais choisi tourne au
+   niveau 3) : 1 temps réel (connexion permanente), 2 temps réel sur Wi-Fi ou
+   en charge et aux 15 minutes sinon, 3 aux 15 minutes, 4 chaque heure,
+   5 désactivé. Les niveaux 1 et 2 demandent à Android de laisser l'app hors de
+   l'optimisation de la batterie ; si l'utilisateur refuse, l'app le dit et
+   propose le niveau 3. Une seule notification permanente, partagée avec la
+   passerelle SMS (son ancien canal « Passerelle SMS » est remplacé) et à la
+   priorité minimale, s'affiche tant qu'une connexion permanente tourne.
+5. **L'écran verrouillé**, par serveur : « Masqué quand verrouillé » (le défaut)
+   est garanti. Quand Android masque le contenu sensible sur l'écran verrouillé,
+   la notification y montre « Nouveau message — <serveur> », et l'auteur et le
+   texte une fois déverrouillé ; quand Android montre tout le contenu, ou que
+   l'app ne peut pas lire ce réglage, la notification n'apparaît pas du tout sur
+   l'écran verrouillé et s'affiche normalement une fois déverrouillé. Le choix
+   se fait à chaque affichage : une notification dessinée pendant qu'Android
+   masquait le contenu garde cette forme si l'utilisateur change ensuite le
+   réglage d'Android, jusqu'à ce qu'elle soit affichée de nouveau. « Jamais
+   affiché » et « Toujours affiché » font ce qu'ils disent.
+
+Ce qui sonne suit le réglage d'Odoo (tout, mentions, rien, par conversation) ;
+le téléphone ne peut qu'être plus strict. Odoo ne réessaie jamais un push, et
+rien ne marque un message comme lu : un téléphone muet plus longtemps que le
+cache de ntfy, ou un compte sans ntfy, reçoit un sommaire par serveur, compté
+sur les compteurs de non lus d'Odoo. Odoo publie dans la requête qui poste le
+message (quand moins de 5 appareils sont parmi les destinataires) : un ntfy qui
+accepte la connexion sans jamais répondre retarde un envoi jusqu'à 5 secondes
+par appareil ; un port fermé échoue aussitôt. Jusqu'au module 1.5, ntfy répond
+200 là où Odoo attend 201, si bien que chaque push réussi inscrit dans le
+journal d'Odoo un avertissement qui porte le sujet : traiter ce journal comme
+sensible.
+
+La propriété de construction `-PnoChatRealtime` laisse le service permanent hors
+de l'APK (une version sans les niveaux 1 et 2, pour un magasin qui le refuse).

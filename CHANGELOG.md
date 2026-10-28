@@ -172,6 +172,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   captures — from which the signal processor's echo cancellation strips back
   out whatever the device has just played, so quality is poor by
   construction
+- **Chat notifications while the app is closed** — Options › Chat
+  notifications sets, per Odoo 18 server, a link to the user's own ntfy (QR
+  code or pasted, with a second address when Odoo reaches ntfy differently).
+  Odoo publishes an encrypted push to the account's secret topic, the phone
+  decrypts it and draws one notification per conversation, with the reply,
+  mark-as-read, mute and react actions queued like any other. Five levels:
+  realtime, realtime on Wi-Fi or charging, every 15 minutes (the default for an
+  install that never chose), every hour, off; the first two keep a permanent
+  connection behind one minimal notification shared with the SMS gateway
+  (its « Passerelle SMS » channel is replaced) and ask Android for the battery
+  exemption. A phone silent longer than the ntfy cache, and an account without
+  ntfy, get one summary per server counted from Odoo's unread counters;
+  nothing is marked read. The lock-screen choice is per server and
+  « Hidden when locked » is guaranteed: when Android hides sensitive content
+  the notification shows « Nouveau message — <server> », and when Android shows
+  all content or the setting cannot be read the notification stays off the lock
+  screen. `-PnoChatRealtime` builds without the permanent service. Works with
+  `erplibre_mobile_chat` 1.4 or without the module; migration 2026102801 adds
+  the table `chat_push`
 
 ### Changed
 - **Gettext catalogues leave the bundle** — 41 763 files and 857 MB, 33.5 %

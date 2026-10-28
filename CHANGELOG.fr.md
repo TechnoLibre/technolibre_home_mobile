@@ -190,6 +190,26 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Reste le couplage acoustique — jouer sur le haut-parleur pendant que le
   micro capte — dont l'annulation d'écho du processeur de signal retire ce
   que l'appareil vient de jouer, d'où une qualité mauvaise par construction
+- **Notifications du clavardage app fermée** — Options › Notifications du
+  clavardage associe, par serveur Odoo 18, un lien vers le ntfy de
+  l'utilisateur (code QR ou collé, avec une seconde adresse quand Odoo atteint
+  ntfy autrement). Odoo publie un push chiffré sur le sujet secret du compte, le
+  téléphone le déchiffre et affiche une notification par conversation, avec les
+  actions répondre, marquer comme lu, mettre en sourdine et réagir, mises en
+  file comme les autres. Cinq niveaux : temps réel, temps réel sur Wi-Fi ou en
+  charge, aux 15 minutes (le défaut d'une installation qui n'a jamais choisi),
+  chaque heure, désactivé ; les deux premiers gardent une connexion permanente
+  derrière une notification minimale partagée avec la passerelle SMS (son canal
+  « Passerelle SMS » est remplacé) et demandent à Android l'exemption de
+  batterie. Un téléphone muet plus longtemps que le cache de ntfy, et un compte
+  sans ntfy, reçoivent un sommaire par serveur compté sur les compteurs de non
+  lus d'Odoo ; rien n'est marqué lu. Le choix de l'écran verrouillé est par
+  serveur et « Masqué quand verrouillé » est garanti : quand Android masque le
+  contenu sensible la notification montre « Nouveau message — <serveur> », et
+  quand Android montre tout ou que le réglage est illisible la notification
+  reste hors de l'écran verrouillé. `-PnoChatRealtime` construit sans le service
+  permanent. Fonctionne avec `erplibre_mobile_chat` 1.4 ou sans le module ; la
+  migration 2026102801 ajoute la table `chat_push`
 
 ### Modifié
 - **Les catalogues gettext quittent le bundle** — 41 763 fichiers et 857 Mo,
