@@ -5594,6 +5594,36 @@ export const FEATURE_TREE: FeatureNode[] = [
                 ],
                 tests: ["src/__tests__/chatInfoComponent.test.ts"],
             },
+            {
+                id: "chat.notifications",
+                label: { en: "Chat notifications", fr: "Notifications du clavardage" },
+                description: {
+                    en: "Chat notifications while the app is closed: Web Push decryption and sealed keys.",
+                    fr: "Notifications du clavardage app fermée : déchiffrement Web Push et clés scellées.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "A pushed message arrives encrypted as RFC 8291 requires. Native "
+                        + "Java decrypts it with the account's own P-256 key pair and "
+                        + "auth secret, and the secrets rest sealed by a key that never "
+                        + "leaves the Android Keystore.",
+                    fr: "Un message poussé arrive chiffré comme l'exige la RFC 8291. Du "
+                        + "Java natif le déchiffre avec la paire de clés P-256 et le "
+                        + "secret d'authentification propres au compte, et les secrets "
+                        + "reposent scellés par une clé qui ne quitte jamais le "
+                        + "Keystore d'Android.",
+                },
+                demo: { kind: "options" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/chatpush/B64.java",
+                    "android/app/src/main/java/ca/erplibre/home/chatpush/Hkdf.java",
+                    "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushKeys.java",
+                    "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushDecrypt.java",
+                    "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushException.java",
+                    "android/app/src/main/java/ca/erplibre/home/chatpush/SecretBox.java",
+                    "android/app/src/main/java/ca/erplibre/home/chatpush/KeystoreKeys.java",
+                ],
+            },
         ],
     },
 ];
