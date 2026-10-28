@@ -31,7 +31,12 @@ final class NotificationModel {
         boolean messaging;
         /** Android VISIBILITY_PRIVATE: publicTitle on the locked screen. False is VISIBILITY_PUBLIC. */
         boolean privateVisibility;
+        /** An update of a notification already drawn: no sound, no vibration, no heads-up. */
+        boolean silent;
     }
+
+    /** The channel shared by every server's status notifications. */
+    static final String STATUS_CHANNEL = "status";
 
     /** First 12 hex digits of SHA-256(configId): a stable per-server suffix that does not spell the id. */
     static String hashOf(String configId) {
@@ -100,6 +105,24 @@ final class NotificationModel {
                 ? s.format("summary_one", Collections.singletonMap("server", a.label))
                 : s.format("summary", twoVars("n", String.valueOf(count), "server", a.label));
         out.conversationTitle = out.publicTitle;
+        out.openUrl = "/chat";
+        out.messaging = false;
+        out.privateVisibility = false;
+        return out;
+    }
+
+    /**
+     * The state of a server's notifications (not listening, session expired):
+     * public, outside the server's group, one per server under tag
+     * "status:&lt;configId&gt;", opening the conversation list.
+     */
+    static Shown status(AccountView a, String text) {
+        Shown out = new Shown();
+        out.channelId = STATUS_CHANNEL;
+        out.tag = "status:" + a.configId;
+        out.conversationTitle = a.label;
+        out.text = text;
+        out.publicTitle = text;
         out.openUrl = "/chat";
         out.messaging = false;
         out.privateVisibility = false;

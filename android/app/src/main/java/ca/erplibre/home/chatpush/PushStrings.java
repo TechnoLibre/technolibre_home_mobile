@@ -32,6 +32,7 @@ final class PushStrings {
         FALLBACK.put("reason_unauthorized", "jeton refusé par ntfy");
         FALLBACK.put("reason_forbidden", "accès refusé par ntfy");
         FALLBACK.put("reason_unreachable", "ntfy injoignable");
+        FALLBACK.put("reason_odoo_unreachable", "Odoo injoignable");
         FALLBACK.put("reason_rate_limited", "trop de requêtes");
         FALLBACK.put("reason_http_refused", "http non autorisé");
         FALLBACK.put("reason_cleartext_blocked", "http bloqué par cette version de l'app");

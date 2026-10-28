@@ -13,9 +13,9 @@ import org.json.JSONObject;
 /**
  * What the app mirrors for the native side: the notification level, the
  * cleartext permission, the translated strings and each account's view,
- * plus the engine's own flags (app in foreground, last heartbeat) and the
- * per-install key that authenticates a notification tap. Nothing here is
- * secret except openKey().
+ * plus the engine's own flags (app in foreground, last heartbeat, its
+ * durable state) and the per-install key that authenticates a notification
+ * tap. Nothing here is secret except openKey().
  */
 final class PushSettingsStore {
 
@@ -120,6 +120,21 @@ final class PushSettingsStore {
         } catch (NumberFormatException e) {
             return 0L;
         }
+    }
+
+    /**
+     * The engine's own durable state (shown summary counts, failed runs,
+     * poll times, status shown), under "eng:&lt;key&gt;"; put() leaves it
+     * alone. Null when absent.
+     */
+    String engineState(String key) {
+        return kv.get("eng:" + key);
+    }
+
+    /** Stores the value, or removes the key when value is null. */
+    void setEngineState(String key, String value) {
+        if (value == null) kv.remove("eng:" + key);
+        else kv.put("eng:" + key, value);
     }
 
     /** A random per-install secret (drawn once, then kept) that a notification tap must carry. */

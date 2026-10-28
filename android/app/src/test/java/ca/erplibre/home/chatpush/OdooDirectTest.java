@@ -148,6 +148,19 @@ public class OdooDirectTest {
     }
 
     @Test
+    public void a404Or410IsNotFound() throws Exception {
+        for (int code : new int[] {404, 410}) {
+            server.enqueue(new MockResponse().setResponseCode(code));
+            try {
+                odoo.unregister(session, "https://ntfy.exemple.test/upab12cd34topic", true);
+                fail();
+            } catch (OdooDirectException e) {
+                assertEquals(OdooDirectException.Kind.NOT_FOUND, e.kind());
+            }
+        }
+    }
+
+    @Test
     public void aBodyThatIsNotJsonIsProtocol() throws Exception {
         server.enqueue(new MockResponse().setBody("<html>login</html>"));
         try {

@@ -91,6 +91,9 @@ final class OdooDirect {
         String text;
         try (Response r = client.newCall(request).execute()) {
             if (r.code() == 401) throw new OdooDirectException(OdooDirectException.Kind.SESSION_EXPIRED, "HTTP 401");
+            if (r.code() == 404 || r.code() == 410) {
+                throw new OdooDirectException(OdooDirectException.Kind.NOT_FOUND, "HTTP " + r.code());
+            }
             if (r.code() < 200 || r.code() >= 300) {
                 throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, "HTTP " + r.code());
             }

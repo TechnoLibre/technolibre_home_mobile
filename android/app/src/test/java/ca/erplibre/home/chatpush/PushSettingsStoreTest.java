@@ -53,4 +53,14 @@ public class PushSettingsStoreTest {
         assertTrue(k.length() >= 24);
         assertEquals(k, new PushSettingsStore(kv).openKey());
     }
+
+    @Test
+    public void engineStateSurvivesAMirrorAndRemovesOnNull() {
+        PushSettingsStore s = new PushSettingsStore(new MapKeyValue());
+        s.setEngineState("sum:cfg1", "3");
+        s.put(4, false, null, null);
+        assertEquals("3", s.engineState("sum:cfg1"));
+        s.setEngineState("sum:cfg1", null);
+        assertNull(s.engineState("sum:cfg1"));
+    }
 }

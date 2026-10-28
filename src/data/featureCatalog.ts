@@ -5619,8 +5619,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         id: "chat.notifications.native",
                         label: { en: "Native ntfy client", fr: "Client ntfy natif" },
                         description: {
-                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication).",
-                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage).",
+                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication), and the engine: one connection per ntfy, reconnect backoff, Odoo-direct summary, status and health.",
+                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage), et le moteur : une connexion par ntfy, reconnexion espacée, sommaire direct d'Odoo, état et santé.",
                         },
                         status: "experimental",
                         howItWorks: {
@@ -5669,6 +5669,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "android/app/src/main/java/ca/erplibre/home/chatpush/UnreadSummary.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/OdooDirectException.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/OdooDirect.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/HealthSnapshot.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PushEngine.java",
                         ],
                     },
                 ],
