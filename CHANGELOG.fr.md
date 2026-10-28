@@ -194,9 +194,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   clavardage associe, par serveur Odoo 18, un lien vers le ntfy de
   l'utilisateur (code QR ou collé, avec une seconde adresse quand Odoo atteint
   ntfy autrement). Odoo publie un push chiffré sur le sujet secret du compte, le
-  téléphone le déchiffre et affiche une notification par conversation, avec les
-  actions répondre, marquer comme lu, mettre en sourdine et réagir, mises en
-  file comme les autres. Cinq niveaux : temps réel, temps réel sur Wi-Fi ou en
+  téléphone le déchiffre et affiche une notification par conversation ; la toucher
+  ouvre la conversation. Cinq niveaux : temps réel, temps réel sur Wi-Fi ou en
   charge, aux 15 minutes (le défaut d'une installation qui n'a jamais choisi),
   chaque heure, désactivé ; les deux premiers gardent une connexion permanente
   derrière une notification minimale partagée avec la passerelle SMS (son canal

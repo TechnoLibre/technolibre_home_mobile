@@ -176,8 +176,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   notifications sets, per Odoo 18 server, a link to the user's own ntfy (QR
   code or pasted, with a second address when Odoo reaches ntfy differently).
   Odoo publishes an encrypted push to the account's secret topic, the phone
-  decrypts it and draws one notification per conversation, with the reply,
-  mark-as-read, mute and react actions queued like any other. Five levels:
+  decrypts it and draws one notification per conversation; tapping it opens
+  the conversation. Five levels:
   realtime, realtime on Wi-Fi or charging, every 15 minutes (the default for an
   install that never chose), every hour, off; the first two keep a permanent
   connection behind one minimal notification shared with the SMS gateway

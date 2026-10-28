@@ -472,8 +472,7 @@ none); the phone registers itself with Odoo, under its own session.
    changes the Android setting, until it is posted again. « Never shown » and
    « Always shown » do what they say.
 
-What rings is Odoo's own setting (all, mentions, nothing, per conversation); the
-phone can only be stricter. Odoo never retries a push, and nothing marks a
+What rings is Odoo's own setting (all, mentions, nothing, per conversation). Odoo never retries a push, and nothing marks a
 message read: a phone silent for longer than the ntfy cache, or an account
 without ntfy, gets one summary per server, counted from Odoo's unread counters.
 Odoo publishes inside the request that posts the message (when fewer than 5
@@ -532,8 +531,8 @@ s'enregistre lui-même auprès d'Odoo, sous sa propre session.
    réglage d'Android, jusqu'à ce qu'elle soit affichée de nouveau. « Jamais
    affiché » et « Toujours affiché » font ce qu'ils disent.
 
-Ce qui sonne suit le réglage d'Odoo (tout, mentions, rien, par conversation) ;
-le téléphone ne peut qu'être plus strict. Odoo ne réessaie jamais un push, et
+Ce qui sonne suit le réglage d'Odoo (tout, mentions, rien, par conversation).
+Odoo ne réessaie jamais un push, et
 rien ne marque un message comme lu : un téléphone muet plus longtemps que le
 cache de ntfy, ou un compte sans ntfy, reçoit un sommaire par serveur, compté
 sur les compteurs de non lus d'Odoo. Odoo publie dans la requête qui poste le
