@@ -57,9 +57,11 @@ describe("ChatAvatars", () => {
     server = avatarServer(files);
     chat.useFileIO({ files, http: server.http, onWifi: async () => false });
     for (const creds of env.creds as SyncCredentials[]) {
+      // Stamped with the real clock: the client drops a session older than
+      // 24 h by Date.now(), and the fake clock above is a fixed past date.
       await SecureStoragePlugin.set({
         key: syncSessionKey(creds),
-        value: JSON.stringify({ sessionId: "sid1", odooMajorVersion: 18, createdAt: clock.toISOString() }),
+        value: JSON.stringify({ sessionId: "sid1", odooMajorVersion: 18, createdAt: new Date().toISOString() }),
       });
     }
     config = env.configIds[0];
