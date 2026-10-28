@@ -4018,6 +4018,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/options/sms_gateway/options_sms_gateway_component.ts",
                     "src/components/options/sms_gateway/options_sms_gateway_component.scss",
                     "android/app/src/main/java/ca/erplibre/home/SmsGatewayPlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/BatteryExemption.java",
                     "android/app/src/main/java/ca/erplibre/home/SmsGatewayConfig.java",
                 ],
             },
@@ -5619,8 +5620,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         id: "chat.notifications.native",
                         label: { en: "Native ntfy client", fr: "Client ntfy natif" },
                         description: {
-                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication), and the engine: one connection per ntfy, reconnect backoff, Odoo-direct summary, status and health.",
-                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage), et le moteur : une connexion par ntfy, reconnexion espacée, sommaire direct d'Odoo, état et santé.",
+                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication), and the engine: one connection per ntfy, reconnect backoff, Odoo-direct summary, status and health; then the Android side: per-server channels, conversation notifications, tap to open, the plugin and QR decoding.",
+                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage), et le moteur : une connexion par ntfy, reconnexion espacée, sommaire direct d'Odoo, état et santé ; puis le côté Android : canaux par serveur, notifications de conversation, ouverture au toucher, le plugin et le décodage de QR.",
                         },
                         status: "experimental",
                         howItWorks: {
@@ -5671,7 +5672,38 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "android/app/src/main/java/ca/erplibre/home/chatpush/OdooDirect.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/HealthSnapshot.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/PushEngine.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatNotifier.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushOpen.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushRuntime.java",
+                            "android/app/src/main/java/ca/erplibre/home/ChatPushPlugin.java",
+                            "android/app/src/main/java/ca/erplibre/home/BatteryExemption.java",
                         ],
+                    },
+                    {
+                        id: "chat.notifications.settings",
+                        label: { en: "Notification bridge", fr: "Pont des notifications" },
+                        description: {
+                            en: "TypeScript bridge to the native chat push: settings mirror, ntfy servers, subscriptions, session copies, health, tap to open and QR decoding.",
+                            fr: "Pont TypeScript vers la poussée native du clavardage : miroir des réglages, serveurs ntfy, abonnements, copies de session, santé, ouverture au toucher et décodage de QR.",
+                        },
+                        status: "experimental",
+                        howItWorks: {
+                            en: "Each call goes to the native ChatPushPlugin; state changes run there "
+                                + "one at a time in call order, and a refusal comes back as an Error "
+                                + "naming the method. A notification tap carries a per-install secret "
+                                + "and one of three app paths, and is ignored otherwise.",
+                            fr: "Chaque appel passe au ChatPushPlugin natif ; les changements d'état "
+                                + "y passent un à la fois dans l'ordre des appels, et un refus revient "
+                                + "en Error qui nomme la méthode. Le toucher d'une notification porte "
+                                + "un secret propre à l'installation et l'un de trois chemins de "
+                                + "l'app, sans quoi il est ignoré.",
+                        },
+                        demo: { kind: "none", reason: { en: "Native only, used by the chat notification settings.", fr: "Natif seulement, utilisé par les réglages des notifications du clavardage." } },
+                        files: [
+                            "src/plugins/chatPushPlugin.ts",
+                            "src/__mocks__/chatPushNative.ts",
+                        ],
+                        tests: ["src/__tests__/chatPushPlugin.test.ts"],
                     },
                 ],
             },

@@ -15,6 +15,7 @@ final class PushStrings {
 
     static {
         FALLBACK.put("new_message", "Nouveau message");
+        FALLBACK.put("you", "Vous");
         FALLBACK.put("new_message_server", "Nouveau message — {server}");
         FALLBACK.put("summary_one", "1 nouveau message — {server}");
         FALLBACK.put("summary", "{n} nouveaux messages — {server}");

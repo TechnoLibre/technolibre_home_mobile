@@ -51,6 +51,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(KeepAwakePlugin.class);
         registerPlugin(SmsGatewayPlugin.class);
         registerPlugin(NoteSyncPlugin.class);
+        registerPlugin(ChatPushPlugin.class);
         super.onCreate(savedInstanceState);
         CastContext.getSharedInstance(this);
     }

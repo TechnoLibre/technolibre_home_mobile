@@ -154,6 +154,8 @@ dependencies {
     // MarianMT on-device translation: ONNX Runtime for encoder/decoder inference
     implementation "com.microsoft.onnxruntime:onnxruntime-android:1.20.0"
     implementation "com.google.mlkit:face-detection:16.1.7"
+    // QR codes of the chat notification setup, decoded from a picked image
+    implementation "com.google.mlkit:barcode-scanning:17.3.0"
 }
 
 apply from: 'capacitor.build.gradle'

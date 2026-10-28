@@ -234,30 +234,11 @@ public class SmsGatewayPlugin extends Plugin {
     // ------------------------------------------------------------------
 
     private boolean ignoringBatteryOptimizations() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            return true;
-        }
-        try {
-            android.os.PowerManager pm =
-                    getContext().getSystemService(android.os.PowerManager.class);
-            return pm != null
-                    && pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
-        } catch (Exception e) {
-            return false;
-        }
+        return BatteryExemption.ignoringBatteryOptimizations(getContext());
     }
 
     private boolean canScheduleExact() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            return true;
-        }
-        try {
-            android.app.AlarmManager am =
-                    getContext().getSystemService(android.app.AlarmManager.class);
-            return am != null && am.canScheduleExactAlarms();
-        } catch (Exception e) {
-            return false;
-        }
+        return BatteryExemption.canScheduleExact(getContext());
     }
 
     /**
@@ -278,11 +259,7 @@ public class SmsGatewayPlugin extends Plugin {
             return;
         }
         try {
-            android.content.Intent intent = new android.content.Intent(
-                    android.provider.Settings
-                            .ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
-            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
+            BatteryExemption.openBatterySettings(getContext());
             result.put("alreadyExempt", false);
             result.put("opened", true);
             call.resolve(result);
@@ -307,10 +284,7 @@ public class SmsGatewayPlugin extends Plugin {
             return;
         }
         try {
-            android.content.Intent intent = new android.content.Intent(
-                    android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
-            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
+            BatteryExemption.openExactAlarmSettings(getContext());
             result.put("alreadyGranted", false);
             result.put("opened", true);
             call.resolve(result);
