@@ -54,4 +54,24 @@ public class NativeSessionsTest {
         assertEquals(1, sessions.pending().size());
         assertEquals("endpoint-deux", sessions.pending().get(0).endpoint);
     }
+
+    @Test
+    public void donePendingRemovesOnlyTheEndpointsSent() {
+        sessions.addPendingUnregister("cfg1", "endpoint-un");
+        sessions.addPendingUnregister("cfg1", "endpoint-deux");
+        sessions.donePending("cfg1", java.util.Collections.singleton("endpoint-un"));
+        assertEquals(1, sessions.pending().size());
+        assertEquals("endpoint-deux", sessions.pending().get(0).endpoint);
+        sessions.donePending("cfg1", java.util.Collections.singleton("endpoint-deux"));
+        assertTrue(sessions.pending().isEmpty());
+        assertFalse(kv.map.containsKey("pend:cfg1"));
+    }
+
+    @Test
+    public void configIdsListsTheStoredSessions() {
+        sessions.put(new NativeSession("cfg1", "https://odoo.exemple.test", "db_exemple", "sid_exemple_secret", 5L));
+        sessions.put(new NativeSession("cfg2", "https://odoo.exemple.test", "db_exemple", "sid_exemple_secret", 5L));
+        sessions.addPendingUnregister("cfg3", "endpoint-un");
+        assertEquals(new java.util.HashSet<>(java.util.Arrays.asList("cfg1", "cfg2")), sessions.configIds());
+    }
 }

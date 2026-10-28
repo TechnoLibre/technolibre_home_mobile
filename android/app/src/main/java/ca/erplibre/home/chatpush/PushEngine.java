@@ -31,7 +31,8 @@ import org.json.JSONException;
  * never held across a network call: a poll or an Odoo check reads what it
  * needs under the monitor, runs outside it, then applies its result under
  * it. runDue runs one at a time. Notifier calls are made with the monitor
- * held.
+ * held. The Odoo check owed after a silence runs from the Scheduler, never
+ * on a stream's reader thread.
  */
 final class PushEngine {
 
@@ -58,7 +59,11 @@ final class PushEngine {
         long now();
     }
 
-    /** Delayed work; schedule() is called with the engine's monitor held and never runs r on the calling thread. */
+    /**
+     * Delayed work. schedule() is called with the engine's monitor held: it
+     * never runs r on the calling thread, and runs it on a thread that may
+     * block on the network (r can be an Odoo check).
+     */
     interface Scheduler {
         void schedule(Runnable r, long delayMs);
 
@@ -132,7 +137,7 @@ final class PushEngine {
     private boolean realtime;
     private PushLevelPolicy.Effective effective;
     private int undecryptable;
-    private int decryptFaults;
+    private int faults;
 
     PushEngine(PushStore store, PushSettingsStore settings, NativeSessions sessions, NtfyClient ntfy,
             OdooDirect odoo, Notifier notifier, Clock clock, Scheduler scheduler) {
@@ -190,9 +195,10 @@ final class PushEngine {
      * One run of the periodic job. OFF does nothing. POLL_15 polls every
      * ntfy, POLL_60 an ntfy last polled 60 minutes ago or more. When the
      * policy asks Odoo directly, every mirrored account without ntfy is
-     * checked. Then the pending unregisters are sent. At levels without the
-     * permanent service, two failed runs in a row of an ntfy or an account
-     * post one status notification, removed by the next success.
+     * checked, after any check a silence left owed. Then the pending
+     * unregisters are sent. At levels without the permanent service, two
+     * failed runs in a row of an ntfy or an account post one status
+     * notification, removed by the next success.
      */
     void runDue(PushLevelPolicy.Effective e) {
         synchronized (runLock) {
@@ -220,6 +226,7 @@ final class PushEngine {
                 }
             }
             for (Link l : due) poll(l, counting);
+            drainOwedChecks();
             for (String id : direct) checkAccount(id, counting);
             runPending();
             synchronized (lock) {
@@ -242,10 +249,12 @@ final class PushEngine {
      * The mirror changed. A removed account loses its notifications, and so
      * does any tag of an account no longer mirrored (left by an earlier
      * process). A changed ntfy set or cleartext permission reopens the
-     * streams; a refusal held for good is lifted and retried.
+     * streams; a refusal held for good is lifted and retried. A session copy
+     * the mirror no longer needs goes once nothing is left to unregister.
      */
     void onSettingsChanged() {
         synchronized (lock) {
+            settings.setEngineState("mirrorAt", Long.toString(clock.now()));
             Set<String> now = mirroredIds();
             for (String id : mirrored) {
                 if (!now.contains(id)) {
@@ -276,6 +285,7 @@ final class PushEngine {
                 }
             }
             for (String id : now) refreshStatus(id);
+            forgetOrphanSessions();
             publishStatus();
         }
     }
@@ -303,13 +313,13 @@ final class PushEngine {
             return !realtime || generation != link.generation || links.get(link.url) != link;
         }
 
+        /** A silence beyond the cache owes each account a check, run off this reader thread. */
         @Override
         public void onOpen() {
-            List<String> silent = null;
             synchronized (lock) {
                 if (stale()) return;
                 long now = clock.now();
-                if (silentTooLong(link, now)) silent = new ArrayList<>(link.configIds);
+                if (silentTooLong(link, now)) oweChecks(link.configIds);
                 link.state = LinkState.CONNECTED;
                 link.attempt = 0;
                 link.reason = null;
@@ -318,9 +328,6 @@ final class PushEngine {
                 clearFailures(ntfyKey(link.url));
                 for (String id : link.configIds) refreshStatus(id);
                 publishStatus();
-            }
-            if (silent != null) {
-                for (String id : silent) checkAccount(id, false);
             }
         }
 
@@ -442,6 +449,8 @@ final class PushEngine {
         List<String> silent = null;
         synchronized (lock) {
             long now = clock.now();
+            // A failed poll counts as a poll: at POLL_60 the status of two failed runs comes with the
+            // second failure, an hour after the first and two after the last success.
             settings.setEngineState("poll:" + l.url, Long.toString(now));
             if (got != null) {
                 if (silentTooLong(l, now)) silent = new ArrayList<>(l.configIds);
@@ -473,11 +482,15 @@ final class PushEngine {
         if (!"message".equals(m.event)) return;
         if (l.seen == null) l.seen = store.seen(l.url);
         if (!l.seen.add(m.id)) return;
-        store.saveSeen(l.url, l.seen);
         try {
             deliver(m);
+        } catch (RuntimeException e) {
+            // the platform cipher, a sealed key that no longer opens, or building or drawing failed
+            faults++;
         } finally {
+            // saved once handled: a death before this point replays the message rather than losing it
             long now = clock.now();
+            store.saveSeen(l.url, l.seen);
             store.setCursor(l.url, m.id, now);
             l.contactAt = now;
             l.contactSavedAt = now;
@@ -492,10 +505,6 @@ final class PushEngine {
             plain = WebPushDecrypt.decrypt(m.body, sub.privateKey(), sub.publicKey, sub.authSecret);
         } catch (WebPushException e) {
             undecryptable++;
-            return;
-        } catch (IllegalStateException e) {
-            // the platform cipher failed or the sealed key no longer opens
-            decryptFaults++;
             return;
         }
         if (settings.foreground()) return;
@@ -538,6 +547,30 @@ final class PushEngine {
     }
 
     // ---- Odoo direct ----
+
+    /** Records a check owed to each account, kept across a stop or a death, and schedules it now. Monitor held. */
+    private void oweChecks(List<String> configIds) {
+        for (String id : configIds) settings.setEngineState("owe:" + id, "1");
+        scheduler.schedule(new Runnable() {
+            @Override
+            public void run() {
+                drainOwedChecks();
+            }
+        }, 0);
+    }
+
+    /** Runs the checks owed to mirrored accounts; each is taken once. */
+    private void drainOwedChecks() {
+        List<String> owed = new ArrayList<>();
+        synchronized (lock) {
+            for (String id : mirroredIds()) {
+                if (settings.engineState("owe:" + id) == null) continue;
+                settings.setEngineState("owe:" + id, null);
+                owed.add(id);
+            }
+        }
+        for (String id : owed) checkAccount(id, false);
+    }
 
     /**
      * Counts the account's unread messages in Odoo: the summary goes up
@@ -634,13 +667,16 @@ final class PushEngine {
                 s = sessions.expired(configId) ? null : sessions.get(configId);
             }
             if (s == null) continue;
-            boolean done = true;
+            Set<String> sent = new HashSet<>();
             for (PendingUnregister p : e.getValue()) {
                 try {
                     odoo.unregister(s, p.endpoint, http);
+                    sent.add(p.endpoint);
                 } catch (OdooDirectException ex) {
-                    if (ex.kind() == OdooDirectException.Kind.NOT_FOUND) continue;
-                    done = false;
+                    if (ex.kind() == OdooDirectException.Kind.NOT_FOUND) {
+                        sent.add(p.endpoint);
+                        continue;
+                    }
                     if (ex.kind() == OdooDirectException.Kind.SESSION_EXPIRED) {
                         synchronized (lock) {
                             sessions.markExpired(configId);
@@ -650,12 +686,40 @@ final class PushEngine {
                     break;
                 }
             }
-            if (done) {
-                synchronized (lock) {
-                    sessions.donePending(configId);
-                    if (settings.account(configId) == null) sessions.forget(configId);
+            synchronized (lock) {
+                if (!sent.isEmpty()) sessions.donePending(configId, sent);
+                if (settings.account(configId) == null && !pendingAccounts().contains(configId)) {
+                    sessions.forget(configId);
                 }
             }
+        }
+        synchronized (lock) {
+            forgetOrphanSessions();
+        }
+    }
+
+    private Set<String> pendingAccounts() {
+        Set<String> out = new HashSet<>();
+        for (PendingUnregister p : sessions.pending()) out.add(p.configId);
+        return out;
+    }
+
+    /**
+     * Forgets the session copy of every account the last mirror left out
+     * that has no endpoint left to unregister (none queued, all sent, or
+     * expired). A copy saved after that mirror belongs to an account not
+     * mirrored yet and stays. Nothing happens before a first mirror. Monitor
+     * held.
+     */
+    private void forgetOrphanSessions() {
+        long mirrorAt = parseLong(settings.engineState("mirrorAt"));
+        if (mirrorAt <= 0) return;
+        Set<String> live = mirroredIds();
+        Set<String> waiting = pendingAccounts();
+        for (String id : sessions.configIds()) {
+            if (live.contains(id) || waiting.contains(id)) continue;
+            NativeSession s = sessions.get(id);
+            if (s == null || s.savedAt <= mirrorAt) sessions.forget(id);
         }
     }
 
@@ -819,6 +883,7 @@ final class PushEngine {
         accounts.remove(configId);
         settings.setEngineState("sum:" + configId, null);
         settings.setEngineState("status:" + configId, null);
+        settings.setEngineState("owe:" + configId, null);
         clearFailures(accountKey(configId));
     }
 
@@ -865,7 +930,7 @@ final class PushEngine {
         String mode = realtime ? "realtime" : e.mode.name().toLowerCase(Locale.ROOT);
         boolean alive = e.permanentService && now - settings.lastBeat() < BEAT_MAX_AGE_MS;
         return new HealthSnapshot(now, level, e.level, mode, realtimeBuild, alive, ns, as, undecryptable,
-                decryptFaults);
+                faults);
     }
 
     private String stateOf(Link l, boolean polling) {

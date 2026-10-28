@@ -18,8 +18,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import javax.crypto.spec.SecretKeySpec;
+import okhttp3.Call;
+import okhttp3.EventListener;
 import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
@@ -42,9 +45,13 @@ public class PushEngineTest {
     /** KeyValue over a concurrent map: the engine writes from OkHttp threads while the test reads. */
     static final class SyncKeyValue implements KeyValue {
         final Map<String, String> map = new ConcurrentHashMap<>();
+        List<String> log;
 
         public String get(String k) { return map.get(k); }
-        public void put(String k, String v) { map.put(k, v); }
+        public void put(String k, String v) {
+            if (log != null) log.add("put:" + k.substring(0, k.indexOf(':') + 1));
+            map.put(k, v);
+        }
         public void remove(String k) { map.remove(k); }
         public Set<String> keys() { return new HashSet<>(map.keySet()); }
     }
@@ -82,8 +89,13 @@ public class PushEngineTest {
         final List<String> cancelledAll = new CopyOnWriteArrayList<>();
         final Set<String> active = ConcurrentHashMap.newKeySet();
         final List<HealthSnapshot> statuses = new CopyOnWriteArrayList<>();
+        /** Shows that throw before drawing anything. */
+        final AtomicInteger failNext = new AtomicInteger();
+        List<String> log;
 
         public void show(NotificationModel.Shown n) {
+            if (failNext.getAndUpdate(v -> Math.max(0, v - 1)) > 0) throw new IllegalArgumentException("drawing failed");
+            if (log != null) log.add("show:" + n.text);
             shown.add(n);
             active.add(n.tag);
         }
@@ -143,6 +155,7 @@ public class PushEngineTest {
                             .getJSONObject("kwargs").getString("endpoint");
                     endpoints.add(ep + " " + r.getHeader("Cookie"));
                     if (ep.contains("gone")) return new MockResponse().setResponseCode(404);
+                    if (ep.contains("panne")) return new MockResponse().setResponseCode(500);
                 } catch (Exception e) {
                     return new MockResponse().setResponseCode(500);
                 }
@@ -172,6 +185,9 @@ public class PushEngineTest {
     private final HandScheduler scheduler = new HandScheduler();
     private final FakeOdoo odoo = new FakeOdoo();
 
+    /** Calls started on the ntfy client: OkHttp counts a call inside enqueue() or execute(), on the caller's thread. */
+    private final AtomicInteger ntfyCalls = new AtomicInteger();
+
     private MockWebServer ntfyServer;
     private MockWebServer odooServer;
     private PushEngine engine;
@@ -195,11 +211,27 @@ public class PushEngineTest {
     // ---- helpers ----
 
     private PushEngine engine() {
-        if (engine == null) {
-            engine = new PushEngine(store, settings, sessions, new NtfyClient(new OkHttpClient()),
-                    new OdooDirect(new OkHttpClient()), notifier, () -> now, scheduler);
-        }
+        if (engine == null) engine = newEngine();
         return engine;
+    }
+
+    private PushEngine newEngine() {
+        OkHttpClient counted = new OkHttpClient.Builder().eventListener(new EventListener() {
+            @Override
+            public void callStart(Call call) {
+                ntfyCalls.incrementAndGet();
+            }
+        }).build();
+        return new PushEngine(store, settings, sessions, new NtfyClient(counted),
+                new OdooDirect(new OkHttpClient()), notifier, () -> now, scheduler);
+    }
+
+    private List<HandScheduler.Task> immediate() {
+        List<HandScheduler.Task> out = new ArrayList<>();
+        for (HandScheduler.Task t : scheduler.tasks) {
+            if (t.delay == 0) out.add(t);
+        }
+        return out;
     }
 
     private static AccountView account(String configId, String label) {
@@ -407,7 +439,7 @@ public class PushEngineTest {
         assertEquals(1, notifier.shown.size());
         assertEquals("reçu", notifier.shown.get(0).text);
         JSONObject h = engine.health().toJson();
-        assertEquals(1, h.getInt("decryptFaults"));
+        assertEquals(1, h.getInt("faults"));
         assertEquals(0, h.getInt("undecryptable"));
     }
 
@@ -451,8 +483,7 @@ public class PushEngineTest {
         engine().startRealtime();
         awaitClosed(1);
         inRange(scheduler.last().delay, 5_000, 6_000);
-        Thread.sleep(100);
-        assertEquals(1, ntfyServer.getRequestCount());
+        assertEquals(1, ntfyCalls.get());
 
         scheduler.runAll();
         awaitClosed(1);
@@ -480,9 +511,9 @@ public class PushEngineTest {
         await(() -> ntfyServer.getRequestCount() == 2, "the reconnect on network back");
         awaitClosed(2);
         // the reconnect that was waiting is spent: running it opens nothing more
+        assertEquals(2, ntfyCalls.get());
         scheduler.tasks.get(0).r.run();
-        Thread.sleep(300);
-        assertEquals(2, ntfyServer.getRequestCount());
+        assertEquals(2, ntfyCalls.get());
     }
 
     @Test
@@ -500,8 +531,7 @@ public class PushEngineTest {
         assertEquals("unauthorized", h.getString("reason"));
 
         engine.onNetworkAvailable();
-        Thread.sleep(300);
-        assertEquals(1, ntfyServer.getRequestCount());
+        assertEquals(1, ntfyCalls.get());
 
         scheduler.runAll();
         awaitClosed(1);
@@ -539,19 +569,45 @@ public class PushEngineTest {
         store.setCursor(n.url, "m0", NOW - (CACHE + 1) * 1000L);
         mirrorSession("cfg1", "sid_exemple_secret");
         odoo.mailData = mailData(2);
-        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)));
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + push(a, "m1", 42, "Alice Martin", "rejoué")));
         ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)));
         engine().startRealtime();
-        awaitClosed(1);
-        await(() -> !notifier.tagged("summary:cfg1").isEmpty(), "the summary");
-        assertEquals(1, odoo.count("/mail/data"));
+        awaitClosed(2);
+        // the check waits for the scheduler: the replay behind the open is not held by Odoo
+        assertEquals(1, immediate().size());
+        assertEquals(0, odoo.requests.size());
+        assertEquals("rejoué", notifier.shown.get(0).text);
         assertTrue(ntfyServer.takeRequest().getPath().endsWith("since=m0"));
+
+        immediate().get(0).r.run();
+        assertEquals(1, odoo.count("/mail/data"));
+        assertEquals(1, notifier.tagged("summary:cfg1").size());
 
         scheduler.runAll();
         awaitClosed(1);
-        Thread.sleep(200);
-        assertEquals(2, ntfyServer.getRequestCount());
+        assertEquals(2, ntfyCalls.get());
+        assertTrue(immediate().isEmpty());
         assertEquals(1, odoo.count("/mail/data"));
+    }
+
+    @Test
+    public void aCheckOwedAfterASilenceRunsAtTheNextDueRunWhenTheStreamStopped() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        store.setCursor(n.url, "m0", NOW - (CACHE + 1) * 1000L);
+        mirrorSession("cfg1", "sid_exemple_secret");
+        odoo.mailData = mailData(2);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)));
+        engine().startRealtime();
+        awaitClosed(2);
+        engine.stopRealtime();
+        assertTrue(scheduler.tasks.isEmpty());
+        assertEquals(0, odoo.requests.size());
+
+        newEngine().runDue(level(1));
+        assertEquals(1, odoo.count("/mail/data"));
+        assertEquals(1, notifier.tagged("summary:cfg1").size());
     }
 
     @Test
@@ -746,8 +802,119 @@ public class PushEngineTest {
 
         // a later engine (a new process) still clears a tag left by an account it never knew
         notifier.active.add("inbox:cfg9:project.task:7");
-        new PushEngine(store, settings, sessions, new NtfyClient(new OkHttpClient()),
-                new OdooDirect(new OkHttpClient()), notifier, () -> now, scheduler).onSettingsChanged();
+        newEngine().onSettingsChanged();
         assertEquals(Collections.singleton("chat:cfg1:42"), notifier.active);
+    }
+
+    @Test
+    public void aRestartedEngineShowsEachReplayedMessageOnce() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        String m1 = push(a, "m1", 42, "Alice Martin", "un");
+        String m2 = push(a, "m2", 42, "Alice Martin", "deux");
+        String m3 = push(a, "m3", 42, "Alice Martin", "trois");
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + m1 + m2));
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + m1 + m2 + m3));
+        engine().startRealtime();
+        awaitClosed(1);
+        engine.stopRealtime();
+
+        // a new process: same stores, a fresh engine, ntfy replaying its cache
+        engine = newEngine();
+        engine.startRealtime();
+        awaitClosed(1);
+        ntfyServer.takeRequest();
+        assertTrue(ntfyServer.takeRequest().getPath().endsWith("since=m2"));
+        List<String> texts = new ArrayList<>();
+        for (NotificationModel.Shown s : notifier.shown) texts.add(s.text);
+        assertEquals(Arrays.asList("un", "deux", "trois"), texts);
+    }
+
+    @Test
+    public void theSeenIdsAreSavedWithTheCursorAfterTheMessageIsShown() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        List<String> log = new CopyOnWriteArrayList<>();
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + push(a, "m1", 42, "Alice Martin", "un")));
+        engine();
+        storeKv.log = log;
+        notifier.log = log;
+        engine.startRealtime();
+        awaitClosed(1);
+        int shown = log.indexOf("show:un");
+        assertTrue(log.toString(), shown >= 0);
+        assertTrue(log.toString(), log.lastIndexOf("put:seen:") > shown);
+        assertEquals(log.toString(), log.indexOf("put:seen:"), log.lastIndexOf("put:seen:"));
+    }
+
+    @Test
+    public void aFailingNotifierLosesOnlyThatMessage() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        notifier.failNext.set(1);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + push(a, "m1", 42, "Alice Martin", "perdu")
+                + push(a, "m2", 43, "Bruno Tremblay", "reçu")));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertEquals(1, notifier.shown.size());
+        assertEquals("reçu", notifier.shown.get(0).text);
+        assertEquals("m2", store.cursor(n.url));
+        assertEquals(1, engine.health().toJson().getInt("faults"));
+        // the stream ended cleanly, not on a listener failure
+        assertEquals("connecting", ntfyHealth(engine.health().toJson(), n.url).getString("state"));
+        assertTrue(ntfyHealth(engine.health().toJson(), n.url).isNull("reason"));
+    }
+
+    @Test
+    public void anUnregisterThatFailsKeepsItsEntries() throws Exception {
+        mirror(3, true, account("cfg2", "Serveur B"));
+        engine().onSettingsChanged();
+        mirrorSession("cfg3", "sid_exemple_parti");
+        sessions.addPendingUnregister("cfg3", "https://ntfy.exemple.test/upab12cd34ancien");
+        sessions.addPendingUnregister("cfg3", "https://ntfy.exemple.test/upab12cd34panne");
+        sessions.addPendingUnregister("cfg3", "https://ntfy.exemple.test/upab12cd34suivant");
+        engine.runDue(level(3));
+        List<PendingUnregister> left = sessions.pending();
+        List<String> eps = new ArrayList<>();
+        for (PendingUnregister p : left) eps.add(p.endpoint);
+        assertEquals(Arrays.asList("https://ntfy.exemple.test/upab12cd34panne",
+                "https://ntfy.exemple.test/upab12cd34suivant"), eps);
+        assertNotNull(sessions.get("cfg3"));
+    }
+
+    @Test
+    public void aRemovedAccountWithoutNtfyLosesItsSessionCopy() throws Exception {
+        mirror(3, true, account("cfg1", "Serveur A"), account("cfg2", "Serveur B"));
+        mirrorSession("cfg1", "sid_exemple_garde");
+        mirrorSession("cfg2", "sid_exemple_parti");
+        engine().onSettingsChanged();
+        mirror(3, true, account("cfg1", "Serveur A"));
+        engine.onSettingsChanged();
+        assertNull(sessions.get("cfg2"));
+        assertNotNull(sessions.get("cfg1"));
+    }
+
+    @Test
+    public void aRemovedAccountLosesItsSessionOnceItsEntriesExpire() throws Exception {
+        mirror(3, true, account("cfg1", "Serveur A"), account("cfg3", "Serveur C"));
+        mirrorSession("cfg3", "sid_exemple_parti");
+        engine().onSettingsChanged();
+        sessions.addPendingUnregister("cfg3", "https://ntfy.exemple.test/upab12cd34panne");
+        mirror(3, true, account("cfg1", "Serveur A"));
+        engine.onSettingsChanged();
+        assertNotNull(sessions.get("cfg3"));
+        engine.runDue(level(3));
+        assertNotNull(sessions.get("cfg3"));
+
+        now += NativeSessions.PENDING_MAX_AGE_MS + 1;
+        // a session mirrored after the last publish belongs to an account on its way in
+        sessions.put(new NativeSession("cfg4", odooServer.url("/").toString(), "db_exemple", "sid_exemple_neuf", now));
+        engine.runDue(level(3));
+        assertTrue(sessions.pending().isEmpty());
+        assertNull(sessions.get("cfg3"));
+        assertNotNull(sessions.get("cfg4"));
     }
 }

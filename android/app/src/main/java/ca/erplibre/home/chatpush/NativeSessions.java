@@ -3,7 +3,9 @@ package ca.erplibre.home.chatpush;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.LongSupplier;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -110,6 +112,28 @@ final class NativeSessions {
     /** The account's queued endpoints are unregistered: forgets them, not the session copy. */
     void donePending(String configId) {
         kv.remove("pend:" + configId);
+    }
+
+    /**
+     * Forgets the account's queued endpoints that are in sent; an endpoint
+     * queued meanwhile stays, and so does the session copy.
+     */
+    void donePending(String configId, Set<String> sent) {
+        List<PendingUnregister> left = new ArrayList<>();
+        for (PendingUnregister p : read(configId)) {
+            if (!sent.contains(p.endpoint)) left.add(p);
+        }
+        if (left.isEmpty()) kv.remove("pend:" + configId);
+        else write(configId, left);
+    }
+
+    /** The accounts holding a session copy, readable or not. */
+    Set<String> configIds() {
+        Set<String> out = new HashSet<>();
+        for (String k : kv.keys()) {
+            if (k.startsWith("sess:")) out.add(k.substring("sess:".length()));
+        }
+        return out;
     }
 
     private List<PendingUnregister> read(String configId) {

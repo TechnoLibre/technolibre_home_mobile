@@ -62,12 +62,16 @@ final class HealthSnapshot {
     final List<Account> accounts;
     /** Messages dropped because their body did not decrypt or did not parse. */
     final int undecryptable;
-    /** Messages dropped on a platform fault (cipher unavailable, sealed key unreadable). */
-    final int decryptFaults;
+    /**
+     * Messages dropped on a fault of this side: the platform cipher, a sealed
+     * key that no longer opens, an unexpected error while building or drawing
+     * the notification.
+     */
+    final int faults;
 
     HealthSnapshot(long at, int level, int effectiveLevel, String mode, boolean realtimeBuild,
             boolean serviceAlive, List<Ntfy> ntfys, List<Account> accounts, int undecryptable,
-            int decryptFaults) {
+            int faults) {
         this.at = at;
         this.level = level;
         this.effectiveLevel = effectiveLevel;
@@ -77,7 +81,7 @@ final class HealthSnapshot {
         this.ntfys = new ArrayList<>(ntfys);
         this.accounts = new ArrayList<>(accounts);
         this.undecryptable = undecryptable;
-        this.decryptFaults = decryptFaults;
+        this.faults = faults;
     }
 
     JSONObject toJson() {
@@ -112,7 +116,7 @@ final class HealthSnapshot {
             }
             o.put("accounts", as);
             o.put("undecryptable", undecryptable);
-            o.put("decryptFaults", decryptFaults);
+            o.put("faults", faults);
             return o;
         } catch (JSONException e) {
             throw new IllegalStateException("health unwritable");
