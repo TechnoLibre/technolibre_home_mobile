@@ -62,15 +62,20 @@ export class ChatLifecycle {
    * Hooks the chat to the application list: each change reaches
    * applicationsChanged; an edit that renames the account holds its
    * uploads while the rows move, then the closed-app notifications move
-   * to the new id (ChatPush.rekey, queued, not awaited); a delete lets
-   * them go (ChatPush.forget) while the application still exists.
+   * to the new id (ChatPush.rekey, queued, not awaited, also when resuming
+   * fails); a delete, or an edit to another login, database or server,
+   * lets them go (ChatPush.forget) while the application still holds its
+   * credentials.
    */
   followApplications(apps: AppService): void {
     apps.onChanged = (change) => this.applicationsChanged(change);
     apps.beforeRename = (oldConfigId, newConfigId) => this.chat.pauseUploads(oldConfigId, newConfigId);
     apps.afterRename = async (oldConfigId, newConfigId) => {
-      await this.chat.resumeUploads(oldConfigId, newConfigId);
-      this.chat.push.rekey(oldConfigId, newConfigId).catch((e) => console.warn("[chat] push rekey failed:", e instanceof Error ? e.message : e));
+      try {
+        await this.chat.resumeUploads(oldConfigId, newConfigId);
+      } finally {
+        this.chat.push.rekey(oldConfigId, newConfigId).catch((e) => console.warn("[chat] push rekey failed:", e instanceof Error ? e.message : e));
+      }
     };
     apps.beforeDelete = (configId) => this.chat.push.forget(configId);
   }

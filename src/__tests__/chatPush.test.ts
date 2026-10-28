@@ -459,6 +459,54 @@ describe("ChatPush", () => {
     expect(lastMirror().accounts.map((a) => a.configId)).toContain(moved);
   });
 
+  it("an edit to another login lets the old account go before its application changes", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    await chat.push.idle();
+    const apps = new AppService(env.db);
+    new ChatLifecycle(chat).followApplications(apps);
+    const forget = vi.spyOn(chat.push, "forget");
+    const update = vi.spyOn(env.db, "updateApplication");
+    const app = (await env.db.getAllApplications())[0];
+    native.calls.length = 0;
+    await apps.edit({ url: A.url, username: A.username }, { ...app, username: "bruno" });
+    await chat.push.idle();
+    expect(forget).toHaveBeenCalledWith(ids[0]);
+    expect(forget.mock.invocationCallOrder[0]).toBeLessThan(update.mock.invocationCallOrder[0]);
+    expect(odoo.kw("unregister_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${NTFY}/upab12cd34fake1`]);
+    expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[0], pendingEndpoint: null }]);
+    const drop = indexOf("publishSettings", (o) => !o.accounts.some((a: any) => a.configId === ids[0]));
+    expect(indexOf("unsubscribe")).toBeLessThan(drop);
+    expect(await chat.repo.pushRow(ids[0])).toMatchObject({ ntfyUrl: null, endpoint: null });
+    // A url spelled differently renames instead: no forget
+    forget.mockClear();
+    await apps.edit({ url: B.url, username: B.username }, { ...(await env.db.getAllApplications())[1], url: `${B.url}/` });
+    expect(forget).not.toHaveBeenCalled();
+  });
+
+  it("a registration queued behind a forget or a rekey copies no session of the old id", async () => {
+    await storeSession(A, "sid-a");
+    const src = await sourceOf(ids[0]);
+    native.calls.length = 0;
+    const forgotten = chat.push.forget(ids[0]);
+    const late = chat.push.ensureRegistered(src);
+    await forgotten;
+    expect(await late).toBe("none");
+    expect(native.callsOf("mirrorSession")).toEqual([]);
+    // A rekey: the old id is no longer an account
+    const srcB = await sourceOf(ids[1]);
+    await storeSession(B, "sid-b");
+    const app = (await env.db.getAllApplications())[1];
+    const renamed = `${B.url}/|alice|db1`;
+    await env.db.updateApplication(B.url, B.username, { ...app, url: `${B.url}/` });
+    await env.db.renameSyncConfigId(ids[1], renamed);
+    native.calls.length = 0;
+    const moved = chat.push.rekey(ids[1], renamed);
+    const stale = chat.push.ensureRegistered(srcB);
+    await moved;
+    await stale;
+    expect(native.callsOf("mirrorSession").filter((o: any) => o.configId === ids[1])).toEqual([]);
+  });
+
   it("a rename that did not move the rows changes nothing", async () => {
     await chat.push.applyLink([ids[0]], link());
     native.calls.length = 0;
@@ -474,6 +522,7 @@ describe("ChatPush", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await expect(chat.load(await sourceOf(ids[0]))).resolves.toBeUndefined();
     expect((await chat.repo.sourceState(ids[0])).loadedAt).toBe(clock.toISOString());
+    await vi.waitFor(() => expect(odoo.kw("register_devices")).toHaveLength(2));
     await vi.advanceTimersByTimeAsync(PUSH_RPC_TIMEOUT_MS);
     await chat.push.idle();
   });

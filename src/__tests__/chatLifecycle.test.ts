@@ -43,4 +43,16 @@ describe("ChatLifecycle purge schedule", () => {
         await Promise.resolve();
         expect(chat.startRealtime).toHaveBeenCalled();
     });
+
+    it("a rename moves the push to the new id even when resuming the uploads fails", async () => {
+        const chat = {
+            ...fake(),
+            resumeUploads: vi.fn().mockRejectedValue(new Error("disk")),
+            push: { newSession: vi.fn(), rekey: vi.fn().mockResolvedValue(undefined) },
+        } as any;
+        const apps: any = {};
+        new ChatLifecycle(chat).followApplications(apps);
+        await expect(apps.afterRename("old", "new")).rejects.toThrow("disk");
+        expect(chat.push.rekey).toHaveBeenCalledWith("old", "new");
+    });
 });

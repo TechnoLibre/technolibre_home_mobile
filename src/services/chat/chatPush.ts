@@ -546,9 +546,14 @@ export class ChatPush {
     }
   }
 
-  /** Copies the account's stored session (OdooRpcClient.storedSession, no login), at levels 1 to 4. */
+  /**
+   * Copies the account's stored session (OdooRpcClient.storedSession, no
+   * login), at levels 1 to 4, while it is still a chat account: a load
+   * that began before a forget or a rekey copies nothing for the id let go.
+   */
   private async copyStored(src: ChatSource): Promise<void> {
     if (chatSettings().notifyLevel > 4) return;
+    if (!(await this.liveSources()).some((s) => s.configId === src.configId)) return;
     const stored = await this.rpc.storedSession(src.creds);
     if (stored && stored.odooMajorVersion === CHAT_MAJOR) await this.copySession(src.configId, src.creds, stored);
   }

@@ -56,10 +56,12 @@ export class AppService {
    */
   afterRename: RenameHook | null = null;
   /**
-   * Awaited before the row of an application with a database is deleted
-   * (delete and clear), with its sync config id: the chat push
-   * unregisters the phone from that server while it still has the
-   * credentials. A hook that fails is logged and the delete goes on.
+   * Awaited before an application's sync config id goes, with that id:
+   * its row deleted (delete and clear), or an edit that leaves the id
+   * with no application (another login, database or server; a url merely
+   * spelled differently renames instead). The chat push unregisters the
+   * phone from that server while it still has the credentials. A hook
+   * that fails is logged and the change goes on.
    */
   beforeDelete: ((configId: string) => Promise<void>) | null = null;
 
@@ -195,6 +197,9 @@ export class AppService {
     if (options?.ignorePassword) {
       newApp = Object.assign({}, newApp, { password: appToEdit.password });
     }
+    const renames = appID.username === newApp.username && sameServerUrl(appID.url, newApp.url)
+      && appToEdit.database === newApp.database;
+    if (!renames && configIdOf(appToEdit) !== configIdOf(newApp)) await this.runBeforeDelete(appToEdit);
 
     await this._db.updateApplication(
       appID.url,
@@ -206,8 +211,7 @@ export class AppService {
     // database (url spelled differently): a remote id means nothing
     // elsewhere, so other edits leave them behind, non-live, and the next
     // push creates new records.
-    if (appID.username === newApp.username && sameServerUrl(appID.url, newApp.url)
-      && appToEdit.database === newApp.database) {
+    if (renames) {
       const oldConfigId = syncConfigIdFor(appID.url, appID.username, appToEdit.database);
       const newConfigId = syncConfigIdFor(newApp.url, newApp.username, newApp.database);
       if (oldConfigId !== newConfigId) await this.renameConfigId(oldConfigId, newConfigId);
