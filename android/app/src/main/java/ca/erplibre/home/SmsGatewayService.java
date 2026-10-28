@@ -176,7 +176,15 @@ public class SmsGatewayService extends Service {
             return START_NOT_STICKY;
         }
 
-        startForegroundCompat();
+        if (!startForegroundCompat()) {
+            // Android refuse le premier plan à une app en arrière-plan : s'arrêter
+            // plutôt que planter. START_NOT_STICKY, car une relance en
+            // arrière-plan serait refusée de même ; la surveillance réessaie.
+            journal.warn(SmsJournal.CAT_SERVICE,
+                    "Premier plan refusé par Android, service arrêté", null);
+            stopSelf();
+            return START_NOT_STICKY;
+        }
 
         if (running) {
             if (ACTION_KICK.equals(action)) {
@@ -285,10 +293,11 @@ public class SmsGatewayService extends Service {
     /**
      * La notification permanente est partagée avec les notifications du
      * clavardage (PermanentNotice) : un seul avis, dont la passerelle tient
-     * une ligne, avec son action « Arrêter » tant qu'elle le tient.
+     * une ligne, avec son action « Arrêter » tant qu'elle le tient. Faux
+     * quand Android refuse le premier plan.
      */
-    private void startForegroundCompat() {
-        PermanentNotice.hold(this, PermanentNotice.Holder.SMS, statusLine());
+    private boolean startForegroundCompat() {
+        return PermanentNotice.hold(this, PermanentNotice.Holder.SMS, statusLine());
     }
 
     private String statusLine() {

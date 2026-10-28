@@ -26,10 +26,14 @@ import java.util.concurrent.RejectedExecutionException;
  * Type specialUse, not dataSync: Android 15 caps dataSync at six hours per
  * twenty-four, and the connection must stay open.
  *
- * The level is re-read at each start, when the default network comes back,
- * when wifi comes or goes (level 2 listens in realtime on wifi or charger
- * only) and when the charger is plugged or unplugged. A level that no
- * longer wants the service stops it.
+ * Each start holds the notice first, before the runtime is built, so the
+ * foreground deadline is met; a start Android refuses (app in the
+ * background) stops the service without a sticky restart, and health then
+ * reports it dead. The level is re-read at each start, when wifi comes or
+ * goes (level 2 listens in realtime on wifi or charger only) and when the
+ * charger is plugged or unplugged; a returning network only reopens the
+ * waiting streams. A level that no longer wants the service stops it, with
+ * stopSelfResult on the latest start id so a newer start is never lost.
  *
  * No wakelock is held while waiting: the device sleeps between messages,
  * and a permanent wakelock is what vendor app killers act on. The engine
@@ -46,22 +50,32 @@ public class ChatPushService extends Service {
     private ConnectivityManager.NetworkCallback networkCallback;
     private BroadcastReceiver powerReceiver;
     private boolean started;
+    private volatile int lastStartId;
     /** Whether the default network was wifi or ethernet at the last callback; null before the first. */
     private Boolean onWifi;
 
     @Override
     public void onCreate() {
         super.onCreate();
-        runtime = ChatPushRuntime.get(this);
         worker = Executors.newSingleThreadExecutor();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        PermanentNotice.hold(this, PermanentNotice.Holder.CHAT, runtime.permanentLine());
+        lastStartId = startId;
+        // the first start holds with an empty line: the runtime is built after the deadline is met
+        String line = runtime == null ? "" : runtime.permanentLine();
+        if (!PermanentNotice.hold(this, PermanentNotice.Holder.CHAT, line)) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        if (runtime == null) {
+            runtime = ChatPushRuntime.get(this);
+            PermanentNotice.update(this, PermanentNotice.Holder.CHAT, runtime.permanentLine());
+        }
         if (!started) {
             started = true;
-            runtime.serviceStarted(line -> PermanentNotice.update(this, PermanentNotice.Holder.CHAT, line));
+            runtime.serviceStarted(next -> PermanentNotice.update(this, PermanentNotice.Holder.CHAT, next));
             registerNetworkCallback();
             registerPowerReceiver();
         }
@@ -102,7 +116,7 @@ public class ChatPushService extends Service {
     /** Applies the level on the worker (leaving realtime polls, on the network); stops when it is not wanted. */
     private void reapply() {
         submit(() -> {
-            if (!runtime.applyRealtime()) stopSelf();
+            if (!runtime.applyRealtime()) stopSelfResult(lastStartId);
         });
     }
 
@@ -128,23 +142,20 @@ public class ChatPushService extends Service {
             @Override
             public void onAvailable(Network network) {
                 submit(runtime::onNetworkAvailable);
-                reapply();
             }
 
-            /** Called for signal changes too: only a wifi change re-reads the level. */
+            /**
+             * Called on every network change and for signal changes too: only
+             * a wifi change re-reads the level. The first call records the
+             * state onStartCommand already applied.
+             */
             @Override
             public void onCapabilitiesChanged(Network network, NetworkCapabilities caps) {
                 boolean wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
                         || caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET);
-                if (onWifi != null && onWifi == wifi) return;
+                Boolean was = onWifi;
                 onWifi = wifi;
-                reapply();
-            }
-
-            @Override
-            public void onLost(Network network) {
-                onWifi = null;
-                reapply();
+                if (was != null && was != wifi) reapply();
             }
         };
         try {

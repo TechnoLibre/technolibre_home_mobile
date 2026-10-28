@@ -35,9 +35,9 @@ public class ChatPushJob extends JobService {
 
     /**
      * Aligns the job and the permanent service with the mirrored level:
-     * level 5 cancels the job and stops the service; any other schedules
-     * the job, and starts the service when the level wants it (stops it
-     * otherwise). A running service is asked to re-read the level.
+     * level 5 cancels the job; any other schedules it, and starts the
+     * service when the level wants it. A running service is asked to re-read
+     * the level and stops itself when the level no longer wants it.
      */
     public static void apply(Context c) {
         PushLevelPolicy.Effective e = ChatPushRuntime.effective(c);

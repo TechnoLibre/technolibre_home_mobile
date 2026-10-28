@@ -56,12 +56,18 @@ final class RealtimeHost {
         }
     }
 
-    /** Stops the service; stopService is allowed from the background, unlike a start. */
+    /**
+     * Asks a running service to re-read the level, which stops it when the
+     * level no longer wants it. No stopService: one sent right after a
+     * startForegroundService, before the service reached startForeground,
+     * makes Android kill the app. A service still starting re-reads the
+     * level in its own onStartCommand.
+     */
     static void stop(Context c) {
         Class<?> cls = service();
-        if (cls == null) return;
+        if (cls == null || !ChatPushRuntime.serviceRunning()) return;
         try {
-            c.stopService(new Intent(c, cls));
+            c.startService(new Intent(c, cls));
         } catch (IllegalStateException | SecurityException e) {
             Log.w(TAG, "service not stopped: " + e.getClass().getSimpleName());
         }

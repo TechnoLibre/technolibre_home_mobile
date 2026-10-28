@@ -29,6 +29,13 @@ import java.util.Map;
  * the text left: a detached notification loses its foreground flag, and
  * the re-assertion gives it back. The last one to release removes it.
  *
+ * Android 12 and later may refuse startForeground to an app in the
+ * background (ForegroundServiceStartNotAllowedException, an
+ * IllegalStateException). A refused hold is undone and reported to the
+ * caller, which stops; a refused re-assertion falls back to a plain post of
+ * the text left, the remaining service keeping the foreground state it
+ * already had. Only the exception class is logged.
+ *
  * Every method is safe from any thread; all run under one lock, and none
  * calls back into a holder.
  */
@@ -52,15 +59,25 @@ public final class PermanentNotice {
     /**
      * Makes s a foreground service holding the notice with line, and draws
      * the combined text. A service that already holds only updates its line.
+     * Returns false when Android refuses the foreground start: nothing is
+     * held then, and the caller is expected to stop.
      */
-    public static void hold(Service s, Holder h, String line) {
+    public static boolean hold(final Service s, Holder h, String line) {
         synchronized (LOCK) {
             boolean held = SERVICES.get(h) == s;
             STATE.hold(h, line);
             SERVICES.put(h, s);
-            Notification n = build(s);
-            if (held) notify(s, n);
-            else startForeground(s, n);
+            final Notification n = build(s);
+            if (held) {
+                notify(s, n);
+                return true;
+            }
+            String refusal = tryForeground(() -> startForeground(s, n), null);
+            if (refusal == null) return true;
+            Log.w(TAG, "hold refused: " + refusal);
+            SERVICES.remove(h);
+            STATE.release(h);
+            return false;
         }
     }
 
@@ -92,8 +109,26 @@ public final class PermanentNotice {
                 return;
             }
             stopForeground(s, false);
-            Service o = SERVICES.get(other);
-            if (o != null) startForeground(o, build(o));
+            final Service o = SERVICES.get(other);
+            if (o == null) return;
+            final Notification n = build(o);
+            String refusal = tryForeground(() -> startForeground(o, n), () -> notify(o, n));
+            if (refusal != null) Log.w(TAG, "re-assertion refused, notice posted: " + refusal);
+        }
+    }
+
+    /**
+     * Runs start; when it throws an IllegalStateException (a foreground start
+     * Android refuses), runs fallback if any and returns the exception's
+     * class name. Null when start went through. Other exceptions propagate.
+     */
+    static String tryForeground(Runnable start, Runnable fallback) {
+        try {
+            start.run();
+            return null;
+        } catch (IllegalStateException e) {
+            if (fallback != null) fallback.run();
+            return e.getClass().getSimpleName();
         }
     }
 
@@ -208,10 +243,12 @@ public final class PermanentNotice {
             return "ERPLibre";
         }
 
+        /** A holder whose line is still empty (its first hold, before its state is known) adds none. */
         List<String> lines() {
             List<String> out = new ArrayList<>();
             boolean several = lines.size() > 1;
             for (Map.Entry<Holder, String> e : lines.entrySet()) {
+                if (e.getValue().isEmpty()) continue;
                 out.add(several && e.getKey() == Holder.SMS ? "Passerelle SMS : " + e.getValue() : e.getValue());
             }
             return out;
