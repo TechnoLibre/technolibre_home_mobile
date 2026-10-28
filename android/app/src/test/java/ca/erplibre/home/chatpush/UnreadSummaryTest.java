@@ -46,10 +46,13 @@ public class UnreadSummaryTest {
     @Test
     public void theInboxCountsOnceWithoutTheChannelMentions() throws Exception {
         JSONObject d = load();
-        // inbox 5 holds the 3 mentions of the channel: 2 left, plus 10
+        // inbox 7 holds the 3 mentions of the channel and the 2 of an unpinned chat, which the JS
+        // takes out too (it subtracts every cached channel's mentions): 2 left, plus 10
         assertEquals(12, UnreadSummary.of(d, null, NOW).total);
         d.getJSONObject("Store").getJSONObject("inbox").put("counter", 1);
         assertEquals(10, UnreadSummary.of(d, null, NOW).total);
+        d.getJSONObject("Store").getJSONObject("inbox").put("counter", 6);
+        assertEquals(11, UnreadSummary.of(d, null, NOW).total);
     }
 
     @Test

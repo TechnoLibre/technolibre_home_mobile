@@ -79,7 +79,7 @@ final class PushStore {
     /**
      * The account's subscription on this server. An existing one is returned
      * as is unless renew is set, it sits on another server or its topic no
-     * longer starts with the server's prefix; otherwise a new key pair, a new
+     * was drawn under another prefix (compared exactly); otherwise a new key pair, a new
      * auth secret and a new topic (prefix + 22 of [a-z0-9]) replace it.
      * IllegalArgumentException when the server is unknown.
      */
@@ -87,7 +87,7 @@ final class PushStore {
         NtfyServer s = ntfy(ntfyUrl);
         if (s == null) throw new IllegalArgumentException("unknown ntfy server");
         Subscription known = subscription(configId);
-        if (known != null && !renew && known.ntfyUrl.equals(s.url) && known.topic.startsWith(s.prefix)) {
+        if (known != null && !renew && known.ntfyUrl.equals(s.url) && s.prefix.equals(known.prefix)) {
             return known;
         }
         KeyPair pair = WebPushKeys.generate();
@@ -99,6 +99,7 @@ final class PushStore {
             JSONObject o = new JSONObject();
             o.put("ntfy", s.url);
             o.put("topic", topic.toString());
+            o.put("prefix", s.prefix);
             o.put("pub", WebPushKeys.b64url(pub));
             o.put("auth", seal(auth));
             o.put("priv", seal(pair.getPrivate().getEncoded()));
@@ -115,7 +116,7 @@ final class PushStore {
         if (raw == null) return null;
         try {
             JSONObject o = new JSONObject(raw);
-            return new Subscription(configId, o.getString("ntfy"), o.getString("topic"),
+            return new Subscription(configId, o.getString("ntfy"), o.getString("topic"), o.optString("prefix", ""),
                     WebPushKeys.unb64url(o.getString("pub")), box.open(o.getString("auth")),
                     o.getString("priv"), box);
         } catch (JSONException | GeneralSecurityException | IllegalArgumentException e) {

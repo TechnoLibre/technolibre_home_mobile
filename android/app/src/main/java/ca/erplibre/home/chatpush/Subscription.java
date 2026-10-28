@@ -13,16 +13,19 @@ final class Subscription {
     final String configId;
     final String ntfyUrl;
     final String topic;
+    /** The server prefix the topic was drawn under. */
+    final String prefix;
     final byte[] publicKey;
     final byte[] authSecret;
     private final String sealedPrivate;
     private final SecretBox box;
 
-    Subscription(String configId, String ntfyUrl, String topic, byte[] publicKey, byte[] authSecret,
+    Subscription(String configId, String ntfyUrl, String topic, String prefix, byte[] publicKey, byte[] authSecret,
             String sealedPrivate, SecretBox box) {
         this.configId = configId;
         this.ntfyUrl = ntfyUrl;
         this.topic = topic;
+        this.prefix = prefix;
         this.publicKey = publicKey;
         this.authSecret = authSecret;
         this.sealedPrivate = sealedPrivate;

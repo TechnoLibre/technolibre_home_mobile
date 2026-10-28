@@ -146,4 +146,28 @@ public class OdooDirectTest {
         assertEquals("unregister_devices", p.getString("method"));
         assertEquals("http://ntfy.exemple.test/upab12cd34topic", p.getJSONObject("kwargs").getString("endpoint"));
     }
+
+    @Test
+    public void aBodyThatIsNotJsonIsProtocol() throws Exception {
+        server.enqueue(new MockResponse().setBody("<html>login</html>"));
+        try {
+            odoo.check(session, true, NOW);
+            fail();
+        } catch (OdooDirectException e) {
+            assertEquals(OdooDirectException.Kind.PROTOCOL, e.kind());
+        }
+    }
+
+    @Test
+    public void aPlatformCleartextRefusalIsCleartextBlocked() throws Exception {
+        OkHttpClient refusing = new OkHttpClient.Builder().addInterceptor(chain -> {
+            throw new java.net.UnknownServiceException("CLEARTEXT communication not permitted");
+        }).build();
+        try {
+            new OdooDirect(refusing).check(session, true, NOW);
+            fail();
+        } catch (OdooDirectException e) {
+            assertEquals(OdooDirectException.Kind.CLEARTEXT_BLOCKED, e.kind());
+        }
+    }
 }

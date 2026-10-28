@@ -76,6 +76,9 @@ final class UnreadSummary {
             JSONObject c = channels.optJSONObject(i);
             if (c == null || !c.has("id") || c.optBoolean("_DELETE", false)) continue;
             long id = c.optLong("id");
+            // Every cached channel's mentions leave the inbox counter, shown or not (chatService.unreadTotal)
+            int needaction = c.optInt("message_needaction_counter", 0);
+            mentions += needaction;
             JSONObject self = selfByChannel.get(id);
             Object sm = c.opt("selfMember");
             boolean isMember = self != null;
@@ -96,10 +99,8 @@ final class UnreadSummary {
             // shown(): a member, and a direct message only while pinned
             if (!isMember || ("chat".equals(type) && !c.optBoolean("is_pinned", false))) continue;
 
-            int needaction = c.optInt("message_needaction_counter", 0);
             int unread = self == null ? 0 : self.optInt("message_unread_counter", 0);
             int own = "channel".equals(type) ? needaction : unread;
-            mentions += needaction;
             if (own == 0) read.add(id);
             boolean muted = ahead(c.isNull("mute_until_dt") ? null : c.optString("mute_until_dt", null), nowMs)
                     || ahead(globalMuteUntil, nowMs);

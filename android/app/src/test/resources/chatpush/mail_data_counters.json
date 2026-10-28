@@ -7,7 +7,7 @@
     "inbox": {
       "id": "inbox",
       "model": "mail.box",
-      "counter": 5
+      "counter": 7
     }
   },
   "discuss.channel": [
@@ -79,7 +79,7 @@
       "channel_type": "chat",
       "name": "Non epingle",
       "is_pinned": false,
-      "message_needaction_counter": 0,
+      "message_needaction_counter": 2,
       "mute_until_dt": false,
       "selfMember": 108
     }

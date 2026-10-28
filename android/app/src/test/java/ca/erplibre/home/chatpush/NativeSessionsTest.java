@@ -43,4 +43,15 @@ public class NativeSessionsTest {
         sessions.donePending("cfg2");
         assertTrue(sessions.pending().isEmpty());
     }
+
+    @Test
+    public void anUnreadableEntryDropsOnlyItself() throws Exception {
+        sessions.addPendingUnregister("cfg1", "endpoint-un");
+        sessions.addPendingUnregister("cfg1", "endpoint-deux");
+        org.json.JSONArray arr = new org.json.JSONArray(kv.map.get("pend:cfg1"));
+        arr.getJSONObject(0).put("ep", "v1:bad:bad");
+        kv.map.put("pend:cfg1", arr.toString());
+        assertEquals(1, sessions.pending().size());
+        assertEquals("endpoint-deux", sessions.pending().get(0).endpoint);
+    }
 }

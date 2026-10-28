@@ -116,15 +116,21 @@ final class NativeSessions {
         List<PendingUnregister> out = new ArrayList<>();
         String raw = kv.get("pend:" + configId);
         if (raw == null) return out;
+        JSONArray arr;
         try {
-            JSONArray arr = new JSONArray(raw);
-            for (int i = 0; i < arr.length(); i++) {
+            arr = new JSONArray(raw);
+        } catch (JSONException e) {
+            return out;
+        }
+        // An entry that no longer opens is skipped alone; the others stay
+        for (int i = 0; i < arr.length(); i++) {
+            try {
                 JSONObject o = arr.getJSONObject(i);
                 out.add(new PendingUnregister(configId,
                         new String(box.open(o.getString("ep")), StandardCharsets.UTF_8), o.getLong("since")));
+            } catch (JSONException | GeneralSecurityException e) {
+                // dropped
             }
-        } catch (JSONException | GeneralSecurityException e) {
-            out.clear();
         }
         return out;
     }

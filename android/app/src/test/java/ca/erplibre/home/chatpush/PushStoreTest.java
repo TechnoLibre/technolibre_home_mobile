@@ -9,7 +9,6 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.regex.Pattern;
 import javax.crypto.spec.SecretKeySpec;
@@ -60,6 +59,15 @@ public class PushStoreTest {
     }
 
     @Test
+    public void aShorterPrefixThatTheOldTopicStartsWithStillRenews() {
+        Subscription a = store.subscribe("cfg1", URL, false);
+        store.putNtfy(new NtfyServer(URL, TOKEN, "upab12cd3", 43200));
+        Subscription b = store.subscribe("cfg1", URL, false);
+        assertNotEquals(a.topic, b.topic);
+        assertTrue(Pattern.matches("upab12cd3[a-z0-9]{22}", b.topic));
+    }
+
+    @Test
     public void byTopicFindsTheAccount() {
         store.subscribe("cfg1", URL, false);
         Subscription b = store.subscribe("cfg2", URL, false);
@@ -86,7 +94,11 @@ public class PushStoreTest {
             assertFalse(raw.contains(authUrl));
         }
         assertNotNull(store.ntfy(URL));
-        assertTrue(new String(priv, StandardCharsets.ISO_8859_1).length() > 0);
+        for (byte[] secret : new byte[][] {priv, s.authSecret}) {
+            StringBuilder hex = new StringBuilder();
+            for (byte b : secret) hex.append(String.format("%02x", b));
+            for (String raw : kv.map.values()) assertFalse(raw.contains(hex.toString()));
+        }
     }
 
     @Test
