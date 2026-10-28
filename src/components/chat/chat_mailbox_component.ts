@@ -179,6 +179,15 @@ export class ChatMailboxComponent extends EnhancedComponent {
                                 onDone.bind="onReplyDone" onCancel.bind="onReplyCancel"/>
     </div>`;
 
+    /** Follows the changes, shows the cache, reads the server, then opens the record `?thread=` asks for. */
+    async start(): Promise<void> {
+        this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
+        void this.watchNetwork();
+        await this.loadCache();
+        await this.refreshOnline();
+        await this.openRequestedThread();
+    }
+
     private _sources: ChatSource[] = [];
     /** The app has more than one account, whichever the box shows. */
     private _several = false;
@@ -210,14 +219,7 @@ export class ChatMailboxComponent extends EnhancedComponent {
             error: "",
             reply: null,
         });
-        onMounted(async () => {
-            this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
-            void this.watchNetwork();
-            await this.loadCache();
-            await this.openRequestedThread();
-            await this.refreshOnline();
-            await this.openRequestedThread();
-        });
+        onMounted(() => this.start());
         onWillUnmount(() => {
             this.unwatchNetwork();
             this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
@@ -277,8 +279,9 @@ export class ChatMailboxComponent extends EnhancedComponent {
      * through ChatInbox.openItem. Without such an item the inbox stays,
      * kept to the server `s` names. The address is rewritten without the
      * parameter before opening, so a return to this screen does not open
-     * the item again; a malformed parameter is ignored. Runs again after
-     * the first read of the server, since the cache may not hold the item yet.
+     * the item again; a malformed parameter is ignored. Runs after the
+     * server read (offline included), so the newest item is the server's,
+     * not the cache's.
      */
     async openRequestedThread(): Promise<void> {
         const params = new URLSearchParams(window.location.search);

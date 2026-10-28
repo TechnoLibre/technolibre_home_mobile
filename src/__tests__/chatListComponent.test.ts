@@ -873,4 +873,42 @@ describe("ChatListComponent listening banner", () => {
         await c.loadListening();
         expect([c.state.listeningText, c.state.listeningOff]).toEqual(["", false]);
     });
+
+    it("an unreadable native state raises the banner with the unknown reason", async () => {
+        const c = withPush({});
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        c.chatService.push.native.failNext("status");
+        await c.loadListening();
+        expect(c.state.listeningText).toBe("The phone is not listening: unexpected answer");
+        const d = withPush({});
+        d.chatService.repo.pushRows = vi.fn().mockRejectedValue(new Error("db"));
+        await d.loadListening();
+        warn.mockRestore();
+        expect(d.state.listeningText).toBe("The phone is not listening: unexpected answer");
+    });
+
+    it("a hanging status does not delay the list refresh", async () => {
+        const c = withPush({});
+        c.chatService.push.native.status = () => new Promise(() => {});
+        c.refreshOnline = vi.fn().mockResolvedValue(undefined);
+        await c.start();
+        expect(c.refreshOnline).toHaveBeenCalledTimes(1);
+    });
+
+    it("the banner is read again on a chat change and when the list shows again", async () => {
+        vi.useFakeTimers();
+        const c = withPush({});
+        c.refreshOnline = vi.fn().mockResolvedValue(undefined);
+        await c.start();
+        const status = () => c.chatService.push.native.callsOf("status").length;
+        const n = status();
+        c._onChanged();
+        await vi.advanceTimersByTimeAsync(300);
+        expect(status()).toBeGreaterThan(n);
+        const m = status();
+        document.dispatchEvent(new Event("visibilitychange"));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(status()).toBeGreaterThan(m);
+        vi.useRealTimers();
+    });
 });

@@ -418,4 +418,20 @@ describe("ChatMailboxComponent", () => {
         await c.openRequestedThread();
         expect(chat.inbox.openItem).not.toHaveBeenCalled();
     });
+
+    it("a thread parameter waits for the server read and opens the newest item then", async () => {
+        const chat: any = fakeChat(["a"]);
+        chat.inbox.items.mockResolvedValue([item("a", 603, { threadModel: "res.partner", threadId: 70 })]);
+        chat.inbox.refresh.mockImplementation(async () => {
+            chat.inbox.items.mockResolvedValue([
+                item("a", 640, { threadModel: "res.partner", threadId: 70 }),
+                item("a", 603, { threadModel: "res.partner", threadId: 70 }),
+            ]);
+            return { more: false, offline: false, oldestId: null };
+        });
+        const c = make(chat, "/chat/inbox?s=a&thread=res.partner,70");
+        await c.start();
+        expect(chat.inbox.openItem).toHaveBeenCalledTimes(1);
+        expect(chat.inbox.openItem.mock.calls[0][1].messageId).toBe(640);
+    });
 });

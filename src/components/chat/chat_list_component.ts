@@ -275,8 +275,23 @@ export class ChatListComponent extends EnhancedComponent {
         this._debounce = setTimeout(() => {
             this._debounce = null;
             this.loadCache();
+            void this.loadListening();
         }, CHANGE_DEBOUNCE_MS);
     };
+
+    /** The list comes back into view (the app returns from the background): the banner is read again. */
+    private _onVisible = () => {
+        if (document.visibilityState === "visible") void this.loadListening();
+    };
+
+    /** Follows the changes, builds the list from the cache, reads the banner beside the server read (a slow status never delays it). */
+    async start(): Promise<void> {
+        this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
+        document.addEventListener("visibilitychange", this._onVisible);
+        await this.loadCache();
+        void this.loadListening();
+        await this.refreshOnline();
+    }
 
     setup() {
         this.state = useState<ChatListState>({
@@ -297,13 +312,9 @@ export class ChatListComponent extends EnhancedComponent {
             listeningText: "",
             listeningOff: false,
         });
-        onMounted(async () => {
-            this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChanged);
-            await this.loadCache();
-            await this.loadListening();
-            await this.refreshOnline();
-        });
+        onMounted(() => this.start());
         onWillUnmount(() => {
+            document.removeEventListener("visibilitychange", this._onVisible);
             this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChanged);
             if (this._debounce !== null) clearTimeout(this._debounce);
             if (this._searchTimer !== null) clearTimeout(this._searchTimer);
@@ -314,7 +325,7 @@ export class ChatListComponent extends EnhancedComponent {
     /**
      * Reads whether the phone listens while the app is closed (the native
      * health): a banner naming the reasons, or at level 5 a quiet line.
-     * Off a native platform, or when native code does not answer, neither shows.
+     * Off a native platform neither shows; an unreadable state shows the banner with an unknown reason.
      */
     async loadListening(): Promise<void> {
         const native = this.chatService.push?.native;
@@ -328,6 +339,8 @@ export class ChatListComponent extends EnhancedComponent {
                 if (reasons.length > 0) text = t("chat.push_not_listening", { reason: reasons.join(" ; ") });
             } catch (e) {
                 console.warn("chat list: listening state unreadable", e instanceof Error ? e.message : String(e));
+                // An unreadable state is not a listening phone
+                text = t("chat.push_not_listening", { reason: reasonText(null) });
             }
         }
         this.state.listeningText = text;
