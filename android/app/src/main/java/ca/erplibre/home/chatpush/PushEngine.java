@@ -100,6 +100,13 @@ final class PushEngine {
     static final long BEAT_MAX_AGE_MS = 10L * 60 * 1000;
     /** Failed runs in a row before a status notification, at levels without the permanent service. */
     static final int FAILED_RUNS_FOR_STATUS = 2;
+    /**
+     * A connected stream with no contact for this long is taken for dead:
+     * three of ntfy's default keepalives (45 s), above the longest one an
+     * operator sets (about 100 s). Measured on the wall clock, which runs
+     * in deep sleep where the read timeout and the backoff do not.
+     */
+    static final long STALE_CONTACT_MS = 3 * 45_000L;
 
     private enum LinkState { CONNECTING, CONNECTED, POLLING, ERROR, OFF }
 
@@ -118,7 +125,7 @@ final class PushEngine {
         boolean waiting;
         LinkState state = LinkState.OFF;
         NtfyException.Kind reason;
-        /** The last close was a refusal no retry fixes; the reason stays until onSettingsChanged. */
+        /** The last close was a refusal no retry fixes; the reason stays until onStoresChanged. */
         boolean fatal;
         long contactAt;
         long contactSavedAt;
@@ -152,6 +159,8 @@ final class PushEngine {
     private final Random random = new Random();
     private final Map<String, Link> links = new LinkedHashMap<>();
     private final Map<String, AccountState> accounts = new HashMap<>();
+    /** Accounts whose owed check runs now, so a second drain does not take it too. */
+    private final Set<String> draining = new HashSet<>();
     private Set<String> mirrored;
     private boolean allowHttp;
     private boolean realtime;
@@ -217,17 +226,34 @@ final class PushEngine {
     }
 
     /**
-     * One run of the periodic job. OFF does nothing. POLL_15 polls every
-     * ntfy, POLL_60 an ntfy last polled 60 minutes ago or more. When the
-     * policy asks Odoo directly, every mirrored account without ntfy is
-     * checked, after any check a silence left owed. Then the pending
-     * unregisters are sent. At levels without the permanent service, two
-     * failed runs in a row of an ntfy or an account post one status
-     * notification, removed by the next success.
+     * One periodic run. A level that wants the permanent service while none
+     * runs (Android refused its start) polls every 15 minutes and counts its
+     * failed runs, as level 3 does: the run still fetches, and two failures
+     * say so. Health keeps the level, so the dead service stays reported.
      */
+    void runPeriod(PushLevelPolicy.Effective e, boolean serviceRunning) {
+        if (e.permanentService && !serviceRunning) runDue(PushLevelPolicy.withoutService(e), true);
+        else runDue(e);
+    }
+
+    /** runDue counting failed runs at the levels without the permanent service. */
     void runDue(PushLevelPolicy.Effective e) {
+        runDue(e, !e.permanentService);
+    }
+
+    /**
+     * One run of the periodic job. OFF does nothing. POLL_15 polls every
+     * ntfy, POLL_60 an ntfy last polled 60 minutes ago or more. REALTIME
+     * with the streams open reopens every stream waiting for its backoff
+     * and every connected one silent for STALE_CONTACT_MS, except those
+     * refused for good. When the policy asks Odoo directly, every mirrored
+     * account without ntfy is checked, after any check a silence left owed.
+     * Then the pending unregisters are sent. When counting, two failed runs
+     * in a row of an ntfy or an account post one status notification,
+     * removed by the next success.
+     */
+    void runDue(PushLevelPolicy.Effective e, boolean counting) {
         synchronized (runLock) {
-            boolean counting = !e.permanentService;
             List<Link> due = new ArrayList<>();
             List<String> direct = new ArrayList<>();
             synchronized (lock) {
@@ -242,6 +268,11 @@ final class PushEngine {
                     for (Link l : links.values()) {
                         if (e.mode == PushLevelPolicy.Mode.POLL_60 && now - lastPollAt(l.url) < POLL_60_MS) continue;
                         due.add(l);
+                    }
+                } else if (e.mode == PushLevelPolicy.Mode.REALTIME && realtime) {
+                    for (Link l : links.values()) {
+                        if (l.fatal) continue;
+                        if ((l.call == null && l.waiting) || stale(l, now)) reopen(l);
                     }
                 }
                 if (e.odooDirect) {
@@ -271,15 +302,28 @@ final class PushEngine {
     }
 
     /**
-     * The mirror changed. A removed account loses its notifications, and so
-     * does any tag of an account no longer mirrored (left by an earlier
-     * process). A changed ntfy set or cleartext permission reopens the
-     * streams; a refusal held for good is lifted and retried. A session copy
-     * the mirror no longer needs goes once nothing is left to unregister.
+     * A new mirror was published: its time is recorded (a session copy
+     * saved after it belongs to an account on its way in), then
+     * onStoresChanged.
      */
     void onSettingsChanged() {
         synchronized (lock) {
             settings.setEngineState("mirrorAt", Long.toString(clock.now()));
+            onStoresChanged();
+        }
+    }
+
+    /**
+     * What the engine reads changed: the mirror, the ntfy servers or the
+     * subscriptions. A removed account loses its notifications, and so
+     * does any tag of an account no longer mirrored (left by an earlier
+     * process). A changed ntfy set or cleartext permission reopens the
+     * streams; a refusal held for good is lifted and retried. A session copy
+     * the last mirror no longer needs goes once nothing is left to
+     * unregister.
+     */
+    void onStoresChanged() {
+        synchronized (lock) {
             Set<String> now = mirroredIds();
             for (String id : mirrored) {
                 if (!now.contains(id)) {
@@ -592,17 +636,31 @@ final class PushEngine {
         }, 0);
     }
 
-    /** Runs the checks owed to mirrored accounts; each is taken once. */
+    /**
+     * Runs the checks owed to mirrored accounts; each is taken once. The
+     * owed mark is cleared once the check ran, so a death during the check
+     * leaves it owed to the next run.
+     */
     private void drainOwedChecks() {
         List<String> owed = new ArrayList<>();
         synchronized (lock) {
             for (String id : mirroredIds()) {
-                if (settings.engineState("owe:" + id) == null) continue;
-                settings.setEngineState("owe:" + id, null);
+                if (settings.engineState("owe:" + id) == null || !draining.add(id)) continue;
                 owed.add(id);
             }
         }
-        for (String id : owed) checkAccount(id, false);
+        for (String id : owed) {
+            try {
+                checkAccount(id, false);
+                synchronized (lock) {
+                    settings.setEngineState("owe:" + id, null);
+                }
+            } finally {
+                synchronized (lock) {
+                    draining.remove(id);
+                }
+            }
+        }
     }
 
     /**
@@ -955,24 +1013,31 @@ final class PushEngine {
         boolean polling = e.mode == PushLevelPolicy.Mode.POLL_15 || e.mode == PushLevelPolicy.Mode.POLL_60;
         List<HealthSnapshot.Ntfy> ns = new ArrayList<>();
         for (Link l : links.values()) {
-            ns.add(new HealthSnapshot.Ntfy(l.url, stateOf(l, polling), lower(l.reason), l.contactAt,
+            ns.add(new HealthSnapshot.Ntfy(l.url, stateOf(l, polling, now), lower(l.reason), l.contactAt,
                     new ArrayList<>(l.configIds)));
         }
         List<HealthSnapshot.Account> as = new ArrayList<>();
-        for (AccountView a : settings.accounts()) as.add(accountHealth(a.configId, polling));
+        for (AccountView a : settings.accounts()) as.add(accountHealth(a.configId, polling, now));
         String mode = realtime ? "realtime" : e.mode.name().toLowerCase(Locale.ROOT);
         boolean alive = e.permanentService && now - settings.lastBeat() < BEAT_MAX_AGE_MS;
         return new HealthSnapshot(now, level, e.level, mode, realtimeBuild, alive, ns, as, undecryptable,
                 faults);
     }
 
-    private String stateOf(Link l, boolean polling) {
+    /** A connected stream silent for STALE_CONTACT_MS on the wall clock. Monitor held. */
+    private static boolean stale(Link l, long now) {
+        return l.state == LinkState.CONNECTED && now - l.contactAt > STALE_CONTACT_MS;
+    }
+
+    /** A stale stream reads as connecting: it is not counted as listening. */
+    private String stateOf(Link l, boolean polling, long now) {
+        if (realtime && stale(l, now)) return "connecting";
         if (realtime) return l.state == LinkState.POLLING ? "connecting" : l.state.name().toLowerCase(Locale.ROOT);
         if (l.state == LinkState.ERROR) return "error";
         return polling ? "polling" : "off";
     }
 
-    private HealthSnapshot.Account accountHealth(String configId, boolean polling) {
+    private HealthSnapshot.Account accountHealth(String configId, boolean polling, long now) {
         AccountState st = accounts.get(configId);
         long checkedAt = st == null ? 0L : st.lastCheckAt;
         Link l = linkOf(configId);
@@ -982,7 +1047,7 @@ final class PushEngine {
         }
         if (l != null) {
             String state;
-            String ls = stateOf(l, polling);
+            String ls = stateOf(l, polling, now);
             if ("connected".equals(ls) || "polling".equals(ls)) state = "ok";
             else if ("error".equals(ls)) state = "error";
             else state = "waiting";

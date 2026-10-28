@@ -30,7 +30,8 @@ import java.util.concurrent.RejectedExecutionException;
  * Each start holds the notice first, before the runtime is built, so the
  * foreground deadline is met; a start Android refuses (app in the
  * background) stops the service without a sticky restart, and health then
- * reports it dead. The level is re-read at each start, when wifi comes or
+ * reports it dead; so does a runtime that cannot be built, rather than a
+ * crash that START_STICKY would repeat. The level is re-read at each start, when wifi comes or
  * goes (level 2 listens in realtime on wifi or charger only) and when the
  * charger is plugged or unplugged; a returning network only reopens the
  * waiting streams. A level that no longer wants the service stops it, by
@@ -73,7 +74,14 @@ public class ChatPushService extends Service {
             return START_NOT_STICKY;
         }
         if (runtime == null) {
-            runtime = ChatPushRuntime.get(this);
+            try {
+                runtime = ChatPushRuntime.get(this);
+            } catch (RuntimeException e) {
+                // the class only: a message may carry a URL
+                Log.w(TAG, "runtime not built: " + e.getClass().getSimpleName());
+                stopSelf();
+                return START_NOT_STICKY;
+            }
             PermanentNotice.update(this, PermanentNotice.Holder.CHAT, runtime.permanentLine());
         }
         if (!started) {

@@ -29,8 +29,9 @@ import org.json.JSONObject;
  * The chat push of this process: one PushEngine over the native stores,
  * drawn by ChatNotifier, built on first use and kept for the life of the
  * process. The public methods are what the Capacitor plugin calls; each
- * one that changes what the engine reads (settings, ntfy servers,
- * subscriptions) ends with engine.onSettingsChanged().
+ * one that changes what the engine reads ends with engine.onSettingsChanged()
+ * for a new mirror (publishSettings), engine.onStoresChanged() for the ntfy
+ * servers and the subscriptions.
  *
  * The permanent service (ca.erplibre.home.chatpush.realtime, present only
  * in a realtime build) drives the engine through serviceStarted,
@@ -183,14 +184,14 @@ public final class ChatPushRuntime {
             return "protocol";
         }
         store.putNtfy(s);
-        engine.onSettingsChanged();
+        engine.onStoresChanged();
         return null;
     }
 
     /** Forgets the server, its cursor and seen ids; its accounts are unsubscribed by the caller. */
     public synchronized void removeNtfy(String url) {
         store.removeNtfy(url);
-        engine.onSettingsChanged();
+        engine.onStoresChanged();
     }
 
     /**
@@ -200,7 +201,7 @@ public final class ChatPushRuntime {
      */
     public synchronized JSONObject subscribe(String configId, String ntfyUrl, boolean renew) throws JSONException {
         Subscription s = store.subscribe(configId, ntfyUrl, renew);
-        engine.onSettingsChanged();
+        engine.onStoresChanged();
         return new JSONObject()
                 .put("topic", s.topic)
                 .put("p256dh", WebPushKeys.b64url(s.publicKey))
@@ -216,7 +217,7 @@ public final class ChatPushRuntime {
             sessions.addPendingUnregister(configId, pendingEndpoint);
         }
         store.unsubscribe(configId);
-        engine.onSettingsChanged();
+        engine.onStoresChanged();
     }
 
     /** Stores the account's session copy, dated now on the engine's clock, and clears its expired mark. */
@@ -312,9 +313,13 @@ public final class ChatPushRuntime {
         if (beatAt.compareAndSet(last, now)) settings.beat(now);
     }
 
-    /** One run of the periodic job at the level the settings and the power state give; blocks on the network. */
+    /**
+     * One run of the periodic job at the level the settings and the power
+     * state give; a level wanting the permanent service while none runs in
+     * this process polls (PushEngine.runPeriod). Blocks on the network.
+     */
     public void checkNow() {
-        engine.runDue(effective());
+        engine.runPeriod(effective(), serviceRunning);
     }
 
     PushLevelPolicy.Effective effective() {

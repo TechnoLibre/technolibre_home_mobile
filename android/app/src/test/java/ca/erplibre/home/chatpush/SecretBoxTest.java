@@ -7,6 +7,7 @@ import static org.junit.Assert.fail;
 
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.security.ProviderException;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.Test;
@@ -63,6 +64,26 @@ public class SecretBoxTest {
             fail("expected GeneralSecurityException");
         } catch (GeneralSecurityException expected) {
             // only v1 is known
+        }
+    }
+
+    @Test
+    public void aKeystoreRuntimeFaultIsAGeneralSecurityException() throws Exception {
+        String sealed = box.seal(secret);
+        SecretBox broken = new SecretBox(() -> {
+            throw new ProviderException("keystore fault");
+        });
+        try {
+            broken.open(sealed);
+            fail("expected GeneralSecurityException");
+        } catch (GeneralSecurityException expected) {
+            // the Keystore answers a ProviderException, a RuntimeException
+        }
+        try {
+            broken.seal(secret);
+            fail("expected GeneralSecurityException");
+        } catch (GeneralSecurityException expected) {
+            // the same on the way in
         }
     }
 }

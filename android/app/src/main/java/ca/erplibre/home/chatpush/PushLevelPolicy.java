@@ -82,6 +82,14 @@ final class PushLevelPolicy {
         return new Effective(level, mode, permanent, level <= 4);
     }
 
+    /**
+     * What a level wanting the permanent service does while none runs: it
+     * polls every 15 minutes, keeping its level and its want of the service.
+     */
+    static Effective withoutService(Effective e) {
+        return new Effective(e.level, Mode.POLL_15, e.permanentService, e.odooDirect);
+    }
+
     private static int clamp(int level) {
         return Math.max(1, Math.min(5, level));
     }

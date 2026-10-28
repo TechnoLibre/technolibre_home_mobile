@@ -14,9 +14,10 @@ import java.util.concurrent.Executors;
  * The 15-minute run of the chat push, owned by the system so it outlives
  * the process and, persisted, a reboot. Each run resolves the level against
  * the power state, starts the permanent service when the level wants it and
- * none runs, then runs PushEngine.runDue: the poll of levels 2 (off wifi
- * and charger), 3 and 4, the Odoo-direct checks and the pending
- * unregisters. Level 5 cancels the job.
+ * none runs, then runs PushEngine.runPeriod: the poll of levels 2 (off wifi
+ * and charger), 3 and 4, and of levels 1 and 2 while their service does not
+ * run; the reopening of dead streams; the Odoo-direct checks and the
+ * pending unregisters. Level 5 cancels the job.
  *
  * The run blocks on the network, so it goes to a worker thread and ends
  * with jobFinished; the system holds a wakelock until then.
@@ -95,8 +96,9 @@ public class ChatPushJob extends JobService {
             RealtimeHost.stop(c);
             return;
         }
+        // The start lands later, or never when Android refuses it: this run polls either way
         if (e.permanentService && !ChatPushRuntime.serviceRunning()) RealtimeHost.start(c);
-        ChatPushRuntime.get(c).engine().runDue(e);
+        ChatPushRuntime.get(c).checkNow();
     }
 
     /** Nothing to resume: the next period runs again. */

@@ -43,8 +43,9 @@ import ca.erplibre.home.chatpush.ChatPushRuntime;
  * that failed, never a token, a session id, a URL or an exception message.
  *
  * publishSettings ends by aligning the 15-minute job and the permanent
- * service with the new level (ChatPushJob.apply): the app is in the
- * foreground then, when Android lets it start a foreground service.
+ * service with the stored level (ChatPushJob.apply), even when the
+ * publish itself failed: the app is in the foreground then, when Android
+ * lets it start a foreground service.
  *
  * The foreground flag is written on the main thread at resume and pause,
  * without waiting for the JavaScript. A notification tap reaching the
@@ -136,9 +137,13 @@ public class ChatPushPlugin extends Plugin {
                 String k = it.next();
                 strings.put(k, s.optString(k, ""));
             }
-            runtime().publishSettings(c.getInt("level", 3), Boolean.TRUE.equals(c.getBoolean("allowHttp", false)),
-                    strings, accounts);
-            ChatPushJob.apply(getContext());
+            try {
+                runtime().publishSettings(c.getInt("level", 3), Boolean.TRUE.equals(c.getBoolean("allowHttp", false)),
+                        strings, accounts);
+            } finally {
+                // the level stored stands even when the engine failed to follow it
+                ChatPushJob.apply(getContext());
+            }
             c.resolve();
         });
     }

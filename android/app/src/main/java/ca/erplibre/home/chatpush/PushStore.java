@@ -78,9 +78,10 @@ final class PushStore {
 
     /**
      * The account's subscription on this server. An existing one is returned
-     * as is unless renew is set, it sits on another server or its topic no
-     * was drawn under another prefix (compared exactly); otherwise a new key pair, a new
-     * auth secret and a new topic (prefix + 22 of [a-z0-9]) replace it.
+     * as is, unless renew is set, it sits on another server, or its topic was
+     * drawn under another prefix (compared exactly); otherwise a new key
+     * pair, a new auth secret and a new topic (prefix + 22 of [a-z0-9])
+     * replace it.
      * IllegalArgumentException when the server is unknown.
      */
     Subscription subscribe(String configId, String ntfyUrl, boolean renew) {

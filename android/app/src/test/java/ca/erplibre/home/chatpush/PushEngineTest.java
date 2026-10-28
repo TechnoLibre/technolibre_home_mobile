@@ -7,6 +7,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.security.ProviderException;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -946,5 +947,141 @@ public class PushEngineTest {
         assertTrue(sessions.pending().isEmpty());
         assertNull(sessions.get("cfg3"));
         assertNotNull(sessions.get("cfg4"));
+    }
+
+    // ---- a dead service, a dead stream, a Keystore fault ----
+
+    @Test
+    public void aLevelThatWantsTheServiceWithNoneRunningPollsAndSaysSo() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(push(a, "m1", 42, "Alice Martin", "relevé")));
+        ntfyServer.enqueue(new MockResponse().setResponseCode(500));
+        ntfyServer.enqueue(new MockResponse().setResponseCode(500));
+        engine().runPeriod(level(1), false);
+        assertEquals(1, notifier.shown.size());
+        assertEquals("relevé", notifier.shown.get(0).text);
+        assertTrue(ntfyServer.takeRequest().getPath().contains("poll=1"));
+        JSONObject h = engine.health().toJson();
+        assertEquals(1, h.getInt("effectiveLevel"));
+        assertEquals("poll_15", h.getString("mode"));
+        assertFalse(h.getBoolean("serviceAlive"));
+
+        // two failed runs in a row say so, as at a level without the service
+        now += 15 * MINUTE;
+        engine.runPeriod(level(1), false);
+        assertTrue(notifier.onChannel("status").isEmpty());
+        now += 15 * MINUTE;
+        engine.runPeriod(level(1), false);
+        assertEquals(1, notifier.onChannel("status").size());
+
+        // a running service listens itself: the run polls nothing
+        now += 15 * MINUTE;
+        engine.runPeriod(level(1), true);
+        assertEquals(3, ntfyServer.getRequestCount());
+    }
+
+    @Test
+    public void aWaitingStreamReopensAtTheDueRun() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)));
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)));
+        engine().startRealtime();
+        awaitClosed(1);
+        // the backoff's clock stops in deep sleep: the reconnect may never come
+        engine.runDue(level(1));
+        await(() -> ntfyServer.getRequestCount() == 2, "the reopen of the due run");
+    }
+
+    @Test
+    public void aStreamSilentForThreeKeepalivesReopensAtTheDueRun() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        String opened = open(a.topic);
+        // the body promises more than it sends: the stream stays open, silent
+        ntfyServer.enqueue(new MockResponse().setBody(opened).setHeader("Content-Length", "100000"));
+        ntfyServer.enqueue(new MockResponse().setBody(opened).setHeader("Content-Length", "100000"));
+        engine().startRealtime();
+        await(() -> "connected".equals(state(n.url)), "the stream open");
+        PushStrings s = settings.strings();
+        assertEquals(s.get("permanent_listening_one"), engine.health().permanentLine(s, settings.accounts()));
+
+        now += PushEngine.STALE_CONTACT_MS - 1000;
+        engine.runDue(level(1));
+        assertEquals(1, ntfyServer.getRequestCount());
+
+        now += 2000;
+        assertEquals(s.get("permanent_waiting"), engine.health().permanentLine(s, settings.accounts()));
+        engine.runDue(level(1));
+        await(() -> ntfyServer.getRequestCount() == 2, "the reopen of a silent stream");
+    }
+
+    @Test
+    public void aKeystoreFaultLeavesTheEngineStanding() throws Exception {
+        mirror(3, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        store.subscribe("cfg1", n.url, false);
+        mirrorSession("cfg1", "sid_exemple_secret");
+        SecretBox broken = new SecretBox(() -> {
+            throw new ProviderException("keystore fault");
+        });
+        PushEngine e = new PushEngine(new PushStore(storeKv, broken), settings,
+                new NativeSessions(sessionsKv, broken, () -> now), new NtfyClient(new OkHttpClient()),
+                new OdooDirect(new OkHttpClient()), notifier, () -> now, scheduler);
+        e.onSettingsChanged();
+        e.runDue(level(3));
+        JSONObject h = e.health().toJson();
+        assertEquals(0, h.getJSONArray("ntfys").length());
+        assertEquals("no_session", accountHealth(h, "cfg1").getString("state"));
+        assertEquals(0, ntfyServer.getRequestCount());
+        assertEquals(0, odoo.requests.size());
+    }
+
+    @Test
+    public void aSubscribeAfterAPublishKeepsASessionCopiedMeanwhile() throws Exception {
+        mirror(3, true, account("cfg1", "Serveur A"));
+        engine().onSettingsChanged();
+        now += MINUTE;
+        // an account on its way in: its session is copied before the publish that names it
+        sessions.put(new NativeSession("cfg2", odooServer.url("/").toString(), "db_exemple", "sid_exemple_neuf", now));
+        now += MINUTE;
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        store.subscribe("cfg1", n.url, false);
+        engine.onStoresChanged();
+        assertNotNull(sessions.get("cfg2"));
+    }
+
+    @Test
+    public void anOwedCheckCutShortIsOwedStill() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        store.subscribe("cfg1", n.url, false);
+        mirrorSession("cfg1", "sid_exemple_secret");
+        settings.setEngineState("owe:cfg1", "1");
+        odoo.mailData = mailData(2);
+        // the summary's drawing fails: the check ends as a death would end it
+        notifier.failNext.set(1);
+        try {
+            engine().runDue(level(1));
+        } catch (IllegalArgumentException expected) {
+            // drawing failed
+        }
+        assertNotNull(settings.engineState("owe:cfg1"));
+
+        newEngine().runDue(level(1));
+        assertEquals(1, notifier.tagged("summary:cfg1").size());
+        assertNull(settings.engineState("owe:cfg1"));
+    }
+
+    private String state(String url) {
+        try {
+            return ntfyHealth(engine.health().toJson(), url).getString("state");
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
     }
 }
