@@ -1,0 +1,197 @@
+{
+  "Store": {
+    "self": {
+      "id": 7,
+      "type": "partner"
+    },
+    "inbox": {
+      "id": "inbox",
+      "model": "mail.box",
+      "counter": 5
+    }
+  },
+  "discuss.channel": [
+    {
+      "id": 1,
+      "channel_type": "chat",
+      "name": "Bruno Tremblay",
+      "is_pinned": true,
+      "message_needaction_counter": 0,
+      "mute_until_dt": false,
+      "selfMember": 101
+    },
+    {
+      "id": 2,
+      "channel_type": "chat",
+      "name": "Chat deux",
+      "is_pinned": true,
+      "message_needaction_counter": 0,
+      "mute_until_dt": false,
+      "selfMember": 102
+    },
+    {
+      "id": 3,
+      "channel_type": "group",
+      "name": "Groupe",
+      "is_pinned": true,
+      "message_needaction_counter": 0,
+      "mute_until_dt": false,
+      "selfMember": 103
+    },
+    {
+      "id": 4,
+      "channel_type": "channel",
+      "name": "General",
+      "is_pinned": true,
+      "message_needaction_counter": 3,
+      "mute_until_dt": false,
+      "selfMember": 104
+    },
+    {
+      "id": 5,
+      "channel_type": "channel",
+      "name": "Annonces",
+      "is_pinned": true,
+      "message_needaction_counter": 0,
+      "mute_until_dt": false,
+      "selfMember": 105
+    },
+    {
+      "id": 6,
+      "channel_type": "chat",
+      "name": "Chat muet",
+      "is_pinned": true,
+      "message_needaction_counter": 0,
+      "mute_until_dt": "9999-12-31 23:59:59",
+      "selfMember": 106
+    },
+    {
+      "id": 7,
+      "channel_type": "channel",
+      "name": "Lu",
+      "is_pinned": true,
+      "message_needaction_counter": 0,
+      "mute_until_dt": false,
+      "selfMember": 107
+    },
+    {
+      "id": 8,
+      "channel_type": "chat",
+      "name": "Non epingle",
+      "is_pinned": false,
+      "message_needaction_counter": 0,
+      "mute_until_dt": false,
+      "selfMember": 108
+    }
+  ],
+  "discuss.channel.member": [
+    {
+      "id": 101,
+      "thread": {
+        "id": 1,
+        "model": "discuss.channel"
+      },
+      "persona": {
+        "id": 7,
+        "type": "partner"
+      },
+      "message_unread_counter": 2
+    },
+    {
+      "id": 102,
+      "thread": {
+        "id": 2,
+        "model": "discuss.channel"
+      },
+      "persona": {
+        "id": 7,
+        "type": "partner"
+      },
+      "message_unread_counter": 1
+    },
+    {
+      "id": 103,
+      "thread": {
+        "id": 3,
+        "model": "discuss.channel"
+      },
+      "persona": {
+        "id": 7,
+        "type": "partner"
+      },
+      "message_unread_counter": 4
+    },
+    {
+      "id": 104,
+      "thread": {
+        "id": 4,
+        "model": "discuss.channel"
+      },
+      "persona": {
+        "id": 7,
+        "type": "partner"
+      },
+      "message_unread_counter": 5
+    },
+    {
+      "id": 105,
+      "thread": {
+        "id": 5,
+        "model": "discuss.channel"
+      },
+      "persona": {
+        "id": 7,
+        "type": "partner"
+      },
+      "message_unread_counter": 6
+    },
+    {
+      "id": 106,
+      "thread": {
+        "id": 6,
+        "model": "discuss.channel"
+      },
+      "persona": {
+        "id": 7,
+        "type": "partner"
+      },
+      "message_unread_counter": 9
+    },
+    {
+      "id": 107,
+      "thread": {
+        "id": 7,
+        "model": "discuss.channel"
+      },
+      "persona": {
+        "id": 7,
+        "type": "partner"
+      },
+      "message_unread_counter": 0
+    },
+    {
+      "id": 108,
+      "thread": {
+        "id": 8,
+        "model": "discuss.channel"
+      },
+      "persona": {
+        "id": 7,
+        "type": "partner"
+      },
+      "message_unread_counter": 3
+    },
+    {
+      "id": 900,
+      "thread": {
+        "id": 1,
+        "model": "discuss.channel"
+      },
+      "persona": {
+        "id": 8,
+        "type": "partner"
+      },
+      "message_unread_counter": 99
+    }
+  ]
+}

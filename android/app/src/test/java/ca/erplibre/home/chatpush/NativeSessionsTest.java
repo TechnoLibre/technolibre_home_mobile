@@ -1,0 +1,46 @@
+package ca.erplibre.home.chatpush;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
+import javax.crypto.spec.SecretKeySpec;
+import org.junit.Test;
+
+public class NativeSessionsTest {
+
+    private final MapKeyValue kv = new MapKeyValue();
+    private final SecretBox box = new SecretBox(() -> new SecretKeySpec(new byte[32], "AES"));
+    private long now = 1_000_000L;
+    private final NativeSessions sessions = new NativeSessions(kv, box, () -> now);
+
+    @Test
+    public void aSessionIsStoredSealedAndHidden() {
+        NativeSession s = new NativeSession("cfg1", "http://odoo.exemple.test:8069", "db_exemple", "sid_exemple_secret", 5L);
+        sessions.put(s);
+        for (String v : kv.map.values()) assertFalse(v.contains("sid_exemple_secret"));
+        assertEquals("sid_exemple_secret", sessions.get("cfg1").sessionId);
+        assertFalse(s.toString().contains("sid_exemple_secret"));
+        sessions.markExpired("cfg1");
+        assertTrue(sessions.expired("cfg1"));
+        sessions.put(s);
+        assertFalse(sessions.expired("cfg1"));
+        sessions.forget("cfg1");
+        assertNull(sessions.get("cfg1"));
+    }
+
+    @Test
+    public void pendingUnregistersExpireAfterSevenDays() {
+        sessions.addPendingUnregister("cfg1", "http://ntfy.exemple.test/upab12cd34topic");
+        sessions.addPendingUnregister("cfg1", "http://ntfy.exemple.test/upab12cd34topic");
+        assertEquals(1, sessions.pending().size());
+        assertEquals("http://ntfy.exemple.test/upab12cd34topic", sessions.pending().get(0).endpoint);
+        for (String v : kv.map.values()) assertFalse(v.contains("upab12cd34topic"));
+        now += NativeSessions.PENDING_MAX_AGE_MS + 1;
+        assertTrue(sessions.pending().isEmpty());
+        sessions.addPendingUnregister("cfg2", "e");
+        sessions.donePending("cfg2");
+        assertTrue(sessions.pending().isEmpty());
+    }
+}
