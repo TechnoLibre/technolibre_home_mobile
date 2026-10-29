@@ -13,7 +13,8 @@ export const CHAT_FINGERPRINT_FIELD = "erplibre_body_fingerprint";
 
 /**
  * Field the module adds to mail.message at 1.4: a computed Selection whose
- * keys name the level. A later level appends a key instead of adding a field.
+ * keys name the level. A later level (1.5 included) appends a key instead of
+ * adding a field.
  */
 export const CHAT_LEVEL_FIELD = "erplibre_chat_level";
 
@@ -32,12 +33,12 @@ async function moduleRow(
 }
 
 /** Module version as the fields it adds show it; null when none is visible. */
-export type ChatModuleLevel = "1.0" | "1.1" | "1.2" | "1.3" | "1.4";
+export type ChatModuleLevel = "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | "1.5";
 
-const LEVEL_RANK: Record<ChatModuleLevel, number> = { "1.0": 0, "1.1": 1, "1.2": 2, "1.3": 3, "1.4": 4 };
+const LEVEL_RANK: Record<ChatModuleLevel, number> = { "1.0": 0, "1.1": 1, "1.2": 2, "1.3": 3, "1.4": 4, "1.5": 5 };
 
 /** The level at which the module reads installed: the highest this app knows. */
-const CURRENT_LEVEL: ChatModuleLevel = "1.4";
+const CURRENT_LEVEL: ChatModuleLevel = "1.5";
 
 const isKnownLevel = (key: string): key is ChatModuleLevel => key in LEVEL_RANK;
 
@@ -74,7 +75,7 @@ export function levelAtLeast(level: ChatModuleLevel | null, min: ChatModuleLevel
 /**
  * Module version from the (cached or fresh) capabilities, which any user can
  * read: the selection of CHAT_LEVEL_FIELD on mail.message names the level
- * from 1.4; failing it, CHAT_FINGERPRINT_FIELD on mail.message is 1.3, CHAT_UUID_FIELD on
+ * from 1.4 (1.5 appends a key); failing it, CHAT_FINGERPRINT_FIELD on mail.message is 1.3, CHAT_UUID_FIELD on
  * ir.attachment is 1.2, on discuss.channel 1.1, on mail.message 1.0; null
  * when none carries it, or offline without a cached capability. `fresh`
  * skips the capability cache, as needed right after an install or an
@@ -109,9 +110,9 @@ export type ModuleProbe = { state: ChatModuleState; level: ChatModuleLevel | nul
 /**
  * State of the chat module on a server, with its level; it never persists
  * them.
- * - installed: the level is 1.4; or a system user sees the module row
+ * - installed: the level is the current one (1.5); or a system user sees the module row
  *   installed before the registry exposes any field;
- * - outdated: the level is 1.0 to 1.3 (the row of an older module reads
+ * - outdated: the level is 1.0 to 1.4 (the row of an older module reads
  *   installed until it is upgraded, so the level decides), or a system user
  *   sees the row waiting for an upgrade;
  * - available / absent: no level, and a system user sees the row not
@@ -198,7 +199,7 @@ export async function installModule(
 }
 
 /**
- * Upgrades a module 1.0 to 1.3 to the current version; system users only, as the
+ * Upgrades a module 1.0 to 1.4 to the current version; system users only, as the
  * module row is not readable otherwise. Any other state is returned as probed.
  */
 export async function upgradeModule(

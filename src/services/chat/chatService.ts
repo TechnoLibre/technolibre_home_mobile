@@ -218,6 +218,8 @@ export class ChatService {
     this.repo = new ChatRepository(db, now);
     this.push = new ChatPush(this.repo, rpc, opts.native ?? null, () => this.sources({ online: false }), now);
     this.push.isOnline = () => this.isOnline();
+    this.push.moduleLevel = async (configId) =>
+      this.moduleMode === "auto" ? effectiveLevel(await this.repo.sourceState(configId)) : null;
     this.push.conversations = (configId) => this.conversations([configId]);
     this.people = new ChatPeople(rpc, this.repo, () => this.isOnline());
     this.mentions = new ChatMentions(this.repo, rpc, this.people, () => this.isOnline());
@@ -657,7 +659,8 @@ export class ChatService {
    * needs module 1.1 (message posts also work with 1.0); an idempotent
    * attachment upload needs module 1.2; a guarded edit, which checks the
    * body fingerprint, needs module 1.3; server search, an idempotent star and
-   * an idempotent chatter post need module 1.4.
+   * an idempotent chatter post need module 1.4; marking the app's device,
+   * which the notification actions rely on, needs module 1.5.
    */
   async features(configId: string): Promise<{
     canRemoveMembers: boolean;
@@ -667,6 +670,7 @@ export class ChatService {
     serverSearch: boolean;
     idempotentStar: boolean;
     idempotentRecordPost: boolean;
+    appPush: boolean;
   }> {
     const state = await this.repo.sourceState(configId);
     const at = (min: ChatModuleLevel) => this.moduleMode === "auto" && levelAtLeast(effectiveLevel(state), min);
@@ -678,6 +682,7 @@ export class ChatService {
       serverSearch: at("1.4"),
       idempotentStar: at("1.4"),
       idempotentRecordPost: at("1.4"),
+      appPush: at("1.5"),
     };
   }
 

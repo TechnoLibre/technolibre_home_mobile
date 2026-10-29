@@ -91,6 +91,8 @@ function fakeOdoo() {
   const state = {
     vapid: VAPID,
     devices: new Map<string, { keys: any; host: string }>(),
+    /** The params of each call of the device route. */
+    marked: [] as any[],
     data: mailData() as any,
     hang: false,
     /** register_devices on this host stays on the wire. */
@@ -101,6 +103,10 @@ function fakeOdoo() {
     registerGate: null as Promise<void> | null,
     /** unregister_devices answers after this many ms. */
     unregisterDelayMs: 0,
+    /** Appended to the session id a login answers, to make a new session. */
+    sessionSuffix: "",
+    /** The device route answers an Odoo error. */
+    markRefuses: false,
     /** Called as /mail/data is read. */
     onMailData: null as (() => void) | null,
   };
@@ -117,12 +123,16 @@ function fakeOdoo() {
     calls.push({ host: u.hostname, path: u.pathname, params });
     switch (u.pathname) {
       case "/web/session/authenticate":
-        return ok({ uid: 2, session_id: `sid-${u.hostname}`, server_version_info: [u.hostname.startsWith("ancien") ? 17 : 18, 0, 0, "final", 0, ""] });
+        return ok({ uid: 2, session_id: `sid-${u.hostname}${state.sessionSuffix}`, server_version_info: [u.hostname.startsWith("ancien") ? 17 : 18, 0, 0, "final", 0, ""] });
       case "/web/session/get_session_info":
         return ok({
           uid: 2, partner_id: SELF, is_system: false, websocket_worker_version: "18.0-7", is_internal_user: true,
           storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: false } } },
         });
+      case "/erplibre_mobile_chat/push/device":
+        state.marked.push(params);
+        if (state.markRefuses) return rpcError("odoo.exceptions.AccessError");
+        return ok({ ok: state.devices.has(params.endpoint) });
       case "/mail/data":
         state.onMailData?.();
         return ok(JSON.parse(JSON.stringify(state.data)));
@@ -434,6 +444,100 @@ describe("ChatPush", () => {
     expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[1], pendingEndpoint: `${NTFY}/upab12cd34fake2` }]);
     expect(native.callsOf("forgetSession")).toEqual([]);
     expect(lastMirror().accounts.map((a) => a.configId)).toEqual([ids[0]]);
+  });
+
+  describe("module 1.5", () => {
+    const at = (level: string | null, who = 0) => chat.repo.setSourceState({
+      configId: ids[who], moduleState: level === "1.5" ? "installed" : level ? "outdated" : "unknown", moduleLevel: level as any,
+    });
+    const routeCalls = () => odoo.calls.filter((c) => c.path === "/erplibre_mobile_chat/push/device");
+
+    it("a 1.5 account marks its device after registering", async () => {
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      expect(odoo.state.marked).toEqual([{ endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: false }]);
+      const calls = odoo.calls.map((c) => c.params?.method ?? c.path);
+      expect(calls.indexOf("/erplibre_mobile_chat/push/device")).toBeGreaterThan(calls.indexOf("register_devices"));
+      expect(chat.push.registrationError(ids[0])).toBeNull();
+    });
+
+    it("a new session marks the device again", async () => {
+      await chat.push.start();
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      expect(odoo.state.marked).toHaveLength(1);
+      odoo.state.sessionSuffix = "-2";
+      await rpc.authenticate(credsOf(A));
+      await chat.push.idle();
+      expect(odoo.state.marked).toHaveLength(2);
+      expect(odoo.state.marked[1]).toEqual(odoo.state.marked[0]);
+    });
+
+    it("a 1.4 account never calls the device route", async () => {
+      await chat.push.start();
+      await at("1.4");
+      await chat.push.applyLink([ids[0]], link());
+      odoo.state.sessionSuffix = "-2";
+      await rpc.authenticate(credsOf(A));
+      await chat.push.idle();
+      expect(routeCalls()).toEqual([]);
+      expect(lastMirror().accounts[0].module).toBe("1.4");
+    });
+
+    it("with the module ignored the device is not marked and the mirror says no module", async () => {
+      chat.dispose();
+      chat = new ChatService(env.db, rpc, new OutboxService(env.db, () => clock), new CapabilityService(env.db, rpc), () => clock, { native, moduleMode: "ignore" });
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      expect(routeCalls()).toEqual([]);
+      expect(lastMirror().accounts.map((a) => a.module)).toEqual(["", ""]);
+    });
+
+    it("a failed mark keeps the registration and shows the reason", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await chat.push.start();
+      await at("1.5");
+      odoo.state.markRefuses = true;
+      await chat.push.applyLink([ids[0]], link());
+      expect(await chat.repo.pushRow(ids[0])).toMatchObject({ registeredAt: clock.toISOString() });
+      expect(odoo.state.devices.has(`${NTFY}/upab12cd34fake1`)).toBe(true);
+      expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_mark_failed");
+      expect(t("chat.push_registration_mark_failed")).not.toBe("chat.push_registration_mark_failed");
+      // a device Odoo does not hold answers ok false: the same reason, until a mark succeeds
+      odoo.state.markRefuses = false;
+      odoo.state.devices.clear();
+      odoo.state.sessionSuffix = "-2";
+      await rpc.authenticate(credsOf(A));
+      await chat.push.idle();
+      expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_mark_failed");
+      odoo.state.devices.set(`${NTFY}/upab12cd34fake1`, { keys: {}, host: "odoo.exemple.test" });
+      odoo.state.sessionSuffix = "-3";
+      await rpc.authenticate(credsOf(A));
+      await chat.push.idle();
+      expect(chat.push.registrationError(ids[0])).toBeNull();
+      // the endpoint is never logged
+      for (const spy of [console.warn as any]) for (const c of spy.mock.calls) expect(JSON.stringify(c)).not.toContain("upab12cd34fake1");
+    });
+
+    it("the mirror carries the module level", async () => {
+      await at("1.5", 0);
+      await at("1.2", 1);
+      await chat.push.start();
+      await chat.push.publish();
+      expect(lastMirror().accounts.map((a) => a.module)).toEqual(["1.5", "1.2"]);
+      await at(null, 1);
+      await chat.push.publish();
+      expect(lastMirror().accounts.map((a) => a.module)).toEqual(["1.5", ""]);
+    });
+
+    it("publish sends the action strings", async () => {
+      await chat.push.start();
+      const { strings } = lastMirror();
+      expect(strings.action_reply).toBe("Répondre");
+      for (const k of ["action_reply", "action_reply_hint", "action_mark_read", "action_mute", "action_react", "handoff_one", "handoff", "action_unsent"]) {
+        expect(strings[k]).toBeTruthy();
+      }
+    });
   });
 
   it("a registration failure reason is shown until the next success", async () => {

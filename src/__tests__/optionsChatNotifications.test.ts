@@ -11,6 +11,7 @@ import { Directory, Filesystem } from "@capacitor/filesystem";
 import { OptionsChatNotificationsComponent } from "../components/options/chat_notifications/options_chat_notifications_component";
 import { fakeChatPushNative, type FakeChatPushNative } from "../__mocks__/chatPushNative";
 import { chatSettings } from "../services/chat/chatSettings";
+import { t } from "../i18n";
 
 vi.mock("@capacitor/filesystem", () => ({
     Filesystem: { deleteFile: vi.fn().mockResolvedValue(undefined) },
@@ -50,15 +51,17 @@ function setup(rows: any[] = [row(A), row(B, { ntfyUrl: "https://ntfy.exemple.te
         setLevel: vi.fn(async (_l: number) => {}),
         registrationError: vi.fn((_id: string): string | null => null),
     };
+    const appPush = new Set<string>();
     const chat = {
         push,
         sources: vi.fn().mockResolvedValue(rows.map((r) => ({ configId: r.configId, label: r.configId.split("|")[0].replace("https://", "") }))),
         repo: { pushRows: vi.fn(async () => rows) },
+        features: vi.fn(async (id: string) => ({ appPush: appPush.has(id) })),
     };
     const c = new (OptionsChatNotificationsComponent as any)();
     Object.defineProperty(c, "chatService", { value: chat });
     c.setup();
-    return { c, native, push, chat, rows };
+    return { c, native, push, chat, rows, appPush };
 }
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); vi.clearAllMocks(); });
@@ -70,6 +73,20 @@ beforeEach(() => {
 const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "options", "chat_notifications", "options_chat_notifications_component.ts"), "utf8");
 
 describe("OptionsChatNotificationsComponent", () => {
+    it("the actions line says whether 👍 is there", async () => {
+        const { c, appPush } = setup();
+        appPush.add(B);
+        await c.load();
+        const of = (id: string) => c.state.accounts.find((a: any) => a.configId === id);
+        expect(of(B).appPush).toBe(true);
+        expect(of(A).appPush).toBe(false);
+        expect(source).toContain("chat.push_actions_full");
+        expect(source).toContain("chat.push_actions_no_react");
+        expect(t("chat.push_actions_full")).toContain("👍");
+        expect(t("chat.push_actions_no_react")).toContain("1.5");
+        expect(t("chat.push_actions_full")).not.toBe(t("chat.push_actions_no_react"));
+    });
+
     it("choosing level 1 asks for the exemption and offers level 3 when refused", async () => {
         const { c, native, push } = setup();
         native.exempt = false;

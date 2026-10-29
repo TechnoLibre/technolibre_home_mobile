@@ -35,6 +35,8 @@ interface AccountCard {
     registeredAt: string | null;
     /** The i18n key of why the last registration failed (ChatPush.registrationError), null for none. */
     registrationError: string | null;
+    /** Whether the server module is at 1.5, which adds the 👍 action. */
+    appPush: boolean;
     /** The link typed or pasted, and whether its field is open. */
     paste: string;
     pasteOpen: boolean;
@@ -111,6 +113,8 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
                t-esc="a.registeredAt ? t('chat.push_registered') : t('chat.push_not_registered')"/>
             <p t-if="a.ntfyUrl and a.registrationError" class="options-sync__info chat-notifications__alarm"
                t-esc="t(a.registrationError)"/>
+            <p t-if="a.ntfyUrl" class="options-sync__info"
+               t-esc="t(a.appPush ? 'chat.push_actions_full' : 'chat.push_actions_no_react')"/>
             <div class="chat-new__chips">
               <button type="button" class="chat-new__chip" t-att-disabled="state.busy"
                       t-on-click="() => this.onScan(a.configId)" t-esc="t('chat.push_scan')"/>
@@ -223,9 +227,10 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
     private async loadAccounts(): Promise<void> {
         try {
             const [sources, rows] = await Promise.all([this.chatService.sources({ online: false }), this.chatService.repo.pushRows()]);
+            const appPush = await Promise.all(sources.map(async (s) => (await this.chatService.features(s.configId)).appPush));
             if (this.destroyed) return;
             const before = new Map<string, AccountCard>(this.state.accounts.map((a: AccountCard) => [a.configId, a]));
-            this.state.accounts = sources.map((s) => {
+            this.state.accounts = sources.map((s, i) => {
                 const r = rows.find((x) => x.configId === s.configId);
                 const old = before.get(s.configId);
                 return {
@@ -236,6 +241,7 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
                     lockScreen: r?.lockScreen ?? "hidden_locked",
                     registeredAt: r?.registeredAt ?? null,
                     registrationError: this.chatService.push.registrationError(s.configId),
+                    appPush: appPush[i],
                     paste: old?.paste ?? "",
                     pasteOpen: old?.pasteOpen ?? false,
                 };

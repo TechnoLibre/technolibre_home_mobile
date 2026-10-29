@@ -803,24 +803,26 @@ describe("ChatService", () => {
   it("features follow the module level, member removal also a system user", async () => {
     fakeOdoo();
     await chat.load(await source());
-    const matrix: Array<[any, any, boolean, boolean, boolean, boolean, boolean, boolean]> = [
-      ["installed", "1.4", true, true, true, true, true, true],
-      ["installed", "1.4", false, false, true, true, true, true],
-      ["outdated", "1.3", true, true, true, true, true, false],
-      ["outdated", "1.3", false, false, true, true, true, false],
-      ["outdated", "1.2", true, true, true, true, false, false],
-      ["outdated", "1.2", false, false, true, true, false, false],
-      ["outdated", "1.1", true, true, true, false, false, false],
-      ["outdated", "1.1", false, false, true, false, false, false],
-      ["outdated", "1.0", true, false, false, false, false, false],
-      ["available", null, true, false, false, false, false, false],
-      ["unknown", null, false, false, false, false, false, false],
+    const matrix: Array<[any, any, boolean, boolean, boolean, boolean, boolean, boolean, boolean]> = [
+      ["installed", "1.5", true, true, true, true, true, true, true],
+      ["installed", "1.5", false, false, true, true, true, true, true],
+      ["outdated", "1.4", true, true, true, true, true, true, false],
+      ["outdated", "1.4", false, false, true, true, true, true, false],
+      ["outdated", "1.3", true, true, true, true, true, false, false],
+      ["outdated", "1.3", false, false, true, true, true, false, false],
+      ["outdated", "1.2", true, true, true, true, false, false, false],
+      ["outdated", "1.2", false, false, true, true, false, false, false],
+      ["outdated", "1.1", true, true, true, false, false, false, false],
+      ["outdated", "1.1", false, false, true, false, false, false, false],
+      ["outdated", "1.0", true, false, false, false, false, false, false],
+      ["available", null, true, false, false, false, false, false, false],
+      ["unknown", null, false, false, false, false, false, false, false],
     ];
-    for (const [moduleState, moduleLevel, isSystem, remove, create, upload, guarded, v14] of matrix) {
+    for (const [moduleState, moduleLevel, isSystem, remove, create, upload, guarded, v14, v15] of matrix) {
       await chat.repo.setSourceState({ configId: config, moduleState, moduleLevel, isSystem });
       expect(await chat.features(config)).toEqual({
         canRemoveMembers: remove, idempotentCreate: create, idempotentUpload: upload, guardedEdit: guarded,
-        serverSearch: v14, idempotentStar: v14, idempotentRecordPost: v14,
+        serverSearch: v14, idempotentStar: v14, idempotentRecordPost: v14, appPush: v15,
       });
     }
   });
@@ -832,12 +834,12 @@ describe("ChatService", () => {
     await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: null, isSystem: true });
     expect(await chat.features(config)).toEqual({
       canRemoveMembers: true, idempotentCreate: true, idempotentUpload: false, guardedEdit: false,
-      serverSearch: false, idempotentStar: false, idempotentRecordPost: false,
+      serverSearch: false, idempotentStar: false, idempotentRecordPost: false, appPush: false,
     });
     await chat.repo.setSourceState({ configId: config, moduleState: "outdated", moduleLevel: null });
     expect(await chat.features(config)).toEqual({
       canRemoveMembers: false, idempotentCreate: false, idempotentUpload: false, guardedEdit: false,
-      serverSearch: false, idempotentStar: false, idempotentRecordPost: false,
+      serverSearch: false, idempotentStar: false, idempotentRecordPost: false, appPush: false,
     });
     for (const st of ["installed", "outdated"] as const) {
       const odoo = fakeOdoo();
@@ -850,11 +852,11 @@ describe("ChatService", () => {
   it("features give nothing when the module is ignored", async () => {
     fakeOdoo();
     await chat.load(await source());
-    await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.4", isSystem: true });
+    await chat.repo.setSourceState({ configId: config, moduleState: "installed", moduleLevel: "1.5", isSystem: true });
     const ignoring = new ChatService(env.db, (chat as any).rpc, new OutboxService(env.db), (chat as any).capabilities, undefined, { moduleMode: "ignore" });
     expect(await ignoring.features(config)).toEqual({
       canRemoveMembers: false, idempotentCreate: false, idempotentUpload: false, guardedEdit: false,
-      serverSearch: false, idempotentStar: false, idempotentRecordPost: false,
+      serverSearch: false, idempotentStar: false, idempotentRecordPost: false, appPush: false,
     });
   });
 

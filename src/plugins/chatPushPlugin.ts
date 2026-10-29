@@ -9,6 +9,8 @@ export interface PushAccountMirror {
     configId: string;
     label: string;
     lockScreen: PushLockScreen;
+    /** The module level a post would use ("1.5"...); "" when posts go without the module. */
+    module: string;
     channels: { id: number; name: string; type: string }[];
 }
 

@@ -5,6 +5,7 @@ import type { ChatPushNative, PushSettingsMirror } from "../../plugins/chatPushP
 import { isHttpAllowed, onHttpPolicyChange } from "../odoo/httpPolicy";
 import { OdooRpcError, type OdooRpcClient, type StoredSession, type SyncCredentials } from "../odoo/odooRpcClient";
 import { displayNameOf } from "./chatNames";
+import { effectiveLevel, levelAtLeast, type ChatModuleLevel } from "./chatModule";
 import { httpUrl, type NtfyLink } from "./chatPushLink";
 import type { ChatRepository } from "./chatRepository";
 import { chatSettings, setChatSettings, type NotifyLevel } from "./chatSettings";
@@ -41,6 +42,10 @@ export const UNREGISTER_BOUND_MS = 5000;
 export const PUSH_RPC_TIMEOUT_MS = 15000;
 
 const PUSH_DEVICE = "mail.push.device";
+/** Module 1.5 route that marks the partner's device of an endpoint as the app's. */
+const PUSH_DEVICE_ROUTE = "/erplibre_mobile_chat/push/device";
+/** The registrationError key of a device the server did not mark. */
+const MARK_FAILED = "chat.push_registration_mark_failed";
 
 /**
  * What a registration came to: Odoo holds the endpoint (registered), the
@@ -84,6 +89,11 @@ const messageOf = (e: unknown): string => (e instanceof Error ? e.message : Stri
 export class ChatPush {
   /** Whether a server may answer now; ChatService sets its own. */
   isOnline: () => Promise<boolean> = async () => true;
+  /**
+   * The module level the account's posts use, null when none (module unseen
+   * or ignored); ChatService sets its own.
+   */
+  moduleLevel: (configId: string) => Promise<ChatModuleLevel | null>;
   /** The conversations the list shows for an account; ChatService sets its own. */
   conversations: (configId: string) => Promise<ChatChannel[]>;
 
@@ -111,6 +121,7 @@ export class ChatPush {
     private now: () => Date,
   ) {
     this.conversations = (configId) => repo.channels(configId);
+    this.moduleLevel = async (configId) => effectiveLevel(await repo.sourceState(configId));
   }
 
   /** Runs `task` once every task queued before it settled, and returns its result. */
@@ -423,7 +434,10 @@ export class ChatPush {
       if (chatSettings().notifyLevel > 4 || stored.odooMajorVersion !== CHAT_MAJOR) return;
       const configId = syncConfigIdFor(creds.odooUrl, creds.username, creds.database);
       if (!(await this.liveSources()).some((s) => s.configId === configId)) return;
-      if (await this.copySession(configId, creds, stored)) await this.publishNow();
+      if (!(await this.copySession(configId, creds, stored))) return;
+      await this.publishNow();
+      const src = (await this.liveSources()).find((s) => s.configId === configId);
+      if (src) await this.markAppDevice(src);
     });
   }
 
@@ -570,6 +584,7 @@ export class ChatPush {
       await this.repo.updatePushRow({ configId: src.configId, vapidKey: String(vapid), registeredAt: this.now().toISOString() });
       this.done.set(src.configId, "registered");
       this.failures.delete(src.configId);
+      await this.markAppDevice(src);
       return "registered";
     } catch (e) {
       const result: RegisterResult = e instanceof OdooRpcError ? "refused" : "offline";
@@ -578,6 +593,49 @@ export class ChatPush {
       console.warn(`[chat push] registration ${result}:`, messageOf(e));
       return result;
     }
+  }
+
+  /**
+   * Marks the account's device as the app's own on a module at 1.5
+   * (POST /erplibre_mobile_chat/push/device), which tells the server that
+   * the notification carries the actions. It does nothing below 1.5, with
+   * the module ignored or without an endpoint. Odoo answering ok false
+   * (no such device for this partner) or an error is kept as the
+   * registration's reason (registrationError) and logged without the
+   * endpoint; a success clears it. Never throws. True when marked.
+   */
+  async markAppDevice(src: ChatSource): Promise<boolean> {
+    try {
+      if (!levelAtLeast(await this.moduleLevel(src.configId), "1.5")) return false;
+      const { endpoint } = await this.repo.pushRow(src.configId);
+      if (!endpoint) return false;
+      if (!(await this.isOnline())) return false;
+      const answer = await this.withTimeout(
+        this.rpc.callWithAuth(src.creds, (sessionId) =>
+          this.rpc.jsonRoute(src.creds.odooUrl, sessionId, PUSH_DEVICE_ROUTE, { endpoint, quiet_while_online: false })),
+        `${PUSH_DEVICE_ROUTE}`,
+      );
+      if (answer?.ok === true) {
+        if (this.failures.get(src.configId) === MARK_FAILED) this.failures.delete(src.configId);
+        return true;
+      }
+      this.failures.set(src.configId, MARK_FAILED);
+      console.warn("[chat push] device not marked: Odoo holds no such device");
+      return false;
+    } catch (e) {
+      this.failures.set(src.configId, MARK_FAILED);
+      console.warn("[chat push] device not marked:", messageOf(e));
+      return false;
+    }
+  }
+
+  /** The promise's result, rejecting after PUSH_RPC_TIMEOUT_MS without one. */
+  private withTimeout<T>(call: Promise<T>, what: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${what}: no answer within ${PUSH_RPC_TIMEOUT_MS} ms`)), PUSH_RPC_TIMEOUT_MS);
+    });
+    return Promise.race([call, late]).finally(() => clearTimeout(timer));
   }
 
   /** mail.push.device.<method>(**kwargs) for the account; rejects after PUSH_RPC_TIMEOUT_MS without an answer. */
@@ -684,6 +742,7 @@ export class ChatPush {
         configId,
         label: src.label,
         lockScreen: row.lockScreen,
+        module: (await this.moduleLevel(configId)) ?? "",
         channels: channels.map((c) => ({
           id: c.channelId,
           name: displayNameOf(c, membersOf.get(c.channelId) ?? [], byPartner, state.selfPartnerId, lang),
