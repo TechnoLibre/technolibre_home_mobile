@@ -373,9 +373,13 @@ export function deviceTestHook(env: DeviceHookEnv) {
 		 * Replaces native code's copy of the account's session by the session
 		 * id « invalide », which Odoo does not know: the next native action
 		 * finds the session dead. The app's own session is left as it is.
+		 * The push work already queued (a copy of the real session after a
+		 * load) settles first, so it does not write over the broken copy;
+		 * a later foreground session copies the real one again.
 		 */
 		async chatPushBreakSession(configId: string): Promise<void> {
 			const { creds } = await chatSourceOf(env, configId);
+			await env.syncService.chat.push.idle();
 			await pushNativeOf(env).mirrorSession({ configId, odooUrl: creds.odooUrl, database: creds.database, sessionId: "invalide" });
 		},
 		/** The account's chat_push row (ntfy, topic, endpoint, lock screen), null when it has none. */
