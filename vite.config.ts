@@ -307,12 +307,6 @@ const SKIP_WS_DIRS = new Set([
 ]);
 
 /**
- * Unversioned top-level directories of the workspace, left out by name when
- * git cannot list what it tracks: investigation notes and their captures.
- */
-const UNVERSIONED_WS_DIRS = new Set(["tasks", ".superpowers"]);
-
-/**
  * The paths git tracks under root (its index), with every directory that
  * holds one, relative to root with "/" separators; null when git cannot
  * answer (no repository, no git).
@@ -341,18 +335,43 @@ export function gitTrackedPaths(root: string): Set<string> | null {
 
 /**
  * The skip function of the workspace walk: SKIP_WS_DIRS, the venvs and the
- * Odoo trees always; then, with tracked (gitTrackedPaths), every path git
- * does not track — ignored or not yet added — so the APK carries versioned
- * files only; without it, the UNVERSIONED_WS_DIRS at the top.
+ * Odoo trees always; then every path git does not track (tracked, from
+ * gitTrackedPaths) — ignored or not yet added — so the APK carries
+ * versioned files only.
  */
-export function workspaceSkip(tracked: Set<string> | null): (relBase: string, name: string) => boolean {
+export function workspaceSkip(tracked: Set<string>): (relBase: string, name: string) => boolean {
     return (relBase: string, name: string): boolean => {
         if (SKIP_WS_DIRS.has(name)) return true;
         if (name.startsWith(".venv")) return true;
         if (/^odoo\d+\.\d+/.test(name)) return true;
-        if (tracked) return !tracked.has(relBase ? `${relBase}/${name}` : name);
-        return relBase === "" && UNVERSIONED_WS_DIRS.has(name);
+        return !tracked.has(relBase ? `${relBase}/${name}` : name);
     };
+}
+
+/**
+ * Section 1b: the files git tracks under workspaceRoot (workspaceSkip),
+ * minus excludeAbsPaths, copied into outDir with their index.json; the
+ * counters, or null when git cannot list what it tracks. It fails closed
+ * then: outDir is removed, nothing is copied, and a warning says so — a
+ * name list would let any ignored file (a local config, notes) through.
+ */
+export function bundleWorkspace(workspaceRoot: string, outDir: string, excludeAbsPaths: Set<string>): CopyStats | null {
+    removeDirRobust(outDir);
+    const tracked = gitTrackedPaths(workspaceRoot);
+    if (!tracked) {
+        console.warn(
+            `[bundle-warn] git cannot list the files of ${workspaceRoot}:` +
+            " src/public/erplibre/ is left out of this build",
+        );
+        return null;
+    }
+    mkdirSync(outDir, { recursive: true });
+    const index: BundleEntry[] = [];
+    const stats: CopyStats = { copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, errors: 0 };
+    copyDirToBundle(workspaceRoot, "", outDir, index, workspaceSkip(tracked), excludeAbsPaths,
+        MAX_BUNDLE_FILE_BYTES, stats);
+    writeFileSync(join(outDir, "index.json"), JSON.stringify(index, null, 2));
+    return stats;
 }
 
 // ── XML manifest parser ───────────────────────────────────────────────────────
@@ -506,7 +525,8 @@ function bundleSourcePlugin(): Plugin {
             // ── 1b. Workspace root bundle (src/public/erplibre/) ──────────
             // The files git tracks in the ERPLibre workspace (workspaceSkip:
             // nothing ignored or unversioned, such as tasks/ or a local
-            // config), minus the obvious heavy / redundant subtrees:
+            // config; nothing at all when git cannot list them, see
+            // bundleWorkspace), minus the obvious heavy / redundant subtrees:
             //   addons/      already in src/public/repos/{slug}.tar.gz
             //   mobile/      this app, already in src/public/repo/
             //   .venv*/      Python venvs
@@ -520,39 +540,22 @@ function bundleSourcePlugin(): Plugin {
             // to read from the Code tool. Skipped on BUNDLE_SKIP_ERPLIBRE=1.
             if (process.env["BUNDLE_SKIP_ERPLIBRE"] !== "1") {
                 const workspaceRoot = resolve(root, "..", "..");
-                const erplibreOutDir = join(root, "src", "public", "erplibre");
-                removeDirRobust(erplibreOutDir);
-                mkdirSync(erplibreOutDir, { recursive: true });
-
-                const erplibreIndex: BundleEntry[] = [];
-                const erplibreStats: CopyStats = {
-                    copied: 0, skippedName: 0, skippedExclude: 0,
-                    skippedSize: 0, errors: 0,
-                };
                 const erplibreT0 = Date.now();
-
-                const skipWsFn = workspaceSkip(gitTrackedPaths(workspaceRoot));
-
                 const inRepos = manifestProjectPathsOnDisk(manifestPath, skipRepos);
-                copyDirToBundle(
-                    workspaceRoot, "", erplibreOutDir, erplibreIndex, skipWsFn,
-                    inRepos, MAX_BUNDLE_FILE_BYTES, erplibreStats,
+                const erplibreStats = bundleWorkspace(
+                    workspaceRoot, join(root, "src", "public", "erplibre"), inRepos,
                 );
-
-                writeFileSync(
-                    join(erplibreOutDir, "index.json"),
-                    JSON.stringify(erplibreIndex, null, 2),
-                );
-
-                console.log(
-                    `[bundle-source] ${erplibreStats.copied} files → src/public/erplibre/` +
-                    `  (${Date.now() - erplibreT0} ms` +
-                    (erplibreStats.skippedExclude
-                        ? `, ${erplibreStats.skippedExclude} manifest projects left to repos/`
-                        : "") +
-                    (erplibreStats.errors ? `  ⚠ ${erplibreStats.errors} errors` : "") +
-                    `)`
-                );
+                if (erplibreStats) {
+                    console.log(
+                        `[bundle-source] ${erplibreStats.copied} files → src/public/erplibre/` +
+                        `  (${Date.now() - erplibreT0} ms` +
+                        (erplibreStats.skippedExclude
+                            ? `, ${erplibreStats.skippedExclude} manifest projects left to repos/`
+                            : "") +
+                        (erplibreStats.errors ? `  ⚠ ${erplibreStats.errors} errors` : "") +
+                        `)`
+                    );
+                }
             } else {
                 // Honor the skip flag: nuke any leftover from a prior build.
                 removeDirRobust(join(root, "src", "public", "erplibre"));

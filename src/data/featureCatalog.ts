@@ -2442,7 +2442,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "BUNDLE_SKIP_ERPLIBRE shave APK size for dev loops. "
                         + "The workspace bundle (src/public/erplibre/) carries "
                         + "only the files git tracks: ignored or unversioned "
-                        + "paths such as tasks/ never reach the APK.",
+                        + "paths such as tasks/ never reach the APK, and "
+                        + "without git to list them it is left out.",
                     fr: "Plugin Vite custom : lit le manifest Google-Repo, "
                         + "tar chaque projet (pool parallèle = nproc) et "
                         + "écrit dans src/public/repos/ avec un manifest.json. "
@@ -2450,7 +2451,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "réduisent la taille APK en dev. Le bundle de "
                         + "l'espace de travail (src/public/erplibre/) ne porte "
                         + "que les fichiers que git suit : un chemin ignoré ou "
-                        + "non versionné, comme tasks/, n'atteint jamais l'APK.",
+                        + "non versionné, comme tasks/, n'atteint jamais l'APK, "
+                        + "et sans git pour les lister il est omis.",
                 },
                 status: "stable",
                 demo: NONE_BG,
