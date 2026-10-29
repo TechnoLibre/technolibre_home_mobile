@@ -25,7 +25,10 @@ export const PUSH_STRING_KEYS = [
   "reason_http_refused", "reason_cleartext_blocked", "reason_session_expired", "reason_protocol",
 ] as const;
 
-/** How long a removal waits for Odoo to unregister the account's endpoints before leaving them to native code. */
+/**
+ * How long a removal may take, its wait for the queue included, before the
+ * account's endpoints are left to native code.
+ */
 export const UNREGISTER_BOUND_MS = 5000;
 
 /**
@@ -86,6 +89,8 @@ export class ChatPush {
   private chain: Promise<void> = Promise.resolve();
   /** Per account, the registration result of this foreground session ("registered" or "refused"). */
   private done = new Map<string, RegisterResult>();
+  /** Per account, the i18n key of why its last registration failed; cleared by a success. */
+  private failures = new Map<string, string>();
   /** Per account, the session id last copied to native code in this foreground session. */
   private mirrored = new Map<string, string>();
   /** Accounts forget let go whose application row is not deleted yet: left out of the mirror. */
@@ -292,38 +297,72 @@ export class ChatPush {
     return this.run(() => this.registerNow(src));
   }
 
+  /** The i18n key of why the account's last registration failed (offline or refused), null after a success. */
+  registrationError(configId: string): string | null {
+    return this.failures.get(configId) ?? null;
+  }
+
   /**
-   * Before the account's application is deleted. Online, its endpoint and
-   * the stale ones are unregistered, all within UNREGISTER_BOUND_MS; each
-   * one not unregistered then is handed to native code
+   * Before the account's application is deleted; settles within
+   * UNREGISTER_BOUND_MS of the call, the wait for the queue included.
+   * Online, its endpoint and the stale ones are unregistered until that
+   * bound; each one not unregistered then is handed to native code
    * (unsubscribe with pendingEndpoint), which unregisters it with the
    * session copy and forgets both. With none left, the subscription and
    * the session copy go at once. The row loses its ntfy, a server no
    * account is left on is removed, and the mirror without the account
    * follows.
+   *
+   * When the bound comes before the queue reached the task, the row is
+   * read then and the promise settles: the caller may erase the row, and
+   * the task, once it runs, starts no unregister and hands every endpoint
+   * of that reading and of the row left, if any, to native code.
    */
   forget(configId: string): Promise<void> {
     const native = this.native;
     if (!native) return Promise.resolve();
-    return this.run(async () => {
-      const row = await this.repo.pushRow(configId);
-      const endpoints = withEndpoint(row.staleEndpoints, row.endpoint);
-      let pending = endpoints;
-      const src = (await this.sources()).find((s) => s.configId === configId);
-      if (endpoints.length > 0 && src && (await this.isOnline())) pending = await this.unregisterWithin(src, endpoints);
-      if (pending.length === 0) {
-        await native.unsubscribe({ configId, pendingEndpoint: null });
-        await native.forgetSession({ configId });
-      } else {
-        for (const endpoint of pending) await native.unsubscribe({ configId, pendingEndpoint: endpoint });
+    const bound = boundOf(UNREGISTER_BOUND_MS);
+    let started = false;
+    let early: ChatPushRow | null = null;
+    const task = this.run(async () => {
+      started = true;
+      try {
+        const row = await this.repo.pushRow(configId);
+        const endpoints = withEndpoint(row.staleEndpoints, row.endpoint);
+        if (early) for (const e of withEndpoint(early.staleEndpoints, early.endpoint)) if (!endpoints.includes(e)) endpoints.push(e);
+        const ntfyUrl = row.ntfyUrl ?? early?.ntfyUrl ?? null;
+        let pending = endpoints;
+        const src = (await this.sources()).find((s) => s.configId === configId);
+        if (endpoints.length > 0 && src && !bound.expired() && (await this.isOnline())) {
+          pending = await this.unregisterWithin(src, endpoints, bound);
+        }
+        await this.letGo(native, configId, pending, ntfyUrl);
+      } finally {
+        bound.cancel();
       }
-      this.done.delete(configId);
-      this.mirrored.delete(configId);
-      this.leaving.add(configId);
-      await this.repo.updatePushRow({ configId, ...NO_NTFY, staleEndpoints: [] });
-      if (row.ntfyUrl) await this.dropUnusedNtfy(row.ntfyUrl);
-      await this.publishNow();
     });
+    const handoff = bound.reached.then(async () => {
+      if (started) return task;
+      early = await this.repo.pushRow(configId);
+    });
+    return Promise.race([task, handoff]);
+  }
+
+  /** The rest of forget, inside the queue: native code lets the account go, then its row, its ntfy and the mirror. */
+  private async letGo(native: ChatPushNative, configId: string, pending: string[], ntfyUrl: string | null): Promise<void> {
+    if (pending.length === 0) {
+      await native.unsubscribe({ configId, pendingEndpoint: null });
+      await native.forgetSession({ configId });
+    } else {
+      for (const endpoint of pending) await native.unsubscribe({ configId, pendingEndpoint: endpoint });
+    }
+    this.done.delete(configId);
+    this.failures.delete(configId);
+    this.mirrored.delete(configId);
+    this.leaving.add(configId);
+    await this.repo.updatePushRow({ configId, ...NO_NTFY, staleEndpoints: [] });
+    if (ntfyUrl) await this.dropUnusedNtfy(ntfyUrl);
+    await this.publishNow();
   }
 
   /**
@@ -353,6 +392,7 @@ export class ChatPush {
       }
       for (const id of [oldId, newId]) {
         this.done.delete(id);
+        this.failures.delete(id);
         this.mirrored.delete(id);
       }
       if (row.ntfyUrl) {
@@ -503,14 +543,18 @@ export class ChatPush {
   /**
    * Registers the account's endpoint unless this session did; the row is
    * updated only while it is still stored under this id (a rename may
-   * have moved it during the calls).
+   * have moved it during the calls). An offline or refused result keeps
+   * its reason for registrationError until a registration succeeds.
    */
   private async registerOnce(src: ChatSource): Promise<RegisterResult> {
     const known = this.done.get(src.configId);
     if (known) return known;
     const row = await this.repo.pushRow(src.configId);
     if (!row.endpoint && row.staleEndpoints.length === 0) return "none";
-    if (!(await this.isOnline())) return "offline";
+    if (!(await this.isOnline())) {
+      this.failures.set(src.configId, "chat.push_registration_offline");
+      return "offline";
+    }
     try {
       await this.unregisterStale(src);
       if (!row.endpoint || !row.p256dh || !row.auth) return "none";
@@ -523,10 +567,12 @@ export class ChatPush {
       });
       await this.repo.updatePushRow({ configId: src.configId, vapidKey: String(vapid), registeredAt: this.now().toISOString() });
       this.done.set(src.configId, "registered");
+      this.failures.delete(src.configId);
       return "registered";
     } catch (e) {
       const result: RegisterResult = e instanceof OdooRpcError ? "refused" : "offline";
       if (result === "refused") this.done.set(src.configId, result);
+      this.failures.set(src.configId, `chat.push_registration_${result}`);
       console.warn(`[chat push] registration ${result}:`, messageOf(e));
       return result;
     }
@@ -555,16 +601,15 @@ export class ChatPush {
 
   /**
    * Unregisters each endpoint in turn; returns, in order, those not
-   * unregistered within UNREGISTER_BOUND_MS. At the bound no further call
-   * starts: the endpoints left go to native code, and the account is on
-   * its way out.
+   * unregistered before the bound. At the bound no further call starts:
+   * the endpoints left go to native code, and the account is on its way
+   * out.
    */
-  private async unregisterWithin(src: ChatSource, endpoints: string[]): Promise<string[]> {
+  private async unregisterWithin(src: ChatSource, endpoints: string[], bound: Bound): Promise<string[]> {
     const left = new Set(endpoints);
-    let bound = false;
     const all = (async () => {
       for (const endpoint of endpoints) {
-        if (bound) return;
+        if (bound.expired()) return;
         try {
           await this.kw(src, "unregister_devices", { endpoint });
           left.delete(endpoint);
@@ -573,10 +618,9 @@ export class ChatPush {
         }
       }
     })();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([all, new Promise<void>((resolve) => { timer = setTimeout(resolve, UNREGISTER_BOUND_MS); })]);
-    clearTimeout(timer);
-    bound = true;
+    await Promise.race([all, bound.reached]);
+    // Ended by the bound or by the last answer: either way no call starts after this
+    bound.cancel();
     return endpoints.filter((e) => left.has(e));
   }
 
@@ -670,6 +714,36 @@ function recordOf(tail: string): { model: string; resId: number } | null {
   const at = tail.lastIndexOf(":");
   const resId = Number(tail.slice(at + 1));
   return at > 0 && Number.isInteger(resId) ? { model: tail.slice(0, at), resId } : null;
+}
+
+/**
+ * A time bound: `reached` settles once `ms` passed, `expired` is true from
+ * then on or once cancelled; cancel stops the timer, and `reached` then
+ * never settles.
+ */
+interface Bound {
+  reached: Promise<void>;
+  expired: () => boolean;
+  cancel: () => void;
+}
+
+function boundOf(ms: number): Bound {
+  let over = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const reached = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      over = true;
+      resolve();
+    }, ms);
+  });
+  return {
+    reached,
+    expired: () => over,
+    cancel: () => {
+      over = true;
+      clearTimeout(timer);
+    },
+  };
 }
 
 /** The list with the endpoint first when it is set and not in it yet. */

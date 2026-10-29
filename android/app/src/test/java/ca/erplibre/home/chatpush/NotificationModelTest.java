@@ -181,6 +181,14 @@ public class NotificationModelTest {
     }
 
     @Test
+    public void anInboxPushWithAnEmptyTitleIsTitledByTheServer() throws Exception {
+        NotificationModel.Shown s = NotificationModel.inbox(account(LockScreenMode.ALWAYS),
+                payload("", "Un commentaire", "project.task", 12, ""), FR);
+        assertEquals("Serveur Alice", s.conversationTitle);
+        assertEquals("Un commentaire", s.text);
+    }
+
+    @Test
     public void inboxLockScreenFollowsTheSameRule() throws Exception {
         PushPayload p = payload("Titre", "Corps", "project.task", 1, "");
         assertTrue(NotificationModel.inbox(account(LockScreenMode.HIDDEN_LOCKED), p, FR).privateVisibility);

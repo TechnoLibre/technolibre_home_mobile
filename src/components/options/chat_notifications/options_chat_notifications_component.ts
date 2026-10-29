@@ -33,6 +33,8 @@ interface AccountCard {
     odooUrl: string;
     lockScreen: LockScreen;
     registeredAt: string | null;
+    /** The i18n key of why the last registration failed (ChatPush.registrationError), null for none. */
+    registrationError: string | null;
     /** The link typed or pasted, and whether its field is open. */
     paste: string;
     pasteOpen: boolean;
@@ -107,6 +109,8 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
             <p class="options-sync__info" t-esc="t('chat.push_account_ntfy', { url: a.ntfyUrl || t('chat.push_ntfy_none') })"/>
             <p t-if="a.ntfyUrl" class="options-sync__info"
                t-esc="a.registeredAt ? t('chat.push_registered') : t('chat.push_not_registered')"/>
+            <p t-if="a.ntfyUrl and a.registrationError" class="options-sync__info chat-notifications__alarm"
+               t-esc="t(a.registrationError)"/>
             <div class="chat-new__chips">
               <button type="button" class="chat-new__chip" t-att-disabled="state.busy"
                       t-on-click="() => this.onScan(a.configId)" t-esc="t('chat.push_scan')"/>
@@ -231,6 +235,7 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
                     odooUrl: r?.odooNtfyUrl ?? "",
                     lockScreen: r?.lockScreen ?? "hidden_locked",
                     registeredAt: r?.registeredAt ?? null,
+                    registrationError: this.chatService.push.registrationError(s.configId),
                     paste: old?.paste ?? "",
                     pasteOpen: old?.pasteOpen ?? false,
                 };

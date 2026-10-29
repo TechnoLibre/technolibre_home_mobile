@@ -798,9 +798,9 @@ final class PushEngine {
     /**
      * Forgets the session copy of every account the last mirror left out
      * that has no endpoint left to unregister (none queued, all sent, or
-     * expired). A copy saved after that mirror belongs to an account not
-     * mirrored yet and stays. Nothing happens before a first mirror. Monitor
-     * held.
+     * expired). A copy saved after that mirror, or in its millisecond,
+     * belongs to an account not mirrored yet and stays. Nothing happens
+     * before a first mirror. Monitor held.
      */
     private void forgetOrphanSessions() {
         long mirrorAt = parseLong(settings.engineState("mirrorAt"));
@@ -810,7 +810,7 @@ final class PushEngine {
         for (String id : sessions.configIds()) {
             if (live.contains(id) || waiting.contains(id)) continue;
             NativeSession s = sessions.get(id);
-            if (s == null || s.savedAt <= mirrorAt) sessions.forget(id);
+            if (s == null || s.savedAt < mirrorAt) sessions.forget(id);
         }
     }
 

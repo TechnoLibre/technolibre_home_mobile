@@ -162,10 +162,13 @@ final class NotificationModel {
         return out;
     }
 
-    /** A comment on a record, shown in the "inbox" channel and opened in the inbox thread. */
+    /**
+     * A comment on a record, shown in the "inbox" channel and opened in the
+     * inbox thread; titled by the payload title, else by the server's label.
+     */
     static Shown inbox(AccountView a, PushPayload p, PushStrings s) {
         Shown out = base(a, inboxChannelId(a.configId), "inbox:" + a.configId + ":" + p.model + ":" + p.resId);
-        out.conversationTitle = p.title;
+        out.conversationTitle = p.title.isEmpty() ? a.label : p.title;
         out.text = p.body.isEmpty() ? s.get("new_message") : p.body;
         out.openUrl = "/chat/inbox?s=" + encode(a.configId) + "&thread=" + p.model + "," + p.resId;
         out.messaging = false;

@@ -1391,6 +1391,8 @@ export const translations: Record<string, string> = {
   "chat.push_lock_always": "Toujours affiché",
   "chat.push_registered": "Enregistré auprès d'Odoo.",
   "chat.push_not_registered": "Pas encore enregistré auprès d'Odoo.",
+  "chat.push_registration_offline": "Dernier essai d'enregistrement : Odoo injoignable.",
+  "chat.push_registration_refused": "Dernier essai d'enregistrement : refusé par Odoo.",
   "chat.push_status": "État de l'écoute",
   "chat.push_check_now": "Vérifier maintenant",
   "chat.push_status_ntfy": "ntfy {url} : {state}",

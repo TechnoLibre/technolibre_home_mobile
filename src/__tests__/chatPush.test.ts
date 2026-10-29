@@ -9,7 +9,7 @@ import { OdooRpcClient, syncSessionKey, type SyncCredentials } from "../services
 import { OutboxService } from "../services/outboxService";
 import { CapabilityService } from "../services/odoo/capabilityService";
 import { ChatService, type ChatSource } from "../services/chat/chatService";
-import { PUSH_RPC_TIMEOUT_MS, PUSH_STRING_KEYS } from "../services/chat/chatPush";
+import { PUSH_RPC_TIMEOUT_MS, PUSH_STRING_KEYS, UNREGISTER_BOUND_MS } from "../services/chat/chatPush";
 import { ChatLifecycle } from "../services/chat/chatLifecycle";
 import { parseNtfyLink, type NtfyLink } from "../services/chat/chatPushLink";
 import { chatSettings } from "../services/chat/chatSettings";
@@ -95,6 +95,8 @@ function fakeOdoo() {
     hang: false,
     /** register_devices on this host stays on the wire. */
     hangRegister: null as string | null,
+    /** register_devices answers an Odoo error. */
+    refuseRegister: false,
     /** register_devices answers once this settles. */
     registerGate: null as Promise<void> | null,
     /** unregister_devices answers after this many ms. */
@@ -131,6 +133,7 @@ function fakeOdoo() {
           if (method === "register_devices") {
             if (state.hangRegister === u.hostname) return new Promise<Response>(() => {});
             if (state.registerGate) await state.registerGate;
+            if (state.refuseRegister) return rpcError("odoo.exceptions.AccessError");
             if (kwargs.vapid_public_key !== state.vapid) return rpcError("odoo.addons.mail.tools.jwt.InvalidVapidError");
             if (!state.devices.has(kwargs.endpoint)) state.devices.set(kwargs.endpoint, { keys: kwargs.keys, host: u.hostname });
             return ok(null);
@@ -393,14 +396,62 @@ describe("ChatPush", () => {
     await chat.push.applyLink([ids[0]], link());
     odoo.state.hang = true;
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // The 5 s count from the call; each check of waitFor moves the clock by its interval
     const done = chat.push.forget(ids[0]);
-    await vi.waitFor(() => expect(odoo.kw("unregister_devices")).toHaveLength(1));
-    await vi.advanceTimersByTimeAsync(4900);
+    await vi.waitFor(() => expect(odoo.kw("unregister_devices")).toHaveLength(1), { interval: 1 });
+    await vi.advanceTimersByTimeAsync(4800);
     expect(native.callsOf("unsubscribe")).toEqual([]);
-    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(200);
     await done;
     expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[0], pendingEndpoint: `${NTFY}/upab12cd34fake1` }]);
     expect(native.callsOf("forgetSession")).toEqual([]);
+  });
+
+  it("forget is bounded as a whole, its queue wait included", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await chat.push.applyLink(ids, link());
+    chat.push.newSession();
+    odoo.state.hangRegister = "odoo.exemple.test";
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const hung = chat.push.ensureRegistered(await sourceOf(ids[0]));
+    await vi.waitFor(() => expect(odoo.kw("register_devices")).toHaveLength(3));
+    let forgotten = false;
+    const done = chat.push.forget(ids[1]).then(() => { forgotten = true; });
+    await vi.advanceTimersByTimeAsync(UNREGISTER_BOUND_MS - 100);
+    expect(forgotten).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
+    await done;
+    expect(native.callsOf("unsubscribe")).toEqual([]);
+    // The delete goes on: the account's rows are erased while the queue still waits
+    await chat.repo.dropSource(ids[1]);
+    await vi.advanceTimersByTimeAsync(PUSH_RPC_TIMEOUT_MS);
+    expect(await hung).toBe("offline");
+    await chat.push.idle();
+    // Past the bound no unregister starts: the endpoint goes to native code, which keeps the session copy for it
+    expect(odoo.kw("unregister_devices")).toEqual([]);
+    expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[1], pendingEndpoint: `${NTFY}/upab12cd34fake2` }]);
+    expect(native.callsOf("forgetSession")).toEqual([]);
+    expect(lastMirror().accounts.map((a) => a.configId)).toEqual([ids[0]]);
+  });
+
+  it("a registration failure reason is shown until the next success", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await chat.push.applyLink([ids[0]], link());
+    expect(chat.push.registrationError(ids[0])).toBeNull();
+    chat.push.newSession();
+    setNetwork({ connected: false, wifi: false });
+    expect(await chat.push.ensureRegistered(await sourceOf(ids[0]))).toBe("offline");
+    expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_offline");
+    setNetwork({ connected: true, wifi: true });
+    odoo.state.refuseRegister = true;
+    expect(await chat.push.ensureRegistered(await sourceOf(ids[0]))).toBe("refused");
+    expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_refused");
+    expect(t("chat.push_registration_refused")).not.toBe("chat.push_registration_refused");
+    expect(chat.push.registrationError(ids[1])).toBeNull();
+    chat.push.newSession();
+    odoo.state.refuseRegister = false;
+    expect(await chat.push.ensureRegistered(await sourceOf(ids[0]))).toBe("registered");
+    expect(chat.push.registrationError(ids[0])).toBeNull();
   });
 
   it("removing an application through the app wiring reaches push.forget before the row goes", async () => {

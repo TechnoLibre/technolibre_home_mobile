@@ -929,6 +929,15 @@ public class PushEngineTest {
     }
 
     @Test
+    public void aSessionCopiedInTheSameMillisecondAsTheMirrorIsKept() throws Exception {
+        mirror(3, true, account("cfg1", "Serveur A"));
+        // an account on its way in: its copy and the mirror that does not name it yet share a millisecond
+        sessions.put(new NativeSession("cfg2", odooServer.url("/").toString(), "db_exemple", "sid_exemple_neuf", now));
+        engine().onSettingsChanged();
+        assertNotNull(sessions.get("cfg2"));
+    }
+
+    @Test
     public void aRemovedAccountLosesItsSessionOnceItsEntriesExpire() throws Exception {
         mirror(3, true, account("cfg1", "Serveur A"), account("cfg3", "Serveur C"));
         mirrorSession("cfg3", "sid_exemple_parti");

@@ -48,6 +48,7 @@ function setup(rows: any[] = [row(A), row(B, { ntfyUrl: "https://ntfy.exemple.te
         setOdooUrl: vi.fn(async () => {}),
         setLockScreen: vi.fn(async () => {}),
         setLevel: vi.fn(async (_l: number) => {}),
+        registrationError: vi.fn((_id: string): string | null => null),
     };
     const chat = {
         push,
@@ -214,6 +215,18 @@ describe("OptionsChatNotificationsComponent", () => {
         native.health = { accounts: [{ configId: A, via: "odoo", state: "error", reason: "unreachable", lastCheckAt: 0 }] };
         await c.refreshStatus();
         expect(c.statusLines().join("\n")).toContain("Odoo unreachable");
+    });
+
+    it("the reason of a failed registration shows under the registration line", async () => {
+        const { c, push } = setup();
+        push.registrationError.mockImplementation((id: string) => (id === B ? "chat.push_registration_offline" : null));
+        await c.load();
+        expect(c.state.accounts.map((a: any) => a.registrationError)).toEqual([null, "chat.push_registration_offline", null]);
+        const line = source.indexOf("chat.push_not_registered");
+        const reason = source.indexOf("t(a.registrationError)");
+        expect(line).toBeGreaterThan(0);
+        expect(reason).toBeGreaterThan(line);
+        expect(source.slice(line, reason)).not.toContain("chat-new__chips");
     });
 
     it("the lock-screen choice is saved and published", async () => {
