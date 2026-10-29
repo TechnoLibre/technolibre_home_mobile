@@ -1,0 +1,44 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "MessageReactions": [
+      {
+        "content": "👍",
+        "count": 1,
+        "message": 32,
+        "personas": [
+          {
+            "id": 3,
+            "type": "partner"
+          }
+        ],
+        "sequence": 4
+      }
+    ],
+    "mail.message": [
+      {
+        "id": 32,
+        "reactions": [
+          [
+            "ADD",
+            [
+              {
+                "message": 32,
+                "content": "👍"
+              }
+            ]
+          ]
+        ]
+      }
+    ],
+    "res.partner": [
+      {
+        "avatar_128_access_token": "jeton",
+        "id": 3,
+        "name": "Administrator",
+        "write_date": "2026-10-29 04:23:32"
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": 404,
+    "message": "404: Not Found",
+    "data": {
+      "name": "werkzeug.exceptions.NotFound",
+      "debug": "Traceback (most recent call last):\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/http.py\", line 2167, in _transactioning\n    return service_model.retrying(func, env=self.env)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/service/model.py\", line 157, in retrying\n    result = func()\n             ^^^^^^\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/http.py\", line 2134, in _serve_ir_http\n    response = self.dispatcher.dispatch(rule.endpoint, args)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/http.py\", line 2382, in dispatch\n    result = self.request.registry['ir.http']._dispatch(endpoint)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/addons/base/models/ir_http.py\", line 333, in _dispatch\n    result = endpoint(**request.params)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/http.py\", line 754, in route_wrapper\n    result = endpoint(self, *args, **params_ok)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/erplibre/odoo18.0/odoo/addons/mail/models/discuss/mail_guest.py\", line 38, in wrapper\n    return func(self, *args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/erplibre/odoo18.0/odoo/addons/mail/controllers/message_reaction.py\", line 17, in mail_message_reaction\n    raise NotFound()\nwerkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.\n",
+      "message": "404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.",
+      "arguments": [],
+      "context": {}
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": null,
+  "error": {
+    "code": 100,
+    "message": "Odoo Session Expired",
+    "data": {
+      "name": "odoo.http.SessionExpiredException",
+      "debug": "Traceback (most recent call last):\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/http.py\", line 2167, in _transactioning\n    return service_model.retrying(func, env=self.env)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/service/model.py\", line 157, in retrying\n    result = func()\n             ^^^^^^\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/http.py\", line 2132, in _serve_ir_http\n    self.registry['ir.http']._authenticate(rule.endpoint)\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/addons/base/models/ir_http.py\", line 263, in _authenticate\n    cls._authenticate_explicit(auth)\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/addons/base/models/ir_http.py\", line 272, in _authenticate_explicit\n    getattr(cls, f'_auth_method_{auth}')()\n  File \"/opt/erplibre/odoo18.0/odoo/odoo/addons/base/models/ir_http.py\", line 248, in _auth_method_user\n    raise http.SessionExpiredException(\"Session expired\")\nodoo.http.SessionExpiredException: Session expired\n",
+      "message": "Session expired",
+      "arguments": [
+        "Session expired"
+      ],
+      "context": {}
+    }
+  }
+}

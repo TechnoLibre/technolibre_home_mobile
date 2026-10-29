@@ -1,12 +1,6 @@
 package ca.erplibre.home.chatpush;
 
-import java.io.IOException;
-import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -19,18 +13,15 @@ import org.json.JSONObject;
  */
 final class OdooDirect {
 
-    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
-
-    private final OkHttpClient client;
+    private final OdooJson json;
 
     OdooDirect(OkHttpClient base) {
-        this.client = base.newBuilder().followRedirects(false).followSslRedirects(false).build();
+        this.json = new OdooJson(base);
     }
 
     /** Reads the account-wide mute and the self partner, then the member channels' counters, and counts them. */
     UnreadSummary check(NativeSession s, boolean allowHttp, long nowMs) throws OdooDirectException {
-        requireAllowed(s, allowHttp);
-        JSONObject info = asObject(call(s, "/web/session/get_session_info", new JSONObject()));
+        JSONObject info = asObject(json.call(s, "/web/session/get_session_info", new JSONObject(), allowHttp));
         String mute = null;
         JSONObject storeData = info.optJSONObject("storeData");
         JSONObject store = storeData == null ? null : storeData.optJSONObject("Store");
@@ -45,12 +36,12 @@ final class OdooDirect {
         } catch (JSONException e) {
             throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, null);
         }
-        JSONObject mailData = asObject(call(s, "/mail/data", params));
+        JSONObject mailData = asObject(json.call(s, "/mail/data", params, allowHttp));
         return UnreadSummary.of(mailData, selfPartnerOf(info, store), mute, nowMs);
     }
 
     /** The session's own partner: its Store's self, else partner_id; -1 when neither says. */
-    private static long selfPartnerOf(JSONObject info, JSONObject store) {
+    static long selfPartnerOf(JSONObject info, JSONObject store) {
         JSONObject self = store == null ? null : store.optJSONObject("self");
         if (self != null && self.opt("id") instanceof Number && "partner".equals(self.optString("type", "partner"))) {
             return self.optLong("id");
@@ -58,9 +49,14 @@ final class OdooDirect {
         return info.opt("partner_id") instanceof Number ? info.optLong("partner_id") : -1;
     }
 
+    /** The session's own partner out of a get_session_info answer; -1 when it says none. */
+    static long selfPartnerOf(JSONObject info) {
+        JSONObject storeData = info.optJSONObject("storeData");
+        return selfPartnerOf(info, storeData == null ? null : storeData.optJSONObject("Store"));
+    }
+
     /** Asks Odoo to forget the push endpoint (no partner check on its side). */
     void unregister(NativeSession s, String endpoint, boolean allowHttp) throws OdooDirectException {
-        requireAllowed(s, allowHttp);
         JSONObject params = new JSONObject();
         try {
             params.put("model", "mail.push.device");
@@ -70,63 +66,7 @@ final class OdooDirect {
         } catch (JSONException e) {
             throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, null);
         }
-        call(s, "/web/dataset/call_kw/mail.push.device/unregister_devices", params);
-    }
-
-    private static void requireAllowed(NativeSession s, boolean allowHttp) throws OdooDirectException {
-        if (!HttpPolicy.allowed(s.odooUrl, allowHttp)) {
-            throw new OdooDirectException(OdooDirectException.Kind.HTTP_REFUSED, null);
-        }
-    }
-
-    private Object call(NativeSession s, String path, JSONObject params) throws OdooDirectException {
-        String base = s.odooUrl.trim();
-        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
-        String body;
-        try {
-            body = new JSONObject().put("jsonrpc", "2.0").put("method", "call").put("id", 1)
-                    .put("params", params).toString();
-        } catch (JSONException e) {
-            throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, null);
-        }
-        Request request;
-        try {
-            request = new Request.Builder().url(base + path)
-                    .header("Cookie", "session_id=" + s.sessionId)
-                    .post(RequestBody.create(JSON, body)).build();
-        } catch (IllegalArgumentException e) {
-            throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, null);
-        }
-        String text;
-        try (Response r = client.newCall(request).execute()) {
-            if (r.code() == 401) throw new OdooDirectException(OdooDirectException.Kind.SESSION_EXPIRED, "HTTP 401");
-            if (r.code() == 404 || r.code() == 410) {
-                throw new OdooDirectException(OdooDirectException.Kind.NOT_FOUND, "HTTP " + r.code());
-            }
-            if (r.code() < 200 || r.code() >= 300) {
-                throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, "HTTP " + r.code());
-            }
-            ResponseBody rb = r.body();
-            text = rb == null ? "" : rb.string();
-        } catch (IOException e) {
-            if (e instanceof java.net.UnknownServiceException) {
-                throw new OdooDirectException(OdooDirectException.Kind.CLEARTEXT_BLOCKED, null);
-            }
-            throw new OdooDirectException(OdooDirectException.Kind.UNREACHABLE, e.getClass().getSimpleName());
-        }
-        try {
-            JSONObject json = new JSONObject(text);
-            JSONObject error = json.optJSONObject("error");
-            if (error != null) {
-                if (error.optInt("code", 0) == 100) {
-                    throw new OdooDirectException(OdooDirectException.Kind.SESSION_EXPIRED, "code 100");
-                }
-                throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, "rpc error");
-            }
-            return json.opt("result");
-        } catch (JSONException e) {
-            throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, "not json");
-        }
+        json.call(s, "/web/dataset/call_kw/mail.push.device/unregister_devices", params, allowHttp);
     }
 
     private static JSONObject asObject(Object result) throws OdooDirectException {

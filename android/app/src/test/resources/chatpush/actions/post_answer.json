@@ -1,0 +1,63 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "mail.message": [
+      {
+        "attachment_ids": [],
+        "author": {
+          "id": 3,
+          "type": "partner"
+        },
+        "body": "<p>Bonjour du test d'action<!-- erplibre-mobile:03b81044-5d6f-4256-9671-773a54cfe4d3 --></p>",
+        "create_date": "2026-10-29 04:23:34",
+        "date": "2026-10-29 04:23:34",
+        "default_subject": "Administrator, MS Chat",
+        "email_from": "\"Administrator\" <admin@example.com>",
+        "id": 34,
+        "is_discussion": true,
+        "is_note": false,
+        "linkPreviews": [],
+        "message_type": "comment",
+        "model": "discuss.channel",
+        "needaction": false,
+        "notifications": [],
+        "parentMessage": false,
+        "pinned_at": false,
+        "rating_id": false,
+        "reactions": [],
+        "recipients": [],
+        "record_name": "Administrator, MS Chat",
+        "res_id": 4,
+        "scheduledDatetime": false,
+        "starred": false,
+        "subject": false,
+        "subtype_description": false,
+        "thread": {
+          "id": 4,
+          "model": "discuss.channel"
+        },
+        "trackingValues": [],
+        "write_date": "2026-10-29 04:23:34"
+      }
+    ],
+    "mail.thread": [
+      {
+        "id": 4,
+        "model": "discuss.channel",
+        "module_icon": "/mail/static/description/icon.png"
+      }
+    ],
+    "res.partner": [
+      {
+        "avatar_128_access_token": "jeton",
+        "id": 3,
+        "isInternalUser": true,
+        "is_company": false,
+        "name": "Administrator",
+        "userId": 2,
+        "write_date": "2026-10-29 04:23:32"
+      }
+    ]
+  }
+}

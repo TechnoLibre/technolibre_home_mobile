@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "id": 35,
+      "body": "<p>Bonjour du test d'action<!-- erplibre-mobile:24ff0bf7-76b8-4caf-ad92-a71df8436306 --></p>",
+      "parent_id": false
+    }
+  ]
+}
