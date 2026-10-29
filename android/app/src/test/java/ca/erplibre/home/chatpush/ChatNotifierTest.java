@@ -1,8 +1,11 @@
 package ca.erplibre.home.chatpush;
 
 import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+
+import java.util.EnumSet;
 
 import org.junit.Test;
 
@@ -15,6 +18,28 @@ public class ChatNotifierTest {
         n.text = text;
         n.at = at;
         return n;
+    }
+
+    @Test
+    public void aRepostAfterReactOffersMuteAsItsThirdButton() {
+        assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.MUTE),
+                ChatNotifier.offerFor(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.MUTE), 17L));
+    }
+
+    @Test
+    public void aRepostKeepsReactWhileTheNewestMessageHasAnId() {
+        assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.REACT),
+                ChatNotifier.offerFor(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.REACT), 17L));
+        // The user's own reply on top has no id: nothing to react to
+        assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.MUTE),
+                ChatNotifier.offerFor(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.REACT), 0L));
+    }
+
+    @Test
+    public void aNotificationDrawnWithFourKindsIsRepostedWithThree() {
+        assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.REACT),
+                ChatNotifier.offerFor(EnumSet.allOf(ActionKind.class), 17L));
+        assertTrue(ChatNotifier.offerFor(EnumSet.noneOf(ActionKind.class), 17L).isEmpty());
     }
 
     @Test

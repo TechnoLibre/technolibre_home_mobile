@@ -181,10 +181,25 @@ final class NotificationModel {
      * title. The mirrored type, else the payload's channel type, says which
      * prefix.
      *
-     * Every lock-screen choice offers « Répondre », « Marquer lu » and
-     * « Muet 1 h »; « 👍 » only with the message id, which names the
-     * message reacted to.
+     * Every lock-screen choice offers the same buttons (chatActions):
+     * « Répondre », « Marquer lu », then « 👍 » with the message id, which
+     * names the message reacted to, else « Muet 1 h ».
      */
+    /** The action buttons Android draws on a notification at most (Notification.Builder's MAX_ACTION_BUTTONS). */
+    static final int MAX_CHAT_ACTIONS = 3;
+
+    /**
+     * The buttons of a conversation's notification: « Répondre » and
+     * « Marquer lu », then « 👍 » when the newest stacked message has an id
+     * (module 1.5) and react still offers it, else « Muet 1 h ». Never more
+     * than MAX_CHAT_ACTIONS: a fourth would not be drawn.
+     */
+    static EnumSet<ActionKind> chatActions(long newestMessageId, boolean react) {
+        EnumSet<ActionKind> out = EnumSet.of(ActionKind.REPLY, ActionKind.READ);
+        out.add(react && newestMessageId > 0 ? ActionKind.REACT : ActionKind.MUTE);
+        return out;
+    }
+
     static Shown chat(AccountView a, PushPayload p, PushStrings s) {
         Shown out = base(a, chatChannelId(a.configId), "chat:" + a.configId + ":" + p.resId);
         ChannelInfo info = a.channels.get(p.resId);
@@ -196,8 +211,7 @@ final class NotificationModel {
         out.messaging = true;
         out.discussChannelId = p.resId;
         out.messageId = p.messageId;
-        out.actions = EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.MUTE);
-        if (p.messageId > 0) out.actions.add(ActionKind.REACT);
+        out.actions = chatActions(p.messageId, true);
         applyLockScreen(out, a, s);
         return out;
     }

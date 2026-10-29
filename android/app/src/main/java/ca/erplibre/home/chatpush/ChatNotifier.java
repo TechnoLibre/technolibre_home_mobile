@@ -283,7 +283,7 @@ final class ChatNotifier implements PushEngine.Notifier {
         if (a != null) show(NotificationModel.unsent(a, settings.strings()));
     }
 
-    /** After « 👍 »: the conversation tagged tag re-posted silently without « 👍 ». */
+    /** After « 👍 »: the conversation tagged tag re-posted silently without « 👍 », « Muet 1 h » in its place. */
     synchronized void withoutReact(String tag) {
         if (manager == null) return;
         StatusBarNotification sbn = drawn(tag);
@@ -338,8 +338,19 @@ final class ChatNotifier implements PushEngine.Notifier {
     }
 
     /**
+     * The buttons a re-post draws from the kinds the notification offered:
+     * none when it offered none, else NotificationModel.chatActions for the
+     * newest stacked id, « 👍 » kept only while kinds still holds it (a
+     * reaction sent drops it, and « Muet 1 h » takes its place).
+     */
+    static EnumSet<ActionKind> offerFor(EnumSet<ActionKind> kinds, long newestMessageId) {
+        if (kinds == null || kinds.isEmpty()) return EnumSet.noneOf(ActionKind.class);
+        return NotificationModel.chatActions(newestMessageId, kinds.contains(ActionKind.REACT));
+    }
+
+    /**
      * The actions old offers (EXTRA_ACTIONS); a chat notification drawn
-     * without that extra offers the lot-2 set, 👍 when the newest id is known.
+     * without that extra offers every kind, which offerFor narrows to three.
      */
     private static EnumSet<ActionKind> offered(Notification old, long[] ids) {
         EnumSet<ActionKind> out = EnumSet.noneOf(ActionKind.class);
@@ -362,18 +373,17 @@ final class ChatNotifier implements PushEngine.Notifier {
     }
 
     /**
-     * Replaces b's actions by kinds on the conversation tagged tag ("chat:
-     * &lt;configId&gt;:&lt;channelId&gt;"), the newest entry of ids naming
-     * the message (👍 is left out when it is 0) and when (epoch ms) bounding
-     * mark read. Records the kinds offered under EXTRA_ACTIONS.
+     * Replaces b's actions by those offerFor draws from kinds on the
+     * conversation tagged tag ("chat:&lt;configId&gt;:&lt;channelId&gt;"),
+     * the newest entry of ids naming the message (no 👍 when it is 0) and
+     * when (epoch ms) bounding mark read. Records the kinds offered under
+     * EXTRA_ACTIONS.
      */
     private void setActions(NotificationCompat.Builder b, String tag, long[] ids, long when,
             EnumSet<ActionKind> kinds) {
         b.clearActions();
         NotificationModel.Shown target = targetOf(tag, ids, when);
-        EnumSet<ActionKind> offer = kinds == null || target == null
-                ? EnumSet.noneOf(ActionKind.class) : EnumSet.copyOf(kinds);
-        if (target == null || target.messageId <= 0) offer.remove(ActionKind.REACT);
+        EnumSet<ActionKind> offer = target == null ? EnumSet.noneOf(ActionKind.class) : offerFor(kinds, target.messageId);
         String[] names = new String[offer.size()];
         int i = 0;
         for (ActionKind k : offer) names[i++] = k.name();

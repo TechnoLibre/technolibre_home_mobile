@@ -298,10 +298,10 @@ public class NotificationModelTest {
     }
 
     @Test
-    public void hiddenAndAlwaysServersOfferTheFourActionsWithAMessageId() throws Exception {
+    public void hiddenAndAlwaysServersOfferReplyReadAndReactWithAMessageId() throws Exception {
         for (LockScreenMode mode : new LockScreenMode[] {LockScreenMode.HIDDEN_LOCKED, LockScreenMode.ALWAYS}) {
             NotificationModel.Shown s = NotificationModel.chat(account(mode), captured("push_module_chat.json"), FR);
-            assertEquals(mode.key, EnumSet.allOf(ActionKind.class), s.actions);
+            assertEquals(mode.key, EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.REACT), s.actions);
             assertEquals(CONFIG, s.configId);
             assertEquals(4L, s.discussChannelId);
             assertEquals(17L, s.messageId);
@@ -309,17 +309,37 @@ public class NotificationModelTest {
     }
 
     @Test
-    public void withoutAMessageIdThereIsNoReact() throws Exception {
+    public void aConversationNeverOffersMoreThanTheThreeButtonsAndroidDraws() {
+        assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.REACT),
+                NotificationModel.chatActions(17L, true));
+        assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.MUTE),
+                NotificationModel.chatActions(0L, true));
+        for (long id : new long[] {0L, 17L}) {
+            for (boolean react : new boolean[] {false, true}) {
+                assertTrue(NotificationModel.chatActions(id, react).size() <= NotificationModel.MAX_CHAT_ACTIONS);
+            }
+        }
+        assertEquals(3, NotificationModel.MAX_CHAT_ACTIONS);
+    }
+
+    @Test
+    public void onceReactedTheThirdButtonIsMuteAgain() {
+        assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.MUTE),
+                NotificationModel.chatActions(17L, false));
+    }
+
+    @Test
+    public void withoutAMessageIdTheThirdButtonIsMute() throws Exception {
         NotificationModel.Shown s = NotificationModel.chat(account(LockScreenMode.ALWAYS), stock(), FR);
         assertEquals(0L, s.messageId);
         assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.MUTE), s.actions);
     }
 
     @Test
-    public void aNeverServerOffersEveryActionWithItsTextHidden() throws Exception {
+    public void aNeverServerOffersTheSameActionsWithItsTextHidden() throws Exception {
         NotificationModel.Shown s = NotificationModel.chat(account(LockScreenMode.NEVER),
                 captured("push_module_chat.json"), FR);
-        assertEquals(EnumSet.allOf(ActionKind.class), s.actions);
+        assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.REACT), s.actions);
         assertEquals(17L, s.messageId);
         assertEquals("Nouveau message", s.conversationTitle);
         assertEquals("Nouveau message", s.text);
