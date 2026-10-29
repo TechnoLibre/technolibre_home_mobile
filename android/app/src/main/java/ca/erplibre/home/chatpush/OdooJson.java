@@ -76,9 +76,9 @@ final class OdooJson {
             JSONObject error = json.optJSONObject("error");
             if (error != null) {
                 int code = error.optInt("code", 0);
-                if (code == 100) throw new OdooDirectException(OdooDirectException.Kind.SESSION_EXPIRED, "code 100");
-                if (code == 404) throw new OdooDirectException(OdooDirectException.Kind.NOT_FOUND, "code 404");
-                throw new OdooDirectException(OdooDirectException.Kind.REFUSED, "rpc error");
+                if (code == 100) throw new OdooDirectException(OdooDirectException.Kind.SESSION_EXPIRED, "code 100", true);
+                if (code == 404) throw new OdooDirectException(OdooDirectException.Kind.NOT_FOUND, "code 404", true);
+                throw new OdooDirectException(OdooDirectException.Kind.REFUSED, "rpc error", true);
             }
             return json.opt("result");
         } catch (JSONException e) {

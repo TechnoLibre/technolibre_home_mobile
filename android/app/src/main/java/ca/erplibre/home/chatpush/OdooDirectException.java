@@ -16,10 +16,22 @@ final class OdooDirectException extends Exception {
     }
 
     private final Kind kind;
+    private final boolean rpc;
 
     OdooDirectException(Kind kind, String detail) {
+        this(kind, detail, false);
+    }
+
+    /** `rpc` is true when the failure is a JSON-RPC error answered with HTTP 200, false for an HTTP status. */
+    OdooDirectException(Kind kind, String detail, boolean rpc) {
         super(detail == null ? kind.name() : kind.name() + ": " + detail);
         this.kind = kind;
+        this.rpc = rpc;
+    }
+
+    /** True when Odoo answered a JSON-RPC error object rather than an HTTP error status. */
+    boolean rpc() {
+        return rpc;
     }
 
     Kind kind() {

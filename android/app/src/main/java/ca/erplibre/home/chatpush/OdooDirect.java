@@ -71,7 +71,7 @@ final class OdooDirect {
         } catch (OdooDirectException e) {
             // Odoo answers null for an endpoint it does not know: only an HTTP 404 or 410 means the route is
             // gone. A JSON-RPC 404 is an unexpected answer, retried.
-            if (e.kind() == OdooDirectException.Kind.NOT_FOUND && String.valueOf(e.getMessage()).contains("code")) {
+            if (e.kind() == OdooDirectException.Kind.NOT_FOUND && e.rpc()) {
                 throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, "rpc error");
             }
             throw e;

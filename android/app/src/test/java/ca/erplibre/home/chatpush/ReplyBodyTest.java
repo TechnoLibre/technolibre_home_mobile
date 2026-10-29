@@ -5,6 +5,11 @@ import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
+/**
+ * reply_body_parity.json holds the bodies the app's own composeBody (no mention, no emoji conversion) writes
+ * for each text. It is not edited by hand: src/__tests__/replyBodyParity.test.ts recomputes every body from
+ * the TypeScript and fails when the fixture drifts, and this test holds the Java port to the same bodies.
+ */
 public class ReplyBodyTest {
 
     private static final String UUID = "03b81044-5d6f-4256-9671-773a54cfe4d3";

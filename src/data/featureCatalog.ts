@@ -4950,7 +4950,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/__tests__/fixtures/PROVENANCE.md",
                 ],
                 tests: [
-                    "src/__tests__/chatCompose.test.ts", "src/__tests__/chatBody.test.ts", "src/__tests__/chatBodyNode.test.ts",
+                    "src/__tests__/chatCompose.test.ts", "src/__tests__/replyBodyParity.test.ts", "src/__tests__/chatBody.test.ts", "src/__tests__/chatBodyNode.test.ts",
                     "src/__tests__/chatMentions.test.ts", "src/__tests__/chatSuggestions.test.ts",
                     "src/__tests__/mentionField.test.ts",
                 ],
