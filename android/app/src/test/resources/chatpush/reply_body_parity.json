@@ -1,0 +1,317 @@
+[
+ {
+  "name": "plain text",
+  "text": "Bonjour tout le monde",
+  "body": "Bonjour tout le monde"
+ },
+ {
+  "name": "one newline",
+  "text": "ligne un\nligne deux",
+  "body": "ligne un<br>ligne deux"
+ },
+ {
+  "name": "three newlines",
+  "text": "ligne un\n\n\nligne deux",
+  "body": "ligne un<br><br>ligne deux"
+ },
+ {
+  "name": "carriage return and newline",
+  "text": "ligne un\r\nligne deux",
+  "body": "ligne un<br><br>ligne deux"
+ },
+ {
+  "name": "leading and trailing blanks",
+  "text": "  \n  bonjour   le monde \n  ",
+  "body": "bonjour   le monde"
+ },
+ {
+  "name": "markup characters",
+  "text": "<b>gras</b> & \"citation\" 'apostrophe' `accent`",
+  "body": "&lt;b&gt;gras&lt;/b&gt; &amp; &quot;citation&quot; &#x27;apostrophe&#x27; &#x60;accent&#x60;"
+ },
+ {
+  "name": "url",
+  "text": "voir https://example.com maintenant",
+  "body": "voir <a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/\">https://example.com</a> maintenant"
+ },
+ {
+  "name": "url with a trailing dot",
+  "text": "voir https://example.com.",
+  "body": "voir <a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/\">https://example.com</a>."
+ },
+ {
+  "name": "www without a scheme",
+  "text": "www.example.org/path?q=1",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://www.example.org/path?q=1\">www.example.org/path?q=1</a>"
+ },
+ {
+  "name": "url with a query and an ampersand",
+  "text": "https://example.com/a?b=1&c=2",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/a?b=1&amp;c=2\">https://example.com/a?b=1&amp;c=2</a>"
+ },
+ {
+  "name": "url in capitals",
+  "text": "HTTPS://Example.COM/Chemin",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/Chemin\">HTTPS://Example.COM/Chemin</a>"
+ },
+ {
+  "name": "url without a tld",
+  "text": "https://x",
+  "body": "https://x"
+ },
+ {
+  "name": "emoticon before a line break",
+  "text": ":)\nsuite",
+  "body": ":)<br>suite"
+ },
+ {
+  "name": "emoji typed directly",
+  "text": "Bravo 🎉 à tous",
+  "body": "Bravo 🎉 à tous"
+ },
+ {
+  "name": "outbox lt and newline",
+  "text": "a < b\nline",
+  "body": "a &lt; b<br>line"
+ },
+ {
+  "name": "outbox url",
+  "text": "voir https://example.com :) fin",
+  "body": "voir <a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/\">https://example.com</a> :) fin"
+ },
+ {
+  "name": "parity 0",
+  "text": "http://1.2.3.4/x",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://1.2.3.4/x\">http://1.2.3.4/x</a>"
+ },
+ {
+  "name": "parity 1",
+  "text": "http://010.1.1.1/a",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://8.1.1.1/a\">http://010.1.1.1/a</a>"
+ },
+ {
+  "name": "parity 2",
+  "text": "http://999.1.1.1",
+  "body": "http://999.1.1.1"
+ },
+ {
+  "name": "parity 3",
+  "text": "http://0x7f.1.1.1",
+  "body": "http://0x7f.1.1.1"
+ },
+ {
+  "name": "parity 4",
+  "text": "HTTP://EXAMPLE.COM:80/A B?x=1#frag",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://example.com/A\">HTTP://EXAMPLE.COM:80/A</a> B?x=1#frag"
+ },
+ {
+  "name": "parity 5",
+  "text": "https://exämple.com/pâth?q=é#frâg",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://xn--exmple-cua.com/p%C3%A2th?q=%C3%A9#fr%C3%A2g\">https://exämple.com/pâth?q=é#frâg</a>"
+ },
+ {
+  "name": "parity 6",
+  "text": "https://user:pw@example.com/",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://user:pw@example.com/\">https://user:pw@example.com/</a>"
+ },
+ {
+  "name": "parity 7",
+  "text": "https://user@example.com",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://user@example.com/\">https://user@example.com</a>"
+ },
+ {
+  "name": "parity 8",
+  "text": "http://example.com:99999",
+  "body": "http://example.com:99999"
+ },
+ {
+  "name": "parity 9",
+  "text": "http://example.com:443",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://example.com:443/\">http://example.com:443</a>"
+ },
+ {
+  "name": "parity 10",
+  "text": "https://example.com:443/a/./b/../c",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/a/c\">https://example.com:443/a/./b/../c</a>"
+ },
+ {
+  "name": "parity 11",
+  "text": "https://example.com:0443/",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/\">https://example.com:0443/</a>"
+ },
+ {
+  "name": "parity 12",
+  "text": "https://example.com\\a\\b",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/a/b\">https://example.com\\a\\b</a>"
+ },
+ {
+  "name": "parity 13",
+  "text": "https://example.com/a%2e%2e/b",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/a%2e%2e/b\">https://example.com/a%2e%2e/b</a>"
+ },
+ {
+  "name": "parity 14",
+  "text": "www.example.com/a|b^c`d{e}",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://www.example.com/a|b^c%60d%7Be%7D\">www.example.com/a|b^c&#x60;d{e}</a>"
+ },
+ {
+  "name": "parity 15",
+  "text": "https://a.com/'x'",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://a.com/&#x27;x&#x27;\">https://a.com/&#x27;x&#x27;</a>"
+ },
+ {
+  "name": "parity 16",
+  "text": "x (https://a.com) y",
+  "body": "x (<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://a.com/\">https://a.com</a>) y"
+ },
+ {
+  "name": "parity 17",
+  "text": "voir https://a.com/x, puis",
+  "body": "voir <a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://a.com/x\">https://a.com/x</a>, puis"
+ },
+ {
+  "name": "parity 18",
+  "text": "https://xn--e.com",
+  "body": "https://xn--e.com"
+ },
+ {
+  "name": "parity 19",
+  "text": "https://EXAMPLE.com.",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/\">https://EXAMPLE.com</a>."
+ },
+ {
+  "name": "parity 20",
+  "text": "http://a.b.cd#frag`x",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://a.b.cd/#frag%60x\">http://a.b.cd#frag&#x60;x</a>"
+ },
+ {
+  "name": "parity 21",
+  "text": "https://example.com/é",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/%C3%A9\">https://example.com/é</a>"
+ },
+ {
+  "name": "parity 22",
+  "text": "www.example.com.123",
+  "body": "www.example.com.123"
+ },
+ {
+  "name": "parity 23",
+  "text": "https://example.com/%41%zz",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/%41%zz\">https://example.com/%41%zz</a>"
+ },
+ {
+  "name": "parity 24",
+  "text": "https://example.com?",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/?\">https://example.com?</a>"
+ },
+ {
+  "name": "parity 25",
+  "text": "https://example.com/#",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/#\">https://example.com/#</a>"
+ },
+ {
+  "name": "parity 26",
+  "text": "https://exa%41mple.com/",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://exaample.com/\">https://exa%41mple.com/</a>"
+ },
+ {
+  "name": "parity 27",
+  "text": "https://ÉCOLE.example.com/",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://xn--cole-9oa.example.com/\">https://ÉCOLE.example.com/</a>"
+ },
+ {
+  "name": "parity 28",
+  "text": "a b\u001fc",
+  "body": "a b\u001fc"
+ },
+ {
+  "name": "parity 29",
+  "text": "\u001c x \u001f",
+  "body": "\u001c x \u001f"
+ },
+ {
+  "name": "parity 30",
+  "text": "﻿ x  ",
+  "body": "x"
+ },
+ {
+  "name": "parity 31",
+  "text": "a   b \n\n c\r\n\r\nd",
+  "body": "a   b <br><br> c<br><br>d"
+ },
+ {
+  "name": "parity 32",
+  "text": "https://a.com/p?q=a b",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://a.com/p?q=a\">https://a.com/p?q=a</a> b"
+ },
+ {
+  "name": "parity 33",
+  "text": "https://example.com/[x]",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/[x]\">https://example.com/[x]</a>"
+ },
+ {
+  "name": "parity 34",
+  "text": "https://a.com;b",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://a.com;b/\">https://a.com;b</a>"
+ },
+ {
+  "name": "parity 35",
+  "text": "https://a.com/x;",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://a.com/x\">https://a.com/x</a>;"
+ },
+ {
+  "name": "parity 36",
+  "text": "http://1.2.3.4:8080?x",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://1.2.3.4:8080/?x\">http://1.2.3.4:8080?x</a>"
+ },
+ {
+  "name": "parity 37",
+  "text": "http://1.2.3.4.5",
+  "body": "http://1.2.3.4.5"
+ },
+ {
+  "name": "parity 38",
+  "text": "https://sub.example.co.uk/a?b=c&d=e#f",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://sub.example.co.uk/a?b=c&amp;d=e#f\">https://sub.example.co.uk/a?b=c&amp;d=e#f</a>"
+ },
+ {
+  "name": "parity 39",
+  "text": "Hello & <i>\"q\"</i> `c` 'a'",
+  "body": "Hello &amp; &lt;i&gt;&quot;q&quot;&lt;/i&gt; &#x60;c&#x60; &#x27;a&#x27;"
+ },
+ {
+  "name": "parity 40",
+  "text": "http://a_b.com",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://a_b.com/\">http://a_b.com</a>"
+ },
+ {
+  "name": "parity 41",
+  "text": "http://a+b.com/",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://a+b.com/\">http://a+b.com/</a>"
+ },
+ {
+  "name": "parity 42",
+  "text": "https://-a.com/",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://-a.com/\">https://-a.com/</a>"
+ },
+ {
+  "name": "parity 43",
+  "text": "https://a..com/",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://a..com/\">https://a..com/</a>"
+ },
+ {
+  "name": "parity 44",
+  "text": "http://example.com:/p",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"http://example.com/p\">http://example.com:/p</a>"
+ },
+ {
+  "name": "parity 45",
+  "text": "https://example.com/ü?ü#ü",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/%C3%BC?%C3%BC#%C3%BC\">https://example.com/ü?ü#ü</a>"
+ },
+ {
+  "name": "parity 46",
+  "text": "https://example.com/a\\..\\b",
+  "body": "<a target=\"_blank\" rel=\"noreferrer noopener\" href=\"https://example.com/b\">https://example.com/a\\..\\b</a>"
+ }
+]

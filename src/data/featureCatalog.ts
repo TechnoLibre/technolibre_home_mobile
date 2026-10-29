@@ -5675,6 +5675,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "android/app/src/main/java/ca/erplibre/home/chatpush/OdooActions.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/Posted.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ReplyBody.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/UrlHref.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/HealthSnapshot.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/PushEngine.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ChatNotifier.java",

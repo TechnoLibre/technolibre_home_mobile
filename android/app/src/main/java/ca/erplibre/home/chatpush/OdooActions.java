@@ -14,8 +14,8 @@ import org.json.JSONObject;
 /**
  * The actions a notification takes on Odoo, on the session's native copy: one JSON-RPC call each, mirroring
  * the app's outbox. /mail/message/post, /discuss/channel/mark_as_read and /mail/message/reaction are
- * auth="public": on a dead session they run as the public user (or answer 404) instead of failing, so a
- * caller asks alive() before each action. A JSON-RPC 404 on an action route is NOT_FOUND. A live answer
+ * auth="public": on a dead session they run as the public user (or answer 404) instead of failing. This
+ * class does not check the session before an action: the caller (the action runner) asks alive() first. A JSON-RPC 404 on an action route is NOT_FOUND. A live answer
  * with no result key is a success. An exception message never carries the session id, a URL, a body or a
  * reply text.
  */

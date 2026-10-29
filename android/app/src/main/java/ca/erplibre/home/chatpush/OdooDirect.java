@@ -66,7 +66,16 @@ final class OdooDirect {
         } catch (JSONException e) {
             throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, null);
         }
-        json.call(s, "/web/dataset/call_kw/mail.push.device/unregister_devices", params, allowHttp);
+        try {
+            json.call(s, "/web/dataset/call_kw/mail.push.device/unregister_devices", params, allowHttp);
+        } catch (OdooDirectException e) {
+            // Odoo answers null for an endpoint it does not know: only an HTTP 404 or 410 means the route is
+            // gone. A JSON-RPC 404 is an unexpected answer, retried.
+            if (e.kind() == OdooDirectException.Kind.NOT_FOUND && String.valueOf(e.getMessage()).contains("code")) {
+                throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, "rpc error");
+            }
+            throw e;
+        }
     }
 
     private static JSONObject asObject(Object result) throws OdooDirectException {

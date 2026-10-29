@@ -739,7 +739,7 @@ final class PushEngine {
         try {
             u = odoo.check(s, http, clock.now());
         } catch (OdooDirectException e) {
-            failed = e.kind();
+            failed = checkKind(e.kind());
         }
         synchronized (lock) {
             AccountState st = accounts.get(configId);
@@ -918,7 +918,25 @@ final class PushEngine {
         settings.setEngineState(key, want);
     }
 
-    private static String odooReasonKey(String kind) {
+    /**
+     * The kind a check failure is recorded under. The action kinds REFUSED, NOT_FOUND and AMBIGUOUS are an
+     * unexpected answer and TRANSIENT an unreachable server: the reasons the status and health texts have
+     * words for.
+     */
+    static OdooDirectException.Kind checkKind(OdooDirectException.Kind k) {
+        switch (k) {
+            case REFUSED:
+            case NOT_FOUND:
+            case AMBIGUOUS:
+                return OdooDirectException.Kind.PROTOCOL;
+            case TRANSIENT:
+                return OdooDirectException.Kind.UNREACHABLE;
+            default:
+                return k;
+        }
+    }
+
+    static String odooReasonKey(String kind) {
         if ("UNREACHABLE".equals(kind)) return "reason_odoo_unreachable";
         if ("NOT_FOUND".equals(kind) || kind.isEmpty()) return "reason_protocol";
         return "reason_" + kind.toLowerCase(Locale.ROOT);
