@@ -202,10 +202,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   when the newest message has a message id (`erplibre_mobile_chat` 1.5),
   otherwise « Mute 1 h ». The buttons show in every lock-screen mode,
   « Never shown » included (the text stays hidden). « Mark read » marks the
-  conversation read in Odoo even with the sending of « read » turned off, and clears that
-  conversation's @mentions up to that message from the Odoo Inbox. Every
-  action is sealed in a local store before any network call and sent once:
-  by the module's client identifier, or, without it, by a search for the
+  conversation read in Odoo even with the sending of « read » turned off, and
+  clears that conversation's @mentions up to that message from the Odoo Inbox.
+  Every action is sealed in a local store before any network call and sent
+  once: by the module's client identifier, or, without it, by a search for the
   hidden marker after a 3-minute quiet window; a network failure is retried
   with a growing delay and the action goes to the app after 24 hours, a
   refusal, two marker hits or a dead session. A dead session is detected
@@ -217,6 +217,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   {server} ». Module 1.5 marks the app's devices (their pushes carry the
   message id and channel type, go out after commit and log nothing) and adds
   the « read » and « inbox done » pushes that remove a notification at once
+  when it is read or done elsewhere.
 
 ### Changed
 - **The app's own read bounds its Inbox clear** — marking a conversation
@@ -788,7 +789,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   marque les appareils de l'app (leurs push portent l'identifiant du message et
   le type de canal, partent après la validation et ne journalisent rien) et
   ajoute les push « lu » et « boîte de réception faite » qui retirent aussitôt
-  une notification
+  une notification lue ou traitée ailleurs.
 
 ### Modifié
 - **La lecture faite dans l'app borne le nettoyage de la boîte de réception**

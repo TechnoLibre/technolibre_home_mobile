@@ -273,19 +273,22 @@ works); the phone registers itself with Odoo, under its own session.
      shown, even when sending « read » is turned off in Options › Chat, and
      clears that conversation's @mentions up to that message from the Odoo
      Inbox (nothing else leaves the Inbox);
-   - « 👍 » reacts to the newest message, offered when that message has a
-     message id, which only module 1.5 pushes; otherwise « Mute 1 h » takes the
-     place (and takes it back once a 👍 has been sent).
+   - « 👍 » reacts to the newest message received (the user's own reply does
+     not count), offered when that message has a message id, which only module
+     1.5 pushes; otherwise « Mute 1 h » takes the place (and takes it back once
+     a 👍 has been sent).
 
    The buttons are offered in every lock-screen mode, « Never shown » included
-   (the text stays hidden there; except on « Always shown » servers, Android 12
-   and later asks to unlock before an action runs). Every action is written to a
-   sealed local store before any network call, so it is never lost and never
+   (the text stays hidden there). On every server except « Always shown » ones,
+   Android 12 and later asks to unlock before an action runs. Every action is
+   written to a sealed local store before any network call, so it is never
+   lost and never
    done twice: a reply carries a client identifier (the module stores it, and
    without the module the phone looks the hidden marker of the body up first,
    after a 3-minute quiet window), and mark read, mute and 👍 are target states
-   that a repeat leaves unchanged. An action that fails for a network reason
-   is retried with a growing delay.
+   that a repeat leaves unchanged. Replies to one conversation are sent in the
+   order they were typed. An action that fails for a network reason is retried
+   with a growing delay.
    Before each action the phone checks that the server still knows the
    session, because Odoo answers « mark read » with success while doing nothing
    when the session is dead. A dead session, a refusal, two messages found
@@ -312,12 +315,13 @@ sensitive.
 Module 1.5 (optional) marks the phone's devices through
 `/erplibre_mobile_chat/push/device`, which the app calls after each
 registration. Their pushes then carry the message id and the channel type, are
-sent after the transaction commits, and are accepted on ntfy's 200 without
+sent after the transaction commits (2 seconds at most per device), and are
+accepted on ntfy's 200 without
 logging the topic; a « read » push removes the notification at once when the
 conversation is read elsewhere, and an « inbox done » push removes the inbox
 notification of a record done elsewhere (only the phone's marked devices
 receive them). A phone setting that stays silent while a browser is online
-comes with lot 3. Without module 1.5 there is no 👍 (a reaction found by time
+comes with a later version. Without module 1.5 there is no 👍 (a reaction found by time
 could land on another message), « Mark read » finds the newest message by
 date, and a notification goes at the next check or when the app opens.
 

@@ -279,20 +279,22 @@ le téléphone s'enregistre lui-même auprès d'Odoo, sous sa propre session.
      désactivé dans Options › Clavardage, et retire de la boîte de réception
      d'Odoo les @mentions de cette conversation jusqu'à ce message (rien
      d'autre n'en sort) ;
-   - « 👍 » réagit au plus récent message, offert quand ce message a un
-     identifiant, que seul le module 1.5 pousse ; sinon « Muet 1 h » prend sa
-     place (et la reprend une fois un 👍 envoyé).
+   - « 👍 » réagit au plus récent message reçu (la réponse de l'utilisateur ne
+     compte pas), offert quand ce message a un identifiant, que seul le module
+     1.5 pousse ; sinon « Muet 1 h » prend sa place (et la reprend une fois un
+     👍 envoyé).
 
    Les boutons sont offerts dans tous les modes d'écran verrouillé, « Jamais
-   affiché » compris (le texte y reste masqué ; sauf sur un serveur « Toujours
-   affiché », Android 12 et suivants demande de déverrouiller avant qu'une
-   action s'exécute). Chaque action est écrite dans un magasin local scellé avant tout
-   appel réseau : elle n'est jamais perdue ni faite deux fois. Une réponse porte
+   affiché » compris (le texte y reste masqué). Sur tout serveur sauf
+   « Toujours affiché », Android 12 et suivants demande de déverrouiller avant
+   qu'une action s'exécute. Chaque action est écrite dans un magasin local
+   scellé avant tout appel réseau : elle n'est jamais perdue ni faite deux fois. Une réponse porte
    un identifiant client (le module le garde ; sans le module, le téléphone
    cherche d'abord le marqueur caché du corps, après une fenêtre de calme de
    3 minutes), et marquer lu, mettre en sourdine et 👍 sont des états cibles
-   qu'une répétition laisse intacts. Une action qui échoue pour une raison de
-   réseau est réessayée avec un délai croissant.
+   qu'une répétition laisse intacts. Les réponses à une même conversation
+   partent dans l'ordre où elles ont été saisies. Une action qui échoue pour
+   une raison de réseau est réessayée avec un délai croissant.
    Avant chaque action, le téléphone vérifie que le serveur connaît encore la
    session, car Odoo répond « marquer lu » par un succès sans rien faire quand
    la session est morte. Une session morte, un refus, deux messages trouvés sous
@@ -320,12 +322,13 @@ sensible.
 Le module 1.5 (facultatif) marque les appareils du téléphone par
 `/erplibre_mobile_chat/push/device`, que l'app appelle après chaque
 enregistrement. Leurs push portent alors l'identifiant du message et le type de
-canal, partent après la validation de la transaction et sont acceptés sur le
-200 de ntfy sans journaliser le sujet ; un push « lu » retire aussitôt la
+canal, partent après la validation de la transaction (2 secondes au plus par
+appareil) et sont acceptés sur le 200 de ntfy sans journaliser le sujet ; un push « lu » retire aussitôt la
 notification quand la conversation est lue ailleurs, et un push « boîte de
 réception faite » retire celle d'un enregistrement traité ailleurs (seuls les
 appareils marqués du téléphone les reçoivent). Un réglage du téléphone pour se
-taire quand un navigateur est en ligne vient avec le lot 3. Sans le module 1.5,
+taire quand un navigateur est en ligne vient avec une prochaine version. Sans
+le module 1.5,
 il n'y a pas de 👍 (une réaction trouvée par l'heure pourrait tomber sur un
 autre message), « Marquer lu » trouve le plus récent message par sa date, et
 une notification part au prochain contrôle ou à l'ouverture de l'app.

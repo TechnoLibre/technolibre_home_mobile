@@ -231,7 +231,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   marque les appareils de l'app (leurs push portent l'identifiant du message et
   le type de canal, partent après la validation et ne journalisent rien) et
   ajoute les push « lu » et « boîte de réception faite » qui retirent aussitôt
-  une notification
+  une notification lue ou traitée ailleurs.
 
 ### Modifié
 - **La lecture faite dans l'app borne le nettoyage de la boîte de réception**
