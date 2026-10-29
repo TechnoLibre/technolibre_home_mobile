@@ -6,7 +6,9 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
@@ -19,8 +21,10 @@ import org.json.JSONObject;
  * an action exists before any network call. PENDING and RUNNING records belong to native code; DONE and
  * HANDOFF ones wait for the app's drain, which acks them. A claim stamps the claiming process: recover()
  * turns back to PENDING only the RUNNING records of a process that is gone, keeping their sentAt, so a
- * run still in flight is never started twice. A record whose seal no longer opens is skipped, and
- * prune() deletes it. Every transition runs under one lock shared by every store of the process.
+ * run still in flight is never started twice. A reply is claimed only once every older reply of its
+ * conversation has ended, so replies reach Odoo in the order they were typed. A record whose seal no
+ * longer opens is skipped, and prune() deletes it once another record proves the key works. Every
+ * transition runs under one lock shared by every store of the process.
  */
 final class ActionStore {
 
@@ -86,11 +90,25 @@ final class ActionStore {
         }
     }
 
-    /** PENDING → RUNNING, owned by this process; false when the record is absent or not PENDING. */
+    /**
+     * PENDING → RUNNING, owned by this process; false when the record is absent or not PENDING, or when
+     * it is a reply behind an older reply of its conversation still PENDING or RUNNING. A reply held back
+     * so is due no earlier than that one: its nextAt, or now + FIRST_RETRY_MS while it runs.
+     */
     boolean claim(String id) {
         synchronized (LOCK) {
             ChatAction a = read(PREFIX + id);
             if (a == null || a.state != ChatAction.State.PENDING) return false;
+            ChatAction before = a.kind == ActionKind.REPLY ? replyBefore(a) : null;
+            if (before != null) {
+                long at = before.state == ChatAction.State.PENDING ? before.nextAt
+                        : clock.getAsLong() + FIRST_RETRY_MS;
+                if (at > a.nextAt) {
+                    a.nextAt = at;
+                    write(a);
+                }
+                return false;
+            }
             a.state = ChatAction.State.RUNNING;
             a.owner = process.get();
             write(a);
@@ -216,6 +234,39 @@ final class ActionStore {
         return at;
     }
 
+    /** The oldest reply of a's conversation created before a and not ended yet, or null. Lock held. */
+    private ChatAction replyBefore(ChatAction a) {
+        for (ChatAction b : all()) {
+            if (b.id.equals(a.id)) return null;
+            if (b.kind == ActionKind.REPLY && b.configId.equals(a.configId) && b.channelId == a.channelId
+                    && (b.state == ChatAction.State.PENDING || b.state == ChatAction.State.RUNNING)) {
+                return b;
+            }
+        }
+        return null;
+    }
+
+    /** The PENDING replies of the conversation (configId, channelId), oldest first. */
+    List<ChatAction> pendingReplies(String configId, long channelId) {
+        List<ChatAction> out = new ArrayList<>();
+        for (ChatAction a : all()) {
+            if (a.state == ChatAction.State.PENDING && a.kind == ActionKind.REPLY && a.configId.equals(configId)
+                    && a.channelId == channelId) {
+                out.add(a);
+            }
+        }
+        return out;
+    }
+
+    /** The count of HANDOFF records of every account holding one. */
+    Map<String, Integer> handoffCounts() {
+        Map<String, Integer> out = new HashMap<>();
+        for (ChatAction a : all()) {
+            if (a.state == ChatAction.State.HANDOFF) out.merge(a.configId, 1, Integer::sum);
+        }
+        return out;
+    }
+
     /** The account's actions waiting for the app. */
     int handoffCount(String configId) {
         int n = 0;
@@ -226,20 +277,43 @@ final class ActionStore {
     }
 
     /**
-     * Forgets the DONE records older than 7 days, and the records whose seal does not open or whose
-     * content does not parse; a HANDOFF one stays until the app takes it. Returns how many went.
+     * Forgets the DONE records older than 7 days, the records whose content does not parse, and the
+     * records whose seal does not open when another record opened in the same pass; a HANDOFF one stays
+     * until the app takes it. A pass where no seal opens deletes nothing: a Keystore fault (SecretBox
+     * reports it as any other failure) looks the same as a broken seal, record by record. Returns how
+     * many went.
      */
     int prune() {
         synchronized (LOCK) {
             long now = clock.getAsLong();
             int n = 0;
+            boolean opened = false;
+            List<String> sealed = new ArrayList<>();
             for (String k : kv.keys()) {
-                if (!k.startsWith(PREFIX) || kv.get(k) == null) continue;
-                ChatAction a = read(k);
+                String raw = kv.get(k);
+                if (!k.startsWith(PREFIX) || raw == null) continue;
+                byte[] plain;
+                try {
+                    plain = box.open(raw);
+                } catch (GeneralSecurityException e) {
+                    sealed.add(k);
+                    continue;
+                }
+                opened = true;
+                ChatAction a;
+                try {
+                    a = ChatAction.fromRecord(new JSONObject(new String(plain, StandardCharsets.UTF_8)));
+                } catch (JSONException e) {
+                    a = null;
+                }
                 if (a == null || a.state == ChatAction.State.DONE && now - a.doneAt > PRUNE_MS) {
                     kv.remove(k);
                     n++;
                 }
+            }
+            if (opened) {
+                for (String k : sealed) kv.remove(k);
+                n += sealed.size();
             }
             return n;
         }

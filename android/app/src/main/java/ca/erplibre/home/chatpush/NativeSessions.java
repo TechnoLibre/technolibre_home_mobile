@@ -37,18 +37,23 @@ final class NativeSessions {
         this.clock = clock;
     }
 
+    /** Orders put, forget and markExpired between the threads of the process. */
+    private static final Object LOCK = new Object();
+
     /** Stores the session and clears the account's expired flag. */
     void put(NativeSession s) {
+        JSONObject o = new JSONObject();
         try {
-            JSONObject o = new JSONObject();
             o.put("url", s.odooUrl);
             o.put("db", s.database);
             o.put("sid", seal(s.sessionId));
             o.put("at", s.savedAt);
-            kv.put("sess:" + s.configId, o.toString());
-            kv.remove("dead:" + s.configId);
         } catch (JSONException e) {
             throw new IllegalStateException("session unwritable");
+        }
+        synchronized (LOCK) {
+            kv.put("sess:" + s.configId, o.toString());
+            kv.remove("dead:" + s.configId);
         }
     }
 
@@ -66,12 +71,24 @@ final class NativeSessions {
     }
 
     void forget(String configId) {
-        kv.remove("sess:" + configId);
-        kv.remove("dead:" + configId);
+        synchronized (LOCK) {
+            kv.remove("sess:" + configId);
+            kv.remove("dead:" + configId);
+        }
     }
 
-    void markExpired(String configId) {
-        kv.put("dead:" + configId, "1");
+    /**
+     * Marks the account's session dead when the stored copy is still tried, the session a request just
+     * found dead; false, nothing marked, when the copy was replaced (a new session mirrored meanwhile) or
+     * is gone.
+     */
+    boolean markExpired(String configId, NativeSession tried) {
+        synchronized (LOCK) {
+            NativeSession now = get(configId);
+            if (now == null || !now.sessionId.equals(tried.sessionId)) return false;
+            kv.put("dead:" + configId, "1");
+            return true;
+        }
     }
 
     boolean expired(String configId) {

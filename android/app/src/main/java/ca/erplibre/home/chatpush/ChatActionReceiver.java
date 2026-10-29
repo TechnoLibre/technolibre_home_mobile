@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
 import androidx.core.app.RemoteInput;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -29,7 +30,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   message, mark read and mute cancel it, 👍 drops its button;
  * - one run of the action (8 s per Odoo call); a retry schedules
  *   ChatActionJob for its nextAt, a handoff redraws the server's handoff
- *   notification, and the runtime's actions listener is told.
+ *   notification, and the runtime's actions listener is told. A reply
+ *   that ended lets the replies typed after it in its conversation run at
+ *   once (ActionRunner.runFollowing): replies reach Odoo in typing order.
  * The broadcast is finished after the run or after FINISH_MS, whichever
  * comes first, within Android's 10 s; a run still going then keeps its
  * record RUNNING and ends on its own. Nothing here logs the reply text,
@@ -117,6 +120,11 @@ public class ChatActionReceiver extends BroadcastReceiver {
         }
         ActionRunner.Outcome o = runtime.runner().run(a.id);
         runtime.afterRun(a.id, o);
+        if (p.kind == ActionKind.REPLY) {
+            for (Map.Entry<String, ActionRunner.Outcome> e : runtime.runner().runFollowing(a).entrySet()) {
+                runtime.afterRun(e.getKey(), e.getValue());
+            }
+        }
         ChatActionJob.sync(c, store);
     }
 

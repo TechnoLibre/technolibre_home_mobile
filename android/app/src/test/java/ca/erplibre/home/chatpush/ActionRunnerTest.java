@@ -380,6 +380,89 @@ public class ActionRunnerTest {
     }
 
     @Test
+    public void aMuteRunJustAfterTheTapSendsSixtyMinutes() throws Exception {
+        ChatAction a = store.add("cfg1", ActionKind.MUTE, 4, 0, 0, "");
+        now += 300;
+        answer("session_info");
+        answer("mute");
+        assertEquals(ActionRunner.Outcome.DONE, runner.run(a.id));
+        assertEquals(60, paramsOf(requests().get(1)).getInt("minutes"));
+
+        ChatAction b = store.add("cfg1", ActionKind.MUTE, 4, 0, 0, "");
+        now += 20 * 60_000L + 300;
+        answer("session_info");
+        answer("mute");
+        assertEquals(ActionRunner.Outcome.DONE, runner.run(b.id));
+        assertEquals(40, paramsOf(requests().get(1)).getInt("minutes"));
+    }
+
+    @Test
+    public void aSessionMirroredDuringTheAliveCheckIsNotMarkedDead() throws Exception {
+        ChatAction a = store.add("cfg1", ActionKind.MUTE, 4, 0, 0, "");
+        String dead = res("dead_session_info");
+        server.setDispatcher(new okhttp3.mockwebserver.Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest r) {
+                // The app mirrors a new session while the old copy is being checked
+                sessions.put(new NativeSession("cfg1", session.odooUrl, "exemple_db", "sid_exemple_neuf", 2L));
+                return new MockResponse().setBody(dead);
+            }
+        });
+        assertEquals(ActionRunner.Outcome.RETRY, runner.run(a.id));
+        assertFalse(sessions.expired("cfg1"));
+        assertEquals(ChatAction.State.PENDING, store.get(a.id).state);
+        assertTrue(requests().get(0).getHeader("Cookie").contains(SID));
+    }
+
+    @Test
+    public void aReplyRunsOnlyAfterTheOlderReplyOfItsConversation() throws Exception {
+        ChatAction first = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, TEXT);
+        now += 1;
+        ChatAction second = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, "Deuxième réponse");
+        answer("session_info");
+        status(503);
+        assertEquals(ActionRunner.Outcome.RETRY, runner.run(first.id));
+        requests();
+        // The first one waits for its retry: the second one does not overtake it
+        assertEquals(ActionRunner.Outcome.SKIPPED, runner.run(second.id));
+        assertEquals(0, requests().size());
+
+        now = store.get(first.id).nextAt;
+        for (int i = 0; i < 2; i++) {
+            answer("session_info");
+            answer("post_answer");
+        }
+        Map<String, ActionRunner.Outcome> out = runner.runDue();
+        assertEquals(Arrays.asList(first.id, second.id), new ArrayList<>(out.keySet()));
+        List<RecordedRequest> rs = requests();
+        assertEquals(List.of(INFO, POST, INFO, POST), paths(rs));
+        assertEquals(first.clientUuid,
+                paramsOf(rs.get(1)).getJSONObject("post_data").getString("erplibre_client_uuid"));
+        assertEquals(second.clientUuid,
+                paramsOf(rs.get(3)).getJSONObject("post_data").getString("erplibre_client_uuid"));
+    }
+
+    @Test
+    public void theNextReplyOfAConversationRunsAsSoonAsTheOneBeforeEnds() throws Exception {
+        ChatAction first = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, TEXT);
+        now += 1;
+        ChatAction second = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, "Deuxième réponse");
+        // The first one in flight on another thread
+        assertTrue(store.claim(first.id));
+        assertEquals(ActionRunner.Outcome.SKIPPED, runner.run(second.id));
+        assertTrue(store.get(second.id).nextAt > now);
+        // Nothing follows a reply that has not ended
+        assertTrue(runner.runFollowing(first).isEmpty());
+        store.done(first.id, null);
+
+        answer("session_info");
+        answer("post_answer");
+        Map<String, ActionRunner.Outcome> out = runner.runFollowing(first);
+        assertEquals(Collections.singletonMap(second.id, ActionRunner.Outcome.DONE), out);
+        assertEquals(List.of(INFO, POST), paths(requests()));
+    }
+
+    @Test
     public void aMuteWhoseHourPassedIsDoneWithoutACall() throws Exception {
         ChatAction a = store.add("cfg1", ActionKind.MUTE, 4, 0, 0, "");
         now += HOUR;

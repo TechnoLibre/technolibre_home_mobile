@@ -14,11 +14,13 @@ import java.util.function.LongSupplier;
  *   (plainSent), waits out ActionStore.QUIET_MS from that send before any request, then searches its
  *   marker first and posts only when none is found. The send is stamped before the call.
  * - read: up to the record's message id, else the newest message dated at most its bound, then marked.
- * - mute: for the minutes left until createdAt + 1 h; none left is done without a call.
+ * - mute: for the minutes left until createdAt + 1 h, rounded up; none left is done without a call.
  * - 👍: on the record's message id.
  * A transient failure (TRANSIENT, UNREACHABLE) retries with a backoff until the action is
  * ActionStore.STALE_MS old; a dead session, two marker hits or any other failure hand the action to the
- * app. A JSON-RPC 404 on an action route asks alive again: dead is a dead session, alive a refusal. An
+ * app. A dead session is marked only while it is still the stored copy: one mirrored during the check
+ * stays alive, and the action retries on it. Replies of one conversation run in the order of the store
+ * (ActionStore.claim). A JSON-RPC 404 on an action route asks alive again: dead is a dead session, alive a refusal. An
  * action of an account no longer mirrored is done without an answer. Nothing here logs.
  */
 final class ActionRunner {
@@ -68,6 +70,22 @@ final class ActionRunner {
         return out;
     }
 
+    /**
+     * After a run of the reply a: the PENDING replies of its conversation, oldest first, each run now
+     * whatever its nextAt (one held back behind a is due again once a ends); each id's outcome in run
+     * order. A reply still behind a PENDING or RUNNING one is SKIPPED. Nothing while a itself has not
+     * ended (it is still PENDING or RUNNING).
+     */
+    Map<String, Outcome> runFollowing(ChatAction a) {
+        Map<String, Outcome> out = new LinkedHashMap<>();
+        ChatAction now = store.get(a.id);
+        if (now != null && (now.state == ChatAction.State.PENDING || now.state == ChatAction.State.RUNNING)) {
+            return out;
+        }
+        for (ChatAction b : store.pendingReplies(a.configId, a.channelId)) out.put(b.id, run(b.id));
+        return out;
+    }
+
     private Outcome attempt(ChatAction a) {
         AccountView account = settings.account(a.configId);
         if (account == null) {
@@ -101,16 +119,16 @@ final class ActionRunner {
         try {
             self = odoo.alive(s, allowHttp);
         } catch (OdooDirectException e) {
-            return failed(a, e);
+            return failed(a, s, e);
         }
         try {
             return act(a, module, searchFirst, s, self, minutes, allowHttp);
         } catch (OdooDirectException e) {
-            if (e.kind() != OdooDirectException.Kind.NOT_FOUND || !e.rpc()) return failed(a, e);
+            if (e.kind() != OdooDirectException.Kind.NOT_FOUND || !e.rpc()) return failed(a, s, e);
             try {
                 odoo.alive(s, allowHttp);
             } catch (OdooDirectException again) {
-                return failed(a, again);
+                return failed(a, s, again);
             }
             return handoff(a, REFUSED);
         }
@@ -159,16 +177,17 @@ final class ActionRunner {
         }
     }
 
-    /** Whole minutes left until createdAt + 1 h, never past it. */
+    /** The minutes left until createdAt + 1 h, a started minute counted whole, at most 60. */
     private int minutesLeft(ChatAction a) {
         long left = a.createdAt + MUTE_MS - clock.getAsLong();
-        return left <= 0 ? 0 : (int) Math.min(60, left / 60_000L);
+        return left <= 0 ? 0 : (int) Math.min(60, (left + 59_999L) / 60_000L);
     }
 
-    private Outcome failed(ChatAction a, OdooDirectException e) {
+    /** The failure e of an attempt on the session copy s. */
+    private Outcome failed(ChatAction a, NativeSession s, OdooDirectException e) {
         switch (e.kind()) {
             case SESSION_EXPIRED:
-                sessions.markExpired(a.configId);
+                if (!sessions.markExpired(a.configId, s)) return retryOrStale(a);
                 return handoff(a, SESSION_EXPIRED);
             case TRANSIENT:
             case UNREACHABLE:

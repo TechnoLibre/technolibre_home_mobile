@@ -15,9 +15,9 @@ import org.json.JSONObject;
  * The actions a notification takes on Odoo, on the session's native copy: one JSON-RPC call each, mirroring
  * the app's outbox. /mail/message/post, /discuss/channel/mark_as_read and /mail/message/reaction are
  * auth="public": on a dead session they run as the public user (or answer 404) instead of failing. This
- * class does not check the session before an action: the caller (the action runner) asks alive() first. A JSON-RPC 404 on an action route is NOT_FOUND. A live answer
- * with no result key is a success. An exception message never carries the session id, a URL, a body or a
- * reply text.
+ * class does not check the session before an action: the caller (the action runner) asks alive() first.
+ * A JSON-RPC 404 on an action route is NOT_FOUND. A live answer with no result key is a success. An
+ * exception message never carries the session id, a URL, a body or a reply text.
  */
 final class OdooActions {
 
@@ -38,10 +38,15 @@ final class OdooActions {
                 .callTimeout(8, TimeUnit.SECONDS).connectTimeout(4, TimeUnit.SECONDS).build());
     }
 
-    /** The session's own partner id; SESSION_EXPIRED when get_session_info (auth="user") says the session is dead. */
+    /**
+     * The session's own partner id; SESSION_EXPIRED when get_session_info (auth="user") says the session
+     * is dead.
+     */
     long alive(NativeSession s, boolean allowHttp) throws OdooDirectException {
         Object info = json.call(s, "/web/session/get_session_info", new JSONObject(), allowHttp);
-        if (!(info instanceof JSONObject)) throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, "unexpected result");
+        if (!(info instanceof JSONObject)) {
+            throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, "unexpected result");
+        }
         long partner = OdooDirect.selfPartnerOf((JSONObject) info);
         if (partner < 0) throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, "no partner");
         return partner;
@@ -170,7 +175,9 @@ final class OdooActions {
             throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, null);
         }
         Object result = json.call(s, "/mail/message/reaction", params, allowHttp);
-        if (!(result instanceof JSONObject)) throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, "unexpected result");
+        if (!(result instanceof JSONObject)) {
+            throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, "unexpected result");
+        }
         return result.toString();
     }
 

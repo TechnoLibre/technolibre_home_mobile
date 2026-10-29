@@ -210,6 +210,8 @@ public class PushEngineTest {
     static final class FakeOdoo extends Dispatcher {
         volatile String mailData = mailData(0);
         volatile boolean expired;
+        /** Run before an expired answer: what the app does meanwhile. */
+        volatile Runnable whileExpired;
         final List<RecordedRequest> requests = new CopyOnWriteArrayList<>();
         final List<String> endpoints = new CopyOnWriteArrayList<>();
 
@@ -217,6 +219,8 @@ public class PushEngineTest {
         public MockResponse dispatch(RecordedRequest r) {
             requests.add(r);
             if (expired) {
+                Runnable meanwhile = whileExpired;
+                if (meanwhile != null) meanwhile.run();
                 return new MockResponse().setBody(
                         "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":100,\"message\":\"Odoo Session Expired\"}}");
             }
@@ -846,6 +850,18 @@ public class PushEngineTest {
         engine.runDue(level(3));
         assertEquals(1, odoo.count("/mail/data"));
         assertTrue(notifier.cancelled.contains("status:cfg2"));
+    }
+
+    @Test
+    public void aSessionMirroredDuringTheCheckIsNotMarkedDead() throws Exception {
+        mirror(3, true, account("cfg2", "Serveur B"));
+        mirrorSession("cfg2", "sid_exemple_secret");
+        odoo.expired = true;
+        odoo.whileExpired = () -> mirrorSession("cfg2", "sid_exemple_neuf");
+        engine().runDue(level(3));
+        assertFalse(sessions.expired("cfg2"));
+        assertEquals("sid_exemple_neuf", sessions.get("cfg2").sessionId);
+        assertTrue(notifier.onChannel("status").isEmpty());
     }
 
     // ---- polls, status, unregisters ----

@@ -33,18 +33,58 @@ import java.util.function.Consumer;
  * The Notifier methods run with the engine's monitor held: they only talk
  * to Android and read the mirrored strings, never call the engine. The
  * methods that read a drawn notification back and post it again hold this
- * object's monitor, so an action's update and a new message never post
- * from the same stale copy.
+ * object's monitor and start from the copy this object last posted under
+ * the tag (LastPosted), not from Android's read-back, which can miss a
+ * post still being applied. After a process death the read-back is all
+ * there is: a post applied late then can still be missed once.
  *
  * A chat notification offers its actions (« Répondre », « Marquer lu »,
  * « Muet 1 h », « 👍 ») as buttons whose broadcasts ChatActionIntent builds;
- * they ask for an unlocked device except on an « always » server. 👍 needs
- * the newest stacked message's id. Every re-post keeps the when of the
+ * they ask for an unlocked device except on an « always » server. Mark
+ * read and 👍 target the newest stacked message that has an id: the
+ * user's own reply on top has none. Every re-post keeps the when of the
  * send time it was drawn with: inbox_done compares it.
  */
 final class ChatNotifier implements PushEngine.Notifier {
 
     static final int ID = 0x43485054;
+
+    /**
+     * What a notifier last posted under each tag, and when. NotificationManager applies a post
+     * asynchronously, so a read-back right after it may still return the copy before it, or none. pick
+     * prefers the copy posted here while Android shows the tag, and for APPLY_MS after the post while it
+     * does not show it yet; a tag gone from Android past that was dismissed, and is forgotten. Process
+     * memory only: after a death, the read-back is Android's alone.
+     */
+    static final class LastPosted<T> {
+        static final long APPLY_MS = 2_000L;
+
+        private final Map<String, T> values = new HashMap<>();
+        private final Map<String, Long> times = new HashMap<>();
+
+        synchronized void put(String tag, T value, long at) {
+            values.put(tag, value);
+            times.put(tag, at);
+        }
+
+        synchronized void remove(String tag) {
+            values.remove(tag);
+            times.remove(tag);
+        }
+
+        synchronized Set<String> tags() {
+            return new HashSet<>(values.keySet());
+        }
+
+        /** The copy to start a re-post from: drawn is what Android shows under tag (null: nothing). */
+        synchronized T pick(String tag, T drawn, long now) {
+            T mine = values.get(tag);
+            if (mine == null) return drawn;
+            if (drawn != null || now - times.get(tag) <= APPLY_MS) return mine;
+            remove(tag);
+            return null;
+        }
+    }
 
     /** long[]: the message ids of a chat notification's stack, in order, 0 for a message without id. */
     static final String EXTRA_MESSAGE_IDS = "erplibre.message_ids";
@@ -55,6 +95,7 @@ final class ChatNotifier implements PushEngine.Notifier {
     private final Context context;
     private final NotificationManager manager;
     private final PushSettingsStore settings;
+    private final LastPosted<Notification> posted = new LastPosted<>();
     private volatile Consumer<HealthSnapshot> statusSink;
 
     ChatNotifier(Context context, PushSettingsStore settings) {
@@ -135,12 +176,12 @@ final class ChatNotifier implements PushEngine.Notifier {
                 .setWhen(when);
         if (n.groupId != null) b.setGroup(n.groupId);
         boolean chat = n.tag.startsWith("chat:");
-        StatusBarNotification prev = chat || n.messaging ? drawn(n.tag) : null;
-        long[] prevIds = prev == null ? null : prev.getNotification().extras.getLongArray(EXTRA_MESSAGE_IDS);
+        Notification prev = chat || n.messaging ? drawn(n.tag) : null;
+        long[] prevIds = prev == null ? null : prev.extras.getLongArray(EXTRA_MESSAGE_IDS);
         long[] ids;
         if (n.messaging) {
             NotificationCompat.MessagingStyle style = prev == null ? null
-                    : NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(prev.getNotification());
+                    : NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(prev);
             if (style == null) {
                 style = new NotificationCompat.MessagingStyle(
                         new Person.Builder().setName(settings.strings().get("you")).build());
@@ -191,7 +232,7 @@ final class ChatNotifier implements PushEngine.Notifier {
             b.setPriority(NotificationCompat.PRIORITY_HIGH);
         }
         if (n.silent) b.setOnlyAlertOnce(true).setSilent(true);
-        manager.notify(n.tag, ID, b.build());
+        post(n.tag, b.build());
     }
 
     /**
@@ -205,9 +246,8 @@ final class ChatNotifier implements PushEngine.Notifier {
     @Override
     public synchronized void trimRead(String tag, long lastMessageId) {
         if (manager == null) return;
-        StatusBarNotification sbn = drawn(tag);
-        if (sbn == null) return;
-        Notification old = sbn.getNotification();
+        Notification old = drawn(tag);
+        if (old == null) return;
         long[] ids = old.extras.getLongArray(EXTRA_MESSAGE_IDS);
         NotificationCompat.MessagingStyle style =
                 NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(old);
@@ -242,9 +282,8 @@ final class ChatNotifier implements PushEngine.Notifier {
      */
     synchronized void appendOwnReply(String tag, String text) {
         if (manager == null) return;
-        StatusBarNotification sbn = drawn(tag);
-        if (sbn == null) return;
-        Notification old = sbn.getNotification();
+        Notification old = drawn(tag);
+        if (old == null) return;
         long[] ids = old.extras.getLongArray(EXTRA_MESSAGE_IDS);
         NotificationCompat.MessagingStyle style =
                 NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(old);
@@ -268,9 +307,8 @@ final class ChatNotifier implements PushEngine.Notifier {
      */
     synchronized void refresh(String tag) {
         if (manager == null) return;
-        StatusBarNotification sbn = drawn(tag);
-        if (sbn == null) return;
-        Notification old = sbn.getNotification();
+        Notification old = drawn(tag);
+        if (old == null) return;
         long[] ids = old.extras.getLongArray(EXTRA_MESSAGE_IDS);
         long[] same = ids == null ? new long[0] : ids;
         repost(tag, old, null, same, offered(old, same));
@@ -286,9 +324,8 @@ final class ChatNotifier implements PushEngine.Notifier {
     /** After « 👍 »: the conversation tagged tag re-posted silently without « 👍 », « Muet 1 h » in its place. */
     synchronized void withoutReact(String tag) {
         if (manager == null) return;
-        StatusBarNotification sbn = drawn(tag);
-        if (sbn == null) return;
-        Notification old = sbn.getNotification();
+        Notification old = drawn(tag);
+        if (old == null) return;
         long[] ids = old.extras.getLongArray(EXTRA_MESSAGE_IDS);
         EnumSet<ActionKind> kinds = offered(old, ids);
         kinds.remove(ActionKind.REACT);
@@ -302,6 +339,14 @@ final class ChatNotifier implements PushEngine.Notifier {
      * drawn, opening the conversation list. A count of 0 cancels it.
      */
     synchronized void handoff(String configId, int count) {
+        handoff(configId, count, true);
+    }
+
+    /**
+     * handoff(configId, count), silent even when not drawn unless alert:
+     * a prompt lost to a death or swiped away comes back without a sound.
+     */
+    synchronized void handoff(String configId, int count, boolean alert) {
         if (manager == null) return;
         String tag = NotificationModel.handoffTag(configId);
         if (count <= 0) {
@@ -311,7 +356,7 @@ final class ChatNotifier implements PushEngine.Notifier {
         AccountView a = settings.account(configId);
         if (a == null) return;
         NotificationModel.Shown n = NotificationModel.handoff(a, count, settings.strings());
-        n.silent = drawn(tag) != null;
+        n.silent = !alert || drawn(tag) != null;
         show(n);
     }
 
@@ -334,7 +379,13 @@ final class ChatNotifier implements PushEngine.Notifier {
             b.setVisibility(shownPublic ? NotificationCompat.VISIBILITY_PRIVATE : NotificationCompat.VISIBILITY_SECRET);
         }
         b.setOnlyAlertOnce(true).setSilent(true);
-        manager.notify(tag, ID, b.build());
+        post(tag, b.build());
+    }
+
+    /** Posts n under tag and keeps it as the tag's last post (LastPosted). */
+    private void post(String tag, Notification n) {
+        manager.notify(tag, ID, n);
+        posted.put(tag, n, System.currentTimeMillis());
     }
 
     /**
@@ -375,7 +426,7 @@ final class ChatNotifier implements PushEngine.Notifier {
     /**
      * Replaces b's actions by those offerFor draws from kinds on the
      * conversation tagged tag ("chat:&lt;configId&gt;:&lt;channelId&gt;"),
-     * the newest entry of ids naming the message (no 👍 when it is 0) and
+     * the newest non-zero entry of ids naming the message (no 👍 when none) and
      * when (epoch ms) bounding mark read. Records the kinds offered under
      * EXTRA_ACTIONS.
      */
@@ -420,8 +471,9 @@ final class ChatNotifier implements PushEngine.Notifier {
 
     /**
      * The action target of the conversation tagged tag: its account and
-     * channel from the tag, the newest entry of ids as message, when as the
-     * send time; null for a tag that is not a conversation's.
+     * channel from the tag, the newest non-zero entry of ids as message (0
+     * when none: the user's own reply has no id), when as the send time;
+     * null for a tag that is not a conversation's.
      */
     static NotificationModel.Shown targetOf(String tag, long[] ids, long when) {
         String config = configOf(tag);
@@ -436,7 +488,13 @@ final class ChatNotifier implements PushEngine.Notifier {
         t.tag = tag;
         t.configId = config;
         t.discussChannelId = channel;
-        t.messageId = ids == null || ids.length == 0 ? 0 : Math.max(0, ids[ids.length - 1]);
+        t.messageId = 0;
+        for (int i = ids == null ? -1 : ids.length - 1; i >= 0; i--) {
+            if (ids[i] > 0) {
+                t.messageId = ids[i];
+                break;
+            }
+        }
         t.at = when;
         return t;
     }
@@ -537,12 +595,20 @@ final class ChatNotifier implements PushEngine.Notifier {
         return repeats(last.getText(), p == null ? null : p.getName(), last.getTimestamp(), n);
     }
 
-    /** The notification drawn under tag, or null. */
-    private StatusBarNotification drawn(String tag) {
+    /**
+     * The notification drawn under tag, or null: the copy this object last
+     * posted under it while Android shows it or is still applying the post
+     * (LastPosted), else Android's.
+     */
+    private Notification drawn(String tag) {
+        Notification shown = null;
         for (StatusBarNotification sbn : active()) {
-            if (sbn.getId() == ID && tag.equals(sbn.getTag())) return sbn;
+            if (sbn.getId() == ID && tag.equals(sbn.getTag())) {
+                shown = sbn.getNotification();
+                break;
+            }
         }
-        return null;
+        return posted.pick(tag, shown, System.currentTimeMillis());
     }
 
     /**
@@ -561,13 +627,19 @@ final class ChatNotifier implements PushEngine.Notifier {
 
     @Override
     public void cancel(String tag) {
+        posted.remove(tag);
         if (manager != null) manager.cancel(tag, ID);
     }
 
-    /** Cancels every tag "&lt;kind&gt;:&lt;configId&gt;" or "&lt;kind&gt;:&lt;configId&gt;:...". */
+    /**
+     * Cancels every tag "&lt;kind&gt;:&lt;configId&gt;" or
+     * "&lt;kind&gt;:&lt;configId&gt;:...", shown or just posted.
+     */
     @Override
     public void cancelAll(String configId) {
-        for (String tag : shownTags()) {
+        Set<String> tags = shownTags();
+        tags.addAll(posted.tags());
+        for (String tag : tags) {
             int colon = tag.indexOf(':');
             if (colon < 0) continue;
             String rest = tag.substring(colon + 1);

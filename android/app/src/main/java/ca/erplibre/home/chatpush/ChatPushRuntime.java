@@ -208,8 +208,11 @@ public final class ChatPushRuntime {
 
     /**
      * Turns back the RUNNING actions of a dead process, then runs every due
-     * one (ActionRunner.runDue). Blocks on the network; never on the main
-     * thread.
+     * one (ActionRunner.runDue), then draws the handoff notification of
+     * every account with actions waiting for the app: one handed off now
+     * alerts as handoff() does, the others come back silently (a prompt
+     * lost to a death or swiped away). Blocks on the network; never on the
+     * main thread.
      */
     void runActions() {
         actions.recover();
@@ -220,7 +223,9 @@ public final class ChatPushRuntime {
             ChatAction a = actions.get(e.getKey());
             if (a != null) handed.add(a.configId);
         }
-        for (String configId : handed) notifier.handoff(configId, actions.handoffCount(configId));
+        for (Map.Entry<String, Integer> e : actions.handoffCounts().entrySet()) {
+            notifier.handoff(e.getKey(), e.getValue(), handed.contains(e.getKey()));
+        }
         if (!out.isEmpty()) announceActions();
     }
 

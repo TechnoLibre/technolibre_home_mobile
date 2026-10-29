@@ -3,6 +3,7 @@ package ca.erplibre.home.chatpush;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.EnumSet;
@@ -30,7 +31,7 @@ public class ChatNotifierTest {
     public void aRepostKeepsReactWhileTheNewestMessageHasAnId() {
         assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.REACT),
                 ChatNotifier.offerFor(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.REACT), 17L));
-        // The user's own reply on top has no id: nothing to react to
+        // A stack without any id: nothing to react to
         assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.MUTE),
                 ChatNotifier.offerFor(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.REACT), 0L));
     }
@@ -40,6 +41,39 @@ public class ChatNotifierTest {
         assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.REACT),
                 ChatNotifier.offerFor(EnumSet.allOf(ActionKind.class), 17L));
         assertTrue(ChatNotifier.offerFor(EnumSet.noneOf(ActionKind.class), 17L).isEmpty());
+    }
+
+    @Test
+    public void theTargetIsTheNewestMessageWithAnIdAboveTheUsersOwnReply() {
+        NotificationModel.Shown t = ChatNotifier.targetOf("chat:cfg1:4", new long[] {7, 9, 0}, 5L);
+        assertEquals(9L, t.messageId);
+        assertEquals(4L, t.discussChannelId);
+        assertEquals(0L, ChatNotifier.targetOf("chat:cfg1:4", new long[] {0, 0}, 5L).messageId);
+        assertEquals(0L, ChatNotifier.targetOf("chat:cfg1:4", null, 5L).messageId);
+    }
+
+    @Test
+    public void aRepostStartsFromWhatWasLastPostedNotFromAStaleReadBack() {
+        ChatNotifier.LastPosted<String> posted = new ChatNotifier.LastPosted<>();
+        posted.put("chat:cfg1:4", "trois messages", 1_000L);
+        // Android still shows the copy before the last post
+        assertEquals("trois messages", posted.pick("chat:cfg1:4", "deux messages", 1_100L));
+        // Not shown yet, posted a moment ago: the post is still being applied
+        assertEquals("trois messages", posted.pick("chat:cfg1:4", null, 1_000L + ChatNotifier.LastPosted.APPLY_MS));
+        // Never posted by this process: Android's copy
+        assertEquals("deux messages", posted.pick("chat:cfg1:5", "deux messages", 1_100L));
+    }
+
+    @Test
+    public void aNotificationGoneLongAfterItsPostIsNoLongerDrawn() {
+        ChatNotifier.LastPosted<String> posted = new ChatNotifier.LastPosted<>();
+        posted.put("chat:cfg1:4", "trois messages", 1_000L);
+        assertNull(posted.pick("chat:cfg1:4", null, 1_001L + ChatNotifier.LastPosted.APPLY_MS));
+        // forgotten: a later read-back is Android's alone
+        assertEquals("deux messages", posted.pick("chat:cfg1:4", "deux messages", 1_002L + ChatNotifier.LastPosted.APPLY_MS));
+        posted.put("chat:cfg1:4", "trois messages", 1_000L);
+        posted.remove("chat:cfg1:4");
+        assertNull(posted.pick("chat:cfg1:4", null, 1_000L));
     }
 
     @Test

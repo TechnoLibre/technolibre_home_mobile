@@ -16,13 +16,27 @@ public class NativeSessionsTest {
     private final NativeSessions sessions = new NativeSessions(kv, box, () -> now);
 
     @Test
+    public void onlyTheSessionTriedIsMarkedDead() {
+        String url = "http://odoo.exemple.test:8069";
+        NativeSession old = new NativeSession("cfg1", url, "db_exemple", "sid_exemple_vieux", 5L);
+        sessions.put(old);
+        // A new session mirrored after the old one was tried
+        sessions.put(new NativeSession("cfg1", url, "db_exemple", "sid_exemple_neuf", 6L));
+        assertFalse(sessions.markExpired("cfg1", old));
+        assertFalse(sessions.expired("cfg1"));
+        sessions.forget("cfg1");
+        assertFalse(sessions.markExpired("cfg1", old));
+        assertFalse(sessions.expired("cfg1"));
+    }
+
+    @Test
     public void aSessionIsStoredSealedAndHidden() {
         NativeSession s = new NativeSession("cfg1", "http://odoo.exemple.test:8069", "db_exemple", "sid_exemple_secret", 5L);
         sessions.put(s);
         for (String v : kv.map.values()) assertFalse(v.contains("sid_exemple_secret"));
         assertEquals("sid_exemple_secret", sessions.get("cfg1").sessionId);
         assertFalse(s.toString().contains("sid_exemple_secret"));
-        sessions.markExpired("cfg1");
+        assertTrue(sessions.markExpired("cfg1", s));
         assertTrue(sessions.expired("cfg1"));
         sessions.put(s);
         assertFalse(sessions.expired("cfg1"));

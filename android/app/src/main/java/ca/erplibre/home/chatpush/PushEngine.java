@@ -723,7 +723,8 @@ final class PushEngine {
      * Counts the account's unread messages in Odoo: the summary goes up
      * (alerting) on a rise, is updated silently on a drop, goes at 0; read
      * conversations lose their notification. An expired session is marked
-     * and stops the checks until a new one is mirrored.
+     * and stops the checks until a new one is mirrored; one mirrored while
+     * the check ran is not marked.
      */
     private void checkAccount(String configId, boolean counting) {
         NativeSession s;
@@ -754,7 +755,8 @@ final class PushEngine {
                 clearFailures(accountKey(configId));
                 applySummary(configId, u);
             } else if (failed == OdooDirectException.Kind.SESSION_EXPIRED) {
-                sessions.markExpired(configId);
+                // a session mirrored during the check stays alive: the next check tries it
+                sessions.markExpired(configId, s);
             } else if (counting) {
                 addFailure(accountKey(configId), failed.name());
             }
@@ -826,7 +828,7 @@ final class PushEngine {
                     }
                     if (ex.kind() == OdooDirectException.Kind.SESSION_EXPIRED) {
                         synchronized (lock) {
-                            sessions.markExpired(configId);
+                            sessions.markExpired(configId, s);
                             refreshStatus(configId);
                         }
                     }

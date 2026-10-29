@@ -214,6 +214,84 @@ public class ActionStoreTest {
     }
 
     @Test
+    public void aKeystoreFaultPrunesNothing() {
+        boolean[] fault = {false};
+        SecretBox flaky = new SecretBox(() -> {
+            if (fault[0]) throw new java.security.ProviderException("keystore unavailable");
+            return new SecretKeySpec(new byte[32], "AES");
+        });
+        ActionStore flakyStore = new ActionStore(kv, flaky, () -> now, () -> "process-un");
+        ChatAction reply = flakyStore.add("cfg1", ActionKind.REPLY, 4, 0, 0, TEXT);
+        ChatAction handed = flakyStore.add("cfg1", ActionKind.MUTE, 5, 0, 0, "");
+        flakyStore.claim(handed.id);
+        flakyStore.handoff(handed.id, "session_expired");
+
+        fault[0] = true;
+        assertEquals(0, flakyStore.prune());
+        assertEquals(2, kv.map.size());
+
+        fault[0] = false;
+        assertEquals(TEXT, flakyStore.get(reply.id).text);
+        assertEquals(ChatAction.State.HANDOFF, flakyStore.get(handed.id).state);
+    }
+
+    @Test
+    public void anUnreadableRecordStaysWhileNoOtherRecordOpens() {
+        kv.put("act:seal-casse", "v1:bad:bad");
+        assertEquals(0, store.prune());
+        assertNotNull(kv.get("act:seal-casse"));
+        // A record that opens proves the key: the broken seal goes
+        store.add("cfg1", ActionKind.MUTE, 4, 0, 0, "");
+        assertEquals(1, store.prune());
+        assertNull(kv.get("act:seal-casse"));
+    }
+
+    @Test
+    public void aReplyWaitsForTheOlderRepliesOfItsConversation() {
+        ChatAction first = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, TEXT);
+        now += 1;
+        ChatAction second = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, "Encore");
+        ChatAction elsewhere = store.add("cfg1", ActionKind.REPLY, 5, 0, 0, "Ailleurs");
+        ChatAction mute = store.add("cfg1", ActionKind.MUTE, 4, 0, 0, "");
+        // An older reply of the conversation still PENDING holds the next one back
+        assertFalse(store.claim(second.id));
+        assertEquals(ChatAction.State.PENDING, store.get(second.id).state);
+        assertTrue(store.claim(elsewhere.id));
+        assertTrue(store.claim(mute.id));
+
+        assertTrue(store.claim(first.id));
+        assertFalse(store.claim(second.id));
+        // Its run may die with its process: the next one comes back no earlier than a run for it
+        assertEquals(now + ActionStore.FIRST_RETRY_MS, store.get(second.id).nextAt);
+
+        store.retryAt(first.id, now + 600_000);
+        assertFalse(store.claim(second.id));
+        assertEquals(now + 600_000, store.get(second.id).nextAt);
+
+        assertTrue(store.claim(first.id));
+        store.done(first.id, null);
+        assertTrue(store.claim(second.id));
+    }
+
+    @Test
+    public void handoffCountsListsEveryAccountWaitingForTheApp() {
+        assertTrue(store.handoffCounts().isEmpty());
+        for (String config : new String[] {"cfg1", "cfg1", "cfg2"}) {
+            ChatAction a = store.add(config, ActionKind.MUTE, 4, 0, 0, "");
+            store.claim(a.id);
+            store.handoff(a.id, "refused");
+        }
+        ChatAction done = store.add("cfg3", ActionKind.MUTE, 4, 0, 0, "");
+        store.claim(done.id);
+        store.done(done.id, null);
+        store.add("cfg4", ActionKind.MUTE, 4, 0, 0, "");
+        java.util.Map<String, Integer> counts = store.handoffCounts();
+        assertEquals(2, counts.size());
+        assertEquals(Integer.valueOf(2), counts.get("cfg1"));
+        assertEquals(Integer.valueOf(1), counts.get("cfg2"));
+    }
+
+    @Test
     public void wakeAtIsTheEarliestPendingOrSoonAfterARunningRecord() {
         assertEquals(0L, store.wakeAt());
         ChatAction late = store.add("cfg1", ActionKind.MUTE, 4, 0, 0, "");
