@@ -21,11 +21,18 @@ import org.json.JSONObject;
  * sends two control pushes with no title, whose root is {"erplibre": {"v",
  * "type", ...}}: "read" {"channel_id", "last_message_id"} and "inbox_done"
  * {"threads": [[model, res_id], ...]}, threads null for every inbox thread.
- * A stock push has no message id (0) and no channel type ("").
+ * A stock push has no message id (0) and no channel type (""). Only version
+ * 1 of the erplibre object is read: a control push of another version or of
+ * an unknown type is IGNORED, a message push of another version reads as a
+ * stock one.
  */
 final class PushPayload {
 
-    enum Kind { MESSAGE, READ, INBOX_DONE }
+    /** IGNORED: a control push this app does not read, dropped without being a failure. */
+    enum Kind { MESSAGE, READ, INBOX_DONE, IGNORED }
+
+    /** The version of the module's erplibre object this app reads. */
+    static final int VERSION = 1;
 
     final Kind kind;
     final String title;
@@ -64,10 +71,7 @@ final class PushPayload {
         return kind == Kind.MESSAGE && "discuss.channel".equals(model);
     }
 
-    /**
-     * Parses a plaintext. JSONException on text that is not JSON, and on a
-     * control push of a type this app does not know: nothing is drawn for it.
-     */
+    /** Parses a plaintext; JSONException on text that is not JSON. */
     static PushPayload parse(byte[] json) throws JSONException {
         JSONObject root = new JSONObject(new String(json, StandardCharsets.UTF_8));
         JSONObject control = root.optJSONObject("erplibre");
@@ -77,7 +81,7 @@ final class PushPayload {
         JSONObject data = options.optJSONObject("data");
         if (data == null) data = new JSONObject();
         JSONObject module = data.optJSONObject("erplibre");
-        if (module == null) module = new JSONObject();
+        if (module == null || module.optInt("v", 0) != VERSION) module = new JSONObject();
         return new PushPayload(Kind.MESSAGE,
                 text(root, "title"),
                 text(options, "body"),
@@ -90,7 +94,7 @@ final class PushPayload {
     }
 
     private static PushPayload control(JSONObject e) throws JSONException {
-        String type = text(e, "type");
+        String type = e.optInt("v", 0) == VERSION ? text(e, "type") : "";
         if ("read".equals(type)) {
             return new PushPayload(Kind.READ, "", "", "", 0, "", 0, "",
                     e.optLong("channel_id", 0), e.optLong("last_message_id", 0),
@@ -110,7 +114,7 @@ final class PushPayload {
             }
             return new PushPayload(Kind.INBOX_DONE, "", "", "", 0, "", 0, "", 0, 0, threads);
         }
-        throw new JSONException("unknown control push");
+        return new PushPayload(Kind.IGNORED, "", "", "", 0, "", 0, "", 0, 0, Collections.<String[]>emptyList());
     }
 
     private static String text(JSONObject o, String key) {

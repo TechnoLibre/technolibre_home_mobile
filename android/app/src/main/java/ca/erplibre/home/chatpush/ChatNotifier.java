@@ -38,9 +38,6 @@ final class ChatNotifier implements PushEngine.Notifier {
     /** long[]: the message ids of a chat notification's stack, in order, 0 for a message without id. */
     static final String EXTRA_MESSAGE_IDS = "erplibre.message_ids";
 
-    /** long, in each MessagingStyle message's extras: its Odoo message id, 0 when unknown. */
-    static final String EXTRA_MESSAGE_ID = "erplibre.message_id";
-
     private final Context context;
     private final NotificationManager manager;
     private final PushSettingsStore settings;
@@ -104,9 +101,10 @@ final class ChatNotifier implements PushEngine.Notifier {
      * A chat notification, drawn as a conversation or not (« Jamais
      * affiché »), keeps its stack's message ids under EXTRA_MESSAGE_IDS
      * (stack order, 0 for a message without id), the previous array
-     * extended; a conversation's message also carries its id under
-     * EXTRA_MESSAGE_ID. A private notification always carries its public
-     * version, so a re-post can choose between PRIVATE and SECRET again.
+     * extended. The array is the only record of the ids: Android does not
+     * keep a MessagingStyle message's extras. A private notification always
+     * carries its public version, so a re-post can choose between PRIVATE
+     * and SECRET again.
      */
     @Override
     public void show(NotificationModel.Shown n) {
@@ -141,10 +139,7 @@ final class ChatNotifier implements PushEngine.Notifier {
                 b.setOnlyAlertOnce(true);
             } else {
                 Person author = new Person.Builder().setName(authorOf(n)).build();
-                NotificationCompat.MessagingStyle.Message m =
-                        new NotificationCompat.MessagingStyle.Message(n.text, when, author);
-                m.getExtras().putLong(EXTRA_MESSAGE_ID, n.messageId);
-                style.addMessage(m);
+                style.addMessage(new NotificationCompat.MessagingStyle.Message(n.text, when, author));
                 ids = extended(ids, n.messageId);
             }
             b.setStyle(style).setCategory(NotificationCompat.CATEGORY_MESSAGE);
@@ -343,6 +338,16 @@ final class ChatNotifier implements PushEngine.Notifier {
         Map<String, Long> out = new HashMap<>();
         for (StatusBarNotification sbn : active()) {
             if (sbn.getId() == ID && sbn.getTag() != null) out.put(sbn.getTag(), sbn.getPostTime());
+        }
+        return out;
+    }
+
+    /** The when of each notification of shownTags: the send time show() drew it with. */
+    @Override
+    public Map<String, Long> shownSentAt() {
+        Map<String, Long> out = new HashMap<>();
+        for (StatusBarNotification sbn : active()) {
+            if (sbn.getId() == ID && sbn.getTag() != null) out.put(sbn.getTag(), sbn.getNotification().when);
         }
         return out;
     }

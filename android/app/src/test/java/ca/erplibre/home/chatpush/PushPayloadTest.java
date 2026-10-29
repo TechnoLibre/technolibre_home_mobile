@@ -149,4 +149,27 @@ public class PushPayloadTest {
     public void garbageIsAJsonException() throws Exception {
         parse("not json");
     }
+
+    @Test
+    public void anUnknownControlTypeOrVersionIsIgnored() throws Exception {
+        JSONObject future = new JSONObject(new String(resource("push_read.json"), StandardCharsets.UTF_8));
+        future.getJSONObject("erplibre").put("type", "future");
+        assertEquals(PushPayload.Kind.IGNORED, parse(future.toString()).kind);
+        JSONObject v2 = new JSONObject(new String(resource("push_inbox_done.json"), StandardCharsets.UTF_8));
+        v2.getJSONObject("erplibre").put("v", 2);
+        PushPayload p = parse(v2.toString());
+        assertEquals(PushPayload.Kind.IGNORED, p.kind);
+        assertFalse(p.isChat());
+    }
+
+    @Test
+    public void aMessageOfAnUnknownModuleVersionShowsWithoutItsId() throws Exception {
+        JSONObject v2 = new JSONObject(new String(resource("push_module_chat.json"), StandardCharsets.UTF_8));
+        v2.getJSONObject("options").getJSONObject("data").getJSONObject("erplibre").put("v", 2);
+        PushPayload p = parse(v2.toString());
+        assertEquals(PushPayload.Kind.MESSAGE, p.kind);
+        assertEquals(0L, p.messageId);
+        assertEquals("", p.channelType);
+        assertTrue(p.isChat());
+    }
 }

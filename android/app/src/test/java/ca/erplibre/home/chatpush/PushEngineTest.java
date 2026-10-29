@@ -92,8 +92,12 @@ public class PushEngineTest {
         final List<HealthSnapshot> statuses = new CopyOnWriteArrayList<>();
         /** Per chat tag, the message ids of its stack in order (0: a message without id). */
         final Map<String, List<Long>> ids = new ConcurrentHashMap<>();
-        /** When each tag was last posted, epoch ms. */
+        /** When each tag was last posted, epoch ms, on the device clock (postClock at show). */
         final Map<String, Long> postedAt = new ConcurrentHashMap<>();
+        /** The send time each tag was last drawn with (its when: the ntfy time), epoch ms. */
+        final Map<String, Long> sentAt = new ConcurrentHashMap<>();
+        /** The device clock show() stamps postedAt with. */
+        volatile java.util.function.LongSupplier postClock = () -> 0L;
         /** trimRead calls, "tag@lastMessageId". */
         final List<String> trims = new CopyOnWriteArrayList<>();
         /** Shows that throw before drawing anything. */
@@ -106,7 +110,8 @@ public class PushEngineTest {
             shown.add(n);
             active.add(n.tag);
             if (n.tag.startsWith("chat:")) ids.computeIfAbsent(n.tag, t -> new ArrayList<>()).add(n.messageId);
-            postedAt.put(n.tag, n.at);
+            postedAt.put(n.tag, postClock.getAsLong());
+            sentAt.put(n.tag, n.at);
         }
 
         public void cancel(String tag) {
@@ -123,9 +128,17 @@ public class PushEngineTest {
         public Set<String> shownTags() { return new HashSet<>(active); }
 
         public Map<String, Long> shownAt() {
+            return byTag(postedAt);
+        }
+
+        public Map<String, Long> shownSentAt() {
+            return byTag(sentAt);
+        }
+
+        private Map<String, Long> byTag(Map<String, Long> times) {
             Map<String, Long> out = new HashMap<>();
             for (String tag : active) {
-                Long at = postedAt.get(tag);
+                Long at = times.get(tag);
                 out.put(tag, at == null ? 0L : at);
             }
             return out;
@@ -243,6 +256,9 @@ public class PushEngineTest {
     private final PushSettingsStore settings = new PushSettingsStore(settingsKv);
     private final NativeSessions sessions = new NativeSessions(sessionsKv, box, () -> now);
     private final FakeNotifier notifier = new FakeNotifier();
+    {
+        notifier.postClock = () -> now;
+    }
     private final HandScheduler scheduler = new HandScheduler();
     private final FakeOdoo odoo = new FakeOdoo();
 
@@ -354,7 +370,10 @@ public class PushEngineTest {
         return raw(id, sub.topic, body);
     }
 
-    /** The captured plaintext resource, with the fields of its "erplibre" object (data's for a message) set. */
+    /**
+     * The captured plaintext resource, with the fields of its "erplibre" object (data's for a message) set:
+     * a number, a "[...]" JSON array, a "\"...\"" string, or null.
+     */
     private static String captured(String name, String... keyValues) throws Exception {
         JSONObject root = new JSONObject(new String(PushPayloadTest.resource(name), StandardCharsets.UTF_8));
         JSONObject e = root.has("erplibre") ? root.getJSONObject("erplibre")
@@ -363,7 +382,10 @@ public class PushEngineTest {
         for (int i = 0; i < keyValues.length; i += 2) {
             String k = keyValues[i];
             String v = keyValues[i + 1];
-            Object val = v == null ? JSONObject.NULL : v.startsWith("[") ? new JSONArray(v) : (Object) Long.valueOf(v);
+            Object val = v == null ? JSONObject.NULL
+                    : v.startsWith("[") ? new JSONArray(v)
+                    : v.startsWith("\"") ? v.substring(1, v.length() - 1)
+                    : (Object) Long.valueOf(v);
             if ("res_id".equals(k)) data.put(k, val);
             else e.put(k, val);
         }
@@ -1238,7 +1260,7 @@ public class PushEngineTest {
     }
 
     @Test
-    public void inboxDoneCancelsTheRecordsNamedPostedBeforeIt() throws Exception {
+    public void inboxDoneCancelsTheRecordsNamedSentBeforeIt() throws Exception {
         mirror(1, true, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
@@ -1247,10 +1269,10 @@ public class PushEngineTest {
         String later = "inbox:cfg1:res.partner:3";
         String other = "inbox:cfg1:project.task:2";
         for (String tag : Arrays.asList(named, later, other, "chat:cfg1:42")) notifier.active.add(tag);
-        notifier.postedAt.put(named, NOW - MINUTE);
-        notifier.postedAt.put(later, NOW + MINUTE);
-        notifier.postedAt.put(other, NOW - MINUTE);
-        notifier.postedAt.put("chat:cfg1:42", NOW - MINUTE);
+        notifier.sentAt.put(named, NOW - MINUTE);
+        notifier.sentAt.put(later, NOW + MINUTE);
+        notifier.sentAt.put(other, NOW - MINUTE);
+        notifier.sentAt.put("chat:cfg1:42", NOW - MINUTE);
         ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + encrypted(a, "d1",
                 captured("push_inbox_done.json", "threads", "[[\"project.task\", 1], [\"res.partner\", 3]]"))));
         engine().startRealtime();
@@ -1269,7 +1291,7 @@ public class PushEngineTest {
                 "chat:cfg1:42", "summary:cfg1", "inbox:cfg2:project.task:1");
         for (String tag : tags) {
             notifier.active.add(tag);
-            notifier.postedAt.put(tag, NOW - MINUTE);
+            notifier.sentAt.put(tag, NOW - MINUTE);
         }
         ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + encrypted(a, "d1",
                 captured("push_inbox_done.json", "threads", null))));
@@ -1316,5 +1338,44 @@ public class PushEngineTest {
         assertEquals("Nouveau message", again.conversationTitle);
         assertEquals("Nouveau message", again.text);
         assertFalse(again.messaging);
+    }
+
+    @Test
+    public void inboxDoneCancelsARecordPostedAfterItButSentBefore() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        // a catch-up: the record message and its done arrive together, ten minutes after ntfy stamped them
+        now = NOW + 10 * MINUTE;
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)
+                + encrypted(a, "m1", new String(PushPayloadTest.resource("push_module_record.json"),
+                        StandardCharsets.UTF_8))
+                + encrypted(a, "d1", new String(PushPayloadTest.resource("push_inbox_done.json"),
+                        StandardCharsets.UTF_8))));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertEquals(1, notifier.shown.size());
+        assertEquals(Long.valueOf(NOW + 10 * MINUTE), notifier.postedAt.get("inbox:cfg1:project.task:1"));
+        assertEquals(Collections.singletonList("inbox:cfg1:project.task:1"), notifier.cancelled);
+    }
+
+    @Test
+    public void anUnknownControlPushIsDroppedSilently() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        notifier.active.add("chat:cfg1:4");
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)
+                + encrypted(a, "x1", captured("push_read.json", "type", "\"future\""))
+                + encrypted(a, "x2", captured("push_read.json", "v", "2"))));
+        engine().startRealtime();
+        awaitClosed(1);
+        JSONObject h = engine.health().toJson();
+        assertEquals(0, h.getInt("undecryptable"));
+        assertEquals(0, h.getInt("faults"));
+        assertTrue(notifier.shown.isEmpty());
+        assertTrue(notifier.trims.isEmpty());
+        assertTrue(notifier.cancelled.isEmpty());
+        assertEquals("x2", store.cursor(n.url));
     }
 }

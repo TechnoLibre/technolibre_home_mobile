@@ -61,8 +61,14 @@ final class PushEngine {
          */
         void trimRead(String tag, long lastMessageId);
 
-        /** When each notification of shownTags was last posted, epoch ms. */
+        /** When each notification of shownTags was last posted, epoch ms, on this device's clock. */
         Map<String, Long> shownAt();
+
+        /**
+         * The send time each notification of shownTags is drawn with (its
+         * when: the ntfy time of its message), epoch ms.
+         */
+        Map<String, Long> shownSentAt();
 
         /** The engine's state changed (permanent notification line). */
         void status(HealthSnapshot h);
@@ -608,6 +614,7 @@ final class PushEngine {
             notifier.trimRead("chat:" + a.configId + ":" + p.channelId, p.lastMessageId);
             return;
         }
+        if (p.kind == PushPayload.Kind.IGNORED) return;
         if (p.kind == PushPayload.Kind.INBOX_DONE) {
             // ntfy stamps whole seconds: a notification posted within the push's second came before it
             clearInbox(a.configId, p.threads, m.time * 1000L + 999);
@@ -622,8 +629,10 @@ final class PushEngine {
 
     /**
      * Cancels the account's inbox notifications of the threads ({model,
-     * resId}) posted at or before the bound, epoch ms; threads null names
-     * every inbox notification of the account. Monitor held.
+     * resId}) whose message was sent at or before the bound, epoch ms on
+     * ntfy's clock: the send time, not the post time, so a message and its
+     * done read together in a catch-up still go. threads null names every
+     * inbox notification of the account. Monitor held.
      */
     private void clearInbox(String configId, List<String[]> threads, long before) {
         List<NotificationModel.Clear> clears = new ArrayList<>();
@@ -635,7 +644,7 @@ final class PushEngine {
             }
         }
         if (clears.isEmpty()) return;
-        for (Map.Entry<String, Long> shown : notifier.shownAt().entrySet()) {
+        for (Map.Entry<String, Long> shown : notifier.shownSentAt().entrySet()) {
             for (NotificationModel.Clear c : clears) {
                 if (c.matches(shown.getKey(), shown.getValue())) {
                     notifier.cancel(shown.getKey());
