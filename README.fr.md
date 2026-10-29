@@ -224,8 +224,9 @@ Options › Notifications du clavardage fait sonner le téléphone pour un messa
 du clavardage quand l'app est fermée, sur Android. Odoo 18 publie un push
 chiffré sur un sujet d'un serveur ntfy que vous faites tourner ; le téléphone
 le lit, le déchiffre et affiche la notification. Le module
-`erplibre_mobile_chat` n'est pas requis (version 1.4 ou aucun) ; le téléphone
-s'enregistre lui-même auprès d'Odoo, sous sa propre session.
+`erplibre_mobile_chat` n'est pas requis (la version 1.5 ajoute l'identifiant du
+message, le push « lu » et le bouton 👍 ; sans lui, tout le reste fonctionne) ;
+le téléphone s'enregistre lui-même auprès d'Odoo, sous sa propre session.
 
 1. **Préparer ntfy** sur la machine qui le fait tourner, dans `TODO › Déployer
    › Préparer ntfy pour ERPLibre mobile`, sur cette machine ou par ssh. La
@@ -266,6 +267,41 @@ s'enregistre lui-même auprès d'Odoo, sous sa propre session.
    masquait le contenu garde cette forme si l'utilisateur change ensuite le
    réglage d'Android, jusqu'à ce qu'elle soit affichée de nouveau. « Jamais
    affiché » et « Toujours affiché » font ce qu'ils disent.
+6. **Les actions**, depuis la notification elle-même, sur une notification de
+   clavardage (une discussion directe, un groupe ou un canal ; une notification
+   de boîte de réception, un sommaire ou un état n'en a aucune). Android
+   n'affiche que trois boutons : deux sont toujours là et le troisième dépend
+   du message :
+   - « Répondre » saisit un message qui est publié dans la conversation au nom
+     de l'utilisateur ;
+   - « Marquer lu » marque la conversation lue dans Odoo jusqu'au plus récent
+     message affiché, même quand l'envoi de « lu » est
+     désactivé dans Options › Clavardage, et retire de la boîte de réception
+     d'Odoo les @mentions de cette conversation jusqu'à ce message (rien
+     d'autre n'en sort) ;
+   - « 👍 » réagit au plus récent message, offert quand ce message a un
+     identifiant, que seul le module 1.5 pousse ; sinon « Muet 1 h » prend sa
+     place (et la reprend une fois un 👍 envoyé).
+
+   Les boutons sont offerts dans tous les modes d'écran verrouillé, « Jamais
+   affiché » compris (le texte y reste masqué ; sauf sur un serveur « Toujours
+   affiché », Android 12 et suivants demande de déverrouiller avant qu'une
+   action s'exécute). Chaque action est écrite dans un magasin local scellé avant tout
+   appel réseau : elle n'est jamais perdue ni faite deux fois. Une réponse porte
+   un identifiant client (le module le garde ; sans le module, le téléphone
+   cherche d'abord le marqueur caché du corps, après une fenêtre de calme de
+   3 minutes), et marquer lu, mettre en sourdine et 👍 sont des états cibles
+   qu'une répétition laisse intacts. Une action qui échoue pour une raison de
+   réseau est réessayée avec un délai croissant.
+   Avant chaque action, le téléphone vérifie que le serveur connaît encore la
+   session, car Odoo répond « marquer lu » par un succès sans rien faire quand
+   la session est morte. Une session morte, un refus, deux messages trouvés sous
+   un même marqueur ou 24 heures d'échecs confient l'action à l'app : Android
+   interdit d'ouvrir l'app depuis une action en arrière-plan, alors le téléphone
+   affiche une notification par serveur, « Ouvrez l'app pour terminer une
+   action — <serveur> », et l'app se reconnecte et envoie l'action, une fois, à
+   son prochain démarrage. Une action qui ne peut même pas être enregistrée
+   affiche « Action non envoyée — <serveur> ».
 
 Ce qui sonne suit les réglages d'Odoo : le réglage général (tout, mentions,
 rien) et la sourdine d'une conversation. Les push d'un clavardage ou d'un
@@ -276,10 +312,23 @@ cache de ntfy, ou un compte sans ntfy, reçoit un sommaire par serveur, compté
 sur les compteurs de non lus d'Odoo. Odoo publie dans la requête qui poste le
 message (quand moins de 5 appareils sont parmi les destinataires) : un ntfy qui
 accepte la connexion sans jamais répondre retarde un envoi jusqu'à 5 secondes
-par appareil ; un port fermé échoue aussitôt. Jusqu'au module 1.5, ntfy répond
+par appareil ; un port fermé échoue aussitôt. Sans le module 1.5, ntfy répond
 200 là où Odoo attend 201, si bien que chaque push réussi inscrit dans le
 journal d'Odoo un avertissement qui porte le sujet : traiter ce journal comme
 sensible.
+
+Le module 1.5 (facultatif) marque les appareils du téléphone par
+`/erplibre_mobile_chat/push/device`, que l'app appelle après chaque
+enregistrement. Leurs push portent alors l'identifiant du message et le type de
+canal, partent après la validation de la transaction et sont acceptés sur le
+200 de ntfy sans journaliser le sujet ; un push « lu » retire aussitôt la
+notification quand la conversation est lue ailleurs, et un push « boîte de
+réception faite » retire celle d'un enregistrement traité ailleurs (seuls les
+appareils marqués du téléphone les reçoivent). Un réglage du téléphone pour se
+taire quand un navigateur est en ligne vient avec le lot 3. Sans le module 1.5,
+il n'y a pas de 👍 (une réaction trouvée par l'heure pourrait tomber sur un
+autre message), « Marquer lu » trouve le plus récent message par sa date, et
+une notification part au prochain contrôle ou à l'ouverture de l'app.
 
 La propriété de construction `-PnoChatRealtime` laisse le service permanent hors
 de l'APK (une version sans les niveaux 1 et 2, pour un magasin qui le refuse).

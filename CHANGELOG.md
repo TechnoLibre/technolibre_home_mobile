@@ -191,8 +191,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   screen. `-PnoChatRealtime` builds without the permanent service. Works with
   `erplibre_mobile_chat` 1.4 or without the module; migration 2026102801 adds
   the table `chat_push`
+- **Chat notification actions** — a chat notification offers « Reply » and
+  « Mark read », and a third button (Android draws three at most): « 👍 »
+  when the newest message has a message id (`erplibre_mobile_chat` 1.5),
+  otherwise « Mute 1 h ». The buttons show in every lock-screen mode,
+  « Never shown » included (the text stays hidden). « Mark read » marks the
+  conversation read in Odoo even with the sending of « read » turned off, and clears that
+  conversation's @mentions up to that message from the Odoo Inbox. Every
+  action is sealed in a local store before any network call and sent once:
+  by the module's client identifier, or, without it, by a search for the
+  hidden marker after a 3-minute quiet window; a network failure is retried
+  with a growing delay and the action goes to the app after 24 hours, a
+  refusal, two marker hits or a dead session. A dead session is detected
+  before each action (Odoo answers « mark read » with success and does
+  nothing); the phone then shows one notification per server, « Ouvrez l'app
+  pour terminer une action — {server} », because Android forbids opening the
+  app from a background action, and the app sends the action once at its
+  next start. An action that cannot be recorded shows « Action non envoyée —
+  {server} ». Module 1.5 marks the app's devices (their pushes carry the
+  message id and channel type, go out after commit and log nothing) and adds
+  the « read » and « inbox done » pushes that remove a notification at once
 
 ### Changed
+- **The app's own read bounds its Inbox clear** — marking a conversation
+  read cleared every @mention of that conversation from the Odoo Inbox,
+  including one that arrived after the message read; it now clears only the
+  mentions up to the message read, as « Mark read » in a notification does
 - **Gettext catalogues leave the bundle** — 41 763 files and 857 MB, 33.5 %
   of the files and 58.7 % of the payload, against 603 MB for everything
   else. Weblate and the OCA bots maintain them and nobody reads a catalogue

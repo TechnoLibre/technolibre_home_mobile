@@ -223,8 +223,9 @@ https://forum.ionicframework.com/t/ionic-capacitor-failed-ios-build/177400/2
 Options › Chat notifications makes the phone ring for a chat message while the
 app is closed, on Android. Odoo 18 publishes an encrypted push to a topic of a
 ntfy server that you run; the phone reads it, decrypts it, and draws the
-notification. The `erplibre_mobile_chat` module is not needed (version 1.4 or
-none); the phone registers itself with Odoo, under its own session.
+notification. The `erplibre_mobile_chat` module is not needed (version 1.5 adds
+the message id, the « read » push and the 👍 button; without it everything else
+works); the phone registers itself with Odoo, under its own session.
 
 1. **Prepare ntfy** on the machine that runs it, in `TODO › Deploy › Prepare
    ntfy for ERPLibre mobile`, on that machine or over ssh. The command sets
@@ -263,6 +264,37 @@ none); the phone registers itself with Odoo, under its own session.
    posted: one drawn while Android hid content keeps that form if the user later
    changes the Android setting, until it is posted again. « Never shown » and
    « Always shown » do what they say.
+6. **Actions**, from the notification itself, on a chat notification (a direct
+   chat, a group or a channel; an inbox notification, a summary or a status
+   notification gets none). Android shows at most three buttons, so two are
+   always there and the third depends on the message:
+   - « Reply » types a message that is posted in the conversation as the user;
+   - « Mark read » marks the conversation read in Odoo up to the newest message
+     shown, even when sending « read » is turned off in Options › Chat, and
+     clears that conversation's @mentions up to that message from the Odoo
+     Inbox (nothing else leaves the Inbox);
+   - « 👍 » reacts to the newest message, offered when that message has a
+     message id, which only module 1.5 pushes; otherwise « Mute 1 h » takes the
+     place (and takes it back once a 👍 has been sent).
+
+   The buttons are offered in every lock-screen mode, « Never shown » included
+   (the text stays hidden there; except on « Always shown » servers, Android 12
+   and later asks to unlock before an action runs). Every action is written to a
+   sealed local store before any network call, so it is never lost and never
+   done twice: a reply carries a client identifier (the module stores it, and
+   without the module the phone looks the hidden marker of the body up first,
+   after a 3-minute quiet window), and mark read, mute and 👍 are target states
+   that a repeat leaves unchanged. An action that fails for a network reason
+   is retried with a growing delay.
+   Before each action the phone checks that the server still knows the
+   session, because Odoo answers « mark read » with success while doing nothing
+   when the session is dead. A dead session, a refusal, two messages found
+   under one marker, or 24 hours of failures hand the action to the app: Android
+   forbids opening the app from a background action, so the phone shows one
+   notification per server, « Ouvrez l'app pour terminer une action —
+   <server> », and the app signs in again and sends the action, once, at its
+   next start. An action that cannot even be recorded shows « Action non
+   envoyée — <server> ».
 
 What rings follows Odoo's own settings: the general one (all, mentions,
 nothing) and a conversation's mute. Chat and group pushes ignore a
@@ -273,9 +305,21 @@ without ntfy, gets one summary per server, counted from Odoo's unread counters.
 Odoo publishes inside the request that posts the message (when fewer than 5
 devices are among the recipients), so a ntfy that accepts the connection and
 never answers delays a post by up to 5 seconds per device; a closed port fails
-at once. Until module 1.5, ntfy answers 200 where Odoo expects 201, so each
+at once. Without module 1.5, ntfy answers 200 where Odoo expects 201, so each
 successful push logs an Odoo warning that carries the topic: treat that log as
 sensitive.
+
+Module 1.5 (optional) marks the phone's devices through
+`/erplibre_mobile_chat/push/device`, which the app calls after each
+registration. Their pushes then carry the message id and the channel type, are
+sent after the transaction commits, and are accepted on ntfy's 200 without
+logging the topic; a « read » push removes the notification at once when the
+conversation is read elsewhere, and an « inbox done » push removes the inbox
+notification of a record done elsewhere (only the phone's marked devices
+receive them). A phone setting that stays silent while a browser is online
+comes with lot 3. Without module 1.5 there is no 👍 (a reaction found by time
+could land on another message), « Mark read » finds the newest message by
+date, and a notification goes at the next check or when the app opens.
 
 The build property `-PnoChatRealtime` leaves the permanent service out of the
 APK (a build without levels 1 and 2, for a store that refuses it).

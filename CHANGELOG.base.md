@@ -197,8 +197,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   screen. `-PnoChatRealtime` builds without the permanent service. Works with
   `erplibre_mobile_chat` 1.4 or without the module; migration 2026102801 adds
   the table `chat_push`
+- **Chat notification actions** — a chat notification offers « Reply » and
+  « Mark read », and a third button (Android draws three at most): « 👍 »
+  when the newest message has a message id (`erplibre_mobile_chat` 1.5),
+  otherwise « Mute 1 h ». The buttons show in every lock-screen mode,
+  « Never shown » included (the text stays hidden). « Mark read » marks the
+  conversation read in Odoo even with the sending of « read » turned off, and clears that
+  conversation's @mentions up to that message from the Odoo Inbox. Every
+  action is sealed in a local store before any network call and sent once:
+  by the module's client identifier, or, without it, by a search for the
+  hidden marker after a 3-minute quiet window; a network failure is retried
+  with a growing delay and the action goes to the app after 24 hours, a
+  refusal, two marker hits or a dead session. A dead session is detected
+  before each action (Odoo answers « mark read » with success and does
+  nothing); the phone then shows one notification per server, « Ouvrez l'app
+  pour terminer une action — {server} », because Android forbids opening the
+  app from a background action, and the app sends the action once at its
+  next start. An action that cannot be recorded shows « Action non envoyée —
+  {server} ». Module 1.5 marks the app's devices (their pushes carry the
+  message id and channel type, go out after commit and log nothing) and adds
+  the « read » and « inbox done » pushes that remove a notification at once
 
 ### Changed
+- **The app's own read bounds its Inbox clear** — marking a conversation
+  read cleared every @mention of that conversation from the Odoo Inbox,
+  including one that arrived after the message read; it now clears only the
+  mentions up to the message read, as « Mark read » in a notification does
 - **Gettext catalogues leave the bundle** — 41 763 files and 857 MB, 33.5 %
   of the files and 58.7 % of the payload, against 603 MB for everything
   else. Weblate and the OCA bots maintain them and nobody reads a catalogue
@@ -742,8 +766,36 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reste hors de l'écran verrouillé. `-PnoChatRealtime` construit sans le service
   permanent. Fonctionne avec `erplibre_mobile_chat` 1.4 ou sans le module ; la
   migration 2026102801 ajoute la table `chat_push`
+- **Actions des notifications de clavardage** — une notification de
+  clavardage offre « Répondre » et « Marquer lu », et un troisième bouton
+  (Android en dessine trois au plus) : « 👍 » quand le plus récent message a un
+  identifiant (`erplibre_mobile_chat` 1.5), sinon « Muet 1 h ». Les boutons
+  s'affichent dans tous les modes d'écran verrouillé, « Jamais affiché »
+  compris (le texte reste masqué). « Marquer lu » marque la conversation lue
+  dans Odoo même quand l'envoi de « lu » est désactivé, et retire de la boîte
+  de réception d'Odoo les @mentions de cette conversation jusqu'à ce message.
+  Chaque action est scellée dans un magasin local avant tout appel réseau et
+  envoyée une fois : par l'identifiant client du module ou, sans lui, par la
+  recherche du marqueur caché après une fenêtre de calme de 3 minutes ; un
+  échec réseau est réessayé avec un délai croissant et l'action passe à l'app
+  après 24 heures, un refus, deux marqueurs trouvés ou une session morte. Une
+  session morte est détectée avant chaque action (Odoo répond « marquer lu »
+  par un succès sans rien faire) ; le téléphone affiche alors une notification
+  par serveur, « Ouvrez l'app pour terminer une action — {serveur} », car
+  Android interdit d'ouvrir l'app depuis une action en arrière-plan, et l'app
+  envoie l'action une fois à son prochain démarrage. Une action qui ne peut
+  être enregistrée affiche « Action non envoyée — {serveur} ». Le module 1.5
+  marque les appareils de l'app (leurs push portent l'identifiant du message et
+  le type de canal, partent après la validation et ne journalisent rien) et
+  ajoute les push « lu » et « boîte de réception faite » qui retirent aussitôt
+  une notification
 
 ### Modifié
+- **La lecture faite dans l'app borne le nettoyage de la boîte de réception**
+  — marquer une conversation lue retirait de la boîte de réception d'Odoo
+  toutes les @mentions de cette conversation, y compris une arrivée après le
+  message lu ; elle ne retire plus que celles jusqu'au message lu, comme
+  « Marquer lu » dans une notification
 - **Les catalogues gettext quittent le bundle** — 41 763 fichiers et 857 Mo,
   33,5 % des fichiers et 58,7 % de la charge, contre 603 Mo pour tout le
   reste. Weblate et les robots OCA les maintiennent, et personne n'en lit un
