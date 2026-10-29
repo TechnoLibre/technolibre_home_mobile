@@ -16,10 +16,10 @@ import type { ChatService } from "./chatService";
  * native code ended or hands over are drained (ChatPushActions.drain), and
  * from the start every `actions` event of the plugin drains too. The bus
  * of an application that is added, edited or deleted stops and starts
- * again on its own, the others left running. Realtime is native only; off a native platform
- * start() does nothing, while a deleted application's chat data is still
- * erased. The listener lives here, not in ChatService, so that service
- * builds in node without @capacitor/app.
+ * again on its own, the others left running. Realtime is native only; off
+ * a native platform start() does nothing, while a deleted application's
+ * chat data is still erased. The listener lives here, not in ChatService,
+ * so that service builds in node without @capacitor/app.
  */
 export class ChatLifecycle {
   /** Whether the app is in the foreground, as last known; false until start() reads it. */

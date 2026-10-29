@@ -43,10 +43,11 @@ import { v4 as uuidv4 } from "uuid";
 export const CHAT_NOTE = "chat";
 /**
  * params { channelId, text, mentions: Mentions, parent: MessageTarget|null,
- * useModule: boolean, createSentAt?, maybeSent?, files?, idempotentUpload?,
- * reuploaded? }. maybeSent: a send of the post may have reached Odoo
- * before the op existed (a notification's reply handed over by native
- * code), so its first attempt already looks for the marker. mentions: the people and channels picked, the body and
+ * useModule: boolean, createSentAt?, maybeSent?, plainText?, files?,
+ * idempotentUpload?, reuploaded? }. maybeSent: a send of the post may have
+ * reached Odoo before the op existed (a notification's reply handed over
+ * by native code), so its first attempt already looks for the marker.
+ * plainText: the body converts no emoticon, as native code's. mentions: the people and channels picked, the body and
  * the post's partner_ids and special_mentions built from them and the text
  * at each send (composeBody); parent: the message it replies to, its
  * server id read at the send. files: the local uuids of its files in pick
@@ -334,6 +335,8 @@ export interface PostOpts {
    * attempt waits out the quiet window and looks for the marker first.
    */
   maybeSentAt?: string;
+  /** The text without emoticon conversion, as native code composes a notification's reply: one body whichever side sends. */
+  plainText?: boolean;
 }
 
 /** Options of ChatOutbox.queueAction (see there). */
@@ -391,7 +394,8 @@ const REFUSED_ERRORS = new Set([
   "werkzeug.exceptions.Forbidden",
 ]);
 
-const isRefused = (e: unknown): boolean => e instanceof OdooRpcError && e.odooName !== null && REFUSED_ERRORS.has(e.odooName);
+/** Whether Odoo refused for good (REFUSED_ERRORS): no retry gets past it. */
+export const isRefused = (e: unknown): boolean => e instanceof OdooRpcError && e.odooName !== null && REFUSED_ERRORS.has(e.odooName);
 
 /** The refusals of an action on a message that mean the message is gone (or no longer the user's to reach). */
 const VANISHED_ERRORS = new Set(["werkzeug.exceptions.NotFound", "odoo.exceptions.MissingError"]);
@@ -716,7 +720,7 @@ export class ChatOutbox {
   ): Promise<ChatMessage> {
     const files = opts.files ?? [];
     const mentions = opts.mentions ?? EMPTY_MENTIONS;
-    const body = composeBody(text, mentions, await emojiConversions()).body;
+    const body = composeBody(text, mentions, opts.plainText ? [] : await emojiConversions()).body;
     const parent = opts.replyTo ? await this.parentOf(configId, opts.replyTo) : null;
     const parentFields = {
       parentId: parent?.messageId ?? null,
@@ -787,6 +791,7 @@ export class ChatOutbox {
             : { channelId, text, mentions, parent, useModule }),
           ...(opts.draftText !== undefined ? { draftText: opts.draftText } : {}),
           ...(opts.maybeSentAt ? { createSentAt: opts.maybeSentAt, maybeSent: true } : {}),
+          ...(opts.plainText ? { plainText: true } : {}),
         },
         dependsOn: tail,
         ...(incomplete ? { status: "incomplete" as const } : {}),
@@ -2646,7 +2651,7 @@ export class ChatOutbox {
     }
     const { ids, rows } = files;
     // Built before any stamp: a conversion chunk that fails to load is a plain retry, never a possible send
-    const composed = composeBody(text, op.params.mentions ?? EMPTY_MENTIONS, await emojiConversions());
+    const composed = composeBody(text, op.params.mentions ?? EMPTY_MENTIONS, op.params.plainText ? [] : await emojiConversions());
     const body = composed.body + chatMarker(op.clientUuid);
     const parentId = await this.parentIdOf(op.configId, op.params.parent);
     const sentAt = await this.quietStamp(creds, op);

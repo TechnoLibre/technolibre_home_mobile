@@ -42,13 +42,17 @@ const TEXT = "Bonjour du test d'action";
  * A fake Odoo 18 answering the action routes with the captured answers:
  * get_session_info, /mail/message/post, the marker search (search_read of
  * mail.message, a hit while `marked`), mark_as_read, mark_all_as_read, the
- * mute and the reaction. /discuss/channel/messages answers the captured
+ * mute and the reaction. reaction_add.json is the capture of a 👍 on
+ * REACTED: answered to a 👍 on POSTED, its Store names a message the cache
+ * does not hold and changes nothing; the tests read what was sent.
+ * /discuss/channel/messages answers the captured
  * post's Store as one page holding POSTED, in the route's shape the chat
  * tests use. Any other call answers true.
  */
 function fakeOdoo() {
   const calls: { path: string; params: any }[] = [];
-  const state = { marked: false };
+  /** marked: the marker search finds FOUND; pageRefused: the messages page answers the captured NotFound. */
+  const state = { marked: false, pageRefused: false };
   const raw = (text: string) => ({ ok: true, status: 200, text: async () => text, headers: { forEach: () => {} } } as unknown as Response);
   const ok = (result: unknown) => raw(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: { body: string }) => {
@@ -61,7 +65,9 @@ function fakeOdoo() {
       case "/discuss/channel/mark_as_read": return raw(captured("mark_as_read"));
       case "/discuss/settings/mute": return raw(captured("mute"));
       case "/mail/message/reaction": return raw(captured("reaction_add"));
-      case "/discuss/channel/messages": return ok({ data: resultOf("post_answer"), messages: [POSTED] });
+      case "/discuss/channel/messages":
+        if (state.pageRefused) return raw(captured("dead_reaction"));
+        return ok({ data: resultOf("post_answer"), messages: [POSTED] });
       case "/web/dataset/call_kw": {
         if (params.method === "mark_all_as_read") return raw(captured("mark_all_as_read"));
         if (params.model === "mail.message" && params.method === "search_read") {
@@ -291,6 +297,40 @@ describe("ChatPushActions", () => {
       expect(paths.indexOf("/discuss/channel/messages")).toBeGreaterThanOrEqual(0);
       expect(paths.indexOf("/discuss/channel/messages")).toBeLessThan(paths.indexOf("/mail/message/reaction"));
       expect(odoo.on("/mail/message/reaction").map((c) => c.params)).toEqual([{ message_id: POSTED, content: "👍", action: "add" }]);
+    });
+
+    it("a handed-over reply is posted as native code writes it, without emoticon conversion", async () => {
+      // The parity case native code's ReplyBody is held to
+      const parity = (JSON.parse(readFileSync(resolve(ROOT, "android/app/src/test/resources/chatpush/reply_body_parity.json"), "utf-8")) as
+        { name: string; text: string; body: string }[]).find((c) => c.name === "outbox url")!;
+      expect(parity.text).toContain(":)");
+      offline();
+      native.nativeActions = [action({ text: parity.text })];
+      await chat.pushActions.drain();
+      expect((await chat.repo.messageByClientUuid(configId, POSTED_UUID))!.body).toBe(parity.body);
+      setNetwork({ connected: true, wifi: true });
+      await chat.queue.flush((await source()).creds);
+      expect(odoo.on("/mail/message/post").map((c) => c.params.post_data.body)).toEqual([parity.body + chatMarker(POSTED_UUID)]);
+    });
+
+    it("a drained record still failing a day after its tap is dropped", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      offline();
+      native.nativeActions = [
+        action({ kind: "react", messageId: POSTED, content: "👍", createdAt: clock.getTime() - 24 * 3600_000 }),
+        action({ kind: "react", messageId: POSTED, content: "👍", createdAt: clock.getTime() - 23 * 3600_000 }),
+      ];
+      expect(await chat.pushActions.drain()).toEqual({ applied: ["act1"], kept: ["act2"] });
+      expect(native.nativeActions.map((a) => a.id)).toEqual(["act2"]);
+    });
+
+    it("a drained record Odoo refuses is dropped", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      odoo.state.pageRefused = true;
+      native.nativeActions = [action({ kind: "react", messageId: POSTED, content: "👍" })];
+      expect(await chat.pushActions.drain()).toEqual({ applied: ["act1"], kept: [] });
+      expect(odoo.on("/discuss/channel/messages")).toHaveLength(1);
+      expect(odoo.on("/mail/message/reaction")).toEqual([]);
     });
 
     it("a handoff 👍 offline is kept for the next drain", async () => {

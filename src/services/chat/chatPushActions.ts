@@ -2,12 +2,15 @@ import type { PluginListenerHandle } from "@capacitor/core";
 
 import type { ChatPushNative, NativeAction } from "../../plugins/chatPushPlugin";
 import type { ChatChannel } from "../../models/chat";
-import { muteDt } from "./chatOutbox";
+import { isRefused, muteDt } from "./chatOutbox";
 import type { ChatService, ChatSource } from "./chatService";
 import { parseStore } from "./chatStore";
 
 /** How long the mute button of a notification mutes, from the tap (ActionRunner.MUTE_MS). */
 export const NOTIFICATION_MUTE_MS = 60 * 60_000;
+
+/** After this long from its tap, a record that still fails to apply is dropped (ActionStore.STALE_MS). */
+export const DRAIN_STALE_MS = 24 * 3600_000;
 
 /** What a drain did: the ids it applied (then acked) and those it kept for the next drain. */
 export interface DrainResult {
@@ -28,8 +31,10 @@ const errorName = (e: unknown): string => (e instanceof Error ? e.name : typeof 
  * counters, a mute sets the cached mute; nothing is queued, the next load
  * reconciles. A handoff record is queued as the app's own action would be:
  * a reply by queuePost with the native client uuid (its marker and the
- * module's dedupe key); a read by queueRead whatever the read-receipts
- * option (the user asked for it), its mentions cleared up to the message;
+ * module's dedupe key) and native code's body (plainText: no emoticon
+ * converted), so either side sends the same message; a read by
+ * queueRead whatever the read-receipts option (the user asked for it), its
+ * mentions cleared up to the message;
  * a mute until createdAt + NOTIFICATION_MUTE_MS, dropped once that passed;
  * a 👍 on its message id, loaded first (loadUntil), dropped without an id.
  *
@@ -43,7 +48,9 @@ const errorName = (e: unknown): string => (e instanceof Error ? e.name : typeof 
  *
  * An action of an account no longer a chat source is acked and dropped.
  * One that fails to apply (offline before its message is cached, a queue
- * error) is kept and tried again at the next drain. The applied ids are
+ * error) is kept and tried again at the next drain, unless Odoo refused it
+ * for good (isRefused) or DRAIN_STALE_MS passed since its tap: then it is
+ * acked and dropped, as native code gives up. The applied ids are
  * acked once all records ran; the accounts a handoff queued for are then
  * flushed.
  */
@@ -122,8 +129,13 @@ export class ChatPushActions {
         else if (await this.applyHandoff(src, a)) queued.set(src.configId, src);
         result.applied.push(a.id);
       } catch (e: unknown) {
-        result.kept.push(a.id);
-        console.warn(`[chat push] ${a.kind} action kept for the next drain:`, errorName(e));
+        if (isRefused(e) || this.now().getTime() - a.createdAt >= DRAIN_STALE_MS) {
+          result.applied.push(a.id);
+          console.warn(`[chat push] ${a.kind} action dropped:`, errorName(e));
+        } else {
+          result.kept.push(a.id);
+          console.warn(`[chat push] ${a.kind} action kept for the next drain:`, errorName(e));
+        }
       }
     }
     try {
@@ -198,6 +210,7 @@ export class ChatPushActions {
         const maybeSent = a.sentAt !== null && (!useModule || a.plainSent);
         await this.chat.queue.queuePost(configId, a.channelId, a.text, useModule, {
           clientUuid: a.clientUuid,
+          plainText: true,
           ...(maybeSent ? { maybeSentAt: new Date(a.sentAt!).toISOString() } : {}),
         });
         return true;
