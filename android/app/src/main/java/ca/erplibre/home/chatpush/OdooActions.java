@@ -29,8 +29,12 @@ final class OdooActions {
 
     private final OdooJson json;
 
+    /**
+     * OkHttp never replays a call here: by default it resends a request whose connection dropped after
+     * the send, or that got a 408, and a replayed post is a second message. The caller retries instead.
+     */
     OdooActions(OkHttpClient base) {
-        this.json = new OdooJson(base.newBuilder()
+        this.json = new OdooJson(base.newBuilder().retryOnConnectionFailure(false)
                 .callTimeout(8, TimeUnit.SECONDS).connectTimeout(4, TimeUnit.SECONDS).build());
     }
 

@@ -159,6 +159,24 @@ public class OdooActionsTest {
     }
 
     @Test
+    public void aPostWhoseAnswerIsLostIsNeverReplayed() throws Exception {
+        // alive first, so the post reuses the pooled connection as the runner's does
+        answer("session_info");
+        actions.alive(session, true);
+        server.enqueue(new MockResponse().setResponseCode(408));
+        assertEquals(OdooDirectException.Kind.TRANSIENT,
+                failureOf(() -> actions.post(session, 4, "x", PLAIN_UUID, false, true)));
+        assertEquals(2, server.getRequestCount());
+        server.enqueue(new MockResponse().setBody(res("post_answer_no_module_field"))
+                .setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST));
+        // What a replay would get
+        answer("post_answer_no_module_field");
+        assertEquals(OdooDirectException.Kind.UNREACHABLE,
+                failureOf(() -> actions.post(session, 4, "x", PLAIN_UUID, false, true)));
+        assertEquals(3, server.getRequestCount());
+    }
+
+    @Test
     public void aDeadPostIsNotFound() throws Exception {
         answer("dead_post");
         assertEquals(OdooDirectException.Kind.NOT_FOUND,
@@ -288,11 +306,7 @@ public class OdooActionsTest {
 
     @Test
     public void a503IsTransientAnd403Refused() throws Exception {
-        // OkHttp itself replays a 408 once
-        server.enqueue(new MockResponse().setResponseCode(408));
-        server.enqueue(new MockResponse().setResponseCode(408));
-        assertEquals(OdooDirectException.Kind.TRANSIENT, failureOf(() -> actions.mute(session, 4, 5, true)));
-        for (int code : new int[] {429, 500, 503}) {
+        for (int code : new int[] {408, 429, 500, 503}) {
             server.enqueue(new MockResponse().setResponseCode(code));
             assertEquals(OdooDirectException.Kind.TRANSIENT, failureOf(() -> actions.mute(session, 4, 5, true)));
         }
