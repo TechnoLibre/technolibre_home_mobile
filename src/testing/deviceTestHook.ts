@@ -374,8 +374,9 @@ export function deviceTestHook(env: DeviceHookEnv) {
 		 * id « invalide », which Odoo does not know: the next native action
 		 * finds the session dead. The app's own session is left as it is.
 		 * The push work already queued (a copy of the real session after a
-		 * load) settles first, so it does not write over the broken copy;
-		 * a later foreground session copies the real one again.
+		 * load) settles first, so it does not write over the broken copy.
+		 * Only a new foreground session (a resume, a launch) or a new login
+		 * copies the real session again.
 		 */
 		async chatPushBreakSession(configId: string): Promise<void> {
 			const { creds } = await chatSourceOf(env, configId);

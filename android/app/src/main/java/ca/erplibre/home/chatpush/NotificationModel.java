@@ -173,18 +173,6 @@ final class NotificationModel {
         return "server." + hashOf(configId);
     }
 
-    /**
-     * A discuss channel push. The conversation is the mirrored channel name
-     * (else the payload title); the author is the payload title minus the
-     * prefix Odoo builds for that conversation type ("#name - " for a
-     * channel, "name - " for a group, nothing for a chat), else the whole
-     * title. The mirrored type, else the payload's channel type, says which
-     * prefix.
-     *
-     * Every lock-screen choice offers the same buttons (chatActions):
-     * « Répondre », « Marquer lu », then « 👍 » with the message id, which
-     * names the message reacted to, else « Muet 1 h ».
-     */
     /** The action buttons Android draws on a notification at most (Notification.Builder's MAX_ACTION_BUTTONS). */
     static final int MAX_CHAT_ACTIONS = 3;
 
@@ -200,6 +188,18 @@ final class NotificationModel {
         return out;
     }
 
+    /**
+     * A discuss channel push. The conversation is the mirrored channel name
+     * (else the payload title); the author is the payload title minus the
+     * prefix Odoo builds for that conversation type ("#name - " for a
+     * channel, "name - " for a group, nothing for a chat), else the whole
+     * title. The mirrored type, else the payload's channel type, says which
+     * prefix.
+     *
+     * Every lock-screen choice offers the same buttons (chatActions):
+     * « Répondre », « Marquer lu », then « 👍 » with the message id, which
+     * names the message reacted to, else « Muet 1 h ».
+     */
     static Shown chat(AccountView a, PushPayload p, PushStrings s) {
         Shown out = base(a, chatChannelId(a.configId), "chat:" + a.configId + ":" + p.resId);
         ChannelInfo info = a.channels.get(p.resId);
