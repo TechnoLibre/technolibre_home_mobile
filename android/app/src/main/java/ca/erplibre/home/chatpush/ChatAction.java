@@ -8,7 +8,8 @@ import org.json.JSONObject;
  * One action a notification button asked of Odoo, as the ActionStore keeps it. PENDING waits for its
  * `nextAt`, RUNNING is owned by a runner, DONE and HANDOFF wait for the app's drain. `sentAt` is the
  * last send that may have reached Odoo (0 when none may have); `owner` is the process that claimed a
- * RUNNING record. toString() never shows the reply text.
+ * RUNNING record; `plainSent` is true once a send went without the module's uuid, so that a resend
+ * searches the marker first even after the module came. toString() never shows the reply text.
  */
 final class ChatAction {
 
@@ -37,6 +38,7 @@ final class ChatAction {
     String answer;
     long doneAt;
     String owner;
+    boolean plainSent;
 
     ChatAction(String id, String configId, String clientUuid, ActionKind kind, long channelId, long messageId,
             long atMostS, long createdAt, String text, String content) {
@@ -53,7 +55,10 @@ final class ChatAction {
         this.state = State.PENDING;
     }
 
-    /** The drain's shape (NativeAction in chatPushPlugin.ts): lower-case kind and state, nulls for 0. */
+    /**
+     * The drain's shape (NativeAction in chatPushPlugin.ts, plus plainSent): lower-case kind and state,
+     * nulls for 0.
+     */
     JSONObject toJson() {
         try {
             return new JSONObject()
@@ -69,6 +74,7 @@ final class ChatAction {
                     .put("content", content)
                     .put("createdAt", createdAt)
                     .put("sentAt", sentAt == 0 ? JSONObject.NULL : sentAt)
+                    .put("plainSent", plainSent)
                     .put("answer", answer == null ? JSONObject.NULL : answer);
         } catch (JSONException e) {
             throw new IllegalStateException("action unwritable");
@@ -84,7 +90,7 @@ final class ChatAction {
                 .put("state", state.name()).put("sentAt", sentAt).put("nextAt", nextAt)
                 .put("attempts", attempts).put("reason", reason == null ? JSONObject.NULL : reason)
                 .put("answer", answer == null ? JSONObject.NULL : answer).put("doneAt", doneAt)
-                .put("owner", owner == null ? JSONObject.NULL : owner);
+                .put("owner", owner == null ? JSONObject.NULL : owner).put("plainSent", plainSent);
     }
 
     static ChatAction fromRecord(JSONObject o) throws JSONException {
@@ -104,6 +110,7 @@ final class ChatAction {
         a.answer = o.isNull("answer") ? null : o.getString("answer");
         a.doneAt = o.getLong("doneAt");
         a.owner = o.isNull("owner") ? null : o.getString("owner");
+        a.plainSent = o.optBoolean("plainSent", false);
         return a;
     }
 

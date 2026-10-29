@@ -7,9 +7,10 @@ import java.util.function.LongSupplier;
  * Runs one stored action to its end state on the session's native copy. Each attempt claims the record,
  * then asks Odoo whether the session is alive (the action routes are auth="public" and would run as the
  * public user), then acts:
- * - reply: with the module, posted with its uuid, which makes a resend return the first message; without
- *   it, a reply that may already have reached Odoo (sentAt) waits out ActionStore.QUIET_MS from that send,
- *   then searches its marker first and posts only when none is found. The send is stamped before the call.
+ * - reply: with the module, posted with its uuid, which makes a resend return the first message. A reply
+ *   that may already have reached Odoo (sentAt) without the module now, or by a send without the uuid
+ *   (plainSent), waits out ActionStore.QUIET_MS from that send before any request, then searches its
+ *   marker first and posts only when none is found. The send is stamped before the call.
  * - read: up to the record's message id, else the newest message dated at most its bound, then marked.
  * - mute: for the minutes left until createdAt + 1 h; none left is done without a call.
  * - 👍: on the record's message id.
@@ -74,6 +75,21 @@ final class ActionRunner {
             store.done(a.id, null);
             return Outcome.DONE;
         }
+        boolean module = !account.module.isEmpty();
+        boolean searchFirst = a.kind == ActionKind.REPLY && a.sentAt > 0 && (!module || a.plainSent);
+        if (searchFirst) {
+            long now = clock.getAsLong();
+            if (a.sentAt > now) {
+                // Stamped under a clock that ran fast: the window restarts once, now
+                store.markSent(a.id, false);
+                store.retryAt(a.id, now + ActionStore.QUIET_MS);
+                return Outcome.RETRY;
+            }
+            if (now < a.sentAt + ActionStore.QUIET_MS) {
+                store.retryAt(a.id, a.sentAt + ActionStore.QUIET_MS);
+                return Outcome.RETRY;
+            }
+        }
         NativeSession s = sessions.get(a.configId);
         if (s == null || sessions.expired(a.configId)) return handoff(a, SESSION_EXPIRED);
         boolean allowHttp = settings.allowHttp();
@@ -84,7 +100,7 @@ final class ActionRunner {
             return failed(a, e);
         }
         try {
-            return act(a, account, s, self, minutes, allowHttp);
+            return act(a, module, searchFirst, s, self, minutes, allowHttp);
         } catch (OdooDirectException e) {
             if (e.kind() != OdooDirectException.Kind.NOT_FOUND || !e.rpc()) return failed(a, e);
             try {
@@ -96,29 +112,15 @@ final class ActionRunner {
         }
     }
 
-    private Outcome act(ChatAction a, AccountView account, NativeSession s, long self, int minutes,
-            boolean allowHttp) throws OdooDirectException {
+    private Outcome act(ChatAction a, boolean module, boolean searchFirst, NativeSession s, long self,
+            int minutes, boolean allowHttp) throws OdooDirectException {
         switch (a.kind) {
             case REPLY: {
-                boolean module = !account.module.isEmpty();
-                if (!module && a.sentAt > 0) {
-                    long now = clock.getAsLong();
-                    if (a.sentAt > now) {
-                        // Stamped under a clock that ran fast: the window restarts once, now
-                        store.markSent(a.id);
-                        store.retryAt(a.id, now + ActionStore.QUIET_MS);
-                        return Outcome.RETRY;
-                    }
-                    if (now < a.sentAt + ActionStore.QUIET_MS) {
-                        store.retryAt(a.id, a.sentAt + ActionStore.QUIET_MS);
-                        return Outcome.RETRY;
-                    }
-                    if (odoo.findSent(s, a.channelId, a.clientUuid, self, allowHttp) != null) {
-                        store.done(a.id, null);
-                        return Outcome.DONE;
-                    }
+                if (searchFirst && odoo.findSent(s, a.channelId, a.clientUuid, self, allowHttp) != null) {
+                    store.done(a.id, null);
+                    return Outcome.DONE;
                 }
-                store.markSent(a.id);
+                store.markSent(a.id, !module);
                 Posted p = odoo.post(s, a.channelId, ReplyBody.of(a.text, a.clientUuid), a.clientUuid, module,
                         allowHttp);
                 store.done(a.id, p.answer);

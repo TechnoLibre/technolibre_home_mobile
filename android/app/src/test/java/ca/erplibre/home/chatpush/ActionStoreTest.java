@@ -76,7 +76,8 @@ public class ActionStoreTest {
         store.done(done.id, "{\"MessageReactions\":[]}");
         ChatAction handed = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, TEXT);
         store.claim(handed.id);
-        store.markSent(handed.id);
+        store.markSent(handed.id, true);
+        store.markSent(handed.id, false);
         store.handoff(handed.id, "session_expired");
 
         List<ChatAction> drain = store.forDrain();
@@ -90,6 +91,7 @@ public class ActionStoreTest {
         assertEquals(32, d.getLong("messageId"));
         assertEquals("👍", d.getString("content"));
         assertTrue(d.isNull("sentAt"));
+        assertFalse(d.getBoolean("plainSent"));
         assertTrue(d.isNull("reason"));
         assertEquals("{\"MessageReactions\":[]}", d.getString("answer"));
 
@@ -99,6 +101,8 @@ public class ActionStoreTest {
         assertEquals("session_expired", h.getString("reason"));
         assertTrue(h.isNull("messageId"));
         assertEquals(now, h.getLong("sentAt"));
+        // One send without the module is enough: a marker search comes first ever after
+        assertTrue(h.getBoolean("plainSent"));
         assertEquals(TEXT, h.getString("text"));
         assertEquals("", h.getString("content"));
         assertEquals(handed.clientUuid, h.getString("clientUuid"));
@@ -134,7 +138,7 @@ public class ActionStoreTest {
     public void recoverTurnsRunningBackToPendingAndKeepsSentAt() {
         ChatAction a = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, TEXT);
         store.claim(a.id);
-        store.markSent(a.id);
+        store.markSent(a.id, true);
         long sentAt = now;
         // The claiming process still runs it: not recovered under its feet
         assertEquals(0, store.recover());
@@ -146,6 +150,7 @@ public class ActionStoreTest {
         ChatAction back = next.get(a.id);
         assertEquals(ChatAction.State.PENDING, back.state);
         assertEquals(sentAt, back.sentAt);
+        assertTrue(back.plainSent);
         assertEquals(ids(next.due()), new HashSet<>(Arrays.asList(a.id)));
         assertEquals(0, next.recover());
     }
@@ -187,10 +192,24 @@ public class ActionStoreTest {
         store.done(recent.id, null);
 
         now += 24L * 60 * 60 * 1000 + 1;
-        store.prune();
+        assertEquals(1, store.prune());
         assertNull(store.get(old.id));
         assertNotNull(store.get(recent.id));
         assertNotNull(store.get(handed.id));
         assertNotNull(store.get(pending.id));
+    }
+
+    @Test
+    public void unreadableRecordsArePruned() throws Exception {
+        ChatAction kept = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, TEXT);
+        kv.put("act:seal-casse", "v1:bad:bad");
+        kv.put("act:pas-json", box.seal("pas du json".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        kv.put("autre:cle", "v1:bad:bad");
+        assertEquals(2, store.prune());
+        assertNull(kv.get("act:seal-casse"));
+        assertNull(kv.get("act:pas-json"));
+        assertNotNull(kv.get("autre:cle"));
+        assertNotNull(store.get(kept.id));
+        assertEquals(0, store.prune());
     }
 }

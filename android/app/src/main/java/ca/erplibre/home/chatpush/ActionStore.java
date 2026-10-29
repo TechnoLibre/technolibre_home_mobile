@@ -19,8 +19,8 @@ import org.json.JSONObject;
  * an action exists before any network call. PENDING and RUNNING records belong to native code; DONE and
  * HANDOFF ones wait for the app's drain, which acks them. A claim stamps the claiming process: recover()
  * turns back to PENDING only the RUNNING records of a process that is gone, keeping their sentAt, so a
- * run still in flight is never started twice. A record whose seal no longer opens is skipped, not
- * deleted. Every transition runs under one lock shared by every store of the process.
+ * run still in flight is never started twice. A record whose seal no longer opens is skipped, and
+ * prune() deletes it. Every transition runs under one lock shared by every store of the process.
  */
 final class ActionStore {
 
@@ -98,9 +98,15 @@ final class ActionStore {
         }
     }
 
-    /** Stamps the send about to start: from now on Odoo may hold the message. */
-    void markSent(String id) {
-        update(id, a -> a.sentAt = clock.getAsLong());
+    /**
+     * Stamps the send about to start: from now on Odoo may hold the message. `plain` is a send without the
+     * module's uuid; once one went, plainSent stays true.
+     */
+    void markSent(String id, boolean plain) {
+        update(id, a -> {
+            a.sentAt = clock.getAsLong();
+            if (plain) a.plainSent = true;
+        });
     }
 
     /** DONE with Odoo's Store answer (null when none is kept). */
@@ -201,13 +207,23 @@ final class ActionStore {
         return n;
     }
 
-    /** Forgets the DONE records older than 7 days; a HANDOFF one stays until the app takes it. */
-    void prune() {
+    /**
+     * Forgets the DONE records older than 7 days, and the records whose seal does not open or whose
+     * content does not parse; a HANDOFF one stays until the app takes it. Returns how many went.
+     */
+    int prune() {
         synchronized (LOCK) {
             long now = clock.getAsLong();
-            for (ChatAction a : all()) {
-                if (a.state == ChatAction.State.DONE && now - a.doneAt > PRUNE_MS) kv.remove(PREFIX + a.id);
+            int n = 0;
+            for (String k : kv.keys()) {
+                if (!k.startsWith(PREFIX) || kv.get(k) == null) continue;
+                ChatAction a = read(k);
+                if (a == null || a.state == ChatAction.State.DONE && now - a.doneAt > PRUNE_MS) {
+                    kv.remove(k);
+                    n++;
+                }
             }
+            return n;
         }
     }
 

@@ -178,9 +178,11 @@ public class ActionRunnerTest {
         long sentAt = store.get(a.id).sentAt;
         assertEquals(now, sentAt);
 
+        assertEquals(List.of(INFO, POST), paths(requests()));
         now += 30_000;
-        answer("session_info");
+        // Inside the quiet window: back to wait without asking Odoo anything
         assertEquals(ActionRunner.Outcome.RETRY, runner.run(a.id));
+        assertEquals(0, requests().size());
         assertEquals(sentAt + ActionStore.QUIET_MS, store.get(a.id).nextAt);
         now = sentAt + ActionStore.QUIET_MS - 1;
         assertTrue(store.due().isEmpty());
@@ -189,15 +191,35 @@ public class ActionRunnerTest {
         answer("session_info");
         markerHits(a.clientUuid, 1);
         assertEquals(ActionRunner.Outcome.DONE, runner.run(a.id));
-        List<String> ps = new ArrayList<>();
         List<RecordedRequest> rs = requests();
-        ps.addAll(paths(rs));
-        assertEquals(1, count(ps, POST));
-        assertEquals("/web/dataset/call_kw/mail.message/search_read", ps.get(ps.size() - 1));
-        JSONArray domain = paramsOf(rs.get(rs.size() - 1)).getJSONArray("args").getJSONArray(0);
+        assertEquals(List.of(INFO, "/web/dataset/call_kw/mail.message/search_read"), paths(rs));
+        JSONArray domain = paramsOf(rs.get(1)).getJSONArray("args").getJSONArray(0);
         assertEquals("[\"author_id\",\"=\",3]", domain.getJSONArray(2).toString());
-        assertFalse(paramsOf(rs.get(1)).getJSONObject("post_data").has("erplibre_client_uuid"));
         assertEquals(ChatAction.State.DONE, store.get(a.id).state);
+    }
+
+    @Test
+    public void aReplyFirstSentWithoutTheModuleSearchesItsMarkerOnceTheModuleCame() throws Exception {
+        mirror("");
+        ChatAction a = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, TEXT);
+        answer("session_info");
+        server.enqueue(new MockResponse().setBody(res("post_answer_no_module_field"))
+                .setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST));
+        assertEquals(ActionRunner.Outcome.RETRY, runner.run(a.id));
+        assertTrue(store.get(a.id).plainSent);
+        requests();
+
+        mirror("1.5");
+        now += 30_000;
+        assertEquals(ActionRunner.Outcome.RETRY, runner.run(a.id));
+        assertEquals(0, requests().size());
+        now = store.get(a.id).nextAt;
+        answer("session_info");
+        markerHits(a.clientUuid, 1);
+        assertEquals(ActionRunner.Outcome.DONE, runner.run(a.id));
+        List<String> ps = paths(requests());
+        assertEquals(List.of(INFO, "/web/dataset/call_kw/mail.message/search_read"), ps);
+        assertEquals(0, count(ps, POST));
     }
 
     @Test
@@ -206,17 +228,16 @@ public class ActionRunnerTest {
         ChatAction a = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, TEXT);
         // The process claims, stamps the send, and dies before the answer
         store.claim(a.id);
-        store.markSent(a.id);
+        store.markSent(a.id, true);
         long sentAt = now;
 
         now += 10_000;
         ActionStore next = new ActionStore(actionKv, box, () -> now, () -> "process-deux");
         ActionRunner again = new ActionRunner(next, sessions, settings, new OdooActions(new OkHttpClient()), () -> now);
         assertEquals(1, next.recover());
-        answer("session_info");
         assertEquals(ActionRunner.Outcome.RETRY, again.run(a.id));
         assertEquals(sentAt + ActionStore.QUIET_MS, next.get(a.id).nextAt);
-        assertEquals(List.of(INFO), paths(requests()));
+        assertEquals(0, requests().size());
 
         now = sentAt + ActionStore.QUIET_MS;
         answer("session_info");
@@ -399,8 +420,10 @@ public class ActionRunnerTest {
         ActionRunner.Outcome o;
         int runs = 0;
         while (true) {
+            answer("session_info");
             status(503);
             o = runner.run(a.id);
+            assertEquals(List.of(INFO, "/discuss/channel/mark_as_read"), paths(requests()));
             runs++;
             if (o != ActionRunner.Outcome.RETRY) break;
             assertTrue(now - a.createdAt < ActionStore.STALE_MS);
