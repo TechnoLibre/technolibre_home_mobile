@@ -46,6 +46,7 @@ final class PushStrings {
         FALLBACK.put("action_react", "👍");
         FALLBACK.put("handoff_one", "Ouvrez l'app pour terminer une action — {server}");
         FALLBACK.put("handoff", "Ouvrez l'app pour terminer {n} actions — {server}");
+        FALLBACK.put("action_unsent", "Action non envoyée — {server}");
     }
 
     private final Map<String, String> mirrored;

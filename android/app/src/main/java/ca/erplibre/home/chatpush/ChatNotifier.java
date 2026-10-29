@@ -262,6 +262,27 @@ final class ChatNotifier implements PushEngine.Notifier {
         repost(tag, old, style, kept, offered(old, kept));
     }
 
+    /**
+     * The conversation tagged tag re-posted silently as it is: a reply
+     * field waiting on its broadcast stops waiting. Nothing when not drawn.
+     */
+    synchronized void refresh(String tag) {
+        if (manager == null) return;
+        StatusBarNotification sbn = drawn(tag);
+        if (sbn == null) return;
+        Notification old = sbn.getNotification();
+        long[] ids = old.extras.getLongArray(EXTRA_MESSAGE_IDS);
+        long[] same = ids == null ? new long[0] : ids;
+        repost(tag, old, null, same, offered(old, same));
+    }
+
+    /** NotificationModel.unsent for the account; nothing for an account no longer mirrored. */
+    synchronized void unsent(String configId) {
+        if (manager == null) return;
+        AccountView a = settings.account(configId);
+        if (a != null) show(NotificationModel.unsent(a, settings.strings()));
+    }
+
     /** After « 👍 »: the conversation tagged tag re-posted silently without « 👍 ». */
     synchronized void withoutReact(String tag) {
         if (manager == null) return;

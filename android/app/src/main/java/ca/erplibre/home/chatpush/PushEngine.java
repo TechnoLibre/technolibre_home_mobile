@@ -1052,7 +1052,7 @@ final class PushEngine {
         clearFailures(accountKey(configId));
     }
 
-    private static final String[] TAG_PREFIXES = {"chat:", "inbox:", "summary:", "status:", "handoff:"};
+    private static final String[] TAG_PREFIXES = {"chat:", "inbox:", "summary:", "status:", "handoff:", "unsent:"};
 
     private static boolean isEngineTag(String tag) {
         if (tag == null) return false;

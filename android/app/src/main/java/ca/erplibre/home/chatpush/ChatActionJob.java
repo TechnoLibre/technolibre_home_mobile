@@ -9,6 +9,7 @@ import android.content.Context;
 import android.util.Log;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The retry of the notification actions, owned by the system so it
@@ -19,8 +20,11 @@ import java.util.concurrent.Executors;
  * It runs whatever the push level: the actions are the user's, not the
  * poll's.
  *
- * Scheduling the job's own id stops a run of it in progress, so a run
- * schedules the next one only after jobFinished.
+ * Scheduling or cancelling the job's own id stops a run of it in
+ * progress. So while a run is in progress, schedule and sync do nothing:
+ * the run itself, once finished, schedules the next one from
+ * ActionStore.wakeAt, which then sees every action recorded meanwhile (a
+ * caller records before it schedules).
  */
 public class ChatActionJob extends JobService {
 
@@ -31,8 +35,15 @@ public class ChatActionJob extends JobService {
 
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
 
-    /** Schedules the job at `at` (epoch ms; now when past), replacing the one scheduled. */
+    /** Set from onStartJob until the run's jobFinished; the process has one, no android:process. */
+    private static final AtomicBoolean RUNNING = new AtomicBoolean();
+
+    /**
+     * Schedules the job at `at` (epoch ms; now when past), replacing the one
+     * scheduled; nothing while a run is in progress.
+     */
     static void schedule(Context c, long at) {
+        if (RUNNING.get()) return;
         JobScheduler scheduler = c.getSystemService(JobScheduler.class);
         if (scheduler == null) return;
         JobInfo job = new JobInfo.Builder(JOB_ID, new ComponentName(c, ChatActionJob.class))
@@ -48,8 +59,12 @@ public class ChatActionJob extends JobService {
         }
     }
 
-    /** Schedules the job for the store's next work, or cancels it when there is none. */
+    /**
+     * Schedules the job for the store's next work, or cancels it when there
+     * is none; nothing while a run is in progress.
+     */
     static void sync(Context c, ActionStore store) {
+        if (RUNNING.get()) return;
         long at = store.wakeAt();
         if (at > 0) {
             schedule(c, at);
@@ -62,6 +77,7 @@ public class ChatActionJob extends JobService {
     @Override
     public boolean onStartJob(final JobParameters params) {
         final Context c = getApplicationContext();
+        RUNNING.set(true);
         WORKER.execute(() -> {
             ChatPushRuntime runtime = null;
             try {
@@ -72,6 +88,7 @@ public class ChatActionJob extends JobService {
                 Log.w(TAG, "run failed: " + e.getClass().getSimpleName());
             } finally {
                 jobFinished(params, false);
+                RUNNING.set(false);
             }
             if (runtime != null) {
                 try {

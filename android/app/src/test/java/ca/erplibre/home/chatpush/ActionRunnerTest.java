@@ -9,6 +9,7 @@ import static org.junit.Assert.assertTrue;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -463,7 +464,10 @@ public class ActionRunnerTest {
             answer("session_info");
             answer("mute");
         }
-        runner.runDue();
+        Map<String, ActionRunner.Outcome> out = runner.runDue();
+        assertEquals(Arrays.asList(oldest.id, newest.id), new ArrayList<>(out.keySet()));
+        assertEquals(Arrays.asList(ActionRunner.Outcome.DONE, ActionRunner.Outcome.DONE),
+                new ArrayList<>(out.values()));
         List<RecordedRequest> rs = requests();
         assertEquals(4, rs.size());
         assertEquals(6, paramsOf(rs.get(1)).getLong("channel_id"));

@@ -214,6 +214,8 @@ describe("ChatPush", () => {
     expect([...PUSH_STRING_KEYS].sort()).toEqual([...javaKeys].sort());
     for (const key of PUSH_STRING_KEYS) expect(t(`chat.push_${key}`)).not.toBe(`chat.push_${key}`);
     expect(t("chat.push_summary")).toBe("{n} nouveaux messages — {server}");
+    expect(PUSH_STRING_KEYS).toContain("action_unsent");
+    expect(t("chat.push_action_unsent")).toBe("Action non envoyée — {server}");
   });
 
   it("applyLink subscribes each account and registers its endpoint with the vapid key", async () => {

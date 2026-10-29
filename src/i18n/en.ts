@@ -1360,6 +1360,7 @@ export const translations: Record<string, string> = {
   "chat.push_action_react": "👍",
   "chat.push_handoff_one": "Open the app to finish an action — {server}",
   "chat.push_handoff": "Open the app to finish {n} actions — {server}",
+  "chat.push_action_unsent": "Action not sent — {server}",
   "chat.push_title": "Chat notifications",
   "chat.push_unavailable": "Notifications while the app is closed need the Android app.",
   "chat.push_level": "Level",

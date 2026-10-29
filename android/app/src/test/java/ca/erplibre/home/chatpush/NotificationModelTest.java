@@ -351,4 +351,20 @@ public class NotificationModelTest {
         assertEquals(Collections.emptyList(), NotificationModel.keptAfterRead(Arrays.asList(3L, 7L), 7));
         assertEquals(Collections.emptyList(), NotificationModel.keptAfterRead(Collections.<Long>emptyList(), 7));
     }
+
+    @Test
+    public void anUnsentActionNamesItsServerWithoutContent() {
+        for (LockScreenMode mode : LockScreenMode.values()) {
+            NotificationModel.Shown n = NotificationModel.unsent(account(mode), FR);
+            assertEquals("unsent:" + CONFIG, n.tag);
+            assertEquals(NotificationModel.chatChannelId(CONFIG), n.channelId);
+            assertEquals("Action non envoyée — Serveur Alice", n.text);
+            assertEquals(n.text, n.publicTitle);
+            assertEquals("/chat", n.openUrl);
+            assertFalse(n.privateVisibility);
+            assertFalse(n.messaging);
+            assertTrue(n.actions.isEmpty());
+            assertEquals(null, n.groupId);
+        }
+    }
 }

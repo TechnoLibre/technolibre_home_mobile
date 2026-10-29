@@ -212,4 +212,23 @@ public class ActionStoreTest {
         assertNotNull(store.get(kept.id));
         assertEquals(0, store.prune());
     }
+
+    @Test
+    public void wakeAtIsTheEarliestPendingOrSoonAfterARunningRecord() {
+        assertEquals(0L, store.wakeAt());
+        ChatAction late = store.add("cfg1", ActionKind.MUTE, 4, 0, 0, "");
+        store.retryAt(late.id, now + 600_000);
+        ChatAction soon = store.add("cfg1", ActionKind.MUTE, 5, 0, 0, "");
+        store.retryAt(soon.id, now + 60_000);
+        assertEquals(now + 60_000, store.wakeAt());
+        // a RUNNING record may die with its process: a run comes back for it
+        ChatAction running = store.add("cfg1", ActionKind.MUTE, 6, 0, 0, "");
+        assertTrue(store.claim(running.id));
+        assertEquals(now + ActionStore.FIRST_RETRY_MS, store.wakeAt());
+        // DONE and HANDOFF records wait for the app, not for native code
+        store.done(running.id, null);
+        store.done(soon.id, null);
+        store.handoff(late.id, "refused");
+        assertEquals(0L, store.wakeAt());
+    }
 }

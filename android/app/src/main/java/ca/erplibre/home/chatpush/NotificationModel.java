@@ -280,6 +280,28 @@ final class NotificationModel {
         return out;
     }
 
+    /**
+     * An action the phone could not even record (its store unwritable):
+     * « Action non envoyée — server », nothing of the action itself (no
+     * reply text), public, on the server's chat channel outside its group,
+     * one per server under "unsent:&lt;configId&gt;", opening the
+     * conversation list. No action button.
+     */
+    static Shown unsent(AccountView a, PushStrings s) {
+        Shown out = new Shown();
+        out.configId = a.configId;
+        out.channelId = chatChannelId(a.configId);
+        out.tag = "unsent:" + a.configId;
+        String text = s.format("action_unsent", Collections.singletonMap("server", a.label));
+        out.conversationTitle = a.label.isEmpty() ? text : a.label;
+        out.text = text;
+        out.publicTitle = text;
+        out.openUrl = "/chat";
+        out.messaging = false;
+        out.privateVisibility = false;
+        return out;
+    }
+
     private static Shown base(AccountView a, String channelId, String tag) {
         Shown out = new Shown();
         out.configId = a.configId;

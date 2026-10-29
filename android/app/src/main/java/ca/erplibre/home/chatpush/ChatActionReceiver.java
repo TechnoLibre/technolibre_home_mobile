@@ -18,7 +18,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * and reads the reply text, then goAsync() hands the rest to a worker
  * thread of its own, in this order:
  * - the action recorded in the process's ActionStore, durably, before any
- *   network call; a blank reply records nothing;
+ *   network call; a blank reply records nothing. When the runtime cannot
+ *   be built or the record cannot be sealed, the action is not dropped
+ *   silently: the conversation is re-posted as it is (a reply field stops
+ *   waiting) and the server's « Action non envoyée » notification is
+ *   posted, without the reply text;
  * - ChatActionJob scheduled as a safety net, so an action whose run dies
  *   with the process is turned back and run later;
  * - the notification updated at once: a reply appended as the user's own
@@ -81,15 +85,24 @@ public class ChatActionReceiver extends BroadcastReceiver {
     }
 
     private static void handle(Context c, ChatActionIntent.Parsed p, String text) {
-        ChatPushRuntime runtime = ChatPushRuntime.get(c);
-        ChatNotifier notifier = runtime.notifier();
-        if (p.kind == ActionKind.REPLY && text.trim().isEmpty()) {
-            // nothing to send; the re-post ends the reply field's progress state
-            notifier.appendOwnReply(p.tag, "");
+        ChatPushRuntime runtime = null;
+        ChatAction a;
+        try {
+            runtime = ChatPushRuntime.get(c);
+            if (p.kind == ActionKind.REPLY && text.trim().isEmpty()) {
+                // nothing to send; the re-post ends the reply field's progress state
+                runtime.notifier().refresh(p.tag);
+                return;
+            }
+            a = runtime.actionStore().add(p.configId, p.kind, p.channelId, p.messageId, p.atMostS, text);
+        } catch (RuntimeException e) {
+            // the class only: a message may carry a URL
+            Log.w(TAG, "action not recorded: " + e.getClass().getSimpleName());
+            unsent(c, runtime, p);
             return;
         }
+        ChatNotifier notifier = runtime.notifier();
         ActionStore store = runtime.actionStore();
-        ChatAction a = store.add(p.configId, p.kind, p.channelId, p.messageId, p.atMostS, text);
         ChatActionJob.schedule(c, System.currentTimeMillis() + ActionStore.FIRST_RETRY_MS);
         switch (p.kind) {
             case REPLY:
@@ -105,5 +118,22 @@ public class ChatActionReceiver extends BroadcastReceiver {
         ActionRunner.Outcome o = runtime.runner().run(a.id);
         runtime.afterRun(a.id, o);
         ChatActionJob.sync(c, store);
+    }
+
+    /**
+     * The action could not be recorded: its conversation re-posted as it is
+     * and the server's « Action non envoyée » notification posted. Without a
+     * runtime, a notifier over the settings file alone draws them (it needs
+     * no Keystore key).
+     */
+    private static void unsent(Context c, ChatPushRuntime runtime, ChatActionIntent.Parsed p) {
+        try {
+            ChatNotifier notifier = runtime != null ? runtime.notifier()
+                    : new ChatNotifier(c, new PushSettingsStore(new PrefsKeyValue(c, ChatPushRuntime.SETTINGS_FILE)));
+            notifier.refresh(p.tag);
+            notifier.unsent(p.configId);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "unsent notice failed: " + e.getClass().getSimpleName());
+        }
     }
 }
