@@ -1,5 +1,6 @@
 package ca.erplibre.home.chatpush;
 
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationChannelGroup;
 import android.app.NotificationManager;
@@ -33,6 +34,12 @@ import java.util.function.Consumer;
 final class ChatNotifier implements PushEngine.Notifier {
 
     static final int ID = 0x43485054;
+
+    /** long[]: the message ids of a chat notification's stack, in order, 0 for a message without id. */
+    static final String EXTRA_MESSAGE_IDS = "erplibre.message_ids";
+
+    /** long, in each MessagingStyle message's extras: its Odoo message id, 0 when unknown. */
+    static final String EXTRA_MESSAGE_ID = "erplibre.message_id";
 
     private final Context context;
     private final NotificationManager manager;
@@ -93,6 +100,13 @@ final class ChatNotifier implements PushEngine.Notifier {
      * and the new message appended, so the stack survives a process death;
      * a replay of the last message is not appended twice. A silent n
      * updates without sound, vibration or heads-up.
+     *
+     * A chat notification, drawn as a conversation or not (« Jamais
+     * affiché »), keeps its stack's message ids under EXTRA_MESSAGE_IDS
+     * (stack order, 0 for a message without id), the previous array
+     * extended; a conversation's message also carries its id under
+     * EXTRA_MESSAGE_ID. A private notification always carries its public
+     * version, so a re-post can choose between PRIVATE and SECRET again.
      */
     @Override
     public void show(NotificationModel.Shown n) {
@@ -108,33 +122,49 @@ final class ChatNotifier implements PushEngine.Notifier {
                 .setShowWhen(true)
                 .setWhen(when);
         if (n.groupId != null) b.setGroup(n.groupId);
+        boolean chat = n.tag.startsWith("chat:");
+        StatusBarNotification prev = chat || n.messaging ? drawn(n.tag) : null;
+        long[] prevIds = prev == null ? null : prev.getNotification().extras.getLongArray(EXTRA_MESSAGE_IDS);
+        long[] ids;
         if (n.messaging) {
-            NotificationCompat.MessagingStyle style = previousStyle(n.tag);
+            NotificationCompat.MessagingStyle style = prev == null ? null
+                    : NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(prev.getNotification());
             if (style == null) {
                 style = new NotificationCompat.MessagingStyle(
                         new Person.Builder().setName(settings.strings().get("you")).build());
             }
             style.setConversationTitle(n.conversationTitle);
             style.setGroupConversation(!n.conversationTitle.equals(n.author));
+            ids = aligned(prevIds, style.getMessages().size());
             if (repeatsLast(style, n)) {
                 // drawn again as it was, without alerting a second time
                 b.setOnlyAlertOnce(true);
             } else {
                 Person author = new Person.Builder().setName(authorOf(n)).build();
-                style.addMessage(new NotificationCompat.MessagingStyle.Message(n.text, when, author));
+                NotificationCompat.MessagingStyle.Message m =
+                        new NotificationCompat.MessagingStyle.Message(n.text, when, author);
+                m.getExtras().putLong(EXTRA_MESSAGE_ID, n.messageId);
+                style.addMessage(m);
+                ids = extended(ids, n.messageId);
             }
             b.setStyle(style).setCategory(NotificationCompat.CATEGORY_MESSAGE);
         } else {
             b.setContentTitle(n.conversationTitle);
             if (!n.text.isEmpty()) b.setContentText(n.text);
+            boolean replay = n.messageId > 0 && prevIds != null && prevIds.length > 0
+                    && prevIds[prevIds.length - 1] == n.messageId;
+            ids = replay ? prevIds : extended(prevIds, n.messageId);
+        }
+        if (chat) b.getExtras().putLongArray(EXTRA_MESSAGE_IDS, ids);
+        if (n.privateVisibility) {
+            b.setPublicVersion(new NotificationCompat.Builder(context, n.channelId)
+                    .setSmallIcon(android.R.drawable.stat_notify_chat)
+                    .setContentTitle(n.publicTitle)
+                    .build());
         }
         switch (NotificationModel.visibility(n, redaction())) {
             case PRIVATE:
                 b.setVisibility(NotificationCompat.VISIBILITY_PRIVATE);
-                b.setPublicVersion(new NotificationCompat.Builder(context, n.channelId)
-                        .setSmallIcon(android.R.drawable.stat_notify_chat)
-                        .setContentTitle(n.publicTitle)
-                        .build());
                 break;
             case SECRET:
                 b.setVisibility(NotificationCompat.VISIBILITY_SECRET);
@@ -150,6 +180,89 @@ final class ChatNotifier implements PushEngine.Notifier {
         }
         if (n.silent) b.setOnlyAlertOnce(true).setSilent(true);
         manager.notify(n.tag, ID, b.build());
+    }
+
+    /**
+     * Trims the conversation tagged tag after a « read » push: the messages
+     * whose id is above lastMessageId stay, the others (those without id
+     * included) go. None left cancels the notification; an unchanged stack
+     * is left alone; else it is re-posted silently from itself, its text
+     * unchanged otherwise (a « Jamais affiché » one stays generic), its
+     * lock-screen visibility decided again.
+     */
+    @Override
+    public void trimRead(String tag, long lastMessageId) {
+        if (manager == null) return;
+        StatusBarNotification sbn = drawn(tag);
+        if (sbn == null) return;
+        Notification old = sbn.getNotification();
+        long[] ids = old.extras.getLongArray(EXTRA_MESSAGE_IDS);
+        NotificationCompat.MessagingStyle style =
+                NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(old);
+        // a conversation's ids follow its drawn messages; a « Jamais affiché » one has only the array
+        long[] stack = style != null ? aligned(ids, style.getMessages().size()) : ids == null ? new long[0] : ids;
+        long[] kept = keptIds(stack, lastMessageId);
+        if (kept.length == 0) {
+            cancel(tag);
+            return;
+        }
+        if (kept.length == stack.length) return;
+        NotificationCompat.Builder b = new NotificationCompat.Builder(context, old);
+        if (style != null) {
+            List<NotificationCompat.MessagingStyle.Message> messages = style.getMessages();
+            NotificationCompat.MessagingStyle trimmed = new NotificationCompat.MessagingStyle(style.getUser());
+            trimmed.setConversationTitle(style.getConversationTitle());
+            trimmed.setGroupConversation(style.isGroupConversation());
+            for (int i = 0; i < messages.size(); i++) {
+                if (NotificationModel.keptAfterRead(stack[i], lastMessageId)) trimmed.addMessage(messages.get(i));
+            }
+            b.setStyle(trimmed);
+        }
+        b.getExtras().putLongArray(EXTRA_MESSAGE_IDS, kept);
+        if (old.visibility != Notification.VISIBILITY_PUBLIC) {
+            boolean shownPublic = old.publicVersion != null
+                    && redaction() == NotificationModel.Redaction.HIDDEN;
+            b.setVisibility(shownPublic ? NotificationCompat.VISIBILITY_PRIVATE : NotificationCompat.VISIBILITY_SECRET);
+        }
+        b.setOnlyAlertOnce(true).setSilent(true);
+        manager.notify(tag, ID, b.build());
+    }
+
+    /** Most messages a stack keeps, as MessagingStyle does: its ids array stays aligned on them. */
+    static final int MAX_STACK = NotificationCompat.MessagingStyle.MAXIMUM_RETAINED_MESSAGES;
+
+    /**
+     * The ids of the last count messages of a stack from its ids array: the
+     * array's last count entries, 0 for each message drawn without one.
+     */
+    static long[] aligned(long[] ids, int count) {
+        long[] out = new long[count];
+        int have = ids == null ? 0 : ids.length;
+        for (int i = 0; i < count; i++) {
+            int j = have - count + i;
+            out[i] = j >= 0 ? ids[j] : 0;
+        }
+        return out;
+    }
+
+    /** ids with id appended, its oldest entries dropped beyond MAX_STACK. */
+    static long[] extended(long[] ids, long id) {
+        int have = ids == null ? 0 : ids.length;
+        int keep = Math.min(have, MAX_STACK - 1);
+        long[] out = new long[keep + 1];
+        if (keep > 0) System.arraycopy(ids, have - keep, out, 0, keep);
+        out[keep] = id;
+        return out;
+    }
+
+    /** The entries of ids that stay after a « read » push up to lastMessageId, in order. */
+    static long[] keptIds(long[] ids, long lastMessageId) {
+        int n = 0;
+        long[] out = new long[ids.length];
+        for (long id : ids) {
+            if (NotificationModel.keptAfterRead(id, lastMessageId)) out[n++] = id;
+        }
+        return java.util.Arrays.copyOf(out, n);
     }
 
     /**
@@ -178,12 +291,10 @@ final class ChatNotifier implements PushEngine.Notifier {
         return repeats(last.getText(), p == null ? null : p.getName(), last.getTimestamp(), n);
     }
 
-    /** The MessagingStyle of the notification drawn under tag, or null. */
-    private NotificationCompat.MessagingStyle previousStyle(String tag) {
+    /** The notification drawn under tag, or null. */
+    private StatusBarNotification drawn(String tag) {
         for (StatusBarNotification sbn : active()) {
-            if (sbn.getId() == ID && tag.equals(sbn.getTag())) {
-                return NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(sbn.getNotification());
-            }
+            if (sbn.getId() == ID && tag.equals(sbn.getTag())) return sbn;
         }
         return null;
     }
@@ -227,8 +338,8 @@ final class ChatNotifier implements PushEngine.Notifier {
         return out;
     }
 
-    /** When each notification of shownTags was last posted, epoch ms. */
-    Map<String, Long> shownAt() {
+    @Override
+    public Map<String, Long> shownAt() {
         Map<String, Long> out = new HashMap<>();
         for (StatusBarNotification sbn : active()) {
             if (sbn.getId() == ID && sbn.getTag() != null) out.put(sbn.getTag(), sbn.getPostTime());

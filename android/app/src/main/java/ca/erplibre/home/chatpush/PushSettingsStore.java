@@ -192,6 +192,7 @@ final class PushSettingsStore {
             ch.put(Long.toString(e.getKey()), c);
         }
         o.put("channels", ch);
+        o.put("module", a.module);
         return o;
     }
 
@@ -210,6 +211,6 @@ final class PushSettingsStore {
             }
         }
         return new AccountView(o.getString("configId"), o.optString("label"),
-                LockScreenMode.fromKey(o.optString("lockScreen")), channels);
+                LockScreenMode.fromKey(o.optString("lockScreen")), channels, o.optString("module"));
     }
 }

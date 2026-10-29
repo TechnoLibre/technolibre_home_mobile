@@ -42,6 +42,18 @@ public class PushSettingsStoreTest {
     }
 
     @Test
+    public void theModuleLevelRoundTripsAndDefaultsToNone() {
+        MapKeyValue kv = new MapKeyValue();
+        PushSettingsStore s = new PushSettingsStore(kv);
+        AccountView with = new AccountView("cfg1", "Odoo exemple", LockScreenMode.ALWAYS, null, "1.5");
+        AccountView without = new AccountView("cfg2", "Odoo exemple", LockScreenMode.ALWAYS, null);
+        s.put(1, false, null, java.util.Arrays.asList(with, without));
+        PushSettingsStore again = new PushSettingsStore(kv);
+        assertEquals("1.5", again.account("cfg1").module);
+        assertEquals("", again.account("cfg2").module);
+    }
+
+    @Test
     public void flagsBeatAndOpenKey() {
         MapKeyValue kv = new MapKeyValue();
         PushSettingsStore s = new PushSettingsStore(kv);

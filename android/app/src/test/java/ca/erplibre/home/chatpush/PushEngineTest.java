@@ -90,6 +90,12 @@ public class PushEngineTest {
         final List<String> cancelledAll = new CopyOnWriteArrayList<>();
         final Set<String> active = ConcurrentHashMap.newKeySet();
         final List<HealthSnapshot> statuses = new CopyOnWriteArrayList<>();
+        /** Per chat tag, the message ids of its stack in order (0: a message without id). */
+        final Map<String, List<Long>> ids = new ConcurrentHashMap<>();
+        /** When each tag was last posted, epoch ms. */
+        final Map<String, Long> postedAt = new ConcurrentHashMap<>();
+        /** trimRead calls, "tag@lastMessageId". */
+        final List<String> trims = new CopyOnWriteArrayList<>();
         /** Shows that throw before drawing anything. */
         final AtomicInteger failNext = new AtomicInteger();
         List<String> log;
@@ -99,6 +105,8 @@ public class PushEngineTest {
             if (log != null) log.add("show:" + n.text);
             shown.add(n);
             active.add(n.tag);
+            if (n.tag.startsWith("chat:")) ids.computeIfAbsent(n.tag, t -> new ArrayList<>()).add(n.messageId);
+            postedAt.put(n.tag, n.at);
         }
 
         public void cancel(String tag) {
@@ -114,7 +122,59 @@ public class PushEngineTest {
 
         public Set<String> shownTags() { return new HashSet<>(active); }
 
+        public Map<String, Long> shownAt() {
+            Map<String, Long> out = new HashMap<>();
+            for (String tag : active) {
+                Long at = postedAt.get(tag);
+                out.put(tag, at == null ? 0L : at);
+            }
+            return out;
+        }
+
+        /**
+         * As ChatNotifier does: the ids kept after the read point stay, re-posted
+         * silently as last drawn; none kept cancels; an unchanged stack is left.
+         */
+        public void trimRead(String tag, long lastMessageId) {
+            trims.add(tag + "@" + lastMessageId);
+            if (!active.contains(tag)) return;
+            List<Long> stack = ids.getOrDefault(tag, Collections.<Long>emptyList());
+            List<Long> kept = NotificationModel.keptAfterRead(stack, lastMessageId);
+            if (kept.isEmpty()) {
+                ids.remove(tag);
+                cancel(tag);
+                return;
+            }
+            if (kept.size() == stack.size()) return;
+            ids.put(tag, new ArrayList<>(kept));
+            List<NotificationModel.Shown> drawn = tagged(tag);
+            NotificationModel.Shown again = copy(drawn.get(drawn.size() - 1));
+            again.silent = true;
+            shown.add(again);
+        }
+
         public void status(HealthSnapshot h) { statuses.add(h); }
+
+        static NotificationModel.Shown copy(NotificationModel.Shown n) {
+            NotificationModel.Shown c = new NotificationModel.Shown();
+            c.channelId = n.channelId;
+            c.groupId = n.groupId;
+            c.tag = n.tag;
+            c.conversationTitle = n.conversationTitle;
+            c.author = n.author;
+            c.text = n.text;
+            c.publicTitle = n.publicTitle;
+            c.openUrl = n.openUrl;
+            c.messaging = n.messaging;
+            c.privateVisibility = n.privateVisibility;
+            c.silent = n.silent;
+            c.at = n.at;
+            c.configId = n.configId;
+            c.discussChannelId = n.discussChannelId;
+            c.messageId = n.messageId;
+            c.actions = n.actions.clone();
+            return c;
+        }
 
         List<NotificationModel.Shown> onChannel(String channelId) {
             List<NotificationModel.Shown> out = new ArrayList<>();
@@ -292,6 +352,39 @@ public class PushEngineTest {
         byte[] body = WebPushTestEncrypt.encrypt(json.getBytes(StandardCharsets.UTF_8), sub.publicKey,
                 sub.authSecret, 4096);
         return raw(id, sub.topic, body);
+    }
+
+    /** The captured plaintext resource, with the fields of its "erplibre" object (data's for a message) set. */
+    private static String captured(String name, String... keyValues) throws Exception {
+        JSONObject root = new JSONObject(new String(PushPayloadTest.resource(name), StandardCharsets.UTF_8));
+        JSONObject e = root.has("erplibre") ? root.getJSONObject("erplibre")
+                : root.getJSONObject("options").getJSONObject("data").getJSONObject("erplibre");
+        JSONObject data = root.has("options") ? root.getJSONObject("options").getJSONObject("data") : null;
+        for (int i = 0; i < keyValues.length; i += 2) {
+            String k = keyValues[i];
+            String v = keyValues[i + 1];
+            Object val = v == null ? JSONObject.NULL : v.startsWith("[") ? new JSONArray(v) : (Object) Long.valueOf(v);
+            if ("res_id".equals(k)) data.put(k, val);
+            else e.put(k, val);
+        }
+        return root.toString();
+    }
+
+    private static String encrypted(Subscription sub, String id, String json) throws Exception {
+        byte[] body = WebPushTestEncrypt.encrypt(json.getBytes(StandardCharsets.UTF_8), sub.publicKey,
+                sub.authSecret, 4096);
+        return raw(id, sub.topic, body);
+    }
+
+    /** A module 1.5 chat push (captured shape) for channelId carrying messageId. */
+    private static String modulePush(Subscription sub, String id, long channelId, long messageId) throws Exception {
+        return encrypted(sub, id, captured("push_module_chat.json", "res_id", Long.toString(channelId),
+                "message_id", Long.toString(messageId)));
+    }
+
+    private static String readPush(Subscription sub, String id, long channelId, long last) throws Exception {
+        return encrypted(sub, id, captured("push_read.json", "channel_id", Long.toString(channelId),
+                "last_message_id", Long.toString(last)));
     }
 
     private static void await(BooleanSupplier c, String what) throws InterruptedException {
@@ -1092,5 +1185,136 @@ public class PushEngineTest {
         } catch (Exception e) {
             throw new AssertionError(e);
         }
+    }
+
+    // ---- module 1.5 control pushes ----
+
+    @Test
+    public void aReadPushTrimsItsConversationAndShowsNothing() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + modulePush(a, "m1", 42, 7)
+                + readPush(a, "r1", 42, 7)));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertEquals(1, notifier.shown.size());
+        assertEquals(Collections.singletonList("chat:cfg1:42@7"), notifier.trims);
+        assertEquals(Collections.singletonList("chat:cfg1:42"), notifier.cancelled);
+        assertFalse(notifier.active.contains("chat:cfg1:42"));
+        assertEquals("r1", store.cursor(n.url));
+    }
+
+    @Test
+    public void aReadPushKeepsTheMessagesAfterTheReadPoint() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + modulePush(a, "m1", 42, 7)
+                + modulePush(a, "m2", 42, 9) + readPush(a, "r1", 42, 7)));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertEquals(3, notifier.shown.size());
+        NotificationModel.Shown again = notifier.shown.get(2);
+        assertEquals("chat:cfg1:42", again.tag);
+        assertTrue(again.silent);
+        assertEquals(Collections.singletonList(9L), notifier.ids.get("chat:cfg1:42"));
+        assertTrue(notifier.cancelled.isEmpty());
+    }
+
+    @Test
+    public void aReadPushAppliesInTheForeground() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        notifier.active.add("chat:cfg1:42");
+        notifier.ids.put("chat:cfg1:42", new ArrayList<>(Arrays.asList(5L, 7L)));
+        settings.setForeground(true);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + readPush(a, "r1", 42, 7)));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals(Collections.singletonList("chat:cfg1:42"), notifier.cancelled);
+    }
+
+    @Test
+    public void inboxDoneCancelsTheRecordsNamedPostedBeforeIt() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        // the push's ntfy time is 1790000000 s, NOW
+        String named = "inbox:cfg1:project.task:1";
+        String later = "inbox:cfg1:res.partner:3";
+        String other = "inbox:cfg1:project.task:2";
+        for (String tag : Arrays.asList(named, later, other, "chat:cfg1:42")) notifier.active.add(tag);
+        notifier.postedAt.put(named, NOW - MINUTE);
+        notifier.postedAt.put(later, NOW + MINUTE);
+        notifier.postedAt.put(other, NOW - MINUTE);
+        notifier.postedAt.put("chat:cfg1:42", NOW - MINUTE);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + encrypted(a, "d1",
+                captured("push_inbox_done.json", "threads", "[[\"project.task\", 1], [\"res.partner\", 3]]"))));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertEquals(Collections.singletonList(named), notifier.cancelled);
+        assertTrue(notifier.shown.isEmpty());
+    }
+
+    @Test
+    public void inboxDoneNullCancelsEveryInboxNotificationOfTheAccount() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"), account("cfg2", "Serveur B"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        store.subscribe("cfg2", n.url, false);
+        List<String> tags = Arrays.asList("inbox:cfg1:project.task:1", "inbox:cfg1:res.partner:3",
+                "chat:cfg1:42", "summary:cfg1", "inbox:cfg2:project.task:1");
+        for (String tag : tags) {
+            notifier.active.add(tag);
+            notifier.postedAt.put(tag, NOW - MINUTE);
+        }
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + encrypted(a, "d1",
+                captured("push_inbox_done.json", "threads", null))));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertEquals(new HashSet<>(Arrays.asList("inbox:cfg1:project.task:1", "inbox:cfg1:res.partner:3")),
+                new HashSet<>(notifier.cancelled));
+        assertTrue(notifier.shown.isEmpty());
+    }
+
+    @Test
+    public void aReadPushIsNeverCountedUndecryptable() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)
+                + encrypted(a, "r1", new String(PushPayloadTest.resource("push_read.json"), StandardCharsets.UTF_8))
+                + encrypted(a, "d1",
+                        new String(PushPayloadTest.resource("push_inbox_done.json"), StandardCharsets.UTF_8))));
+        engine().startRealtime();
+        awaitClosed(1);
+        JSONObject h = engine.health().toJson();
+        assertEquals(0, h.getInt("undecryptable"));
+        assertEquals(0, h.getInt("faults"));
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals(Collections.singletonList("chat:cfg1:4@23"), notifier.trims);
+        assertEquals("d1", store.cursor(n.url));
+    }
+
+    @Test
+    public void aReadPushTrimsANeverServersNotificationByItsIds() throws Exception {
+        mirror(1, true, new AccountView("cfg1", "Serveur A", LockScreenMode.NEVER,
+                Collections.singletonMap(42L, new ChannelInfo("Alice Martin", "chat"))));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + modulePush(a, "m1", 42, 7)
+                + modulePush(a, "m2", 42, 9) + readPush(a, "r1", 42, 7)));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertEquals(Collections.singletonList(9L), notifier.ids.get("chat:cfg1:42"));
+        assertEquals(3, notifier.shown.size());
+        NotificationModel.Shown again = notifier.shown.get(2);
+        assertTrue(again.silent);
+        assertEquals("Nouveau message", again.conversationTitle);
+        assertEquals("Nouveau message", again.text);
+        assertFalse(again.messaging);
     }
 }

@@ -23,6 +23,8 @@ export const PUSH_STRING_KEYS = [
   "status_not_listening", "status_session_expired",
   "reason_unauthorized", "reason_forbidden", "reason_unreachable", "reason_odoo_unreachable", "reason_rate_limited",
   "reason_http_refused", "reason_cleartext_blocked", "reason_session_expired", "reason_protocol",
+  "action_reply", "action_reply_hint", "action_mark_read", "action_mute", "action_react",
+  "handoff_one", "handoff",
 ] as const;
 
 /**

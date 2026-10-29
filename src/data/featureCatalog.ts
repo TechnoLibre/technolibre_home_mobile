@@ -5658,6 +5658,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "android/app/src/main/java/ca/erplibre/home/chatpush/AccountView.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/PushStrings.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/NotificationModel.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ActionKind.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/PushLevelPolicy.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/KeyValue.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/PrefsKeyValue.java",

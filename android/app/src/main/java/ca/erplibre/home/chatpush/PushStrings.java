@@ -39,6 +39,13 @@ final class PushStrings {
         FALLBACK.put("reason_cleartext_blocked", "http bloqué par cette version de l'app");
         FALLBACK.put("reason_session_expired", "session Odoo expirée");
         FALLBACK.put("reason_protocol", "réponse inattendue");
+        FALLBACK.put("action_reply", "Répondre");
+        FALLBACK.put("action_reply_hint", "Votre réponse");
+        FALLBACK.put("action_mark_read", "Marquer lu");
+        FALLBACK.put("action_mute", "Muet 1 h");
+        FALLBACK.put("action_react", "👍");
+        FALLBACK.put("handoff_one", "Ouvrez l'app pour terminer une action — {server}");
+        FALLBACK.put("handoff", "Ouvrez l'app pour terminer {n} actions — {server}");
     }
 
     private final Map<String, String> mirrored;

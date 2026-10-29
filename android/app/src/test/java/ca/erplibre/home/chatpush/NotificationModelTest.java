@@ -6,6 +6,9 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -280,5 +283,72 @@ public class NotificationModelTest {
         assertTrue(all.matches(summary, 0L));
         assertFalse("the status one stays", all.matches("status:" + CONFIG, 0L));
         assertFalse("another account", all.matches("chat:" + CONFIG + "x:4", 0L));
+    }
+
+    // ---- module 1.5: message ids and actions ----
+
+    private static PushPayload captured(String name) throws Exception {
+        return PushPayload.parse(PushPayloadTest.resource(name));
+    }
+
+    private static PushPayload stock() throws Exception {
+        String plain = new org.json.JSONObject(new String(PushPayloadTest.resource("odoo18_push.json"),
+                StandardCharsets.UTF_8)).getString("plaintext");
+        return PushPayload.parse(plain.getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void hiddenAndAlwaysServersOfferTheFourActionsWithAMessageId() throws Exception {
+        for (LockScreenMode mode : new LockScreenMode[] {LockScreenMode.HIDDEN_LOCKED, LockScreenMode.ALWAYS}) {
+            NotificationModel.Shown s = NotificationModel.chat(account(mode), captured("push_module_chat.json"), FR);
+            assertEquals(mode.key, EnumSet.allOf(ActionKind.class), s.actions);
+            assertEquals(CONFIG, s.configId);
+            assertEquals(4L, s.discussChannelId);
+            assertEquals(17L, s.messageId);
+        }
+    }
+
+    @Test
+    public void withoutAMessageIdThereIsNoReact() throws Exception {
+        NotificationModel.Shown s = NotificationModel.chat(account(LockScreenMode.ALWAYS), stock(), FR);
+        assertEquals(0L, s.messageId);
+        assertEquals(EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.MUTE), s.actions);
+    }
+
+    @Test
+    public void aNeverServerOffersEveryActionWithItsTextHidden() throws Exception {
+        NotificationModel.Shown s = NotificationModel.chat(account(LockScreenMode.NEVER),
+                captured("push_module_chat.json"), FR);
+        assertEquals(EnumSet.allOf(ActionKind.class), s.actions);
+        assertEquals(17L, s.messageId);
+        assertEquals("Nouveau message", s.conversationTitle);
+        assertEquals("Nouveau message", s.text);
+        assertFalse(s.messaging);
+    }
+
+    @Test
+    public void inboxAndSummaryOfferNothing() throws Exception {
+        AccountView a = account(LockScreenMode.ALWAYS);
+        assertTrue(NotificationModel.inbox(a, captured("push_module_record.json"), FR).actions.isEmpty());
+        assertTrue(NotificationModel.summary(a, 3, FR).actions.isEmpty());
+        assertTrue(NotificationModel.status(a, "x").actions.isEmpty());
+    }
+
+    @Test
+    public void thePayloadTypeStandsInForAMissingMirroredType() throws Exception {
+        Map<Long, ChannelInfo> channels = new HashMap<>();
+        channels.put(5L, new ChannelInfo("canal module", ""));
+        AccountView a = new AccountView(CONFIG, "Serveur", LockScreenMode.ALWAYS, channels);
+        NotificationModel.Shown s = NotificationModel.chat(a, captured("push_module_channel.json"), FR);
+        assertEquals("canal module", s.conversationTitle);
+        assertEquals("MS Chat", s.author);
+    }
+
+    @Test
+    public void keptAfterReadDropsIdsUpToTheReadPointAndThoseWithoutId() {
+        assertEquals(Arrays.asList(9L, 12L), NotificationModel.keptAfterRead(Arrays.asList(5L, 7L, 0L, 9L, 12L), 7));
+        assertEquals(Collections.emptyList(), NotificationModel.keptAfterRead(Arrays.asList(0L, 0L), 1));
+        assertEquals(Collections.emptyList(), NotificationModel.keptAfterRead(Arrays.asList(3L, 7L), 7));
+        assertEquals(Collections.emptyList(), NotificationModel.keptAfterRead(Collections.<Long>emptyList(), 7));
     }
 }

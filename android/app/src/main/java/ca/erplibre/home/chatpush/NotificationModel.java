@@ -3,7 +3,10 @@ package ca.erplibre.home.chatpush;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
+import java.util.List;
 
 /**
  * What a push becomes on screen, decided without Android: the channel and
@@ -36,6 +39,33 @@ final class NotificationModel {
         boolean silent;
         /** Epoch ms the message was sent, 0 when unknown (the notifier then dates it when drawn). */
         long at;
+        /** The server it belongs to; "" for none. */
+        String configId = "";
+        /** The discuss.channel of a chat notification, 0 for the others. */
+        long discussChannelId;
+        /** The Odoo id of the message drawn, 0 when the push carries none. */
+        long messageId;
+        /** The action buttons offered; only a chat notification has any. */
+        EnumSet<ActionKind> actions = EnumSet.noneOf(ActionKind.class);
+    }
+
+    /**
+     * The message ids a « read » push leaves in a stack (ids in stack order,
+     * 0 for a message without id): those above lastMessageId. A message
+     * without id goes, so does every one up to the read point; an empty
+     * answer means the notification goes.
+     */
+    static List<Long> keptAfterRead(List<Long> ids, long lastMessageId) {
+        List<Long> out = new ArrayList<>();
+        for (Long id : ids) {
+            if (id != null && keptAfterRead(id, lastMessageId)) out.add(id);
+        }
+        return out;
+    }
+
+    /** Whether one stacked message of id (0: none) stays after a « read » push up to lastMessageId. */
+    static boolean keptAfterRead(long id, long lastMessageId) {
+        return id > 0 && id > lastMessageId;
     }
 
     /**
@@ -147,17 +177,27 @@ final class NotificationModel {
      * A discuss channel push. The conversation is the mirrored channel name
      * (else the payload title); the author is the payload title minus the
      * prefix Odoo builds for that conversation type ("#name - " for a
-     * channel, "name - " for a group, nothing for a chat), else the whole title.
+     * channel, "name - " for a group, nothing for a chat), else the whole
+     * title. The mirrored type, else the payload's channel type, says which
+     * prefix.
+     *
+     * Every lock-screen choice offers « Répondre », « Marquer lu » and
+     * « Muet 1 h »; « 👍 » only with the message id, which names the
+     * message reacted to.
      */
     static Shown chat(AccountView a, PushPayload p, PushStrings s) {
         Shown out = base(a, chatChannelId(a.configId), "chat:" + a.configId + ":" + p.resId);
         ChannelInfo info = a.channels.get(p.resId);
         boolean known = info != null && !info.name.isEmpty();
         out.conversationTitle = known ? info.name : p.title;
-        out.author = known ? authorOf(p.title, info) : p.title;
+        out.author = known ? authorOf(p.title, info.name, info.type.isEmpty() ? p.channelType : info.type) : p.title;
         out.text = p.body.isEmpty() ? s.get("new_message") : p.body;
         out.openUrl = "/chat/" + encode(a.configId) + "/" + p.resId;
         out.messaging = true;
+        out.discussChannelId = p.resId;
+        out.messageId = p.messageId;
+        out.actions = EnumSet.of(ActionKind.REPLY, ActionKind.READ, ActionKind.MUTE);
+        if (p.messageId > 0) out.actions.add(ActionKind.REACT);
         applyLockScreen(out, a, s);
         return out;
     }
@@ -200,6 +240,7 @@ final class NotificationModel {
      */
     static Shown status(AccountView a, String text) {
         Shown out = new Shown();
+        out.configId = a.configId;
         out.channelId = STATUS_CHANNEL;
         out.tag = "status:" + a.configId;
         out.conversationTitle = a.label;
@@ -213,16 +254,17 @@ final class NotificationModel {
 
     private static Shown base(AccountView a, String channelId, String tag) {
         Shown out = new Shown();
+        out.configId = a.configId;
         out.channelId = channelId;
         out.groupId = groupId(a.configId);
         out.tag = tag;
         return out;
     }
 
-    private static String authorOf(String title, ChannelInfo info) {
+    private static String authorOf(String title, String name, String type) {
         String prefix = null;
-        if ("channel".equals(info.type)) prefix = "#" + info.name + " - ";
-        else if ("group".equals(info.type)) prefix = info.name + " - ";
+        if ("channel".equals(type)) prefix = "#" + name + " - ";
+        else if ("group".equals(type)) prefix = name + " - ";
         if (prefix != null && title.startsWith(prefix) && title.length() > prefix.length()) {
             return title.substring(prefix.length());
         }

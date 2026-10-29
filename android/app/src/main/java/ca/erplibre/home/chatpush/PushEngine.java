@@ -22,7 +22,9 @@ import org.json.JSONException;
  * One stream per distinct ntfy carries the topics of every account on it.
  * Every message, streamed or polled, goes through one path: de-duplicated by
  * id, routed by topic, decrypted, shown unless the app is in the foreground,
- * then the server's cursor and contact time saved. An account without ntfy,
+ * then the server's cursor and contact time saved. A control push of module
+ * erplibre_mobile_chat 1.5 (« read », « inbox_done ») removes or trims
+ * notifications, in the foreground too, and draws none. An account without ntfy,
  * or one whose ntfy was silent longer than its cache, is checked against Odoo
  * directly and gets one summary notification per server.
  *
@@ -50,6 +52,17 @@ final class PushEngine {
 
         /** The tags of the notifications currently drawn. */
         Set<String> shownTags();
+
+        /**
+         * A « read » push for the conversation tagged tag: its stack keeps the
+         * messages whose id is above lastMessageId (NotificationModel
+         * .keptAfterRead), re-posted silently; none kept cancels it. Nothing
+         * when the tag is not drawn.
+         */
+        void trimRead(String tag, long lastMessageId);
+
+        /** When each notification of shownTags was last posted, epoch ms. */
+        Map<String, Long> shownAt();
 
         /** The engine's state changed (permanent notification line). */
         void status(HealthSnapshot h);
@@ -582,9 +595,6 @@ final class PushEngine {
             undecryptable++;
             return;
         }
-        if (settings.foreground()) return;
-        AccountView a = settings.account(sub.configId);
-        if (a == null) return;
         PushPayload p;
         try {
             p = PushPayload.parse(plain);
@@ -592,10 +602,47 @@ final class PushEngine {
             undecryptable++;
             return;
         }
+        AccountView a = settings.account(sub.configId);
+        if (a == null) return;
+        if (p.kind == PushPayload.Kind.READ) {
+            notifier.trimRead("chat:" + a.configId + ":" + p.channelId, p.lastMessageId);
+            return;
+        }
+        if (p.kind == PushPayload.Kind.INBOX_DONE) {
+            // ntfy stamps whole seconds: a notification posted within the push's second came before it
+            clearInbox(a.configId, p.threads, m.time * 1000L + 999);
+            return;
+        }
+        if (settings.foreground()) return;
         PushStrings s = settings.strings();
         NotificationModel.Shown n = p.isChat() ? NotificationModel.chat(a, p, s) : NotificationModel.inbox(a, p, s);
         n.at = m.time * 1000L;
         notifier.show(n);
+    }
+
+    /**
+     * Cancels the account's inbox notifications of the threads ({model,
+     * resId}) posted at or before the bound, epoch ms; threads null names
+     * every inbox notification of the account. Monitor held.
+     */
+    private void clearInbox(String configId, List<String[]> threads, long before) {
+        List<NotificationModel.Clear> clears = new ArrayList<>();
+        if (threads == null) {
+            clears.add(new NotificationModel.Clear(configId, null, true, null, null, false, before));
+        } else {
+            for (String[] t : threads) {
+                clears.add(new NotificationModel.Clear(configId, null, true, t[0], parseLong(t[1]), false, before));
+            }
+        }
+        if (clears.isEmpty()) return;
+        for (Map.Entry<String, Long> shown : notifier.shownAt().entrySet()) {
+            for (NotificationModel.Clear c : clears) {
+                if (c.matches(shown.getKey(), shown.getValue())) {
+                    notifier.cancel(shown.getKey());
+                    break;
+                }
+            }
+        }
     }
 
     /**
