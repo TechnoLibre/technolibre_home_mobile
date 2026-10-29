@@ -519,6 +519,51 @@ describe("ChatPush", () => {
       for (const spy of [console.warn as any]) for (const c of spy.mock.calls) expect(JSON.stringify(c)).not.toContain("upab12cd34fake1");
     });
 
+    it("a mark that failed is sent again at the next registration of the session", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await at("1.5");
+      odoo.state.markRefuses = true;
+      await chat.push.applyLink([ids[0]], link());
+      expect(routeCalls()).toHaveLength(1);
+      odoo.state.markRefuses = false;
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(routeCalls()).toHaveLength(2);
+      expect(chat.push.registrationError(ids[0])).toBeNull();
+      // Marked: the next registration of the session sends nothing more
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(routeCalls()).toHaveLength(2);
+      expect(odoo.kw("register_devices")).toHaveLength(1);
+    });
+
+    it("a mark skipped offline is sent at the next registration of the session", async () => {
+      await chat.push.start();
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      expect(routeCalls()).toHaveLength(1);
+      setNetwork({ connected: false, wifi: false });
+      odoo.state.sessionSuffix = "-2";
+      await rpc.authenticate(credsOf(A));
+      await chat.push.idle();
+      expect(routeCalls()).toHaveLength(1);
+      setNetwork({ connected: true, wifi: true });
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(routeCalls()).toHaveLength(2);
+    });
+
+    it("a mark Odoo answers ok false is not sent again in the session", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await at("1.5");
+      odoo.state.markRefuses = true;
+      await chat.push.applyLink([ids[0]], link());
+      odoo.state.markRefuses = false;
+      odoo.state.devices.clear();
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(routeCalls()).toHaveLength(2);
+      expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_mark_failed");
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(routeCalls()).toHaveLength(2);
+    });
+
     it("the mirror carries the module level", async () => {
       await at("1.5", 0);
       await at("1.2", 1);

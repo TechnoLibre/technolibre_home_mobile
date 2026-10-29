@@ -101,6 +101,8 @@ export class ChatPush {
   private chain: Promise<void> = Promise.resolve();
   /** Per account, the registration result of this foreground session ("registered" or "refused"). */
   private done = new Map<string, RegisterResult>();
+  /** Accounts whose device mark this session did not reach Odoo (offline, an error): sent at their next registration. */
+  private markOwed = new Set<string>();
   /** Per account, the i18n key of why its last registration failed; cleared by a success. */
   private failures = new Map<string, string>();
   /** Per account, the session id last copied to native code in this foreground session. */
@@ -167,6 +169,7 @@ export class ChatPush {
   newSession(): void {
     this.done.clear();
     this.mirrored.clear();
+    this.markOwed.clear();
   }
 
   /**
@@ -564,7 +567,10 @@ export class ChatPush {
    */
   private async registerOnce(src: ChatSource): Promise<RegisterResult> {
     const known = this.done.get(src.configId);
-    if (known) return known;
+    if (known) {
+      if (known === "registered" && this.markOwed.has(src.configId)) await this.markAppDevice(src);
+      return known;
+    }
     const row = await this.repo.pushRow(src.configId);
     if (!row.endpoint && row.staleEndpoints.length === 0) return "none";
     if (!(await this.isOnline())) {
@@ -602,19 +608,26 @@ export class ChatPush {
    * the module ignored or without an endpoint. Odoo answering ok false
    * (no such device for this partner) or an error is kept as the
    * registration's reason (registrationError) and logged without the
-   * endpoint; a success clears it. Never throws. True when marked.
+   * endpoint; a success clears it. A mark offline or failed with an error
+   * is owed (markOwed): the account's next registerOnce of the session
+   * sends it again; an ok false is Odoo's answer and is not. Never throws.
+   * True when marked.
    */
   async markAppDevice(src: ChatSource): Promise<boolean> {
     try {
       if (!levelAtLeast(await this.moduleLevel(src.configId), "1.5")) return false;
       const { endpoint } = await this.repo.pushRow(src.configId);
       if (!endpoint) return false;
-      if (!(await this.isOnline())) return false;
+      if (!(await this.isOnline())) {
+        this.markOwed.add(src.configId);
+        return false;
+      }
       const answer = await this.withTimeout(
         this.rpc.callWithAuth(src.creds, (sessionId) =>
           this.rpc.jsonRoute(src.creds.odooUrl, sessionId, PUSH_DEVICE_ROUTE, { endpoint, quiet_while_online: false })),
         `${PUSH_DEVICE_ROUTE}`,
       );
+      this.markOwed.delete(src.configId);
       if (answer?.ok === true) {
         if (this.failures.get(src.configId) === MARK_FAILED) this.failures.delete(src.configId);
         return true;
@@ -623,6 +636,7 @@ export class ChatPush {
       console.warn("[chat push] device not marked: Odoo holds no such device");
       return false;
     } catch (e) {
+      this.markOwed.add(src.configId);
       this.failures.set(src.configId, MARK_FAILED);
       console.warn("[chat push] device not marked:", messageOf(e));
       return false;
@@ -640,11 +654,7 @@ export class ChatPush {
 
   /** mail.push.device.<method>(**kwargs) for the account; rejects after PUSH_RPC_TIMEOUT_MS without an answer. */
   private kw(src: ChatSource, method: string, kwargs: Record<string, unknown>): Promise<any> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const late = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${PUSH_DEVICE}.${method}: no answer within ${PUSH_RPC_TIMEOUT_MS} ms`)), PUSH_RPC_TIMEOUT_MS);
-    });
-    return Promise.race([this.rpc.callKw(src.creds, PUSH_DEVICE, method, [], kwargs), late]).finally(() => clearTimeout(timer));
+    return this.withTimeout(this.rpc.callKw(src.creds, PUSH_DEVICE, method, [], kwargs), `${PUSH_DEVICE}.${method}`);
   }
 
   /**
