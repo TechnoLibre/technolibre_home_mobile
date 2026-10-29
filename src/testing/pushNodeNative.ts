@@ -5,11 +5,14 @@
  * pairs and auth secrets drawn, topics drawn as R4 says), and the rest
  * (notifications, the permanent service, QR decoding) kept as plain state.
  * The private keys stay in this process: keysOf hands them to the test,
- * which decrypts what Odoo pushed (decryptWebPush, pollNtfy).
+ * which decrypts what Odoo pushed (decryptWebPush, pollNtfy). The action
+ * store holds what the phone's receiver would have ended or handed over:
+ * a test adds a record (addAction) and the app drains it (actions,
+ * ackActions) as it drains the phone's.
  */
 import type { PluginListenerHandle } from "@capacitor/core";
-import { generateKeyPairSync, randomBytes, randomInt, type KeyObject } from "node:crypto";
-import type { ChatPushNative, PushHealth, PushSettingsMirror } from "../plugins/chatPushPlugin";
+import { generateKeyPairSync, randomBytes, randomInt, randomUUID, type KeyObject } from "node:crypto";
+import type { ChatPushNative, NativeAction, PushHealth, PushSettingsMirror } from "../plugins/chatPushPlugin";
 
 /** One account's subscription as native code keeps it, its private key included. */
 export interface NodeSubscription {
@@ -33,6 +36,15 @@ export interface PushNodeNative extends ChatPushNative {
 	/** Endpoints unsubscribe left for native code to unregister. */
 	pending: { configId: string; endpoint: string }[];
 	shownTags: string[];
+	/** The records native code ended or hands over, in the order added; actions() serves copies, oldest first. */
+	actionRecords: NativeAction[];
+	/**
+	 * Stores a record as the phone's ActionStore serves it to the drain and
+	 * returns a copy: what the partial leaves out is a done reply of now,
+	 * with a new id and a new client uuid (v4), no message id, no text, no
+	 * send and no answer. Nothing is announced: the test drains.
+	 */
+	addAction(partial: Partial<NativeAction>): NativeAction;
 	/** The account's subscription keys and topic; throws when it has none. */
 	keysOf(configId: string): { privateKey: KeyObject; publicKey: Uint8Array; auth: Uint8Array; topic: string };
 }
@@ -95,6 +107,29 @@ export function pushNodeNative(): PushNodeNative {
 		sessions: new Map(),
 		pending: [],
 		shownTags: [],
+		actionRecords: [],
+
+		addAction(partial) {
+			const action: NativeAction = {
+				id: randomUUID(),
+				configId: "",
+				kind: "reply",
+				state: "done",
+				reason: null,
+				channelId: 0,
+				messageId: null,
+				clientUuid: randomUUID(),
+				text: "",
+				content: "",
+				createdAt: Date.now(),
+				sentAt: null,
+				plainSent: false,
+				answer: null,
+				...partial,
+			};
+			native.actionRecords.push(action);
+			return { ...action };
+		},
 
 		keysOf(configId) {
 			const sub = native.subscriptions.get(configId);
@@ -210,10 +245,12 @@ export function pushNodeNative(): PushNodeNative {
 		},
 		async actions() {
 			record("actions");
-			return [];
+			return [...native.actionRecords].sort((a, b) => a.createdAt - b.createdAt).map((a) => ({ ...a }));
 		},
 		async ackActions(o) {
 			record("ackActions", o);
+			const acked = new Set(o.ids);
+			native.actionRecords = native.actionRecords.filter((a) => !acked.has(a.id));
 		},
 		async addListener(_event, fn): Promise<PluginListenerHandle> {
 			listeners.add(fn);

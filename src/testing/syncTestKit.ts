@@ -35,6 +35,8 @@ import { mailboxKindOf, type ChatMailboxItem, type MessageTarget } from "../mode
 import { htmlTerm, type SearchResults } from "../services/chat/chatSearch";
 import { noteForRecord } from "../services/chat/chatInbox";
 import type { ChatPush } from "../services/chat/chatPush";
+import type { ChatPushActions } from "../services/chat/chatPushActions";
+import { chatMarker } from "../services/chat/chatBody";
 import { parseNtfyLink, type NtfyLink } from "../services/chat/chatPushLink";
 import { decryptWebPush } from "./webPushNode";
 import { pollNtfy, pushNodeNative, type NodeSubscription, type NtfyMessage, type PushNodeNative } from "./pushNodeNative";
@@ -65,12 +67,13 @@ export type { ChatMailboxItem, SearchResults };
  * ntfy: parseNtfyLink (the setup link the operator's tool prints),
  * pushNodeNative (the phone's native side in Node, its keys at hand),
  * pollNtfy (what a topic holds) and decryptWebPush (a pushed body back to
- * Odoo's JSON).
+ * Odoo's JSON), chatMarker (the marker the app and native code end a
+ * post with, which their resend searches).
  */
-export { parseNtfyLink, decryptWebPush, pollNtfy, pushNodeNative };
+export { parseNtfyLink, decryptWebPush, pollNtfy, pushNodeNative, chatMarker };
 export type { NtfyLink, NodeSubscription, NtfyMessage, PushNodeNative };
 
-export const HARNESS_API = 6;
+export const HARNESS_API = 7;
 
 /** Migrations that read what an older install left (secure storage, video files): none on a new database. */
 const SKIPPED_MIGRATIONS = new Set([2026031801, 2026032401]);
@@ -98,6 +101,8 @@ export interface SyncEnv {
 	push: ChatPush;
 	/** The phone's native side of the notifications, in Node; it outlives restartSyncEnv as native code outlives the app. */
 	pushNative: PushNodeNative;
+	/** The drain of the native actions (chat.pushActions), over pushNative's action store. */
+	pushActions: ChatPushActions;
 }
 
 /**
@@ -142,6 +147,7 @@ export async function createSyncEnv(
 		chatFiles,
 		push: sync.chat.push,
 		pushNative,
+		pushActions: sync.chat.pushActions,
 	};
 }
 
@@ -160,7 +166,10 @@ export async function restartSyncEnv(env: SyncEnv): Promise<SyncEnv> {
 	sync.chat.useFileIO({ files: env.chatFiles, http: nodeChatHttp(env.chatFiles) });
 	await sync.outbox.recoverInterrupted();
 	await sync.chat.recover();
-	return { ...env, sync, chat: sync.chat, push: sync.chat.push, notes: new NoteService(new EventBus(), env.db) };
+	return {
+		...env, sync, chat: sync.chat, push: sync.chat.push, pushActions: sync.chat.pushActions,
+		notes: new NoteService(new EventBus(), env.db),
+	};
 }
 
 /**

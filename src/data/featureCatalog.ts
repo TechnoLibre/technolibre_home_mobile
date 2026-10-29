@@ -5737,7 +5737,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "src/testing/pushNodeNative.ts",
                             "src/testing/webPushNode.ts",
                         ],
-                        tests: ["src/__tests__/webPushNode.test.ts", "src/__tests__/chatPushPlugin.test.ts", "src/__tests__/chatPush.test.ts", "src/__tests__/chatPushLink.test.ts", "src/__tests__/chatPushOpen.test.ts", "src/__tests__/optionsChatNotifications.test.ts"],
+                        tests: ["src/__tests__/webPushNode.test.ts", "src/__tests__/pushNodeNative.test.ts", "src/__tests__/chatPushPlugin.test.ts", "src/__tests__/chatPush.test.ts", "src/__tests__/chatPushLink.test.ts", "src/__tests__/chatPushOpen.test.ts", "src/__tests__/optionsChatNotifications.test.ts"],
                     },
                     {
                         id: "chat.notifications.actions",

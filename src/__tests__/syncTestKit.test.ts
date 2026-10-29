@@ -9,7 +9,7 @@ import {
 	restartSyncEnv, setOnline, setNetwork, chatTitle, memoryChatFiles, nodeChatHttp, stageChatFile, stageChatVoice,
 	composeBody, bodyText, emojiConversions, isEmptyMessage, EMPTY_MENTIONS,
 	foldText, htmlTerm, mailboxKindOf, noteForRecord,
-	parseNtfyLink, decryptWebPush, pollNtfy, pushNodeNative,
+	parseNtfyLink, decryptWebPush, pollNtfy, pushNodeNative, chatMarker,
 } from "../testing/syncTestKit";
 import { syncSessionKey } from "../services/syncService";
 import { isHttpAllowed } from "../services/odoo/httpPolicy";
@@ -25,8 +25,8 @@ describe("syncTestKit", () => {
 		resetMocks();
 	});
 
-	it("is at API 6", () => {
-		expect(HARNESS_API).toBe(6);
+	it("is at API 7", () => {
+		expect(HARNESS_API).toBe(7);
 	});
 
 	it("gives the chat's finding rules: folded text, the server's body term, inbox kinds, the note of a record", () => {
@@ -482,6 +482,22 @@ describe("syncTestKit", () => {
 			expect(after.push).not.toBe(env.push);
 			expect(after.pushNative).toBe(env.pushNative);
 			expect(typeof decryptWebPush).toBe("function");
+		});
+
+		it("createSyncEnv gives the chat's drain of native actions over the node native, which restartSyncEnv renews", async () => {
+			installLocalStorage({ allowHttp: true });
+			const env = await createSyncEnv([TARGET]);
+			expect(env.pushActions).toBe(env.chat.pushActions);
+			const gone = env.pushNative.addAction({ configId: "http://ailleurs.test|admin|db9", kind: "read", channelId: 4 });
+			expect(await env.pushActions.drain()).toEqual({ applied: [gone.id], kept: [] });
+			expect(await env.pushNative.actions()).toEqual([]);
+			const after = await restartSyncEnv(env);
+			expect(after.pushActions).toBe(after.chat.pushActions);
+			expect(after.pushActions).not.toBe(env.pushActions);
+		});
+
+		it("gives the marker the app and native code put in a post", () => {
+			expect(chatMarker("1b2c")).toBe("<!-- erplibre-mobile:1b2c -->");
 		});
 	});
 });
