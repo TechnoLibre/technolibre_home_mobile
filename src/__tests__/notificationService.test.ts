@@ -431,6 +431,7 @@ describe("NotificationService", () => {
             stopSourceRealtime: vi.fn(),
             forgetSource: vi.fn().mockResolvedValue(undefined),
             push: { start: vi.fn().mockResolvedValue(undefined), newSession: vi.fn() },
+            pushActions: { start: vi.fn(), drain: vi.fn().mockResolvedValue({ applied: [], kept: [] }) },
         }) as any;
 
         it("going inactive stops realtime, active starts it", async () => {
@@ -441,11 +442,15 @@ describe("NotificationService", () => {
             expect(chat.push.newSession).toHaveBeenCalledTimes(1);
             expect(chat.startRealtime).toHaveBeenCalledTimes(1);
             expect(chat.startRealtime).toHaveBeenCalledWith(nativeTransport);
+            expect(chat.pushActions.start).toHaveBeenCalledTimes(1);
+            await vi.waitFor(() => expect(chat.pushActions.drain).toHaveBeenCalledTimes(1));
 
             appStateCb!({ isActive: false });
             expect(chat.stopRealtime).toHaveBeenCalledTimes(1);
             appStateCb!({ isActive: true });
             expect(chat.startRealtime).toHaveBeenCalledTimes(2);
+            await vi.waitFor(() => expect(chat.pushActions.drain).toHaveBeenCalledTimes(2));
+            expect(chat.pushActions.start).toHaveBeenCalledTimes(1);
         });
 
         it("a cold start in the background opens no socket until the app comes forward", async () => {

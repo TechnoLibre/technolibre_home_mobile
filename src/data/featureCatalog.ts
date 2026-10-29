@@ -5739,6 +5739,38 @@ export const FEATURE_TREE: FeatureNode[] = [
                         ],
                         tests: ["src/__tests__/webPushNode.test.ts", "src/__tests__/chatPushPlugin.test.ts", "src/__tests__/chatPush.test.ts", "src/__tests__/chatPushLink.test.ts", "src/__tests__/chatPushOpen.test.ts", "src/__tests__/optionsChatNotifications.test.ts"],
                     },
+                    {
+                        id: "chat.notifications.actions",
+                        label: { en: "Notification actions drain", fr: "Relève des actions des notifications" },
+                        description: {
+                            en: "The app takes over the reply, mark read, mute and 👍 that native code ended or hands over: done ones update the cache from Odoo's answer, handed-over ones go into the chat outbox with the native client uuid.",
+                            fr: "L'app reprend les réponses, lectures, mises en sourdine et 👍 que le natif a terminés ou lui confie : les terminés mettent le cache à jour d'après la réponse d'Odoo, les confiés passent dans la boîte d'envoi du clavardage avec l'uuid client natif.",
+                        },
+                        status: "experimental",
+                        howItWorks: {
+                            en: "At each foreground, once the accounts are loaded, and at each "
+                                + "actions event of the plugin, one drain at a time reads the done "
+                                + "and handed-over records, applies them and acks them. A reply "
+                                + "that may already be on Odoo without the module is searched by "
+                                + "its marker after the quiet window before any post; a reply whose "
+                                + "uuid a message or an op carries is skipped, so a repeated drain "
+                                + "sends nothing twice.",
+                            fr: "À chaque premier plan, une fois les comptes chargés, et à chaque "
+                                + "événement actions du plugin, une relève à la fois lit les "
+                                + "enregistrements terminés et confiés, les applique et les "
+                                + "acquitte. Une réponse peut-être déjà dans Odoo sans le module "
+                                + "est cherchée par son marqueur après la fenêtre de silence avant "
+                                + "tout envoi ; une réponse dont un message ou une opération porte "
+                                + "l'uuid est sautée, si bien qu'une relève répétée n'envoie rien "
+                                + "deux fois.",
+                        },
+                        demo: { kind: "none", reason: { en: "Native only: a notification's buttons.", fr: "Natif seulement : les boutons d'une notification." } },
+                        files: [
+                            "src/services/chat/chatPushActions.ts",
+                            "src/services/chat/chatLifecycle.ts",
+                        ],
+                        tests: ["src/__tests__/chatPushActions.test.ts", "src/__tests__/chatLifecycle.test.ts"],
+                    },
                 ],
             },
         ],

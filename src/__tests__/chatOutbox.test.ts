@@ -222,6 +222,36 @@ describe("ChatOutbox", () => {
     expect((await repo.messages(CONFIG, CHANNEL)).map((x) => x.clientUuid)).toEqual([op.clientUuid]);
   });
 
+  it("enqueue keeps a given client uuid", async () => {
+    const given = "24ff0bf7-76b8-4caf-ad92-a71df8436306";
+    const plain = await outbox.enqueue({ noteId: CHAT_NOTE, configId: CONFIG, kind: CHAT_READ, params: {} });
+    expect(plain.clientUuid).not.toBe(given);
+    const kept = await outbox.enqueue({ noteId: CHAT_NOTE, configId: CONFIG, kind: CHAT_READ, params: {}, clientUuid: given });
+    expect(kept.clientUuid).toBe(given);
+    expect((await db.getOutboxOp(kept.id))!.clientUuid).toBe(given);
+    // A post given a uuid keeps it on its op and its bubble; maybeSentAt makes it a post that may be on the server
+    await outbox.cancel(plain.id);
+    await outbox.cancel(kept.id);
+    const sentAt = new Date(clock.getTime() - 60_000).toISOString();
+    const m = await chat.queuePost(CONFIG, CHANNEL, "hello", false, { clientUuid: given, maybeSentAt: sentAt });
+    expect(m.clientUuid).toBe(given);
+    const [op] = await db.getOutboxOpsForConfig(CONFIG);
+    expect(op).toMatchObject({ clientUuid: given, params: { createSentAt: sentAt, maybeSent: true } });
+  });
+
+  it("a post maybe sent waits out the quiet window, then is found by its marker and never posted", async () => {
+    const odoo = chatOdoo();
+    const given = "24ff0bf7-76b8-4caf-ad92-a71df8436306";
+    odoo.messages.push({ id: 35, model: "discuss.channel", res_id: CHANNEL, body: `<p>hello${chatMarker(given)}</p>`, uuid: null, author: 3, parent: false });
+    await chat.queuePost(CONFIG, CHANNEL, "hello", false, { clientUuid: given, maybeSentAt: new Date(clock.getTime() - 60_000).toISOString() });
+    await chat.flush(CREDS);
+    expect(odoo.calls).toHaveLength(0);
+    advance(CREATE_QUIET_WINDOW_MS);
+    expect(await chat.flush(CREDS, { force: true })).toMatchObject({ done: 1 });
+    expect(odoo.posts()).toHaveLength(0);
+    expect((await repo.messages(CONFIG, CHANNEL)).map((r) => [r.messageId, r.clientUuid, r.status])).toEqual([[35, given, "sent"]]);
+  });
+
   it("a post settled after its account was deleted writes nothing", async () => {
     await chat.queuePost(CONFIG, CHANNEL, "hi", true);
     const [op] = await db.getOutboxOpsForConfig(CONFIG);
@@ -985,14 +1015,15 @@ describe("ChatOutbox", () => {
     expect(await db.getOutboxOpsForConfig(CONFIG)).toHaveLength(0);
   });
 
-  it("read with mentions also calls mark_all_as_read", async () => {
+  it("read with mentions also calls mark_all_as_read, bounded to the message read", async () => {
     const odoo = chatOdoo();
     await chat.queueRead(CONFIG, CHANNEL, 50, false);
     await chat.queueRead(CONFIG, CHANNEL, 40, true);
     await chat.flush(CREDS);
     const done = odoo.calls.find((c) => c.params.method === "mark_all_as_read")!;
     expect(done.params.model).toBe("mail.message");
-    expect(done.params.args).toEqual([[["model", "=", "discuss.channel"], ["res_id", "=", CHANNEL]]]);
+    // A mention posted after the message read stays in the Inbox
+    expect(done.params.args).toEqual([[["model", "=", "discuss.channel"], ["res_id", "=", CHANNEL], ["id", "<=", 50]]]);
     expect(odoo.calls.find((c) => c.path === "/discuss/channel/mark_as_read")!.params.last_message_id).toBe(50);
   });
 

@@ -28,6 +28,7 @@ import { ChatInbox } from "./chatInbox";
 import { ChatMentions } from "./chatMentions";
 import { ChatPeople } from "./chatPeople";
 import { ChatPush } from "./chatPush";
+import { ChatPushActions } from "./chatPushActions";
 import { ChatRepository, type ChatDraft, type DraftThread } from "./chatRepository";
 import { ChatSearch } from "./chatSearch";
 import { chatSettings } from "./chatSettings";
@@ -206,6 +207,9 @@ export class ChatService {
    */
   push: ChatPush;
 
+  /** The notification actions native code ended or hands over, drained into the cache and the outbox. */
+  readonly pushActions: ChatPushActions;
+
   constructor(
     private db: DatabaseService,
     private rpc: OdooRpcClient,
@@ -221,6 +225,7 @@ export class ChatService {
     this.push.moduleLevel = async (configId) =>
       this.moduleMode === "auto" ? effectiveLevel(await this.repo.sourceState(configId)) : null;
     this.push.conversations = (configId) => this.conversations([configId]);
+    this.pushActions = new ChatPushActions(this, opts.native ?? null, now);
     this.people = new ChatPeople(rpc, this.repo, () => this.isOnline());
     this.mentions = new ChatMentions(this.repo, rpc, this.people, () => this.isOnline());
     this.search = new ChatSearch(this.repo, this.people, rpc, (configId) => this.features(configId), () => this.isOnline());
@@ -1086,9 +1091,10 @@ export class ChatService {
 
   /**
    * Flushes the account's chat outbox once an action is queued, when
-   * online; a failed flush leaves it queued for the next one.
+   * online; a failed flush leaves it queued for the next one. Tells the
+   * screens before and after (channelId null: the account's list).
    */
-  private async afterAction(src: ChatSource, channelId: number | null): Promise<void> {
+  async afterAction(src: ChatSource, channelId: number | null): Promise<void> {
     this.changed(src.configId, channelId);
     if (!(await this.isOnline())) return;
     try {
@@ -1831,6 +1837,7 @@ export class ChatService {
   /** Cancels the pending typing stops; nothing more is sent for them. */
   dispose(): void {
     this.push.dispose();
+    this.pushActions.dispose();
     this.stopRealtime();
     for (const state of this.typingState.values()) {
       if (state.stop) clearTimeout(state.stop);

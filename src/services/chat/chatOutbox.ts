@@ -43,8 +43,10 @@ import { v4 as uuidv4 } from "uuid";
 export const CHAT_NOTE = "chat";
 /**
  * params { channelId, text, mentions: Mentions, parent: MessageTarget|null,
- * useModule: boolean, createSentAt?, files?, idempotentUpload?,
- * reuploaded? }. mentions: the people and channels picked, the body and
+ * useModule: boolean, createSentAt?, maybeSent?, files?, idempotentUpload?,
+ * reuploaded? }. maybeSent: a send of the post may have reached Odoo
+ * before the op existed (a notification's reply handed over by native
+ * code), so its first attempt already looks for the marker. mentions: the people and channels picked, the body and
  * the post's partner_ids and special_mentions built from them and the text
  * at each send (composeBody); parent: the message it replies to, its
  * server id read at the send. files: the local uuids of its files in pick
@@ -89,7 +91,11 @@ export const CHAT_UPLOAD = "chat.upload";
 export const CHAT_FILE_REFUSED = "chat.file_refused";
 /** Uploads one account runs at a time, beside its other ops. */
 export const CHAT_UPLOADS_AT_ONCE = 2;
-/** params { channelId, lastMessageId, mentions: boolean } */
+/**
+ * params { channelId, lastMessageId, mentions: boolean }: mark_as_read up
+ * to lastMessageId, then with mentions the user's notifications of the
+ * conversation up to the same message (mark_all_as_read).
+ */
 export const CHAT_READ = "chat.read";
 /**
  * params { channelId, mode: "dm"|"group"|"channel", partnerIds, name,
@@ -320,6 +326,14 @@ export interface PostOpts {
   draftText?: string;
   mentions?: Mentions;
   replyTo?: MessageTarget | null;
+  /** The client uuid the post's op and marker take, drawn before it (a notification's reply); a new one by default. */
+  clientUuid?: string;
+  /**
+   * When a send of this post may already have reached Odoo (ISO date): the
+   * op starts stamped (createSentAt) and flagged maybeSent, so its first
+   * attempt waits out the quiet window and looks for the marker first.
+   */
+  maybeSentAt?: string;
 }
 
 /** Options of ChatOutbox.queueAction (see there). */
@@ -452,7 +466,7 @@ const emptyDelta = (): StoreDelta => ({
 });
 
 /** The mute_until_dt a queued `until` stands for on the phone. */
-const muteDt = (until: string | null): string | null =>
+export const muteDt = (until: string | null): string | null =>
   until === "forever" ? MUTE_FOREVER_DT : until ? odooDate(new Date(until)) : null;
 
 /**
@@ -573,6 +587,12 @@ export class ChatOutbox {
       if (this.locks.get(configId) === tail) this.locks.delete(configId);
     });
     return run;
+  }
+
+  /** Whether a message of the account, cached or queued, or an op of its outbox already carries this client uuid. */
+  async knowsClientUuid(configId: string, clientUuid: string): Promise<boolean> {
+    if (await this.repo.messageByClientUuid(configId, clientUuid)) return true;
+    return (await this.db.getOutboxOpsForConfig(configId)).some((o) => o.clientUuid === clientUuid);
   }
 
   /**
@@ -713,7 +733,7 @@ export class ChatOutbox {
         configId,
         channelId,
         messageId: null,
-        clientUuid: uuidv4(),
+        clientUuid: opts.clientUuid ?? uuidv4(),
         authorPartnerId: (await this.repo.sourceState(configId)).selfPartnerId,
         body,
         date: odooDate(this.now()),
@@ -766,9 +786,11 @@ export class ChatOutbox {
             }
             : { channelId, text, mentions, parent, useModule }),
           ...(opts.draftText !== undefined ? { draftText: opts.draftText } : {}),
+          ...(opts.maybeSentAt ? { createSentAt: opts.maybeSentAt, maybeSent: true } : {}),
         },
         dependsOn: tail,
         ...(incomplete ? { status: "incomplete" as const } : {}),
+        ...(opts.clientUuid ? { clientUuid: opts.clientUuid } : {}),
       });
     } catch (e: unknown) {
       for (const up of uploads) await this.outbox.cancel(up.id);
@@ -2633,7 +2655,9 @@ export class ChatOutbox {
     let result: any = null;
     try {
       if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the post waits for the network.");
-      const found = op.attempts > 1 ? await this.findSent(creds, op, { model: CHANNEL_MODEL, resId: channelId }) : null;
+      // A retry, or a post handed over by native code whose send may have reached Odoo, looks for its marker first
+      const searchFirst = op.attempts > 1 || !!op.params.maybeSent;
+      const found = searchFirst ? await this.findSent(creds, op, { model: CHANNEL_MODEL, resId: channelId }) : null;
       if (found) {
         messageId = found.id;
         // The body and parent the server holds, so the message settles on them and not on the pending ones
@@ -4009,8 +4033,9 @@ export class ChatOutbox {
             last_message_id: lastMessageId,
           }));
         if (mentions) {
+          // Bounded to the message read: a mention posted after it stays in the Inbox
           await this.rpc.callKw(creds, "mail.message", "mark_all_as_read", [
-            [["model", "=", CHANNEL_MODEL], ["res_id", "=", channelId]],
+            [["model", "=", CHANNEL_MODEL], ["res_id", "=", channelId], ["id", "<=", lastMessageId]],
           ]);
         }
       } catch (e: unknown) {

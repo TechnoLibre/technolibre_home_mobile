@@ -140,11 +140,13 @@ export class OutboxService {
     dependsOn?: string | null;
     status?: Extract<OutboxStatus, "queued" | "incomplete" | "blocked">;
     lastError?: string | null;
+    /** The op's client uuid when one was drawn before it (a native action's); a new one by default. */
+    clientUuid?: string;
   }): Promise<OutboxOp> {
     const at = this.now().toISOString();
     const op: OutboxOp = {
       id: uuidv4(),
-      clientUuid: uuidv4(),
+      clientUuid: input.clientUuid ?? uuidv4(),
       noteId: input.noteId,
       configId: input.configId,
       kind: input.kind,

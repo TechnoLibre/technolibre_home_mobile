@@ -9,6 +9,7 @@ function fake(maybePurge: any = vi.fn().mockResolvedValue(null)) {
         stopRealtime: vi.fn(),
         attachments: { maybePurge },
         push: { newSession: vi.fn() },
+        pushActions: { start: vi.fn(), drain: vi.fn().mockResolvedValue({ applied: [], kept: [] }) },
     } as any;
 }
 
@@ -27,6 +28,28 @@ describe("ChatLifecycle purge schedule", () => {
         expect(chat.push.newSession).not.toHaveBeenCalled();
         lifecycle.follow(true);
         expect(chat.push.newSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("coming to the foreground drains the native actions once the accounts are loaded", async () => {
+        const chat = fake();
+        let loaded!: () => void;
+        chat.startRealtime.mockReturnValue(new Promise<void>((r) => { loaded = r; }));
+        (new ChatLifecycle(chat) as any).follow(true);
+        await Promise.resolve();
+        expect(chat.pushActions.drain).not.toHaveBeenCalled();
+        loaded();
+        await vi.waitFor(() => expect(chat.pushActions.drain).toHaveBeenCalledTimes(1));
+    });
+
+    it("a failed realtime start still drains, going to the background does not", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const chat = fake();
+        chat.startRealtime.mockRejectedValue(new Error("offline"));
+        const lifecycle = new ChatLifecycle(chat) as any;
+        lifecycle.follow(false);
+        expect(chat.pushActions.drain).not.toHaveBeenCalled();
+        lifecycle.follow(true);
+        await vi.waitFor(() => expect(chat.pushActions.drain).toHaveBeenCalledTimes(1));
     });
 
     it("going to the background does not", () => {

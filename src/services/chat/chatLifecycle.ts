@@ -11,9 +11,12 @@ import type { ChatService } from "./chatService";
  * goes to the background. Coming to the foreground, at the launch too, also
  * lets the attachment cache run its due purge and starts a new session of
  * the closed-app notifications (each account registers again at its next
- * load); the start begins them (ChatPush.start). The bus of an application
- * that is added, edited or deleted stops and starts again on its own, the
- * others left running. Realtime is native only; off a native platform
+ * load); the start begins them (ChatPush.start). Once the accounts are
+ * loaded at that foreground, started or not, the notification actions
+ * native code ended or hands over are drained (ChatPushActions.drain), and
+ * from the start every `actions` event of the plugin drains too. The bus
+ * of an application that is added, edited or deleted stops and starts
+ * again on its own, the others left running. Realtime is native only; off a native platform
  * start() does nothing, while a deleted application's chat data is still
  * erased. The listener lives here, not in ChatService, so that service
  * builds in node without @capacitor/app.
@@ -35,6 +38,7 @@ export class ChatLifecycle {
     if (!Capacitor.isNativePlatform()) return;
     this.native = true;
     this.chat.push.start().catch((e) => console.warn("[chat] push start failed:", e instanceof Error ? e.message : e));
+    this.chat.pushActions.start();
     let reported = false;
     void App.addListener("appStateChange", ({ isActive }) => {
       reported = true;
@@ -53,7 +57,7 @@ export class ChatLifecycle {
     this.active = isActive;
     if (isActive) {
       this.chat.push.newSession();
-      this.startRealtime();
+      this.startRealtime().finally(() => this.drainActions());
       this.chat.attachments?.maybePurge().catch((e) => console.warn("[chat] cache purge failed:", e));
     } else this.chat.stopRealtime();
   }
@@ -104,7 +108,11 @@ export class ChatLifecycle {
     this.chat.startSourceRealtime(configId).catch((e) => console.warn("[chat] realtime start failed:", e));
   }
 
-  private startRealtime(): void {
-    this.chat.startRealtime(nativeTransport).catch((e) => console.warn("[chat] realtime start failed:", e));
+  private startRealtime(): Promise<void> {
+    return this.chat.startRealtime(nativeTransport).catch((e) => console.warn("[chat] realtime start failed:", e));
+  }
+
+  private drainActions(): void {
+    this.chat.pushActions.drain().catch((e) => console.warn("[chat] notification actions not drained:", e instanceof Error ? e.name : e));
   }
 }
