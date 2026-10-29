@@ -4,10 +4,11 @@
  * test can read or preset: the mirror, the ntfy servers, subscriptions,
  * session copies, pending endpoints and shown tags. `failNext` makes the
  * next call of a method reject the way the bridge does; `emitPushOpen`
- * plays a notification tap to the pushOpen listeners.
+ * plays a notification tap to the pushOpen listeners, `emitActions` adds
+ * native actions to the drain and tells the actions listeners.
  */
 import type { PluginListenerHandle } from "@capacitor/core";
-import type { ChatPushNative, PushHealth, PushSettingsMirror } from "../plugins/chatPushPlugin";
+import type { ChatPushEvents, ChatPushNative, NativeAction, PushHealth, PushSettingsMirror } from "../plugins/chatPushPlugin";
 
 export interface FakeChatPushNative extends ChatPushNative {
     calls: { method: string; args: unknown }[];
@@ -28,16 +29,23 @@ export interface FakeChatPushNative extends ChatPushNative {
     notificationsAllowed: boolean;
     /** Fields merged over the default health status() answers. */
     health: Partial<PushHealth>;
+    /** The actions the drain serves until acked, oldest first. */
+    nativeActions: NativeAction[];
     /** The next call of method rejects with "ChatPushPlugin.<method>: <message>". */
     failNext(method: keyof ChatPushNative, message?: string): void;
     emitPushOpen(url: string): void;
+    /** Appends actions to the drain, then fires the actions event. */
+    emitActions(actions: NativeAction[]): void;
     /** Calls of one method, their arguments in order. */
     callsOf(method: keyof ChatPushNative): unknown[];
 }
 
 export function fakeChatPushNative(): FakeChatPushNative {
     const failures = new Map<string, string>();
-    const listeners = new Set<(ev: { url: string }) => void>();
+    const listeners: { [E in keyof ChatPushEvents]: Set<(ev: ChatPushEvents[E]) => void> } = {
+        pushOpen: new Set(),
+        actions: new Set(),
+    };
     let topicSeq = 0;
 
     const record = async (method: keyof ChatPushNative, args?: unknown): Promise<void> => {
@@ -65,12 +73,17 @@ export function fakeChatPushNative(): FakeChatPushNative {
         exempt: false,
         notificationsAllowed: true,
         health: {},
+        nativeActions: [],
 
         failNext(method, message = "refused") {
             failures.set(method, message);
         },
         emitPushOpen(url) {
-            for (const fn of listeners) fn({ url });
+            for (const fn of listeners.pushOpen) fn({ url });
+        },
+        emitActions(actions) {
+            fake.nativeActions.push(...actions);
+            for (const fn of listeners.actions) fn({});
         },
         callsOf(method) {
             return fake.calls.filter((c) => c.method === method).map((c) => c.args);
@@ -190,9 +203,18 @@ export function fakeChatPushNative(): FakeChatPushNative {
         async requestBatteryExemption() {
             await record("requestBatteryExemption");
         },
-        async addListener(_event, fn): Promise<PluginListenerHandle> {
-            listeners.add(fn);
-            return { remove: async () => { listeners.delete(fn); } };
+        async actions() {
+            await record("actions");
+            return [...fake.nativeActions];
+        },
+        async ackActions(o) {
+            await record("ackActions", o);
+            fake.nativeActions = fake.nativeActions.filter((a) => !o.ids.includes(a.id));
+        },
+        async addListener(event, fn): Promise<PluginListenerHandle> {
+            const set = listeners[event] as Set<typeof fn>;
+            set.add(fn);
+            return { remove: async () => { set.delete(fn); } };
         },
     };
     return fake;

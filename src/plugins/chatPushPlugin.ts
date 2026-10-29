@@ -57,6 +57,39 @@ export type PushHealth = {
 };
 
 /**
+ * A notification action that native code ended (done) or hands to the app
+ * (handoff, reason session_expired | refused | ambiguous | stale), as the
+ * drain returns it. text is the reply typed in the notification ("" for the
+ * other kinds), content the reaction; messageId is null when unknown,
+ * sentAt when no send may have reached Odoo; plainSent is true once a send
+ * went without the module's uuid; answer is Odoo's Store answer, if kept.
+ */
+export interface NativeAction {
+    id: string;
+    configId: string;
+    kind: "reply" | "read" | "mute" | "react";
+    state: "done" | "handoff";
+    reason: string | null;
+    channelId: number;
+    messageId: number | null;
+    clientUuid: string;
+    text: string;
+    content: string;
+    createdAt: number;
+    sentAt: number | null;
+    plainSent: boolean;
+    answer: string | null;
+}
+
+/** The plugin's events and what each carries. */
+export interface ChatPushEvents {
+    /** A notification tap while the app runs; kept until a listener takes it. */
+    pushOpen: { url: string };
+    /** A notification action ran natively; nothing carried, the app drains with actions(). */
+    actions: Record<string, never>;
+}
+
+/**
  * The native side of the closed-app chat notifications (ChatPushPlugin).
  * Calls that change state run in the order they are made. A rejection is
  * an Error whose message starts with "ChatPushPlugin.<method>:".
@@ -127,13 +160,18 @@ export interface ChatPushNative {
     batteryExempt(): Promise<{ exempt: boolean }>;
     /** Opens the system list of battery-optimisation exemptions. */
     requestBatteryExemption(): Promise<void>;
-    /** A notification tap while the app runs; the event is kept until a listener takes it. */
-    addListener(event: "pushOpen", fn: (ev: { url: string }) => void): Promise<PluginListenerHandle>;
+    /** The notification actions native code ended or hands over, oldest first; they stay until acked. */
+    actions(): Promise<NativeAction[]>;
+    /** Forgets the drained actions of ids (a pending one stays native code's); the handoff notifications follow. */
+    ackActions(o: { ids: string[] }): Promise<void>;
+    /** pushOpen: a notification tap (kept until taken); actions: a native action ran (not kept). */
+    addListener<E extends keyof ChatPushEvents>(event: E, fn: (ev: ChatPushEvents[E]) => void): Promise<PluginListenerHandle>;
 }
 
-/** The plugin as Capacitor registers it: shown() answers an object, since a native call resolves one. */
-export type ChatPushPluginApi = Omit<ChatPushNative, "shown"> & {
+/** The plugin as Capacitor registers it: shown() and actions() answer an object, since a native call resolves one. */
+export type ChatPushPluginApi = Omit<ChatPushNative, "shown" | "actions"> & {
     shown(): Promise<{ tags: { tag: string }[] }>;
+    actions(): Promise<{ actions: NativeAction[] }>;
 };
 
 function failure(method: string, e: unknown): Error {
@@ -174,6 +212,8 @@ export function createChatPushNative(p: ChatPushPluginApi): ChatPushNative {
         decodeQr: (o) => bridged("decodeQr", () => p.decodeQr(o)),
         batteryExempt: () => bridged("batteryExempt", () => p.batteryExempt()),
         requestBatteryExemption: () => done("requestBatteryExemption", () => p.requestBatteryExemption()),
+        actions: async () => (await bridged("actions", () => p.actions())).actions ?? [],
+        ackActions: (o) => done("ackActions", () => p.ackActions(o)),
         addListener: (event, fn) => p.addListener(event, fn),
     };
 }

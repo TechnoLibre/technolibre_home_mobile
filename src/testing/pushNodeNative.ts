@@ -80,7 +80,7 @@ async function readCheck(url: string, token: string, prefix: string): Promise<st
 }
 
 export function pushNodeNative(): PushNodeNative {
-	const listeners = new Set<(ev: { url: string }) => void>();
+	const listeners = new Set<(ev: never) => void>();
 	const record = (method: string, args?: unknown) => {
 		native.calls.push({ method, args });
 	};
@@ -207,6 +207,13 @@ export function pushNodeNative(): PushNodeNative {
 		},
 		async requestBatteryExemption() {
 			record("requestBatteryExemption");
+		},
+		async actions() {
+			record("actions");
+			return [];
+		},
+		async ackActions(o) {
+			record("ackActions", o);
 		},
 		async addListener(_event, fn): Promise<PluginListenerHandle> {
 			listeners.add(fn);

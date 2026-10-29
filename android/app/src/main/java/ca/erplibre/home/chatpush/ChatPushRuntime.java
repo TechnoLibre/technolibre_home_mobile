@@ -9,7 +9,9 @@ import android.os.PowerManager;
 import android.util.Log;
 import ca.erplibre.home.BuildConfig;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -45,12 +47,19 @@ import org.json.JSONObject;
  * mirror. A pending endpoint (unsubscribe) is therefore queued before the
  * publishSettings that drops its account, and an account whose session was
  * just mirrored is published before or with the next change.
+ *
+ * The notification actions live beside the engine: one ActionStore and one
+ * ActionRunner for the process, shared by ChatActionReceiver, ChatActionJob
+ * and ChatPushJob. A run that ends an action (or hands it to the app)
+ * reaches the actions listener, the plugin's « actions » event while the
+ * app runs; the app drains with actions() and acks with ackActions().
  */
 public final class ChatPushRuntime {
 
     static final String STORE_FILE = "erplibre_chat_push";
     static final String SETTINGS_FILE = "erplibre_chat_push_settings";
     static final String SESSIONS_FILE = "erplibre_chat_push_sessions";
+    static final String ACTIONS_FILE = "erplibre_chat_push_actions";
     static final String KEY_ALIAS = "erplibre_chat_push";
 
     /** Whether this build carries the permanent realtime service; health and the level policy read it. */
@@ -66,6 +75,8 @@ public final class ChatPushRuntime {
     private static ChatPushRuntime instance;
     /** Set while a permanent service of this process runs, between serviceStarted and serviceStopped. */
     private static volatile boolean serviceRunning;
+    /** Told after every action run; set by the plugin while the app runs, null otherwise. */
+    private static volatile Runnable actionsListener;
 
     private final Context context;
     private final PushStore store;
@@ -75,6 +86,8 @@ public final class ChatPushRuntime {
     private final ChatNotifier notifier;
     private final PushEngine.Clock clock;
     private final PushEngine engine;
+    private final ActionStore actions;
+    private final ActionRunner runner;
     private final AtomicLong beatAt = new AtomicLong();
     /** Whether applyRealtime opened the streams. Guarded by this. */
     private boolean realtimeOn;
@@ -102,6 +115,9 @@ public final class ChatPushRuntime {
         engine = new PushEngine(store, settings, sessions, ntfy, new OdooDirect(http), notifier, clock,
                 new ExecutorScheduler(), REALTIME_BUILD);
         engine.setWake(new MessageWake(context));
+        actions = new ActionStore(new PrefsKeyValue(context, ACTIONS_FILE), box, clock::now);
+        // OdooActions derives its own client from http: no replay of a call, its own timeouts
+        runner = new ActionRunner(actions, sessions, settings, new OdooActions(http), clock::now);
     }
 
     /** The process's runtime, built on the first call. */
@@ -124,6 +140,88 @@ public final class ChatPushRuntime {
 
     NativeSessions sessions() {
         return sessions;
+    }
+
+    ActionStore actionStore() {
+        return actions;
+    }
+
+    ActionRunner runner() {
+        return runner;
+    }
+
+    ChatNotifier notifier() {
+        return notifier;
+    }
+
+    // ---- the notification actions ----
+
+    /** Sets who is told after each action run (the plugin's « actions » event); null drops it. */
+    public static void setActionsListener(Runnable listener) {
+        actionsListener = listener;
+    }
+
+    /** Tells the actions listener, if any; its failure stays its own. */
+    static void announceActions() {
+        Runnable l = actionsListener;
+        if (l == null) return;
+        try {
+            l.run();
+        } catch (RuntimeException e) {
+            Log.w(TAG, "actions listener failed: " + e.getClass().getSimpleName());
+        }
+    }
+
+    /** The DONE and HANDOFF actions waiting for the app, oldest first, as ChatAction.toJson writes them. */
+    public JSONArray actions() {
+        JSONArray out = new JSONArray();
+        for (ChatAction a : actions.forDrain()) out.put(a.toJson());
+        return out;
+    }
+
+    /**
+     * Forgets the drained actions among ids (a PENDING or RUNNING one stays
+     * native code's), then redraws the handoff notification of each account
+     * they belonged to: gone once none is left.
+     */
+    public void ackActions(Collection<String> ids) {
+        Set<String> configs = new HashSet<>();
+        for (String id : ids) {
+            ChatAction a = actions.get(id);
+            if (a != null) configs.add(a.configId);
+        }
+        actions.ack(ids);
+        for (String configId : configs) notifier.handoff(configId, actions.handoffCount(configId));
+    }
+
+    /**
+     * What follows one run: a handoff redraws its account's handoff
+     * notification, and the listener is told.
+     */
+    void afterRun(String id, ActionRunner.Outcome o) {
+        if (o == ActionRunner.Outcome.HANDOFF) {
+            ChatAction a = actions.get(id);
+            if (a != null) notifier.handoff(a.configId, actions.handoffCount(a.configId));
+        }
+        announceActions();
+    }
+
+    /**
+     * Turns back the RUNNING actions of a dead process, then runs every due
+     * one (ActionRunner.runDue). Blocks on the network; never on the main
+     * thread.
+     */
+    void runActions() {
+        actions.recover();
+        Map<String, ActionRunner.Outcome> out = runner.runDue();
+        Set<String> handed = new HashSet<>();
+        for (Map.Entry<String, ActionRunner.Outcome> e : out.entrySet()) {
+            if (e.getValue() != ActionRunner.Outcome.HANDOFF) continue;
+            ChatAction a = actions.get(e.getKey());
+            if (a != null) handed.add(a.configId);
+        }
+        for (String configId : handed) notifier.handoff(configId, actions.handoffCount(configId));
+        if (!out.isEmpty()) announceActions();
     }
 
     /**

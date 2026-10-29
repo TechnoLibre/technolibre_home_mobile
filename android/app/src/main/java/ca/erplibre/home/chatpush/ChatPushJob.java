@@ -17,7 +17,9 @@ import java.util.concurrent.Executors;
  * none runs, then runs PushEngine.runPeriod: the poll of levels 2 (off wifi
  * and charger), 3 and 4, and of levels 1 and 2 while their service does not
  * run; the reopening of dead streams; the Odoo-direct checks and the
- * pending unregisters. Level 5 cancels the job.
+ * pending unregisters. Each run then runs the notification actions that
+ * are due, after turning back those of a dead process, and aligns
+ * ChatActionJob with what remains. Level 5 cancels the job.
  *
  * The run blocks on the network, so it goes to a worker thread and ends
  * with jobFinished; the system holds a wakelock until then.
@@ -98,7 +100,14 @@ public class ChatPushJob extends JobService {
         }
         // The start lands later, or never when Android refuses it: this run polls either way
         if (e.permanentService && !ChatPushRuntime.serviceRunning()) RealtimeHost.start(c);
-        ChatPushRuntime.get(c).checkNow();
+        ChatPushRuntime runtime = ChatPushRuntime.get(c);
+        try {
+            runtime.checkNow();
+        } finally {
+            // a failed check never holds back an action
+            runtime.runActions();
+            ChatActionJob.sync(c, runtime.actionStore());
+        }
     }
 
     /** Nothing to resume: the next period runs again. */

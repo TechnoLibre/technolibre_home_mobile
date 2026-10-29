@@ -1,6 +1,8 @@
 package ca.erplibre.home.chatpush;
 
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.function.LongSupplier;
 
 /**
@@ -58,10 +60,12 @@ final class ActionRunner {
         }
     }
 
-    /** Forgets the old DONE records, then runs every due record, oldest first. */
-    void runDue() {
+    /** Forgets the old DONE records, then runs every due record, oldest first; each id's outcome in run order. */
+    Map<String, Outcome> runDue() {
         store.prune();
-        for (ChatAction a : store.due()) run(a.id);
+        Map<String, Outcome> out = new LinkedHashMap<>();
+        for (ChatAction a : store.due()) out.put(a.id, run(a.id));
+        return out;
     }
 
     private Outcome attempt(ChatAction a) {

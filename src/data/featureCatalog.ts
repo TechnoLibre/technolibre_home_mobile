@@ -5620,8 +5620,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         id: "chat.notifications.native",
                         label: { en: "Native ntfy client", fr: "Client ntfy natif" },
                         description: {
-                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication), and the engine: one connection per ntfy, reconnect backoff, Odoo-direct summary, status and health; then the Android side: per-server channels, conversation notifications, tap to open, the plugin and QR decoding; and the permanent service of levels 1 and 2 (left out by -PnoChatRealtime), its 15-minute job, the boot restart, and one permanent notification shared with the SMS gateway.",
-                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage), et le moteur : une connexion par ntfy, reconnexion espacée, sommaire direct d'Odoo, état et santé ; puis le côté Android : canaux par serveur, notifications de conversation, ouverture au toucher, le plugin et le décodage de QR ; et le service permanent des niveaux 1 et 2 (retiré par -PnoChatRealtime), sa tâche aux 15 minutes, la relance au démarrage et une seule notification permanente partagée avec la passerelle SMS.",
+                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication), and the engine: one connection per ntfy, reconnect backoff, Odoo-direct summary, status and health; then the Android side: per-server channels, conversation notifications, tap to open, the reply, mark read, mute and 👍 buttons with their retry job and handoff notification, the plugin and QR decoding; and the permanent service of levels 1 and 2 (left out by -PnoChatRealtime), its 15-minute job, the boot restart, and one permanent notification shared with the SMS gateway.",
+                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage), et le moteur : une connexion par ntfy, reconnexion espacée, sommaire direct d'Odoo, état et santé ; puis le côté Android : canaux par serveur, notifications de conversation, ouverture au toucher, les boutons répondre, marquer lu, muet et 👍 avec leur tâche de reprise et leur notification de relais, le plugin et le décodage de QR ; et le service permanent des niveaux 1 et 2 (retiré par -PnoChatRealtime), sa tâche aux 15 minutes, la relance au démarrage et une seule notification permanente partagée avec la passerelle SMS.",
                         },
                         status: "experimental",
                         howItWorks: {
@@ -5683,6 +5683,9 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "android/app/src/main/java/ca/erplibre/home/chatpush/PushEngine.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ChatNotifier.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushOpen.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatActionIntent.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatActionReceiver.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatActionJob.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushRuntime.java",
                             "android/app/src/main/java/ca/erplibre/home/ChatPushPlugin.java",
                             "android/app/src/main/java/ca/erplibre/home/BatteryExemption.java",
@@ -5698,8 +5701,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         id: "chat.notifications.settings",
                         label: { en: "Notification bridge", fr: "Pont des notifications" },
                         description: {
-                            en: "TypeScript bridge to the native chat push (settings mirror, ntfy servers, subscriptions, session copies, health, tap to open, QR decoding), the per-account ntfy (setup link, registration with Odoo, unregistering on removal), and the settings screen: levels, link by QR or paste, lock screen, live status, the « not listening » banner in the chat list, opening from a tap.",
-                            fr: "Pont TypeScript vers la poussée native du clavardage (miroir des réglages, serveurs ntfy, abonnements, copies de session, santé, ouverture au toucher, décodage de QR), le ntfy par compte (lien de configuration, enregistrement auprès d'Odoo, désinscription au retrait) et l'écran de réglages : niveaux, lien par QR ou collé, écran verrouillé, état en direct, bandeau « le téléphone n'écoute pas » dans la liste, ouverture au toucher.",
+                            en: "TypeScript bridge to the native chat push (settings mirror, ntfy servers, subscriptions, session copies, health, tap to open, the drain of notification actions, QR decoding), the per-account ntfy (setup link, registration with Odoo, unregistering on removal), and the settings screen: levels, link by QR or paste, lock screen, live status, the « not listening » banner in the chat list, opening from a tap.",
+                            fr: "Pont TypeScript vers la poussée native du clavardage (miroir des réglages, serveurs ntfy, abonnements, copies de session, santé, ouverture au toucher, relève des actions des notifications, décodage de QR), le ntfy par compte (lien de configuration, enregistrement auprès d'Odoo, désinscription au retrait) et l'écran de réglages : niveaux, lien par QR ou collé, écran verrouillé, état en direct, bandeau « le téléphone n'écoute pas » dans la liste, ouverture au toucher.",
                         },
                         status: "experimental",
                         howItWorks: {

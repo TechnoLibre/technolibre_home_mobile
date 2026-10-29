@@ -21,6 +21,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -52,12 +53,22 @@ import ca.erplibre.home.chatpush.ChatPushRuntime;
  * running activity is emitted as event pushOpen {url} (kept until a
  * listener takes it); one that launched the activity is read by
  * takeLaunchUrl.
+ *
+ * While the plugin is loaded, every run of a notification action is
+ * emitted as event actions {} (not kept): the app then drains with
+ * actions and acks what it took with ackActions.
  */
 @CapacitorPlugin(name = "ChatPushPlugin")
 public class ChatPushPlugin extends Plugin {
 
     private final ExecutorService serial = Executors.newSingleThreadExecutor();
     private final ExecutorService work = Executors.newSingleThreadExecutor();
+
+    @Override
+    public void load() {
+        super.load();
+        ChatPushRuntime.setActionsListener(() -> notifyListeners("actions", new JSObject()));
+    }
 
     @Override
     protected void handleOnResume() {
@@ -90,6 +101,7 @@ public class ChatPushPlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
+        ChatPushRuntime.setActionsListener(null);
         serial.shutdown();
         work.shutdown();
         super.handleOnDestroy();
@@ -244,6 +256,28 @@ public class ChatPushPlugin extends Plugin {
             JSObject out = new JSObject();
             out.put("tags", tags);
             c.resolve(out);
+        });
+    }
+
+    /** The DONE and HANDOFF notification actions waiting for the app: {actions: [NativeAction...]}. */
+    @PluginMethod
+    public void actions(PluginCall call) {
+        on(serial, call, "actions", c -> {
+            JSObject out = new JSObject();
+            out.put("actions", runtime().actions());
+            c.resolve(out);
+        });
+    }
+
+    /** Forgets the drained actions of ids; the handoff notifications follow. */
+    @PluginMethod
+    public void ackActions(PluginCall call) {
+        on(serial, call, "ackActions", c -> {
+            JSArray ids = c.getArray("ids", new JSArray());
+            List<String> list = new ArrayList<>();
+            for (int i = 0; i < ids.length(); i++) list.add(ids.getString(i));
+            runtime().ackActions(list);
+            c.resolve();
         });
     }
 

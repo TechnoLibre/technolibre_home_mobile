@@ -198,6 +198,24 @@ final class ActionStore {
         }
     }
 
+    /**
+     * When native code has work next: the earliest nextAt of the PENDING records, at most
+     * now + FIRST_RETRY_MS while a record is RUNNING (its run may die with its process, and recover() then
+     * needs a later run); 0 when there is none.
+     */
+    long wakeAt() {
+        long now = clock.getAsLong();
+        long at = 0;
+        for (ChatAction a : all()) {
+            long t;
+            if (a.state == ChatAction.State.PENDING) t = a.nextAt;
+            else if (a.state == ChatAction.State.RUNNING) t = now + FIRST_RETRY_MS;
+            else continue;
+            if (at == 0 || t < at) at = t;
+        }
+        return at;
+    }
+
     /** The account's actions waiting for the app. */
     int handoffCount(String configId) {
         int n = 0;

@@ -252,6 +252,34 @@ final class NotificationModel {
         return out;
     }
 
+    static String handoffTag(String configId) {
+        return "handoff:" + configId;
+    }
+
+    /**
+     * The server's actions waiting for the app: « Ouvrez l'app pour terminer
+     * une action — server » or « … n actions … », no message content, so
+     * public; on the server's chat channel, outside its group (the summary
+     * does not count it), one per server under handoffTag, opening the
+     * conversation list. No action button.
+     */
+    static Shown handoff(AccountView a, int count, PushStrings s) {
+        Shown out = new Shown();
+        out.configId = a.configId;
+        out.channelId = chatChannelId(a.configId);
+        out.tag = handoffTag(a.configId);
+        String text = count == 1
+                ? s.format("handoff_one", Collections.singletonMap("server", a.label))
+                : s.format("handoff", twoVars("n", String.valueOf(count), "server", a.label));
+        out.conversationTitle = a.label.isEmpty() ? text : a.label;
+        out.text = text;
+        out.publicTitle = text;
+        out.openUrl = "/chat";
+        out.messaging = false;
+        out.privateVisibility = false;
+        return out;
+    }
+
     private static Shown base(AccountView a, String channelId, String tag) {
         Shown out = new Shown();
         out.configId = a.configId;

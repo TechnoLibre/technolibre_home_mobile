@@ -10,6 +10,8 @@ import android.provider.Settings;
 import android.service.notification.StatusBarNotification;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.Person;
+import androidx.core.app.RemoteInput;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -29,7 +31,16 @@ import java.util.function.Consumer;
  * deletes its channels and their notifications.
  *
  * The Notifier methods run with the engine's monitor held: they only talk
- * to Android and read the mirrored strings, never call the engine.
+ * to Android and read the mirrored strings, never call the engine. The
+ * methods that read a drawn notification back and post it again hold this
+ * object's monitor, so an action's update and a new message never post
+ * from the same stale copy.
+ *
+ * A chat notification offers its actions (« Répondre », « Marquer lu »,
+ * « Muet 1 h », « 👍 ») as buttons whose broadcasts ChatActionIntent builds;
+ * they ask for an unlocked device except on an « always » server. 👍 needs
+ * the newest stacked message's id. Every re-post keeps the when of the
+ * send time it was drawn with: inbox_done compares it.
  */
 final class ChatNotifier implements PushEngine.Notifier {
 
@@ -37,6 +48,9 @@ final class ChatNotifier implements PushEngine.Notifier {
 
     /** long[]: the message ids of a chat notification's stack, in order, 0 for a message without id. */
     static final String EXTRA_MESSAGE_IDS = "erplibre.message_ids";
+
+    /** String[]: the ActionKind names a chat notification offers, so a re-post offers them again. */
+    static final String EXTRA_ACTIONS = "erplibre.actions";
 
     private final Context context;
     private final NotificationManager manager;
@@ -107,7 +121,7 @@ final class ChatNotifier implements PushEngine.Notifier {
      * and SECRET again.
      */
     @Override
-    public void show(NotificationModel.Shown n) {
+    public synchronized void show(NotificationModel.Shown n) {
         if (manager == null) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager.getNotificationChannel(n.channelId) == null) {
             syncChannels(settings.accounts(), settings.strings());
@@ -150,7 +164,10 @@ final class ChatNotifier implements PushEngine.Notifier {
                     && prevIds[prevIds.length - 1] == n.messageId;
             ids = replay ? prevIds : extended(prevIds, n.messageId);
         }
-        if (chat) b.getExtras().putLongArray(EXTRA_MESSAGE_IDS, ids);
+        if (chat) {
+            b.getExtras().putLongArray(EXTRA_MESSAGE_IDS, ids);
+            setActions(b, n.tag, ids, when, n.actions);
+        }
         if (n.privateVisibility) {
             b.setPublicVersion(new NotificationCompat.Builder(context, n.channelId)
                     .setSmallIcon(android.R.drawable.stat_notify_chat)
@@ -186,7 +203,7 @@ final class ChatNotifier implements PushEngine.Notifier {
      * lock-screen visibility decided again.
      */
     @Override
-    public void trimRead(String tag, long lastMessageId) {
+    public synchronized void trimRead(String tag, long lastMessageId) {
         if (manager == null) return;
         StatusBarNotification sbn = drawn(tag);
         if (sbn == null) return;
@@ -202,18 +219,94 @@ final class ChatNotifier implements PushEngine.Notifier {
             return;
         }
         if (kept.length == stack.length) return;
-        NotificationCompat.Builder b = new NotificationCompat.Builder(context, old);
+        NotificationCompat.MessagingStyle trimmed = null;
         if (style != null) {
             List<NotificationCompat.MessagingStyle.Message> messages = style.getMessages();
-            NotificationCompat.MessagingStyle trimmed = new NotificationCompat.MessagingStyle(style.getUser());
+            trimmed = new NotificationCompat.MessagingStyle(style.getUser());
             trimmed.setConversationTitle(style.getConversationTitle());
             trimmed.setGroupConversation(style.isGroupConversation());
             for (int i = 0; i < messages.size(); i++) {
                 if (NotificationModel.keptAfterRead(stack[i], lastMessageId)) trimmed.addMessage(messages.get(i));
             }
-            b.setStyle(trimmed);
         }
-        b.getExtras().putLongArray(EXTRA_MESSAGE_IDS, kept);
+        repost(tag, old, trimmed, kept, offered(old, kept));
+    }
+
+    /**
+     * After « Répondre »: the reply appended to the conversation tagged tag
+     * as the user's own message (no id, so the next read push trims it),
+     * silently, the actions kept. A « Jamais affiché » notification, or one
+     * of a server now « never », is re-posted silently unchanged: the text
+     * never shows there. A blank text re-posts unchanged too. Nothing when
+     * the tag is not drawn.
+     */
+    synchronized void appendOwnReply(String tag, String text) {
+        if (manager == null) return;
+        StatusBarNotification sbn = drawn(tag);
+        if (sbn == null) return;
+        Notification old = sbn.getNotification();
+        long[] ids = old.extras.getLongArray(EXTRA_MESSAGE_IDS);
+        NotificationCompat.MessagingStyle style =
+                NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(old);
+        AccountView a = settings.account(configOf(tag));
+        boolean hidden = a != null && a.lockScreen == LockScreenMode.NEVER;
+        if (style == null || hidden || text == null || text.trim().isEmpty()) {
+            long[] same = ids == null ? new long[0] : ids;
+            repost(tag, old, null, same, offered(old, same));
+            return;
+        }
+        long[] stack = extended(aligned(ids, style.getMessages().size()), 0);
+        style.addMessage(new NotificationCompat.MessagingStyle.Message(text, System.currentTimeMillis(),
+                (Person) null));
+        long[] kept = aligned(stack, style.getMessages().size());
+        repost(tag, old, style, kept, offered(old, kept));
+    }
+
+    /** After « 👍 »: the conversation tagged tag re-posted silently without « 👍 ». */
+    synchronized void withoutReact(String tag) {
+        if (manager == null) return;
+        StatusBarNotification sbn = drawn(tag);
+        if (sbn == null) return;
+        Notification old = sbn.getNotification();
+        long[] ids = old.extras.getLongArray(EXTRA_MESSAGE_IDS);
+        EnumSet<ActionKind> kinds = offered(old, ids);
+        kinds.remove(ActionKind.REACT);
+        repost(tag, old, null, ids == null ? new long[0] : ids, kinds);
+    }
+
+    /**
+     * The server's handoff notification, tag "handoff:&lt;configId&gt;" on
+     * its chat channel: « Ouvrez l'app pour terminer une action — server »
+     * (or n actions), no message content, public, alerting only when first
+     * drawn, opening the conversation list. A count of 0 cancels it.
+     */
+    synchronized void handoff(String configId, int count) {
+        if (manager == null) return;
+        String tag = NotificationModel.handoffTag(configId);
+        if (count <= 0) {
+            cancel(tag);
+            return;
+        }
+        AccountView a = settings.account(configId);
+        if (a == null) return;
+        NotificationModel.Shown n = NotificationModel.handoff(a, count, settings.strings());
+        n.silent = drawn(tag) != null;
+        show(n);
+    }
+
+    /**
+     * Posts old again under tag, silently: style when given (else old's), ids
+     * as its message ids, the actions of kinds rebuilt for the newest id, its
+     * when kept, its lock-screen visibility decided again for the redaction
+     * read now.
+     */
+    private void repost(String tag, Notification old, NotificationCompat.Style style, long[] ids,
+            EnumSet<ActionKind> kinds) {
+        NotificationCompat.Builder b = new NotificationCompat.Builder(context, old);
+        if (style != null) b.setStyle(style);
+        b.setWhen(old.when).setShowWhen(true);
+        b.getExtras().putLongArray(EXTRA_MESSAGE_IDS, ids);
+        setActions(b, tag, ids, old.when, kinds);
         if (old.visibility != Notification.VISIBILITY_PUBLIC) {
             boolean shownPublic = old.publicVersion != null
                     && redaction() == NotificationModel.Redaction.HIDDEN;
@@ -221,6 +314,133 @@ final class ChatNotifier implements PushEngine.Notifier {
         }
         b.setOnlyAlertOnce(true).setSilent(true);
         manager.notify(tag, ID, b.build());
+    }
+
+    /**
+     * The actions old offers (EXTRA_ACTIONS); a chat notification drawn
+     * without that extra offers the lot-2 set, 👍 when the newest id is known.
+     */
+    private static EnumSet<ActionKind> offered(Notification old, long[] ids) {
+        EnumSet<ActionKind> out = EnumSet.noneOf(ActionKind.class);
+        String[] names = old.extras.getStringArray(EXTRA_ACTIONS);
+        if (names == null) {
+            out.add(ActionKind.REPLY);
+            out.add(ActionKind.READ);
+            out.add(ActionKind.MUTE);
+            out.add(ActionKind.REACT);
+            return out;
+        }
+        for (String name : names) {
+            try {
+                out.add(ActionKind.valueOf(name));
+            } catch (IllegalArgumentException e) {
+                // a kind of another version: not offered
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Replaces b's actions by kinds on the conversation tagged tag ("chat:
+     * &lt;configId&gt;:&lt;channelId&gt;"), the newest entry of ids naming
+     * the message (👍 is left out when it is 0) and when (epoch ms) bounding
+     * mark read. Records the kinds offered under EXTRA_ACTIONS.
+     */
+    private void setActions(NotificationCompat.Builder b, String tag, long[] ids, long when,
+            EnumSet<ActionKind> kinds) {
+        b.clearActions();
+        NotificationModel.Shown target = targetOf(tag, ids, when);
+        EnumSet<ActionKind> offer = kinds == null || target == null
+                ? EnumSet.noneOf(ActionKind.class) : EnumSet.copyOf(kinds);
+        if (target == null || target.messageId <= 0) offer.remove(ActionKind.REACT);
+        String[] names = new String[offer.size()];
+        int i = 0;
+        for (ActionKind k : offer) names[i++] = k.name();
+        b.getExtras().putStringArray(EXTRA_ACTIONS, names);
+        if (offer.isEmpty()) return;
+        AccountView a = settings.account(target.configId);
+        boolean unlock = a == null || a.lockScreen != LockScreenMode.ALWAYS;
+        PushStrings s = settings.strings();
+        for (ActionKind k : offer) {
+            NotificationCompat.Action.Builder ab = new NotificationCompat.Action.Builder(iconOf(k), labelOf(k, s),
+                    ChatActionIntent.pending(context, target, k))
+                    .setShowsUserInterface(false)
+                    .setAuthenticationRequired(unlock);
+            switch (k) {
+                case REPLY:
+                    ab.addRemoteInput(new RemoteInput.Builder(ChatActionIntent.KEY_REPLY)
+                                    .setLabel(s.get("action_reply_hint")).build())
+                            .setAllowGeneratedReplies(false)
+                            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY);
+                    break;
+                case READ:
+                    ab.setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MARK_AS_READ);
+                    break;
+                case MUTE:
+                    ab.setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MUTE);
+                    break;
+                default:
+                    ab.setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_THUMBS_UP);
+                    break;
+            }
+            b.addAction(ab.build());
+        }
+    }
+
+    /**
+     * The action target of the conversation tagged tag: its account and
+     * channel from the tag, the newest entry of ids as message, when as the
+     * send time; null for a tag that is not a conversation's.
+     */
+    static NotificationModel.Shown targetOf(String tag, long[] ids, long when) {
+        String config = configOf(tag);
+        if (config == null) return null;
+        long channel;
+        try {
+            channel = Long.parseLong(tag.substring(tag.lastIndexOf(':') + 1));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        NotificationModel.Shown t = new NotificationModel.Shown();
+        t.tag = tag;
+        t.configId = config;
+        t.discussChannelId = channel;
+        t.messageId = ids == null || ids.length == 0 ? 0 : Math.max(0, ids[ids.length - 1]);
+        t.at = when;
+        return t;
+    }
+
+    /** The configId of a "chat:&lt;configId&gt;:&lt;channelId&gt;" tag, or null. */
+    static String configOf(String tag) {
+        if (tag == null || !tag.startsWith("chat:")) return null;
+        int last = tag.lastIndexOf(':');
+        return last <= 5 ? null : tag.substring(5, last);
+    }
+
+    private static int iconOf(ActionKind k) {
+        switch (k) {
+            case REPLY:
+                return android.R.drawable.ic_menu_send;
+            case READ:
+                return android.R.drawable.ic_menu_view;
+            case MUTE:
+                return android.R.drawable.ic_lock_silent_mode;
+            default:
+                return android.R.drawable.star_on;
+        }
+    }
+
+    private static String labelOf(ActionKind k, PushStrings s) {
+        switch (k) {
+            case REPLY:
+                return s.get("action_reply");
+            case READ:
+                return s.get("action_mark_read");
+            case MUTE:
+                return s.get("action_mute");
+            default:
+                return s.get("action_react");
+        }
     }
 
     /** Most messages a stack keeps, as MessagingStyle does: its ids array stays aligned on them. */

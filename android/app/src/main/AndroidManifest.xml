@@ -150,6 +150,19 @@
             android:permission="android.permission.BIND_JOB_SERVICE"
             android:exported="false" />
 
+        <!-- Réessaie les actions des notifications du clavardage (répondre,
+             marquer lu, muet, pouce) restées en attente, application fermée. -->
+        <service
+            android:name=".chatpush.ChatActionJob"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
+
+        <!-- Les boutons des notifications du clavardage : non exporté, seules
+             les PendingIntent explicites de l'app l'atteignent. -->
+        <receiver
+            android:name=".chatpush.ChatActionReceiver"
+            android:exported="false" />
+
         <!-- Reapplique le niveau des notifications du clavardage apres un
              redemarrage ou une mise a jour : la mise a jour arrete le service
              permanent sans le relancer. -->
