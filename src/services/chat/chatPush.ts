@@ -330,9 +330,12 @@ export class ChatPush {
    * follows.
    *
    * When the bound comes before the queue reached the task, the row is
-   * read then and the promise settles: the caller may erase the row, and
-   * the task, once it runs, starts no unregister and hands every endpoint
-   * of that reading and of the row left, if any, to native code.
+   * read then, each of its endpoints is handed to native code at once
+   * (native calls run in the order they are made, so a mirror queued
+   * ahead cannot drop the account before its endpoints are pending), and
+   * the promise settles: the caller may erase the row, and the task, once
+   * it runs, starts no unregister and hands to native code every endpoint
+   * of the row left, if any, not handed yet.
    */
   forget(configId: string): Promise<void> {
     const native = this.native;
@@ -340,6 +343,7 @@ export class ChatPush {
     const bound = boundOf(UNREGISTER_BOUND_MS);
     let started = false;
     let early: ChatPushRow | null = null;
+    const handed = new Set<string>();
     const task = this.run(async () => {
       started = true;
       try {
@@ -352,7 +356,7 @@ export class ChatPush {
         if (endpoints.length > 0 && src && !bound.expired() && (await this.isOnline())) {
           pending = await this.unregisterWithin(src, endpoints, bound);
         }
-        await this.letGo(native, configId, pending, ntfyUrl);
+        await this.letGo(native, configId, pending, ntfyUrl, handed);
       } finally {
         bound.cancel();
       }
@@ -360,17 +364,29 @@ export class ChatPush {
     const handoff = bound.reached.then(async () => {
       if (started) return task;
       early = await this.repo.pushRow(configId);
+      for (const endpoint of withEndpoint(early.staleEndpoints, early.endpoint)) {
+        handed.add(endpoint);
+        await native.unsubscribe({ configId, pendingEndpoint: endpoint });
+      }
     });
     return Promise.race([task, handoff]);
   }
 
-  /** The rest of forget, inside the queue: native code lets the account go, then its row, its ntfy and the mirror. */
-  private async letGo(native: ChatPushNative, configId: string, pending: string[], ntfyUrl: string | null): Promise<void> {
+  /**
+   * The rest of forget, inside the queue: native code lets the account go
+   * (each endpoint of pending not in handed is handed to it), then its row,
+   * its ntfy and the mirror.
+   */
+  private async letGo(
+    native: ChatPushNative, configId: string, pending: string[], ntfyUrl: string | null, handed: Set<string>,
+  ): Promise<void> {
     if (pending.length === 0) {
       await native.unsubscribe({ configId, pendingEndpoint: null });
       await native.forgetSession({ configId });
     } else {
-      for (const endpoint of pending) await native.unsubscribe({ configId, pendingEndpoint: endpoint });
+      for (const endpoint of pending) {
+        if (!handed.has(endpoint)) await native.unsubscribe({ configId, pendingEndpoint: endpoint });
+      }
     }
     this.done.delete(configId);
     this.failures.delete(configId);

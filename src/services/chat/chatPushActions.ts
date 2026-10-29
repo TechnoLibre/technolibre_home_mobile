@@ -9,7 +9,7 @@ import { parseStore } from "./chatStore";
 /** How long the mute button of a notification mutes, from the tap (ActionRunner.MUTE_MS). */
 export const NOTIFICATION_MUTE_MS = 60 * 60_000;
 
-/** After this long from its tap, a record that still fails to apply is dropped (ActionStore.STALE_MS). */
+/** After this long from its tap, a record that still fails to apply online is dropped (ActionStore.STALE_MS). */
 export const DRAIN_STALE_MS = 24 * 3600_000;
 
 /** What a drain did: the ids it applied (then acked) and those it kept for the next drain. */
@@ -49,8 +49,9 @@ const errorName = (e: unknown): string => (e instanceof Error ? e.name : typeof 
  * An action of an account no longer a chat source is acked and dropped.
  * One that fails to apply (offline before its message is cached, a queue
  * error) is kept and tried again at the next drain, unless Odoo refused it
- * for good (isRefused) or DRAIN_STALE_MS passed since its tap: then it is
- * acked and dropped, as native code gives up. The applied ids are
+ * for good (isRefused), or it failed while online once DRAIN_STALE_MS
+ * passed since its tap: then it is acked and dropped, as native code gives
+ * up. Offline, however old, it is kept. The applied ids are
  * acked once all records ran; the accounts a handoff queued for are then
  * flushed.
  */
@@ -129,7 +130,8 @@ export class ChatPushActions {
         else if (await this.applyHandoff(src, a)) queued.set(src.configId, src);
         result.applied.push(a.id);
       } catch (e: unknown) {
-        if (isRefused(e) || this.now().getTime() - a.createdAt >= DRAIN_STALE_MS) {
+        const stale = this.now().getTime() - a.createdAt >= DRAIN_STALE_MS;
+        if (isRefused(e) || (stale && (await this.chat.isOnline()))) {
           result.applied.push(a.id);
           console.warn(`[chat push] ${a.kind} action dropped:`, errorName(e));
         } else {

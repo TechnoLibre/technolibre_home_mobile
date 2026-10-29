@@ -47,9 +47,10 @@ export const CHAT_NOTE = "chat";
  * idempotentUpload?, reuploaded? }. maybeSent: a send of the post may have
  * reached Odoo before the op existed (a notification's reply handed over
  * by native code), so its first attempt already looks for the marker.
- * plainText: the body converts no emoticon, as native code's. mentions: the people and channels picked, the body and
- * the post's partner_ids and special_mentions built from them and the text
- * at each send (composeBody); parent: the message it replies to, its
+ * plainText: the body converts no emoticon, as native code's. mentions:
+ * the people and channels picked, the body and the post's partner_ids and
+ * special_mentions built from them and the text at each send
+ * (composeBody); parent: the message it replies to, its
  * server id read at the send. files: the local uuids of its files in pick
  * order (their rows carry the post's client uuid); idempotentUpload:
  * whether their uploads take the module route (module 1.2); reuploaded:

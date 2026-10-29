@@ -196,7 +196,8 @@ describe("ChatPush", () => {
   const credsOf = (t: typeof A): SyncCredentials => ({ odooUrl: t.url, username: t.username, password: t.password, database: t.database });
   const storeSession = (t: typeof A, sessionId: string) => SecureStoragePlugin.set({
     key: syncSessionKey(credsOf(t)),
-    value: JSON.stringify({ sessionId, odooMajorVersion: 18, createdAt: clock.toISOString() }),
+    // The session's age is checked against the real clock, not the test's
+    value: JSON.stringify({ sessionId, odooMajorVersion: 18, createdAt: new Date().toISOString() }),
   });
   const lastMirror = () => native.settings as PushSettingsMirror;
   const indexOf = (method: string, test: (args: any) => boolean = () => true) =>
@@ -433,7 +434,8 @@ describe("ChatPush", () => {
     expect(forgotten).toBe(false);
     await vi.advanceTimersByTimeAsync(100);
     await done;
-    expect(native.callsOf("unsubscribe")).toEqual([]);
+    // At the bound the endpoint is already native code's: no publish queued ahead can drop the account first
+    expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[1], pendingEndpoint: `${NTFY}/upab12cd34fake2` }]);
     // The delete goes on: the account's rows are erased while the queue still waits
     await chat.repo.dropSource(ids[1]);
     await vi.advanceTimersByTimeAsync(PUSH_RPC_TIMEOUT_MS);
@@ -444,6 +446,8 @@ describe("ChatPush", () => {
     expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[1], pendingEndpoint: `${NTFY}/upab12cd34fake2` }]);
     expect(native.callsOf("forgetSession")).toEqual([]);
     expect(lastMirror().accounts.map((a) => a.configId)).toEqual([ids[0]]);
+    const drop = indexOf("publishSettings", (o) => !o.accounts.some((a: any) => a.configId === ids[1]));
+    expect(indexOf("unsubscribe")).toBeLessThan(drop);
   });
 
   describe("module 1.5", () => {
