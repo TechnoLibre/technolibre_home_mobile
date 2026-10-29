@@ -291,6 +291,70 @@ export function copyDirToBundle(
     }
 }
 
+/**
+ * Directory names the workspace bundle (section 1b) never enters, at any
+ * depth: heavy or redundant subtrees, and private/, which may be versioned
+ * on a private fork but is never shipped.
+ */
+const SKIP_WS_DIRS = new Set([
+    "addons",      // bundled per-repo as tar.gz
+    "mobile",      // this app — already in /repo/
+    "node_modules",
+    "dist", "build", "coverage",
+    "private",     // sensitive, versioned or not
+    ".repo", ".git",
+    "cache",
+]);
+
+/**
+ * Unversioned top-level directories of the workspace, left out by name when
+ * git cannot list what it tracks: investigation notes and their captures.
+ */
+const UNVERSIONED_WS_DIRS = new Set(["tasks", ".superpowers"]);
+
+/**
+ * The paths git tracks under root (its index), with every directory that
+ * holds one, relative to root with "/" separators; null when git cannot
+ * answer (no repository, no git).
+ */
+export function gitTrackedPaths(root: string): Set<string> | null {
+    let listed: string;
+    try {
+        listed = execFileSync("git", ["-C", root, "ls-files", "-z", "--cached"], {
+            encoding: "utf8",
+            maxBuffer: 256 * 1024 * 1024,
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+    } catch {
+        return null;
+    }
+    const tracked = new Set<string>();
+    for (const file of listed.split("\0")) {
+        if (!file) continue;
+        tracked.add(file);
+        for (let i = file.indexOf("/"); i >= 0; i = file.indexOf("/", i + 1)) {
+            tracked.add(file.slice(0, i));
+        }
+    }
+    return tracked;
+}
+
+/**
+ * The skip function of the workspace walk: SKIP_WS_DIRS, the venvs and the
+ * Odoo trees always; then, with tracked (gitTrackedPaths), every path git
+ * does not track — ignored or not yet added — so the APK carries versioned
+ * files only; without it, the UNVERSIONED_WS_DIRS at the top.
+ */
+export function workspaceSkip(tracked: Set<string> | null): (relBase: string, name: string) => boolean {
+    return (relBase: string, name: string): boolean => {
+        if (SKIP_WS_DIRS.has(name)) return true;
+        if (name.startsWith(".venv")) return true;
+        if (/^odoo\d+\.\d+/.test(name)) return true;
+        if (tracked) return !tracked.has(relBase ? `${relBase}/${name}` : name);
+        return relBase === "" && UNVERSIONED_WS_DIRS.has(name);
+    };
+}
+
 // ── XML manifest parser ───────────────────────────────────────────────────────
 
 export function parseManifestXml(xml: string): {
@@ -440,8 +504,9 @@ function bundleSourcePlugin(): Plugin {
             const skipRepos = process.env["BUNDLE_SKIP_REPOS"] === "1";
 
             // ── 1b. Workspace root bundle (src/public/erplibre/) ──────────
-            // The full ERPLibre workspace as seen from /home/.../erplibre01/,
-            // minus the obvious heavy / redundant subtrees:
+            // The files git tracks in the ERPLibre workspace (workspaceSkip:
+            // nothing ignored or unversioned, such as tasks/ or a local
+            // config), minus the obvious heavy / redundant subtrees:
             //   addons/      already in src/public/repos/{slug}.tar.gz
             //   mobile/      this app, already in src/public/repo/
             //   .venv*/      Python venvs
@@ -466,21 +531,7 @@ function bundleSourcePlugin(): Plugin {
                 };
                 const erplibreT0 = Date.now();
 
-                const SKIP_WS_DIRS = new Set([
-                    "addons",      // bundled per-repo as tar.gz
-                    "mobile",      // this app — already in /repo/
-                    "node_modules",
-                    "dist", "build", "coverage",
-                    "private",     // not versioned, sensitive
-                    ".repo", ".git",
-                    "cache",
-                ]);
-                const skipWsFn = (_relBase: string, name: string): boolean => {
-                    if (SKIP_WS_DIRS.has(name)) return true;
-                    if (name.startsWith(".venv")) return true;
-                    if (/^odoo\d+\.\d+/.test(name)) return true;
-                    return false;
-                };
+                const skipWsFn = workspaceSkip(gitTrackedPaths(workspaceRoot));
 
                 const inRepos = manifestProjectPathsOnDisk(manifestPath, skipRepos);
                 copyDirToBundle(
