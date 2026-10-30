@@ -130,11 +130,13 @@ const recordSendKey = (configId: string, thread: RecordThread): string => `${con
  * notification applied raises to its own; stored, it holds across
  * restarts. A channel's unread and mention counters carry their own bus id
  * marks, as Odoo's records do: a load writes them 0, its read being as of
- * counterBusId; a bus value older than the mark or than counterBusId is not
- * taken, and the mark follows the one taken; a local change is made only by
- * a notification above both. So a notification replayed after a load or a
- * restart is never counted twice and never rolls a counter back. Records (messages, members,
- * partners) are upserts and are always applied.
+ * counterBusId. A notification at or below counterBusId brings no counter;
+ * a later one's counter is taken unless its own bus id, which Odoo stamps
+ * below the notification's id, is older than the mark, and the mark
+ * follows the one taken; a local change is made only by a notification
+ * above both. So a notification replayed after a load or a restart is
+ * never counted twice and never rolls a counter back. Records (messages,
+ * members, partners) are upserts and are always applied.
  *
  * The writers of server counters of one account (load, a history page, a
  * bus delivery) run one at a time, each from its server read to its last
@@ -2218,9 +2220,9 @@ export class ChatService {
    * and without its type (a pin flag, a counter) is left out: it would make
    * an empty conversation. A channel counter is taken only with a bus id
    * not older than the stored one (see ChatRepository.applyDelta). Not
-   * `fresh` (at or below counterBusId), a cached channel keeps its pin:
-   * the load after that bus id read it, and a replay must not show a
-   * hidden direct message again.
+   * `fresh` (at or below counterBusId), no channel counter is taken and a
+   * cached channel keeps its pin: the load after that bus id read both,
+   * and a replay must not show a hidden direct message again.
    */
   private async applyStore(configId: string, result: any, fresh: boolean): Promise<StoreDelta> {
     const delta = parseStore(result, configId, await this.selfOf(configId));
@@ -2231,6 +2233,15 @@ export class ChatService {
       if (c.channelType !== undefined || cached) kept.push(c);
     }
     delta.channels = kept;
+    // A replay's counters are older than the load that set counterBusId, whatever their own stamp
+    if (!fresh) {
+      for (const c of delta.channels) {
+        delete c.unreadCounter;
+        delete c.unreadCounterBusId;
+        delete c.needactionCounter;
+        delete c.needactionCounterBusId;
+      }
+    }
     // A replayed starred box (a delete's _cleanup_side_records) is older than the load that set the counter
     if (!fresh) delete delta.starredCounter;
     // The user's reactions still to be sent win over the server's older groups

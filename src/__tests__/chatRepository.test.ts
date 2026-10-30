@@ -306,13 +306,14 @@ describe("ChatRepository", () => {
     expect(await repo.channel(B, 7)).toMatchObject({ unreadCounter: 3, unreadCounterBusId: 0, needactionCounter: 3, needactionCounterBusId: 0 });
   });
 
-  it("a bus counter below the account's counterBusId is not taken over a mark of 0", async () => {
+  it("a bus counter is compared with the row's mark only, not with counterBusId", async () => {
     await repo.applyDelta(A, delta({ channels: [{ channelId: 7, channelType: "group", unreadCounter: 1, unreadCounterBusId: 0, needactionCounter: 1, needactionCounterBusId: 0 }] }));
     await repo.setSourceState({ configId: A, counterBusId: 31 });
+    // Odoo stamps a counter below the id of the notification carrying it, which may be below counterBusId
     await repo.applyDelta(A, delta({ channels: [{ channelId: 7, unreadCounter: 5, unreadCounterBusId: 29, needactionCounter: 5, needactionCounterBusId: 29 }] }), { fromBus: true });
-    expect(await repo.channel(A, 7)).toMatchObject({ unreadCounter: 1, unreadCounterBusId: 0, needactionCounter: 1, needactionCounterBusId: 0 });
-    await repo.applyDelta(A, delta({ channels: [{ channelId: 7, unreadCounter: 5, unreadCounterBusId: 31, needactionCounter: 6, needactionCounterBusId: 32 }] }), { fromBus: true });
-    expect(await repo.channel(A, 7)).toMatchObject({ unreadCounter: 5, unreadCounterBusId: 31, needactionCounter: 6, needactionCounterBusId: 32 });
+    expect(await repo.channel(A, 7)).toMatchObject({ unreadCounter: 5, unreadCounterBusId: 29, needactionCounter: 5, needactionCounterBusId: 29 });
+    await repo.applyDelta(A, delta({ channels: [{ channelId: 7, unreadCounter: 6, unreadCounterBusId: 28, needactionCounter: 6, needactionCounterBusId: 28 }] }), { fromBus: true });
+    expect(await repo.channel(A, 7)).toMatchObject({ unreadCounter: 5, unreadCounterBusId: 29, needactionCounter: 5, needactionCounterBusId: 29 });
   });
 
   it("a temporary id is never one a settled create stored a pair for", async () => {

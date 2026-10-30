@@ -175,10 +175,13 @@ type MarkKey = "unreadCounterBusId" | "needactionCounterBusId";
  * always taken, its bus id too even below the stored mark: the server's
  * bus ids start again from 0 when its bus table is emptied or the database
  * is replaced, and a read is the server's present state. From the bus, a
- * counter is taken only with a bus id at or above both the stored mark
- * and `floor`, the account's counterBusId (a load writes the marks 0 and
- * its bus id there); the mark then follows it. An older one, or one
- * without a bus id, is dropped. A bus id without its counter moves nothing.
+ * counter is taken only with a bus id at or above the stored mark, which
+ * then follows it; an older one, or one without a bus id, is dropped. A
+ * bus id without its counter moves nothing. That bus id is Odoo's stamp,
+ * lower than the id of the notification carrying it and of those sent
+ * before it in one transaction, so it is compared with the mark alone: a
+ * notification older than the last load never brings its counters here
+ * (the service's applyStore drops them).
  */
 function gateCounter(
   patch: Partial<ChatChannel>,
@@ -186,12 +189,11 @@ function gateCounter(
   counter: CounterKey,
   mark: MarkKey,
   fromBus: boolean,
-  floor: number,
 ): void {
   const busId = patch[mark];
   if (patch[counter] === undefined) {
     delete patch[mark];
-  } else if (fromBus && (busId === undefined || busId < Math.max(base[mark], floor))) {
+  } else if (fromBus && (busId === undefined || busId < base[mark])) {
     delete patch[counter];
     delete patch[mark];
   }
@@ -683,11 +685,10 @@ export class ChatRepository {
    * post stay, as failed and detached from the outbox, so the text typed is
    * not lost (the conversation screen shows them). Channel counters follow
    * gateCounter; `fromBus` says the delta comes from a bus delivery, where
-   * a counter without its bus id, or below the account's counterBusId, is
-   * not taken. Attachment rows take the server's fields only; a message
-   * listing attachment ids claims those rows and releases the ones it no
-   * longer lists, and a deleted channel drops its rows (its draft included)
-   * but the files still waiting to be sent.
+   * a counter without its bus id is not taken. Attachment rows take the
+   * server's fields only; a message listing attachment ids claims those rows
+   * and releases the ones it no longer lists, and a deleted channel drops its
+   * rows (its draft included) but the files still waiting to be sent.
    * Reactions follow the messages: a full set drops the message's groups it
    * does not name, a group replaces its own, a deletion removes one; a group
    * of a message not cached is not stored. A deleted message goes with its
@@ -703,8 +704,7 @@ export class ChatRepository {
     d: StoreDelta,
     opts: { fromBus?: boolean; onMessagesStored?: (channelIds: number[]) => void } = {},
   ): Promise<void> {
-    const floor = opts.fromBus && d.channels.length > 0 ? (await this.sourceState(configId)).counterBusId : 0;
-    for (const p of d.channels) await this.upsertChannel(configId, p, !!opts.fromBus, floor);
+    for (const p of d.channels) await this.upsertChannel(configId, p, !!opts.fromBus);
     for (const p of d.members) await this.upsertMember(configId, p);
     for (const { attachmentIds: _ids, ...p } of d.messages) await this.upsertMessage(configId, p);
     for (const p of d.partners) await this.upsertPartner(configId, p);
@@ -807,7 +807,6 @@ export class ChatRepository {
     configId: string,
     p: Partial<ChatChannel> & { channelId: number },
     fromBus: boolean,
-    floor: number,
   ): Promise<void> {
     const stored = await this.row("chat_channels", key(configId, p.channelId));
     const base: ChatChannel = stored
@@ -851,8 +850,8 @@ export class ChatRepository {
     if (patch.name === "" && base.name !== "" && (patch.channelType ?? base.channelType) !== "group") {
       delete patch.name;
     }
-    gateCounter(patch, base, "unreadCounter", "unreadCounterBusId", fromBus, floor);
-    gateCounter(patch, base, "needactionCounter", "needactionCounterBusId", fromBus, floor);
+    gateCounter(patch, base, "unreadCounter", "unreadCounterBusId", fromBus);
+    gateCounter(patch, base, "needactionCounter", "needactionCounterBusId", fromBus);
     const next: ChatChannel = { ...base, ...patch, configId };
     next.lastMessageId = maxOf(base.lastMessageId, patch.lastMessageId);
     next.oldestLoadedId = minOf(base.oldestLoadedId, patch.oldestLoadedId);

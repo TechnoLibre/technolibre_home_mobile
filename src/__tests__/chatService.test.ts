@@ -1246,6 +1246,37 @@ describe("ChatService", () => {
     expect((await chat.repo.channel(config, 1))!.unreadCounter).toBe(1);
   });
 
+  /**
+   * The two records Odoo's _mark_as_read sends for a read in the browser,
+   * cut from the captured self member to the fields each send names: the
+   * seen record first, then the separator with the counter. Both are sent
+   * at precommit, after the counter was stamped with the bus id of its
+   * serialization: the stamp is below both notification ids.
+   */
+  const browserRead = (firstId: number, stamp: number) => {
+    const { id, thread, persona, seen_message_id, new_message_separator } = capturedMailData()["discuss.channel.member"]
+      .find((m: any) => m.thread.id === 1 && m.persona.id === SELF);
+    return [
+      bus(firstId, "mail.record/insert", { "discuss.channel.member": [{ id, thread, persona, seen_message_id }] }),
+      bus(firstId + 1, "mail.record/insert", { "discuss.channel.member": [{
+        id, thread, persona, new_message_separator, message_unread_counter: 0, message_unread_counter_bus_id: stamp, syncUnread: false,
+      }] }),
+    ];
+  };
+
+  it("a fresh counter stamped below an earlier notification of its batch is taken", async () => {
+    const odoo = fakeOdoo();
+    odoo.state.data = capturedMailData();
+    const src = await source();
+    await chat.load(src);
+    odoo.state.data = stampedAt(capturedMailData(), 31);
+    await chat.load(src);
+    expect((await chat.repo.channel(config, 1))!.unreadCounter).toBe(1);
+    await chat.applyBus(config, browserRead(33, 32));
+    expect(await chat.repo.channel(config, 1)).toMatchObject({ unreadCounter: 0, unreadCounterBusId: 32 });
+    expect((await chat.repo.sourceState(config)).counterBusId).toBe(34);
+  });
+
   const selfMember = (unread: number, busId: number) => ({
     "discuss.channel.member": [{ id: 100, thread: { id: CHAT, model: "discuss.channel" }, persona: { id: SELF, type: "partner" }, message_unread_counter: unread, message_unread_counter_bus_id: busId }],
   });
@@ -1297,8 +1328,8 @@ describe("ChatService", () => {
     await chat.load(await source());
     expect(await chat.repo.channel(config, GROUP)).toMatchObject({ unreadCounterBusId: 0, needactionCounterBusId: 0 });
     expect((await chat.repo.sourceState(config)).counterBusId).toBe(1000);
-    // A record stamped before the load's read is older than the counter read
-    await chat.applyBus(config, [bus(1001, "mail.record/insert", {
+    // A notification at or below the load's bus id is a replay: its counter is older than the read
+    await chat.applyBus(config, [bus(1000, "mail.record/insert", {
       "discuss.channel.member": [{ id: 102, thread: { id: GROUP, model: "discuss.channel" }, persona: { id: SELF, type: "partner" }, message_unread_counter: 9, message_unread_counter_bus_id: 999 }],
     })]);
     expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(2);
