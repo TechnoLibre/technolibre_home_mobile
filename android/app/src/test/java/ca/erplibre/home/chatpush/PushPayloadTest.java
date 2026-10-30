@@ -118,6 +118,7 @@ public class PushPayloadTest {
         assertEquals(PushPayload.Kind.MESSAGE, p.kind);
         assertEquals(0L, p.messageId);
         assertEquals("", p.channelType);
+        assertFalse(p.flags);
         assertTrue(p.isChat());
     }
 
@@ -162,14 +163,60 @@ public class PushPayloadTest {
         assertFalse(p.isChat());
     }
 
+    /** Each v 2 capture: {file, message id, channel type, mentioned, browser online}. */
+    private static final Object[][] V2 = {
+        {"push16_chat.json", 19L, "chat", false, false},
+        {"push16_group.json", 20L, "group", false, false},
+        {"push16_channel_plain.json", 21L, "channel", false, false},
+        {"push16_channel_mention.json", 22L, "channel", true, false},
+        {"push16_channel_everyone.json", 23L, "channel", true, false},
+        {"push16_record.json", 24L, "", false, false},
+        {"push16_record_mention.json", 25L, "", true, false},
+        {"push16_chat_browser_online.json", 26L, "chat", false, true},
+        {"push16_group_browser_online.json", 27L, "group", false, true},
+    };
+
     @Test
-    public void aMessageOfAnUnknownModuleVersionShowsWithoutItsId() throws Exception {
-        JSONObject v2 = new JSONObject(new String(resource("push_module_chat.json"), StandardCharsets.UTF_8));
-        v2.getJSONObject("options").getJSONObject("data").getJSONObject("erplibre").put("v", 2);
-        PushPayload p = parse(v2.toString());
+    public void aV2PushCarriesMentionedAndBrowserOnline() throws Exception {
+        for (Object[] row : V2) {
+            String name = (String) row[0];
+            PushPayload p = PushPayload.parse(resource(name));
+            assertEquals(name, PushPayload.Kind.MESSAGE, p.kind);
+            assertTrue(name, p.flags);
+            assertEquals(name, row[1], p.messageId);
+            assertEquals(name, row[2], p.channelType);
+            assertEquals(name, row[3], p.mentioned);
+            assertEquals(name, row[4], p.browserOnline);
+            assertEquals(name, !"".equals(row[2]), p.isChat());
+        }
+    }
+
+    @Test
+    public void aV1PushFromA16ServerHasNoFlagsButItsMessageId() throws Exception {
+        PushPayload p = PushPayload.parse(resource("push16_v1_device.json"));
+        assertEquals(PushPayload.Kind.MESSAGE, p.kind);
+        assertEquals(19L, p.messageId);
+        assertEquals("chat", p.channelType);
+        assertFalse(p.flags);
+        assertFalse(p.mentioned);
+        assertFalse(p.browserOnline);
+        assertTrue(p.isChat());
+        PushPayload lot2 = PushPayload.parse(resource("push_module_chat.json"));
+        assertEquals(17L, lot2.messageId);
+        assertFalse(lot2.flags);
+    }
+
+    @Test
+    public void aV3ObjectIsIgnoredAsUnknown() throws Exception {
+        JSONObject v3 = new JSONObject(new String(resource("push16_chat_browser_online.json"), StandardCharsets.UTF_8));
+        v3.getJSONObject("options").getJSONObject("data").getJSONObject("erplibre").put("v", 3);
+        PushPayload p = parse(v3.toString());
         assertEquals(PushPayload.Kind.MESSAGE, p.kind);
         assertEquals(0L, p.messageId);
         assertEquals("", p.channelType);
+        assertFalse(p.flags);
+        assertFalse(p.mentioned);
+        assertFalse(p.browserOnline);
         assertTrue(p.isChat());
     }
 }

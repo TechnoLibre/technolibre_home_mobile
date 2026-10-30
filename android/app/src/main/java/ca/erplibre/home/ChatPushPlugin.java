@@ -32,6 +32,7 @@ import java.util.concurrent.Executors;
 import ca.erplibre.home.chatpush.ChatPushJob;
 import ca.erplibre.home.chatpush.ChatPushOpen;
 import ca.erplibre.home.chatpush.ChatPushRuntime;
+import ca.erplibre.home.chatpush.PhonePrefs;
 
 /**
  * Bridge between the chat's JavaScript and ChatPushRuntime, the native side
@@ -156,7 +157,7 @@ public class ChatPushPlugin extends Plugin {
             }
             try {
                 runtime().publishSettings(c.getInt("level", 3), Boolean.TRUE.equals(c.getBoolean("allowHttp", false)),
-                        strings, accounts);
+                        PhonePrefs.of(c.getData()), strings, accounts);
             } finally {
                 // the level stored stands even when the engine failed to follow it
                 ChatPushJob.apply(getContext());

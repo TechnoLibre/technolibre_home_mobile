@@ -13,10 +13,10 @@ import org.json.JSONObject;
 
 /**
  * What the app mirrors for the native side: the notification level, the
- * cleartext permission, the translated strings and each account's view,
- * plus the engine's own flags (app in foreground, last heartbeat, its
- * durable state) and the per-install key that authenticates a notification
- * tap. Nothing here is secret except openKey().
+ * cleartext permission, the phone-wide prefs, the translated strings and
+ * each account's view, plus the engine's own flags (app in foreground, last
+ * heartbeat, its durable state) and the per-install key that authenticates
+ * a notification tap. Nothing here is secret except openKey().
  */
 final class PushSettingsStore {
 
@@ -50,11 +50,12 @@ final class PushSettingsStore {
         return B64.encode(b, true);
     }
 
-    /** Replaces the whole mirror in one pass. */
-    void put(int level, boolean allowHttp, Map<String, String> strings, List<AccountView> accounts) {
+    /** Replaces the whole mirror in one pass; null prefs store the defaults. */
+    void put(int level, boolean allowHttp, PhonePrefs prefs, Map<String, String> strings, List<AccountView> accounts) {
         kv.put("level", Integer.toString(level));
         kv.put("allowHttp", Boolean.toString(allowHttp));
         try {
+            kv.put("prefs", (prefs == null ? PhonePrefs.DEFAULT : prefs).toJson().toString());
             JSONObject s = new JSONObject();
             if (strings != null) {
                 for (Map.Entry<String, String> e : strings.entrySet()) s.put(e.getKey(), e.getValue());
@@ -78,6 +79,17 @@ final class PushSettingsStore {
             return Integer.parseInt(v);
         } catch (NumberFormatException e) {
             return DEFAULT_LEVEL;
+        }
+    }
+
+    /** The mirrored phone-wide prefs; the defaults before the app ever mirrored them. */
+    PhonePrefs prefs() {
+        String raw = kv.get("prefs");
+        if (raw == null) return PhonePrefs.DEFAULT;
+        try {
+            return PhonePrefs.of(new JSONObject(raw));
+        } catch (JSONException e) {
+            return PhonePrefs.DEFAULT;
         }
     }
 
@@ -193,6 +205,7 @@ final class PushSettingsStore {
         }
         o.put("channels", ch);
         o.put("module", a.module);
+        a.prefs().writeTo(o);
         return o;
     }
 
@@ -211,6 +224,7 @@ final class PushSettingsStore {
             }
         }
         return new AccountView(o.getString("configId"), o.optString("label"),
-                LockScreenMode.fromKey(o.optString("lockScreen")), channels, o.optString("module"));
+                LockScreenMode.fromKey(o.optString("lockScreen")), channels, o.optString("module"),
+                AccountView.AccountPrefs.of(o));
     }
 }

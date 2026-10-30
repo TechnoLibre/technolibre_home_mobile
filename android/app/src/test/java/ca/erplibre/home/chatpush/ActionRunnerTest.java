@@ -67,7 +67,7 @@ public class ActionRunnerTest {
     private void mirror(String module) {
         Map<Long, ChannelInfo> ch = new HashMap<>();
         ch.put(4L, new ChannelInfo("MS Chat", "chat"));
-        settings.put(3, true, null, Collections.singletonList(
+        settings.put(3, true, null, null, Collections.singletonList(
                 new AccountView("cfg1", "Odoo exemple", LockScreenMode.ALWAYS, ch, module)));
     }
 
@@ -522,7 +522,7 @@ public class ActionRunnerTest {
     @Test
     public void anAccountNoLongerMirroredDropsItsAction() throws Exception {
         ChatAction a = store.add("cfg1", ActionKind.REPLY, 4, 0, 0, TEXT);
-        settings.put(3, true, null, Collections.<AccountView>emptyList());
+        settings.put(3, true, null, null, Collections.<AccountView>emptyList());
         assertEquals(ActionRunner.Outcome.DONE, runner.run(a.id));
         assertEquals(0, requests().size());
         ChatAction back = store.get(a.id);

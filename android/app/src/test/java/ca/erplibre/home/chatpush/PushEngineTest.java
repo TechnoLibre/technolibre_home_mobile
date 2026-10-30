@@ -323,7 +323,7 @@ public class PushEngineTest {
     }
 
     private void mirror(int level, boolean allowHttp, AccountView... accounts) {
-        settings.put(level, allowHttp, Collections.<String, String>emptyMap(), Arrays.asList(accounts));
+        settings.put(level, allowHttp, null, Collections.<String, String>emptyMap(), Arrays.asList(accounts));
     }
 
     private NtfyServer addNtfy(MockWebServer s, int cache) {

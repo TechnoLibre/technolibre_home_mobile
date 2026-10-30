@@ -21,18 +21,27 @@ import org.json.JSONObject;
  * sends two control pushes with no title, whose root is {"erplibre": {"v",
  * "type", ...}}: "read" {"channel_id", "last_message_id"} and "inbox_done"
  * {"threads": [[model, res_id], ...]}, threads null for every inbox thread.
- * A stock push has no message id (0) and no channel type (""). Only version
- * 1 of the erplibre object is read: a control push of another version or of
- * an unknown type is IGNORED, a message push of another version reads as a
- * stock one.
+ * A stock push has no message id (0) and no channel type ("").
+ *
+ * Module 1.6 sends a device marked for version 2 the message object {"v": 2,
+ * "message_id", "channel_type", "mentioned", "browser_online"}: mentioned
+ * when the recipient is among the message's partners, browser_online when a
+ * browser of the recipient's user was active. A device marked for version 1
+ * still gets lot 2's object. A message object of version 1 or 2 is read for
+ * its message id and channel type, the two flags only from version 2 (flags
+ * says whether they were read); a message object of another version reads as
+ * a stock push. A control push is read only at version 1: another version or
+ * an unknown type is IGNORED.
  */
 final class PushPayload {
 
     /** IGNORED: a control push this app does not read, dropped without being a failure. */
     enum Kind { MESSAGE, READ, INBOX_DONE, IGNORED }
 
-    /** The version of the module's erplibre object this app reads. */
+    /** The version of the module's control pushes, and of a message object without flags. */
     static final int VERSION = 1;
+    /** The version of the module's message object that carries mentioned and browser_online. */
+    static final int FLAGS_VERSION = 2;
 
     final Kind kind;
     final String title;
@@ -50,9 +59,16 @@ final class PushPayload {
     final long lastMessageId;
     /** The threads of an INBOX_DONE push, each {model, resId}; null names every inbox thread. Empty otherwise. */
     final List<String[]> threads;
+    /** Whether the MESSAGE push carried a version 2 object, so that mentioned and browserOnline were read. */
+    final boolean flags;
+    /** The recipient is mentioned (@everyone included); false without flags. */
+    final boolean mentioned;
+    /** A browser of the recipient's Odoo user was active when the message was sent; false without flags. */
+    final boolean browserOnline;
 
     private PushPayload(Kind kind, String title, String body, String model, long resId, String action,
-            long messageId, String channelType, long channelId, long lastMessageId, List<String[]> threads) {
+            long messageId, String channelType, long channelId, long lastMessageId, List<String[]> threads,
+            boolean flags, boolean mentioned, boolean browserOnline) {
         this.kind = kind;
         this.title = title;
         this.body = body;
@@ -64,6 +80,9 @@ final class PushPayload {
         this.channelId = channelId;
         this.lastMessageId = lastMessageId;
         this.threads = threads;
+        this.flags = flags;
+        this.mentioned = mentioned;
+        this.browserOnline = browserOnline;
     }
 
     /** A discuss channel push (chat, group or channel mention), as opposed to a record comment. */
@@ -81,7 +100,9 @@ final class PushPayload {
         JSONObject data = options.optJSONObject("data");
         if (data == null) data = new JSONObject();
         JSONObject module = data.optJSONObject("erplibre");
-        if (module == null || module.optInt("v", 0) != VERSION) module = new JSONObject();
+        int v = module == null ? 0 : module.optInt("v", 0);
+        if (v != VERSION && v != FLAGS_VERSION) module = new JSONObject();
+        boolean flags = v == FLAGS_VERSION;
         return new PushPayload(Kind.MESSAGE,
                 text(root, "title"),
                 text(options, "body"),
@@ -90,7 +111,9 @@ final class PushPayload {
                 text(data, "action"),
                 module.optLong("message_id", 0),
                 text(module, "channel_type"),
-                0, 0, Collections.<String[]>emptyList());
+                0, 0, Collections.<String[]>emptyList(),
+                flags, flags && module.optBoolean("mentioned", false),
+                flags && module.optBoolean("browser_online", false));
     }
 
     private static PushPayload control(JSONObject e) throws JSONException {
@@ -98,7 +121,7 @@ final class PushPayload {
         if ("read".equals(type)) {
             return new PushPayload(Kind.READ, "", "", "", 0, "", 0, "",
                     e.optLong("channel_id", 0), e.optLong("last_message_id", 0),
-                    Collections.<String[]>emptyList());
+                    Collections.<String[]>emptyList(), false, false, false);
         }
         if ("inbox_done".equals(type)) {
             List<String[]> threads;
@@ -112,9 +135,10 @@ final class PushPayload {
                     threads.add(new String[] {t.getString(0), Long.toString(t.getLong(1))});
                 }
             }
-            return new PushPayload(Kind.INBOX_DONE, "", "", "", 0, "", 0, "", 0, 0, threads);
+            return new PushPayload(Kind.INBOX_DONE, "", "", "", 0, "", 0, "", 0, 0, threads, false, false, false);
         }
-        return new PushPayload(Kind.IGNORED, "", "", "", 0, "", 0, "", 0, 0, Collections.<String[]>emptyList());
+        return new PushPayload(Kind.IGNORED, "", "", "", 0, "", 0, "", 0, 0, Collections.<String[]>emptyList(),
+                false, false, false);
     }
 
     private static String text(JSONObject o, String key) {

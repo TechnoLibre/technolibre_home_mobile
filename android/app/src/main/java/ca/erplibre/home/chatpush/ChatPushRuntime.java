@@ -243,14 +243,15 @@ public final class ChatPushRuntime {
     }
 
     /**
-     * Replaces the mirror: level, cleartext permission, strings and the
-     * accounts, each {configId, label, lockScreen, module, channels: [{id,
-     * name, type}]}, module the level of erplibre_mobile_chat a post uses
-     * ("" or absent: none). The channels follow the accounts. JSONException on an
-     * account without configId or a channel without a numeric id.
+     * Replaces the mirror: level, cleartext permission, phone-wide prefs,
+     * strings and the accounts, each {configId, label, lockScreen, module,
+     * channels: [{id, name, type}]} plus the AccountPrefs keys, module the
+     * level of erplibre_mobile_chat a post uses ("" or absent: none). The
+     * channels follow the accounts. JSONException on an account without
+     * configId or a channel without a numeric id.
      */
-    public synchronized void publishSettings(int level, boolean allowHttp, Map<String, String> strings,
-            JSONArray accounts) throws JSONException {
+    public synchronized void publishSettings(int level, boolean allowHttp, PhonePrefs prefs,
+            Map<String, String> strings, JSONArray accounts) throws JSONException {
         List<AccountView> views = new ArrayList<>();
         for (int i = 0; i < accounts.length(); i++) {
             JSONObject a = accounts.getJSONObject(i);
@@ -265,9 +266,10 @@ public final class ChatPushRuntime {
             String configId = a.getString("configId");
             if (configId.isEmpty()) throw new JSONException("empty configId");
             views.add(new AccountView(configId, a.optString("label"),
-                    LockScreenMode.fromKey(a.optString("lockScreen")), channels, a.optString("module")));
+                    LockScreenMode.fromKey(a.optString("lockScreen")), channels, a.optString("module"),
+                    AccountView.AccountPrefs.of(a)));
         }
-        settings.put(level, allowHttp, strings, views);
+        settings.put(level, allowHttp, prefs, strings, views);
         notifier.syncChannels(views, settings.strings());
         engine.onSettingsChanged();
     }
