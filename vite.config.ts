@@ -2,6 +2,7 @@ import { defineConfig, Plugin } from "vite";
 import {
     copyFileSync,
     existsSync,
+    lstatSync,
     mkdirSync,
     readdirSync,
     readFileSync,
@@ -199,7 +200,17 @@ interface CopyStats {
     skippedName: number;   // SKIP / MANIFEST_SKIP_DIRS / extraSkip
     skippedExclude: number; // outputExclusion hit
     skippedSize: number;   // over maxFileSize
-    errors: number;        // stat/copy errors (broken symlinks, perms…)
+    skippedLink: number;   // symlink whose target is missing
+    errors: number;        // stat/copy errors (permissions…)
+}
+
+/** Whether path is itself a symbolic link (false when even lstat fails). */
+function isLink(path: string): boolean {
+    try {
+        return lstatSync(path).isSymbolicLink();
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -259,7 +270,13 @@ export function copyDirToBundle(
         try {
             stat = statSync(fullSrc);
         } catch (e) {
-            // Broken symlink, permission error, etc.
+            // A link whose target is missing (third-party addon repos ship some) is skipped;
+            // any other stat failure is an error
+            if (isLink(fullSrc)) {
+                dbg(`skip(broken link) ${relPath}`);
+                if (stats) stats.skippedLink++;
+                continue;
+            }
             console.warn(`[bundle-warn] stat failed: ${fullSrc} — ${e}`);
             if (stats) stats.errors++;
             continue;
@@ -367,7 +384,7 @@ export function bundleWorkspace(workspaceRoot: string, outDir: string, excludeAb
     }
     mkdirSync(outDir, { recursive: true });
     const index: BundleEntry[] = [];
-    const stats: CopyStats = { copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, errors: 0 };
+    const stats: CopyStats = { copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, skippedLink: 0, errors: 0 };
     copyDirToBundle(workspaceRoot, "", outDir, index, workspaceSkip(tracked), excludeAbsPaths,
         MAX_BUNDLE_FILE_BYTES, stats);
     writeFileSync(join(outDir, "index.json"), JSON.stringify(index, null, 2));
@@ -470,7 +487,7 @@ function bundleSourcePlugin(): Plugin {
             mkdirSync(appOutDir, { recursive: true });
 
             const appIndex: BundleEntry[] = [];
-            const appStats: CopyStats = { copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, errors: 0 };
+            const appStats: CopyStats = { copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, skippedLink: 0, errors: 0 };
             const appT0 = Date.now();
 
             // Skip src/public/ to avoid bundling the bundle itself
@@ -575,7 +592,7 @@ function bundleSourcePlugin(): Plugin {
                 const testIndex: BundleEntry[] = [];
                 const testStats: CopyStats = {
                     copied: 0, skippedName: 0, skippedExclude: 0,
-                    skippedSize: 0, errors: 0,
+                    skippedSize: 0, skippedLink: 0, errors: 0,
                 };
                 const testT0 = Date.now();
                 copyDirToBundle(
@@ -676,7 +693,7 @@ function bundleSourcePlugin(): Plugin {
 
                     const projIndex: BundleEntry[] = [];
                     const projStats: CopyStats = {
-                        copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, errors: 0,
+                        copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, skippedLink: 0, errors: 0,
                     };
                     const projT0 = Date.now();
                     copyDirToBundle(

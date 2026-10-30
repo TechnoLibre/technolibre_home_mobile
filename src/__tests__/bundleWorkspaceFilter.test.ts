@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,6 +84,28 @@ describe("the workspace bundle", () => {
 			expect(existsSync(join(out, "index.json"))).toBe(true);
 		} finally {
 			rmSync(join(out, ".."), { recursive: true, force: true });
+		}
+	});
+});
+
+describe("copyDirToBundle", () => {
+	it("skips a broken link with a debug line, not a warning", () => {
+		const src = mkdtempSync(join(tmpdir(), "bundle-src-"));
+		const out = mkdtempSync(join(tmpdir(), "bundle-out-"));
+		write(src, "module/__init__.py", "");
+		symlinkSync(join(src, "absent"), join(src, "module", "lien"));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			const index: { path: string; type: string }[] = [];
+			const stats = { copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, skippedLink: 0, errors: 0 };
+			copyDirToBundle(src, "", out, index, undefined, undefined, undefined, stats);
+			expect(index.map((e) => e.path).sort()).toEqual(["module", "module/__init__.py"]);
+			expect(stats).toMatchObject({ copied: 1, skippedLink: 1, errors: 0 });
+			expect(warn).not.toHaveBeenCalled();
+		} finally {
+			warn.mockRestore();
+			rmSync(src, { recursive: true, force: true });
+			rmSync(out, { recursive: true, force: true });
 		}
 	});
 });
