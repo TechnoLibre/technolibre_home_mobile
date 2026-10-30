@@ -493,6 +493,19 @@ export class ChatRepository {
     );
   }
 
+  /**
+   * put, unless `stored` (the row as read before the merge) already holds
+   * every value of `row`, updated_at aside. Each write is a committed
+   * statement on the phone and a load merges every row of the account it
+   * reads: writing back the unchanged ones makes a load as slow as the
+   * account is large, and the account's queue (the bus, a history page,
+   * the next load) waits behind it.
+   */
+  private async putChanged(table: string, row: Row, stored: Row | null | undefined): Promise<void> {
+    if (stored && Object.keys(row).every((c) => c === "updated_at" || (row[c] ?? null) === (stored[c] ?? null))) return;
+    await this.put(table, row);
+  }
+
   private async del(table: string, where: Row): Promise<void> {
     const cols = Object.keys(where);
     await this.db.rawRun(
@@ -830,7 +843,7 @@ export class ChatRepository {
     const next: ChatChannel = { ...base, ...patch, configId };
     next.lastMessageId = maxOf(base.lastMessageId, patch.lastMessageId);
     next.oldestLoadedId = minOf(base.oldestLoadedId, patch.oldestLoadedId);
-    await this.put("chat_channels", this.channelRow(next));
+    await this.putChanged("chat_channels", this.channelRow(next), stored);
   }
 
   /**
@@ -881,7 +894,7 @@ export class ChatRepository {
       checksum: p.checksum,
       voice: p.voice,
     });
-    await this.put("chat_attachments", this.attachmentRow({ ...base, ...server, configId }));
+    await this.putChanged("chat_attachments", this.attachmentRow({ ...base, ...server, configId }), stored);
   }
 
   /**
@@ -901,12 +914,12 @@ export class ChatRepository {
       await this.upsertAttachment(configId, { attachmentId }, channel);
       const row = await this.row("chat_attachments", key(configId, `a${attachmentId}`));
       if (!row) continue;
-      await this.put("chat_attachments", {
+      await this.putChanged("chat_attachments", {
         ...row,
         message_id: messageId,
         seq,
         channel_id: channel ?? row.channel_id,
-      });
+      }, row);
     }
     const dropped = (await this.rows("chat_attachments", { config_id: configId, message_id: messageId }))
       .filter((r) => String(r.id).startsWith(key(configId, "a")) && !ids.includes(r.attachment_id));
@@ -929,7 +942,7 @@ export class ChatRepository {
           typingAt: null,
           createDate: null,
         };
-    await this.put("chat_members", this.memberRow({ ...base, ...defined(p), configId }));
+    await this.putChanged("chat_members", this.memberRow({ ...base, ...defined(p), configId }), stored);
   }
 
   /**
@@ -941,14 +954,14 @@ export class ChatRepository {
    */
   private async upsertPartner(configId: string, p: StoreDelta["partners"][number]): Promise<void> {
     const stored = (await this.rows("chat_partners", { id: key(configId, p.partnerId) }))[0];
-    await this.put("chat_partners", {
+    await this.putChanged("chat_partners", {
       id: key(configId, p.partnerId),
       config_id: configId,
       partner_id: p.partnerId,
       name: p.name ?? stored?.name ?? "",
       im_status: p.imStatus !== undefined ? p.imStatus : (stored?.im_status ?? null),
       write_date: p.writeDate ?? stored?.write_date ?? null,
-    });
+    }, stored);
   }
 
   private async upsertMessage(configId: string, p: Partial<ChatMessage> & { messageId: number }): Promise<void> {
@@ -986,7 +999,7 @@ export class ChatRepository {
     };
     const next: ChatMessage = { ...fresh, ...defined(p), configId };
     if (!base && p.status === undefined) next.status = "sent";
-    await this.put("chat_messages", this.messageRow(next));
+    await this.putChanged("chat_messages", this.messageRow(next), stored);
   }
 
   /**

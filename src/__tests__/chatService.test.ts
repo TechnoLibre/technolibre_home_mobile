@@ -599,6 +599,29 @@ describe("ChatService", () => {
     expect(changes).toContainEqual([config, null]);
   });
 
+  it("a load that brings nothing new writes back none of the account's rows", async () => {
+    // On the phone each write is a committed bridge call: an account of a hundred conversations
+    // rewritten at every load holds the queue, and the resume load and the bus behind it, for seconds
+    const odoo = fakeOdoo();
+    odoo.state.data["mail.message"].find((m: any) => m.id === 80).attachment_ids = [77];
+    odoo.state.data["ir.attachment"] = [{
+      id: 77, name: "a.txt", mimetype: "text/plain", size: 3, checksum: "c77", voice: false,
+      thread: { id: CHAT, model: "discuss.channel" },
+    }];
+    const src = await source();
+    await chat.load(src);
+    expect(await chat.repo.attachmentsOf(config, CHAT, [80], [])).toEqual(new Map([["m80", [expect.objectContaining({ attachmentId: 77 })]]]));
+    const run = env.db.rawRun.bind(env.db);
+    const writes: string[] = [];
+    vi.spyOn(env.db, "rawRun").mockImplementation(async (sql: string, values?: any[]) => {
+      writes.push(sql);
+      return run(sql, values);
+    });
+    await chat.load(src);
+    expect(writes.filter((sql) => /\bchat_(channels|members|messages|partners|attachments)\b/.test(sql))).toEqual([]);
+    expect((await chat.repo.channel(config, CHAT))!.lastMessageId).toBe(80);
+  });
+
   it("a load reads the global mute fresh and a newer bus change wins over a load that started earlier", async () => {
     fakeOdoo({ sessionMute: "9999-12-31 23:59:59" });
     const src = await source();
