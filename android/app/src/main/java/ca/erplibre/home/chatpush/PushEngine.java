@@ -218,6 +218,8 @@ final class PushEngine {
          * the entries of such a link. Never reset while the process lives.
          */
         boolean caughtUp;
+        /** Bumped by every catch-up a stream open starts: a retry of an earlier one stops. */
+        int catchUps;
 
         Link(String url) {
             this.url = url;
@@ -540,7 +542,7 @@ final class PushEngine {
                 clearFailures(ntfyKey(link.url));
                 for (String id : link.configIds) refreshStatus(id);
                 if (held.of(link.url).isEmpty()) link.caughtUp = true;
-                else scheduleCatchUp(link);
+                else scheduleCatchUp(link, 0);
                 publishStatus();
             }
         }
@@ -620,8 +622,7 @@ final class PushEngine {
         }
         if (kind != null) l.reason = kind;
         l.state = kind == null ? LinkState.CONNECTING : LinkState.ERROR;
-        long base = RECONNECT_MS[Math.min(l.attempt, last)];
-        long delay = base + (long) (base * JITTER * random.nextDouble());
+        long delay = backoff(l.attempt);
         l.attempt = Math.min(l.attempt + 1, last);
         l.waiting = true;
         l.generation++;
@@ -636,6 +637,12 @@ final class PushEngine {
                 }
             }
         }, delay);
+    }
+
+    /** RECONNECT_MS[attempt], the last value past its end, plus up to JITTER of it. Monitor held. */
+    private long backoff(int attempt) {
+        long base = RECONNECT_MS[Math.min(attempt, RECONNECT_MS.length - 1)];
+        return base + (long) (base * JITTER * random.nextDouble());
     }
 
     private static boolean isFatal(NtfyException.Kind k) {
@@ -888,20 +895,33 @@ final class PushEngine {
      * poll from its saved cursor, whose read pushes drop their entries, after
      * which the link counts as caught up and its due entries are drawn. The
      * stream's own replay of the same messages is dropped by the seen ids.
-     * A failed poll leaves the entries to the next open or run. Monitor held.
+     * Attempt 0 runs at once; a failed poll schedules the next attempt after
+     * backoff(attempt), so the link's entries, and those its stream holds
+     * meanwhile, are drawn once ntfy answers. A later open starts its own
+     * catch-up and stops this one; stopRealtime drops the scheduled attempt.
+     * Monitor held.
      */
-    private void scheduleCatchUp(final Link l) {
+    private void scheduleCatchUp(final Link l, final int attempt) {
+        if (attempt == 0) l.catchUps++;
+        final int chain = l.catchUps;
         scheduler.schedule(new Runnable() {
             @Override
             public void run() {
-                if (!poll(l, false)) return;
+                synchronized (lock) {
+                    if (chain != l.catchUps) return;
+                }
+                boolean ok = poll(l, false);
                 synchronized (lock) {
                     if (links.get(l.url) != l) return;
+                    if (!ok) {
+                        if (realtime && chain == l.catchUps) scheduleCatchUp(l, attempt + 1);
+                        return;
+                    }
                     l.caughtUp = true;
                     releaseDue(l.url, false);
                 }
             }
-        }, 0);
+        }, attempt == 0 ? 0 : backoff(attempt - 1));
     }
 
     /**

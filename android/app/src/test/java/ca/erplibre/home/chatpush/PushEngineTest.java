@@ -1890,6 +1890,46 @@ public class PushEngineTest {
     }
 
     @Test
+    public void aFailedCatchUpIsRetriedWithTheBackoffAndThenReleases() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        dieWhileAPollWaits(chatOnline(a, "m1"));
+        assertEquals(1, held.of(n.url).size());
+
+        // a new process: the stream holds m2 live, the catch-up poll fails
+        now = NOW + MINUTE;
+        engine = newEngine();
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + groupOnline(a, "m2")));
+        ntfyServer.enqueue(new MockResponse().setResponseCode(503));
+        engine.startRealtime();
+        awaitClosed(2);
+        runImmediate();
+        assertEquals(2, held.of(n.url).size());
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+
+        // the stream's reconnect and the catch-up's retry, both on the backoff's first wait
+        assertEquals(2, scheduler.tasks.size());
+        long first = PushEngine.RECONNECT_MS[0];
+        for (HandScheduler.Task t : scheduler.tasks) inRange(t.delay, first, first + (long) (first * PushEngine.JITTER));
+        ntfyServer.setDispatcher(new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest r) {
+                // the reconnect never opens, so only the retry can catch up
+                return r.getPath().contains("poll=1") ? new MockResponse().setBody("")
+                        : new MockResponse().setResponseCode(503);
+            }
+        });
+        scheduler.runAll();
+        assertEquals(2, notifier.shown.size());
+        assertEquals("chat:cfg1:4", notifier.shown.get(0).tag);
+        assertEquals("chat:cfg1:3", notifier.shown.get(1).tag);
+        assertTrue(held.isEmpty());
+    }
+
+    @Test
     public void aReadPushReplayedAtRestartDropsTheHeldMessage() throws Exception {
         mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
