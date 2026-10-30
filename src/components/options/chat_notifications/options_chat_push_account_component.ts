@@ -150,8 +150,9 @@ export class OptionsChatPushAccountComponent extends EnhancedComponent {
 
     /**
      * What the browser mode does on this server: the mode itself at 1.6;
-     * at 1.5 « quiet » is Odoo's own, held until 30 min after the last
-     * browser activity, and « wait » rings at once; without the module
+     * at 1.5 « quiet » is the 1.5 module's own, which sees the browser
+     * only in about the minute after it connects (no client patch sends
+     * its presence again), and « wait » rings at once; without the module
      * every mode rings at once. Then « not applied yet » while the
      * device mark is owed (ChatPush.markOwed).
      */
@@ -165,7 +166,10 @@ export class OptionsChatPushAccountComponent extends EnhancedComponent {
         return lines;
     }
 
-    /** Runs a save; the card takes `after` once it succeeds, a failure is said. */
+    /**
+     * Runs a save; the card takes `after` once it succeeds. A failure is
+     * said and the card takes what the account's row holds (takeStored).
+     */
     private async save(run: () => Promise<void>, after: (card: AccountCard) => void): Promise<void> {
         if (!this.props.native) return;
         this.state.message = "";
@@ -175,6 +179,31 @@ export class OptionsChatPushAccountComponent extends EnhancedComponent {
         } catch (e) {
             console.warn("chat notifications:", e instanceof Error ? e.message : String(e));
             this.state.message = t("chat.push_action_failed");
+            await this.takeStored();
+        }
+    }
+
+    /**
+     * Copies the phone-side preferences of the account's chat_push row
+     * into the card. ChatPush writes the row before native code may refuse
+     * the mirror, so after a refusal the row, not the card, holds what
+     * native code read; the next change builds on it. An unreadable row
+     * leaves the card as it is.
+     */
+    private async takeStored(): Promise<void> {
+        try {
+            const r = await this.props.push.pushRow(this.card.configId);
+            Object.assign(this.card, {
+                lockScreen: r.lockScreen,
+                filter: r.filter,
+                inboxNotify: r.inboxNotify,
+                inboxMentions: r.inboxMentions,
+                quietOn: r.quietOn,
+                quietFrom: r.quietFrom,
+                quietTo: r.quietTo,
+            });
+        } catch (e) {
+            console.warn("chat notifications: push row unreadable", e instanceof Error ? e.message : String(e));
         }
     }
 

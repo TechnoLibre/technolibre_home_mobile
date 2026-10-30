@@ -74,6 +74,8 @@ export type PushHealth = {
     undecryptable: number;
     /** Messages lost to a fault of the phone (cipher, sealed key, drawing). */
     faults: number;
+    /** Held messages (browser active) dropped at their release because they could no longer be read or drawn. */
+    heldLost: number;
     notificationsAllowed: boolean;
     batteryExempt: boolean;
 };

@@ -164,6 +164,7 @@ export function fakeChatPushNative(): FakeChatPushNative {
                 accounts: [],
                 undecryptable: 0,
                 faults: 0,
+                heldLost: 0,
                 notificationsAllowed: fake.notificationsAllowed,
                 batteryExempt: fake.exempt,
                 ...fake.health,

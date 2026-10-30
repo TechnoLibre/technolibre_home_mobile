@@ -173,8 +173,8 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
     browserChoices = BROWSER_CHOICES;
     private destroyed = false;
     private timer: ReturnType<typeof setInterval> | null = null;
-    /** Whether the battery exemption was requested from this screen, which alone lets a refusal show. */
-    private exemptionAsked = false;
+    /** The level onLevel is choosing, null once it settled. */
+    private levelAsked: NotifyLevel | null = null;
     private appState: Promise<{ remove: () => Promise<void> }> | undefined;
     /** The climb last asked for while its save is queued, null once it settled. */
     private wantedClimb: Climb | null = null;
@@ -254,14 +254,17 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
 
     /**
      * Whether to say the exemption is refused: a level 1 or 2 chosen on a
-     * realtime build, the exemption requested from this screen, and
-     * Android not exempting the app now. Read on mount and each time the
-     * app comes back to the front; an unreadable state changes nothing.
+     * realtime build, and Android not exempting the app now. The level is
+     * the one onLevel is choosing while it runs (levelAsked), since the
+     * system dialog's return can come before setLevel settles. Read on
+     * mount and each time the app comes back to the front; an unreadable
+     * state changes nothing.
      */
     async refreshExemption(): Promise<void> {
         const native = this.native;
         if (!native) return;
-        if (!this.exemptionAsked || this.state.level > 2 || !this.state.realtime) {
+        const level = this.levelAsked ?? this.state.level;
+        if (level > 2 || !this.state.realtime) {
             this.state.exemptionRefused = false;
             return;
         }
@@ -343,19 +346,22 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
         this.state.busy = true;
         this.state.message = "";
         this.state.exemptionRefused = false;
+        this.levelAsked = level;
+        let failed = false;
         try {
             this.state.permDenied = level <= 4 ? !(await this.ensurePermission()) : false;
-            if (level <= 2 && !(await native.batteryExempt()).exempt) {
-                this.exemptionAsked = true;
-                await native.requestBatteryExemption();
-            }
+            if (level <= 2 && !(await native.batteryExempt()).exempt) await native.requestBatteryExemption();
             await this.chatService.push.setLevel(level);
             this.state.level = level;
         } catch (e) {
+            failed = true;
             this.fail(e);
         } finally {
+            this.levelAsked = null;
             this.state.busy = false;
         }
+        // A refused level leaves the one before, whose refusal line is read again
+        if (failed) await this.refreshExemption();
         await this.refreshStatus();
     }
 
@@ -500,8 +506,10 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
     /**
      * Saves the whole climb tuple; state.climb takes it once saved. ChatPush
      * saves one change after the other, so the tuple stays the base of the
-     * next change until it settles (wantedClimb); a refused one then leaves
-     * state.climb, the last saved.
+     * next change until it settles (wantedClimb). A refused one leaves
+     * state.climb on what the settings hold: ChatPush stores the climb
+     * before native code may refuse the mirror, and native code keeps it
+     * when the refusal comes after its own store.
      */
     private async saveClimb(climb: Climb): Promise<void> {
         this.state.message = "";
@@ -511,6 +519,8 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
             this.state.climb = climb;
         } catch (e) {
             this.fail(e);
+            const s = chatSettings();
+            this.state.climb = { auto: s.climbAuto, oneBelow: s.climbOneBelow, twoBelow: s.climbTwoBelow };
         } finally {
             if (this.wantedClimb === climb) this.wantedClimb = null;
         }
@@ -574,14 +584,16 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
      * « En ce moment : niveau N (why) » while native code applies a level
      * the battery climbed to (climbReason); null otherwise, a build that
      * maps 1 and 2 to 3 included. A threshold reason names the threshold
-     * as set.
+     * the stored settings hold, which is what the mirror hands native
+     * code (a refused publish keeps it there), not the one on screen.
      */
     effectiveLine(): string | null {
         const h: PushHealth | null = this.state.health;
         if (!h?.climbReason) return null;
+        const settings = chatSettings();
         const why = h.climbReason === "saver"
             ? t("chat.push_effective_saver")
-            : t("chat.push_effective_below", { pct: String(h.climbReason === "below_two" ? this.state.climb.twoBelow : this.state.climb.oneBelow) });
+            : t("chat.push_effective_below", { pct: String(h.climbReason === "below_two" ? settings.climbTwoBelow : settings.climbOneBelow) });
         return t("chat.push_effective", { level: String(h.effectiveLevel), why });
     }
 
@@ -626,6 +638,7 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
             lines.push(reasoned(t("chat.push_status_account", { server: labelOf(a.configId), state: word(a.state) }), accountReason(a) ?? (failing ? a.state : null), failing));
         }
         if (h.faults > 0) lines.push(t("chat.push_status_faults", { n: String(h.faults) }));
+        if (h.heldLost > 0) lines.push(t("chat.push_status_held_lost", { n: String(h.heldLost) }));
         if (h.undecryptable > 0) lines.push(t("chat.push_status_undecryptable", { n: String(h.undecryptable) }));
         return lines;
     }

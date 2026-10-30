@@ -389,6 +389,11 @@ export class ChatPush {
     return this.run(() => this.registerNow(src));
   }
 
+  /** The account's stored chat_push row (its ntfy and phone-side preferences). */
+  pushRow(configId: string): Promise<ChatPushRow> {
+    return this.repo.pushRow(configId);
+  }
+
   /** The i18n key of why the account's last registration failed (offline or refused), null after a success. */
   registrationError(configId: string): string | null {
     return this.failures.get(configId) ?? null;

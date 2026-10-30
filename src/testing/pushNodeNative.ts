@@ -219,6 +219,7 @@ export function pushNodeNative(): PushNodeNative {
 				accounts: [],
 				undecryptable: 0,
 				faults: 0,
+				heldLost: 0,
 				notificationsAllowed: true,
 				batteryExempt: true,
 			};

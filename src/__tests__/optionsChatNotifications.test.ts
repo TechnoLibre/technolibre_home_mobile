@@ -48,16 +48,22 @@ function setup(rows: any[] = [row(A), row(B, { ntfyUrl: "https://ntfy.exemple.te
         removeItem: (k: string) => { delete store[k]; },
     });
     const native: FakeChatPushNative = fakeChatPushNative();
-    // The setters write the phone settings as ChatPush does
+    const rowOf = (id: string) => rows.find((r) => r.configId === id);
+    // The setters write the phone settings and the push rows as ChatPush does
     const push = {
         native,
         applyLink: vi.fn(async (ids: string[], _l: any) => ({ ok: true, reason: null, registered: ids })),
         removeNtfy: vi.fn(async () => {}),
         setOdooUrl: vi.fn(async () => {}),
-        setLockScreen: vi.fn(async () => {}),
+        setLockScreen: vi.fn(async (id: string, mode: string) => { Object.assign(rowOf(id), { lockScreen: mode }); }),
         setLevel: vi.fn(async (l: NotifyLevel) => { setChatSettings({ ...chatSettings(), notifyLevel: l }); }),
-        setFilter: vi.fn(async (_id: string, _f: string, _i: boolean, _m: boolean) => {}),
-        setQuietHours: vi.fn(async (_id: string, _q: { on: boolean; from: number; to: number }) => {}),
+        setFilter: vi.fn(async (id: string, f: string, i: boolean, m: boolean) => {
+            Object.assign(rowOf(id), { filter: f, inboxNotify: i, inboxMentions: m });
+        }),
+        setQuietHours: vi.fn(async (id: string, q: { on: boolean; from: number; to: number }) => {
+            Object.assign(rowOf(id), { quietOn: q.on, quietFrom: q.from, quietTo: q.to });
+        }),
+        pushRow: vi.fn(async (id: string) => ({ ...rowOf(id) })),
         setClimb: vi.fn(async (c: { auto: boolean; oneBelow: ClimbThreshold; twoBelow: ClimbThreshold }) => {
             setChatSettings({ ...chatSettings(), climbAuto: c.auto, climbOneBelow: c.oneBelow, climbTwoBelow: c.twoBelow });
         }),
@@ -188,6 +194,39 @@ describe("OptionsChatNotificationsComponent", () => {
         // The read on mount follows the exemption as well
         native.exempt = false;
         await c.load();
+        expect(c.state.exemptionRefused).toBe(true);
+    });
+
+    it("a screen opened again at level 1 or 2 reads the refusal on mount", async () => {
+        const { c, native } = setup();
+        native.exempt = false;
+        await c.load();
+        await c.onLevel(1);
+        const again = new (OptionsChatNotificationsComponent as any)();
+        Object.defineProperty(again, "chatService", { value: c.chatService });
+        again.setup();
+        await again.load();
+        expect(again.state.level).toBe(1);
+        expect(again.state.exemptionRefused).toBe(true);
+        native.exempt = true;
+        await resumeListener()({ isActive: true });
+        expect(again.state.exemptionRefused).toBe(false);
+    });
+
+    it("a resume before the level is saved still reads the refusal", async () => {
+        const { c, native, push } = setup();
+        native.exempt = false;
+        await c.load();
+        expect(c.state.level).toBe(3);
+        const level = holdCalls(push.setLevel, (l: NotifyLevel) => { setChatSettings({ ...chatSettings(), notifyLevel: l }); });
+        const choosing = c.onLevel(2);
+        await vi.waitFor(() => expect(push.setLevel).toHaveBeenCalledWith(2));
+        // The system dialog answered and the app resumed while setLevel waits in ChatPush's queue
+        await resumeListener()({ isActive: true });
+        expect(c.state.exemptionRefused).toBe(true);
+        await level.release();
+        await choosing;
+        expect(c.state.level).toBe(2);
         expect(c.state.exemptionRefused).toBe(true);
     });
 
@@ -436,12 +475,51 @@ describe("OptionsChatNotificationsComponent", () => {
             .toEqual(["Économiser automatiquement", "Un niveau de plus sous", "Deux niveaux de plus sous", "aucun"]);
     });
 
+    it("a save refused after it was written shows what storage holds", async () => {
+        const { c, push, rows } = setup();
+        await c.load();
+        const of = (id: string) => c.state.accounts.find((a: any) => a.configId === id);
+        const k = account(c, B);
+        const refused = new Error("ChatPushPlugin.publishSettings: refused");
+        const write = (patch: Record<string, unknown>) => async () => {
+            Object.assign(rows.find((r: any) => r.configId === B), patch);
+            throw refused;
+        };
+        push.setFilter.mockImplementationOnce(write({ filter: "none", inboxNotify: true, inboxMentions: false }));
+        await k.onFilter("none");
+        expect(of(B).filter).toBe("none");
+        expect(k.state.message).toBe(t("chat.push_action_failed"));
+        push.setQuietHours.mockImplementationOnce(write({ quietOn: true, quietFrom: 1320, quietTo: 420 }));
+        await k.onQuietOn({ target: { checked: true } });
+        expect(of(B).quietOn).toBe(true);
+        push.setLockScreen.mockImplementationOnce(write({ lockScreen: "always" }));
+        await k.onLockScreen("always");
+        expect(of(B).lockScreen).toBe("always");
+        // The next change builds on what storage holds
+        await k.onInbox({ target: { checked: false } });
+        expect(push.setFilter).toHaveBeenLastCalledWith(B, "none", false, false);
+        // A refusal before anything was written leaves the card on the stored value
+        push.setFilter.mockRejectedValueOnce(refused);
+        await k.onFilter("all");
+        expect(of(B)).toMatchObject({ filter: "none", inboxNotify: false });
+
+        push.setClimb.mockImplementationOnce(async (v: any) => {
+            setChatSettings({ ...chatSettings(), climbAuto: v.auto, climbOneBelow: v.oneBelow, climbTwoBelow: v.twoBelow });
+            throw refused;
+        });
+        await c.onClimbOne({ target: { value: "40" } });
+        expect(c.state.climb).toEqual({ auto: true, oneBelow: 40, twoBelow: 15 });
+        expect(c.state.message).toBe(t("chat.push_action_failed"));
+    });
+
     it("a card change made while another is saved keeps both", async () => {
-        const { c, push } = setup();
+        const { c, push, rows } = setup();
         await c.load();
         const of = (id: string) => c.state.accounts.find((a: any) => a.configId === id);
         const k = account(c, A);
-        const filter = holdCalls(push.setFilter);
+        const filter = holdCalls(push.setFilter, (id: string, f: string, i: boolean, m: boolean) => {
+            Object.assign(rows.find((r: any) => r.configId === id), { filter: f, inboxNotify: i, inboxMentions: m });
+        });
         const first = k.onFilter("mentions_dm");
         const second = k.onInbox({ target: { checked: false } });
         expect(push.setFilter).toHaveBeenLastCalledWith(A, "mentions_dm", false, false);
@@ -459,7 +537,9 @@ describe("OptionsChatNotificationsComponent", () => {
         await filter.release();
         await next;
 
-        const quiet = holdCalls(push.setQuietHours);
+        const quiet = holdCalls(push.setQuietHours, (id: string, q: { on: boolean; from: number; to: number }) => {
+            Object.assign(rows.find((r: any) => r.configId === id), { quietOn: q.on, quietFrom: q.from, quietTo: q.to });
+        });
         const on = k.onQuietOn({ target: { checked: true } });
         const from = k.onQuietFrom({ target: { value: "21:30" } });
         expect(push.setQuietHours).toHaveBeenLastCalledWith(A, { on: true, from: 1290, to: 420 });
@@ -513,7 +593,7 @@ describe("OptionsChatNotificationsComponent", () => {
         expect(c.state.browserMode).toBe("quiet");
         expect(account(c, A).browserLines()).toEqual([applies("quiet")]);
         expect(account(c, B).browserLines()).toEqual([t("chat.push_browser_quiet_15")]);
-        expect(account(c, B).browserLines()[0]).toContain("30 min");
+        expect(account(c, B).browserLines()[0]).not.toContain("30 min");
         expect(account(c, C).browserLines()).toEqual([applies("ring")]);
         push.markOwed.mockImplementation((id: string) => id === A);
         expect(account(c, A).browserLines()).toEqual([applies("quiet"), t("chat.push_browser_owed")]);
@@ -521,8 +601,10 @@ describe("OptionsChatNotificationsComponent", () => {
             "Sonner tout de suite", "Attendre 10 s", "Ne pas envoyer au téléphone",
         ]);
         expect(fr["chat.push_browser_owed"]).toBe("pas encore appliqué sur ce serveur");
-        expect(fr["chat.push_browser_quiet_15"])
-            .toBe("Ne pas envoyer : sur ce serveur (module 1.5), jusqu'à 30 min après votre dernière activité dans le navigateur");
+        expect(fr["chat.push_browser_quiet_15"]).toBe(
+            "Ne pas envoyer : sur ce serveur (module 1.5), seulement dans la minute environ qui suit l'ouverture du navigateur ;"
+            + " le module 1.6 applique la règle des 5 minutes d'activité",
+        );
         // A refused mirror is said, the cards still follow the mode the settings hold
         push.setBrowserMode.mockRejectedValueOnce(new Error("ChatPushPlugin.publishSettings: refused"));
         await c.onBrowserMode("ring");
@@ -545,6 +627,10 @@ describe("OptionsChatNotificationsComponent", () => {
         native.health = { level: 1, effectiveLevel: 3, climbReason: "below_two" };
         await c.refreshStatus();
         expect(c.effectiveLine()).toBe("En ce moment : niveau 3 (batterie sous 15 %)");
+        // The threshold named is the one the stored settings hand native code, not the one the screen holds
+        setChatSettings({ ...chatSettings(), climbTwoBelow: 20 });
+        expect(c.state.climb.twoBelow).toBe(15);
+        expect(c.effectiveLine()).toBe("En ce moment : niveau 3 (batterie sous 20 %)");
         expect(source).toContain("effectiveLine()");
     });
 
@@ -588,6 +674,17 @@ describe("OptionsChatNotificationsComponent", () => {
         expect(refused).toContain("http not allowed");
         expect(blocked).toContain("http blocked by this version of the app");
         expect(refused).not.toBe(blocked);
+    });
+
+    it("held messages lost are counted in the status panel", async () => {
+        const { c, native } = setup();
+        native.health = { heldLost: 2 };
+        await c.refreshStatus();
+        expect(c.statusLines()).toContain("Held messages lost: 2");
+        expect(fr["chat.push_status_held_lost"]).toBe("Messages retenus perdus : {n}");
+        native.health = { heldLost: 0 };
+        await c.refreshStatus();
+        expect(c.statusLines().join("\n")).not.toContain("Held messages lost");
     });
 
     it("the status panel polls every 5 s while shown, and stops", async () => {
