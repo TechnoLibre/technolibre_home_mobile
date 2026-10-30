@@ -180,7 +180,7 @@ export interface ChatPushNative {
     /** The text of the first QR code in the image file (path or file:/content: URI), or null. */
     decodeQr(o: { path: string }): Promise<{ text: string | null }>;
     batteryExempt(): Promise<{ exempt: boolean }>;
-    /** Opens the system list of battery-optimisation exemptions. */
+    /** Asks Android for the battery-optimisation exemption (its dialog, else its list); answers once the screen opens. */
     requestBatteryExemption(): Promise<void>;
     /** The notification actions native code ended or hands over, oldest first; they stay until acked. */
     actions(): Promise<NativeAction[]>;

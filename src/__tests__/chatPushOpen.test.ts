@@ -133,6 +133,11 @@ describe("listeningOf", () => {
     expect(r).toEqual({ off: true, alarms: [], warnings: [] });
   });
 
+  it("an effective level 5 reads as off", () => {
+    const r = listeningOf(health({ level: 3, effectiveLevel: 5, notificationsAllowed: false }), []);
+    expect(r).toEqual({ off: true, alarms: [], warnings: [] });
+  });
+
   it("a healthy phone has no alarm", () => {
     expect(listeningOf(health(), [])).toEqual({ off: false, alarms: [], warnings: [] });
   });

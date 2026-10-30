@@ -1,7 +1,9 @@
 package ca.erplibre.home;
 
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
 
@@ -42,19 +44,39 @@ public final class BatteryExemption {
     }
 
     /**
-     * Ouvre la liste système des dispenses d'optimisation de batterie.
-     *
-     * <p>La dispense n'est PAS demandée par une boîte de dialogue directe
-     * (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`) : Google la réserve à
-     * des cas précis et la refuse à la publication. La liste, où
-     * l'utilisateur choisit lui-même, est le chemin que le système accepte
-     * durablement. Lève l'exception de startActivity quand le réglage est
-     * introuvable.
+     * Ouvre la liste système des dispenses d'optimisation de batterie, où
+     * l'utilisateur choisit lui-même l'app. La passerelle SMS passe par
+     * elle ; le clavardage demande la dispense directement
+     * (requestExemption), ce que la politique de Google Play admet pour une
+     * messagerie en temps réel qui ne peut pas passer par FCM : la
+     * justification est dans doc/GOOGLE_PLAY. Lève l'exception de
+     * startActivity quand le réglage est introuvable.
      */
     public static void openBatterySettings(Context context) {
         Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         context.startActivity(intent);
+    }
+
+    /**
+     * Demande la dispense par la boîte de dialogue système
+     * (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` sur `package:<id>`,
+     * permission déclarée au manifeste) ; un appareil qui n'a pas cette
+     * boîte reçoit la liste (openBatterySettings). Rend la main dès que
+     * l'écran s'ouvre : la réponse se lit ensuite par
+     * ignoringBatteryOptimizations. Lève l'exception de startActivity
+     * quand la liste est introuvable aussi.
+     */
+    public static void requestExemption(Context context) {
+        Intent intent = new Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:" + context.getPackageName()));
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            context.startActivity(intent);
+        } catch (ActivityNotFoundException e) {
+            openBatterySettings(context);
+        }
     }
 
     /**

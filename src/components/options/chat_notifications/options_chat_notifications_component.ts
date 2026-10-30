@@ -1,46 +1,36 @@
 import { onMounted, onWillUnmount, useState, xml } from "@odoo/owl";
+import { App } from "@capacitor/app";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Directory, Filesystem } from "@capacitor/filesystem";
-import { Dialog } from "@capacitor/dialog";
 import { LocalNotifications } from "@capacitor/local-notifications";
 
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { useFeatureSection } from "../../../utils/featureSection";
 import { t } from "../../../i18n";
-import type { LockScreen } from "../../../models/chat";
 import type { PushHealth } from "../../../plugins/chatPushPlugin";
-import { chatSettings, type NotifyLevel } from "../../../services/chat/chatSettings";
+import {
+    CLIMB_THRESHOLDS,
+    chatSettings,
+    type BrowserMode,
+    type ClimbThreshold,
+    type NotifyLevel,
+} from "../../../services/chat/chatSettings";
 import { parseNtfyLink } from "../../../services/chat/chatPushLink";
 import { accountReason, reasonText } from "../../../services/chat/chatPushOpen";
+import { type AccountCard, OptionsChatPushAccountComponent } from "./options_chat_push_account_component";
 
 /** How often the status panel reads the native state while it is shown. */
 export const STATUS_POLL_MS = 5000;
 
 const LEVELS: NotifyLevel[] = [1, 2, 3, 4, 5];
-const LOCK_CHOICES: { value: LockScreen; label: string }[] = [
-    { value: "hidden_locked", label: "chat.push_lock_hidden_locked" },
-    { value: "never", label: "chat.push_lock_never" },
-    { value: "always", label: "chat.push_lock_always" },
+const BROWSER_CHOICES: { value: BrowserMode; label: string }[] = [
+    { value: "ring", label: "chat.push_browser_ring" },
+    { value: "wait", label: "chat.push_browser_wait" },
+    { value: "quiet", label: "chat.push_browser_quiet" },
 ];
 const STATE_WORDS = new Set([
     "connected", "connecting", "polling", "error", "off", "ok", "waiting", "session_expired", "no_session",
 ]);
-
-interface AccountCard {
-    configId: string;
-    label: string;
-    ntfyUrl: string | null;
-    odooUrl: string;
-    lockScreen: LockScreen;
-    registeredAt: string | null;
-    /** The i18n key of why the last registration failed (ChatPush.registrationError), null for none. */
-    registrationError: string | null;
-    /** Whether the server module is at 1.5, which adds the 👍 action. */
-    appPush: boolean;
-    /** The link typed or pasted, and whether its field is open. */
-    paste: string;
-    pasteOpen: boolean;
-}
 
 /**
  * Deletes a camera photo: the copy the camera plugin answers (in the
@@ -63,13 +53,18 @@ async function forgetPhoto(path: string): Promise<void> {
 const word = (state: string): string => t(STATE_WORDS.has(state) ? "chat.push_state_" + state : "chat.push_state_unknown");
 
 /**
- * The closed-app notification settings of the chat: the level, the ntfy of
- * each account (scanned or pasted link, Odoo-side address, lock screen),
- * and a panel with the native state, read every STATUS_POLL_MS while the
- * section is open. Everything goes through ChatPush; the ntfy token passes
- * from the link to native code and is never kept or logged here.
+ * The closed-app notification settings of the chat: the level, with the
+ * level native code applies when the battery made it climb; the climbing
+ * switch and thresholds; the browser mode; the ntfy of each account
+ * (scanned or pasted link, Odoo-side address) followed by its preferences
+ * (OptionsChatPushAccountComponent); and a panel with the native state,
+ * read every STATUS_POLL_MS while the section is open. Everything goes
+ * through ChatPush; the ntfy token passes from the link to native code and
+ * is never kept or logged here.
  */
 export class OptionsChatNotificationsComponent extends EnhancedComponent {
+    static components = { OptionsChatPushAccountComponent };
+
     static template = xml`
     <li id="chat-notifications" class="options-list__item options-sync">
       <div
@@ -97,11 +92,37 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
               <span class="chat-notifications__level-desc" t-esc="t(l.description)"/>
             </button>
           </div>
+          <p t-if="effectiveLine()" class="options-sync__info" role="status" t-esc="effectiveLine()"/>
           <div t-if="state.exemptionRefused" class="chat-notifications__refused" role="alert">
             <p class="options-sync__info" t-esc="t('chat.push_exemption_refused')"/>
             <button type="button" class="chat-new__chip" t-on-click="onUseLevel3" t-esc="t('chat.push_use_level_3')"/>
           </div>
           <p t-if="state.permDenied" class="options-sync__info chat-notifications__alarm" role="alert" t-esc="t('chat.push_perm_denied')"/>
+          <label class="options-sync__checkbox-label">
+            <input type="checkbox" t-att-checked="state.climb.auto" t-on-change="onClimbAuto" />
+            <t t-esc="t('chat.push_climb_auto')"/>
+          </label>
+          <label class="chat-notifications__label">
+            <t t-esc="t('chat.push_climb_one')"/>
+            <select class="chat-notifications__field" t-att-disabled="!state.climb.auto" t-on-change="onClimbOne">
+              <option t-foreach="thresholds()" t-as="th" t-key="th.value" t-att-value="th.value"
+                      t-att-selected="state.climb.oneBelow === th.value" t-esc="th.label"/>
+            </select>
+          </label>
+          <label class="chat-notifications__label">
+            <t t-esc="t('chat.push_climb_two')"/>
+            <select class="chat-notifications__field" t-att-disabled="!state.climb.auto" t-on-change="onClimbTwo">
+              <option t-foreach="thresholds()" t-as="th" t-key="th.value" t-att-value="th.value"
+                      t-att-selected="state.climb.twoBelow === th.value" t-esc="th.label"/>
+            </select>
+          </label>
+          <h4 t-esc="t('chat.push_browser')"/>
+          <div class="chat-new__chips" role="radiogroup" t-att-aria-label="t('chat.push_browser')">
+            <button t-foreach="browserChoices" t-as="b" t-key="b.value" type="button" class="chat-new__chip" role="radio"
+                    t-att-aria-checked="state.browserMode === b.value ? 'true' : 'false'"
+                    t-att-class="{'chat-new__chip--on': state.browserMode === b.value}"
+                    t-att-disabled="state.busy" t-on-click="() => this.onBrowserMode(b.value)" t-esc="t(b.label)"/>
+          </div>
           <label class="options-sync__checkbox-label">
             <input type="checkbox" t-att-checked="state.applyOthers" t-on-change="onApplyOthers" />
             <t t-esc="t('chat.push_apply_others')"/>
@@ -135,15 +156,7 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
               <input type="url" class="chat-notifications__field" autocomplete="off" autocapitalize="off" spellcheck="false"
                      t-att-value="a.odooUrl" t-on-change="(ev) => this.onOdooUrl(a.configId, ev)"/>
             </label>
-            <div class="chat-notifications__lock" role="radiogroup" t-att-aria-label="t('chat.push_lock')">
-              <span class="chat-notifications__label" t-esc="t('chat.push_lock')"/>
-              <div class="chat-new__chips">
-                <button t-foreach="lockChoices" t-as="c" t-key="c.value" type="button" class="chat-new__chip" role="radio"
-                        t-att-aria-checked="a.lockScreen === c.value ? 'true' : 'false'"
-                        t-att-class="{'chat-new__chip--on': a.lockScreen === c.value}"
-                        t-att-disabled="state.busy" t-on-click="() => this.onLockScreen(a.configId, c.value)" t-esc="t(c.label)"/>
-              </div>
-            </div>
+            <OptionsChatPushAccountComponent card="a" push="chatService.push" native="native" pushFlags="a.pushFlags"/>
           </section>
           <p t-if="state.message" class="options-sync__info" role="alert" t-esc="state.message"/>
           <h4 t-esc="t('chat.push_status')"/>
@@ -156,16 +169,22 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
     </li>
   `;
 
-    lockChoices = LOCK_CHOICES;
+    browserChoices = BROWSER_CHOICES;
     private destroyed = false;
     private timer: ReturnType<typeof setInterval> | null = null;
+    /** Whether the battery exemption was requested from this screen, which alone lets a refusal show. */
+    private exemptionAsked = false;
+    private appState: Promise<{ remove: () => Promise<void> }> | undefined;
 
     setup() {
+        const settings = chatSettings();
         this.state = useState({
             expanded: false,
             available: true,
             realtime: false,
-            level: chatSettings().notifyLevel as NotifyLevel,
+            level: settings.notifyLevel as NotifyLevel,
+            climb: { auto: settings.climbAuto, oneBelow: settings.climbOneBelow, twoBelow: settings.climbTwoBelow },
+            browserMode: settings.browserMode,
             accounts: [] as AccountCard[],
             applyOthers: true,
             busy: false,
@@ -179,13 +198,16 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
             this.startPolling();
         });
         onMounted(() => void this.load());
+        // The exemption dialog is the system's: its answer is read when the app comes back
+        this.appState = App.addListener("appStateChange", ({ isActive }) => (isActive ? this.refreshExemption() : undefined));
         onWillUnmount(() => {
             this.destroyed = true;
             this.stopPolling();
+            void Promise.resolve(this.appState).then((h) => h?.remove()).catch(() => {});
         });
     }
 
-    private get native() {
+    get native() {
         return this.chatService.push.native;
     }
 
@@ -218,16 +240,42 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
             console.warn("chat notifications: capabilities unreadable", e instanceof Error ? e.message : String(e));
             this.state.realtime = false;
         }
-        this.state.level = chatSettings().notifyLevel;
+        const settings = chatSettings();
+        this.state.level = settings.notifyLevel;
+        this.state.climb = { auto: settings.climbAuto, oneBelow: settings.climbOneBelow, twoBelow: settings.climbTwoBelow };
+        this.state.browserMode = settings.browserMode;
         await this.loadAccounts();
+        await this.refreshExemption();
         await this.refreshStatus();
+    }
+
+    /**
+     * Whether to say the exemption is refused: a level 1 or 2 chosen on a
+     * realtime build, the exemption requested from this screen, and
+     * Android not exempting the app now. Read on mount and each time the
+     * app comes back to the front; an unreadable state changes nothing.
+     */
+    async refreshExemption(): Promise<void> {
+        const native = this.native;
+        if (!native) return;
+        if (!this.exemptionAsked || this.state.level > 2 || !this.state.realtime) {
+            this.state.exemptionRefused = false;
+            return;
+        }
+        try {
+            const exempt = (await native.batteryExempt()).exempt;
+            if (!this.destroyed) this.state.exemptionRefused = !exempt;
+        } catch (e) {
+            console.warn("chat notifications: exemption unreadable", e instanceof Error ? e.message : String(e));
+        }
     }
 
     /** The cards, rebuilt from the sources and their push rows; a card keeps what is being typed. */
     private async loadAccounts(): Promise<void> {
         try {
             const [sources, rows] = await Promise.all([this.chatService.sources({ online: false }), this.chatService.repo.pushRows()]);
-            const appPush = await Promise.all(sources.map(async (s) => (await this.chatService.features(s.configId)).appPush));
+            const features = await Promise.all(sources.map((s) => this.chatService.features(s.configId)));
+            const browserMode = chatSettings().browserMode;
             if (this.destroyed) return;
             const before = new Map<string, AccountCard>(this.state.accounts.map((a: AccountCard) => [a.configId, a]));
             this.state.accounts = sources.map((s, i) => {
@@ -241,7 +289,15 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
                     lockScreen: r?.lockScreen ?? "hidden_locked",
                     registeredAt: r?.registeredAt ?? null,
                     registrationError: this.chatService.push.registrationError(s.configId),
-                    appPush: appPush[i],
+                    appPush: features[i].appPush,
+                    pushFlags: features[i].pushFlags,
+                    filter: r?.filter ?? "all",
+                    inboxNotify: r?.inboxNotify ?? true,
+                    inboxMentions: r?.inboxMentions ?? false,
+                    quietOn: r?.quietOn ?? false,
+                    quietFrom: r?.quietFrom ?? 1320,
+                    quietTo: r?.quietTo ?? 420,
+                    browserMode,
                     paste: old?.paste ?? "",
                     pasteOpen: old?.pasteOpen ?? false,
                 };
@@ -273,8 +329,10 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
 
     /**
      * Chooses a level. Levels 1 to 4 ask for the notification right; 1 and 2
-     * also for the battery exemption, and keep the level whatever the answer,
-     * saying what the refusal costs and offering level 3.
+     * also request the battery exemption from the system dialog when the
+     * app lacks it, and keep the level whatever the answer. The answer is
+     * read when the app resumes (refreshExemption), which then says what a
+     * refusal costs and offers level 3.
      */
     async onLevel(level: NotifyLevel): Promise<void> {
         const native = this.native;
@@ -284,14 +342,9 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
         this.state.exemptionRefused = false;
         try {
             this.state.permDenied = level <= 4 ? !(await this.ensurePermission()) : false;
-            if (level <= 2) {
-                let exempt = (await native.batteryExempt()).exempt;
-                if (!exempt) {
-                    const { value } = await Dialog.confirm({ title: t("chat.push_title"), message: t("chat.push_exemption_ask") });
-                    if (value) await native.requestBatteryExemption();
-                    exempt = (await native.batteryExempt()).exempt;
-                }
-                this.state.exemptionRefused = !exempt;
+            if (level <= 2 && !(await native.batteryExempt()).exempt) {
+                this.exemptionAsked = true;
+                await native.requestBatteryExemption();
             }
             await this.chatService.push.setLevel(level);
             this.state.level = level;
@@ -430,15 +483,59 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
         await this.loadAccounts();
     }
 
-    async onLockScreen(configId: string, mode: LockScreen): Promise<void> {
+    /** The thresholds offered for climbing, 0 worded « none ». */
+    thresholds(): { value: ClimbThreshold; label: string }[] {
+        return CLIMB_THRESHOLDS.map((v) => ({ value: v, label: v === 0 ? t("chat.push_climb_none") : `${v} %` }));
+    }
+
+    private async saveClimb(climb: { auto: boolean; oneBelow: ClimbThreshold; twoBelow: ClimbThreshold }): Promise<void> {
         this.state.message = "";
         try {
-            await this.chatService.push.setLockScreen(configId, mode);
-            const card = this.card(configId);
-            if (card) card.lockScreen = mode;
+            await this.chatService.push.setClimb(climb);
+            this.state.climb = climb;
         } catch (e) {
             this.fail(e);
         }
+    }
+
+    async onClimbAuto(ev: { target: any }): Promise<void> {
+        await this.saveClimb({ ...this.state.climb, auto: !!ev.target.checked });
+    }
+
+    /** A value outside CLIMB_THRESHOLDS changes nothing. */
+    private thresholdOf(ev: { target: any }): ClimbThreshold | null {
+        const v = Number(ev.target.value);
+        return CLIMB_THRESHOLDS.includes(v as ClimbThreshold) ? (v as ClimbThreshold) : null;
+    }
+
+    async onClimbOne(ev: { target: any }): Promise<void> {
+        const v = this.thresholdOf(ev);
+        if (v !== null) await this.saveClimb({ ...this.state.climb, oneBelow: v });
+    }
+
+    async onClimbTwo(ev: { target: any }): Promise<void> {
+        const v = this.thresholdOf(ev);
+        if (v !== null) await this.saveClimb({ ...this.state.climb, twoBelow: v });
+    }
+
+    /**
+     * Saves the browser mode; ChatPush marks every account's device again.
+     * The cards then follow the mode the settings hold, whose marks still
+     * owed each card shows, even when native code refused the mirror.
+     */
+    async onBrowserMode(mode: BrowserMode): Promise<void> {
+        if (this.state.busy) return;
+        this.state.busy = true;
+        this.state.message = "";
+        try {
+            await this.chatService.push.setBrowserMode(mode);
+        } catch (e) {
+            this.fail(e);
+        } finally {
+            this.state.busy = false;
+        }
+        this.state.browserMode = chatSettings().browserMode;
+        await this.loadAccounts();
     }
 
     async onCheckNow(): Promise<void> {
@@ -453,6 +550,21 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
             this.state.busy = false;
         }
         await this.refreshStatus();
+    }
+
+    /**
+     * « En ce moment : niveau N (why) » while native code applies a level
+     * the battery climbed to (climbReason); null otherwise, a build that
+     * maps 1 and 2 to 3 included. A threshold reason names the threshold
+     * as set.
+     */
+    effectiveLine(): string | null {
+        const h: PushHealth | null = this.state.health;
+        if (!h?.climbReason) return null;
+        const why = h.climbReason === "saver"
+            ? t("chat.push_effective_saver")
+            : t("chat.push_effective_below", { pct: String(h.climbReason === "below_two" ? this.state.climb.twoBelow : this.state.climb.oneBelow) });
+        return t("chat.push_effective", { level: String(h.effectiveLevel), why });
     }
 
     /** Reads the native state into the panel; a failed read leaves the last one. */

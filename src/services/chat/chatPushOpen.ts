@@ -136,7 +136,8 @@ export function accountReason(a: PushHealthAccount): string | null {
 }
 
 /**
- * What the native health says about listening. Level 5 is off. Otherwise
+ * What the native health says about listening. An effective level 5 is
+ * off (climbing never reaches 5, so it is the level chosen). Otherwise
  * an alarm for each of: notifications not allowed; levels 1 and 2 applied
  * (effectiveLevel: a build without the realtime service applies 3) with
  * the permanent service dead; an account in error, with an expired session
@@ -146,7 +147,7 @@ export function accountReason(a: PushHealthAccount): string | null {
  * account, or one of notifications_denied, service_dead, no_session.
  */
 export function listeningOf(h: PushHealth, rows: ChatPushRow[]): Listening {
-  if (h.level === 5) return { off: true, alarms: [], warnings: [] };
+  if (h.effectiveLevel === 5) return { off: true, alarms: [], warnings: [] };
   const alarms: ListeningAlarm[] = [];
   const add = (configId: string | null, reason: string): void => {
     if (!alarms.some((a) => a.configId === configId && a.reason === reason)) alarms.push({ configId, reason });

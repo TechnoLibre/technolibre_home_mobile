@@ -337,11 +337,11 @@ public class ChatPushPlugin extends Plugin {
         call.resolve(out);
     }
 
-    /** Opens the system list of battery-optimisation exemptions, as the SMS gateway does. */
+    /** Asks for the battery-optimisation exemption through the system dialog, the list where it is missing. */
     @PluginMethod
     public void requestBatteryExemption(PluginCall call) {
         try {
-            BatteryExemption.openBatterySettings(getContext());
+            BatteryExemption.requestExemption(getContext());
             call.resolve();
         } catch (Exception e) {
             call.reject("requestBatteryExemption failed");

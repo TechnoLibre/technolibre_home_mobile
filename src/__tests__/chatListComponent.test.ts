@@ -870,7 +870,7 @@ describe("ChatListComponent listening banner", () => {
     });
 
     it("level 5 shows the quiet line and no banner", async () => {
-        const c = withPush({ level: 5, notificationsAllowed: false });
+        const c = withPush({ level: 5, effectiveLevel: 5, notificationsAllowed: false });
         await c.loadListening();
         expect([c.state.listeningText, c.state.listeningOff]).toEqual(["", true]);
     });

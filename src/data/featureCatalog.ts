@@ -5725,8 +5725,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         id: "chat.notifications.settings",
                         label: { en: "Notification bridge", fr: "Pont des notifications" },
                         description: {
-                            en: "TypeScript bridge to the native chat push (settings mirror, ntfy servers, subscriptions, session copies, health, tap to open, the drain of notification actions, QR decoding), the per-account ntfy (setup link, registration with Odoo, unregistering on removal), and the settings screen: levels, link by QR or paste, lock screen, live status, the « not listening » banner in the chat list, opening from a tap.",
-                            fr: "Pont TypeScript vers la poussée native du clavardage (miroir des réglages, serveurs ntfy, abonnements, copies de session, santé, ouverture au toucher, relève des actions des notifications, décodage de QR), le ntfy par compte (lien de configuration, enregistrement auprès d'Odoo, désinscription au retrait) et l'écran de réglages : niveaux, lien par QR ou collé, écran verrouillé, état en direct, bandeau « le téléphone n'écoute pas » dans la liste, ouverture au toucher.",
+                            en: "TypeScript bridge to the native chat push (settings mirror, ntfy servers, subscriptions, session copies, health, tap to open, the drain of notification actions, QR decoding), the per-account ntfy (setup link, registration with Odoo, unregistering on removal), and the settings screen: levels with the level the battery climbed to and why, the direct battery exemption request read back on resume, battery climbing and its thresholds, the browser mode, link by QR or paste, and per account the lock screen, the chat filter, the inbox and record-mentions switches, quiet hours and what the browser mode does on that server; live status, the « not listening » banner in the chat list, opening from a tap.",
+                            fr: "Pont TypeScript vers la poussée native du clavardage (miroir des réglages, serveurs ntfy, abonnements, copies de session, santé, ouverture au toucher, relève des actions des notifications, décodage de QR), le ntfy par compte (lien de configuration, enregistrement auprès d'Odoo, désinscription au retrait) et l'écran de réglages : niveaux avec celui où la batterie a fait monter et pourquoi, demande directe de dispense de batterie relue au retour dans l'app, montée selon la batterie et ses seuils, mode navigateur, lien par QR ou collé, et par compte l'écran verrouillé, le filtre des conversations, les interrupteurs de la boîte de réception et des mentions dans un enregistrement, les heures calmes et ce que le mode navigateur fait sur ce serveur ; état en direct, bandeau « le téléphone n'écoute pas » dans la liste, ouverture au toucher.",
                         },
                         status: "experimental",
                         howItWorks: {
@@ -5759,6 +5759,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "src/services/chat/chatPushOpen.ts",
                             "src/components/options/chat_notifications/options_chat_notifications_component.ts",
                             "src/components/options/chat_notifications/options_chat_notifications_component.scss",
+                            "src/components/options/chat_notifications/options_chat_push_account_component.ts",
+                            "src/components/options/chat_notifications/options_chat_push_account_component.scss",
                             "src/testing/pushNodeNative.ts",
                             "src/testing/webPushNode.ts",
                         ],
