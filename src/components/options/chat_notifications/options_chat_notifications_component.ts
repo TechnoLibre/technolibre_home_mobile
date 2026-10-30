@@ -94,6 +94,7 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
             </button>
           </div>
           <p t-if="effectiveLine()" class="options-sync__info" role="status" t-esc="effectiveLine()"/>
+          <p t-if="state.exemptionPending" class="options-sync__info" role="status" t-esc="t('chat.push_exemption_pending')"/>
           <div t-if="state.exemptionRefused" class="chat-notifications__refused" role="alert">
             <p class="options-sync__info" t-esc="t('chat.push_exemption_refused')"/>
             <button type="button" class="chat-new__chip" t-on-click="onUseLevel3" t-esc="t('chat.push_use_level_3')"/>
@@ -178,6 +179,13 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
     private appState: Promise<{ remove: () => Promise<void> }> | undefined;
     /** The climb last asked for while its save is queued, null once it settled. */
     private wantedClimb: Climb | null = null;
+    /**
+     * Where the exemption request of onLevel stands: "asking" until the
+     * system dialog is launched (the notification right may be asked
+     * first, and its own dialog resumes the app), "launched" until a
+     * resume reads Android's answer, "idle" otherwise.
+     */
+    private exemptionStage: "idle" | "asking" | "launched" = "idle";
 
     setup() {
         const settings = chatSettings();
@@ -194,6 +202,7 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
             message: "",
             permDenied: false,
             exemptionRefused: false,
+            exemptionPending: false,
             health: null as PushHealth | null,
         });
         useFeatureSection("chat-notifications", () => {
@@ -258,22 +267,32 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
      * the one onLevel is choosing while it runs (levelAsked), since the
      * system dialog's return can come before setLevel settles. Read on
      * mount and each time the app comes back to the front; an unreadable
-     * state changes nothing.
+     * state changes nothing. While onLevel has not launched the exemption
+     * dialog yet (exemptionStage "asking"), a resume is the notification
+     * right's dialog closing and concludes nothing: the line stays pending.
+     * The first read after the launch is Android's answer and ends the wait.
      */
     async refreshExemption(): Promise<void> {
         const native = this.native;
-        if (!native) return;
+        if (!native || this.exemptionStage === "asking") return;
         const level = this.levelAsked ?? this.state.level;
         if (level > 2 || !this.state.realtime) {
-            this.state.exemptionRefused = false;
+            this.endExemptionWait(false);
             return;
         }
         try {
             const exempt = (await native.batteryExempt()).exempt;
-            if (!this.destroyed) this.state.exemptionRefused = !exempt;
+            if (!this.destroyed) this.endExemptionWait(!exempt);
         } catch (e) {
             console.warn("chat notifications: exemption unreadable", e instanceof Error ? e.message : String(e));
         }
+    }
+
+    /** Ends the exemption wait: the pending line goes, the refusal line follows refused. */
+    private endExemptionWait(refused: boolean): void {
+        this.exemptionStage = "idle";
+        this.state.exemptionPending = false;
+        this.state.exemptionRefused = refused;
     }
 
     /** The cards, rebuilt from the sources and their push rows; a card keeps what is being typed. */
@@ -336,9 +355,11 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
     /**
      * Chooses a level. Levels 1 to 4 ask for the notification right; 1 and 2
      * also request the battery exemption from the system dialog when the
-     * app lacks it, and keep the level whatever the answer. The answer is
-     * read when the app resumes (refreshExemption), which then says what a
-     * refusal costs and offers level 3.
+     * app lacks it, and keep the level whatever the answer. From the choice
+     * of a level 1 or 2 on a realtime build until Android's answer, the
+     * screen shows the exemption as pending (exemptionPending). The answer
+     * is read when the app resumes after the dialog (refreshExemption),
+     * which then says what a refusal costs and offers level 3.
      */
     async onLevel(level: NotifyLevel): Promise<void> {
         const native = this.native;
@@ -346,11 +367,26 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
         this.state.busy = true;
         this.state.message = "";
         this.state.exemptionRefused = false;
+        const asks = level <= 2 && this.state.realtime;
+        this.state.exemptionPending = asks;
+        this.exemptionStage = asks ? "asking" : "idle";
         this.levelAsked = level;
         let failed = false;
         try {
             this.state.permDenied = level <= 4 ? !(await this.ensurePermission()) : false;
-            if (level <= 2 && !(await native.batteryExempt()).exempt) await native.requestBatteryExemption();
+            if (level <= 2 && !(await native.batteryExempt()).exempt) {
+                // The dialog opens over the app: the next resume is its answer
+                if (asks) this.exemptionStage = "launched";
+                try {
+                    await native.requestBatteryExemption();
+                } catch (e) {
+                    // No dialog opened: no resume will answer
+                    this.exemptionStage = "idle";
+                    throw e;
+                }
+            } else if (asks) {
+                this.endExemptionWait(false);
+            }
             await this.chatService.push.setLevel(level);
             this.state.level = level;
         } catch (e) {
@@ -360,8 +396,12 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
             this.levelAsked = null;
             this.state.busy = false;
         }
-        // A refused level leaves the one before, whose refusal line is read again
-        if (failed) await this.refreshExemption();
+        // A refused level leaves the one before, whose refusal line is read again;
+        // a dialog still open answers on its own resume
+        if (failed && this.exemptionStage !== "launched") {
+            this.exemptionStage = "idle";
+            await this.refreshExemption();
+        }
         await this.refreshStatus();
     }
 

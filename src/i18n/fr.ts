@@ -1384,6 +1384,7 @@ export const translations: Record<string, string> = {
   "chat.push_level_4_desc": "Une vérification par heure, le plus économe pour la batterie.",
   "chat.push_level_5": "5 · Désactivé",
   "chat.push_level_5_desc": "Aucune notification quand l'app est fermée.",
+  "chat.push_exemption_pending": "Exemption de batterie demandée : en attente de la réponse d'Android.",
   "chat.push_exemption_refused": "Sans l'exemption, Android peut couper la connexion et les notifications arrivent en retard.",
   "chat.push_use_level_3": "Passer au niveau 3",
   "chat.push_perm_denied": "Les notifications ne sont pas autorisées pour cette app : rien ne peut sonner.",

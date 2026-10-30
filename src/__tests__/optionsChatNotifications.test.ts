@@ -230,6 +230,81 @@ describe("OptionsChatNotificationsComponent", () => {
         expect(c.state.exemptionRefused).toBe(true);
     });
 
+    /**
+     * Plays onLevel(1) with the notification right still to ask: its
+     * dialog stays open until `allow()`, and the screen resumes when it
+     * closes, before the exemption is asked.
+     */
+    async function askedThroughBothDialogs() {
+        const s = setup();
+        s.native.exempt = false;
+        await s.c.load();
+        let allow: (v: { display: string }) => void = () => {};
+        (LocalNotifications.checkPermissions as any).mockResolvedValueOnce({ display: "prompt" });
+        (LocalNotifications.requestPermissions as any).mockImplementationOnce(() => new Promise((r) => { allow = r; }));
+        const choosing = s.c.onLevel(1);
+        await vi.waitFor(() => expect(LocalNotifications.requestPermissions).toHaveBeenCalled());
+        return { ...s, choosing, allow: (display = "granted") => allow({ display }) };
+    }
+
+    it("the exemption line waits for Android's answer, refused only once it came", async () => {
+        const { c, native, choosing, allow } = await askedThroughBothDialogs();
+        expect(c.state.exemptionPending).toBe(true);
+        expect(c.state.exemptionRefused).toBe(false);
+        // The notification dialog closes: its resume comes before the exemption is asked
+        await resumeListener()({ isActive: true });
+        expect(c.state.exemptionPending).toBe(true);
+        expect(c.state.exemptionRefused).toBe(false);
+        allow();
+        await choosing;
+        expect(native.callsOf("requestBatteryExemption")).toHaveLength(1);
+        // The exemption dialog is open: still waiting
+        expect(c.state.exemptionPending).toBe(true);
+        expect(c.state.exemptionRefused).toBe(false);
+        await resumeListener()({ isActive: true });
+        expect(c.state.exemptionPending).toBe(false);
+        expect(c.state.exemptionRefused).toBe(true);
+        expect(source).toContain("chat.push_exemption_pending");
+        expect(t("chat.push_exemption_pending")).not.toBe("chat.push_exemption_pending");
+    });
+
+    it("a granted exemption ends the wait with no line", async () => {
+        const { c, native, choosing, allow } = await askedThroughBothDialogs();
+        await resumeListener()({ isActive: true });
+        allow();
+        await choosing;
+        expect(c.state.exemptionPending).toBe(true);
+        native.exempt = true;
+        await resumeListener()({ isActive: true });
+        expect(c.state.exemptionPending).toBe(false);
+        expect(c.state.exemptionRefused).toBe(false);
+    });
+
+    it("an app already exempt, or a level above 2, never waits", async () => {
+        const { c, native } = setup();
+        native.exempt = true;
+        await c.load();
+        await c.onLevel(1);
+        expect(native.callsOf("requestBatteryExemption")).toHaveLength(0);
+        expect(c.state.exemptionPending).toBe(false);
+        native.exempt = false;
+        await c.onLevel(3);
+        expect(c.state.exemptionPending).toBe(false);
+        expect(c.state.exemptionRefused).toBe(false);
+    });
+
+    it("a request that fails ends the wait and reads the level kept", async () => {
+        const { c, native } = setup();
+        native.exempt = false;
+        await c.load();
+        native.failNext("requestBatteryExemption");
+        await c.onLevel(1);
+        expect(c.state.exemptionPending).toBe(false);
+        // the level stays 3, which needs no exemption
+        expect(c.state.level).toBe(3);
+        expect(c.state.exemptionRefused).toBe(false);
+    });
+
     it("without the realtime build no refusal is shown", async () => {
         const { c, native } = setup();
         native.exempt = false;
