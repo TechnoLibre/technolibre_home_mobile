@@ -341,6 +341,12 @@ public class PushEngineTest {
                 PushLevelPolicy.NO_CLIMB);
     }
 
+    /** The level chosen l resolves to on battery, with the default climbing prefs. */
+    private static PushLevelPolicy.Effective climbed(int l, boolean wifi, boolean saver, int pct) {
+        return PushLevelPolicy.resolve(l, new PushLevelPolicy.PowerState(wifi, false, saver, pct), true,
+                BatteryClimber.of(PhonePrefs.DEFAULT));
+    }
+
     private static MockResponse rpc(String result) {
         return new MockResponse().setBody("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":" + result + "}");
     }
@@ -933,6 +939,51 @@ public class PushEngineTest {
         engine.runDue(level(4));
         assertEquals(2, ntfyServer.getRequestCount());
         assertEquals("poll_60", engine.health().toJson().getString("mode"));
+    }
+
+    // ---- the effective level in health ----
+
+    @Test
+    public void healthReportsTheEffectiveLevelHandedInRealtime() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        PushLevelPolicy.Effective e = climbed(1, true, false, 25);
+        assertEquals(PushLevelPolicy.Mode.REALTIME, e.mode);
+        engine().setEffective(e);
+        engine.startRealtime();
+        JSONObject h = engine.health().toJson();
+        assertEquals(1, h.getInt("level"));
+        assertEquals(2, h.getInt("effectiveLevel"));
+        assertEquals("realtime", h.getString("mode"));
+        assertEquals("below_one", h.getString("climbReason"));
+    }
+
+    @Test
+    public void healthCarriesTheClimbReason() throws Exception {
+        mirror(1, true, account("cfg1", "Serveur A"));
+        engine().runDue(climbed(1, false, true, 80));
+        JSONObject h = engine.health().toJson();
+        assertEquals(3, h.getInt("effectiveLevel"));
+        assertEquals("poll_15", h.getString("mode"));
+        assertEquals("saver", h.getString("climbReason"));
+        engine.runDue(level(1));
+        assertTrue(engine.health().toJson().isNull("climbReason"));
+    }
+
+    @Test
+    public void healthAfterAPowerChangeReportsTheFreshLevelAndReasonWithoutARun() throws Exception {
+        mirror(3, true, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(""));
+        engine().runDue(level(3));
+        assertEquals(1, ntfyServer.getRequestCount());
+        assertEquals(3, engine.health().toJson().getInt("effectiveLevel"));
+        engine.setEffective(climbed(3, false, false, 10));
+        JSONObject h = engine.health().toJson();
+        assertEquals(4, h.getInt("effectiveLevel"));
+        assertEquals("poll_60", h.getString("mode"));
+        assertEquals("below_two", h.getString("climbReason"));
+        assertEquals(1, ntfyServer.getRequestCount());
     }
 
     @Test

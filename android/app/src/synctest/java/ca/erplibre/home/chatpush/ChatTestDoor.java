@@ -10,6 +10,8 @@ import android.os.Bundle;
 import android.service.notification.StatusBarNotification;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.RemoteInput;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * The test door of the chat notifications, packaged only in the -PsyncTest build (src/synctest/). Its
@@ -22,6 +24,10 @@ import androidx.core.app.RemoteInput;
  * with the text filled in as its RemoteInput result) or the content intent for open. The result data
  * says what happened ("sent", or the reason nothing was sent); nothing else is done and nothing is
  * logged.
+ *
+ * <p>Kind power carries no tag: its extras plugged, saver (booleans) and pct (int), or clear=true, set or
+ * clear the fake power state (TestPower), then the level is re-applied (ChatPushJob.apply) and a running
+ * permanent service re-reads it. The result is "sent", or "refused" for malformed extras.
  */
 public final class ChatTestDoor extends BroadcastReceiver {
 
@@ -29,6 +35,7 @@ public final class ChatTestDoor extends BroadcastReceiver {
     static final String EXTRA_TAG = "tag";
     static final String EXTRA_KIND = "kind";
     static final String EXTRA_TEXT = "text";
+    static final String KIND_POWER = "power";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -39,6 +46,7 @@ public final class ChatTestDoor extends BroadcastReceiver {
         if (intent == null || !ACTION.equals(intent.getAction())) return "refused";
         String tag = intent.getStringExtra(EXTRA_TAG);
         String kind = intent.getStringExtra(EXTRA_KIND);
+        if (KIND_POWER.equals(kind)) return power(context, intent.getExtras());
         if (tag == null || kind == null) return "refused";
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager == null) return "no-notification";
@@ -84,5 +92,23 @@ public final class ChatTestDoor extends BroadcastReceiver {
         } catch (PendingIntent.CanceledException e) {
             return "canceled";
         }
+    }
+
+    /**
+     * Stores the override the extras ask for, then re-applies the level with it. Bundle.get reads an
+     * extra of any type: am broadcast sends plugged as a boolean (--ez) or a string (--es) alike.
+     */
+    @SuppressWarnings("deprecation")
+    private static String power(Context context, Bundle extras) {
+        Map<String, String> asked = new HashMap<>();
+        if (extras != null) {
+            for (String key : extras.keySet()) asked.put(key, String.valueOf(extras.get(key)));
+        }
+        Map<String, String> override = TestPower.fromExtras(asked);
+        if (override == null) return "refused";
+        TestPower.store(context, override);
+        ChatPushJob.apply(context);
+        RealtimeHost.stop(context);
+        return "sent";
     }
 }

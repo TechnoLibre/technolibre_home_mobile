@@ -1,6 +1,8 @@
 package ca.erplibre.home.chatpush;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -8,6 +10,8 @@ import android.os.BatteryManager;
 import android.os.PowerManager;
 import android.util.Log;
 import ca.erplibre.home.BuildConfig;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -71,6 +75,9 @@ public final class ChatPushRuntime {
     /** The partial wakelock taken around a streamed message lapses after this, whatever happens. */
     static final long MESSAGE_WAKE_MS = 10_000L;
 
+    /** The test door's fake power state, present only in a -PsyncTest build. */
+    static final String TEST_POWER_CLASS = "ca.erplibre.home.chatpush.TestPower";
+
     private static final String TAG = "ChatPushRuntime";
     private static ChatPushRuntime instance;
     /** Set while a permanent service of this process runs, between serviceStarted and serviceStopped. */
@@ -91,6 +98,8 @@ public final class ChatPushRuntime {
     private final AtomicLong beatAt = new AtomicLong();
     /** Whether applyRealtime opened the streams. Guarded by this. */
     private boolean realtimeOn;
+    /** The level applyRealtime last applied; null before the first. */
+    private volatile PushLevelPolicy.Effective applied;
 
     private ChatPushRuntime(Context c) {
         context = c.getApplicationContext();
@@ -336,12 +345,19 @@ public final class ChatPushRuntime {
     }
 
     /**
-     * HealthSnapshot.toJson() plus notificationsAllowed. A permanent service
-     * running in this process beats first, so a heartbeat older than the
-     * last write period never reads as a dead service.
+     * HealthSnapshot.toJson() plus notificationsAllowed, at the level the
+     * settings and the power state give now, handed to the engine first: a
+     * level 1 to 4 that climbed or came down since the last run reads as it
+     * is. A level wanting the permanent service while none runs reads as
+     * the 15-minute poll it falls back to, as PushEngine.runPeriod runs it.
+     * A permanent service running in this process beats first, so a
+     * heartbeat older than the last write period never reads as a dead
+     * service.
      */
     public JSONObject health() throws JSONException {
         if (serviceRunning) beat(false);
+        PushLevelPolicy.Effective e = effective();
+        engine.setEffective(e.permanentService && !serviceRunning ? PushLevelPolicy.withoutService(e) : e);
         return engine.health().toJson().put("notificationsAllowed", notifier.allowed());
     }
 
@@ -387,10 +403,16 @@ public final class ChatPushRuntime {
      * Re-reads the level and the power state: realtime opens the streams,
      * any other mode closes them, and leaving realtime polls once at once
      * so what arrived meanwhile is caught up. Blocks on the network then.
-     * Returns whether the permanent service is still wanted.
+     * The engine gets the level for health, and ChatClimbJob is aligned
+     * with it: a climb that stops the service leaves the job waiting for
+     * the charger. Returns whether the permanent service is still wanted.
      */
     public boolean applyRealtime() {
-        PushLevelPolicy.Effective e = effective();
+        PushLevelPolicy.PowerState real = realPowerState(context);
+        PushLevelPolicy.Effective e = resolve(settings, context, real);
+        applied = e;
+        engine.setEffective(e);
+        ChatClimbJob.sync(context, e, real.plugged);
         boolean left = false;
         synchronized (this) {
             if (e.mode == PushLevelPolicy.Mode.REALTIME) {
@@ -404,6 +426,16 @@ public final class ChatPushRuntime {
         }
         if (left && e.mode != PushLevelPolicy.Mode.OFF) engine.runDue(e);
         return e.permanentService;
+    }
+
+    /**
+     * Whether the level the settings and the power state give now differs
+     * from the one applyRealtime last applied in level, mode or climb
+     * reason (BatteryClimber.differs): the permanent service re-reads the
+     * level on a battery change only then.
+     */
+    public boolean levelChanged() {
+        return BatteryClimber.differs(applied, effective());
     }
 
     /** The network came back: streams waiting for their backoff reopen now. */
@@ -428,15 +460,26 @@ public final class ChatPushRuntime {
         engine.runPeriod(effective(), serviceRunning);
     }
 
+    /** The level the settings give, climbed by the power state now (BatteryClimber). */
     PushLevelPolicy.Effective effective() {
-        return PushLevelPolicy.resolve(settings.level(), powerState(context), REALTIME_BUILD,
-                PushLevelPolicy.NO_CLIMB);
+        return resolve(settings, context, realPowerState(context));
     }
 
     /** effective() read from the settings file alone, without building the runtime. */
     static PushLevelPolicy.Effective effective(Context c) {
-        int level = new PushSettingsStore(new PrefsKeyValue(c, SETTINGS_FILE)).level();
-        return PushLevelPolicy.resolve(level, powerState(c), REALTIME_BUILD, PushLevelPolicy.NO_CLIMB);
+        return effective(c, realPowerState(c));
+    }
+
+    /** effective(c) for a real power state the caller already read (realPowerState). */
+    static PushLevelPolicy.Effective effective(Context c, PushLevelPolicy.PowerState real) {
+        return resolve(new PushSettingsStore(new PrefsKeyValue(c, SETTINGS_FILE)), c, real);
+    }
+
+    /** The mirrored level and climbing prefs resolved against real, as the test door overrides it. */
+    private static PushLevelPolicy.Effective resolve(PushSettingsStore s, Context c,
+            PushLevelPolicy.PowerState real) {
+        return PushLevelPolicy.resolve(s.level(), testPowerOver(c, real), REALTIME_BUILD,
+                BatteryClimber.of(s.prefs()));
     }
 
     /** Removes the account's notifications NotificationModel.Clear names, by their post time. */
@@ -452,10 +495,16 @@ public final class ChatPushRuntime {
         return notifier.shownTags();
     }
 
-    /** Wifi, charger, battery saver and battery level now; unknown facts read as false, 100 %. */
-    static PushLevelPolicy.PowerState powerState(Context c) {
+    /**
+     * Wifi, plugged in, battery saver and battery level now, as the device
+     * reports them; unknown facts read as false, 100 %. Plugged and the
+     * percentage come from the sticky ACTION_BATTERY_CHANGED (EXTRA_PLUGGED
+     * non-zero; EXTRA_LEVEL·100/EXTRA_SCALE), readable from a job without
+     * registering a receiver.
+     */
+    static PushLevelPolicy.PowerState realPowerState(Context c) {
         boolean wifi = false;
-        boolean charging = false;
+        boolean plugged = false;
         boolean saver = false;
         int pct = 100;
         try {
@@ -467,15 +516,53 @@ public final class ChatPushRuntime {
         } catch (RuntimeException e) {
             // the network state is unreadable: not on wifi
         }
-        BatteryManager bm = c.getSystemService(BatteryManager.class);
-        if (bm != null) {
-            charging = bm.isCharging();
-            int cap = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
-            if (cap > 0 && cap <= 100) pct = cap;
+        Intent battery = null;
+        try {
+            battery = c.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        } catch (RuntimeException e) {
+            // the battery state is unreadable: unplugged, 100 %
+        }
+        if (battery != null) {
+            plugged = battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
+            int level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+            int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+            if (level >= 0 && scale > 0) pct = Math.min(100, level * 100 / scale);
         }
         PowerManager pm = c.getSystemService(PowerManager.class);
         if (pm != null) saver = pm.isPowerSaveMode();
-        return new PushLevelPolicy.PowerState(wifi, charging, saver, pct);
+        return new PushLevelPolicy.PowerState(wifi, plugged, saver, pct);
+    }
+
+    /**
+     * real through TestPower.over when this build carries the test door's
+     * fake power state (found by class name, as RealtimeHost finds the
+     * service), else real itself.
+     */
+    private static PushLevelPolicy.PowerState testPowerOver(Context c, PushLevelPolicy.PowerState real) {
+        Method over = TestPowerLookup.OVER;
+        if (over == null) return real;
+        try {
+            return (PushLevelPolicy.PowerState) over.invoke(null, c, real);
+        } catch (IllegalAccessException | InvocationTargetException | ClassCastException e) {
+            Log.w(TAG, "test power unread: " + e.getClass().getSimpleName());
+            return real;
+        }
+    }
+
+    /** TestPower.over, looked up once on first use; null in every build without the class. */
+    private static final class TestPowerLookup {
+        static final Method OVER = find();
+
+        private static Method find() {
+            try {
+                Method m = Class.forName(TEST_POWER_CLASS)
+                        .getDeclaredMethod("over", Context.class, PushLevelPolicy.PowerState.class);
+                m.setAccessible(true);
+                return m;
+            } catch (ClassNotFoundException | NoSuchMethodException | LinkageError | SecurityException e) {
+                return null;
+            }
+        }
     }
 
     /**

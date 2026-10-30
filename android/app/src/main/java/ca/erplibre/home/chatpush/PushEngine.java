@@ -378,6 +378,16 @@ final class PushEngine {
         }
     }
 
+    /**
+     * Records the level the caller resolved for health, without a run: the
+     * permanent service hands the one it applies, health a fresh one.
+     */
+    void setEffective(PushLevelPolicy.Effective e) {
+        synchronized (lock) {
+            effective = e;
+        }
+    }
+
     HealthSnapshot health() {
         synchronized (lock) {
             return snapshot();
@@ -1085,7 +1095,7 @@ final class PushEngine {
         int level = settings.level();
         PushLevelPolicy.Effective e = effective != null ? effective
                 : PushLevelPolicy.resolve(level, new PushLevelPolicy.PowerState(false, false, false, 100),
-                        realtimeBuild, PushLevelPolicy.NO_CLIMB);
+                        realtimeBuild, BatteryClimber.of(settings.prefs()));
         boolean polling = e.mode == PushLevelPolicy.Mode.POLL_15 || e.mode == PushLevelPolicy.Mode.POLL_60;
         List<HealthSnapshot.Ntfy> ns = new ArrayList<>();
         for (Link l : links.values()) {
@@ -1096,8 +1106,8 @@ final class PushEngine {
         for (AccountView a : settings.accounts()) as.add(accountHealth(a.configId, polling, now));
         String mode = realtime ? "realtime" : e.mode.name().toLowerCase(Locale.ROOT);
         boolean alive = e.permanentService && now - settings.lastBeat() < BEAT_MAX_AGE_MS;
-        return new HealthSnapshot(now, level, e.level, mode, realtimeBuild, alive, ns, as, undecryptable,
-                faults);
+        return new HealthSnapshot(now, level, e.level, e.climbReason, mode, realtimeBuild, alive, ns, as,
+                undecryptable, faults);
     }
 
     /** A connected stream silent for STALE_CONTACT_MS on the wall clock. Monitor held. */

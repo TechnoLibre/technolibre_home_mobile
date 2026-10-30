@@ -19,7 +19,9 @@ import java.util.concurrent.Executors;
  * run; the reopening of dead streams; the Odoo-direct checks and the
  * pending unregisters. Each run then runs the notification actions that
  * are due, after turning back those of a dead process, and aligns
- * ChatActionJob with what remains. Level 5 cancels the job.
+ * ChatActionJob with what remains. Level 5 cancels the job. apply and each
+ * run align ChatClimbJob with the level, climbed or not, against the
+ * battery's real plugged state.
  *
  * The run blocks on the network, so it goes to a worker thread and ends
  * with jobFinished; the system holds a wakelock until then.
@@ -37,13 +39,15 @@ public class ChatPushJob extends JobService {
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
 
     /**
-     * Aligns the job and the permanent service with the mirrored level:
-     * level 5 cancels the job; any other schedules it, and starts the
+     * Aligns the jobs and the permanent service with the mirrored level:
+     * level 5 cancels this job; any other schedules it, and starts the
      * service when the level wants it. A running service is asked to re-read
      * the level and stops itself when the level no longer wants it.
+     * ChatClimbJob is pending while the level is climbed and the phone is
+     * not plugged in, cancelled otherwise (level 5 included).
      */
     public static void apply(Context c) {
-        PushLevelPolicy.Effective e = ChatPushRuntime.effective(c);
+        PushLevelPolicy.Effective e = climbAligned(c);
         if (e.mode == PushLevelPolicy.Mode.OFF) {
             cancel(c);
             RealtimeHost.stop(c);
@@ -91,8 +95,19 @@ public class ChatPushJob extends JobService {
         return true;
     }
 
+    /**
+     * The level now, after aligning ChatClimbJob with it; the job reads the
+     * real plugged state, read before the test door's override.
+     */
+    private static PushLevelPolicy.Effective climbAligned(Context c) {
+        PushLevelPolicy.PowerState real = ChatPushRuntime.realPowerState(c);
+        PushLevelPolicy.Effective e = ChatPushRuntime.effective(c, real);
+        ChatClimbJob.sync(c, e, real.plugged);
+        return e;
+    }
+
     private static void run(Context c) {
-        PushLevelPolicy.Effective e = ChatPushRuntime.effective(c);
+        PushLevelPolicy.Effective e = climbAligned(c);
         if (e.mode == PushLevelPolicy.Mode.OFF) {
             cancel(c);
             RealtimeHost.stop(c);

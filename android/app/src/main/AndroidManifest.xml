@@ -157,6 +157,15 @@
             android:permission="android.permission.BIND_JOB_SERVICE"
             android:exported="false" />
 
+        <!-- Attend le branchement pendant que le niveau des notifications du
+             clavardage est monté (économiseur, batterie faible), puis le
+             réapplique : le service permanent revient sans attendre la
+             relève aux 15 minutes. -->
+        <service
+            android:name=".chatpush.ChatClimbJob"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
+
         <!-- Les boutons des notifications du clavardage : non exporté, seules
              les PendingIntent explicites de l'app l'atteignent. -->
         <receiver

@@ -10,6 +10,7 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.util.Log;
 import ca.erplibre.home.chatpush.ChatPushRuntime;
 import ca.erplibre.home.chatpush.PermanentNotice;
@@ -32,9 +33,11 @@ import java.util.concurrent.RejectedExecutionException;
  * background) stops the service without a sticky restart, and health then
  * reports it dead; so does a runtime that cannot be built, rather than a
  * crash that START_STICKY would repeat. The level is re-read at each start, when wifi comes or
- * goes (level 2 listens in realtime on wifi or charger only) and when the
- * charger is plugged or unplugged; a returning network only reopens the
- * waiting streams. A level that no longer wants the service stops it, by
+ * goes (level 2 listens in realtime on wifi or plugged in only), when the
+ * phone is plugged or unplugged, when battery saver turns on or off, and on
+ * a battery change that moves the level, its mode or its climb reason
+ * (automatic climbing, BatteryClimber); a returning network only reopens
+ * the waiting streams. A level that no longer wants the service stops it, by
  * stopSelfResult on the start id current when the re-read was asked
  * (PolicyReread): Android refuses that id once a newer start has arrived,
  * so a start delivered while a re-read blocks is never lost.
@@ -179,16 +182,30 @@ public class ChatPushService extends Service {
         }
     }
 
+    /**
+     * ACTION_BATTERY_CHANGED arrives at every percent and at registration
+     * (it is sticky): it re-reads the level only when ChatPushRuntime.levelChanged
+     * says the level, mode or climb reason moved, checked on the worker
+     * after any re-read already queued. The other actions always re-read.
+     */
     private void registerPowerReceiver() {
         powerReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                reapply();
+                if (Intent.ACTION_BATTERY_CHANGED.equals(intent.getAction())) {
+                    submit(() -> {
+                        if (runtime.levelChanged()) reapply();
+                    });
+                } else {
+                    reapply();
+                }
             }
         };
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_POWER_CONNECTED);
         filter.addAction(Intent.ACTION_POWER_DISCONNECTED);
+        filter.addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
+        filter.addAction(Intent.ACTION_BATTERY_CHANGED);
         // system broadcasts reach a receiver that is not exported
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(powerReceiver, filter, Context.RECEIVER_NOT_EXPORTED);

@@ -5629,8 +5629,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                         id: "chat.notifications.native",
                         label: { en: "Native ntfy client", fr: "Client ntfy natif" },
                         description: {
-                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication), the mirror of the phone and per-server preferences (climbing thresholds, browser mode, filter, inbox, quiet hours, Odoo's channel setting), and the engine: one connection per ntfy, reconnect backoff, Odoo-direct summary, status and health; then the Android side: per-server channels, conversation notifications, tap to open, the reply, mark read, mute and 👍 buttons with their retry job and handoff notification, the plugin and QR decoding; and the permanent service of levels 1 and 2 (left out by -PnoChatRealtime), its 15-minute job, the boot restart, and one permanent notification shared with the SMS gateway.",
-                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage), le miroir des préférences du téléphone et de chaque serveur (seuils de montée, mode navigateur, filtre, boîte de réception, heures calmes, réglage des canaux d'Odoo), et le moteur : une connexion par ntfy, reconnexion espacée, sommaire direct d'Odoo, état et santé ; puis le côté Android : canaux par serveur, notifications de conversation, ouverture au toucher, les boutons répondre, marquer lu, muet et 👍 avec leur tâche de reprise et leur notification de relais, le plugin et le décodage de QR ; et le service permanent des niveaux 1 et 2 (retiré par -PnoChatRealtime), sa tâche aux 15 minutes, la relance au démarrage et une seule notification permanente partagée avec la passerelle SMS.",
+                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication), the mirror of the phone and per-server preferences (climbing thresholds, browser mode, filter, inbox, quiet hours, Odoo's channel setting), and the engine: one connection per ntfy, reconnect backoff, Odoo-direct summary, status and health; then the Android side: per-server channels, conversation notifications, tap to open, the reply, mark read, mute and 👍 buttons with their retry job and handoff notification, the plugin and QR decoding; the automatic climbing of the level on battery saver and low battery with its job waiting for the charger, and the permanent service of levels 1 and 2 (left out by -PnoChatRealtime), its 15-minute job, the boot restart, and one permanent notification shared with the SMS gateway.",
+                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage), le miroir des préférences du téléphone et de chaque serveur (seuils de montée, mode navigateur, filtre, boîte de réception, heures calmes, réglage des canaux d'Odoo), et le moteur : une connexion par ntfy, reconnexion espacée, sommaire direct d'Odoo, état et santé ; puis le côté Android : canaux par serveur, notifications de conversation, ouverture au toucher, les boutons répondre, marquer lu, muet et 👍 avec leur tâche de reprise et leur notification de relais, le plugin et le décodage de QR ; la montée automatique du niveau sur économiseur et batterie faible avec sa tâche qui attend le branchement, et le service permanent des niveaux 1 et 2 (retiré par -PnoChatRealtime), sa tâche aux 15 minutes, la relance au démarrage et une seule notification permanente partagée avec la passerelle SMS.",
                         },
                         status: "experimental",
                         howItWorks: {
@@ -5672,6 +5672,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "android/app/src/main/java/ca/erplibre/home/chatpush/NotificationModel.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ActionKind.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/PushLevelPolicy.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/BatteryClimber.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/KeyValue.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/PrefsKeyValue.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/Subscription.java",
@@ -5705,10 +5706,12 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "android/app/src/main/java/ca/erplibre/home/chatpush/RealtimeHost.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/PolicyReread.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushJob.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatClimbJob.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushBootReceiver.java",
                             "android/app/src/realtime/java/ca/erplibre/home/chatpush/realtime/ChatPushService.java",
                             "android/app/src/synctest/java/ca/erplibre/home/chatpush/ChatTestDoor.java",
                             "android/app/src/synctest/java/ca/erplibre/home/chatpush/TestDoorChoice.java",
+                            "android/app/src/synctest/java/ca/erplibre/home/chatpush/TestPower.java",
                         ],
                     },
                     {

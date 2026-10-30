@@ -57,6 +57,8 @@ final class HealthSnapshot {
     final long at;
     final int level;
     final int effectiveLevel;
+    /** Why effectiveLevel is above the chosen level: saver, below_one or below_two; "" when it is not. */
+    final String climbReason;
     /** realtime, poll_15, poll_60 or off. */
     final String mode;
     final boolean realtimeBuild;
@@ -72,12 +74,13 @@ final class HealthSnapshot {
      */
     final int faults;
 
-    HealthSnapshot(long at, int level, int effectiveLevel, String mode, boolean realtimeBuild,
-            boolean serviceAlive, List<Ntfy> ntfys, List<Account> accounts, int undecryptable,
-            int faults) {
+    HealthSnapshot(long at, int level, int effectiveLevel, String climbReason, String mode,
+            boolean realtimeBuild, boolean serviceAlive, List<Ntfy> ntfys, List<Account> accounts,
+            int undecryptable, int faults) {
         this.at = at;
         this.level = level;
         this.effectiveLevel = effectiveLevel;
+        this.climbReason = climbReason == null ? "" : climbReason;
         this.mode = mode;
         this.realtimeBuild = realtimeBuild;
         this.serviceAlive = serviceAlive;
@@ -121,6 +124,7 @@ final class HealthSnapshot {
             o.put("at", at);
             o.put("level", level);
             o.put("effectiveLevel", effectiveLevel);
+            o.put("climbReason", climbReason.isEmpty() ? JSONObject.NULL : climbReason);
             o.put("mode", mode);
             o.put("realtimeBuild", realtimeBuild);
             o.put("serviceAlive", serviceAlive);

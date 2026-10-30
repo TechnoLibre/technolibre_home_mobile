@@ -1,11 +1,13 @@
 package ca.erplibre.home.chatpush;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.json.JSONObject;
 import org.junit.Test;
 
 /** HealthSnapshot.permanentLine: the chat line of the permanent notification (R10). */
@@ -24,7 +26,7 @@ public class HealthSnapshotTest {
     }
 
     private static HealthSnapshot health(String mode, List<HealthSnapshot.Ntfy> ns, List<HealthSnapshot.Account> as) {
-        return new HealthSnapshot(1L, 1, 1, mode, true, true, ns, as, 0, 0);
+        return new HealthSnapshot(1L, 1, 1, "", mode, true, true, ns, as, 0, 0);
     }
 
     private static final PushStrings FR = new PushStrings(null);
@@ -66,5 +68,18 @@ public class HealthSnapshotTest {
                 Arrays.asList(ntfy("https://ntfy.exemple.test/", "connected", null, "cfg1")),
                 Arrays.asList(acc("cfg1", "session_expired", "session_expired")));
         assertEquals("Serveur A: Odoo session expired", expired.permanentLine(new PushStrings(en), views));
+    }
+
+    @Test
+    public void theJsonNamesTheClimbReasonOrNull() throws Exception {
+        List<HealthSnapshot.Ntfy> none = Arrays.asList();
+        List<HealthSnapshot.Account> noAccount = Arrays.asList();
+        JSONObject climbed = new HealthSnapshot(1L, 1, 3, "saver", "poll_15", true, false, none, noAccount, 0, 0)
+                .toJson();
+        assertEquals("saver", climbed.getString("climbReason"));
+        assertEquals(3, climbed.getInt("effectiveLevel"));
+        JSONObject plain = health("realtime", none, noAccount).toJson();
+        assertTrue(plain.has("climbReason"));
+        assertTrue(plain.isNull("climbReason"));
     }
 }
