@@ -2126,6 +2126,89 @@ public class PushEngineTest {
         assertEquals(1, engine.health().toJson().getInt("heldLost"));
     }
 
+    /** A hold wakelock that records its calls in calls. */
+    private static PushEngine.Wake recordingWake(List<String> calls) {
+        return new PushEngine.Wake() {
+            public void acquire() { calls.add("acquire"); }
+            public void acquire(long timeoutMs) { calls.add("acquire:" + timeoutMs); }
+            public void release() { calls.add("release"); }
+        };
+    }
+
+    @Test
+    public void aDeliberateUnsubscribeDropsTheHeldPushUncounted() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        List<String> hold = new CopyOnWriteArrayList<>();
+        engine().setHoldWake(recordingWake(hold));
+        streamOpen(a, chatOnline(a, "m1"));
+        ChatPushRuntime.unsubscribe(engine, store, sessions, "cfg1", null);
+        assertTrue(held.isEmpty());
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals(0, engine.health().toJson().getInt("heldLost"));
+        assertEquals(Arrays.asList("acquire:" + (PushEngine.HOLD_MS + 2_000), "release"), hold);
+    }
+
+    @Test
+    public void aMoveToOffDropsTheHeldPushAndItsReturnDrawsNothing() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        List<String> hold = new CopyOnWriteArrayList<>();
+        engine().setHoldWake(recordingWake(hold));
+        streamOpen(a, chatOnline(a, "m1"));
+        mirrorMode(5, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        engine.onSettingsChanged();
+        assertTrue(held.isEmpty());
+        assertEquals(Arrays.asList("acquire:" + (PushEngine.HOLD_MS + 2_000), "release"), hold);
+        engine.stopRealtime();
+
+        // level 1 again: nothing held, so the reopened stream needs no catch-up and the timer draws nothing
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        engine.onSettingsChanged();
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)).setHeader("Content-Length", "100000"));
+        engine.startRealtime();
+        await(() -> "connected".equals(state(n.url)), "the reopened stream");
+        assertTrue(immediate().isEmpty());
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals(0, engine.health().toJson().getInt("heldLost"));
+    }
+
+    @Test
+    public void runDueAtOffDropsHeldEntries() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOpen(a, chatOnline(a, "m1"));
+        engine.stopRealtime();
+        engine.runDue(level(5));
+        assertTrue(held.isEmpty());
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals(0, engine.health().toJson().getInt("heldLost"));
+    }
+
+    @Test
+    public void anEngineBuiltAtOffDropsWhatAnEarlierProcessHeld() throws Exception {
+        mirrorMode(3, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        dieWhileAPollWaits(chatOnline(a, "m1"));
+        assertEquals(1, held.of(n.url).size());
+        // level 5 mirrored, then the process died before onSettingsChanged
+        mirrorMode(5, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        engine = newEngine();
+        assertTrue(held.isEmpty());
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals(0, engine.health().toJson().getInt("heldLost"));
+    }
+
     @Test
     public void aPollBatchDropsAMessageWhoseReadFollowsInTheBatch() throws Exception {
         mirrorMode(3, BrowserMode.WAIT, account("cfg1", "Serveur A"));

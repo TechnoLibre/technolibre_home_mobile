@@ -334,12 +334,22 @@ public final class ChatPushRuntime {
 
     /**
      * Drops the account's subscription. A pending endpoint is queued first,
-     * so the session copy stays until the engine has unregistered it.
+     * so the session copy stays until the engine has unregistered it. The
+     * account's held entries are dropped uncounted before the subscription
+     * (PushEngine.dropHeld): without it, their release finds no
+     * subscription and counts them lost.
      */
     public synchronized void unsubscribe(String configId, String pendingEndpoint) {
+        unsubscribe(engine, store, sessions, configId, pendingEndpoint);
+    }
+
+    /** unsubscribe on the given engine and stores. */
+    static void unsubscribe(PushEngine engine, PushStore store, NativeSessions sessions, String configId,
+            String pendingEndpoint) {
         if (pendingEndpoint != null && !pendingEndpoint.isEmpty()) {
             sessions.addPendingUnregister(configId, pendingEndpoint);
         }
+        engine.dropHeld(configId);
         store.unsubscribe(configId);
         engine.onStoresChanged();
     }

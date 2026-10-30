@@ -107,6 +107,25 @@ final class HeldStore {
         return n;
     }
 
+    /** Removes every entry, readable or not, uncounted. */
+    void clear() {
+        for (String k : kv.keys()) {
+            if (k.startsWith(PREFIX)) kv.remove(k);
+        }
+    }
+
+    /** Removes the account's entries, of every ntfy server. Returns how many. */
+    int dropAccount(String configId) {
+        int n = 0;
+        for (Held h : all()) {
+            if (h.configId.equals(configId)) {
+                remove(h.message.id);
+                n++;
+            }
+        }
+        return n;
+    }
+
     /** The entries due at now, of every ntfy server. */
     List<Held> due(long now) {
         List<Held> out = new ArrayList<>();

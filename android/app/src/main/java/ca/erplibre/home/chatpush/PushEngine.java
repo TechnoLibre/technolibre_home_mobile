@@ -286,7 +286,9 @@ final class PushEngine {
      * earlier process waits for its ntfy's catch-up, and one of an ntfy no
      * link carries waits for the first startRealtime, runDue or
      * onStoresChanged, so its release reads the quiet hours and the hold's
-     * wakelock the caller sets after construction.
+     * wakelock the caller sets after construction. At a chosen level 5 the
+     * entries are dropped instead (dropHeld): a mirror of level 5 whose
+     * onSettingsChanged a process death skipped.
      */
     PushEngine(PushStore store, PushSettingsStore settings, NativeSessions sessions, NtfyClient ntfy,
             OdooDirect odoo, Notifier notifier, Clock clock, Scheduler scheduler, HeldStore held,
@@ -305,6 +307,7 @@ final class PushEngine {
             mirrored = mirroredIds();
             allowHttp = settings.allowHttp();
             alignLinks(false);
+            if (chosenOff()) dropHeld();
         }
     }
 
@@ -378,7 +381,8 @@ final class PushEngine {
     }
 
     /**
-     * One run of the periodic job. OFF does nothing. POLL_15 polls every
+     * One run of the periodic job. OFF drops the held entries (dropHeld)
+     * and does nothing else. POLL_15 polls every
      * ntfy, POLL_60 an ntfy last polled 60 minutes ago or more, or one with
      * entries held (a stream stopped inside a hold leaves them). REALTIME
      * with the streams open reopens every stream waiting for its backoff
@@ -397,6 +401,7 @@ final class PushEngine {
             synchronized (lock) {
                 effective = e;
                 if (e.mode == PushLevelPolicy.Mode.OFF) {
+                    dropHeld();
                     publishStatus();
                     return;
                 }
@@ -448,14 +453,50 @@ final class PushEngine {
 
     /**
      * A new mirror was published: its time is recorded (a session copy
-     * saved after it belongs to an account on its way in), then
-     * onStoresChanged.
+     * saved after it belongs to an account on its way in), a chosen level 5
+     * drops the held entries (dropHeld), then onStoresChanged. The drop
+     * runs before the caller re-reads the level and stops the service, so
+     * a hold timer firing in between finds nothing to draw.
      */
     void onSettingsChanged() {
         synchronized (lock) {
             settings.setEngineState("mirrorAt", Long.toString(clock.now()));
+            if (chosenOff()) dropHeld();
             onStoresChanged();
         }
+    }
+
+    /**
+     * Forgets every held entry without drawing or counting it, and lets the
+     * hold's wakelock go: a move to level 5 (OFF) is deliberate, and each
+     * entry's ntfy id is already among its link's seen ids (handle saved
+     * them when it held the entry), so no replay draws it later.
+     */
+    void dropHeld() {
+        synchronized (lock) {
+            held.clear();
+            releaseHoldWakeIfEmpty();
+        }
+    }
+
+    /**
+     * Forgets the account's held entries without drawing or counting them,
+     * and lets the hold's wakelock go once nothing is held: a deliberate
+     * unsubscribe, called before the subscription is dropped so that a
+     * death in between leaves an entry release still counts, never a
+     * silent loss.
+     */
+    void dropHeld(String configId) {
+        synchronized (lock) {
+            held.dropAccount(configId);
+            releaseHoldWakeIfEmpty();
+        }
+    }
+
+    /** Whether the mirrored level resolves to OFF: a chosen 5, which no climb reaches. Monitor held. */
+    private boolean chosenOff() {
+        return PushLevelPolicy.resolve(settings.level(), new PushLevelPolicy.PowerState(false, false, false, 100),
+                realtimeBuild, PushLevelPolicy.NO_CLIMB).mode == PushLevelPolicy.Mode.OFF;
     }
 
     /**

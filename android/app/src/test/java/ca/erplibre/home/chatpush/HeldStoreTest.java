@@ -120,6 +120,29 @@ public class HeldStoreTest {
     }
 
     @Test
+    public void clearRemovesEveryEntryUncounted() throws Exception {
+        held.add(LINK, message("a"), "cfg1", 4, 1, now + 100);
+        held.add("https://autre.exemple.test", message("b"), "cfg2", 4, 2, now + 200);
+        kv.put("held:m0", "{\"link\":");
+        kv.put("autre:clef", "gardée");
+        held.clear();
+        assertTrue(held.isEmpty());
+        assertEquals(0, held.takeUnreadable());
+        assertEquals("gardée", kv.get("autre:clef"));
+    }
+
+    @Test
+    public void dropAccountRemovesThatAccountsEntriesOnly() throws Exception {
+        held.add(LINK, message("a"), "cfg1", 4, 1, now + 100);
+        held.add("https://autre.exemple.test", message("b"), "cfg1", 3, 2, now + 200);
+        held.add(LINK, message("c"), "cfg2", 4, 3, now + 150);
+        assertEquals(2, held.dropAccount("cfg1"));
+        assertEquals(Arrays.asList(3L), messageIds(held.of(LINK)));
+        assertTrue(held.of("https://autre.exemple.test").isEmpty());
+        assertEquals(0, held.dropAccount("cfg1"));
+    }
+
+    @Test
     public void linkUrlsNamesEveryServerHolding() throws Exception {
         held.add(LINK, message("a"), "cfg1", 4, 1, now + 100);
         held.add(LINK, message("b"), "cfg1", 4, 2, now + 200);
