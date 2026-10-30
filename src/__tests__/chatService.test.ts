@@ -1328,6 +1328,24 @@ describe("ChatService", () => {
     expect((await chat.repo.channel(config, CHAT))!.unreadCounter).toBe(6);
   });
 
+  it("a replayed joined of a conversation the cache holds loads nothing", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    odoo.state.data["discuss.channel"].push({ id: 16, channel_type: "channel", name: "New", last_interest_dt: "2026-10-25 12:00:00" });
+    odoo.state.data["discuss.channel.member"].push({ id: 160, thread: { id: 16, model: "discuss.channel" }, persona: { id: SELF, type: "partner" }, message_unread_counter: 0 });
+    await chat.load(src);
+    const loads = odoo.on("/mail/data").length;
+    const joined = (id: number, channelId: number) => bus(id, "discuss.channel/joined", { channel: { id: channelId, model: "discuss.channel" } });
+    // At or below the load's counterBusId (1000): the load already read the membership it announces
+    await chat.applyBus(config, [joined(990, 16)]);
+    expect(odoo.on("/mail/data")).toHaveLength(loads);
+    // A replayed join the cache lacks, and a fresh one, still load
+    await chat.applyBus(config, [joined(995, 17)]);
+    expect(odoo.on("/mail/data")).toHaveLength(loads + 1);
+    await chat.applyBus(config, [joined(1001, 16)]);
+    expect(odoo.on("/mail/data")).toHaveLength(loads + 2);
+  });
+
   it("a delivery that fails does not hold back the next one", async () => {
     fakeOdoo();
     await chat.load(await source());

@@ -2138,12 +2138,12 @@ export class ChatService {
    * ends with onChange; an unknown type is ignored. See the class for the
    * bus id rule that guards the counters. Queued behind the account's other
    * server writers; a notification that reloads the account (a channel
-   * joined, a message of an unknown channel) runs that load inline. The
-   * bus resubscribes at most once per call: when the memberships differ
-   * after it (noteMembershipChange), or after a channel joined. An inbox
-   * delivery a load overtook (applyInbox) then has the first inbox page
-   * read again, once the notifications are applied; its failure is only
-   * logged, the next page read catching up.
+   * joined since the last load, a message of an unknown channel) runs that
+   * load inline. The bus resubscribes at most once per call: when the
+   * memberships differ after it (noteMembershipChange), or after a channel
+   * joined. An inbox delivery a load overtook (applyInbox) then has the
+   * first inbox page read again, once the notifications are applied; its
+   * failure is only logged, the next page read catching up.
    */
   async applyBus(configId: string, notifications: BusNotification[]): Promise<void> {
     const joined = notifications.some((n) => n.message?.type === "discuss.channel/joined");
@@ -2212,9 +2212,15 @@ export class ChatService {
         if (delta.channelNotifications !== undefined) this.publishGeneral();
         return null;
       }
-      case "discuss.channel/joined":
-        await this.reload(configId);
-        return typeof p.channel?.id === "number" ? p.channel.id : null;
+      case "discuss.channel/joined": {
+        const channelId = typeof p.channel?.id === "number" ? p.channel.id : null;
+        // A replay (at or below counterBusId) of a conversation held as a member: the load that set
+        // counterBusId already read the membership it announces, and a replay of many joins would
+        // otherwise run one whole load each
+        const held = channelId !== null && !fresh && (await this.repo.channel(configId, channelId))?.isMember;
+        if (!held) await this.reload(configId);
+        return channelId;
+      }
       case "discuss.channel/leave":
       case "discuss.channel/delete": {
         const ids: number[] = (type === "discuss.channel/delete"
