@@ -314,6 +314,15 @@ mute only, since Odoo ignores their own setting. A change waits in the queue
 when offline, and a change made in the browser reaches the app through
 Odoo's bus.
 
+**A change made just before leaving the app.** What the app sends to Odoo
+from its screens (a message, a conversation marked read, a notification
+setting) goes through a queue stored on the phone, and that queue runs in the
+app's page. About a minute after the app leaves the screen (Home, another
+app), Android's WebView freezes that page, so a change queued just before
+leaving may wait until the app comes back to the front, then goes out in
+order. Nothing is lost. The actions of a notification (reply, mark read,
+mute, 👍) are not affected: native code runs them, app open or not.
+
 **What the phone lets through, per server.** On top of Odoo's settings, each
 account's card in Options › Chat notifications holds a filter that can only be
 stricter. « Conversations »: « Everything Odoo sends » (the default),

@@ -322,6 +322,16 @@ n'offrent que la sourdine, puisqu'Odoo ignore leur propre réglage. Un
 changement attend dans la file hors ligne, et un changement fait dans le
 navigateur arrive dans l'app par le bus d'Odoo.
 
+**Un changement fait juste avant de quitter l'app.** Ce que l'app envoie à
+Odoo depuis ses écrans (un message, une conversation marquée lue, un réglage
+de notification) passe par une file conservée sur le téléphone, et
+cette file tourne dans la page de l'app. Environ une minute après que l'app
+quitte l'écran (Accueil, une autre app), la WebView d'Android gèle cette page :
+un changement mis en file juste avant de partir peut attendre que l'app
+revienne au premier plan, puis part dans l'ordre. Rien n'est perdu. Les
+actions d'une notification (répondre, marquer lu, sourdine, 👍) n'en sont pas
+touchées : le code natif les exécute, l'app ouverte ou non.
+
 **Ce que le téléphone laisse passer, par serveur.** Par-dessus les réglages
 d'Odoo, la carte de chaque compte dans Options › Notifications du clavardage
 porte un filtre qui ne peut qu'être plus strict. « Conversations » : « Tout ce
