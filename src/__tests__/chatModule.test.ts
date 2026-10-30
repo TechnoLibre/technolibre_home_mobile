@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CHAT_FINGERPRINT_FIELD, CHAT_LEVEL_FIELD, CHAT_MODULE, levelOfSelection, CHAT_UUID_FIELD, installModule, effectiveLevel, levelAtLeast, moduleLevel, moduleState, upgradeModule } from "../services/chat/chatModule";
+import { CHAT_FINGERPRINT_FIELD, CHAT_LEVEL_FIELD, CHAT_MODULE, levelOfSelection, CHAT_UUID_FIELD, installModule, effectiveLevel, levelAtLeast, moduleLevel, moduleProbe, moduleState, upgradeModule } from "../services/chat/chatModule";
 import { OdooRpcError, SyncCredentials } from "../services/odoo/odooRpcClient";
 
 const CREDS: SyncCredentials = { odooUrl: "https://odoo.example.com", username: "u", password: "p", database: "db" };
@@ -51,12 +51,13 @@ const WITH = { [CHAT_UUID_FIELD]: { type: "char" } };
 const level = (...keys: string[]) => ({ [CHAT_LEVEL_FIELD]: { type: "selection", selection: keys.map((k) => [k, k]) } });
 const WITH14 = { ...WITH, ...level("1.4") };
 const WITH15 = { ...WITH, ...level("1.4", "1.5") };
+const WITH16 = { ...WITH, ...level("1.4", "1.5", "1.6") };
 const WITH13 = { [CHAT_UUID_FIELD]: { type: "char" }, [CHAT_FINGERPRINT_FIELD]: { type: "char" } };
 
 describe("chat module state", () => {
   it("is installed when the fingerprint field is on mail.message", async () => {
     const rpc = fakeRpc({ isSystem: true });
-    const caps = fakeCaps([WITH15], [WITH], [WITH]);
+    const caps = fakeCaps([WITH16], [WITH], [WITH]);
     expect(await moduleState(rpc, caps, CREDS, { online: true })).toBe("installed");
     expect(rpc.calls).toEqual([]);
     expect(caps.calls).toContainEqual({ model: "mail.message", options: { online: true, maxAgeMs: undefined } });
@@ -92,7 +93,7 @@ describe("chat module state", () => {
 
   it("offline, reads the cached field and does not query the module row", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "uninstalled" }] });
-    expect(await moduleState(rpc, fakeCaps([WITH15], [WITH], [WITH]), CREDS, { online: false })).toBe("installed");
+    expect(await moduleState(rpc, fakeCaps([WITH16], [WITH], [WITH]), CREDS, { online: false })).toBe("installed");
     expect(await moduleState(rpc, fakeCaps([{}]), CREDS, { online: false })).toBe("unknown");
     expect(rpc.calls).toEqual([]);
   });
@@ -107,9 +108,11 @@ describe("chat module state", () => {
 
 describe("chat module state matrix", () => {
   const MATRIX: Array<[string, any, any, any, boolean, string, string | null]> = [
-    ["level field 1.5, system", WITH15, WITH, WITH, true, "installed", "1.5"],
-    ["level field 1.5, not system", WITH15, {}, {}, false, "installed", "1.5"],
-    ["level field 1.5 and a later key", { ...WITH13, ...level("1.4", "1.5", "1.6") }, {}, {}, false, "installed", "1.5"],
+    ["level field 1.6, system", WITH16, WITH, WITH, true, "installed", "1.6"],
+    ["level field 1.6, not system", WITH16, {}, {}, false, "installed", "1.6"],
+    ["level field 1.6 and a later key", { ...WITH13, ...level("1.4", "1.5", "1.6", "1.7") }, {}, {}, false, "installed", "1.6"],
+    ["level field 1.5, system", WITH15, WITH, WITH, true, "outdated", "1.5"],
+    ["level field 1.5, not system", WITH15, {}, {}, false, "outdated", "1.5"],
     ["level field 1.4, system", WITH14, WITH, WITH, true, "outdated", "1.4"],
     ["level field 1.4, not system", WITH14, {}, {}, false, "outdated", "1.4"],
     ["level field with no usable key falls to the fingerprint", { ...WITH13, ...level() }, {}, {}, false, "outdated", "1.3"],
@@ -164,7 +167,7 @@ describe("chat module state matrix", () => {
 describe("upgrade chat module", () => {
   it("upgrades the module row, then probes fresh", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }] });
-    const caps = fakeCaps([WITH, WITH15], [WITH], [WITH]);
+    const caps = fakeCaps([WITH, WITH16], [WITH], [WITH]);
     expect((await upgradeModule(rpc, caps, CREDS)).state).toBe("installed");
     expect(rpc.calls).toContain("ir.module.module.button_immediate_upgrade [[7]]");
     expect(caps.calls.at(-1).options.maxAgeMs).toBe(0);
@@ -172,7 +175,7 @@ describe("upgrade chat module", () => {
 
   it("treats a lost response as no error and returns what the probe says", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }], upgradeError: new Error("timeout") });
-    expect((await upgradeModule(rpc, fakeCaps([WITH, WITH15], [WITH], [WITH]), CREDS)).state).toBe("installed");
+    expect((await upgradeModule(rpc, fakeCaps([WITH, WITH16], [WITH], [WITH]), CREDS)).state).toBe("installed");
   });
 
   it("returns the probed state on an AccessError and propagates other server errors", async () => {
@@ -189,8 +192,18 @@ describe("upgrade chat module", () => {
     expect((await upgradeModule(user, fakeCaps([WITH], [{}]), CREDS)).state).toBe("outdated");
     expect(user.calls).toEqual([]);
     const current = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }] });
-    expect((await upgradeModule(current, fakeCaps([WITH15], [WITH], [WITH]), CREDS)).state).toBe("installed");
+    expect((await upgradeModule(current, fakeCaps([WITH16], [WITH], [WITH]), CREDS)).state).toBe("installed");
     expect(current.calls).toEqual([]);
+  });
+});
+
+describe("upgrade from module 1.5", () => {
+  it("is offered at level 1.5, accepted, then reads installed once the 1.6 key appears", async () => {
+    const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }] });
+    expect(await moduleProbe(rpc, fakeCaps([WITH15], [WITH], [WITH]), CREDS, { online: true })).toEqual({ state: "outdated", level: "1.5" });
+    const next = await upgradeModule(rpc, fakeCaps([WITH15, WITH16], [WITH], [WITH]), CREDS);
+    expect(next).toEqual({ state: "installed", level: "1.6" });
+    expect(rpc.calls).toContain("ir.module.module.button_immediate_upgrade [[7]]");
   });
 });
 
@@ -210,8 +223,8 @@ describe("upgrade from module 1.2", () => {
   it("is offered at level 1.2, accepted, then reads installed once the level field appears", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }] });
     expect(await moduleState(rpc, fakeCaps([WITH], [WITH], [WITH]), CREDS, { online: true })).toBe("outdated");
-    const next = await upgradeModule(rpc, fakeCaps([WITH, WITH15], [WITH], [WITH]), CREDS);
-    expect(next).toEqual({ state: "installed", level: "1.5" });
+    const next = await upgradeModule(rpc, fakeCaps([WITH, WITH16], [WITH], [WITH]), CREDS);
+    expect(next).toEqual({ state: "installed", level: "1.6" });
     expect(rpc.calls).toContain("ir.module.module.button_immediate_upgrade [[7]]");
   });
 });
@@ -221,7 +234,7 @@ describe("upgrade from module 1.1", () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }] });
     const caps = fakeCaps([WITH], [WITH], [{}, WITH]);
     expect(await moduleState(rpc, caps, CREDS, { online: true })).toBe("outdated");
-    expect((await upgradeModule(rpc, fakeCaps([WITH, WITH15], [WITH], [{}, WITH]), CREDS)).state).toBe("installed");
+    expect((await upgradeModule(rpc, fakeCaps([WITH, WITH16], [WITH], [{}, WITH]), CREDS)).state).toBe("installed");
     expect(rpc.calls).toContain("ir.module.module.button_immediate_upgrade [[7]]");
   });
 });
@@ -229,7 +242,7 @@ describe("upgrade from module 1.1", () => {
 describe("install chat module", () => {
   it("installs the module row, then probes fresh", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "uninstalled" }] });
-    const caps = fakeCaps([{}, WITH15], [{}, WITH], [{}, WITH]);
+    const caps = fakeCaps([{}, WITH16], [{}, WITH], [{}, WITH]);
     expect((await installModule(rpc, caps, CREDS)).state).toBe("installed");
     expect(rpc.calls).toContain("ir.module.module.button_immediate_install [[7]]");
     expect(caps.calls.at(-1).options.maxAgeMs).toBe(0);
@@ -237,7 +250,7 @@ describe("install chat module", () => {
 
   it("treats a lost response as no error and returns what the probe says", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "uninstalled" }], installError: new Error("timeout") });
-    expect((await installModule(rpc, fakeCaps([{}, WITH15], [{}, WITH], [{}, WITH]), CREDS)).state).toBe("installed");
+    expect((await installModule(rpc, fakeCaps([{}, WITH16], [{}, WITH], [{}, WITH]), CREDS)).state).toBe("installed");
   });
 
   it("returns the probed state when the server refuses with an AccessError", async () => {
@@ -266,8 +279,9 @@ describe("levelOfSelection", () => {
   });
   it("counts a key above every known one as the highest known", () => {
     expect(levelOfSelection([["1.4", "x"], ["1.5", "x"]])).toBe("1.5");
-    expect(levelOfSelection([["1.4", "x"], ["1.6", "x"]])).toBe("1.5");
-    expect(levelOfSelection([["2.0", "x"]])).toBe("1.5");
+    expect(levelOfSelection([["1.5", "x"], ["1.6", "x"]])).toBe("1.6");
+    expect(levelOfSelection([["1.4", "x"], ["1.7", "x"]])).toBe("1.6");
+    expect(levelOfSelection([["2.0", "x"]])).toBe("1.6");
   });
   it("is null without a usable key", () => {
     expect(levelOfSelection(undefined)).toBeNull();
@@ -280,8 +294,8 @@ describe("upgrade from module 1.3", () => {
   it("is offered at level 1.3, accepted, then reads installed once the level field appears", async () => {
     const rpc = fakeRpc({ isSystem: true, rows: [{ id: 7, state: "installed" }] });
     expect(await moduleState(rpc, fakeCaps([WITH13], [WITH], [WITH]), CREDS, { online: true })).toBe("outdated");
-    const next = await upgradeModule(rpc, fakeCaps([WITH13, { ...WITH13, ...level("1.4", "1.5") }], [WITH], [WITH]), CREDS);
-    expect(next).toEqual({ state: "installed", level: "1.5" });
+    const next = await upgradeModule(rpc, fakeCaps([WITH13, { ...WITH13, ...level("1.4", "1.5", "1.6") }], [WITH], [WITH]), CREDS);
+    expect(next).toEqual({ state: "installed", level: "1.6" });
     expect(rpc.calls).toContain("ir.module.module.button_immediate_upgrade [[7]]");
   });
 });

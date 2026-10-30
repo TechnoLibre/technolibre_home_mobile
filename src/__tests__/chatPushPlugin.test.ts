@@ -7,7 +7,7 @@ const health: PushHealth = {
     at: 1_000, level: 3, effectiveLevel: 3, mode: "poll_15", realtimeBuild: true, serviceAlive: false,
     ntfys: [{ url: "https://ntfy.exemple.test", state: "polling", reason: null, lastContactAt: 900, configIds: ["a"] }],
     accounts: [{ configId: "a", via: "ntfy", state: "ok", reason: null, lastCheckAt: 0 }],
-    undecryptable: 0, faults: 0, notificationsAllowed: true, batteryExempt: false,
+    undecryptable: 0, faults: 0, notificationsAllowed: true, batteryExempt: false, climbReason: "below_one",
 };
 
 const action: NativeAction = {
@@ -112,6 +112,14 @@ describe("chatPushPlugin bridge", () => {
         fake.emitPushOpen("/chat");
         expect(onOpen).toHaveBeenCalledWith({ url: "/chat" });
         expect(onActions).toHaveBeenCalledTimes(1);
+    });
+
+    it("the fake answers the effective level and climb reason it is set to", async () => {
+        const fake = fakeChatPushNative();
+        expect(await fake.status()).toMatchObject({ level: 3, effectiveLevel: 3, climbReason: null });
+        fake.effectiveLevel = 4;
+        fake.climbReason = "saver";
+        expect(await fake.status()).toMatchObject({ level: 3, effectiveLevel: 4, climbReason: "saver" });
     });
 
     it("is null off a native platform", () => {

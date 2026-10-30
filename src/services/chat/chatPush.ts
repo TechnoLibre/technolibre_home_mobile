@@ -1,5 +1,5 @@
 import { getCurrentLocale, t } from "../../i18n";
-import type { ChatChannel, ChatMailboxItem, ChatPushRow, LockScreen } from "../../models/chat";
+import type { ChatChannel, ChatMailboxItem, ChatPushRow, LockScreen, PhoneFilter } from "../../models/chat";
 import { sameServerUrl, syncConfigIdFor } from "../../models/syncConfig";
 import type { ChatPushNative, PushSettingsMirror } from "../../plugins/chatPushPlugin";
 import { isHttpAllowed, onHttpPolicyChange } from "../odoo/httpPolicy";
@@ -8,7 +8,7 @@ import { displayNameOf } from "./chatNames";
 import { effectiveLevel, levelAtLeast, type ChatModuleLevel } from "./chatModule";
 import { httpUrl, type NtfyLink } from "./chatPushLink";
 import type { ChatRepository } from "./chatRepository";
-import { chatSettings, setChatSettings, type NotifyLevel } from "./chatSettings";
+import { chatSettings, setChatSettings, type BrowserMode, type ClimbThreshold, type NotifyLevel } from "./chatSettings";
 import { CHAT_MAJOR, type ChatSource } from "./chatSources";
 import { isMuted, unreadOf } from "./chatUnread";
 
@@ -42,7 +42,7 @@ export const UNREGISTER_BOUND_MS = 5000;
 export const PUSH_RPC_TIMEOUT_MS = 15000;
 
 const PUSH_DEVICE = "mail.push.device";
-/** Module 1.5 route that marks the partner's device of an endpoint as the app's. */
+/** Module 1.5 route that marks the partner's device of an endpoint as the app's (with its browser mode at 1.6). */
 const PUSH_DEVICE_ROUTE = "/erplibre_mobile_chat/push/device";
 /** The registrationError key of a device the server did not mark. */
 const MARK_FAILED = "chat.push_registration_mark_failed";
@@ -68,8 +68,10 @@ const messageOf = (e: unknown): string => (e instanceof Error ? e.message : Stri
  * nothing). It keeps chat_push (ChatPushRow) and Odoo's mail.push.device
  * in step with what native code holds, and mirrors to native code what it
  * needs while the app is closed: the level, « Autoriser http », the texts,
- * each account's label, lock-screen choice and conversation names
- * (publish), and each account's Odoo session (mirrorSession).
+ * the battery climb and the browser mode, each account's label,
+ * lock-screen choice, conversation names, phone filter, inbox switches,
+ * quiet hours and Odoo's general channel setting (publish), and each
+ * account's Odoo session (mirrorSession).
  *
  * The methods run one at a time in call order, each from its first read
  * to its last native call. Native code forgets the session copy of an
@@ -102,7 +104,7 @@ export class ChatPush {
   /** Per account, the registration result of this foreground session ("registered" or "refused"). */
   private done = new Map<string, RegisterResult>();
   /** Accounts whose device mark this session did not reach Odoo (offline, an error): sent at their next registration. */
-  private markOwed = new Set<string>();
+  private owed = new Set<string>();
   /** Per account, the i18n key of why its last registration failed; cleared by a success. */
   private failures = new Map<string, string>();
   /** Per account, the session id last copied to native code in this foreground session. */
@@ -169,7 +171,17 @@ export class ChatPush {
   newSession(): void {
     this.done.clear();
     this.mirrored.clear();
-    this.markOwed.clear();
+    this.owed.clear();
+  }
+
+  /**
+   * Whether the account's device mark (its browser mode) has not reached
+   * Odoo in this foreground session: tried offline or failed with an
+   * error, owed until a registration of the session sends it. Kept in
+   * memory only.
+   */
+  markOwed(configId: string): boolean {
+    return this.owed.has(configId);
   }
 
   /**
@@ -280,6 +292,58 @@ export class ChatPush {
     return this.run(async () => {
       await this.repo.setPushRow({ configId, lockScreen: mode });
       await this.publishNow();
+    });
+  }
+
+  /**
+   * Which of the account's pushes the phone shows: the chat filter, the
+   * record and activity pushes (inbox), and with inbox off those that
+   * mention the user (inboxMentions); published at once.
+   */
+  setFilter(configId: string, filter: PhoneFilter, inbox: boolean, inboxMentions: boolean): Promise<void> {
+    if (!this.native) return Promise.resolve();
+    return this.run(async () => {
+      await this.repo.setPushRow({ configId, filter, inboxNotify: inbox, inboxMentions });
+      await this.publishNow();
+    });
+  }
+
+  /**
+   * The account's quiet hours, from and to in minutes from local midnight
+   * (integers from 0 to 1439); published at once. Rejects, writing
+   * nothing, a minute outside the day, or equal bounds while on (an empty
+   * span native code never enters).
+   */
+  setQuietHours(configId: string, q: { on: boolean; from: number; to: number }): Promise<void> {
+    if (!this.native) return Promise.resolve();
+    const minute = (m: number) => Number.isInteger(m) && m >= 0 && m < 1440;
+    if (!minute(q.from) || !minute(q.to)) return Promise.reject(new Error("Quiet hours outside the day"));
+    if (q.on && q.from === q.to) return Promise.reject(new Error("Quiet hours with equal bounds"));
+    return this.run(async () => {
+      await this.repo.setPushRow({ configId, quietOn: q.on, quietFrom: q.from, quietTo: q.to });
+      await this.publishNow();
+    });
+  }
+
+  /** Saves the battery climb (switch and thresholds) and publishes it. */
+  setClimb(c: { auto: boolean; oneBelow: ClimbThreshold; twoBelow: ClimbThreshold }): Promise<void> {
+    return this.run(async () => {
+      setChatSettings({ ...chatSettings(), climbAuto: c.auto, climbOneBelow: c.oneBelow, climbTwoBelow: c.twoBelow });
+      if (this.native) await this.publishNow();
+    });
+  }
+
+  /**
+   * Saves the browser mode, publishes it, then marks the device of every
+   * account again (remarkAll), since each server holds the mode per
+   * device.
+   */
+  setBrowserMode(mode: BrowserMode): Promise<void> {
+    return this.run(async () => {
+      setChatSettings({ ...chatSettings(), browserMode: mode });
+      if (!this.native) return;
+      await this.publishNow();
+      await this.remarkAll();
     });
   }
 
@@ -468,9 +532,11 @@ export class ChatPush {
 
   /**
    * Sends the whole mirror: the level, « Autoriser http », the texts of
-   * PUSH_STRING_KEYS, and per chat account its label, lock-screen choice
-   * and the conversations the list shows, by displayNameOf in the app's
-   * language. A mirror equal to the last one accepted is not sent again.
+   * PUSH_STRING_KEYS, the battery climb, the browser mode, and per chat
+   * account its label, lock-screen choice, the conversations the list
+   * shows (by displayNameOf in the app's language), its phone filter,
+   * inbox switches, quiet hours and Odoo's general channel setting. A
+   * mirror equal to the last one accepted is not sent again.
    */
   publish(): Promise<void> {
     if (!this.native) return Promise.resolve();
@@ -584,7 +650,7 @@ export class ChatPush {
   private async registerOnce(src: ChatSource): Promise<RegisterResult> {
     const known = this.done.get(src.configId);
     if (known) {
-      if (known === "registered" && this.markOwed.has(src.configId)) await this.markAppDevice(src);
+      if (known === "registered" && this.owed.has(src.configId)) await this.markAppDevice(src);
       return known;
     }
     const row = await this.repo.pushRow(src.configId);
@@ -620,30 +686,38 @@ export class ChatPush {
   /**
    * Marks the account's device as the app's own on a module at 1.5
    * (POST /erplibre_mobile_chat/push/device), which tells the server that
-   * the notification carries the actions. It does nothing below 1.5, with
-   * the module ignored or without an endpoint. Odoo answering ok false
-   * (no such device for this partner) or an error is kept as the
-   * registration's reason (registrationError) and logged without the
-   * endpoint; a success clears it. A mark offline or failed with an error
-   * is owed (markOwed): the account's next registerOnce of the session
-   * sends it again; an ok false is Odoo's answer and is not. Never throws.
-   * True when marked.
+   * the notification carries the actions, with the browser mode of the
+   * settings: at 1.6 as browser_mode, at 1.5 as quiet_while_online (true
+   * for "quiet" only). The argument follows the stored level alone
+   * (moduleLevel), since Odoo answers ok to an argument its route does not
+   * know. It does nothing below 1.5, with the module ignored or without an
+   * endpoint. Odoo answering ok false (no such device for this partner) or
+   * an error is kept as the registration's reason (registrationError) and
+   * logged without the endpoint; a success clears it. A mark offline or
+   * failed with an error is owed (markOwed): the account's next
+   * registerOnce of the session sends it again; an ok false is Odoo's
+   * answer and is not. Never throws. True when marked.
    */
   async markAppDevice(src: ChatSource): Promise<boolean> {
     try {
-      if (!levelAtLeast(await this.moduleLevel(src.configId), "1.5")) return false;
+      const level = await this.moduleLevel(src.configId);
+      if (!levelAtLeast(level, "1.5")) return false;
       const { endpoint } = await this.repo.pushRow(src.configId);
       if (!endpoint) return false;
       if (!(await this.isOnline())) {
-        this.markOwed.add(src.configId);
+        this.owed.add(src.configId);
         return false;
       }
+      const mode = chatSettings().browserMode;
+      const params = levelAtLeast(level, "1.6")
+        ? { endpoint, browser_mode: mode }
+        : { endpoint, quiet_while_online: mode === "quiet" };
       const answer = await this.withTimeout(
         this.rpc.callWithAuth(src.creds, (sessionId) =>
-          this.rpc.jsonRoute(src.creds.odooUrl, sessionId, PUSH_DEVICE_ROUTE, { endpoint, quiet_while_online: false })),
+          this.rpc.jsonRoute(src.creds.odooUrl, sessionId, PUSH_DEVICE_ROUTE, params)),
         `${PUSH_DEVICE_ROUTE}`,
       );
-      this.markOwed.delete(src.configId);
+      this.owed.delete(src.configId);
       if (answer?.ok === true) {
         if (this.failures.get(src.configId) === MARK_FAILED) this.failures.delete(src.configId);
         return true;
@@ -652,11 +726,16 @@ export class ChatPush {
       console.warn("[chat push] device not marked: Odoo holds no such device");
       return false;
     } catch (e) {
-      this.markOwed.add(src.configId);
+      this.owed.add(src.configId);
       this.failures.set(src.configId, MARK_FAILED);
       console.warn("[chat push] device not marked:", messageOf(e));
       return false;
     }
+  }
+
+  /** markAppDevice for every chat account, in turn; each one skips or owes its mark as markAppDevice says. */
+  private async remarkAll(): Promise<void> {
+    for (const src of await this.liveSources()) await this.markAppDevice(src);
   }
 
   /** The promise's result, rejecting after PUSH_RPC_TIMEOUT_MS without one. */
@@ -774,13 +853,21 @@ export class ChatPush {
           name: displayNameOf(c, membersOf.get(c.channelId) ?? [], byPartner, state.selfPartnerId, lang),
           type: c.channelType,
         })),
+        filter: row.filter,
+        inbox: row.inboxNotify,
+        inboxMentions: row.inboxMentions,
+        quiet: { on: row.quietOn, from: row.quietFrom, to: row.quietTo },
+        channelNotifications: state.channelNotifications,
       });
     }
+    const settings = chatSettings();
     const mirror: PushSettingsMirror = {
-      level: chatSettings().notifyLevel,
+      level: settings.notifyLevel,
       allowHttp: isHttpAllowed(),
       strings: Object.fromEntries(PUSH_STRING_KEYS.map((key) => [key, t(`chat.push_${key}`)])),
       accounts,
+      climb: { auto: settings.climbAuto, oneBelow: settings.climbOneBelow, twoBelow: settings.climbTwoBelow },
+      browserMode: settings.browserMode,
     };
     const text = JSON.stringify(mirror);
     if (text === this.lastMirror) return;

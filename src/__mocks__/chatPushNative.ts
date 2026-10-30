@@ -27,6 +27,10 @@ export interface FakeChatPushNative extends ChatPushNative {
     qrText: string | null;
     exempt: boolean;
     notificationsAllowed: boolean;
+    /** The effective level status() answers; null: the level mirrored. */
+    effectiveLevel: number | null;
+    /** The climb reason status() answers. */
+    climbReason: PushHealth["climbReason"];
     /** Fields merged over the default health status() answers. */
     health: Partial<PushHealth>;
     /** The actions the drain serves until acked, oldest first. */
@@ -72,6 +76,8 @@ export function fakeChatPushNative(): FakeChatPushNative {
         qrText: null,
         exempt: false,
         notificationsAllowed: true,
+        effectiveLevel: null,
+        climbReason: null,
         health: {},
         nativeActions: [],
 
@@ -149,8 +155,9 @@ export function fakeChatPushNative(): FakeChatPushNative {
             return {
                 at: 0,
                 level: fake.settings?.level ?? 3,
-                effectiveLevel: fake.settings?.level ?? 3,
+                effectiveLevel: fake.effectiveLevel ?? fake.settings?.level ?? 3,
                 mode: "poll_15",
+                climbReason: fake.climbReason,
                 realtimeBuild: fake.realtime,
                 serviceAlive: false,
                 ntfys: [],

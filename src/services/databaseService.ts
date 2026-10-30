@@ -197,6 +197,20 @@ const DB_NAME = "erplibre_mobile";
 const SEARCH_FILL_ROUND = 500;
 
 /**
+ * The push preference columns of chat_push and their definitions: the
+ * phone filter, the inbox switches, the quiet hours (minutes from local
+ * midnight, 22:00 to 07:00 by default).
+ */
+const CHAT_PUSH_PREFS = [
+  ["phone_filter", "TEXT NOT NULL DEFAULT 'all'"],
+  ["inbox_notify", "INTEGER NOT NULL DEFAULT 1"],
+  ["inbox_mentions", "INTEGER NOT NULL DEFAULT 0"],
+  ["quiet_on", "INTEGER NOT NULL DEFAULT 0"],
+  ["quiet_from", "INTEGER NOT NULL DEFAULT 1320"],
+  ["quiet_to", "INTEGER NOT NULL DEFAULT 420"],
+] as const;
+
+/**
  * The triggers that keep chat_search_fts in step with chat_messages, by
  * name. An INSERT OR REPLACE over an existing id deletes the old row
  * without firing delete triggers (recursive_triggers is off), so the
@@ -1328,7 +1342,9 @@ export class DatabaseService {
         file_dir               TEXT,
         module_level           TEXT,
         starred_counter        INTEGER NOT NULL DEFAULT 0,
-        notification_type      TEXT
+        notification_type      TEXT,
+        channel_notifications    TEXT,
+        channel_notifications_at TEXT
       )
     `);
     await this.createChatMailboxTable();
@@ -1641,7 +1657,8 @@ export class DatabaseService {
         vapid_key       TEXT,
         registered_at   TEXT,
         stale_endpoints TEXT NOT NULL DEFAULT '[]',
-        lock_screen     TEXT NOT NULL DEFAULT 'hidden_locked'
+        lock_screen     TEXT NOT NULL DEFAULT 'hidden_locked',
+        ${CHAT_PUSH_PREFS.map(([col, def]) => `${col} ${def}`).join(",\n        ")}
       )
     `);
   }
@@ -1649,6 +1666,32 @@ export class DatabaseService {
   /** Migration 2026102801: the chat_push table, made once (createChatPushTable). */
   async addChatPush(): Promise<void> {
     await this.createChatPushTable();
+  }
+
+  /**
+   * Migration 2026103001: adds the push preferences (CHAT_PUSH_PREFS) to
+   * chat_push and Odoo's general channel setting with its stale guard
+   * (channel_notifications, channel_notifications_at) to chat_sources. A
+   * column is added only when PRAGMA table_info does not list it, and only
+   * to an existing table: a fresh install (createChatTables already has
+   * them), a second run and a database without the chat tables change
+   * nothing.
+   */
+  async addChatPushPrefs(): Promise<void> {
+    const columns: Record<string, (readonly [string, string])[]> = {
+      chat_push: CHAT_PUSH_PREFS,
+      chat_sources: [
+        ["channel_notifications", "TEXT"],
+        ["channel_notifications_at", "TEXT"],
+      ],
+    };
+    for (const [table, wanted] of Object.entries(columns)) {
+      const names = ((await this.db.query(`PRAGMA table_info(${table})`)).values ?? []).map((r: any) => r.name as string);
+      if (names.length === 0) continue;
+      for (const [col, def] of wanted) {
+        if (!names.includes(col)) await this.db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+      }
+    }
   }
 
   /**

@@ -589,6 +589,133 @@ describe("ChatPush", () => {
     });
   });
 
+  describe("module 1.6 and the push preferences", () => {
+    const at = (level: string | null, who = 0) => chat.repo.setSourceState({
+      configId: ids[who], moduleState: level === "1.6" ? "installed" : level ? "outdated" : "unknown", moduleLevel: level as any,
+    });
+    const routeCalls = () => odoo.calls.filter((c) => c.path === "/erplibre_mobile_chat/push/device");
+    const marks = () => routeCalls().map((c) => [c.host, c.params]);
+
+    it("a 1.6 server gets the browser mode", async () => {
+      await at("1.6");
+      await chat.push.applyLink([ids[0]], link());
+      expect(odoo.state.marked).toEqual([{ endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "wait" }]);
+      await chat.push.setBrowserMode("ring");
+      expect(odoo.state.marked.at(-1)).toEqual({ endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "ring" });
+      expect(chatSettings().browserMode).toBe("ring");
+    });
+
+    it("a 1.5 server gets quiet_while_online only", async () => {
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      await chat.push.setBrowserMode("quiet");
+      await chat.push.setBrowserMode("ring");
+      expect(odoo.state.marked).toEqual([
+        { endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: false },
+        { endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: true },
+        { endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: false },
+      ]);
+    });
+
+    it("changing the browser mode marks every 1.5 and 1.6 account again", async () => {
+      await at("1.6", 0);
+      await at("1.5", 1);
+      await chat.push.applyLink(ids, link());
+      odoo.calls.length = 0;
+      await chat.push.setBrowserMode("quiet");
+      expect(marks()).toEqual([
+        ["odoo.exemple.test", { endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "quiet" }],
+        ["bureau.exemple.test", { endpoint: `${NTFY}/upab12cd34fake2`, quiet_while_online: true }],
+      ]);
+      expect(lastMirror().browserMode).toBe("quiet");
+      // Offline, the mark is owed until a registration of the session sends it
+      setNetwork({ connected: false, wifi: false });
+      odoo.calls.length = 0;
+      await chat.push.setBrowserMode("wait");
+      expect(marks()).toEqual([]);
+      expect(lastMirror().browserMode).toBe("wait");
+      expect(ids.map((id) => chat.push.markOwed(id))).toEqual([true, true]);
+      setNetwork({ connected: true, wifi: true });
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(marks()).toEqual([["odoo.exemple.test", { endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "wait" }]]);
+      expect(ids.map((id) => chat.push.markOwed(id))).toEqual([false, true]);
+    });
+
+    it("an account without the module is never marked", async () => {
+      await at(null, 0);
+      await at("1.4", 1);
+      await chat.push.applyLink(ids, link());
+      await chat.push.setBrowserMode("quiet");
+      setNetwork({ connected: false, wifi: false });
+      await chat.push.setBrowserMode("ring");
+      expect(routeCalls()).toEqual([]);
+      expect(ids.map((id) => chat.push.markOwed(id))).toEqual([false, false]);
+      expect(lastMirror().browserMode).toBe("ring");
+    });
+
+    it("the mirror carries the phone and server preferences", async () => {
+      await chat.push.start();
+      expect(lastMirror()).toMatchObject({ climb: { auto: true, oneBelow: 30, twoBelow: 15 }, browserMode: "wait" });
+      for (const a of lastMirror().accounts) {
+        expect(a).toMatchObject({
+          filter: "all", inbox: true, inboxMentions: false, quiet: { on: false, from: 1320, to: 420 }, channelNotifications: null,
+        });
+      }
+      await chat.push.setClimb({ auto: false, oneBelow: 20, twoBelow: 0 });
+      expect(chatSettings()).toMatchObject({ climbAuto: false, climbOneBelow: 20, climbTwoBelow: 0 });
+      expect(lastMirror().climb).toEqual({ auto: false, oneBelow: 20, twoBelow: 0 });
+      await chat.push.setFilter(ids[0], "mentions_dm", false, true);
+      await chat.push.setQuietHours(ids[1], { on: true, from: 1380, to: 360 });
+      await chat.repo.setSourceState({ configId: ids[0], channelNotifications: "no_notif", channelNotificationsAt: clock.toISOString() });
+      await chat.push.publish();
+      const [first, second] = lastMirror().accounts;
+      expect(first).toMatchObject({
+        filter: "mentions_dm", inbox: false, inboxMentions: true, quiet: { on: false, from: 1320, to: 420 }, channelNotifications: "no_notif",
+      });
+      expect(second).toMatchObject({
+        filter: "all", inbox: true, inboxMentions: false, quiet: { on: true, from: 1380, to: 360 }, channelNotifications: null,
+      });
+      expect(await chat.repo.pushRow(ids[0])).toMatchObject({ filter: "mentions_dm", inboxNotify: false, inboxMentions: true });
+      expect(await chat.repo.pushRow(ids[1])).toMatchObject({ quietOn: true, quietFrom: 1380, quietTo: 360 });
+      expect(await chat.repo.sourceState(ids[0])).toMatchObject({ channelNotifications: "no_notif", channelNotificationsAt: clock.toISOString() });
+    });
+
+    it("equal quiet bounds are refused", async () => {
+      await chat.push.start();
+      await expect(chat.push.setQuietHours(ids[0], { on: true, from: 600, to: 600 })).rejects.toThrow();
+      for (const bad of [{ from: -1, to: 420 }, { from: 1320, to: 1440 }, { from: 12.5, to: 420 }]) {
+        await expect(chat.push.setQuietHours(ids[0], { on: true, ...bad })).rejects.toThrow();
+      }
+      expect(await chat.repo.pushRow(ids[0])).toMatchObject({ quietOn: false, quietFrom: 1320, quietTo: 420 });
+      // Off, the bounds are kept as given: the switch alone decides
+      await chat.push.setQuietHours(ids[0], { on: false, from: 600, to: 600 });
+      expect(await chat.repo.pushRow(ids[0])).toMatchObject({ quietOn: false, quietFrom: 600, quietTo: 600 });
+      expect(lastMirror().accounts[0].quiet).toEqual({ on: false, from: 600, to: 600 });
+    });
+
+    it("a renamed account keeps its preferences", async () => {
+      await chat.push.start();
+      await chat.push.applyLink([ids[0]], link());
+      await chat.push.setFilter(ids[0], "none", false, false);
+      await chat.push.setQuietHours(ids[0], { on: true, from: 1200, to: 480 });
+      await chat.push.idle();
+      const apps = new AppService(env.db);
+      new ChatLifecycle(chat).followApplications(apps);
+      const app = (await env.db.getAllApplications())[0];
+      const renamed = `${A.url}/|alice|db1`;
+      await apps.edit({ url: A.url, username: A.username }, { ...app, url: `${A.url}/` });
+      await chat.push.idle();
+      await chat.push.idle();
+      expect(await chat.repo.pushRow(renamed)).toMatchObject({
+        endpoint: `${NTFY}/upab12cd34fake2`, filter: "none", inboxNotify: false, inboxMentions: false,
+        quietOn: true, quietFrom: 1200, quietTo: 480,
+      });
+      expect(lastMirror().accounts.find((a) => a.configId === renamed)).toMatchObject({
+        filter: "none", inbox: false, quiet: { on: true, from: 1200, to: 480 },
+      });
+    });
+  });
+
   it("a registration failure reason is shown until the next success", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     await chat.push.applyLink([ids[0]], link());
@@ -993,6 +1120,7 @@ describe("migration 2026102801", () => {
   const PUSH_COLS = [
     "config_id", "ntfy_url", "odoo_ntfy_url", "prefix", "topic", "endpoint", "p256dh", "auth", "vapid_key",
     "registered_at", "stale_endpoints", "lock_screen",
+    "phone_filter", "inbox_notify", "inbox_mentions", "quiet_on", "quiet_from", "quiet_to",
   ];
 
   beforeEach(async () => {
@@ -1004,7 +1132,7 @@ describe("migration 2026102801", () => {
   it("follows 2026102705 and adds the table once", async () => {
     const versions = APP_MIGRATIONS.map((m) => m.version);
     expect(versions[versions.indexOf(2026102801) - 1]).toBe(2026102705);
-    expect(versions[versions.length - 1]).toBe(2026102801);
+    expect(versions[versions.indexOf(2026102801) + 1]).toBe(2026103001);
     expect(migration().description).toBe("Clavardage : notifications par ntfy, par compte");
     await migration().run(db);
     const repo = new ChatRepository(db);
@@ -1038,6 +1166,7 @@ describe("ChatRepository push rows", () => {
     expect(await repo.pushRow(C1)).toEqual({
       configId: C1, ntfyUrl: null, odooNtfyUrl: null, prefix: null, topic: null, endpoint: null, p256dh: null,
       auth: null, vapidKey: null, registeredAt: null, staleEndpoints: [], lockScreen: "hidden_locked",
+      filter: "all", inboxNotify: true, inboxMentions: false, quietOn: false, quietFrom: 1320, quietTo: 420,
     });
     expect(await repo.pushRows()).toEqual([]);
   });
@@ -1048,6 +1177,11 @@ describe("ChatRepository push rows", () => {
     expect(await repo.pushRow(C1)).toMatchObject({ ntfyUrl: NTFY, staleEndpoints: ["e1"], lockScreen: "always" });
     await db.rawRun("UPDATE chat_push SET lock_screen = ?, stale_endpoints = ? WHERE config_id = ?", ["sometimes", "{bad", C1]);
     expect(await repo.pushRow(C1)).toMatchObject({ lockScreen: "hidden_locked", staleEndpoints: [] });
+    // Unreadable preferences read as their defaults
+    await repo.setPushRow({ configId: C1, filter: "none", inboxNotify: false, quietFrom: 0, quietTo: 1439 });
+    expect(await repo.pushRow(C1)).toMatchObject({ filter: "none", inboxNotify: false, quietFrom: 0, quietTo: 1439 });
+    await db.rawRun("UPDATE chat_push SET phone_filter = ?, quiet_from = ?, quiet_to = ? WHERE config_id = ?", ["some", 1440, -1, C1]);
+    expect(await repo.pushRow(C1)).toMatchObject({ filter: "all", quietFrom: 1320, quietTo: 420 });
   });
 
   it("rename and drop source cover chat_push", async () => {

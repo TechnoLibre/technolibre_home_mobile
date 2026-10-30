@@ -120,7 +120,7 @@ describe("opening from a tap", () => {
 // A realtime build applies the level chosen: effectiveLevel follows level unless the case says otherwise
 const health = (over: Partial<PushHealth> = {}): PushHealth => ({
   at: 0, level: 3, effectiveLevel: over.level ?? 3, mode: "poll_15", realtimeBuild: true, serviceAlive: true,
-  ntfys: [], accounts: [], undecryptable: 0, faults: 0, notificationsAllowed: true, batteryExempt: true, ...over,
+  ntfys: [], accounts: [], undecryptable: 0, faults: 0, notificationsAllowed: true, batteryExempt: true, climbReason: null, ...over,
 });
 const row = (configId: string, ntfyUrl: string | null): ChatPushRow => ({
   configId, ntfyUrl, odooNtfyUrl: null, prefix: null, topic: null, endpoint: null, p256dh: null, auth: null,

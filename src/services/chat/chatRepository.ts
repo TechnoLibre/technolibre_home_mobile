@@ -13,7 +13,9 @@ import type {
   ChatSourceState,
   LockScreen,
   MessageTarget,
+  OdooNotify,
   OutgoingFile,
+  PhoneFilter,
 } from "../../models/chat";
 import { messageKeyOf, sameTarget } from "../../models/chat";
 import { EMPTY_MENTIONS, type Mentions } from "./chatCompose";
@@ -69,6 +71,8 @@ function defaultSource(configId: string): ChatSourceState {
     moduleLevel: null,
     starredCounter: 0,
     notificationType: null,
+    channelNotifications: null,
+    channelNotificationsAt: null,
   };
 }
 
@@ -353,15 +357,36 @@ function memberFromRow(r: Row): ChatMember {
 }
 
 const LOCK_SCREENS: LockScreen[] = ["hidden_locked", "never", "always"];
+const PHONE_FILTERS: PhoneFilter[] = ["all", "mentions_dm", "none"];
+const ODOO_NOTIFY: OdooNotify[] = ["all", "mentions", "no_notif"];
+
+/** Default quiet hours, in minutes from local midnight: 22:00 to 07:00. */
+const QUIET_FROM = 1320;
+const QUIET_TO = 420;
 
 function defaultPush(configId: string): ChatPushRow {
   return {
     configId, ntfyUrl: null, odooNtfyUrl: null, prefix: null, topic: null, endpoint: null, p256dh: null, auth: null,
     vapidKey: null, registeredAt: null, staleEndpoints: [], lockScreen: "hidden_locked",
+    filter: "all", inboxNotify: true, inboxMentions: false, quietOn: false, quietFrom: QUIET_FROM, quietTo: QUIET_TO,
   };
 }
 
-/** A stored push row; a stale list that does not read as an array of strings counts as empty, an unknown lock screen as the default. */
+/** A minute of the day (an integer from 0 to 1439), else `fallback`. */
+function minuteOf(v: any, fallback: number): number {
+  return Number.isInteger(v) && v >= 0 && v < 1440 ? v : fallback;
+}
+
+/** The column of a push row field: `filter` is stored as phone_filter, the others by snakeOf. */
+function pushColumnOf(field: string): string {
+  return field === "filter" ? "phone_filter" : snakeOf(field);
+}
+
+/**
+ * A stored push row; a stale list that does not read as an array of
+ * strings counts as empty, an unknown lock screen or filter and a minute
+ * outside the day as the default, a missing inbox_notify as on.
+ */
 function pushFromRow(r: Row): ChatPushRow {
   let stale: unknown = [];
   try {
@@ -382,6 +407,12 @@ function pushFromRow(r: Row): ChatPushRow {
     registeredAt: r.registered_at ?? null,
     staleEndpoints: Array.isArray(stale) ? stale.filter((e): e is string => typeof e === "string") : [],
     lockScreen: LOCK_SCREENS.includes(r.lock_screen) ? r.lock_screen : "hidden_locked",
+    filter: PHONE_FILTERS.includes(r.phone_filter) ? r.phone_filter : "all",
+    inboxNotify: r.inbox_notify === undefined || r.inbox_notify === null ? true : bool(r.inbox_notify),
+    inboxMentions: bool(r.inbox_mentions),
+    quietOn: bool(r.quiet_on),
+    quietFrom: minuteOf(r.quiet_from, QUIET_FROM),
+    quietTo: minuteOf(r.quiet_to, QUIET_TO),
   };
 }
 
@@ -399,6 +430,12 @@ function pushToRow(p: ChatPushRow): Row {
     registered_at: p.registeredAt,
     stale_endpoints: JSON.stringify(p.staleEndpoints),
     lock_screen: p.lockScreen,
+    phone_filter: p.filter,
+    inbox_notify: flag(p.inboxNotify),
+    inbox_mentions: flag(p.inboxMentions),
+    quiet_on: flag(p.quietOn),
+    quiet_from: p.quietFrom,
+    quiet_to: p.quietTo,
   };
 }
 
@@ -422,6 +459,8 @@ function sourceFromRow(r: Row): ChatSourceState {
     moduleLevel: r.module_level ?? null,
     starredCounter: r.starred_counter ?? 0,
     notificationType: r.notification_type === "email" || r.notification_type === "inbox" ? r.notification_type : null,
+    channelNotifications: ODOO_NOTIFY.includes(r.channel_notifications) ? r.channel_notifications : null,
+    channelNotificationsAt: r.channel_notifications_at ?? null,
   };
 }
 
@@ -675,6 +714,8 @@ export class ChatRepository {
       module_level: s.moduleLevel,
       starred_counter: s.starredCounter,
       notification_type: s.notificationType,
+      channel_notifications: s.channelNotifications,
+      channel_notifications_at: s.channelNotificationsAt,
     };
   }
 
@@ -1926,7 +1967,7 @@ export class ChatRepository {
 
   // ─── Push ─────────────────────────────────────────────────────────────────
 
-  /** The account's closed-app notifications; no ntfy and hidden when locked while nothing is stored. */
+  /** The account's closed-app notifications; no ntfy, hidden when locked and the default preferences while nothing is stored. */
   async pushRow(configId: string): Promise<ChatPushRow> {
     const row = (await this.rows("chat_push", { config_id: configId }))[0];
     return row ? pushFromRow(row) : defaultPush(configId);
@@ -1945,7 +1986,7 @@ export class ChatRepository {
   async setPushRow(p: Partial<ChatPushRow> & { configId: string }): Promise<void> {
     const fresh = pushToRow(defaultPush(p.configId));
     const full = pushToRow({ ...defaultPush(p.configId), ...defined(p) });
-    const cols = Object.keys(defined(p)).filter((k) => k !== "configId").map(snakeOf);
+    const cols = Object.keys(defined(p)).filter((k) => k !== "configId").map(pushColumnOf);
     const names = Object.keys(fresh);
     await this.db.rawRun(
       `INSERT OR IGNORE INTO chat_push (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
@@ -1965,7 +2006,7 @@ export class ChatRepository {
    */
   async updatePushRow(p: Partial<ChatPushRow> & { configId: string }): Promise<void> {
     const full = pushToRow({ ...defaultPush(p.configId), ...defined(p) });
-    const cols = Object.keys(defined(p)).filter((k) => k !== "configId").map(snakeOf);
+    const cols = Object.keys(defined(p)).filter((k) => k !== "configId").map(pushColumnOf);
     if (cols.length === 0) return;
     await this.db.rawRun(
       `UPDATE chat_push SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE config_id = ?`,

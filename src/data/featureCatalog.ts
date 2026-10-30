@@ -5751,6 +5751,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "src/services/chat/chatPush.ts",
                             "src/services/chat/chatPushLink.ts",
                             "src/services/migrations/addChatPush.ts",
+                            "src/services/migrations/addChatPushPrefs.ts",
                             "src/services/chat/chatPushOpen.ts",
                             "src/components/options/chat_notifications/options_chat_notifications_component.ts",
                             "src/components/options/chat_notifications/options_chat_notifications_component.scss",

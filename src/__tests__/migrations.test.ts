@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 
 import { addNotePriority } from "../services/migrations/addNotePriority";
 import { addReminderCreatedAt } from "../services/migrations/addReminderCreatedAt";
@@ -36,6 +37,10 @@ import { addChatOnTop } from "../services/migrations/addChatOnTop";
 import { addChatRecordThreads } from "../services/migrations/addChatRecordThreads";
 import { addChatAvatars } from "../services/migrations/addChatAvatars";
 import { addChatPush } from "../services/migrations/addChatPush";
+import { addChatPushPrefs } from "../services/migrations/addChatPushPrefs";
+import { APP_MIGRATIONS } from "../services/migrations";
+import { DatabaseService } from "../services/databaseService";
+import { ChatRepository } from "../services/chat/chatRepository";
 
 // Each migration is a thin wrapper that delegates to one DatabaseService
 // method and returns { counts: {} }. The contract under test is that
@@ -77,6 +82,7 @@ const cases: Array<{
     { name: "addChatRecordThreads",    migration: addChatRecordThreads,    method: "addChatRecordThreads" },
     { name: "addChatAvatars",          migration: addChatAvatars,          method: "addChatAvatars" },
     { name: "addChatPush",             migration: addChatPush,             method: "addChatPush" },
+    { name: "addChatPushPrefs",        migration: addChatPushPrefs,        method: "addChatPushPrefs" },
 ];
 
 describe("schema migrations (one-method wrappers)", () => {
@@ -97,4 +103,58 @@ describe("schema migrations (one-method wrappers)", () => {
             });
         });
     }
+});
+
+describe("2026103001 push preferences", () => {
+    let db: DatabaseService;
+    const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026103001)!;
+    const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+    const PUSH_PREFS = ["phone_filter", "inbox_notify", "inbox_mentions", "quiet_on", "quiet_from", "quiet_to"];
+    const SOURCE_PREFS = ["channel_notifications", "channel_notifications_at"];
+
+    beforeEach(async () => {
+        SecureStoragePlugin._store.clear();
+        db = new DatabaseService();
+        await db.initialize();
+    });
+
+    it("2026103001 adds the push preference columns with their defaults", async () => {
+        const versions = APP_MIGRATIONS.map((m) => m.version);
+        expect(versions[versions.indexOf(2026103001) - 1]).toBe(2026102801);
+        expect(versions[versions.length - 1]).toBe(2026103001);
+        expect(migration().description).toBe("Clavardage : préférences de notification");
+        // The tables as migration 2026102801 and the chat tables before it left them
+        const raw = (db as any).db;
+        await raw.execute(`CREATE TABLE IF NOT EXISTS chat_push (
+            config_id TEXT PRIMARY KEY NOT NULL, ntfy_url TEXT, odoo_ntfy_url TEXT, prefix TEXT, topic TEXT,
+            endpoint TEXT, p256dh TEXT, auth TEXT, vapid_key TEXT, registered_at TEXT,
+            stale_endpoints TEXT NOT NULL DEFAULT '[]', lock_screen TEXT NOT NULL DEFAULT 'hidden_locked')`);
+        await raw.execute("CREATE TABLE IF NOT EXISTS chat_sources (config_id TEXT PRIMARY KEY NOT NULL, notification_type TEXT)");
+        await db.rawRun("INSERT INTO chat_push (config_id, stale_endpoints, lock_screen) VALUES (?, ?, ?)", ["c", "[]", "never"]);
+        await db.rawRun("INSERT INTO chat_sources (config_id) VALUES (?)", ["c"]);
+        await migration().run(db);
+        expect(await colsOf("chat_push")).toEqual(expect.arrayContaining(PUSH_PREFS));
+        expect(await colsOf("chat_sources")).toEqual(expect.arrayContaining(SOURCE_PREFS));
+        expect(await new ChatRepository(db).pushRow("c")).toMatchObject({
+            lockScreen: "never", filter: "all", inboxNotify: true, inboxMentions: false, quietOn: false, quietFrom: 1320, quietTo: 420,
+        });
+        expect((await db.rawQuery("SELECT channel_notifications, channel_notifications_at FROM chat_sources"))[0])
+            .toEqual({ channel_notifications: null, channel_notifications_at: null });
+        // A second run changes nothing
+        const before = [await colsOf("chat_push"), await colsOf("chat_sources")];
+        await migration().run(db);
+        expect([await colsOf("chat_push"), await colsOf("chat_sources")]).toEqual(before);
+    });
+
+    it("is idempotent on a database that has them, and adds no table to one without the chat", async () => {
+        await migration().run(db);
+        expect(await colsOf("chat_push")).toEqual([]);
+        expect(await colsOf("chat_sources")).toEqual([]);
+        await db.createChatTables();
+        const fresh = [await colsOf("chat_push"), await colsOf("chat_sources")];
+        expect(fresh[0]).toEqual(expect.arrayContaining(PUSH_PREFS));
+        expect(fresh[1]).toEqual(expect.arrayContaining(SOURCE_PREFS));
+        await migration().run(db);
+        expect([await colsOf("chat_push"), await colsOf("chat_sources")]).toEqual(fresh);
+    });
 });

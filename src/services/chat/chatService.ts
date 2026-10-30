@@ -672,7 +672,9 @@ export class ChatService {
    * attachment upload needs module 1.2; a guarded edit, which checks the
    * body fingerprint, needs module 1.3; server search, an idempotent star and
    * an idempotent chatter post need module 1.4; marking the app's device,
-   * which the notification actions rely on, needs module 1.5.
+   * which the notification actions rely on, needs module 1.5; the browser
+   * mode on the device and the push flags (mentioned, browser online) the
+   * phone filter and the hold read need module 1.6.
    */
   async features(configId: string): Promise<{
     canRemoveMembers: boolean;
@@ -683,6 +685,7 @@ export class ChatService {
     idempotentStar: boolean;
     idempotentRecordPost: boolean;
     appPush: boolean;
+    pushFlags: boolean;
   }> {
     const state = await this.repo.sourceState(configId);
     const at = (min: ChatModuleLevel) => this.moduleMode === "auto" && levelAtLeast(effectiveLevel(state), min);
@@ -695,6 +698,7 @@ export class ChatService {
       idempotentStar: at("1.4"),
       idempotentRecordPost: at("1.4"),
       appPush: at("1.5"),
+      pushFlags: at("1.6"),
     };
   }
 

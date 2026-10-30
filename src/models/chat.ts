@@ -267,12 +267,26 @@ export interface ChatSourceState {
   /** Random id of the account's directory under chat/; never derived from the account. */
   fileDir: string | null;
   /** Level of the server module (attachment upload route at "1.2"); null while unknown. */
-  moduleLevel: "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | "1.5" | null;
+  moduleLevel: "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | "1.5" | "1.6" | null;
   /** How many messages the user starred (`Store.starred.counter`). */
   starredCounter: number;
   /** Whether Odoo mails the user's notifications or keeps them in the inbox (`notification_type`); null while unknown. */
   notificationType: "email" | "inbox" | null;
+  /**
+   * Odoo's general setting for the user's channels
+   * (`res.users.settings.channel_notifications`, OdooNotify); null while
+   * unknown.
+   */
+  channelNotifications: OdooNotify | null;
+  /** ISO time `channelNotifications` was last set from the bus; a load that started earlier does not overwrite it. */
+  channelNotificationsAt: string | null;
 }
+
+/**
+ * Odoo's notification setting of channels: every message, mentions only,
+ * nothing. Odoo stores "mentions" as false on the general setting.
+ */
+export type OdooNotify = "all" | "mentions" | "no_notif";
 
 /**
  * A message of the inbox, history or starred boxes, of any model: the
@@ -362,6 +376,12 @@ export interface BusNotification {
 export type LockScreen = "hidden_locked" | "never" | "always";
 
 /**
+ * Which chat pushes of a server the phone shows: everything Odoo sends,
+ * mentions and direct messages, or none.
+ */
+export type PhoneFilter = "all" | "mentions_dm" | "none";
+
+/**
  * An account's closed-app notifications (table chat_push). ntfyUrl null:
  * no ntfy, the account is only polled from Odoo. topic, p256dh and auth
  * are the Web Push subscription native code drew on that ntfy; endpoint
@@ -369,6 +389,13 @@ export type LockScreen = "hidden_locked" | "never" | "always";
  * vapidKey and registeredAt are those of the last register_devices that
  * Odoo accepted. staleEndpoints are endpoints this phone left that Odoo
  * may still push to: each is unregistered, then dropped from the list.
+ *
+ * The phone-side preferences native code applies to the server's pushes:
+ * filter governs conversations; inboxNotify shows the record and activity
+ * pushes, inboxMentions those that mention the user while inboxNotify is
+ * off; inside the quiet hours (quietOn, from quietFrom to quietTo, in
+ * minutes from local midnight, crossing it when quietFrom > quietTo) the
+ * notifications are posted silent.
  */
 export interface ChatPushRow {
   configId: string;
@@ -383,4 +410,10 @@ export interface ChatPushRow {
   registeredAt: string | null;
   staleEndpoints: string[];
   lockScreen: LockScreen;
+  filter: PhoneFilter;
+  inboxNotify: boolean;
+  inboxMentions: boolean;
+  quietOn: boolean;
+  quietFrom: number;
+  quietTo: number;
 }

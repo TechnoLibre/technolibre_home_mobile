@@ -39,6 +39,7 @@ import { addChatOnTop } from "./addChatOnTop";
 import { addChatRecordThreads } from "./addChatRecordThreads";
 import { addChatAvatars } from "./addChatAvatars";
 import { addChatPush } from "./addChatPush";
+import { addChatPushPrefs } from "./addChatPushPrefs";
 
 /**
  * The app's database migrations, in version order: runMigrations runs at
@@ -249,5 +250,10 @@ export const APP_MIGRATIONS: Migration[] = [
 		version: 2026102801,
 		description: "Clavardage : notifications par ntfy, par compte",
 		run: addChatPush,
+	},
+	{
+		version: 2026103001,
+		description: "Clavardage : préférences de notification",
+		run: addChatPushPrefs,
 	},
 ];

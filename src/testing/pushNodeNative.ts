@@ -193,6 +193,7 @@ export function pushNodeNative(): PushNodeNative {
 				at: Date.now(),
 				level,
 				effectiveLevel: level,
+				climbReason: null,
 				mode: level <= 2 ? "realtime" : level === 3 ? "poll_15" : level === 4 ? "poll_60" : "off",
 				realtimeBuild: true,
 				serviceAlive: false,

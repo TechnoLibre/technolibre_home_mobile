@@ -4,7 +4,11 @@ import type { PluginListenerHandle } from "@capacitor/core";
 /** What a server's notifications show on the lock screen. */
 export type PushLockScreen = "hidden_locked" | "never" | "always";
 
-/** One account as the native side sees it: label, lock-screen choice, mirrored conversations. */
+/**
+ * One account as the native side sees it: label, lock-screen choice,
+ * mirrored conversations, and the preferences native code applies to its
+ * pushes.
+ */
 export interface PushAccountMirror {
     configId: string;
     label: string;
@@ -12,6 +16,16 @@ export interface PushAccountMirror {
     /** The module level a post would use ("1.5"...); "" when posts go without the module. */
     module: string;
     channels: { id: number; name: string; type: string }[];
+    /** Which chat pushes are shown: all, mentions and direct messages, none. */
+    filter: "all" | "mentions_dm" | "none";
+    /** Whether record and activity pushes are shown. */
+    inbox: boolean;
+    /** With inbox off, whether a record push that mentions the user is shown (module 1.6 flags). */
+    inboxMentions: boolean;
+    /** Quiet hours: on, from and to in minutes from local midnight; notifications inside are silent. */
+    quiet: { on: boolean; from: number; to: number };
+    /** Odoo's general channel setting; null while unknown. */
+    channelNotifications: "all" | "mentions" | "no_notif" | null;
 }
 
 export interface PushSettingsMirror {
@@ -21,6 +35,10 @@ export interface PushSettingsMirror {
     /** The notification texts in the app's language; a missing key falls back to French. */
     strings: Record<string, string>;
     accounts: PushAccountMirror[];
+    /** Battery climbing: on, and the percentages under which one and two levels are added (0: none). */
+    climb: { auto: boolean; oneBelow: number; twoBelow: number };
+    /** What a chat push does while a browser of the user is active: ring at once, wait for a read, not reach the phone. */
+    browserMode: "ring" | "wait" | "quiet";
 }
 
 export interface PushHealthNtfy {
@@ -46,6 +64,8 @@ export type PushHealth = {
     level: number;
     effectiveLevel: number;
     mode: "realtime" | "poll_15" | "poll_60" | "off";
+    /** Why effectiveLevel is above level: the battery saver, or the battery under a threshold; null otherwise. */
+    climbReason: "saver" | "below_one" | "below_two" | null;
     realtimeBuild: boolean;
     serviceAlive: boolean;
     ntfys: PushHealthNtfy[];
