@@ -118,7 +118,8 @@
 	padding: 0.4rem 0.6rem;
 }
 
-.chat-info__candidate--on {
+.chat-info__candidate--on,
+.chat-info__btn--on {
 	background: var(--btn-blue-color, #2563eb);
 	border-color: var(--btn-blue-color, #2563eb);
 	color: #fff;

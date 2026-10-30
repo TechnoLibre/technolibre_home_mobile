@@ -173,6 +173,7 @@ export class ChatInfoComponent extends EnhancedComponent {
           <div class="chat-info__mutes" role="radiogroup" t-att-aria-label="t('chat.notify_channel')">
             <button t-foreach="notifyChoices" t-as="n" t-key="n_index" class="chat-info__btn" role="radio"
                     t-att-aria-checked="state.notify === n.value ? 'true' : 'false'"
+                    t-att-class="{'chat-info__btn--on': state.notify === n.value}"
                     t-att-disabled="state.busy" t-on-click="() => this.onNotify(n.value)" t-esc="notifyLabel(n)"/>
           </div>
         </section>

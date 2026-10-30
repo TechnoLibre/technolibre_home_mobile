@@ -463,3 +463,50 @@ describe("ChatInfoComponent attachment space", () => {
         expect(c.state.error).toBe("");
     });
 });
+
+describe("ChatInfoComponent mounted", () => {
+    // The suite's Owl stub renders nothing: this block imports the screen again over the real Owl
+    afterEach(() => {
+        document.body.innerHTML = "";
+        vi.doUnmock("@odoo/owl");
+        vi.resetModules();
+    });
+
+    it("the conversation chooser marks the channel's value on screen and follows a change", async () => {
+        vi.doMock("@odoo/owl", async () => await import("../../node_modules/@odoo/owl/dist/owl.es.js"));
+        vi.resetModules();
+        const owl = await import("@odoo/owl");
+        const { ChatInfoComponent: Mounted } = await import("../components/chat/chat_info_component");
+        stubLocale();
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const chat: any = fakeChat(channel({ channelType: "channel", customNotifications: "no_notif" }));
+        chat.attachments = { space: vi.fn(async () => 0), clear: vi.fn() };
+        const host = document.createElement("div");
+        document.body.appendChild(host);
+        const env = {
+            eventBus: new owl.EventBus(),
+            router: { getRouteParams: () => new Map([["source", "a"], ["channelId", "5"]]) },
+            databaseService: { getOutboxOpsForConfig: vi.fn().mockResolvedValue([]) },
+            syncService: { chat },
+        };
+        const c: any = await owl.mount(Mounted as any, host, { env } as any);
+        const radios = () => [...host.querySelectorAll<HTMLElement>(".chat-info__mutes[role=radiogroup] [role=radio]")];
+        const marked = () => radios().map((b) => [b.textContent, b.classList.contains("chat-info__btn--on"), b.getAttribute("aria-checked")]);
+        await vi.waitFor(() => expect(radios()).toHaveLength(4));
+        expect(marked()).toEqual([
+            ["Default (Mentions only)", false, "false"],
+            ["All messages", false, "false"],
+            ["Mentions only", false, "false"],
+            ["Nothing", true, "true"],
+        ]);
+        // A change made in the browser reaches the cache, then the screen
+        chat.state.ch = channel({ channelType: "channel", customNotifications: "all" });
+        await c.refresh();
+        await vi.waitFor(() => expect(marked().map((m) => m[1])).toEqual([false, true, false, false]));
+        // Default is a value of its own: only its button is marked
+        chat.state.ch = channel({ channelType: "channel", customNotifications: null });
+        await c.refresh();
+        await vi.waitFor(() => expect(marked().map((m) => m[1])).toEqual([true, false, false, false]));
+        c.__owl__.app.destroy();
+    });
+});
