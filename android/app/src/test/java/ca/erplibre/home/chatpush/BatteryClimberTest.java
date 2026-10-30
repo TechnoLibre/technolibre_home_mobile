@@ -9,7 +9,10 @@ import java.util.Collections;
 import java.util.List;
 import org.junit.Test;
 
-/** BatteryClimber: the level the power state climbs to, and why (plan L4, L12), held by a margin (L3b-1). */
+/**
+ * BatteryClimber: the level the power state climbs to, and why (plan L4, L12), and the climb held until
+ * MARGIN points above its threshold.
+ */
 public class BatteryClimberTest {
 
     private static final BatteryClimber DEFAULTS = new BatteryClimber(true, 30, 15);
