@@ -622,6 +622,52 @@ describe("ChatService", () => {
     expect((await chat.repo.channel(config, CHAT))!.lastMessageId).toBe(80);
   });
 
+  it("a load writes the one column that changed after rows left as they were", async () => {
+    const odoo = fakeOdoo();
+    const file = (id: number) => ({
+      id, name: `f${id}.txt`, mimetype: "text/plain", size: 3, checksum: `c${id}`, voice: false,
+      thread: { id: CHAT, model: "discuss.channel" },
+    });
+    const last = odoo.state.data["mail.message"].find((m: any) => m.id === 80);
+    last.attachment_ids = [77, 78];
+    odoo.state.data["ir.attachment"] = [file(77), file(78)];
+    const src = await source();
+    await chat.load(src);
+    await chat.load(src);
+    odoo.state.data["res.partner"].find((p: any) => p.id === BOB).im_status = "away";
+    last.attachment_ids = [78, 77];
+    await chat.load(src);
+    expect((await chat.repo.partners(config)).find((p) => p.partnerId === BOB)!.imStatus).toBe("away");
+    const files = (await chat.repo.attachmentsOf(config, CHAT, [80], [])).get("m80")!;
+    expect(files.map((a) => [a.attachmentId, a.seq])).toEqual([[78, 0], [77, 1]]);
+  });
+
+  it("a load tells the conversations its messages reached before the rest of the load is written", async () => {
+    const odoo = fakeOdoo();
+    const src = await source();
+    await chat.load(src);
+    odoo.state.data["mail.message"].push(msg(81, CHAT));
+    const changes: any[] = [];
+    chat.onChange = (c, ch) => changes.push([c, ch]);
+    // The load's last write waits: whatever is told before it was told while the load still ran
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    const run = env.db.rawRun.bind(env.db);
+    vi.spyOn(env.db, "rawRun").mockImplementation(async (sql: string, values?: any[]) => {
+      if (sql.startsWith("UPDATE chat_sources") && sql.includes("loaded_at")) await held;
+      return run(sql, values);
+    });
+    let done = false;
+    const loading = chat.load(src).then(() => { done = true; });
+    await vi.waitFor(() => expect(changes).toContainEqual([config, CHAT]));
+    expect(done).toBe(false);
+    expect(changes).not.toContainEqual([config, null]);
+    expect(await chat.repo.message(config, 81)).not.toBeNull();
+    release();
+    await loading;
+    expect(changes.at(-1)).toEqual([config, null]);
+  });
+
   it("a load reads the global mute fresh and a newer bus change wins over a load that started earlier", async () => {
     fakeOdoo({ sessionMute: "9999-12-31 23:59:59" });
     const src = await source();

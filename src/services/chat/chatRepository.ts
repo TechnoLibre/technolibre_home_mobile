@@ -690,9 +690,16 @@ export class ChatRepository {
    * of a message not cached is not stored. A deleted message goes with its
    * reactions and its server files; a deleted channel drops its reactions.
    * A channel's pinned list (pinnedSets) unpins its cached messages it
-   * does not name, after the messages are written.
+   * does not name, after the messages are written. `onMessagesStored`
+   * gets the channels of the delta's messages once those messages, their
+   * attachment links and the attachment records are written, before the
+   * reactions, the mailbox, the pins and the deletions.
    */
-  async applyDelta(configId: string, d: StoreDelta, opts: { fromBus?: boolean } = {}): Promise<void> {
+  async applyDelta(
+    configId: string,
+    d: StoreDelta,
+    opts: { fromBus?: boolean; onMessagesStored?: (channelIds: number[]) => void } = {},
+  ): Promise<void> {
     for (const p of d.channels) await this.upsertChannel(configId, p, !!opts.fromBus);
     for (const p of d.members) await this.upsertMember(configId, p);
     for (const { attachmentIds: _ids, ...p } of d.messages) await this.upsertMessage(configId, p);
@@ -702,6 +709,7 @@ export class ChatRepository {
       if (m.attachmentIds) await this.linkAttachments(configId, m.messageId, m.attachmentIds, m.channelId);
     }
     for (const p of d.attachments) await this.upsertAttachment(configId, p);
+    if (d.messages.length > 0) opts.onMessagesStored?.([...new Set(d.messages.map((m) => m.channelId))]);
     await this.applyReactions(configId, d);
     for (const p of d.mailbox ?? []) await this.upsertMailbox(configId, p);
     // A message's starred flag also moves its mailbox row: a bus Store carries {id, starred} without the thread

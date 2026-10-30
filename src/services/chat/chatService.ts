@@ -460,7 +460,8 @@ export class ChatService {
     // exclusive() task with the write, so an action queued after the overlay read the ops is not written over
     await this.queue.exclusive(configId, async () => {
       await this.queue.overlayPending(configId, delta);
-      await this.repo.applyDelta(configId, delta);
+      // An open conversation shows its new messages without waiting for the rest of the account
+      await this.repo.applyDelta(configId, delta, { onMessagesStored: (ids) => ids.forEach((id) => this.changed(configId, id)) });
     });
     for (const channelId of gaps) {
       await this.repo.patchChannel(configId, channelId, { oldestLoadedId: null, historyComplete: false });
