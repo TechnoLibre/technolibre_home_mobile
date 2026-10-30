@@ -139,6 +139,14 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   développement expose aussi `window.__erplibreTest` à ses tests appareil, et
   `-PsyncTest` construit l'app sous `ca.erplibre.home.synctest`, à côté de
   celle de l'utilisateur.
+- **Porte de test des notifications du clavardage** — seule la construction
+  `-PsyncTest` porte `ChatTestDoor` (`android/app/src/synctest/`), un
+  récepteur que seul le shell adb atteint (`android.permission.DUMP`) : il
+  envoie la vraie PendingIntent d'action ou de contenu de la notification de
+  l'app de test, retrouvée par son étiquette ; les scénarios d'appareil
+  d'ERPLibre agissent ainsi sur une notification sans toucher au volet. Les
+  constructions normale et `-PnoChatRealtime` n'en portent ni la classe ni
+  l'entrée de manifeste.
 - **Bundle de test** — une troisième cible dans Options › Code, après Mobile
   et ERPLibre. 52 fixtures d'affichage sous 400 Ko : PNG en couleur, avec
   alpha et en niveaux de gris, plus le cas dégénéré 1×1, BMP, GIF fixe et

@@ -130,6 +130,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   against real Odoo servers; a development build also exposes
   `window.__erplibreTest` to its device tests, and `-PsyncTest` builds the
   app as `ca.erplibre.home.synctest`, beside the user's own.
+- **Chat notifications test door** — the `-PsyncTest` build alone carries
+  `ChatTestDoor` (`android/app/src/synctest/`), a receiver only the adb shell
+  reaches (`android.permission.DUMP`): it sends the real action or content
+  PendingIntent of the test app's own notification by tag, so ERPLibre's
+  device scenarios act on a notification without touching the shade. The
+  normal and `-PnoChatRealtime` builds carry neither the class nor the
+  manifest entry.
 - **Test bundle** — a third target in Options › Code, after Mobile and
   ERPLibre. 52 display fixtures under 400 KB: PNG in colour, alpha and
   greyscale plus the 1×1 degenerate case, BMP, static and animated GIF,
@@ -697,6 +704,14 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   développement expose aussi `window.__erplibreTest` à ses tests appareil, et
   `-PsyncTest` construit l'app sous `ca.erplibre.home.synctest`, à côté de
   celle de l'utilisateur.
+- **Porte de test des notifications du clavardage** — seule la construction
+  `-PsyncTest` porte `ChatTestDoor` (`android/app/src/synctest/`), un
+  récepteur que seul le shell adb atteint (`android.permission.DUMP`) : il
+  envoie la vraie PendingIntent d'action ou de contenu de la notification de
+  l'app de test, retrouvée par son étiquette ; les scénarios d'appareil
+  d'ERPLibre agissent ainsi sur une notification sans toucher au volet. Les
+  constructions normale et `-PnoChatRealtime` n'en portent ni la classe ni
+  l'entrée de manifeste.
 - **Bundle de test** — une troisième cible dans Options › Code, après Mobile
   et ERPLibre. 52 fixtures d'affichage sous 400 Ko : PNG en couleur, avec
   alpha et en niveaux de gris, plus le cas dégénéré 1×1, BMP, GIF fixe et

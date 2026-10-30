@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fusionné seulement dans une construction -PsyncTest (app/build.gradle) :
+     l'app de l'utilisateur ne porte ni cette entrée ni sa classe. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- La porte de test des notifications du clavardage : exportée, mais
+             réservée aux détenteurs de DUMP, que le shell adb tient et
+             qu'aucune app ne reçoit. Elle envoie les vraies PendingIntent
+             des notifications de l'app elle-même, sans toucher au volet. -->
+        <receiver
+            android:name="ca.erplibre.home.chatpush.ChatTestDoor"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

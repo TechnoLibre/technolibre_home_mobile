@@ -5704,6 +5704,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushJob.java",
                             "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushBootReceiver.java",
                             "android/app/src/realtime/java/ca/erplibre/home/chatpush/realtime/ChatPushService.java",
+                            "android/app/src/synctest/java/ca/erplibre/home/chatpush/ChatTestDoor.java",
+                            "android/app/src/synctest/java/ca/erplibre/home/chatpush/TestDoorChoice.java",
                         ],
                     },
                     {
