@@ -239,11 +239,37 @@ public class BatteryClimberTest {
     }
 
     @Test
-    public void aChosenFiveKeepsTheBatteryPath() {
-        PushLevelPolicy.Climb c = DEFAULTS.climb(5, battery(12));
-        assertClimb(5, "", c);
-        assertEquals(2, c.steps);
-        assertClimb(3, "below_two", DEFAULTS.withHeld(c.steps).climb(1, battery(17)));
+    public void aLevelTheBatteryDoesNotRaiseHoldsNothing() {
+        // a chosen 5, and a chosen 4 already at the cap: the level stays, nothing is held
+        PushLevelPolicy.Climb five = DEFAULTS.climb(5, battery(12));
+        assertClimb(5, "", five);
+        assertEquals(0, five.steps);
+        PushLevelPolicy.Climb four = DEFAULTS.withHeld(2).climb(4, battery(12));
+        assertClimb(4, "", four);
+        assertEquals(0, four.steps);
+        // a build without realtime maps 1 and 2 to 3: a climb to 3 raises nothing
+        PushLevelPolicy.Effective clamped = PushLevelPolicy.resolve(1, battery(12), false, DEFAULTS);
+        assertEquals(3, clamped.level);
+        assertEquals("", clamped.climbReason);
+        assertEquals(0, clamped.climbSteps);
+        assertEquals(0, PushLevelPolicy.resolve(2, battery(20), false, DEFAULTS).climbSteps);
+    }
+
+    @Test
+    public void aClimbHeldBeforeLevelFiveDoesNotComeBackAfterIt() {
+        // nothing decides at level 5, so a charge there is never seen: the hold ends on the move to 5
+        MapKeyValue kv = new MapKeyValue();
+        new PushSettingsStore(kv).put(1, false, PhonePrefs.DEFAULT, null, null);
+        assertEquals(3, BatteryClimber.resolveStored(new PushSettingsStore(kv), battery(12), true).level);
+        assertEquals(2, new PushSettingsStore(kv).climbSteps());
+        new PushSettingsStore(kv).put(5, false, PhonePrefs.DEFAULT, null, null);
+        BatteryClimber.resolveStored(new PushSettingsStore(kv), battery(12), true);
+        assertEquals(0, new PushSettingsStore(kv).climbSteps());
+        new PushSettingsStore(kv).put(1, false, PhonePrefs.DEFAULT, null, null);
+        PushLevelPolicy.Effective back = BatteryClimber.resolveStored(new PushSettingsStore(kv), battery(17), true);
+        // what 17 % climbs now (under 30), not the two levels held before
+        assertEquals(2, back.level);
+        assertEquals("below_one", back.climbReason);
     }
 
     @Test

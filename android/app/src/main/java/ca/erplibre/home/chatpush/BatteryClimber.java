@@ -14,9 +14,11 @@ package ca.erplibre.home.chatpush;
  * plus MARGIN points, so a gauge jittering around a threshold climbs once:
  * the decision takes the threshold steps the previous one answered (held)
  * and answers the steps now in force (Climb.steps). Plugging in releases at
- * once; the saver holds nothing, it ends when the saver turns off. A chosen
- * 5 keeps following the battery, so a move back to 1 starts from the path
- * the battery took.
+ * once; the saver holds nothing, it ends when the saver turns off. Steps
+ * are held only while they raise the level: that is exactly while
+ * ChatClimbJob waits for the charger, so a charge always releases them. A
+ * level the battery does not raise (a chosen 5, a chosen 4 at the cap)
+ * holds nothing, since no job would see a charge in between.
  *
  * climb is pure and Android-free; resolveStored is the one entry that reads
  * and writes the held steps, in PushSettingsStore, so that a decision made
@@ -114,16 +116,16 @@ final class BatteryClimber implements PushLevelPolicy.LevelClimber {
     /**
      * The reason is SAVER when the saver set the level, else BELOW_TWO or
      * BELOW_ONE (the threshold crossed, held or not) when the level is
-     * above the chosen one, else "". Plugged in answers 0 steps.
+     * above the chosen one, else "". Plugged in, or a level left at the
+     * chosen one, answers 0 steps.
      */
     @Override
     public PushLevelPolicy.Climb climb(int chosen, PushLevelPolicy.PowerState s) {
-        if (s.plugged) return new PushLevelPolicy.Climb(chosen, "", 0);
+        if (s.plugged || chosen >= 5) return new PushLevelPolicy.Climb(chosen, "", 0);
         int steps = steps(s.batteryPct);
-        if (chosen >= 5) return new PushLevelPolicy.Climb(chosen, "", steps);
         int level = Math.max(chosen, Math.min(chosen + steps, CAP));
         if (s.saver && level < SAVER_LEVEL) return new PushLevelPolicy.Climb(SAVER_LEVEL, SAVER, steps);
-        if (level == chosen) return new PushLevelPolicy.Climb(chosen, "", steps);
+        if (level == chosen) return new PushLevelPolicy.Climb(chosen, "", 0);
         return new PushLevelPolicy.Climb(level, steps == 2 ? BELOW_TWO : BELOW_ONE, steps);
     }
 }

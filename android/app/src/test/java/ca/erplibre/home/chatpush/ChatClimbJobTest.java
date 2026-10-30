@@ -34,6 +34,26 @@ public class ChatClimbJobTest {
     }
 
     @Test
+    public void heldStepsAlwaysHaveTheJobWaitingForTheCharger() {
+        // a hold no job waits on would outlive a charge nobody saw
+        for (boolean realtimeBuild : new boolean[] {true, false}) {
+            for (boolean saver : new boolean[] {false, true}) {
+                for (int chosen = 1; chosen <= 5; chosen++) {
+                    for (int held = 0; held <= 2; held++) {
+                        for (int pct = 0; pct <= 100; pct++) {
+                            PushLevelPolicy.Effective e = PushLevelPolicy.resolve(chosen,
+                                    new PushLevelPolicy.PowerState(false, false, saver, pct), realtimeBuild,
+                                    DEFAULTS.withHeld(held));
+                            assertTrue("chosen " + chosen + " held " + held + " at " + pct,
+                                    e.climbSteps == 0 || ChatClimbJob.wanted(e, false));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     public void notWantedForABuildClamp() {
         assertFalse(ChatClimbJob.wanted(resolve(1, false, false, 80, false), false));
         assertFalse(ChatClimbJob.wanted(resolve(2, false, false, 20, false), false));

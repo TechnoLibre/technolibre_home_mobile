@@ -391,7 +391,9 @@ s'arrêtent qu'à un niveau 5 choisi par l'utilisateur. En remontant, une monté
 n'est relâchée que 5 points au-dessus de son seuil (montée sous 15 %, retour à
 20 % ou plus) : une jauge qui oscille autour d'un seuil ne fait monter qu'une
 fois ; la dernière montée est conservée, et une relève lancée après la mort du
-processus de l'app la poursuit. L'économiseur de batterie d'Android veut dire
+processus de l'app la poursuit. Un niveau que la batterie ne fait pas monter
+(un 5 choisi, ou un 4 choisi déjà au plafond) ne conserve aucune montée,
+puisqu'aucune relève ne verrait une charge entre-temps. L'économiseur de batterie d'Android veut dire
 le niveau 3 au moins, même l'interrupteur désactivé, et cesse avec lui.
 Branché, le téléphone revient aussitôt au niveau choisi, quel que soit le
 pourcentage. Pendant une montée, les options affichent « En ce moment : niveau

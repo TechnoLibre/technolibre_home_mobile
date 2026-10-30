@@ -586,7 +586,9 @@ level 4: notifications stop only at a level 5 the user chose. On the way back
 up a climb is released only 5 points above its threshold (climbed under 15 %,
 back at 20 % or more), so a battery gauge wavering around a threshold climbs
 once; the last climb is stored, and a check run after the app's process died
-continues it. Android's battery saver means level 3 at least, even with the
+continues it. A level the battery does not raise (a chosen 5, or a chosen 4
+already at the cap) keeps no climb, since no check would see a charge in
+between. Android's battery saver means level 3 at least, even with the
 switch off, and ends when the saver turns off. Plugged in, the phone returns
 to the chosen level at once, at any percentage. While climbed, the options
 show « Right now: level {level} ({why}) », the reason being « battery saver »
@@ -799,7 +801,9 @@ s'arrêtent qu'à un niveau 5 choisi par l'utilisateur. En remontant, une monté
 n'est relâchée que 5 points au-dessus de son seuil (montée sous 15 %, retour à
 20 % ou plus) : une jauge qui oscille autour d'un seuil ne fait monter qu'une
 fois ; la dernière montée est conservée, et une relève lancée après la mort du
-processus de l'app la poursuit. L'économiseur de batterie d'Android veut dire
+processus de l'app la poursuit. Un niveau que la batterie ne fait pas monter
+(un 5 choisi, ou un 4 choisi déjà au plafond) ne conserve aucune montée,
+puisqu'aucune relève ne verrait une charge entre-temps. L'économiseur de batterie d'Android veut dire
 le niveau 3 au moins, même l'interrupteur désactivé, et cesse avec lui.
 Branché, le téléphone revient aussitôt au niveau choisi, quel que soit le
 pourcentage. Pendant une montée, les options affichent « En ce moment : niveau

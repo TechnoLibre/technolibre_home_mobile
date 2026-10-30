@@ -67,7 +67,7 @@ final class PushLevelPolicy {
         final boolean odooDirect;
         /** The climber's reason (saver, below_one, below_two), "" when the level is the chosen one. */
         final String climbReason;
-        /** The climber's threshold steps in force (Climb.steps), whatever the level shows. */
+        /** The climber's threshold steps in force (Climb.steps), 0 when climbReason is "". */
         final int climbSteps;
 
         Effective(int level, Mode mode, boolean permanentService, boolean odooDirect, String climbReason) {
@@ -91,7 +91,9 @@ final class PushLevelPolicy {
      * minutes, 4 every 60; 5 is off and leaves Odoo's unread state alone. A
      * build without the realtime service maps 1 and 2 to 3. The climb reason
      * is kept only when the level differs from the chosen one after that
-     * mapping: a chosen 1 or 2 that the build maps to 3 is no climb.
+     * mapping: a chosen 1 or 2 that the build maps to 3 is no climb, and
+     * holds no steps either (BatteryClimber holds steps only while they
+     * raise the level).
      */
     static Effective resolve(int chosen, PowerState s, boolean realtimeBuild, LevelClimber climber) {
         Climb climb = climber.climb(chosen, s);
@@ -118,7 +120,7 @@ final class PushLevelPolicy {
                 mode = Mode.OFF;
                 break;
         }
-        return new Effective(level, mode, permanent, level <= 4, reason, climb.steps);
+        return new Effective(level, mode, permanent, level <= 4, reason, reason.isEmpty() ? 0 : climb.steps);
     }
 
     /**

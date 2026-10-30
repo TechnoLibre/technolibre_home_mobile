@@ -15,7 +15,8 @@ import android.util.Log;
  * Without it, plugging in would wait for the next 15-minute run. It is
  * pending exactly while the level is climbed and the phone is not really
  * plugged in (wanted); ChatPushJob and the permanent service align it at
- * each re-read through sync.
+ * each re-read through sync. BatteryClimber holds climb steps only while
+ * the level is climbed, so the charge that releases them is always seen.
  *
  * Not persisted: after a reboot, ChatPushBootReceiver re-applies the level,
  * which schedules it again when still wanted.

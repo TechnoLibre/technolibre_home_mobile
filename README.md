@@ -375,7 +375,9 @@ level 4: notifications stop only at a level 5 the user chose. On the way back
 up a climb is released only 5 points above its threshold (climbed under 15 %,
 back at 20 % or more), so a battery gauge wavering around a threshold climbs
 once; the last climb is stored, and a check run after the app's process died
-continues it. Android's battery saver means level 3 at least, even with the
+continues it. A level the battery does not raise (a chosen 5, or a chosen 4
+already at the cap) keeps no climb, since no check would see a charge in
+between. Android's battery saver means level 3 at least, even with the
 switch off, and ends when the saver turns off. Plugged in, the phone returns
 to the chosen level at once, at any percentage. While climbed, the options
 show « Right now: level {level} ({why}) », the reason being « battery saver »
