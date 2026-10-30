@@ -552,12 +552,17 @@ the status Odoo displays keeps its own delay). Under « Wait 10 s » a chat
 message pushed while a browser is active is held 10 seconds and dropped if it
 is read in the browser meanwhile, otherwise drawn. A held message survives the
 process: it is drawn after the next catch-up of the ntfy, unless its read came
-in the meantime. When the permanent service stops at level 1 or 2 (a climb, a
-swipe), a held message waits for the next periodic check (15 minutes, longer
-under Android's Doze) instead of 10 seconds. « Do not send to the phone »
-asks module 1.6 to push nothing to the phone while a browser is active. With
-module 1.5 « Wait 10 s » rings at once, and « Do not send to the phone »
-silences the phone until 30 minutes after the last activity in the browser,
+in the meantime. When the battery makes the level climb past 2, the held
+messages are drawn about 10 seconds later, before the permanent service
+stops; only a death of the process (a swipe on some phones, a memory kill)
+leaves them for the next periodic check (15 minutes, longer under Android's
+Doze). A move to level 5 drops them. A held message that can no longer be
+read or drawn when its time comes is counted in the options' status panel
+(« Held messages lost: {n} »). « Do not send to the phone » asks module 1.6
+to push nothing to the phone while a browser is active. With module 1.5
+« Wait 10 s » rings at once, and « Do not send to the phone » only works in
+about the minute after the browser opens (that module's server sees the
+browser only when it connects; 1.6 applies the 5-minute activity rule),
 which the card states; without the module every push rings. Each card says
 what applies on its server (« Browser active, on this server: {mode} »), and
 « not applied on this server yet » while the server has not been told of a
@@ -742,14 +747,20 @@ garde son délai). Avec « Attendre 10 s », un message de clavardage poussé
 pendant qu'un navigateur est actif est retenu 10 secondes et retiré s'il est
 lu dans le navigateur entre-temps, sinon affiché. Un message retenu survit au
 processus : il est affiché après le prochain rattrapage du ntfy, à moins que
-sa lecture soit arrivée entre-temps. Quand le service permanent s'arrête au
-niveau 1 ou 2 (une montée, un balayage), un message retenu attend la prochaine
-relève périodique (15 minutes, davantage sous le Doze d'Android) au lieu de
-10 secondes. « Ne pas envoyer au téléphone » demande au module 1.6 de ne rien
-pousser au téléphone tant qu'un navigateur est actif. Avec le module 1.5,
-« Attendre 10 s » sonne tout de suite, et « Ne pas envoyer au téléphone » fait
-taire le téléphone jusqu'à 30 minutes après la dernière activité dans le
-navigateur, ce que dit la carte ; sans le module, tout push sonne. Chaque
+sa lecture soit arrivée entre-temps. Quand la batterie fait monter le niveau
+au-delà de 2, les messages retenus sont affichés une dizaine de secondes plus
+tard, avant l'arrêt du service permanent ; seule la mort du processus (un
+balayage sur certains téléphones, une fin forcée faute de mémoire) les laisse
+à la prochaine relève périodique (15 minutes, davantage sous le Doze
+d'Android). Un passage au niveau 5 les retire. Un message retenu qui ne peut
+plus être lu ni affiché à son heure est compté dans le panneau d'état des
+options (« Messages retenus perdus : {n} »). « Ne pas envoyer au téléphone »
+demande au module 1.6 de ne rien pousser au téléphone tant qu'un navigateur
+est actif. Avec le module 1.5, « Attendre 10 s » sonne tout de suite, et « Ne
+pas envoyer au téléphone » ne joue que dans la minute environ qui suit
+l'ouverture du navigateur (le serveur de ce module ne voit le navigateur qu'à
+sa connexion ; la 1.6 applique la règle des 5 minutes d'activité), ce que dit
+la carte ; sans le module, tout push sonne. Chaque
 carte dit ce qui s'applique sur son serveur (« Navigateur actif, sur ce
 serveur : {mode} »), et « pas encore appliqué sur ce serveur » tant que le
 serveur n'a pas appris un changement.

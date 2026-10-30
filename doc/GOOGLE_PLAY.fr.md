@@ -100,7 +100,7 @@ ajoutée à l'app ou à un plugin a sa place dans ce tableau.
 | `FOREGROUND_SERVICE` | services de premier plan | gardée |
 | `FOREGROUND_SERVICE_DATA_SYNC` | téléchargement du modèle de parole | gardée |
 | `FOREGROUND_SERVICE_SPECIAL_USE` | `SmsGatewayService` ; `ChatPushService` dans une construction temps réel | retirée sauf si les niveaux 1 et 2 restent |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | niveaux 1 et 2 ; la passerelle SMS | retirée sans temps réel |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | niveaux 1 et 2 (la boîte de dialogue directe) | retirée sans temps réel |
 | `SCHEDULE_EXACT_ALARM` | cadence de la passerelle SMS | retirée |
 | `SEND_SMS` | la passerelle SMS | retirée |
 | `RECEIVE_SMS` | la passerelle SMS (réponses STOP) | retirée |
@@ -116,6 +116,7 @@ ajoutée à l'app ou à un plugin a sa place dans ce tableau.
 | `WRITE_EXTERNAL_STORAGE` | lecteur vidéo, Android 12 et avant (`maxSdkVersion` 32) | gardée |
 | `USE_BIOMETRIC` | déverrouillage biométrique (plugin) | gardée |
 | `USE_FINGERPRINT` | déverrouillage biométrique sur un Android ancien (plugin) | gardée |
+| `ca.erplibre.home.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` | androidx.core : protège les récepteurs dynamiques non exportés de l'app ; niveau signature, aucune déclaration Play | gardée |
 
 Les commentaires de la passerelle SMS qui disent que la justification de Play
 « ne s'applique pas » restent : ils décrivent la passerelle, qui est hors de

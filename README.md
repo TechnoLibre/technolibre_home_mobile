@@ -341,12 +341,17 @@ the status Odoo displays keeps its own delay). Under « Wait 10 s » a chat
 message pushed while a browser is active is held 10 seconds and dropped if it
 is read in the browser meanwhile, otherwise drawn. A held message survives the
 process: it is drawn after the next catch-up of the ntfy, unless its read came
-in the meantime. When the permanent service stops at level 1 or 2 (a climb, a
-swipe), a held message waits for the next periodic check (15 minutes, longer
-under Android's Doze) instead of 10 seconds. « Do not send to the phone »
-asks module 1.6 to push nothing to the phone while a browser is active. With
-module 1.5 « Wait 10 s » rings at once, and « Do not send to the phone »
-silences the phone until 30 minutes after the last activity in the browser,
+in the meantime. When the battery makes the level climb past 2, the held
+messages are drawn about 10 seconds later, before the permanent service
+stops; only a death of the process (a swipe on some phones, a memory kill)
+leaves them for the next periodic check (15 minutes, longer under Android's
+Doze). A move to level 5 drops them. A held message that can no longer be
+read or drawn when its time comes is counted in the options' status panel
+(« Held messages lost: {n} »). « Do not send to the phone » asks module 1.6
+to push nothing to the phone while a browser is active. With module 1.5
+« Wait 10 s » rings at once, and « Do not send to the phone » only works in
+about the minute after the browser opens (that module's server sees the
+browser only when it connects; 1.6 applies the 5-minute activity rule),
 which the card states; without the module every push rings. Each card says
 what applies on its server (« Browser active, on this server: {mode} »), and
 « not applied on this server yet » while the server has not been told of a

@@ -90,7 +90,7 @@ added to the app or to a plugin belongs in this table.
 | `FOREGROUND_SERVICE` | foreground services | kept |
 | `FOREGROUND_SERVICE_DATA_SYNC` | speech model download | kept |
 | `FOREGROUND_SERVICE_SPECIAL_USE` | `SmsGatewayService`; `ChatPushService` in a realtime build | removed unless levels 1 and 2 stay |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | levels 1 and 2; the SMS gateway | removed without realtime |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | levels 1 and 2 (the direct dialog) | removed without realtime |
 | `SCHEDULE_EXACT_ALARM` | the SMS gateway's polling | removed |
 | `SEND_SMS` | the SMS gateway | removed |
 | `RECEIVE_SMS` | the SMS gateway (STOP replies) | removed |
@@ -106,6 +106,7 @@ added to the app or to a plugin belongs in this table.
 | `WRITE_EXTERNAL_STORAGE` | video player, Android 12 and earlier (`maxSdkVersion` 32) | kept |
 | `USE_BIOMETRIC` | biometric unlock (plugin) | kept |
 | `USE_FINGERPRINT` | biometric unlock on older Android (plugin) | kept |
+| `ca.erplibre.home.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` | androidx.core: protects the app's non-exported dynamic receivers; signature level, no Play declaration | kept |
 
 The comments of the SMS gateway saying that Play's justification « does not
 apply » stay: they describe the gateway, which is outside any Play build.

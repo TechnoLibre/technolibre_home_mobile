@@ -353,14 +353,20 @@ garde son délai). Avec « Attendre 10 s », un message de clavardage poussé
 pendant qu'un navigateur est actif est retenu 10 secondes et retiré s'il est
 lu dans le navigateur entre-temps, sinon affiché. Un message retenu survit au
 processus : il est affiché après le prochain rattrapage du ntfy, à moins que
-sa lecture soit arrivée entre-temps. Quand le service permanent s'arrête au
-niveau 1 ou 2 (une montée, un balayage), un message retenu attend la prochaine
-relève périodique (15 minutes, davantage sous le Doze d'Android) au lieu de
-10 secondes. « Ne pas envoyer au téléphone » demande au module 1.6 de ne rien
-pousser au téléphone tant qu'un navigateur est actif. Avec le module 1.5,
-« Attendre 10 s » sonne tout de suite, et « Ne pas envoyer au téléphone » fait
-taire le téléphone jusqu'à 30 minutes après la dernière activité dans le
-navigateur, ce que dit la carte ; sans le module, tout push sonne. Chaque
+sa lecture soit arrivée entre-temps. Quand la batterie fait monter le niveau
+au-delà de 2, les messages retenus sont affichés une dizaine de secondes plus
+tard, avant l'arrêt du service permanent ; seule la mort du processus (un
+balayage sur certains téléphones, une fin forcée faute de mémoire) les laisse
+à la prochaine relève périodique (15 minutes, davantage sous le Doze
+d'Android). Un passage au niveau 5 les retire. Un message retenu qui ne peut
+plus être lu ni affiché à son heure est compté dans le panneau d'état des
+options (« Messages retenus perdus : {n} »). « Ne pas envoyer au téléphone »
+demande au module 1.6 de ne rien pousser au téléphone tant qu'un navigateur
+est actif. Avec le module 1.5, « Attendre 10 s » sonne tout de suite, et « Ne
+pas envoyer au téléphone » ne joue que dans la minute environ qui suit
+l'ouverture du navigateur (le serveur de ce module ne voit le navigateur qu'à
+sa connexion ; la 1.6 applique la règle des 5 minutes d'activité), ce que dit
+la carte ; sans le module, tout push sonne. Chaque
 carte dit ce qui s'applique sur son serveur (« Navigateur actif, sur ce
 serveur : {mode} »), et « pas encore appliqué sur ce serveur » tant que le
 serveur n'a pas appris un changement.

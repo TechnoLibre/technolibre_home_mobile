@@ -235,9 +235,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   levels more under thresholds (30 % and 15 % by default), never past level 4,
   level 3 at least under battery saver, back to the chosen level once plugged,
   with « Right now: level {level} ({why}) » in the options. Levels 1 and 2 ask
-  for the battery exemption through Android's dialog. `erplibre_mobile_chat`
-  1.6 adds the mention and browser flags; without it the filter lets channel
-  messages through and « Wait 10 s » rings at once. Migration 2026103001 adds
+  for the battery exemption through Android's dialog, and the options say
+  when Android refuses it. The status panel counts « Held messages lost:
+  {n} ». `erplibre_mobile_chat` 1.6 adds the mention and browser flags, and
+  an install or upgrade from the app tells the server at once; without it the
+  filter lets channel messages through and « Wait 10 s » rings at once, and
+  with 1.5 « Do not send to the phone » only works in about the minute after
+  the browser opens. Migration 2026103001 adds
   the preference columns of `chat_push` and `chat_sources`;
   `doc/GOOGLE_PLAY.md` writes down the Play justifications and gaps
 
