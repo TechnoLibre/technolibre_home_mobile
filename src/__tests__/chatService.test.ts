@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as network from "@capacitor/network";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createSyncEnv, installLocalStorage, resetMocks, type SyncEnv } from "../testing/syncTestKit";
 import { OdooRpcClient, RequestNotSentError } from "../services/odoo/odooRpcClient";
 import { OutboxService } from "../services/outboxService";
@@ -35,6 +38,29 @@ const MUTED = 13;
 const QUIET = 14;
 
 interface Call { path: string; params: any }
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+/**
+ * A /mail/data answer of Odoo 18, captured (host and secrets replaced):
+ * the self partner is SELF, and every counter bus id of the inbox, the
+ * channels and the self members is the server's bus_last_id of the read.
+ */
+const capturedMailData = (): any =>
+  JSON.parse(readFileSync(resolve(ROOT, "android/app/src/test/resources/chatpush/mail_data_settings.json"), "utf-8")).result;
+
+/** `data` with every counter bus id at `busId`, as Odoo stamps a later read with its bus_last_id. */
+function stampedAt(data: any, busId: number): any {
+  data.Store.inbox.counter_bus_id = busId;
+  data.Store.starred.counter_bus_id = busId;
+  for (const c of data["discuss.channel"]) {
+    if ("message_needaction_counter_bus_id" in c) c.message_needaction_counter_bus_id = busId;
+  }
+  for (const m of data["discuss.channel.member"]) {
+    if ("message_unread_counter_bus_id" in m) m.message_unread_counter_bus_id = busId;
+  }
+  return data;
+}
 
 const msg = (id: number, channelId: number, author = BOB, body = `<p>m${id}</p>`) => ({
   id, body, date: "2026-10-25 09:00:00", message_type: "comment",
@@ -1130,8 +1156,8 @@ describe("ChatService", () => {
     });
     // The first connection replays older rows: the conversation's creation, counters 0
     await chat.applyBus(config, [bus(2316, "mail.record/insert", member(0, 2316)), bus(2317, "mail.record/insert", channel(0, 2317))]);
-    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ unreadCounter: 1, unreadCounterBusId: 2328 });
-    expect(await chat.repo.channel(config, GENERAL)).toMatchObject({ needactionCounter: 1, needactionCounterBusId: 2328 });
+    expect(await chat.repo.channel(config, CHAT)).toMatchObject({ unreadCounter: 1, unreadCounterBusId: 0 });
+    expect(await chat.repo.channel(config, GENERAL)).toMatchObject({ needactionCounter: 1, needactionCounterBusId: 0 });
     // A counter without its bus id is not taken from the bus
     await chat.applyBus(config, [bus(2329, "mail.record/insert", member(5)), bus(2329, "mail.record/insert", channel(5))]);
     expect((await chat.repo.channel(config, CHAT))!.unreadCounter).toBe(1);
@@ -1162,6 +1188,62 @@ describe("ChatService", () => {
     })]);
     expect(await chat.repo.channel(config, CHAT)).toMatchObject({ unreadCounter: 4, unreadCounterBusId: 5 });
     expect((await chat.repo.sourceState(config)).counterBusId).toBe(5);
+  });
+
+  /**
+   * The self member of the captured /mail/data's first channel as the bus
+   * sends it: the same record (Odoo's discuss.channel.member _to_store),
+   * with its counter and the bus id it is stamped with.
+   */
+  const capturedSelfMember = (unread: number, busId: number) => {
+    const member = capturedMailData()["discuss.channel.member"].find((m: any) => m.thread.id === 1 && m.persona.id === SELF);
+    return { "discuss.channel.member": [{ ...member, message_unread_counter: unread, message_unread_counter_bus_id: busId }] };
+  };
+
+  it("a second load differing only in the counter bus ids writes no chat_channels row", async () => {
+    const odoo = fakeOdoo();
+    odoo.state.data = capturedMailData();
+    const src = await source();
+    await chat.load(src);
+    expect((await chat.repo.channels(config)).length).toBe(5);
+    odoo.state.data = stampedAt(capturedMailData(), 31);
+    const run = env.db.rawRun.bind(env.db);
+    const writes: string[] = [];
+    vi.spyOn(env.db, "rawRun").mockImplementation(async (sql: string, values?: any[]) => {
+      writes.push(sql);
+      return run(sql, values);
+    });
+    await chat.load(src);
+    expect(writes.filter((sql) => /\bchat_channels\b/.test(sql))).toEqual([]);
+    expect((await chat.repo.sourceState(config)).counterBusId).toBe(31);
+  });
+
+  it("a bus counter older than the latest load is still refused", async () => {
+    const odoo = fakeOdoo();
+    odoo.state.data = capturedMailData();
+    const src = await source();
+    await chat.load(src);
+    odoo.state.data = stampedAt(capturedMailData(), 31);
+    await chat.load(src);
+    // Stamped between the two loads: the second load's read already holds it
+    await chat.applyBus(config, [bus(29, "mail.record/insert", capturedSelfMember(5, 29))]);
+    expect((await chat.repo.channel(config, 1))!.unreadCounter).toBe(1);
+    await chat.applyBus(config, [bus(32, "mail.record/insert", capturedSelfMember(5, 32))]);
+    expect((await chat.repo.channel(config, 1))!.unreadCounter).toBe(5);
+  });
+
+  it("a load after a bus counter takes the read", async () => {
+    const odoo = fakeOdoo();
+    odoo.state.data = capturedMailData();
+    const src = await source();
+    await chat.load(src);
+    await chat.applyBus(config, [bus(30, "mail.record/insert", capturedSelfMember(5, 30))]);
+    expect((await chat.repo.channel(config, 1))!.unreadCounter).toBe(5);
+    odoo.state.data = stampedAt(capturedMailData(), 33);
+    await chat.load(src);
+    expect((await chat.repo.channel(config, 1))!.unreadCounter).toBe(1);
+    await chat.applyBus(config, [bus(32, "mail.record/insert", capturedSelfMember(5, 32))]);
+    expect((await chat.repo.channel(config, 1))!.unreadCounter).toBe(1);
   });
 
   const selfMember = (unread: number, busId: number) => ({
@@ -1210,10 +1292,16 @@ describe("ChatService", () => {
     expect(await chat.repo.channel(config, CHAT)).toMatchObject({ unreadCounter: 6, unreadCounterBusId: 1002 });
   });
 
-  it("a load without per-record bus ids seeds the marks with the inbox bus id", async () => {
+  it("a load writes the marks 0 and its inbox bus id as the account's counterBusId", async () => {
     fakeOdoo();
     await chat.load(await source());
-    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ unreadCounterBusId: 1000, needactionCounterBusId: 1000 });
+    expect(await chat.repo.channel(config, GROUP)).toMatchObject({ unreadCounterBusId: 0, needactionCounterBusId: 0 });
+    expect((await chat.repo.sourceState(config)).counterBusId).toBe(1000);
+    // A record stamped before the load's read is older than the counter read
+    await chat.applyBus(config, [bus(1001, "mail.record/insert", {
+      "discuss.channel.member": [{ id: 102, thread: { id: GROUP, model: "discuss.channel" }, persona: { id: SELF, type: "partner" }, message_unread_counter: 9, message_unread_counter_bus_id: 999 }],
+    })]);
+    expect((await chat.repo.channel(config, GROUP))!.unreadCounter).toBe(2);
   });
 
   it("inbox notifications move the inbox and mention counters", async () => {

@@ -306,6 +306,15 @@ describe("ChatRepository", () => {
     expect(await repo.channel(B, 7)).toMatchObject({ unreadCounter: 3, unreadCounterBusId: 0, needactionCounter: 3, needactionCounterBusId: 0 });
   });
 
+  it("a bus counter below the account's counterBusId is not taken over a mark of 0", async () => {
+    await repo.applyDelta(A, delta({ channels: [{ channelId: 7, channelType: "group", unreadCounter: 1, unreadCounterBusId: 0, needactionCounter: 1, needactionCounterBusId: 0 }] }));
+    await repo.setSourceState({ configId: A, counterBusId: 31 });
+    await repo.applyDelta(A, delta({ channels: [{ channelId: 7, unreadCounter: 5, unreadCounterBusId: 29, needactionCounter: 5, needactionCounterBusId: 29 }] }), { fromBus: true });
+    expect(await repo.channel(A, 7)).toMatchObject({ unreadCounter: 1, unreadCounterBusId: 0, needactionCounter: 1, needactionCounterBusId: 0 });
+    await repo.applyDelta(A, delta({ channels: [{ channelId: 7, unreadCounter: 5, unreadCounterBusId: 31, needactionCounter: 6, needactionCounterBusId: 32 }] }), { fromBus: true });
+    expect(await repo.channel(A, 7)).toMatchObject({ unreadCounter: 5, unreadCounterBusId: 31, needactionCounter: 6, needactionCounterBusId: 32 });
+  });
+
   it("a temporary id is never one a settled create stored a pair for", async () => {
     const now = new Date("2026-10-25T10:00:00.000Z");
     const first = await repo.newTemporaryId(A, now);

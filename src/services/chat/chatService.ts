@@ -129,10 +129,11 @@ const recordSendKey = (configId: string, thread: RecordThread): string => `${con
  * /mail/data reports (Store.inbox.counter_bus_id), lower or not, and each
  * notification applied raises to its own; stored, it holds across
  * restarts. A channel's unread and mention counters carry their own bus id
- * marks, as Odoo's records do: a load sets them, a bus value older than the
- * mark is not taken, a local change is made only by a notification above
- * it. So a notification replayed after a load or a restart is never counted
- * twice and never rolls a counter back. Records (messages, members,
+ * marks, as Odoo's records do: a load writes them 0, its read being as of
+ * counterBusId; a bus value older than the mark or than counterBusId is not
+ * taken, and the mark follows the one taken; a local change is made only by
+ * a notification above both. So a notification replayed after a load or a
+ * restart is never counted twice and never rolls a counter back. Records (messages, members,
  * partners) are upserts and are always applied.
  *
  * The writers of server counters of one account (load, a history page, a
@@ -449,10 +450,13 @@ export class ChatService {
     }
     const busId = Number(result?.Store?.inbox?.counter_bus_id);
     if (Number.isFinite(busId)) {
-      // A counter read without its own bus id is as of the read: it sets the mark a replay must beat
+      // The counters read are as of busId, which becomes the account's counterBusId below, in this
+      // same queue task: the bus gate already compares with it, so the marks are written 0. Odoo
+      // stamps each counter with its bus id of the moment, which moves between any two loads: kept,
+      // it would make every load rewrite every conversation row
       for (const c of delta.channels) {
-        if (c.unreadCounter !== undefined && c.unreadCounterBusId === undefined) c.unreadCounterBusId = busId;
-        if (c.needactionCounter !== undefined && c.needactionCounterBusId === undefined) c.needactionCounterBusId = busId;
+        if (c.unreadCounter !== undefined) c.unreadCounterBusId = 0;
+        if (c.needactionCounter !== undefined) c.needactionCounterBusId = 0;
       }
     }
     if (erased()) return;

@@ -1,0 +1,438 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "Store": {
+      "inbox": {
+        "counter": 0,
+        "counter_bus_id": 27,
+        "id": "inbox",
+        "model": "mail.box"
+      },
+      "initChannelsUnreadCounter": 1,
+      "starred": {
+        "counter": 0,
+        "counter_bus_id": 27,
+        "id": "starred",
+        "model": "mail.box"
+      }
+    },
+    "discuss.channel": [
+      {
+        "allow_public_upload": false,
+        "authorizedGroupFullName": "User types / Internal User",
+        "avatarCacheKey": "dda982121466c643ce8742846929170ea97c5afd9302ce6789a921047b3675c7440883da35241c857ed55587cb5b57ba5f511c2d17ca533d795455b96c3dd8fe",
+        "channel_type": "channel",
+        "create_uid": 1,
+        "custom_channel_name": false,
+        "custom_notifications": false,
+        "defaultDisplayMode": false,
+        "description": "General announcements for all employees.",
+        "fetchChannelInfoState": "fetched",
+        "from_message_id": false,
+        "group_based_subscription": true,
+        "group_public_id": 1,
+        "id": 1,
+        "invitedMembers": [
+          [
+            "ADD",
+            []
+          ]
+        ],
+        "is_editable": true,
+        "is_pinned": true,
+        "last_interest_dt": false,
+        "memberCount": 4,
+        "message_needaction_counter": 0,
+        "message_needaction_counter_bus_id": 27,
+        "mute_until_dt": false,
+        "name": "general",
+        "parent_channel_id": false,
+        "rtcSessions": [
+          [
+            "ADD",
+            []
+          ]
+        ],
+        "state": "closed",
+        "uuid": "6YRXutDrrZ"
+      },
+      {
+        "allow_public_upload": false,
+        "authorizedGroupFullName": "Administration / Settings",
+        "avatarCacheKey": "0038ad1b34687caa6fdc1a9c1509ba5b7607fe9fbe0b76eea888acf5058d334ba1a18e68313543566ad8cc91e2cd722d1852b5995cca5d3d99350a5f078de578",
+        "channel_type": "channel",
+        "create_uid": 1,
+        "custom_channel_name": false,
+        "custom_notifications": false,
+        "defaultDisplayMode": false,
+        "description": "General channel for administrators.",
+        "fetchChannelInfoState": "fetched",
+        "from_message_id": false,
+        "group_based_subscription": true,
+        "group_public_id": 4,
+        "id": 2,
+        "invitedMembers": [
+          [
+            "ADD",
+            []
+          ]
+        ],
+        "is_editable": true,
+        "is_pinned": true,
+        "last_interest_dt": false,
+        "memberCount": 1,
+        "message_needaction_counter": 0,
+        "message_needaction_counter_bus_id": 27,
+        "mute_until_dt": false,
+        "name": "Administrators",
+        "parent_channel_id": false,
+        "rtcSessions": [
+          [
+            "ADD",
+            []
+          ]
+        ],
+        "state": "closed",
+        "uuid": "VjYFmJ3Tpa"
+      },
+      {
+        "allow_public_upload": false,
+        "authorizedGroupFullName": false,
+        "avatarCacheKey": "e74508bbc51a8e018c18a8b505b9f11f654fe4767abae0f5d8ac47e872bcd71dd7d260dd2e90b72afd891d9245c495f29185127bd70e4afd43517a0529b14a15",
+        "channel_type": "group",
+        "create_uid": 2,
+        "custom_channel_name": false,
+        "custom_notifications": false,
+        "defaultDisplayMode": false,
+        "description": false,
+        "fetchChannelInfoState": "fetched",
+        "from_message_id": false,
+        "group_based_subscription": false,
+        "group_public_id": false,
+        "id": 3,
+        "invitedMembers": [
+          [
+            "ADD",
+            []
+          ]
+        ],
+        "is_editable": true,
+        "is_pinned": true,
+        "last_interest_dt": false,
+        "memberCount": 3,
+        "message_needaction_counter": 0,
+        "message_needaction_counter_bus_id": 27,
+        "mute_until_dt": false,
+        "name": "ms chat",
+        "parent_channel_id": false,
+        "rtcSessions": [
+          [
+            "ADD",
+            []
+          ]
+        ],
+        "state": "closed",
+        "uuid": "grziQMA6YU"
+      },
+      {
+        "allow_public_upload": false,
+        "authorizedGroupFullName": "User types / Internal User",
+        "avatarCacheKey": "2534eb6beb5b238eb080b24b0f5b9824172c98487482ef542802d39826176f453e9d2b1930427c3eb513d97f67f9fb825f349b816e30d90fd4575d20c81c44f0",
+        "channel_type": "channel",
+        "create_uid": 2,
+        "custom_channel_name": false,
+        "custom_notifications": "no_notif",
+        "defaultDisplayMode": false,
+        "description": false,
+        "fetchChannelInfoState": "fetched",
+        "from_message_id": false,
+        "group_based_subscription": false,
+        "group_public_id": 1,
+        "id": 4,
+        "invitedMembers": [
+          [
+            "ADD",
+            []
+          ]
+        ],
+        "is_editable": true,
+        "is_pinned": true,
+        "last_interest_dt": false,
+        "memberCount": 3,
+        "message_needaction_counter": 0,
+        "message_needaction_counter_bus_id": 27,
+        "mute_until_dt": false,
+        "name": "canal réglages",
+        "parent_channel_id": false,
+        "rtcSessions": [
+          [
+            "ADD",
+            []
+          ]
+        ],
+        "state": "closed",
+        "uuid": "LZvV3MorgF"
+      },
+      {
+        "allow_public_upload": false,
+        "authorizedGroupFullName": "User types / Internal User",
+        "avatarCacheKey": "18a9d0a8dc9cd6d804d8c4b93b34d022829e15b9680893ab31f1d8318a24986b3bf683b92ede4f2c1900ecfa4f782d0a380ebbdaacb85ac92d86ddf12ff45aa7",
+        "channel_type": "channel",
+        "create_uid": 2,
+        "custom_channel_name": false,
+        "custom_notifications": false,
+        "defaultDisplayMode": false,
+        "description": false,
+        "fetchChannelInfoState": "fetched",
+        "from_message_id": false,
+        "group_based_subscription": false,
+        "group_public_id": 1,
+        "id": 5,
+        "invitedMembers": [
+          [
+            "ADD",
+            []
+          ]
+        ],
+        "is_editable": true,
+        "is_pinned": true,
+        "last_interest_dt": false,
+        "memberCount": 3,
+        "message_needaction_counter": 0,
+        "message_needaction_counter_bus_id": 27,
+        "mute_until_dt": false,
+        "name": "canal tout le monde",
+        "parent_channel_id": false,
+        "rtcSessions": [
+          [
+            "ADD",
+            []
+          ]
+        ],
+        "state": "closed",
+        "uuid": "RyJPQrxoCH"
+      }
+    ],
+    "discuss.channel.member": [
+      {
+        "create_date": "2026-10-30 08:53:28",
+        "fetched_message_id": 1,
+        "id": 2,
+        "last_interest_dt": "2026-10-30 08:53:29",
+        "last_seen_dt": false,
+        "message_unread_counter": 1,
+        "message_unread_counter_bus_id": 27,
+        "new_message_separator": 0,
+        "persona": {
+          "id": 3,
+          "type": "partner"
+        },
+        "seen_message_id": 1,
+        "thread": {
+          "id": 1,
+          "model": "discuss.channel"
+        }
+      },
+      {
+        "create_date": "2026-10-30 08:53:28",
+        "fetched_message_id": false,
+        "id": 1,
+        "last_interest_dt": "2026-10-30 08:53:29",
+        "last_seen_dt": false,
+        "message_unread_counter": 0,
+        "message_unread_counter_bus_id": 27,
+        "new_message_separator": 0,
+        "persona": {
+          "id": 3,
+          "type": "partner"
+        },
+        "seen_message_id": false,
+        "thread": {
+          "id": 2,
+          "model": "discuss.channel"
+        }
+      },
+      {
+        "create_date": "2026-10-30 08:53:46",
+        "fetched_message_id": false,
+        "id": 7,
+        "last_interest_dt": "2026-10-30 08:53:46",
+        "last_seen_dt": false,
+        "message_unread_counter": 0,
+        "message_unread_counter_bus_id": 27,
+        "new_message_separator": 0,
+        "persona": {
+          "id": 3,
+          "type": "partner"
+        },
+        "seen_message_id": false,
+        "thread": {
+          "id": 3,
+          "model": "discuss.channel"
+        }
+      },
+      {
+        "create_date": "2026-10-30 08:53:46",
+        "fetched_message_id": false,
+        "id": 6,
+        "last_seen_dt": false,
+        "persona": {
+          "id": 9,
+          "type": "partner"
+        },
+        "seen_message_id": false,
+        "thread": {
+          "id": 3,
+          "model": "discuss.channel"
+        }
+      },
+      {
+        "create_date": "2026-10-30 08:53:46",
+        "fetched_message_id": false,
+        "id": 8,
+        "last_seen_dt": false,
+        "persona": {
+          "id": 10,
+          "type": "partner"
+        },
+        "seen_message_id": false,
+        "thread": {
+          "id": 3,
+          "model": "discuss.channel"
+        }
+      },
+      {
+        "create_date": "2026-10-30 08:54:11",
+        "fetched_message_id": false,
+        "id": 9,
+        "last_interest_dt": "2026-10-30 08:54:11",
+        "last_seen_dt": false,
+        "message_unread_counter": 0,
+        "message_unread_counter_bus_id": 27,
+        "new_message_separator": 0,
+        "persona": {
+          "id": 3,
+          "type": "partner"
+        },
+        "seen_message_id": false,
+        "thread": {
+          "id": 4,
+          "model": "discuss.channel"
+        }
+      },
+      {
+        "create_date": "2026-10-30 08:54:11",
+        "fetched_message_id": false,
+        "id": 10,
+        "last_interest_dt": "2026-10-30 08:54:11",
+        "last_seen_dt": false,
+        "message_unread_counter": 0,
+        "message_unread_counter_bus_id": 27,
+        "new_message_separator": 0,
+        "persona": {
+          "id": 3,
+          "type": "partner"
+        },
+        "seen_message_id": false,
+        "thread": {
+          "id": 5,
+          "model": "discuss.channel"
+        }
+      }
+    ],
+    "mail.message": [
+      {
+        "attachment_ids": [],
+        "author": {
+          "id": 2,
+          "type": "partner"
+        },
+        "body": "<p>Welcome to the #general channel.</p>\n            <p>This channel is accessible to all users to <b>easily share company information</b>.</p>",
+        "create_date": "2026-10-30 08:53:28",
+        "date": "2026-10-30 08:53:29",
+        "default_subject": "general",
+        "email_from": "\"OdooBot\" <odoobot@example.com>",
+        "id": 1,
+        "is_discussion": true,
+        "is_note": false,
+        "linkPreviews": [],
+        "message_type": "email",
+        "model": "discuss.channel",
+        "needaction": false,
+        "notifications": [],
+        "parentMessage": false,
+        "pinned_at": false,
+        "rating_id": false,
+        "reactions": [],
+        "recipients": [],
+        "record_name": "general",
+        "res_id": 1,
+        "scheduledDatetime": false,
+        "starred": false,
+        "subject": "Welcome to Odoo!",
+        "subtype_description": false,
+        "thread": {
+          "id": 1,
+          "model": "discuss.channel"
+        },
+        "trackingValues": [],
+        "write_date": "2026-10-30 08:53:28"
+      }
+    ],
+    "mail.thread": [
+      {
+        "id": 1,
+        "model": "discuss.channel",
+        "module_icon": "/mail/static/description/icon.png"
+      }
+    ],
+    "res.partner": [
+      {
+        "active": true,
+        "avatar_128_access_token": "jeton",
+        "email": "admin@example.com",
+        "id": 3,
+        "im_status": "offline",
+        "isInternalUser": true,
+        "is_company": false,
+        "name": "Administrator",
+        "userId": 2,
+        "write_date": "2026-10-30 08:54:09"
+      },
+      {
+        "active": true,
+        "avatar_128_access_token": "jeton",
+        "email": false,
+        "id": 9,
+        "im_status": "offline",
+        "isInternalUser": true,
+        "is_company": false,
+        "name": "MS Chat",
+        "userId": 7,
+        "write_date": "2026-10-30 08:53:46"
+      },
+      {
+        "active": true,
+        "avatar_128_access_token": "jeton",
+        "email": "ms-inbox@example.com",
+        "id": 10,
+        "im_status": "offline",
+        "isInternalUser": true,
+        "is_company": false,
+        "name": "MS Boite",
+        "userId": 8,
+        "write_date": "2026-10-30 08:53:46"
+      },
+      {
+        "avatar_128_access_token": "jeton",
+        "id": 2,
+        "isInternalUser": true,
+        "is_company": false,
+        "name": "OdooBot",
+        "userId": 1,
+        "write_date": "2026-10-30 08:53:45"
+      }
+    ]
+  }
+}
