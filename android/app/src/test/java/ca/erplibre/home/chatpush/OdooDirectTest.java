@@ -56,7 +56,7 @@ public class OdooDirectTest {
     public void checkReadsSessionInfoThenMailDataWithTheSessionCookie() throws Exception {
         server.enqueue(rpc("{\"storeData\":{\"Store\":{\"settings\":{\"mute_until_dt\":false}}}}"));
         server.enqueue(rpc(mailData()));
-        UnreadSummary s = odoo.check(session, true, NOW);
+        UnreadSummary s = odoo.check(session, true, null, NOW);
         assertEquals(12, s.total);
         RecordedRequest info = server.takeRequest();
         RecordedRequest data = server.takeRequest();
@@ -86,28 +86,28 @@ public class OdooDirectTest {
         server.enqueue(rpc("{\"partner_id\":99,\"storeData\":{\"Store\":{\"self\":{\"id\":7,\"type\":\"partner\"},"
                 + "\"settings\":{\"mute_until_dt\":false}}}}"));
         server.enqueue(rpc(mailDataWithoutSelf()));
-        assertEquals(12, odoo.check(session, true, NOW).total);
+        assertEquals(12, odoo.check(session, true, null, NOW).total);
     }
 
     @Test
     public void theSelfPartnerFallsBackToTheSessionPartnerId() throws Exception {
         server.enqueue(rpc("{\"partner_id\":7}"));
         server.enqueue(rpc(mailDataWithoutSelf()));
-        assertEquals(12, odoo.check(session, true, NOW).total);
+        assertEquals(12, odoo.check(session, true, null, NOW).total);
     }
 
     @Test
     public void theGlobalMuteOfSessionInfoSilencesTheCount() throws Exception {
         server.enqueue(rpc("{\"storeData\":{\"Store\":{\"settings\":{\"mute_until_dt\":\"9999-12-31 23:59:59\"}}}}"));
         server.enqueue(rpc(mailData()));
-        assertEquals(2, odoo.check(session, true, NOW).total);
+        assertEquals(2, odoo.check(session, true, null, NOW).total);
     }
 
     @Test
     public void checkNeverCallsARouteThatMarksRead() throws Exception {
         server.enqueue(rpc("{}"));
         server.enqueue(rpc(mailData()));
-        odoo.check(session, true, NOW);
+        odoo.check(session, true, null, NOW);
         List<String> paths = new ArrayList<>();
         paths.add(server.takeRequest().getPath());
         paths.add(server.takeRequest().getPath());
@@ -120,7 +120,7 @@ public class OdooDirectTest {
         server.enqueue(new MockResponse().setBody(
                 "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":100,\"message\":\"Odoo Session Expired\"}}"));
         try {
-            odoo.check(session, true, NOW);
+            odoo.check(session, true, null, NOW);
             fail();
         } catch (OdooDirectException e) {
             assertEquals(OdooDirectException.Kind.SESSION_EXPIRED, e.kind());
@@ -132,7 +132,7 @@ public class OdooDirectTest {
     public void http401IsSessionExpired() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(401));
         try {
-            odoo.check(session, true, NOW);
+            odoo.check(session, true, null, NOW);
             fail();
         } catch (OdooDirectException e) {
             assertEquals(OdooDirectException.Kind.SESSION_EXPIRED, e.kind());
@@ -143,7 +143,7 @@ public class OdooDirectTest {
     public void aRedirectIsNotFollowed() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(303).setHeader("Location", "/web/login"));
         try {
-            odoo.check(session, true, NOW);
+            odoo.check(session, true, null, NOW);
             fail();
         } catch (OdooDirectException e) {
             assertEquals(OdooDirectException.Kind.PROTOCOL, e.kind());
@@ -154,7 +154,7 @@ public class OdooDirectTest {
     @Test
     public void httpRefusedBeforeAnyRequest() throws Exception {
         try {
-            odoo.check(session, false, NOW);
+            odoo.check(session, false, null, NOW);
             fail();
         } catch (OdooDirectException e) {
             assertEquals(OdooDirectException.Kind.HTTP_REFUSED, e.kind());
@@ -192,7 +192,7 @@ public class OdooDirectTest {
     public void aBodyThatIsNotJsonIsProtocol() throws Exception {
         server.enqueue(new MockResponse().setBody("<html>login</html>"));
         try {
-            odoo.check(session, true, NOW);
+            odoo.check(session, true, null, NOW);
             fail();
         } catch (OdooDirectException e) {
             assertEquals(OdooDirectException.Kind.PROTOCOL, e.kind());
@@ -205,7 +205,7 @@ public class OdooDirectTest {
             throw new java.net.UnknownServiceException("CLEARTEXT communication not permitted");
         }).build();
         try {
-            new OdooDirect(refusing).check(session, true, NOW);
+            new OdooDirect(refusing).check(session, true, null, NOW);
             fail();
         } catch (OdooDirectException e) {
             assertEquals(OdooDirectException.Kind.CLEARTEXT_BLOCKED, e.kind());

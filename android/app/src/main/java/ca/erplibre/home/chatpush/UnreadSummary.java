@@ -21,21 +21,40 @@ import org.json.JSONObject;
  * mute_until_dt or the account-wide one still ahead) counts nothing, and
  * the inbox counter is added once, minus the mentions the channels count
  * themselves, never below 0.
+ *
+ * A channel also counts nothing when Odoo pushes none of its messages
+ * (discuss.channel's push domain): its own custom_notifications is
+ * "no_notif", or it is false (the default) while the account's general
+ * channel setting is "no_notif". Chats and groups ignore both settings, as
+ * Odoo does. The JS badge still counts such a channel: the rule is the push
+ * summary's only.
  */
 final class UnreadSummary {
 
+    /** chat + inbox. */
     final int total;
+    /** The conversations' share: chats and groups by unread messages, channels by mentions. */
+    final int chat;
+    /** The inbox counter's share, the channel mentions taken out. */
+    final int inbox;
     /** Counted conversations whose own unread count is 0 (muted or not). */
     final Set<Long> readChannelIds;
 
-    private UnreadSummary(int total, Set<Long> readChannelIds) {
-        this.total = total;
+    private UnreadSummary(int chat, int inbox, Set<Long> readChannelIds) {
+        this.total = chat + inbox;
+        this.chat = chat;
+        this.inbox = inbox;
         this.readChannelIds = Collections.unmodifiableSet(readChannelIds);
     }
 
     /** of() for a /mail/data whose Store names its self partner. */
     static UnreadSummary of(JSONObject mailData, String globalMuteUntil, long nowMs) {
         return of(mailData, -1, globalMuteUntil, nowMs);
+    }
+
+    /** of() with the account's general channel setting unknown. */
+    static UnreadSummary of(JSONObject mailData, long sessionSelf, String globalMuteUntil, long nowMs) {
+        return of(mailData, sessionSelf, globalMuteUntil, null, nowMs);
     }
 
     /**
@@ -45,9 +64,12 @@ final class UnreadSummary {
      *     in its channels (selfMember), and the self member rows are found
      *     by it. A Store "self" wins over it.
      * @param globalMuteUntil Odoo "YYYY-MM-DD HH:MM:SS" UTC, or null
+     * @param channelNotifications the account's general channel setting
+     *     ("all", "mentions", "no_notif"), null while unknown
      * @param nowMs epoch ms the mutes are compared with
      */
-    static UnreadSummary of(JSONObject mailData, long sessionSelf, String globalMuteUntil, long nowMs) {
+    static UnreadSummary of(JSONObject mailData, long sessionSelf, String globalMuteUntil,
+            String channelNotifications, long nowMs) {
         JSONObject res = mailData == null ? new JSONObject() : mailData;
         JSONObject store = res.optJSONObject("Store");
         if (store == null) store = new JSONObject();
@@ -113,10 +135,18 @@ final class UnreadSummary {
             int own = "channel".equals(type) ? needaction : unread;
             if (own == 0) read.add(id);
             boolean muted = ahead(c.isNull("mute_until_dt") ? null : c.optString("mute_until_dt", null), nowMs)
-                    || ahead(globalMuteUntil, nowMs);
+                    || ahead(globalMuteUntil, nowMs)
+                    || ("channel".equals(type) && pushesNothing(c, channelNotifications));
             if (!muted) counted += own;
         }
-        return new UnreadSummary(Math.max(0, inboxCounter - mentions) + counted, read);
+        return new UnreadSummary(counted, Math.max(0, inboxCounter - mentions), read);
+    }
+
+    /** Whether Odoo pushes none of the channel's messages: its own setting, else the general one, is "no_notif". */
+    private static boolean pushesNothing(JSONObject channel, String general) {
+        Object own = channel.opt("custom_notifications");
+        if (own instanceof String) return "no_notif".equals(own);
+        return "no_notif".equals(general);
     }
 
     private static long idOf(Object v) {

@@ -19,8 +19,13 @@ final class OdooDirect {
         this.json = new OdooJson(base);
     }
 
-    /** Reads the account-wide mute and the self partner, then the member channels' counters, and counts them. */
-    UnreadSummary check(NativeSession s, boolean allowHttp, long nowMs) throws OdooDirectException {
+    /**
+     * Reads the account-wide mute and the self partner, then the member
+     * channels' counters, and counts them; channelNotifications is the
+     * account's general channel setting as mirrored, null while unknown.
+     */
+    UnreadSummary check(NativeSession s, boolean allowHttp, String channelNotifications, long nowMs)
+            throws OdooDirectException {
         JSONObject info = asObject(json.call(s, "/web/session/get_session_info", new JSONObject(), allowHttp));
         String mute = null;
         JSONObject storeData = info.optJSONObject("storeData");
@@ -37,7 +42,7 @@ final class OdooDirect {
             throw new OdooDirectException(OdooDirectException.Kind.PROTOCOL, null);
         }
         JSONObject mailData = asObject(json.call(s, "/mail/data", params, allowHttp));
-        return UnreadSummary.of(mailData, selfPartnerOf(info, store), mute, nowMs);
+        return UnreadSummary.of(mailData, selfPartnerOf(info, store), mute, channelNotifications, nowMs);
     }
 
     /** The session's own partner: its Store's self, else partner_id; -1 when neither says. */

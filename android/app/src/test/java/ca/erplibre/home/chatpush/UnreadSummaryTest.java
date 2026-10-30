@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
 
@@ -15,7 +16,11 @@ public class UnreadSummaryTest {
     private static final long NOW = 1704067200000L;
 
     private static JSONObject load() throws Exception {
-        try (InputStream in = UnreadSummaryTest.class.getResourceAsStream("/chatpush/mail_data_counters.json")) {
+        return load("mail_data_counters.json");
+    }
+
+    private static JSONObject load(String name) throws Exception {
+        try (InputStream in = UnreadSummaryTest.class.getResourceAsStream("/chatpush/" + name)) {
             byte[] buf = new byte[in.available()];
             int n = 0;
             while (n < buf.length) n += in.read(buf, n, buf.length - n);
@@ -63,5 +68,56 @@ public class UnreadSummaryTest {
         assertFalse(s.readChannelIds.contains(1L));
         assertFalse(s.readChannelIds.contains(6L));
         assertFalse(s.readChannelIds.contains(8L));
+    }
+
+    @Test
+    public void chatAndInboxSharesAddUpToTheTotal() throws Exception {
+        UnreadSummary s = UnreadSummary.of(load(), null, NOW);
+        // conversations 10 (see chatsCountUnreadChannelsCountMentions), inbox 7 less 5 channel mentions
+        assertEquals(10, s.chat);
+        assertEquals(2, s.inbox);
+        assertEquals(s.chat + s.inbox, s.total);
+    }
+
+    /** The captured /mail/data of Task 0: self partner 3, channel 4 set to « no_notif », 1, 2 and 5 default. */
+    private static JSONObject settingsData() throws Exception {
+        return load("mail_data_settings.json").getJSONObject("result");
+    }
+
+    private static JSONObject channel(JSONObject d, long id) throws Exception {
+        for (int i = 0; i < d.getJSONArray("discuss.channel").length(); i++) {
+            JSONObject c = d.getJSONArray("discuss.channel").getJSONObject(i);
+            if (c.getLong("id") == id) return c;
+        }
+        throw new AssertionError("no channel " + id);
+    }
+
+    @Test
+    public void aChannelSetToNothingInOdooCountsNothing() throws Exception {
+        JSONObject d = settingsData();
+        channel(d, 4).put("message_needaction_counter", 2);
+        channel(d, 5).put("message_needaction_counter", 1);
+        assertEquals(1, UnreadSummary.of(d, 3, null, null, NOW).total);
+        assertEquals(1, UnreadSummary.of(d, 3, null, "all", NOW).total);
+        // its mentions are still unread: a notification of it is not cancelled as read
+        assertFalse(UnreadSummary.of(d, 3, null, null, NOW).readChannelIds.contains(4L));
+    }
+
+    @Test
+    public void aDefaultChannelCountsNothingWhenTheGeneralSettingIsNothing() throws Exception {
+        JSONObject d = settingsData();
+        channel(d, 1).put("message_needaction_counter", 2);
+        channel(d, 5).put("message_needaction_counter", 1);
+        // the group (self member row 7) counts its unread messages whatever the channel settings
+        JSONArray members = d.getJSONArray("discuss.channel.member");
+        for (int i = 0; i < members.length(); i++) {
+            if (members.getJSONObject(i).getLong("id") == 7) members.getJSONObject(i).put("message_unread_counter", 4);
+        }
+        assertEquals(7, UnreadSummary.of(d, 3, null, null, NOW).total);
+        assertEquals(7, UnreadSummary.of(d, 3, null, "mentions", NOW).total);
+        assertEquals(4, UnreadSummary.of(d, 3, null, "no_notif", NOW).total);
+        // a channel's own « all » wins over the general « no_notif »
+        channel(d, 2).put("custom_notifications", "all").put("message_needaction_counter", 3);
+        assertEquals(7, UnreadSummary.of(d, 3, null, "no_notif", NOW).total);
     }
 }

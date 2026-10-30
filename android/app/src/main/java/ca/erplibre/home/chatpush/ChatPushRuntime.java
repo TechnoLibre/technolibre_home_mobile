@@ -13,6 +13,7 @@ import ca.erplibre.home.BuildConfig;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
@@ -124,6 +126,7 @@ public final class ChatPushRuntime {
         engine = new PushEngine(store, settings, sessions, ntfy, new OdooDirect(http), notifier, clock,
                 new ExecutorScheduler(), REALTIME_BUILD);
         engine.setWake(new MessageWake(context));
+        engine.setLocalTime(new ZoneTime());
         actions = new ActionStore(new PrefsKeyValue(context, ACTIONS_FILE), box, clock::now);
         // OdooActions derives its own client from http: no replay of a call, its own timeouts
         runner = new ActionRunner(actions, sessions, settings, new OdooActions(http), clock::now);
@@ -562,6 +565,21 @@ public final class ChatPushRuntime {
             } catch (ClassNotFoundException | NoSuchMethodException | LinkageError | SecurityException e) {
                 return null;
             }
+        }
+    }
+
+    /**
+     * The engine's time of day: the device's default time zone, looked up at
+     * each call, so a zone changed while the process lives applies to the
+     * next post. Calendar rather than java.time, which needs API 26.
+     */
+    private static final class ZoneTime implements PushEngine.LocalTime {
+
+        @Override
+        public int minuteOfDay(long epochMs) {
+            Calendar c = Calendar.getInstance(TimeZone.getDefault());
+            c.setTimeInMillis(epochMs);
+            return c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE);
         }
     }
 

@@ -1445,4 +1445,153 @@ public class PushEngineTest {
         assertTrue(notifier.cancelled.isEmpty());
         assertEquals("x2", store.cursor(n.url));
     }
+
+    // ---- filter and quiet hours ----
+
+    /** account(configId, label) on a 1.6 server with the given prefs; quiet hours 22:00 to 07:00 when on. */
+    private static AccountView withPrefs(String configId, String label, PhoneFilter filter, boolean inbox,
+            boolean quietOn, String channelNotifications) {
+        return new AccountView(configId, label, LockScreenMode.ALWAYS, account(configId, label).channels, "1.6",
+                new AccountView.AccountPrefs(filter, inbox, false, quietOn, 1320, 420, channelNotifications));
+    }
+
+    private static String resourceText(String name) throws Exception {
+        return new String(PushPayloadTest.resource(name), StandardCharsets.UTF_8);
+    }
+
+    /** A LocalTime answering 23:00, inside the quiet hours of withPrefs. */
+    private static final PushEngine.LocalTime ELEVEN_PM = epochMs -> 23 * 60;
+
+    @Test
+    public void aFilteredPushDrawsNothingAndStillAdvancesTheCursor() throws Exception {
+        mirror(1, true, withPrefs("cfg1", "Serveur A", PhoneFilter.NONE, true, false, null));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)
+                + encrypted(a, "m1", resourceText("push16_chat.json"))
+                + encrypted(a, "m2", resourceText("push16_record.json"))));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals("m2", store.cursor(n.url));
+        assertEquals(0, engine.health().toJson().getInt("faults"));
+    }
+
+    @Test
+    public void aReadPushAppliesOnAServerSetToNothing() throws Exception {
+        mirror(1, true, withPrefs("cfg1", "Serveur A", PhoneFilter.NONE, true, false, null));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        notifier.active.add("chat:cfg1:42");
+        notifier.ids.put("chat:cfg1:42", new ArrayList<>(Arrays.asList(5L, 7L)));
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + readPush(a, "r1", 42, 7)));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertEquals(Collections.singletonList("chat:cfg1:42"), notifier.cancelled);
+        assertTrue(notifier.shown.isEmpty());
+    }
+
+    @Test
+    public void insideQuietHoursTheNotificationIsPostedSilently() throws Exception {
+        mirror(1, true, withPrefs("cfg1", "Serveur A", PhoneFilter.ALL, true, true, null));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)
+                + encrypted(a, "m1", resourceText("push16_chat.json"))));
+        engine().setLocalTime(ELEVEN_PM);
+        engine.startRealtime();
+        awaitClosed(1);
+        assertEquals(1, notifier.shown.size());
+        assertEquals("chat:cfg1:4", notifier.shown.get(0).tag);
+        assertTrue(notifier.shown.get(0).silent);
+    }
+
+    @Test
+    public void anInboxNotificationInsideQuietHoursIsPostedSilently() throws Exception {
+        mirror(1, true, withPrefs("cfg1", "Serveur A", PhoneFilter.ALL, true, true, null));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)
+                + encrypted(a, "m1", resourceText("push16_record.json"))));
+        engine().setLocalTime(ELEVEN_PM);
+        engine.startRealtime();
+        awaitClosed(1);
+        assertEquals(1, notifier.shown.size());
+        assertEquals("inbox:cfg1:project.task:1", notifier.shown.get(0).tag);
+        assertTrue(notifier.shown.get(0).silent);
+    }
+
+    @Test
+    public void theZoneIsReadAtEachPost() throws Exception {
+        mirror(1, true, withPrefs("cfg1", "Serveur A", PhoneFilter.ALL, true, true, null));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)
+                + encrypted(a, "m1", resourceText("push16_chat.json"))
+                + encrypted(a, "m2", resourceText("push16_group.json"))));
+        // the zone changes between the two posts: 00:30 there, 10:00 here
+        int[] answers = {30, 600};
+        List<Long> asked = new CopyOnWriteArrayList<>();
+        engine().setLocalTime(epochMs -> {
+            asked.add(epochMs);
+            return answers[Math.min(asked.size(), answers.length) - 1];
+        });
+        engine.startRealtime();
+        awaitClosed(1);
+        assertEquals(2, notifier.shown.size());
+        assertTrue(notifier.shown.get(0).silent);
+        assertFalse(notifier.shown.get(1).silent);
+        assertEquals(Arrays.asList(NOW, NOW), asked);
+    }
+
+    @Test
+    public void aServerSetToNothingGetsNoSummary() throws Exception {
+        mirror(3, true, withPrefs("cfg2", "Serveur B", PhoneFilter.ALL, true, false, null));
+        mirrorSession("cfg2", "sid_exemple_secret");
+        odoo.mailData = mailData(3);
+        engine().runDue(level(3));
+        assertEquals(1, notifier.tagged("summary:cfg2").size());
+        mirror(3, true, withPrefs("cfg2", "Serveur B", PhoneFilter.NONE, true, false, null));
+        odoo.mailData = mailData(5);
+        engine.runDue(level(3));
+        assertEquals(1, notifier.tagged("summary:cfg2").size());
+        assertTrue(notifier.cancelled.contains("summary:cfg2"));
+        assertFalse(notifier.active.contains("summary:cfg2"));
+    }
+
+    @Test
+    public void inboxOffLeavesTheInboxShareOutOfTheSummary() throws Exception {
+        mirror(3, true, withPrefs("cfg2", "Serveur B", PhoneFilter.ALL, false, false, null));
+        mirrorSession("cfg2", "sid_exemple_secret");
+        // conversations 10, inbox share 2 (UnreadSummaryTest)
+        odoo.mailData = resourceText("mail_data_counters.json");
+        engine().runDue(level(3));
+        List<NotificationModel.Shown> s = notifier.tagged("summary:cfg2");
+        assertEquals(1, s.size());
+        assertTrue(s.get(0).publicTitle, s.get(0).publicTitle.startsWith("10 "));
+    }
+
+    @Test
+    public void theSummaryInsideQuietHoursIsSilent() throws Exception {
+        mirror(3, true, withPrefs("cfg2", "Serveur B", PhoneFilter.ALL, true, true, null));
+        mirrorSession("cfg2", "sid_exemple_secret");
+        odoo.mailData = mailData(3);
+        engine().setLocalTime(ELEVEN_PM);
+        engine.runDue(level(3));
+        List<NotificationModel.Shown> s = notifier.tagged("summary:cfg2");
+        assertEquals(1, s.size());
+        assertTrue(s.get(0).silent);
+    }
+
+    @Test
+    public void theGeneralChannelSettingReachesTheSummary() throws Exception {
+        mirror(3, true, withPrefs("cfg2", "Serveur B", PhoneFilter.ALL, true, false, "no_notif"));
+        mirrorSession("cfg2", "sid_exemple_secret");
+        // 12 less the 3 mentions of channel 4, a default channel the general « no_notif » silences
+        odoo.mailData = resourceText("mail_data_counters.json");
+        engine().runDue(level(3));
+        List<NotificationModel.Shown> s = notifier.tagged("summary:cfg2");
+        assertEquals(1, s.size());
+        assertTrue(s.get(0).publicTitle, s.get(0).publicTitle.startsWith("9 "));
+    }
 }

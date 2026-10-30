@@ -17,16 +17,19 @@ import org.json.JSONException;
 /**
  * Turns ntfy messages and Odoo unread counters into notifications.
  * Capacitor-free and Android-free: the screen is a Notifier, time a Clock,
- * delayed work a Scheduler.
+ * the time of day a LocalTime, delayed work a Scheduler.
  *
  * One stream per distinct ntfy carries the topics of every account on it.
  * Every message, streamed or polled, goes through one path: de-duplicated by
  * id, routed by topic, decrypted, shown unless the app is in the foreground,
  * then the server's cursor and contact time saved. A control push of module
  * erplibre_mobile_chat 1.5 (« read », « inbox_done ») removes or trims
- * notifications, in the foreground too, and draws none. An account without ntfy,
- * or one whose ntfy was silent longer than its cache, is checked against Odoo
- * directly and gets one summary notification per server.
+ * notifications, in the foreground too, and draws none. A message push the
+ * account's preferences filter out (PushFilter) draws nothing either; one
+ * drawn inside the account's quiet hours is posted silently. An account
+ * without ntfy, or one whose ntfy was silent longer than its cache, is
+ * checked against Odoo directly and gets one summary notification per
+ * server.
  *
  * Threading: stream callbacks arrive on OkHttp threads, the other entry
  * points on the caller's. Every piece of state is guarded by one monitor,
@@ -87,6 +90,15 @@ final class PushEngine {
         void acquire();
 
         void release();
+    }
+
+    /**
+     * The local time of day, read at each post so a change of time zone
+     * applies to the next notification.
+     */
+    interface LocalTime {
+        /** Minutes since local midnight (0..1439) at epochMs. */
+        int minuteOfDay(long epochMs);
     }
 
     private static final Wake NO_WAKE = new Wake() {
@@ -172,6 +184,8 @@ final class PushEngine {
     private final Scheduler scheduler;
     private final boolean realtimeBuild;
     private volatile Wake wake = NO_WAKE;
+    /** null until setLocalTime: quiet hours then never apply. */
+    private volatile LocalTime localTime;
 
     private final Object lock = new Object();
     private final Object runLock = new Object();
@@ -214,6 +228,11 @@ final class PushEngine {
     /** Sets the hold taken around each streamed message; null takes none. */
     void setWake(Wake w) {
         wake = w == null ? NO_WAKE : w;
+    }
+
+    /** Sets the time of day quiet hours are read with; null turns them off. */
+    void setLocalTime(LocalTime t) {
+        localTime = t;
     }
 
     // ---- entry points ----
@@ -630,11 +649,18 @@ final class PushEngine {
             clearInbox(a.configId, p.threads, m.time * 1000L + 999);
             return;
         }
-        if (settings.foreground()) return;
+        if (settings.foreground() || !PushFilter.allows(a, p)) return;
         PushStrings s = settings.strings();
         NotificationModel.Shown n = p.isChat() ? NotificationModel.chat(a, p, s) : NotificationModel.inbox(a, p, s);
         n.at = m.time * 1000L;
+        if (quiet(a)) n.silent = true;
         notifier.show(n);
+    }
+
+    /** Whether now falls inside the account's quiet hours. Monitor held. */
+    private boolean quiet(AccountView a) {
+        LocalTime t = localTime;
+        return a.quietOn && t != null && QuietHours.inside(a.quietFrom, a.quietTo, t.minuteOfDay(clock.now()));
     }
 
     /**
@@ -739,16 +765,19 @@ final class PushEngine {
     private void checkAccount(String configId, boolean counting) {
         NativeSession s;
         boolean http;
+        String general;
         synchronized (lock) {
             if (sessions.expired(configId)) return;
             s = sessions.get(configId);
             if (s == null) return;
             http = settings.allowHttp();
+            AccountView a = settings.account(configId);
+            general = a == null ? null : a.channelNotifications;
         }
         UnreadSummary u = null;
         OdooDirectException.Kind failed = null;
         try {
-            u = odoo.check(s, http, clock.now());
+            u = odoo.check(s, http, general, clock.now());
         } catch (OdooDirectException e) {
             failed = checkKind(e.kind());
         }
@@ -774,7 +803,12 @@ final class PushEngine {
         }
     }
 
-    /** Monitor held. */
+    /**
+     * The count the summary shows follows the account's preferences: none
+     * with the filter NONE (a summary already drawn goes), the chat share
+     * alone with the inbox off. Inside quiet hours a rise is posted silently.
+     * Monitor held.
+     */
     private void applySummary(String configId, UnreadSummary u) {
         AccountView a = settings.account(configId);
         if (a == null) return;
@@ -783,19 +817,24 @@ final class PushEngine {
             String tag = "chat:" + configId + ":" + id;
             if (drawn.contains(tag)) notifier.cancel(tag);
         }
+        int count = a.filter == PhoneFilter.NONE ? 0 : a.inbox ? u.total : u.chat;
         String tag = "summary:" + configId;
         int last = (int) parseLong(settings.engineState("sum:" + configId));
         boolean foreground = settings.foreground();
-        if (u.total == 0) {
+        if (count == 0) {
             if (last > 0 || drawn.contains(tag)) notifier.cancel(tag);
-        } else if (u.total > last) {
-            if (!foreground) notifier.show(NotificationModel.summary(a, u.total, settings.strings()));
-        } else if (u.total < last && drawn.contains(tag) && !foreground) {
-            NotificationModel.Shown n = NotificationModel.summary(a, u.total, settings.strings());
+        } else if (count > last) {
+            if (!foreground) {
+                NotificationModel.Shown n = NotificationModel.summary(a, count, settings.strings());
+                if (quiet(a)) n.silent = true;
+                notifier.show(n);
+            }
+        } else if (count < last && drawn.contains(tag) && !foreground) {
+            NotificationModel.Shown n = NotificationModel.summary(a, count, settings.strings());
             n.silent = true;
             notifier.show(n);
         }
-        settings.setEngineState("sum:" + configId, u.total == 0 ? null : Integer.toString(u.total));
+        settings.setEngineState("sum:" + configId, count == 0 ? null : Integer.toString(count));
     }
 
     /**

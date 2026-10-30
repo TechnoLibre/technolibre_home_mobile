@@ -6,7 +6,7 @@ package ca.erplibre.home.chatpush;
  * the account's inbox switch.
  */
 enum PhoneFilter {
-    /** Every push Odoo sends. */
+    /** Every conversation push Odoo sends. */
     ALL("all"),
     /** Direct chats and groups, and a channel push only when it mentions the user. */
     MENTIONS_DM("mentions_dm"),
