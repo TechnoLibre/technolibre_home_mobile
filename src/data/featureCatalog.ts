@@ -4405,8 +4405,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.options",
                 label: { en: "Chat options", fr: "Options du clavardage" },
                 description: {
-                    en: "Options section with the send read and send typing switches and the global mute per server.",
-                    fr: "Section des options avec les interrupteurs d'envoi de « lu » et de « écrit… » et la sourdine globale par serveur.",
+                    en: "Options section with the send read and send typing switches, the global mute and Odoo's general channel setting per server.",
+                    fr: "Section des options avec les interrupteurs d'envoi de « lu » et de « écrit… », la sourdine globale et le réglage général des canaux d'Odoo par serveur.",
                 },
                 status: "experimental",
                 dependsOn: ["chat.settings"],
@@ -5572,8 +5572,8 @@ export const FEATURE_TREE: FeatureNode[] = [
                 id: "chat.info",
                 label: { en: "Conversation info", fr: "Infos de la conversation" },
                 description: {
-                    en: "Name, description, members with presence, invite, remove, mute, leave or hide, and giving up a blocked create.",
-                    fr: "Nom, description, membres avec présence, invitation, retrait, sourdine, départ ou masquage, et abandon d'une création bloquée.",
+                    en: "Name, description, members with presence, invite, remove, mute, Odoo's setting of a channel, leave or hide, and giving up a blocked create.",
+                    fr: "Nom, description, membres avec présence, invitation, retrait, sourdine, réglage d'Odoo d'un canal, départ ou masquage, et abandon d'une création bloquée.",
                 },
                 status: "experimental",
                 howItWorks: {
@@ -5581,14 +5581,18 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "group to empty shows its members' names, a chat sets the user's own label. Leave is "
                         + "offered as Odoo's canLeave and always asks; a direct message is hidden without asking. "
                         + "Removing a member needs a system user and the server module 1.1. Mute offers 15 min to "
-                        + "until turned back on and is hidden while the global mute is active. A create blocked as "
+                        + "until turned back on and is hidden while the global mute is active. A channel offers "
+                        + "Odoo's notification setting (default, all, mentions, nothing); a chat or a group offers "
+                        + "mute only, since Odoo ignores the setting there. A create blocked as "
                         + "ambiguous can be cancelled.",
                     fr: "S'ouvre depuis l'en-tête de la conversation. Le renommage suit Odoo selon le type : un "
                         + "canal jamais à vide, un groupe à vide montre les noms des membres, un message direct "
                         + "fixe le libellé propre à l'utilisateur. Quitter est offert comme le canLeave d'Odoo et "
                         + "demande toujours confirmation ; un message direct se masque sans confirmation. Retirer "
                         + "un membre exige un utilisateur système et le module serveur 1.1. La sourdine va de 15 min "
-                        + "à jusqu'à réactivation et se cache sous la sourdine globale. Une création bloquée comme "
+                        + "à jusqu'à réactivation et se cache sous la sourdine globale. Un canal offre le réglage "
+                        + "de notification d'Odoo (par défaut, tout, mentions, rien) ; une discussion ou un groupe "
+                        + "n'offre que la sourdine, Odoo y ignorant le réglage. Une création bloquée comme "
                         + "ambiguë peut être annulée.",
                 },
                 demo: {

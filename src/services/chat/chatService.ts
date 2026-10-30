@@ -3,7 +3,7 @@ import type {
   BusNotification, ChatAttachment, ChatChannel, ChatFileOrigin, ChatMailboxItem, ChatMember, ChatMessage, ChatModuleState,
   ChatNotice, ChatReaction, MessageTarget, OutgoingFile, RecordThread,
 } from "../../models/chat";
-import { messageKeyOf } from "../../models/chat";
+import { messageKeyOf, odooNotifyOf, type OdooNotify } from "../../models/chat";
 import { syncConfigIdFor } from "../../models/syncConfig";
 import type { DatabaseService, OutboxOp } from "../databaseService";
 import { networkService } from "../networkService";
@@ -373,8 +373,10 @@ export class ChatService {
   /**
    * Reads the account from the server: the session (self partner, system
    * right, websocket version), then /mail/data with the member channels and
-   * their last message, then the account-wide mute, then the server module
-   * state. A chat or a group comes with all its members: a cached member
+   * their last message, then the account-wide mute and the general channel
+   * setting (each kept when a bus or app change is newer than the load's
+   * start), then the server module state. A chat or a group comes with
+   * all its members: a cached member
    * it does not carry (gone meanwhile) is dropped. A cached conversation the
    * server no longer lists (left or hidden meanwhile) is dropped, unless it is pinned locally, still being created
    * (createOpId), refused and not dismissed yet (createFailed) or still
@@ -411,19 +413,19 @@ export class ChatService {
     const result = await this.rpc.callWithAuth(creds, (sessionId) =>
       this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/data", { init_messaging: {}, channels_as_member: true }));
     if (erased()) return;
-    // Read fresh after /mail/data: a mute changed before the inbox bus id this load sets is in the
-    // value, since its bus event, at or below that id, is no longer applied
+    // Read fresh after /mail/data: a mute or a general channel setting changed before the inbox bus id
+    // this load sets is in the value, since its bus event, at or below that id, is no longer applied
     const fresh = await this.rpc.sessionInfo(creds, { fresh: true });
-    const mute = fresh.globalMuteUntil;
     if (erased()) return;
     // The notification type has no bus event: each load reads it again
     await this.repo.setSourceState({ configId, notificationType: fresh.notificationType });
-    const lastMuteAt = (await this.repo.sourceState(configId)).globalMuteAt;
-    // A bus change newer than this load's start wins over the value read
-    const muteIsStale = lastMuteAt !== null && lastMuteAt > startedAt;
+    const { globalMuteAt, channelNotificationsAt } = await this.repo.sourceState(configId);
+    // A bus change (or a change made in the app) newer than this load's start wins over the value read
     const delta = parseStore(result, configId, self);
-    if (muteIsStale) delete delta.globalMuteUntil;
-    else delta.globalMuteUntil = mute;
+    if (globalMuteAt !== null && globalMuteAt > startedAt) delete delta.globalMuteUntil;
+    else delta.globalMuteUntil = fresh.globalMuteUntil;
+    if (channelNotificationsAt !== null && channelNotificationsAt > startedAt) delete delta.channelNotifications;
+    else delta.channelNotifications = fresh.channelNotifications;
     const lastOf = new Map(delta.channels.map((c) => [c.channelId, c.lastMessageId]));
     const typeOf = new Map(delta.channels.map((c) => [c.channelId, c.channelType]));
     const carried = new Set(delta.members.map((m) => m.memberId));
@@ -1232,6 +1234,44 @@ export class ChatService {
   async globalMute(src: ChatSource, minutes: number | false): Promise<void> {
     await this.queue.queueGlobalMute(src.configId, this.muteUntil(minutes));
     await this.afterAction(src, null);
+  }
+
+  /**
+   * Sets Odoo's notification setting of a channel the user is a member of
+   * (null: the general setting applies), shown at once and sent by the
+   * outbox; rejects for a chat or a group, where Odoo ignores it (mute
+   * silences them), and for a conversation the user is not a member of.
+   */
+  async setNotify(configId: string, channelId: number, value: OdooNotify | null): Promise<void> {
+    await this.queue.queueNotify(configId, channelId, value);
+    await this.afterSetting(configId, channelId);
+  }
+
+  /**
+   * Sets Odoo's general setting for the account's channels, shown at once
+   * (stamped, so a load that began before keeps it) and sent by the
+   * outbox; native code gets it in the mirror.
+   */
+  async setGlobalNotify(configId: string, value: OdooNotify): Promise<void> {
+    await this.queue.queueGlobalNotify(configId, value);
+    this.publishGeneral();
+    await this.afterSetting(configId, null);
+  }
+
+  /** afterAction for an account named by its config id; without its application, only the change is told. */
+  private async afterSetting(configId: string, channelId: number | null): Promise<void> {
+    const src = await this.sourceOf(configId);
+    if (src) await this.afterAction(src, channelId);
+    else this.changed(configId, channelId);
+  }
+
+  /**
+   * Publishes the mirror after the general channel setting changed: native
+   * code counts a channel by it (UnreadSummary). Queued in ChatPush's order,
+   * not awaited; a failure is logged.
+   */
+  private publishGeneral(): void {
+    this.push.publish().catch((e) => console.warn("[chat] publish failed:", e instanceof Error ? e.message : e));
   }
 
   /**
@@ -2161,9 +2201,15 @@ export class ChatService {
         return channelId;
       }
       case "res.users.settings": {
-        if (!fresh || !("mute_until_dt" in p)) return undefined;
-        // fromBus stamps globalMuteAt: a load that began earlier does not write its older value over it
-        await this.repo.applyDelta(configId, { ...emptyDelta(), globalMuteUntil: p.mute_until_dt || null }, { fromBus: true });
+        // Odoo sends the changed fields only, with the record id: a field absent is left as it is
+        const delta = emptyDelta();
+        if ("mute_until_dt" in p) delta.globalMuteUntil = p.mute_until_dt || null;
+        if ("channel_notifications" in p) delta.channelNotifications = odooNotifyOf(p.channel_notifications);
+        if (!fresh || (delta.globalMuteUntil === undefined && delta.channelNotifications === undefined)) return undefined;
+        // fromBus stamps globalMuteAt and channelNotificationsAt: a load that began earlier does not write
+        // its older value over them
+        await this.repo.applyDelta(configId, delta, { fromBus: true });
+        if (delta.channelNotifications !== undefined) this.publishGeneral();
         return null;
       }
       case "discuss.channel/joined":

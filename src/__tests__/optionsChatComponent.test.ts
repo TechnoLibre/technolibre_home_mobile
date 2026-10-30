@@ -5,6 +5,10 @@ import { EventBus } from "@odoo/owl";
 import { OptionsChatComponent } from "../components/options/chat/options_chat_component";
 import { Events } from "../constants/events";
 import { chatSettings, CHAT_SETTINGS_KEY } from "../services/chat/chatSettings";
+import { t } from "../i18n";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function stubStorage() {
     const store: Record<string, string> = { app_lang: "en" };
@@ -135,6 +139,50 @@ describe("OptionsChatComponent global mute", () => {
         chat.globalMute.mockRejectedValue(new Error("boom"));
         vi.spyOn(console, "warn").mockImplementation(() => {});
         await c.onMute(15);
+        expect(c.state.error).not.toBe("");
+        expect(c.state.busy).toBe(false);
+    });
+});
+
+describe("OptionsChatComponent Odoo's general setting", () => {
+    function makeNotify(values: Record<string, string | null>) {
+        const store = stubStorage();
+        const c = new (OptionsChatComponent as any)();
+        const chat = {
+            sources: vi.fn().mockResolvedValue(Object.keys(values).map((id) => ({ configId: id, label: id, creds: {} }))),
+            globalMute: vi.fn().mockResolvedValue(undefined),
+            setGlobalNotify: vi.fn().mockResolvedValue(undefined),
+            repo: { sourceState: vi.fn(async (id: string) => ({ globalMuteUntil: null, channelNotifications: values[id] })) },
+        };
+        c.env = { eventBus: new EventBus() };
+        Object.defineProperty(c, "chatService", { value: chat });
+        c.setup();
+        return { c, chat, store };
+    }
+
+    it("the general setting chooser per server says it governs channels only", async () => {
+        const { c, chat, store } = makeNotify({ a: "mentions", b: null });
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "options", "chat", "options_chat_component.ts"), "utf8");
+        expect(source).toContain("t('chat.notify_general')");
+        expect(source).toContain("t('chat.notify_general_help')");
+        store.app_lang = "fr";
+        expect(t("chat.notify_general")).toBe("Canaux (réglage d'Odoo)");
+        expect(t("chat.notify_general_help")).toBe("Les discussions et les groupes sonnent toujours ; pour les faire taire, utilisez la sourdine");
+        expect(c.notifyChoices.map((n: any) => [n.value, t(n.label)])).toEqual([
+            ["all", "Tous les messages"], ["mentions", "Mentions seulement"], ["no_notif", "Rien"],
+        ]);
+        await c.loadSources();
+        expect(c.state.notify).toBe("mentions");
+        // Unknown until a load reads it: no choice is shown as set
+        c.onServer("b");
+        await vi.waitFor(() => expect(chat.repo.sourceState).toHaveBeenLastCalledWith("b"));
+        await Promise.resolve();
+        expect(c.state.notify).toBeNull();
+        await c.onNotify("no_notif");
+        expect(chat.setGlobalNotify).toHaveBeenCalledWith("b", "no_notif");
+        chat.setGlobalNotify.mockRejectedValueOnce(new Error("boom"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        await c.onNotify("all");
         expect(c.state.error).not.toBe("");
         expect(c.state.busy).toBe(false);
     });

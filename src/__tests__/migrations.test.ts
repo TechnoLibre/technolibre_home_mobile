@@ -40,7 +40,6 @@ import { addChatPush } from "../services/migrations/addChatPush";
 import { addChatPushPrefs } from "../services/migrations/addChatPushPrefs";
 import { APP_MIGRATIONS } from "../services/migrations";
 import { DatabaseService } from "../services/databaseService";
-import { ChatRepository } from "../services/chat/chatRepository";
 
 // Each migration is a thin wrapper that delegates to one DatabaseService
 // method and returns { counts: {} }. The contract under test is that
@@ -132,11 +131,23 @@ describe("2026103001 push preferences", () => {
         await raw.execute("CREATE TABLE IF NOT EXISTS chat_sources (config_id TEXT PRIMARY KEY NOT NULL, notification_type TEXT)");
         await db.rawRun("INSERT INTO chat_push (config_id, stale_endpoints, lock_screen) VALUES (?, ?, ?)", ["c", "[]", "never"]);
         await db.rawRun("INSERT INTO chat_sources (config_id) VALUES (?)", ["c"]);
+        const execute = vi.spyOn(raw, "execute");
         await migration().run(db);
+        // The mock's PRAGMA lists names only: the definitions are read from the statements run
+        expect(execute.mock.calls.map((c) => c[0]).filter((sql: string) => sql.includes("chat_push"))).toEqual([
+            "ALTER TABLE chat_push ADD COLUMN phone_filter TEXT NOT NULL DEFAULT 'all'",
+            "ALTER TABLE chat_push ADD COLUMN inbox_notify INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE chat_push ADD COLUMN inbox_mentions INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE chat_push ADD COLUMN quiet_on INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE chat_push ADD COLUMN quiet_from INTEGER NOT NULL DEFAULT 1320",
+            "ALTER TABLE chat_push ADD COLUMN quiet_to INTEGER NOT NULL DEFAULT 420",
+        ]);
+        execute.mockRestore();
         expect(await colsOf("chat_push")).toEqual(expect.arrayContaining(PUSH_PREFS));
         expect(await colsOf("chat_sources")).toEqual(expect.arrayContaining(SOURCE_PREFS));
-        expect(await new ChatRepository(db).pushRow("c")).toMatchObject({
-            lockScreen: "never", filter: "all", inboxNotify: true, inboxMentions: false, quietOn: false, quietFrom: 1320, quietTo: 420,
+        // The values stored in the row, not the repository's fallbacks
+        expect((await db.rawQuery(`SELECT lock_screen, ${PUSH_PREFS.join(", ")} FROM chat_push`))[0]).toEqual({
+            lock_screen: "never", phone_filter: "all", inbox_notify: 1, inbox_mentions: 0, quiet_on: 0, quiet_from: 1320, quiet_to: 420,
         });
         expect((await db.rawQuery("SELECT channel_notifications, channel_notifications_at FROM chat_sources"))[0])
             .toEqual({ channel_notifications: null, channel_notifications_at: null });

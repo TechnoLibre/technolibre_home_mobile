@@ -6,10 +6,10 @@ import { Events } from "../../constants/events";
 import { getCurrentLocale, t } from "../../i18n";
 import { formatBytes } from "../../utils/formatBytes";
 import { displayNameOf } from "../../services/chat/chatNames";
-import { MUTE_CHOICES, muteText } from "../../services/chat/chatMute";
+import { MUTE_CHOICES, NOTIFY_CHOICES, muteText } from "../../services/chat/chatMute";
 import { CHAT_JOIN } from "../../services/chat/chatOutbox";
 import type { ChatSource } from "../../services/chat/chatSources";
-import type { ChatChannel, ChatMember, ChatPartner } from "../../models/chat";
+import type { ChatChannel, ChatMember, ChatPartner, OdooNotify } from "../../models/chat";
 import { SEARCH_DEBOUNCE_MS } from "./chat_new_component";
 
 export { MUTE_CHOICES };
@@ -58,6 +58,12 @@ interface InfoState {
     muted: boolean;
     muteLabel: string;
     globalMuteLabel: string;
+    /** Odoo's notification setting is offered: a channel the user is a member of (Odoo ignores it for a chat or a group). */
+    canNotify: boolean;
+    /** The channel's own setting; null when the general setting applies. */
+    notify: OdooNotify | null;
+    /** The account's general channel setting the default follows; null while no load read it. */
+    notifyGeneral: OdooNotify | null;
     create: CreateState;
     /** The create can still be given up: blocked, refused, or waiting and not on the wire. */
     canCancelCreate: boolean;
@@ -72,8 +78,9 @@ interface InfoState {
  * (renamed as Odoo allows per type), the description, the members with
  * their presence, and the actions the conversation and the user's rights
  * offer: invite, remove (a system user on a server with module 1.1), mute,
- * leave or hide. A conversation still being created or joined shows that
- * state and is managed as one the user is a member of: what is changed
+ * Odoo's notification setting (a channel only), leave or hide. A
+ * conversation still being created or joined shows that state and is
+ * managed as one the user is a member of: what is changed
  * meanwhile is queued behind the create and moves to the server's id with
  * it. Its creator may rename it and change its description; a create not on
  * the wire, blocked or refused can be given up. It renders from the cache
@@ -161,6 +168,14 @@ export class ChatInfoComponent extends EnhancedComponent {
             <button t-if="state.muted" class="chat-info__btn" t-att-disabled="state.busy" t-on-click="onUnmute" t-esc="t('chat.info_unmute')"/>
           </div>
         </section>
+        <section t-if="state.canNotify" class="chat-info__section">
+          <h3 class="chat-info__title" t-esc="t('chat.notify_channel')"/>
+          <div class="chat-info__mutes" role="radiogroup" t-att-aria-label="t('chat.notify_channel')">
+            <button t-foreach="notifyChoices" t-as="n" t-key="n_index" class="chat-info__btn" role="radio"
+                    t-att-aria-checked="state.notify === n.value ? 'true' : 'false'"
+                    t-att-disabled="state.busy" t-on-click="() => this.onNotify(n.value)" t-esc="notifyLabel(n)"/>
+          </div>
+        </section>
 
         <section t-if="state.spaceText" class="chat-info__section">
           <p class="chat-info__text" t-esc="t('chat.info_space', {size: state.spaceText})"/>
@@ -177,6 +192,8 @@ export class ChatInfoComponent extends EnhancedComponent {
     </div>`;
 
     muteChoices = MUTE_CHOICES;
+    /** The channel's choices: the default (null, the general setting), then Odoo's three values. */
+    notifyChoices: { value: OdooNotify | null; label: string }[] = [{ value: null, label: "chat.notify_default" }, ...NOTIFY_CHOICES];
 
     private configId = "";
     private channelId = 0;
@@ -225,6 +242,9 @@ export class ChatInfoComponent extends EnhancedComponent {
             muted: false,
             muteLabel: "",
             globalMuteLabel: "",
+            canNotify: false,
+            notify: null,
+            notifyGeneral: null,
             create: "",
             canCancelCreate: false,
             spaceText: "",
@@ -377,6 +397,17 @@ export class ChatInfoComponent extends EnhancedComponent {
         const own = muteText(channel.muteUntilDt, now, t("chat.info_muted_until", { date: "{date}" }), t("chat.info_muted_forever"));
         s.muted = own !== null;
         s.muteLabel = own ?? t("chat.info_not_muted");
+        // Independent of the mute: the global mute silences everything, this setting only channels
+        s.canNotify = usable && type === "channel";
+        s.notify = (channel.customNotifications as OdooNotify | null) ?? null;
+        s.notifyGeneral = st.channelNotifications ?? null;
+    }
+
+    /** A choice as it reads; the default names the general setting it follows, when known. */
+    notifyLabel(choice: { value: OdooNotify | null; label: string }): string {
+        if (choice.value !== null) return t(choice.label);
+        const general = NOTIFY_CHOICES.find((c) => c.value === this.state.notifyGeneral);
+        return general ? t("chat.notify_default", { value: t(general.label) }) : t("chat.notify_default_unknown");
     }
 
     private presenceOf(status: string | null | undefined): "online" | "away" | "offline" {
@@ -559,6 +590,12 @@ export class ChatInfoComponent extends EnhancedComponent {
     async onUnmute(): Promise<void> {
         if (!this.source) return;
         await this.run(() => this.chatService.mute(this.source!, this.channelId, false));
+        await this.refresh();
+    }
+
+    /** Sets Odoo's notification setting of the channel; null: the general setting applies. */
+    async onNotify(value: OdooNotify | null): Promise<void> {
+        await this.run(() => this.chatService.setNotify(this.configId, this.channelId, value));
         await this.refresh();
     }
 

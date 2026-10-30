@@ -5,7 +5,8 @@ import { useFeatureSection } from "../../../utils/featureSection";
 import { Events } from "../../../constants/events";
 import { getCurrentLocale, t } from "../../../i18n";
 import { formatBytes } from "../../../utils/formatBytes";
-import { MUTE_CHOICES, muteText } from "../../../services/chat/chatMute";
+import { MUTE_CHOICES, NOTIFY_CHOICES, muteText } from "../../../services/chat/chatMute";
+import type { OdooNotify } from "../../../models/chat";
 import { serverChoiceMode, type ChatSource, type ChoiceMode } from "../../../services/chat/chatSources";
 import { chatSettings, setChatSettings, ChatSettings, type ListOrder } from "../../../services/chat/chatSettings";
 
@@ -88,6 +89,14 @@ export class OptionsChatComponent extends EnhancedComponent {
             <button t-if="state.muted" class="chat-new__chip" t-att-disabled="state.busy"
                     t-on-click="onUnmute" t-esc="t('chat.global_unmute')"/>
           </div>
+          <h4 t-esc="t('chat.notify_general')"/>
+          <p class="options-sync__info" t-esc="t('chat.notify_general_help')"/>
+          <div class="chat-new__chips" role="radiogroup" t-att-aria-label="t('chat.notify_general')">
+            <button t-foreach="notifyChoices" t-as="n" t-key="n.value" class="chat-new__chip" role="radio"
+                    t-att-aria-checked="state.notify === n.value ? 'true' : 'false'"
+                    t-att-class="{'chat-new__chip--on': state.notify === n.value}"
+                    t-att-disabled="state.busy" t-on-click="() => this.onNotify(n.value)" t-esc="t(n.label)"/>
+          </div>
           <p t-if="state.error" class="options-sync__info" role="alert" t-esc="state.error"/>
         </t>
       </div>
@@ -95,6 +104,7 @@ export class OptionsChatComponent extends EnhancedComponent {
   `;
 
     muteChoices = MUTE_CHOICES;
+    notifyChoices = NOTIFY_CHOICES;
     listOrders: { value: ListOrder; label: string }[] = [
         { value: "on_top_first", label: "chat.list_order_on_top" },
         { value: "unread_first", label: "chat.list_order_unread" },
@@ -104,7 +114,7 @@ export class OptionsChatComponent extends EnhancedComponent {
     private _cacheTimer: ReturnType<typeof setTimeout> | null = null;
     private _onChanged = (ev: Event) => {
         const d = (ev as CustomEvent).detail ?? {};
-        if (d.configId === this.state.serverId) void this.refreshMute();
+        if (d.configId === this.state.serverId) void this.refreshServer();
         this.scheduleCache();
     };
 
@@ -117,6 +127,8 @@ export class OptionsChatComponent extends EnhancedComponent {
             serverId: null as string | null,
             muted: false,
             muteLabel: "",
+            // Odoo's general channel setting of the chosen server; null while no load read it
+            notify: null as OdooNotify | null,
             busy: false,
             error: "",
             // Unknown until the cache answers, and after a read that failed: never a false « 0 B »
@@ -135,7 +147,7 @@ export class OptionsChatComponent extends EnhancedComponent {
         });
     }
 
-    /** Reads the cached sources and shows the global mute of the first one. */
+    /** Reads the cached sources and shows the global mute and general setting of the first one. */
     async loadSources(): Promise<void> {
         try {
             this._sources = await this.chatService.sources({ online: false });
@@ -147,11 +159,11 @@ export class OptionsChatComponent extends EnhancedComponent {
         this.state.sources = this._sources.map((s) => ({ configId: s.configId, label: s.label }));
         this.state.mode = serverChoiceMode(this._sources.length);
         this.state.serverId = this._sources[0]?.configId ?? null;
-        await this.refreshMute();
+        await this.refreshServer();
     }
 
-    /** Shows the global mute state of the chosen server, as the cache holds it. */
-    async refreshMute(): Promise<void> {
+    /** Shows the global mute state and Odoo's general channel setting of the chosen server, as the cache holds them. */
+    async refreshServer(): Promise<void> {
         const id = this.state.serverId;
         if (id === null) return;
         try {
@@ -160,6 +172,7 @@ export class OptionsChatComponent extends EnhancedComponent {
             const text = muteText(st.globalMuteUntil, new Date(), t("chat.info_global_mute", { date: "{date}" }), t("chat.info_global_forever"));
             this.state.muted = text !== null;
             this.state.muteLabel = text ?? t("chat.global_not_muted");
+            this.state.notify = st.channelNotifications;
         } catch (e) {
             this.fail(e);
         }
@@ -168,7 +181,7 @@ export class OptionsChatComponent extends EnhancedComponent {
     onServer(configId: string): void {
         this.state.serverId = configId;
         this.state.error = "";
-        void this.refreshMute();
+        void this.refreshServer();
     }
 
     onServerChange(ev: { target: any }): void {
@@ -197,7 +210,23 @@ export class OptionsChatComponent extends EnhancedComponent {
         } finally {
             this.state.busy = false;
         }
-        await this.refreshMute();
+        await this.refreshServer();
+    }
+
+    /** Sets Odoo's general setting for the channels of the chosen server's account. */
+    async onNotify(value: OdooNotify): Promise<void> {
+        const id = this.state.serverId;
+        if (id === null) return;
+        this.state.busy = true;
+        this.state.error = "";
+        try {
+            await this.chatService.setGlobalNotify(id, value);
+        } catch (e) {
+            this.fail(e);
+        } finally {
+            this.state.busy = false;
+        }
+        await this.refreshServer();
     }
 
     private fail(e: unknown): void {

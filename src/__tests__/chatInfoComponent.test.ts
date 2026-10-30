@@ -30,7 +30,7 @@ const people = [
 ];
 const carol = { partnerId: 9, name: "Carol", imStatus: null };
 
-function fakeChat(ch: any = channel(), opts: { features?: any; global?: string | null; members?: any[] } = {}) {
+function fakeChat(ch: any = channel(), opts: { features?: any; global?: string | null; members?: any[]; general?: string | null } = {}) {
     const state: any = { ch };
     return {
         state,
@@ -45,6 +45,7 @@ function fakeChat(ch: any = channel(), opts: { features?: any; global?: string |
         leave: vi.fn().mockResolvedValue(undefined),
         hide: vi.fn().mockResolvedValue(undefined),
         mute: vi.fn().mockResolvedValue(undefined),
+        setNotify: vi.fn().mockResolvedValue(undefined),
         removeMember: vi.fn().mockResolvedValue(undefined),
         people: {
             inviteCandidates: vi.fn().mockResolvedValue({ partners: [carol, people[2]], count: 2, offline: false }),
@@ -55,7 +56,9 @@ function fakeChat(ch: any = channel(), opts: { features?: any; global?: string |
             channel: vi.fn(async () => state.ch),
             members: vi.fn(async () => opts.members ?? [member(1), member(7), member(8)]),
             partners: vi.fn().mockResolvedValue(people),
-            sourceState: vi.fn().mockResolvedValue({ selfPartnerId: 1, globalMuteUntil: opts.global ?? null }),
+            sourceState: vi.fn().mockResolvedValue({
+                selfPartnerId: 1, globalMuteUntil: opts.global ?? null, channelNotifications: opts.general === undefined ? "mentions" : opts.general,
+            }),
         },
     };
 }
@@ -269,6 +272,35 @@ describe("ChatInfoComponent", () => {
         const expired = await opened(fakeChat(channel(), { global: "2001-01-01 00:00:00" }));
         expect(expired.state.canMute).toBe(true);
         expect(expired.state.globalMuteLabel).toBe("");
+    });
+
+    it("the conversation chooser shows for a channel only", async () => {
+        const chat = fakeChat(channel({ channelType: "channel", customNotifications: "no_notif" }));
+        const c = await opened(chat);
+        expect(c.state.canNotify).toBe(true);
+        expect(c.state.notify).toBe("no_notif");
+        expect(c.notifyChoices.map((n: any) => n.value)).toEqual([null, "all", "mentions", "no_notif"]);
+        // The default names the general setting it follows
+        expect(c.notifyLabel(c.notifyChoices[0])).toBe("Default (Mentions only)");
+        expect(c.notifyLabel(c.notifyChoices[3])).toBe("Nothing");
+        await c.onNotify("all");
+        expect(chat.setNotify).toHaveBeenCalledWith("a", 5, "all");
+        await c.onNotify(null);
+        expect(chat.setNotify).toHaveBeenLastCalledWith("a", 5, null);
+        // Under the global mute too: Odoo's setting is not the mute
+        const muted = await opened(fakeChat(channel({ channelType: "channel" }), { global: "9999-12-31 23:59:59", general: null }));
+        expect(muted.state.canNotify).toBe(true);
+        expect(muted.state.notify).toBeNull();
+        expect(muted.notifyLabel(muted.notifyChoices[0])).toBe("Default");
+        const group = await opened(fakeChat(channel({ channelType: "group" })));
+        expect(group.state.canNotify).toBe(false);
+        expect(group.state.canMute).toBe(true);
+    });
+
+    it("a chat shows mute only", async () => {
+        const c = await opened(fakeChat(channel({ channelType: "chat", correspondentPartnerId: 7 })));
+        expect(c.state.canMute).toBe(true);
+        expect(c.state.canNotify).toBe(false);
     });
 
     it("invites into a group through the server's candidates and stays", async () => {

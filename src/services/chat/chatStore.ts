@@ -1,3 +1,4 @@
+import { odooNotifyOf, type OdooNotify } from "../../models/chat";
 import type {
   ChatAttachment,
   ChatChannel,
@@ -33,6 +34,8 @@ export interface StoreDelta {
   selfPartnerId: number | null;
   /** The account-wide mute end when the Store carries `settings`: a date, or null when unmuted. */
   globalMuteUntil?: string | null;
+  /** Odoo's general channel setting when the Store's `settings` carry it (false read as "mentions"); null when unknown. */
+  channelNotifications?: OdooNotify | null;
   /** Reaction groups (`MessageReactions`), each replacing the stored group of its (message, content). */
   reactions?: ReactionGroup[];
   /** A message's full list of reaction contents (a plain `reactions` list): its groups not named go. */
@@ -263,6 +266,9 @@ export function parseStore(
   }
   if (store.settings && typeof store.settings === "object" && "mute_until_dt" in store.settings) {
     delta.globalMuteUntil = store.settings.mute_until_dt || null;
+  }
+  if (store.settings && typeof store.settings === "object" && "channel_notifications" in store.settings) {
+    delta.channelNotifications = odooNotifyOf(store.settings.channel_notifications);
   }
   const self = delta.selfPartnerId;
 
@@ -545,6 +551,7 @@ export function mergeDeltas(a: StoreDelta, b: StoreDelta): StoreDelta {
     starredCounter: b.starredCounter ?? a.starredCounter,
     selfPartnerId: b.selfPartnerId ?? a.selfPartnerId,
     globalMuteUntil: b.globalMuteUntil !== undefined ? b.globalMuteUntil : a.globalMuteUntil,
+    channelNotifications: b.channelNotifications !== undefined ? b.channelNotifications : a.channelNotifications,
     ...mergeReactions(a, b),
     deletedMessageIds: union(a.deletedMessageIds ?? [], b.deletedMessageIds ?? []),
     pinnedSets: mergeBy(a.pinnedSets ?? [], b.pinnedSets ?? [], "channelId"),

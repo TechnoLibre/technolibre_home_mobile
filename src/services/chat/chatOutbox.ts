@@ -2,7 +2,7 @@ import {
   messageKeyOf,
   sameTarget,
   type ChannelType, type ChatAttachment, type ChatMailboxItem, type ChatMessage, type ChatNotice, type ChatReaction, type MessageTarget,
-  type OutgoingFile, type RecordThread,
+  type OdooNotify, type OutgoingFile, type RecordThread,
 } from "../../models/chat";
 import { attachmentSettings, deviceAttachmentIO } from "../attachmentService";
 import type { DatabaseService, OutboxOp } from "../databaseService";
@@ -122,6 +122,10 @@ export const CHAT_HIDE = "chat.hide";
 export const CHAT_MUTE = "chat.mute";
 /** params { until }, as CHAT_MUTE, for the whole account. */
 export const CHAT_GLOBAL_MUTE = "chat.global_mute";
+/** params { channelId, value: OdooNotify|null }: Odoo's notification setting of a channel; null: the general one applies. */
+export const CHAT_NOTIFY = "chat.notify";
+/** params { value: OdooNotify }: Odoo's general setting for the account's channels. */
+export const CHAT_GLOBAL_NOTIFY = "chat.global_notify";
 /** params { channelId, partnerId }: another member removed, by a system user (server module 1.1). */
 export const CHAT_REMOVE = "chat.remove";
 
@@ -285,7 +289,11 @@ const postStarted = (op: OutboxOp): boolean => op.status === "running" || !!op.p
 /** The actions handled by runAction, each a target state of one conversation (or of the account). */
 const ACTION_KINDS = [
   CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_LEAVE, CHAT_HIDE, CHAT_MUTE, CHAT_GLOBAL_MUTE, CHAT_REMOVE,
+  CHAT_NOTIFY, CHAT_GLOBAL_NOTIFY,
 ];
+
+/** The actions of the whole account: no conversation to find, so never given up as vanished. */
+const ACCOUNT_KINDS = new Set([CHAT_GLOBAL_MUTE, CHAT_GLOBAL_NOTIFY]);
 
 /** The kinds whose blocked rows are notices. */
 const NOTICE_KINDS = [...ACTION_KINDS, ...MESSAGE_KINDS, ...MAILBOX_KINDS, CHAT_DROPPED, CHAT_FILE_REFUSED, CHAT_RECORD_POST];
@@ -309,7 +317,7 @@ const RESIZABLE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/bmp", "
 const foundByNameAlone = (op: OutboxOp): boolean => RESIZABLE_IMAGE_TYPES.has(String(op.params.mimetype ?? "").toLowerCase());
 
 /** The actions of the user a conversation taken away cancels, and counts in its CHAT_DROPPED notice. */
-const USER_ACTIONS = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE, CHAT_REMOVE, ...MESSAGE_KINDS]);
+const USER_ACTIONS = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE, CHAT_NOTIFY, CHAT_REMOVE, ...MESSAGE_KINDS]);
 
 /**
  * Calls only the server module defines: a server whose module is older or
@@ -318,8 +326,8 @@ const USER_ACTIONS = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE
  */
 const MODULE_ONLY = new Set([CHAT_REMOVE]);
 
-/** The actions Odoo would make the user a member for (the mute route joins a non-member): sent only for a member. */
-const MEMBER_ONLY = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE]);
+/** The actions Odoo would make the user a member for (the mute and notification routes join a non-member): sent only for a member. */
+const MEMBER_ONLY = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE, CHAT_NOTIFY]);
 
 /** The options of a post (ChatOutbox.queuePost). */
 export interface PostOpts {
@@ -1388,6 +1396,30 @@ export class ChatOutbox {
     });
   }
 
+  /**
+   * Sets Odoo's notification setting of a channel (null: the general one
+   * applies), shown at once; the op waiting takes the new value. A chat or
+   * a group refuses (Error): Odoo ignores the setting there.
+   */
+  async queueNotify(configId: string, channelId: number, value: OdooNotify | null): Promise<OutboxOp> {
+    const channel = await this.memberChannel(configId, channelId);
+    if (channel.channelType !== "channel") throw new Error("Only a channel takes Odoo's notification setting: mute a chat or a group.");
+    return this.queueAction(configId, CHAT_NOTIFY, channelId, { value }, {
+      local: (id) => this.repo.patchChannel(configId, id!, { customNotifications: value }),
+    });
+  }
+
+  /**
+   * Sets Odoo's general setting for the account's channels, as
+   * queueGlobalMute: applied at once and stamped (channelNotificationsAt),
+   * so a load that began before it does not write the older value over it.
+   */
+  async queueGlobalNotify(configId: string, value: OdooNotify): Promise<OutboxOp> {
+    return this.queueAction(configId, CHAT_GLOBAL_NOTIFY, null, { value }, {
+      local: () => this.repo.setSourceState({ configId, channelNotifications: value, channelNotificationsAt: this.now().toISOString() }),
+    });
+  }
+
   /** Removes another person from a group or channel (one op per person); the caller checks the right. */
   async queueRemove(configId: string, channelId: number, partnerId: number): Promise<OutboxOp> {
     return this.queueAction(configId, CHAT_REMOVE, channelId, { partnerId }, {
@@ -1881,7 +1913,8 @@ export class ChatOutbox {
    * Lays the target states still queued (not given up) over a delta a load
    * read, so the server's older values do not undo what the phone shows
    * until the action is sent: a name or label, a description, a mute, a
-   * hidden direct message, a conversation left, the account's mute. Only
+   * hidden direct message, a conversation left, a channel's notification
+   * setting, the account's mute and general channel setting. Only
    * conversations the delta carries are touched. Then the reactions
    * (overlayMessages).
    */
@@ -1894,6 +1927,10 @@ export class ChatOutbox {
         delta.globalMuteUntil = muteDt(op.params.until ?? null);
         continue;
       }
+      if (op.kind === CHAT_GLOBAL_NOTIFY) {
+        delta.channelNotifications = op.params.value;
+        continue;
+      }
       const c = byId.get(op.params.channelId);
       if (!c) continue;
       const type = c.channelType ?? (await this.repo.channel(configId, c.channelId))?.channelType;
@@ -1902,6 +1939,7 @@ export class ChatOutbox {
         else c.name = op.params.name;
       } else if (op.kind === CHAT_DESCRIBE) c.description = op.params.description;
       else if (op.kind === CHAT_MUTE) c.muteUntilDt = muteDt(op.params.until ?? null);
+      else if (op.kind === CHAT_NOTIFY) c.customNotifications = op.params.value ?? null;
       else if (op.kind === CHAT_HIDE) c.isPinned = false;
       else if (op.kind === CHAT_LEAVE) c.isMember = false;
     }
@@ -3454,7 +3492,8 @@ export class ChatOutbox {
    * the user is leaving, or left with texts unsent, is dropped. A
    * conversation gone, created on the phone only, refused, or one the user
    * is no longer a member of for an action Odoo would join them for
-   * (MEMBER_ONLY) is not sent: the op is given up as "vanished". A refusal
+   * (MEMBER_ONLY) is not sent: the op is given up as "vanished"; an action
+   * of the whole account (ACCOUNT_KINDS) has no conversation to check. A refusal
    * (REFUSED_ERRORS, or AttributeError for a call of the module,
    * MODULE_ONLY, after which the module state is probed again) gives it up
    * as "refused". Given up, it stays blocked in the outbox as a notice
@@ -3468,7 +3507,7 @@ export class ChatOutbox {
       if (!(await this.isOnline())) throw new RequestNotSentError(`Offline: ${act.kind} waits for the network.`);
       const channelId: number | null = act.params.channelId ?? null;
       const channel = channelId === null ? null : await this.repo.channel(act.configId, channelId);
-      if (act.kind !== CHAT_LEAVE && act.kind !== CHAT_GLOBAL_MUTE) {
+      if (act.kind !== CHAT_LEAVE && !ACCOUNT_KINDS.has(act.kind)) {
         // Running when the user left, and retried since: dropped with the rest of the conversation
         if (await this.leaving(act.configId, channelId!)) return;
         const gone = !channel || channelId! <= 0 || channel.createFailed
@@ -3501,8 +3540,9 @@ export class ChatOutbox {
   private async sendAction(creds: SyncCredentials, op: OutboxOp, channel: { channelType: ChannelType } | null): Promise<void> {
     const p = op.params;
     const cid: number = p.channelId;
-    const mute = (params: Record<string, any>) => this.rpc.callWithAuth(creds, (sessionId) =>
-      this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/settings/mute", params));
+    const settings = (route: string, params: Record<string, any>) => this.rpc.callWithAuth(creds, (sessionId) =>
+      this.rpc.jsonRoute(creds.odooUrl, sessionId, `/discuss/settings/${route}`, params));
+    const mute = (params: Record<string, any>) => settings("mute", params);
     switch (op.kind) {
       case CHAT_INVITE:
         await this.rpc.callKw(creds, CHANNEL_MODEL, "add_members", [[cid]], { partner_ids: p.partnerIds });
@@ -3525,6 +3565,14 @@ export class ChatOutbox {
         return;
       case CHAT_GLOBAL_MUTE:
         await mute({ minutes: muteMinutes(p.until ?? null, this.now()) });
+        return;
+      // The route answers no result. A member takes "mentions"; false is the default (the general setting)
+      case CHAT_NOTIFY:
+        await settings("custom_notifications", { custom_notifications: p.value ?? false, channel_id: cid });
+        return;
+      // The general setting stores "mentions" as false: the string is an invalid selection value there
+      case CHAT_GLOBAL_NOTIFY:
+        await settings("custom_notifications", { custom_notifications: p.value === "mentions" ? false : p.value });
         return;
       case CHAT_REMOVE:
         await this.rpc.callKw(creds, CHANNEL_MODEL, "erplibre_remove_member", [[cid], p.partnerId]);

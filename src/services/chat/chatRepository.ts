@@ -726,7 +726,9 @@ export class ChatRepository {
    * post stay, as failed and detached from the outbox, so the text typed is
    * not lost (the conversation screen shows them). Channel counters follow
    * gateCounter; `fromBus` says the delta comes from a bus delivery, where
-   * a counter without its bus id is not taken. Attachment rows take the
+   * a counter without its bus id is not taken, and stamps the account-wide
+   * mute and general channel setting it carries (globalMuteAt,
+   * channelNotificationsAt) so an older load keeps them. Attachment rows take the
    * server's fields only; a message listing attachment ids claims those rows
    * and releases the ones it no longer lists, and a deleted channel drops its
    * rows (its draft included) but the files still waiting to be sent.
@@ -789,6 +791,10 @@ export class ChatRepository {
     if (d.globalMuteUntil !== undefined) {
       state.globalMuteUntil = d.globalMuteUntil;
       if (opts.fromBus) state.globalMuteAt = this.now();
+    }
+    if (d.channelNotifications !== undefined) {
+      state.channelNotifications = d.channelNotifications;
+      if (opts.fromBus) state.channelNotificationsAt = this.now();
     }
     if (Object.keys(state).length > 0) await this.setSourceState({ ...state, configId });
   }

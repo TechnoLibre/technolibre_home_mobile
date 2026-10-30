@@ -641,6 +641,25 @@ describe("ChatPush", () => {
       expect(ids.map((id) => chat.push.markOwed(id))).toEqual([false, true]);
     });
 
+    it("a mirror native code refuses still marks every account again", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await at("1.6", 0);
+      await at("1.5", 1);
+      await chat.push.applyLink(ids, link());
+      odoo.calls.length = 0;
+      native.failNext("publishSettings");
+      await expect(chat.push.setBrowserMode("quiet")).rejects.toThrow();
+      expect(marks()).toEqual([
+        ["odoo.exemple.test", { endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "quiet" }],
+        ["bureau.exemple.test", { endpoint: `${NTFY}/upab12cd34fake2`, quiet_while_online: true }],
+      ]);
+      // Offline, each mark is owed though the mirror failed
+      setNetwork({ connected: false, wifi: false });
+      native.failNext("publishSettings");
+      await expect(chat.push.setBrowserMode("ring")).rejects.toThrow();
+      expect(ids.map((id) => chat.push.markOwed(id))).toEqual([true, true]);
+    });
+
     it("an account without the module is never marked", async () => {
       await at(null, 0);
       await at("1.4", 1);

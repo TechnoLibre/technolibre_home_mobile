@@ -7,7 +7,7 @@ import { SyncService, syncConfigIdOf, CREATE_QUIET_WINDOW_MS, clientMarker } fro
 import { addChatTables } from "../services/migrations/addChatTables";
 import { ChatRepository } from "../services/chat/chatRepository";
 import {
-  CHAT_DELETE, CHAT_EDIT, CHAT_INBOX_ALL, CHAT_INBOX_DONE, CHAT_NOTE, CHAT_PIN, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_RECORD_POST, CHAT_STAR, CHAT_UPLOAD, ChatOutbox,
+  CHAT_DELETE, CHAT_EDIT, CHAT_GLOBAL_NOTIFY, CHAT_INBOX_ALL, CHAT_INBOX_DONE, CHAT_NOTE, CHAT_NOTIFY, CHAT_PIN, CHAT_POST, CHAT_REACTION, CHAT_READ, CHAT_RECORD_POST, CHAT_STAR, CHAT_UPLOAD, ChatOutbox,
   bodyFingerprint, sameTarget,
   targetKey,
 } from "../services/chat/chatOutbox";
@@ -17,6 +17,9 @@ import { chatMarker } from "../services/chat/chatBody";
 import { EMPTY_MENTIONS, composeBody, type Mentions } from "../services/chat/chatCompose";
 import { emojiConversions } from "../services/chat/chatEmoji";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // The real conversions, replaceable per test (a chunk that fails to load)
 vi.mock("../services/chat/chatEmoji", async (importOriginal) => {
@@ -29,6 +32,10 @@ const CONFIG = syncConfigIdOf(CREDS);
 const GONE: SyncCredentials = { ...CREDS, username: "bob" };
 const GONE_CONFIG = syncConfigIdOf(GONE);
 const CHANNEL = 7;
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+/** Odoo 18's answer to /discuss/settings/custom_notifications, captured: an envelope with no result key. */
+const NOTIFY_ANSWER = readFileSync(resolve(ROOT, "android/app/src/test/resources/chatpush/settings/custom_notifications_channel.json"), "utf-8");
 
 interface Posted { id: number; model: string; res_id: number; body: string; uuid: string | null; author?: number; parent?: number | false }
 interface Call { path: string; params: any }
@@ -53,6 +60,8 @@ interface Call { path: string; params: any }
  * flips it, and erplibre_set_starred sets it with the module (an
  * AttributeError without); `starDrops` makes the next N of those two run
  * and then lose their answer, `starError` answers them with that error.
+ * /discuss/settings/custom_notifications answers as captured, or
+ * `notifyError` when set.
  */
 function chatOdoo(opts: { module?: boolean } = {}) {
   const messages: Posted[] = [];
@@ -61,6 +70,7 @@ function chatOdoo(opts: { module?: boolean } = {}) {
     dropResponses: 0, failBefore: 0, unsent: 0, postError: null as string | null, nextId: 500, elsewhere: new Set<number>(),
     pinDrops: 0, pinError: null as string | null, editError: null as string | null,
     starred: new Set<number>(), gone: new Set<number>(), starDrops: 0, starError: null as string | null,
+    notifyError: null as string | null,
   };
   const ok = (result: unknown) => ({
     ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
@@ -125,6 +135,10 @@ function chatOdoo(opts: { module?: boolean } = {}) {
       return ok(method === "search_read" ? [] : true);
     }
     if (path === "/web/session/get_session_info") return ok({ uid: 2, partner_id: 3, is_system: false });
+    if (path === "/discuss/settings/custom_notifications") {
+      if (state.notifyError) return rpcError(state.notifyError);
+      return { ok: true, status: 200, text: async () => NOTIFY_ANSWER, headers: { forEach: () => {} } } as unknown as Response;
+    }
     if ((path === "/mail/message/update_content" || path === "/erplibre_mobile_chat/message/update_content") && state.editError) {
       return rpcError(state.editError);
     }
@@ -139,6 +153,8 @@ function chatOdoo(opts: { module?: boolean } = {}) {
     stars: () => calls.filter((c) => c.path === "/web/dataset/call_kw"
       && (c.params.method === "toggle_message_starred" || c.params.method === "erplibre_set_starred")).map((c) => c.params),
     /** The ids of the star re-reads (search_read of `starred`), in order. */
+    /** The params of each /discuss/settings/custom_notifications call, in order. */
+    notifies: () => calls.filter((c) => c.path === "/discuss/settings/custom_notifications").map((c) => c.params),
     starReads: () => calls.filter((c) => c.path === "/web/dataset/call_kw" && c.params.method === "search_read"
       && c.params.kwargs.fields?.includes("starred")).map((c) => c.params.kwargs.domain.find((d: any[]) => d[0] === "id")[2]),
   };
@@ -1667,6 +1683,130 @@ describe("ChatOutbox", () => {
       await chat.overlayPending(CONFIG, again);
       expect(again.inboxCounter).toBe(2);
       expect(again.channels[0].needactionCounter).toBe(0);
+    });
+  });
+
+  describe("Odoo's notification settings", () => {
+    const TOPIC = 8;
+    const DM = 9;
+    const custom = async (id: number) => (await repo.channel(CONFIG, id))!.customNotifications;
+    const general = async () => (await repo.sourceState(CONFIG)).channelNotifications;
+
+    beforeEach(async () => {
+      await repo.applyDelta(CONFIG, {
+        channels: [
+          { channelId: TOPIC, channelType: "channel", name: "Annonces", isMember: true, lastMessageId: 10 },
+          { channelId: DM, channelType: "chat", name: "", isMember: true, lastMessageId: 11 },
+        ],
+        deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], attachments: [], deletedAttachmentIds: [], partners: [], inboxCounter: null, selfPartnerId: null,
+      });
+    });
+
+    it("mentions is written as false", async () => {
+      const odoo = chatOdoo();
+      await chat.queueGlobalNotify(CONFIG, "mentions");
+      expect(await general()).toBe("mentions");
+      await chat.flush(CREDS);
+      expect(odoo.notifies()).toEqual([{ custom_notifications: false }]);
+      expect(await general()).toBe("mentions");
+    });
+
+    it("a general notify op is sent without a channel and never given up as vanished", async () => {
+      const odoo = chatOdoo();
+      await chat.queueGlobalNotify(CONFIG, "no_notif");
+      const ops = await db.getOutboxOpsForConfig(CONFIG);
+      expect(ops.map((o) => [o.kind, o.params])).toEqual([[CHAT_GLOBAL_NOTIFY, { value: "no_notif" }]]);
+      expect(await chat.flush(CREDS)).toMatchObject({ blocked: 0 });
+      expect(odoo.notifies()).toEqual([{ custom_notifications: "no_notif" }]);
+      expect(await chat.notices([CONFIG])).toEqual([]);
+      expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+    });
+
+    it("a per-channel setting is sent with the channel id", async () => {
+      const odoo = chatOdoo();
+      for (const value of ["all", "mentions", "no_notif"] as const) {
+        await chat.queueNotify(CONFIG, TOPIC, value);
+        expect(await custom(TOPIC)).toBe(value);
+        await chat.flush(CREDS);
+      }
+      expect(odoo.notifies()).toEqual([
+        { custom_notifications: "all", channel_id: TOPIC },
+        { custom_notifications: "mentions", channel_id: TOPIC },
+        { custom_notifications: "no_notif", channel_id: TOPIC },
+      ]);
+    });
+
+    it("default sends false for the channel", async () => {
+      const odoo = chatOdoo();
+      await repo.patchChannel(CONFIG, TOPIC, { customNotifications: "no_notif" });
+      await chat.queueNotify(CONFIG, TOPIC, null);
+      expect(await custom(TOPIC)).toBeNull();
+      await chat.flush(CREDS);
+      expect(odoo.notifies()).toEqual([{ custom_notifications: false, channel_id: TOPIC }]);
+    });
+
+    it("a chat or group never queues a notify op", async () => {
+      chatOdoo();
+      await expect(chat.queueNotify(CONFIG, CHANNEL, "no_notif")).rejects.toThrow();
+      await expect(chat.queueNotify(CONFIG, DM, "no_notif")).rejects.toThrow();
+      expect(await custom(CHANNEL)).toBeNull();
+      expect(await custom(DM)).toBeNull();
+      expect(await db.getOutboxOpsForConfig(CONFIG)).toEqual([]);
+    });
+
+    it("two notify ops on one target coalesce", async () => {
+      const odoo = chatOdoo();
+      chat.isOnline = async () => false;
+      await chat.queueNotify(CONFIG, TOPIC, "all");
+      await chat.queueNotify(CONFIG, TOPIC, "no_notif");
+      await chat.queueGlobalNotify(CONFIG, "all");
+      await chat.queueGlobalNotify(CONFIG, "mentions");
+      // Queued at the same instant: one op per target, in no set order
+      const ops = (await db.getOutboxOpsForConfig(CONFIG)).map((o) => [o.kind, o.params]);
+      expect(ops).toHaveLength(2);
+      expect(ops).toEqual(expect.arrayContaining([
+        [CHAT_NOTIFY, { channelId: TOPIC, value: "no_notif" }],
+        [CHAT_GLOBAL_NOTIFY, { value: "mentions" }],
+      ]));
+      chat.isOnline = async () => true;
+      await chat.flush(CREDS, { force: true });
+      expect(odoo.notifies()).toHaveLength(2);
+      expect(odoo.notifies()).toEqual(expect.arrayContaining([
+        { custom_notifications: "no_notif", channel_id: TOPIC },
+        { custom_notifications: false },
+      ]));
+    });
+
+    it("the setting is applied locally at once and survives a refusal as given up", async () => {
+      const odoo = chatOdoo();
+      chat.isOnline = async () => false;
+      await chat.queueNotify(CONFIG, TOPIC, "no_notif");
+      await chat.queueGlobalNotify(CONFIG, "no_notif");
+      expect(await custom(TOPIC)).toBe("no_notif");
+      expect(await repo.sourceState(CONFIG)).toMatchObject({ channelNotifications: "no_notif", channelNotificationsAt: clock.toISOString() });
+      // A load read meanwhile shows what is still queued, not the server's older values
+      const read: any = {
+        channels: [{ channelId: TOPIC, customNotifications: null }], deletedChannelIds: [], members: [], deletedMemberIds: [],
+        messages: [], attachments: [], deletedAttachmentIds: [], partners: [], inboxCounter: null, selfPartnerId: null,
+        channelNotifications: "all",
+      };
+      await chat.overlayPending(CONFIG, read);
+      expect(read.channels[0].customNotifications).toBe("no_notif");
+      expect(read.channelNotifications).toBe("no_notif");
+      odoo.state.notifyError = "odoo.exceptions.AccessError";
+      chat.isOnline = async () => true;
+      expect(await chat.flush(CREDS, { force: true })).toMatchObject({ blocked: 2 });
+      expect(await custom(TOPIC)).toBe("no_notif");
+      expect(await general()).toBe("no_notif");
+      expect(await chat.notices([CONFIG])).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: CHAT_NOTIFY, channelId: TOPIC, reason: "refused" }),
+        expect.objectContaining({ kind: CHAT_GLOBAL_NOTIFY, reason: "refused" }),
+      ]));
+      // Given up, the ops no longer lay their value over a load
+      const later: any = { ...read, channels: [{ channelId: TOPIC, customNotifications: null }], channelNotifications: "all" };
+      await chat.overlayPending(CONFIG, later);
+      expect(later.channels[0].customNotifications).toBeNull();
+      expect(later.channelNotifications).toBe("all");
     });
   });
 

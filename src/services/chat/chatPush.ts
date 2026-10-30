@@ -336,14 +336,18 @@ export class ChatPush {
   /**
    * Saves the browser mode, publishes it, then marks the device of every
    * account again (remarkAll), since each server holds the mode per
-   * device.
+   * device. The marks run even when native code refuses the mirror (the
+   * rejection follows them), so a mark not sent stays owed (markOwed).
    */
   setBrowserMode(mode: BrowserMode): Promise<void> {
     return this.run(async () => {
       setChatSettings({ ...chatSettings(), browserMode: mode });
       if (!this.native) return;
-      await this.publishNow();
-      await this.remarkAll();
+      try {
+        await this.publishNow();
+      } finally {
+        await this.remarkAll();
+      }
     });
   }
 

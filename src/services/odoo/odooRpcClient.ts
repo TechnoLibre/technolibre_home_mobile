@@ -3,6 +3,7 @@ import { RAW_HTTP_UNSENT, RawHttp } from "../../plugins/rawHttpPlugin";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { StorageConstants } from "../../constants/storage";
 import { assertUrlAllowed } from "./httpPolicy";
+import { odooNotifyOf, type OdooNotify } from "../../models/chat";
 
 export interface SyncCredentials {
   odooUrl: string;
@@ -41,6 +42,11 @@ export interface SessionInfo {
   internalUserGroupId: number | null;
   /** End of the account-wide mute (`Store.settings.mute_until_dt`), null when not muted. */
   globalMuteUntil: string | null;
+  /**
+   * Odoo's general setting for the user's channels (`Store.settings.channel_notifications`,
+   * false read as "mentions"); null when the session does not carry it.
+   */
+  channelNotifications: OdooNotify | null;
   /** The user is an internal user, not a portal one. */
   isInternalUser: boolean;
   /**
@@ -420,14 +426,21 @@ export class OdooRpcClient {
       websocketWorkerVersion: typeof info?.websocket_worker_version === "string" ? info.websocket_worker_version : null,
       internalUserGroupId: Number(store?.internalUserGroupId) || null,
       globalMuteUntil: store?.settings?.mute_until_dt || null,
+      channelNotifications: odooNotifyOf(store?.settings?.channel_notifications),
       isInternalUser: info?.is_internal_user === true,
       notificationType: notificationTypeOf(info),
       maxUploadSize: Number(info?.max_file_upload_size) > 0 ? Number(info.max_file_upload_size) : DEFAULT_MAX_UPLOAD_SIZE,
     };
     // A fresh read renews only what an administrator or the user changes during a session (the account-wide
-    // mute, the notification type, the upload limit); the rest stays as cached
+    // mute, the general channel setting, the notification type, the upload limit); the rest stays as cached
     const kept = known && opts.fresh
-      ? { ...known, globalMuteUntil: result.globalMuteUntil, notificationType: result.notificationType, maxUploadSize: result.maxUploadSize }
+      ? {
+        ...known,
+        globalMuteUntil: result.globalMuteUntil,
+        channelNotifications: result.channelNotifications,
+        notificationType: result.notificationType,
+        maxUploadSize: result.maxUploadSize,
+      }
       : result;
     this._sessions.set(key, kept);
     return kept;

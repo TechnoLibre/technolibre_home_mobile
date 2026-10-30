@@ -289,6 +289,15 @@ export interface ChatSourceState {
 export type OdooNotify = "all" | "mentions" | "no_notif";
 
 /**
+ * The general setting as Odoo sends it (`res.users.settings.channel_notifications`):
+ * false is « mentions »; any other value than "all" or "no_notif" is unknown (null).
+ */
+export function odooNotifyOf(v: unknown): OdooNotify | null {
+  if (v === false) return "mentions";
+  return v === "all" || v === "no_notif" ? v : null;
+}
+
+/**
  * A message of the inbox, history or starred boxes, of any model: the
  * cached shape of what `/mail/{inbox,history,starred}/messages` return.
  * `threadModel`/`threadId` name the record (or channel) it belongs to.

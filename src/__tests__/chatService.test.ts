@@ -16,6 +16,7 @@ import { composeBody, type Mentions } from "../services/chat/chatCompose";
 import { emojiConversions } from "../services/chat/chatEmoji";
 import { createHash } from "node:crypto";
 import { setChatSettings } from "../services/chat/chatSettings";
+import { fakeChatPushNative } from "../__mocks__/chatPushNative";
 import { parseStore } from "../services/chat/chatStore";
 import type { BusNotification, OutgoingFile } from "../models/chat";
 import { memoryChatFiles, fakeChatHttp } from "../testing/chatFakes";
@@ -61,6 +62,15 @@ function stampedAt(data: any, busId: number): any {
   }
   return data;
 }
+
+/**
+ * An answer or a bus notification of Odoo 18 about the notification
+ * settings, captured (host and secrets replaced), from chatpush/settings:
+ * session_info_mentions.json is the session with the general setting
+ * written false.
+ */
+const settingsCapture = (name: string): any =>
+  JSON.parse(readFileSync(resolve(ROOT, "android/app/src/test/resources/chatpush/settings", name), "utf-8"));
 
 const msg = (id: number, channelId: number, author = BOB, body = `<p>m${id}</p>`) => ({
   id, body, date: "2026-10-25 09:00:00", message_type: "comment",
@@ -136,6 +146,8 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
     attachments: [] as ServerFile[],
     /** max_file_upload_size get_session_info reports; absent when null. */
     maxUpload: null as number | null,
+    /** A captured get_session_info result (settingsCapture), answered instead of the built one when set. */
+    session: null as any,
     /** Reply parents by message id: a page record gets `parentMessage`, the parent record follows (as Odoo). */
     parents: {} as Record<number, number>,
     /** Extra keys of each record a messages page answers (its `reactions`, say). */
@@ -164,6 +176,7 @@ function fakeOdoo(opts: { version?: number; sessionMute?: string | false } = {})
       case "/web/session/authenticate":
         return ok({ uid: 2, session_id: "sid", server_version_info: [opts.version ?? 18, 0, 0, "final", 0, ""] });
       case "/web/session/get_session_info":
+        if (state.session) return ok(state.session);
         return ok({
           uid: 2, partner_id: SELF, is_system: false, websocket_worker_version: "18.0-7", is_internal_user: true,
           ...(state.maxUpload !== null ? { max_file_upload_size: state.maxUpload } : {}),
@@ -1800,7 +1813,7 @@ describe("ChatService", () => {
     // Only the inbox remainder is left
     expect(await chat.unreadTotal()).toBe(1);
     // Settings without the mute key leave it as it is
-    await chat.applyBus(config, [bus(1002, "res.users.settings", { id: 1, channel_notifications: "mentions" })]);
+    await chat.applyBus(config, [{ ...settingsCapture("bus_settings_channel_notifications.json"), id: 1002 }]);
     expect((await chat.repo.sourceState(config)).globalMuteUntil).toBe("9999-12-31 23:59:59");
     // A replay older than the load changes nothing
     await chat.applyBus(config, [bus(998, "res.users.settings", { id: 1, mute_until_dt: false })]);
@@ -1808,6 +1821,103 @@ describe("ChatService", () => {
     await chat.applyBus(config, [bus(1003, "res.users.settings", { id: 1, mute_until_dt: false })]);
     expect((await chat.repo.sourceState(config)).globalMuteUntil).toBeNull();
     expect(await chat.unreadTotal()).toBe(7);
+  });
+
+  describe("Odoo's notification settings", () => {
+    const general = async () => (await chat.repo.sourceState(config)).channelNotifications;
+
+    it("the general setting is read from the session info", async () => {
+      const odoo = fakeOdoo();
+      const src = await source();
+      expect(await general()).toBeNull();
+      // Odoo stores « mentions » as false; each load reads the session again
+      for (const [file, value] of [["session_info_mentions.json", "mentions"], ["session_info_no_notif.json", "no_notif"], ["session_info_all.json", "all"]]) {
+        odoo.state.session = settingsCapture(file).result;
+        await chat.load(src);
+        expect(await general(), file).toBe(value);
+      }
+      expect((await chat.repo.sourceState(config)).channelNotificationsAt).toBeNull();
+    });
+
+    it("the bus channel_notifications updates the general setting without a mute", async () => {
+      fakeOdoo({ sessionMute: "9999-12-31 23:59:59" });
+      await chat.load(await source());
+      const changes: any[] = [];
+      chat.onChange = (c, ch) => changes.push([c, ch]);
+      await chat.applyBus(config, [{ ...settingsCapture("bus_settings_channel_notifications.json"), id: 1001 }]);
+      expect(changes).toEqual([[config, null]]);
+      const st = await chat.repo.sourceState(config);
+      expect(st).toMatchObject({ channelNotifications: "no_notif", globalMuteUntil: "9999-12-31 23:59:59" });
+      expect(st.channelNotificationsAt).not.toBeNull();
+      await chat.applyBus(config, [{ ...settingsCapture("bus_settings_channel_notifications_false.json"), id: 1002 }]);
+      expect(await general()).toBe("mentions");
+      // The same value written again sends the record id alone: nothing changes
+      await chat.applyBus(config, [bus(1003, "res.users.settings", { id: 1 })]);
+      expect(await chat.repo.sourceState(config)).toMatchObject({ channelNotifications: "mentions", globalMuteUntil: "9999-12-31 23:59:59" });
+      // A mute alone leaves the general setting as it is
+      await chat.applyBus(config, [bus(1004, "res.users.settings", { id: 1, mute_until_dt: false })]);
+      expect(await chat.repo.sourceState(config)).toMatchObject({ channelNotifications: "mentions", globalMuteUntil: null });
+      // A replay older than the load changes nothing
+      await chat.applyBus(config, [{ ...settingsCapture("bus_settings_channel_notifications.json"), id: 998 }]);
+      expect(await general()).toBe("mentions");
+    });
+
+    it("a load older than a bus change keeps the bus value", async () => {
+      const odoo = fakeOdoo();
+      odoo.state.session = settingsCapture("session_info_all.json").result;
+      const src = await source();
+      await chat.load(src);
+      expect(await general()).toBe("all");
+      let release!: () => void;
+      odoo.state.hold = new Promise<void>((r) => (release = r));
+      const loading = chat.load(src);
+      await vi.waitFor(() => expect(odoo.on("/mail/data")).toHaveLength(2));
+      // The bus change lands after the load started: the session it reads next is older
+      clock = new Date(clock.getTime() + 1000);
+      await chat.repo.applyDelta(config, { ...parseStore({}, config, SELF), channelNotifications: "no_notif" }, { fromBus: true });
+      release();
+      await loading;
+      expect(await general()).toBe("no_notif");
+      // A load that starts after the bus change takes the server's value
+      clock = new Date(clock.getTime() + 1000);
+      await chat.load(src);
+      expect(await general()).toBe("all");
+    });
+
+    it("a browser change of a channel's setting reaches the conversation chooser", async () => {
+      const odoo = fakeOdoo();
+      odoo.state.data = capturedMailData();
+      await chat.load(await source());
+      // The capture was read once channel 4 was set: as before the change, the setting back to the default
+      expect((await chat.repo.channel(config, 4))!.customNotifications).toBe("no_notif");
+      expect((await chat.repo.channel(config, 1))!.customNotifications).toBeNull();
+      await chat.repo.patchChannel(config, 4, { customNotifications: null });
+      const changes: any[] = [];
+      chat.onChange = (c, ch) => changes.push([c, ch]);
+      await chat.applyBus(config, [settingsCapture("bus_record_insert_custom_notifications.json")]);
+      expect((await chat.repo.channel(config, 4))!.customNotifications).toBe("no_notif");
+      expect(changes).toContainEqual([config, 4]);
+    });
+
+    it("the general setting reaches the native mirror", async () => {
+      const native = fakeChatPushNative();
+      const rpc = new OdooRpcClient();
+      chat.dispose();
+      chat = new ChatService(env.db, rpc, new OutboxService(env.db, () => clock), new CapabilityService(env.db, rpc), () => clock, { native });
+      const odoo = fakeOdoo();
+      odoo.state.session = settingsCapture("session_info_no_notif.json").result;
+      await chat.load(await source());
+      await chat.push.idle();
+      const mirrored = () => native.settings!.accounts.find((a) => a.configId === config)!.channelNotifications;
+      expect(mirrored()).toBe("no_notif");
+      await chat.applyBus(config, [{ ...settingsCapture("bus_settings_channel_notifications_false.json"), id: 1001 }]);
+      await chat.push.idle();
+      expect(mirrored()).toBe("mentions");
+      await chat.setGlobalNotify(config, "all");
+      await chat.push.idle();
+      expect(mirrored()).toBe("all");
+      expect(odoo.on("/discuss/settings/custom_notifications").map((c) => c.params)).toEqual([{ custom_notifications: "all" }]);
+    });
   });
 
   it("new_message on a non-member cached channel reloads nothing", async () => {

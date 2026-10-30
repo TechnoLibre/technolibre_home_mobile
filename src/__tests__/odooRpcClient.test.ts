@@ -200,7 +200,7 @@ describe("OdooRpcClient helpers", () => {
     expect(await rpc.sessionInfo(CREDS)).toEqual({
       uid: 7, companies: [{ id: 1, name: "Main" }], currentCompany: 1,
       partnerId: 42, isSystem: true, websocketWorkerVersion: "18.0-7",
-      internalUserGroupId: null, globalMuteUntil: null, isInternalUser: false, notificationType: null,
+      internalUserGroupId: null, globalMuteUntil: null, channelNotifications: null, isInternalUser: false, notificationType: null,
       maxUploadSize: 134217728,
     });
     await rpc.sessionInfo(CREDS);
@@ -276,7 +276,7 @@ describe("OdooRpcClient helpers", () => {
     server(() => ({ result: { uid: 7 } }));
     expect(await rpc.sessionInfo(CREDS)).toMatchObject({
       partnerId: 0, isSystem: false, websocketWorkerVersion: null,
-      internalUserGroupId: null, globalMuteUntil: null, isInternalUser: false,
+      internalUserGroupId: null, globalMuteUntil: null, channelNotifications: null, isInternalUser: false,
     });
   });
 
