@@ -264,6 +264,12 @@ public class PushEngineTest {
         notifier.postClock = () -> now;
     }
     private final HandScheduler scheduler = new HandScheduler();
+    /** The engine's hold timer: kept apart from scheduler, whose cancelAll stopRealtime calls. */
+    private final HandScheduler holdTimer = new HandScheduler();
+    private final SyncKeyValue heldKv = new SyncKeyValue();
+    private final HeldStore held = new HeldStore(heldKv, () -> now);
+    /** What the engine's Sleeper was asked to wait, ms; each wait moves now forward. */
+    private final List<Long> sleeps = new CopyOnWriteArrayList<>();
     private final FakeOdoo odoo = new FakeOdoo();
 
     /** Calls started on the ntfy client: OkHttp counts a call inside enqueue() or execute(), on the caller's thread. */
@@ -303,8 +309,14 @@ public class PushEngineTest {
                 ntfyCalls.incrementAndGet();
             }
         }).build();
-        return new PushEngine(store, settings, sessions, new NtfyClient(counted),
-                new OdooDirect(new OkHttpClient()), notifier, () -> now, scheduler);
+        PushEngine e = new PushEngine(store, settings, sessions, new NtfyClient(counted),
+                new OdooDirect(new OkHttpClient()), notifier, () -> now, scheduler, held);
+        e.setHoldTimer(holdTimer::schedule);
+        e.setSleeper(ms -> {
+            sleeps.add(ms);
+            now += ms;
+        });
+        return e;
     }
 
     private List<HandScheduler.Task> immediate() {
@@ -366,7 +378,12 @@ public class PushEngineTest {
     }
 
     private static String raw(String id, String topic, byte[] body) {
-        return "{\"id\":\"" + id + "\",\"time\":1790000000,\"event\":\"message\",\"topic\":\"" + topic
+        return rawAt(id, topic, body, NOW / 1000);
+    }
+
+    /** raw() stamped by ntfy at timeSec. */
+    private static String rawAt(String id, String topic, byte[] body, long timeSec) {
+        return "{\"id\":\"" + id + "\",\"time\":" + timeSec + ",\"event\":\"message\",\"topic\":\"" + topic
                 + "\",\"message\":\"" + B64.encode(body, false) + "\",\"encoding\":\"base64\"}\n";
     }
 
@@ -1222,7 +1239,7 @@ public class PushEngineTest {
         });
         PushEngine e = new PushEngine(new PushStore(storeKv, broken), settings,
                 new NativeSessions(sessionsKv, broken, () -> now), new NtfyClient(new OkHttpClient()),
-                new OdooDirect(new OkHttpClient()), notifier, () -> now, scheduler);
+                new OdooDirect(new OkHttpClient()), notifier, () -> now, scheduler, held);
         e.onSettingsChanged();
         e.runDue(level(3));
         JSONObject h = e.health().toJson();
@@ -1593,5 +1610,420 @@ public class PushEngineTest {
         List<NotificationModel.Shown> s = notifier.tagged("summary:cfg2");
         assertEquals(1, s.size());
         assertTrue(s.get(0).publicTitle, s.get(0).publicTitle.startsWith("9 "));
+    }
+
+    @Test
+    public void aRecordMentionPassesWithTheInboxOffWhenRecordMentionsRing() throws Exception {
+        mirror(1, true, new AccountView("cfg1", "Serveur A", LockScreenMode.ALWAYS,
+                account("cfg1", "Serveur A").channels, "1.6",
+                new AccountView.AccountPrefs(PhoneFilter.ALL, false, true, false, 1320, 420, null)));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)
+                + encrypted(a, "m1", resourceText("push16_record.json"))
+                + encrypted(a, "m2", resourceText("push16_record_mention.json"))));
+        engine().startRealtime();
+        awaitClosed(1);
+        assertEquals(1, notifier.shown.size());
+        assertEquals("inbox:cfg1:project.task:1", notifier.shown.get(0).tag);
+        assertTrue(notifier.shown.get(0).text, notifier.shown.get(0).text.contains("la date te convient"));
+    }
+
+    // ---- the browser-active hold ----
+
+    /** The mirror at level with the phone's browser mode. */
+    private void mirrorMode(int level, BrowserMode mode, AccountView... accounts) {
+        settings.put(level, true, new PhonePrefs(true, 30, 15, mode), Collections.<String, String>emptyMap(),
+                Arrays.asList(accounts));
+    }
+
+    /** The captured chat push of conversation 4, message 26, sent while a browser was online. */
+    private static String chatOnline(Subscription sub, String id) throws Exception {
+        return encrypted(sub, id, resourceText("push16_chat_browser_online.json"));
+    }
+
+    /** The captured group push of conversation 3, message 27, sent while a browser was online. */
+    private static String groupOnline(Subscription sub, String id) throws Exception {
+        return encrypted(sub, id, resourceText("push16_group_browser_online.json"));
+    }
+
+    /** groupOnline stamped by ntfy at timeSec. */
+    private static String groupOnlineAt(Subscription sub, String id, long timeSec) throws Exception {
+        byte[] body = WebPushTestEncrypt.encrypt(PushPayloadTest.resource("push16_group_browser_online.json"),
+                sub.publicKey, sub.authSecret, 4096);
+        return rawAt(id, sub.topic, body, timeSec);
+    }
+
+    /** Runs and removes the scheduler's tasks due at once, leaving the delayed ones. */
+    private void runImmediate() {
+        List<HandScheduler.Task> now0 = immediate();
+        scheduler.tasks.removeAll(now0);
+        for (HandScheduler.Task t : now0) t.r.run();
+    }
+
+    /** One stream carrying lines after its open; returns once the stream closed. */
+    private void streamOnce(Subscription a, String lines) throws Exception {
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + lines));
+        engine().startRealtime();
+        awaitClosed(1);
+    }
+
+    /**
+     * A job whose wait is cut short by the death of the process: the polled
+     * messages stay held in the store, their seen ids and cursor saved.
+     */
+    private void dieWhileAPollWaits(String pollBody) throws Exception {
+        ntfyServer.enqueue(new MockResponse().setBody(pollBody));
+        PushEngine dying = newEngine();
+        dying.setSleeper(ms -> {
+            throw new IllegalStateException("process killed");
+        });
+        try {
+            dying.runDue(level(3));
+            throw new AssertionError("the job was expected to wait");
+        } catch (IllegalStateException expected) {
+            // the process died inside the wait
+        }
+        holdTimer.tasks.clear();
+    }
+
+    @Test
+    public void waitHoldsAPushWhoseBrowserIsOnline() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOnce(a, chatOnline(a, "m1"));
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals(1, held.of(n.url).size());
+        assertEquals(26L, held.of(n.url).get(0).messageId);
+        assertEquals(4L, held.of(n.url).get(0).channelId);
+        assertEquals(1, holdTimer.tasks.size());
+        assertEquals(PushEngine.HOLD_MS, holdTimer.last().delay);
+        assertEquals("m1", store.cursor(n.url));
+    }
+
+    @Test
+    public void aReadPushWithinTheWaitDropsTheHeldPush() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOnce(a, chatOnline(a, "m1") + readPush(a, "r1", 4, 26));
+        assertTrue(held.isEmpty());
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+    }
+
+    @Test
+    public void aHeldPushIsDrawnWhenDue() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOnce(a, chatOnline(a, "m1"));
+        now += PushEngine.HOLD_MS - 1;
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+        now += 1;
+        holdTimer.runAll();
+        assertEquals(1, notifier.shown.size());
+        NotificationModel.Shown s = notifier.shown.get(0);
+        assertEquals("chat:cfg1:4", s.tag);
+        assertEquals(26L, s.messageId);
+        assertEquals(NOW, s.at);
+        assertFalse(s.silent);
+        assertTrue(held.isEmpty());
+    }
+
+    @Test
+    public void aPushWithoutBrowserOnlineRingsAtOnce() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOnce(a, encrypted(a, "m1", resourceText("push16_chat.json")));
+        assertEquals(1, notifier.shown.size());
+        assertTrue(held.isEmpty());
+        assertTrue(holdTimer.tasks.isEmpty());
+    }
+
+    @Test
+    public void ringModeNeverHolds() throws Exception {
+        mirrorMode(1, BrowserMode.RING, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOnce(a, chatOnline(a, "m1"));
+        assertEquals(1, notifier.shown.size());
+        assertTrue(held.isEmpty());
+        assertTrue(holdTimer.tasks.isEmpty());
+    }
+
+    @Test
+    public void aQuietPhoneHoldsAPushTheServerStillSent() throws Exception {
+        mirrorMode(1, BrowserMode.QUIET, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOnce(a, chatOnline(a, "m1"));
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals(1, held.of(n.url).size());
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertEquals(1, notifier.shown.size());
+    }
+
+    @Test
+    public void aPushWithoutThe16FlagsRingsAtOnce() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOnce(a, modulePush(a, "m1", 4, 26) + encrypted(a, "m2", resourceText("push16_v1_device.json")));
+        assertEquals(2, notifier.shown.size());
+        assertTrue(held.isEmpty());
+    }
+
+    @Test
+    public void stopRealtimeDoesNotDropAHeldPush() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOnce(a, chatOnline(a, "m1"));
+        engine.stopRealtime();
+        assertTrue(scheduler.tasks.isEmpty());
+        assertEquals(1, holdTimer.tasks.size());
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertEquals(1, notifier.shown.size());
+        assertTrue(held.isEmpty());
+    }
+
+    @Test
+    public void theHoldTakesItsOwnWakelockAndALaterMessageDoesNotShortenIt() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        List<String> hold = new CopyOnWriteArrayList<>();
+        List<String> message = new CopyOnWriteArrayList<>();
+        engine().setHoldWake(new PushEngine.Wake() {
+            public void acquire() { hold.add("acquire"); }
+            public void acquire(long timeoutMs) { hold.add("acquire:" + timeoutMs); }
+            public void release() { hold.add("release"); }
+        });
+        engine.setWake(new PushEngine.Wake() {
+            public void acquire() { message.add("acquire"); }
+            public void release() { message.add("release"); }
+        });
+        // a held chat, a push that rings at once, then a held group due at the same time
+        streamOnce(a, chatOnline(a, "m1") + encrypted(a, "m2", resourceText("push16_chat.json"))
+                + groupOnline(a, "m3"));
+        assertEquals(Collections.singletonList("acquire:" + (PushEngine.HOLD_MS + 2_000)), hold);
+        assertEquals(6, message.size());
+        assertEquals(1, notifier.shown.size());
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertEquals(3, notifier.shown.size());
+        assertEquals(Arrays.asList("acquire:" + (PushEngine.HOLD_MS + 2_000), "release"), hold);
+    }
+
+    @Test
+    public void aPolledMessageIsDueFromItsNtfyTimeClampedToTheHold() throws Exception {
+        mirrorMode(3, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        // stamped 4 s ago: due in 6 s
+        now = NOW + 4_000;
+        ntfyServer.enqueue(new MockResponse().setBody(chatOnline(a, "m1")));
+        ntfyServer.enqueue(new MockResponse().setBody(""));
+        engine().runDue(level(3));
+        assertEquals(Collections.singletonList(6_000L), sleeps);
+        assertEquals(1, notifier.shown.size());
+        // stamped a minute ago: due at once, no wait and no second poll
+        now = NOW + MINUTE;
+        ntfyServer.enqueue(new MockResponse().setBody(chatOnline(a, "m2")));
+        engine.runDue(level(3));
+        assertEquals(1, sleeps.size());
+        assertEquals(2, notifier.shown.size());
+        assertEquals(3, ntfyServer.getRequestCount());
+        // stamped a minute ahead of this clock: held HOLD_MS, not longer
+        now = NOW - MINUTE;
+        ntfyServer.enqueue(new MockResponse().setBody(chatOnline(a, "m3")));
+        ntfyServer.enqueue(new MockResponse().setBody(""));
+        engine.runDue(level(3));
+        assertEquals(Arrays.asList(6_000L, PushEngine.HOLD_MS), sleeps);
+        assertEquals(3, notifier.shown.size());
+        assertTrue(held.isEmpty());
+    }
+
+    @Test
+    public void aHeldMessageSurvivesARestartAndIsDrawnWhenDue() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        // polled 6 s after NOW: m1 stamped at NOW is due at NOW + 10 s, m2 stamped at NOW + 6 s at NOW + 16 s
+        now = NOW + 6_000;
+        dieWhileAPollWaits(chatOnline(a, "m1") + groupOnlineAt(a, "m2", NOW / 1000 + 6));
+        assertEquals(2, held.of(n.url).size());
+        assertTrue(notifier.shown.isEmpty());
+
+        // a new process at NOW + 12 s: nothing at construction nor at the stream's open, until the catch-up
+        now = NOW + 12_000;
+        engine = newEngine();
+        assertTrue(notifier.shown.isEmpty());
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)));
+        ntfyServer.enqueue(new MockResponse().setBody(""));
+        engine.startRealtime();
+        awaitClosed(2);
+        assertTrue(notifier.shown.isEmpty());
+        assertTrue(holdTimer.tasks.isEmpty());
+        runImmediate();
+        RecordedRequest catchUp = null;
+        for (int i = 0; i < 3; i++) catchUp = ntfyServer.takeRequest();
+        assertTrue(catchUp.getPath(), catchUp.getPath().contains("poll=1"));
+        assertTrue(catchUp.getPath(), catchUp.getPath().endsWith("since=m2"));
+        assertEquals(1, notifier.shown.size());
+        assertEquals("chat:cfg1:4", notifier.shown.get(0).tag);
+        assertEquals(1, holdTimer.tasks.size());
+        assertEquals(4_000L, holdTimer.last().delay);
+
+        now = NOW + 16_000;
+        holdTimer.runAll();
+        assertEquals(2, notifier.shown.size());
+        assertEquals("chat:cfg1:3", notifier.shown.get(1).tag);
+        assertTrue(held.isEmpty());
+    }
+
+    @Test
+    public void aReadPushReplayedAtRestartDropsTheHeldMessage() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        dieWhileAPollWaits(chatOnline(a, "m1"));
+        assertEquals(1, held.of(n.url).size());
+
+        now = NOW + MINUTE;
+        engine = newEngine();
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)));
+        ntfyServer.enqueue(new MockResponse().setBody(readPush(a, "r1", 4, 26)));
+        engine.startRealtime();
+        awaitClosed(2);
+        runImmediate();
+        assertTrue(held.isEmpty());
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+    }
+
+    @Test
+    public void aReleasedMessageIsNotDrawnTwiceAfterAReplay() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        // held by a process that died before its seen ids and cursor were saved
+        String m1 = chatOnline(a, "m1");
+        held.add(n.url, NtfyMessage.parse(m1.trim()), "cfg1", 4, 26, NOW + PushEngine.HOLD_MS);
+        now = NOW + MINUTE;
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)));
+        ntfyServer.enqueue(new MockResponse().setBody(""));
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + m1));
+        engine().startRealtime();
+        awaitClosed(2);
+        runImmediate();
+        assertEquals(1, notifier.shown.size());
+        assertFalse(store.seen(n.url).add("m1"));
+
+        // a new process: the stream replays m1
+        engine.stopRealtime();
+        engine = newEngine();
+        engine.startRealtime();
+        awaitClosed(1);
+        assertEquals(1, notifier.tagged("chat:cfg1:4").size());
+        assertEquals(1, notifier.shown.size());
+    }
+
+    @Test
+    public void aHeldEntryThatCannotBeDecryptedAtReleaseIsCounted() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOnce(a, chatOnline(a, "m1"));
+        // the key changed meanwhile
+        JSONObject rec = new JSONObject(storeKv.get("sub:cfg1"));
+        rec.put("priv", "v1:AAAAAAAAAAAAAAAA:AAAA");
+        storeKv.put("sub:cfg1", rec.toString());
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+        assertTrue(held.isEmpty());
+        JSONObject h = engine.health().toJson();
+        assertEquals(1, h.getInt("heldLost"));
+        assertEquals(0, h.getInt("undecryptable"));
+    }
+
+    @Test
+    public void aHeldMessageOfAnAccountNoLongerSubscribedIsCounted() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOnce(a, chatOnline(a, "m1"));
+        // no catch-up comes for a server without subscriptions: its entry goes at once
+        store.unsubscribe("cfg1");
+        engine.onStoresChanged();
+        assertTrue(held.isEmpty());
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals(1, engine.health().toJson().getInt("heldLost"));
+    }
+
+    @Test
+    public void aPollBatchDropsAMessageWhoseReadFollowsInTheBatch() throws Exception {
+        mirrorMode(3, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(chatOnline(a, "m1") + readPush(a, "r1", 4, 26)));
+        engine().runDue(level(3));
+        assertTrue(notifier.shown.isEmpty());
+        assertTrue(sleeps.isEmpty());
+        assertTrue(held.isEmpty());
+        assertEquals(1, ntfyServer.getRequestCount());
+    }
+
+    @Test
+    public void aFreshMessageInAPollIsWaitedForAndPolledOnceMore() throws Exception {
+        mirrorMode(3, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(chatOnline(a, "m1")));
+        ntfyServer.enqueue(new MockResponse().setBody(readPush(a, "r1", 4, 26)));
+        engine().runDue(level(3));
+        assertEquals(Collections.singletonList(PushEngine.HOLD_MS), sleeps);
+        assertEquals(2, ntfyServer.getRequestCount());
+        ntfyServer.takeRequest();
+        assertTrue(ntfyServer.takeRequest().getPath().endsWith("since=m1"));
+        assertTrue(notifier.shown.isEmpty());
+        assertTrue(held.isEmpty());
+    }
+
+    @Test
+    public void entriesStillFreshAfterTheSecondPollAreReleasedBeforeTheJobEnds() throws Exception {
+        mirrorMode(3, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(chatOnline(a, "m1")));
+        ntfyServer.enqueue(new MockResponse().setBody(groupOnline(a, "m2")));
+        engine().runDue(level(3));
+        assertEquals(1, sleeps.size());
+        assertEquals(2, ntfyServer.getRequestCount());
+        assertEquals(2, notifier.shown.size());
+        assertEquals("chat:cfg1:3", notifier.shown.get(1).tag);
+        assertTrue(held.isEmpty());
+    }
+
+    @Test
+    public void aHeldPushReleasedInTheForegroundDrawsNothing() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        streamOnce(a, chatOnline(a, "m1"));
+        settings.setForeground(true);
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+        assertTrue(held.isEmpty());
+        assertEquals(0, engine.health().toJson().getInt("heldLost"));
     }
 }

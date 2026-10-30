@@ -19,7 +19,8 @@ final class NtfyMessage {
     final String topic;
     final byte[] body;
 
-    private NtfyMessage(String id, long time, String event, String topic, byte[] body) {
+    /** A message rebuilt from its parts (HeldStore); parse reads one from ntfy. */
+    NtfyMessage(String id, long time, String event, String topic, byte[] body) {
         this.id = id;
         this.time = time;
         this.event = event;

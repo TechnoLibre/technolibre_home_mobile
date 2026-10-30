@@ -73,10 +73,16 @@ final class HealthSnapshot {
      * the notification.
      */
     final int faults;
+    /**
+     * Messages held while a browser was active, then dropped at their
+     * release: no longer decryptable (subscription gone, key changed) or
+     * failing to draw.
+     */
+    final int heldLost;
 
     HealthSnapshot(long at, int level, int effectiveLevel, String climbReason, String mode,
             boolean realtimeBuild, boolean serviceAlive, List<Ntfy> ntfys, List<Account> accounts,
-            int undecryptable, int faults) {
+            int undecryptable, int faults, int heldLost) {
         this.at = at;
         this.level = level;
         this.effectiveLevel = effectiveLevel;
@@ -88,6 +94,7 @@ final class HealthSnapshot {
         this.accounts = new ArrayList<>(accounts);
         this.undecryptable = undecryptable;
         this.faults = faults;
+        this.heldLost = heldLost;
     }
 
     /**
@@ -152,6 +159,7 @@ final class HealthSnapshot {
             o.put("accounts", as);
             o.put("undecryptable", undecryptable);
             o.put("faults", faults);
+            o.put("heldLost", heldLost);
             return o;
         } catch (JSONException e) {
             throw new IllegalStateException("health unwritable");

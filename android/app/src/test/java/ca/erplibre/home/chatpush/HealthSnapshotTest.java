@@ -26,7 +26,7 @@ public class HealthSnapshotTest {
     }
 
     private static HealthSnapshot health(String mode, List<HealthSnapshot.Ntfy> ns, List<HealthSnapshot.Account> as) {
-        return new HealthSnapshot(1L, 1, 1, "", mode, true, true, ns, as, 0, 0);
+        return new HealthSnapshot(1L, 1, 1, "", mode, true, true, ns, as, 0, 0, 0);
     }
 
     private static final PushStrings FR = new PushStrings(null);
@@ -74,7 +74,7 @@ public class HealthSnapshotTest {
     public void theJsonNamesTheClimbReasonOrNull() throws Exception {
         List<HealthSnapshot.Ntfy> none = Arrays.asList();
         List<HealthSnapshot.Account> noAccount = Arrays.asList();
-        JSONObject climbed = new HealthSnapshot(1L, 1, 3, "saver", "poll_15", true, false, none, noAccount, 0, 0)
+        JSONObject climbed = new HealthSnapshot(1L, 1, 3, "saver", "poll_15", true, false, none, noAccount, 0, 0, 0)
                 .toJson();
         assertEquals("saver", climbed.getString("climbReason"));
         assertEquals(3, climbed.getInt("effectiveLevel"));

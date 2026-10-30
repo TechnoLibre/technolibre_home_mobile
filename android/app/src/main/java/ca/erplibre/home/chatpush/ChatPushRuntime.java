@@ -66,6 +66,8 @@ public final class ChatPushRuntime {
     static final String SETTINGS_FILE = "erplibre_chat_push_settings";
     static final String SESSIONS_FILE = "erplibre_chat_push_sessions";
     static final String ACTIONS_FILE = "erplibre_chat_push_actions";
+    /** The chat messages held while a browser is active: ntfy ciphertext only (HeldStore). */
+    static final String HELD_FILE = "erplibre_chat_push_held";
     static final String KEY_ALIAS = "erplibre_chat_push";
 
     /** Whether this build carries the permanent realtime service; health and the level policy read it. */
@@ -123,9 +125,13 @@ public final class ChatPushRuntime {
         ntfy = new NtfyClient(http);
         notifier = new ChatNotifier(context, settings);
         notifier.syncChannels(settings.accounts(), settings.strings());
+        // the held messages wait for their ntfy's catch-up: nothing is released at construction
         engine = new PushEngine(store, settings, sessions, ntfy, new OdooDirect(http), notifier, clock,
-                new ExecutorScheduler(), REALTIME_BUILD);
+                new ExecutorScheduler(), new HeldStore(new PrefsKeyValue(context, HELD_FILE), clock::now),
+                REALTIME_BUILD);
         engine.setWake(new MessageWake(context));
+        engine.setHoldWake(new HoldWake(context));
+        engine.setHoldTimer(new ExecutorHoldTimer());
         engine.setLocalTime(new ZoneTime());
         actions = new ActionStore(new PrefsKeyValue(context, ACTIONS_FILE), box, clock::now);
         // OdooActions derives its own client from http: no replay of a call, its own timeouts
@@ -611,6 +617,74 @@ public final class ChatPushRuntime {
             if (lock == null) return;
             inFlight = Math.max(0, inFlight - 1);
             if (inFlight == 0 && lock.isHeld()) lock.release();
+        }
+    }
+
+    /**
+     * The partial wakelock of the browser-active hold, apart from the
+     * message wakelock (whose release at the end of each message would drop
+     * it): each acquire replaces the timeout, which the engine only ever
+     * moves later; release lets it go once nothing is held.
+     */
+    private static final class HoldWake implements PushEngine.Wake {
+
+        private final PowerManager.WakeLock lock;
+
+        HoldWake(Context c) {
+            PowerManager pm = c.getSystemService(PowerManager.class);
+            lock = pm == null ? null : pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "erplibre:chat-hold");
+            if (lock != null) lock.setReferenceCounted(false);
+        }
+
+        @Override
+        public void acquire() {
+            acquire(PushEngine.HOLD_MS + PushEngine.HOLD_WAKE_EXTRA_MS);
+        }
+
+        @Override
+        public synchronized void acquire(long timeoutMs) {
+            if (lock != null) lock.acquire(timeoutMs);
+        }
+
+        @Override
+        public synchronized void release() {
+            if (lock != null && lock.isHeld()) lock.release();
+        }
+    }
+
+    /**
+     * The engine's HoldTimer: one daemon thread of its own, which the
+     * Scheduler's cancelAll never reaches, so a stream stopped inside a hold
+     * still releases it. The delay runs on the monotonic clock, only while
+     * the CPU is awake (the hold's wakelock keeps it so); no exact alarm.
+     */
+    private static final class ExecutorHoldTimer implements PushEngine.HoldTimer {
+
+        private final ScheduledThreadPoolExecutor executor;
+
+        ExecutorHoldTimer() {
+            executor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "chat-hold");
+                    t.setDaemon(true);
+                    return t;
+                }
+            });
+        }
+
+        @Override
+        public void at(final Runnable r, long delayMs) {
+            executor.schedule(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        r.run();
+                    } catch (RuntimeException e) {
+                        Log.w(TAG, "hold release failed: " + e.getClass().getSimpleName());
+                    }
+                }
+            }, Math.max(0L, delayMs), TimeUnit.MILLISECONDS);
         }
     }
 

@@ -31,13 +31,25 @@ import org.json.JSONException;
  * checked against Odoo directly and gets one summary notification per
  * server.
  *
+ * A chat push sent while a browser of the same Odoo user is active (module
+ * 1.6 flags) waits HOLD_MS for a read push of its conversation unless the
+ * phone's browser mode is RING: it is written to the HeldStore as ntfy sent
+ * it, before the seen ids and the cursor are saved, so a death inside the
+ * hold replays it rather than losing it. A read push drops the held entries
+ * up to its read point; the others are drawn when due, only once their ntfy
+ * has caught up from its saved cursor in this process (the read push of a
+ * dead process's hold comes first). A stream releases them from the hold
+ * timer, under the hold's own wakelock; a periodic run waits for them on the
+ * Sleeper, polls once more and draws what is left before it ends.
+ *
  * Threading: stream callbacks arrive on OkHttp threads, the other entry
  * points on the caller's. Every piece of state is guarded by one monitor,
  * never held across a network call: a poll or an Odoo check reads what it
  * needs under the monitor, runs outside it, then applies its result under
- * it. runDue runs one at a time. Notifier calls are made with the monitor
- * held. The Odoo check owed after a silence runs from the Scheduler, never
- * on a stream's reader thread.
+ * it. runDue runs one at a time; it may block on the Sleeper, never
+ * holding the monitor. Notifier, HoldTimer and hold wakelock calls are made
+ * with the monitor held. The Odoo check owed after a silence and a stream's
+ * catch-up poll run from the Scheduler, never on a stream's reader thread.
  */
 final class PushEngine {
 
@@ -82,14 +94,39 @@ final class PushEngine {
     }
 
     /**
-     * Keeps the device awake while a streamed message is processed: acquire
-     * before, release after, on the stream's reader thread. Called without
-     * the engine's monitor; two streams may overlap their holds.
+     * Keeps the device awake. As the message wakelock (setWake): acquire
+     * before, release after a streamed message, on the stream's reader
+     * thread, without the engine's monitor; two streams may overlap their
+     * holds. As the browser-active hold's (setHoldWake): acquire(timeoutMs)
+     * and release, with the monitor held.
      */
     interface Wake {
         void acquire();
 
+        /**
+         * Keeps the device awake for timeoutMs at most, replacing the timeout
+         * of an earlier call: the browser-active hold's form (setHoldWake),
+         * called with the engine's monitor held. acquire() by default.
+         */
+        default void acquire(long timeoutMs) {
+            acquire();
+        }
+
         void release();
+    }
+
+    /**
+     * Runs the release of held messages after delayMs, on a thread of its
+     * own that stopRealtime never cancels. at() is called with the engine's
+     * monitor held and never runs r on the calling thread.
+     */
+    interface HoldTimer {
+        void at(Runnable r, long delayMs);
+    }
+
+    /** Blocks a periodic run while its held messages come due; the run's caller keeps the device awake. */
+    interface Sleeper {
+        void sleep(long ms) throws InterruptedException;
     }
 
     /**
@@ -107,6 +144,11 @@ final class PushEngine {
 
         @Override
         public void release() {}
+    };
+
+    private static final HoldTimer NO_HOLD_TIMER = new HoldTimer() {
+        @Override
+        public void at(Runnable r, long delayMs) {}
     };
 
     /**
@@ -138,6 +180,15 @@ final class PushEngine {
      * in deep sleep where the read timeout and the backoff do not.
      */
     static final long STALE_CONTACT_MS = 3 * 45_000L;
+    /** How long a chat push sent while a browser is active waits for its read push. */
+    static final long HOLD_MS = 10_000;
+    /** The hold's wakelock lasts this long past the latest due time. */
+    static final long HOLD_WAKE_EXTRA_MS = 2_000;
+    /** The due time handed to deliver by a release: the message is drawn, never held again. */
+    private static final long NO_HOLD = -1;
+
+    /** What deliver did with a message. */
+    private enum Outcome { DONE, HELD, NO_SUBSCRIPTION, UNREADABLE }
 
     private enum LinkState { CONNECTING, CONNECTED, POLLING, ERROR, OFF }
 
@@ -161,6 +212,12 @@ final class PushEngine {
         long contactAt;
         long contactSavedAt;
         SeenIds seen;
+        /**
+         * Read from its saved cursor in this process, by a catch-up poll or by a
+         * stream opened with nothing held for it: the hold timer releases only
+         * the entries of such a link. Never reset while the process lives.
+         */
+        boolean caughtUp;
 
         Link(String url) {
             this.url = url;
@@ -182,8 +239,13 @@ final class PushEngine {
     private final Notifier notifier;
     private final Clock clock;
     private final Scheduler scheduler;
+    private final HeldStore held;
     private final boolean realtimeBuild;
     private volatile Wake wake = NO_WAKE;
+    private volatile Wake holdWake = NO_WAKE;
+    /** NO_HOLD_TIMER until setHoldTimer: held messages then wait for the next catch-up or run. */
+    private volatile HoldTimer holdTimer = NO_HOLD_TIMER;
+    private volatile Sleeper sleeper = Thread::sleep;
     /** null until setLocalTime: quiet hours then never apply. */
     private volatile LocalTime localTime;
 
@@ -200,15 +262,23 @@ final class PushEngine {
     private PushLevelPolicy.Effective effective;
     private int undecryptable;
     private int faults;
+    private int heldLost;
+    /** When the hold's wakelock lapses, epoch ms; 0 when it is not held. */
+    private long holdWakeUntil;
 
     PushEngine(PushStore store, PushSettingsStore settings, NativeSessions sessions, NtfyClient ntfy,
-            OdooDirect odoo, Notifier notifier, Clock clock, Scheduler scheduler) {
-        this(store, settings, sessions, ntfy, odoo, notifier, clock, scheduler, false);
+            OdooDirect odoo, Notifier notifier, Clock clock, Scheduler scheduler, HeldStore held) {
+        this(store, settings, sessions, ntfy, odoo, notifier, clock, scheduler, held, false);
     }
 
-    /** realtimeBuild says whether this build carries the permanent service; health reports it. */
+    /**
+     * realtimeBuild says whether this build carries the permanent service;
+     * health reports it. Nothing held is released here: an entry of an
+     * earlier process waits for its ntfy's catch-up.
+     */
     PushEngine(PushStore store, PushSettingsStore settings, NativeSessions sessions, NtfyClient ntfy,
-            OdooDirect odoo, Notifier notifier, Clock clock, Scheduler scheduler, boolean realtimeBuild) {
+            OdooDirect odoo, Notifier notifier, Clock clock, Scheduler scheduler, HeldStore held,
+            boolean realtimeBuild) {
         this.store = store;
         this.settings = settings;
         this.sessions = sessions;
@@ -217,6 +287,7 @@ final class PushEngine {
         this.notifier = notifier;
         this.clock = clock;
         this.scheduler = scheduler;
+        this.held = held;
         this.realtimeBuild = realtimeBuild;
         synchronized (lock) {
             mirrored = mirroredIds();
@@ -233,6 +304,21 @@ final class PushEngine {
     /** Sets the time of day quiet hours are read with; null turns them off. */
     void setLocalTime(LocalTime t) {
         localTime = t;
+    }
+
+    /** Sets the wakelock the browser-active hold keeps until nothing is held; null takes none. */
+    void setHoldWake(Wake w) {
+        holdWake = w == null ? NO_WAKE : w;
+    }
+
+    /** Sets the timer that releases held messages when due; null leaves them to the next catch-up or run. */
+    void setHoldTimer(HoldTimer t) {
+        holdTimer = t == null ? NO_HOLD_TIMER : t;
+    }
+
+    /** Sets how a periodic run waits for its held messages; Thread.sleep by default. */
+    void setSleeper(Sleeper s) {
+        sleeper = s == null ? Thread::sleep : s;
     }
 
     // ---- entry points ----
@@ -286,9 +372,10 @@ final class PushEngine {
      * and every connected one silent for STALE_CONTACT_MS, except those
      * refused for good. When the policy asks Odoo directly, every mirrored
      * account without ntfy is checked, after any check a silence left owed.
-     * Then the pending unregisters are sent. When counting, two failed runs
-     * in a row of an ntfy or an account post one status notification,
-     * removed by the next success.
+     * The polls' held messages are released before the checks
+     * (releaseAfterPolls). Then the pending unregisters are sent. When
+     * counting, two failed runs in a row of an ntfy or an account post one
+     * status notification, removed by the next success.
      */
     void runDue(PushLevelPolicy.Effective e, boolean counting) {
         synchronized (runLock) {
@@ -319,7 +406,11 @@ final class PushEngine {
                     }
                 }
             }
-            for (Link l : due) poll(l, counting);
+            List<Link> polled = new ArrayList<>();
+            for (Link l : due) {
+                if (poll(l, counting)) polled.add(l);
+            }
+            releaseAfterPolls(polled);
             drainOwedChecks();
             for (String id : direct) checkAccount(id, counting);
             runPending();
@@ -430,7 +521,11 @@ final class PushEngine {
             return !realtime || generation != link.generation || links.get(link.url) != link;
         }
 
-        /** A silence beyond the cache owes each account a check, run off this reader thread. */
+        /**
+         * A silence beyond the cache owes each account a check, run off this
+         * reader thread. With entries held for the link, its catch-up is
+         * scheduled; without, the link counts as caught up.
+         */
         @Override
         public void onOpen() {
             synchronized (lock) {
@@ -444,6 +539,8 @@ final class PushEngine {
                 touch(link, now, true);
                 clearFailures(ntfyKey(link.url));
                 for (String id : link.configIds) refreshStatus(id);
+                if (held.of(link.url).isEmpty()) link.caughtUp = true;
+                else scheduleCatchUp(link);
                 publishStatus();
             }
         }
@@ -455,7 +552,7 @@ final class PushEngine {
             try {
                 synchronized (lock) {
                     if (stale()) return;
-                    handle(link, m);
+                    if (handle(link, m, clock.now() + HOLD_MS)) armHold();
                 }
             } finally {
                 w.release();
@@ -548,13 +645,14 @@ final class PushEngine {
 
     // ---- polls ----
 
-    private void poll(Link l, boolean counting) {
+    /** One poll of the link from its cursor; returns whether ntfy answered. */
+    private boolean poll(Link l, boolean counting) {
         NtfyServer server;
         List<String> topics;
         String since;
         boolean http;
         synchronized (lock) {
-            if (links.get(l.url) != l) return;
+            if (links.get(l.url) != l) return false;
             server = l.server;
             topics = new ArrayList<>(l.topics);
             since = sinceFor(l);
@@ -577,7 +675,7 @@ final class PushEngine {
             settings.setEngineState("poll:" + l.url, Long.toString(now));
             if (got != null) {
                 if (silentTooLong(l, now)) silent = new ArrayList<>(l.configIds);
-                for (NtfyMessage m : got) handle(l, m);
+                for (NtfyMessage m : got) handle(l, m, polledDue(m, now));
                 touch(l, now, true);
                 if (!realtime) l.state = LinkState.POLLING;
                 l.reason = null;
@@ -592,6 +690,16 @@ final class PushEngine {
         if (silent != null) {
             for (String id : silent) checkAccount(id, counting);
         }
+        return got != null;
+    }
+
+    /**
+     * When a polled message is due: its ntfy time plus HOLD_MS, clamped to
+     * [now, now + HOLD_MS], so a clock skew between the phone and ntfy can
+     * neither lengthen the hold nor skip it.
+     */
+    private static long polledDue(NtfyMessage m, long now) {
+        return Math.max(now, Math.min(now + HOLD_MS, m.time * 1000L + HOLD_MS));
     }
 
     private long lastPollAt(String url) {
@@ -600,16 +708,22 @@ final class PushEngine {
 
     // ---- the message path ----
 
-    /** One ntfy message, streamed or polled. Monitor held. */
-    private void handle(Link l, NtfyMessage m) {
-        if (!"message".equals(m.event)) return;
+    /**
+     * One ntfy message, streamed or polled, due at dueAt should the hold keep
+     * it. Returns whether it was held. Monitor held.
+     */
+    private boolean handle(Link l, NtfyMessage m, long dueAt) {
+        if (!"message".equals(m.event)) return false;
         if (l.seen == null) l.seen = store.seen(l.url);
-        if (!l.seen.add(m.id)) return;
+        if (!l.seen.add(m.id)) return false;
         try {
-            deliver(m);
+            Outcome o = deliver(l.url, m, dueAt);
+            if (o == Outcome.UNREADABLE) undecryptable++;
+            return o == Outcome.HELD;
         } catch (RuntimeException e) {
             // the platform cipher, a sealed key that no longer opens, or building or drawing failed
             faults++;
+            return false;
         } finally {
             // saved once handled: a death before this point replays the message rather than losing it
             long now = clock.now();
@@ -620,41 +734,208 @@ final class PushEngine {
         }
     }
 
-    private void deliver(NtfyMessage m) {
+    /**
+     * Decrypts and applies one message of the ntfy at linkUrl. A chat push
+     * the hold keeps (holds) is written to the HeldStore, due at dueAt;
+     * dueAt NO_HOLD (a release) draws it. A read push also drops the held
+     * entries up to its read point. Monitor held.
+     */
+    private Outcome deliver(String linkUrl, NtfyMessage m, long dueAt) {
         Subscription sub = store.byTopic(m.topic);
-        if (sub == null) return;
+        if (sub == null) return Outcome.NO_SUBSCRIPTION;
         byte[] plain;
         try {
             plain = WebPushDecrypt.decrypt(m.body, sub.privateKey(), sub.publicKey, sub.authSecret);
         } catch (WebPushException e) {
-            undecryptable++;
-            return;
+            return Outcome.UNREADABLE;
         }
         PushPayload p;
         try {
             p = PushPayload.parse(plain);
         } catch (JSONException e) {
-            undecryptable++;
-            return;
+            return Outcome.UNREADABLE;
         }
         AccountView a = settings.account(sub.configId);
-        if (a == null) return;
+        if (a == null) return Outcome.DONE;
         if (p.kind == PushPayload.Kind.READ) {
             notifier.trimRead("chat:" + a.configId + ":" + p.channelId, p.lastMessageId);
-            return;
+            if (held.dropRead(a.configId, p.channelId, p.lastMessageId) > 0) releaseHoldWakeIfEmpty();
+            return Outcome.DONE;
         }
-        if (p.kind == PushPayload.Kind.IGNORED) return;
+        if (p.kind == PushPayload.Kind.IGNORED) return Outcome.DONE;
         if (p.kind == PushPayload.Kind.INBOX_DONE) {
             // ntfy stamps whole seconds: a notification posted within the push's second came before it
             clearInbox(a.configId, p.threads, m.time * 1000L + 999);
-            return;
+            return Outcome.DONE;
         }
-        if (settings.foreground() || !PushFilter.allows(a, p)) return;
+        if (settings.foreground() || !PushFilter.allows(a, p)) return Outcome.DONE;
+        if (dueAt != NO_HOLD && holds(p)) {
+            held.add(linkUrl, m, a.configId, p.resId, p.messageId, dueAt);
+            return Outcome.HELD;
+        }
         PushStrings s = settings.strings();
         NotificationModel.Shown n = p.isChat() ? NotificationModel.chat(a, p, s) : NotificationModel.inbox(a, p, s);
         n.at = m.time * 1000L;
         if (quiet(a)) n.silent = true;
         notifier.show(n);
+        return Outcome.DONE;
+    }
+
+    /**
+     * Whether the hold keeps a message push: a chat push whose module 1.6
+     * object says a browser was online and names its message, on a phone
+     * whose browser mode is not RING. Under QUIET such a push comes only
+     * while the server's mark lags behind the phone's choice. Monitor held.
+     */
+    private boolean holds(PushPayload p) {
+        return settings.prefs().browserMode != BrowserMode.RING && p.isChat() && p.flags && p.browserOnline
+                && p.messageId > 0;
+    }
+
+    // ---- the browser-active hold ----
+
+    /**
+     * Draws the link's held entries due now, or every one when all, then
+     * arms the hold timer for what is left and lets the hold's wakelock go
+     * once nothing is held. Called after the link's catch-up, never before.
+     */
+    void releaseDue(String linkUrl, boolean all) {
+        synchronized (lock) {
+            release(linkUrl, all);
+            afterRelease();
+        }
+    }
+
+    /**
+     * Draws the link's held entries due now, or every one when all. Their
+     * ntfy ids are saved as seen first, so a replay never draws one twice;
+     * each is then delivered without the hold (foreground, filter and quiet
+     * hours read anew) and removed. One that cannot be read any more (the
+     * subscription gone, the key changed) or fails to draw is counted in
+     * heldLost. Monitor held.
+     */
+    private void release(String linkUrl, boolean all) {
+        List<HeldStore.Held> out = new ArrayList<>();
+        for (HeldStore.Held h : all ? held.of(linkUrl) : held.due(clock.now())) {
+            if (h.linkUrl.equals(linkUrl)) out.add(h);
+        }
+        if (out.isEmpty()) return;
+        Link l = links.get(linkUrl);
+        // a link gone takes its stream with it: nothing replays from it
+        if (l != null) {
+            if (l.seen == null) l.seen = store.seen(linkUrl);
+            for (HeldStore.Held h : out) l.seen.add(h.message.id);
+            store.saveSeen(linkUrl, l.seen);
+        }
+        for (HeldStore.Held h : out) {
+            try {
+                if (deliver(linkUrl, h.message, NO_HOLD) != Outcome.DONE) heldLost++;
+            } catch (RuntimeException e) {
+                heldLost++;
+            }
+            held.remove(h.message.id);
+        }
+    }
+
+    /** Arms the hold for what is left, or lets its wakelock go when nothing is. Monitor held. */
+    private void afterRelease() {
+        armHold();
+        releaseHoldWakeIfEmpty();
+    }
+
+    /**
+     * Arms the hold timer for the latest due time and keeps the hold's
+     * wakelock until HOLD_WAKE_EXTRA_MS after it, never shortening it.
+     * Nothing when every entry is due already: those wait for their link's
+     * catch-up. Monitor held.
+     */
+    private void armHold() {
+        long now = clock.now();
+        long latest = held.latestDue();
+        if (latest <= now) return;
+        holdTimer.at(new Runnable() {
+            @Override
+            public void run() {
+                releaseCaughtUp();
+            }
+        }, latest - now);
+        long until = latest + HOLD_WAKE_EXTRA_MS;
+        if (until > holdWakeUntil) {
+            holdWake.acquire(until - now);
+            holdWakeUntil = until;
+        }
+    }
+
+    /** Releases the hold's wakelock once nothing is held. Monitor held. */
+    private void releaseHoldWakeIfEmpty() {
+        if (holdWakeUntil == 0 || !held.isEmpty()) return;
+        holdWakeUntil = 0;
+        holdWake.release();
+    }
+
+    /** The hold timer's run: the due entries of every link caught up in this process are drawn. */
+    private void releaseCaughtUp() {
+        synchronized (lock) {
+            for (Link l : links.values()) {
+                if (l.caughtUp) release(l.url, false);
+            }
+            afterRelease();
+        }
+    }
+
+    /**
+     * Schedules the catch-up of a stream opened with entries held for it: a
+     * poll from its saved cursor, whose read pushes drop their entries, after
+     * which the link counts as caught up and its due entries are drawn. The
+     * stream's own replay of the same messages is dropped by the seen ids.
+     * A failed poll leaves the entries to the next open or run. Monitor held.
+     */
+    private void scheduleCatchUp(final Link l) {
+        scheduler.schedule(new Runnable() {
+            @Override
+            public void run() {
+                if (!poll(l, false)) return;
+                synchronized (lock) {
+                    if (links.get(l.url) != l) return;
+                    l.caughtUp = true;
+                    releaseDue(l.url, false);
+                }
+            }
+        }, 0);
+    }
+
+    /**
+     * Releases what the polls of one run held, each link polled from its
+     * cursor: when an entry is not due yet, the run waits on the Sleeper
+     * until the latest due time (HOLD_MS at most), polls those links once
+     * more without counting a failure (a read push in that batch drops its
+     * entry), then draws every entry left at once, without a third wait.
+     */
+    private void releaseAfterPolls(List<Link> polled) {
+        List<Link> holding = new ArrayList<>();
+        long latest = 0L;
+        synchronized (lock) {
+            for (Link l : polled) {
+                List<HeldStore.Held> list = held.of(l.url);
+                if (list.isEmpty()) continue;
+                holding.add(l);
+                latest = Math.max(latest, list.get(list.size() - 1).dueAt);
+            }
+            if (holding.isEmpty()) return;
+            latest -= clock.now();
+        }
+        if (latest > 0) {
+            try {
+                sleeper.sleep(Math.min(latest, HOLD_MS));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            for (Link l : holding) poll(l, false);
+        }
+        synchronized (lock) {
+            for (Link l : holding) release(l.url, true);
+            afterRelease();
+        }
     }
 
     /** Whether now falls inside the account's quiet hours. Monitor held. */
@@ -1030,7 +1311,8 @@ final class PushEngine {
      * sorted, a server first seen gets its contact time recorded (the start
      * of its reading when it has no cursor). While realtime, a new link, a
      * changed token or topic set, or every link when reopenAll, is reopened.
-     * Returns the links reopened. Monitor held.
+     * The entries held for a server dropped are released at once. Returns
+     * the links reopened. Monitor held.
      */
     private Set<Link> syncLinks(boolean reopenAll) {
         Map<String, Link> wanted = new LinkedHashMap<>();
@@ -1068,15 +1350,19 @@ final class PushEngine {
             wanted.put(s.url, l);
             if (realtime && (changed || reopenAll)) toOpen.add(l);
         }
+        List<String> gone = new ArrayList<>();
         for (Link old : links.values()) {
             if (!wanted.containsKey(old.url)) {
                 stop(old);
                 settings.setEngineState("poll:" + old.url, null);
                 clearFailures(ntfyKey(old.url));
+                gone.add(old.url);
             }
         }
         links.clear();
         links.putAll(wanted);
+        // no catch-up comes for a server removed: what it held is drawn, or counted lost without its key
+        for (String url : gone) release(url, true);
         for (Link l : toOpen) reopen(l);
         return new HashSet<>(toOpen);
     }
@@ -1146,7 +1432,7 @@ final class PushEngine {
         String mode = realtime ? "realtime" : e.mode.name().toLowerCase(Locale.ROOT);
         boolean alive = e.permanentService && now - settings.lastBeat() < BEAT_MAX_AGE_MS;
         return new HealthSnapshot(now, level, e.level, e.climbReason, mode, realtimeBuild, alive, ns, as,
-                undecryptable, faults);
+                undecryptable, faults, heldLost);
     }
 
     /** A connected stream silent for STALE_CONTACT_MS on the wall clock. Monitor held. */
