@@ -23,6 +23,7 @@ import { type AccountCard, OptionsChatPushAccountComponent } from "./options_cha
 export const STATUS_POLL_MS = 5000;
 
 const LEVELS: NotifyLevel[] = [1, 2, 3, 4, 5];
+type Climb = { auto: boolean; oneBelow: ClimbThreshold; twoBelow: ClimbThreshold };
 const BROWSER_CHOICES: { value: BrowserMode; label: string }[] = [
     { value: "ring", label: "chat.push_browser_ring" },
     { value: "wait", label: "chat.push_browser_wait" },
@@ -175,6 +176,8 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
     /** Whether the battery exemption was requested from this screen, which alone lets a refusal show. */
     private exemptionAsked = false;
     private appState: Promise<{ remove: () => Promise<void> }> | undefined;
+    /** The climb last asked for while its save is queued, null once it settled. */
+    private wantedClimb: Climb | null = null;
 
     setup() {
         const settings = chatSettings();
@@ -488,18 +491,33 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
         return CLIMB_THRESHOLDS.map((v) => ({ value: v, label: v === 0 ? t("chat.push_climb_none") : `${v} %` }));
     }
 
-    private async saveClimb(climb: { auto: boolean; oneBelow: ClimbThreshold; twoBelow: ClimbThreshold }): Promise<void> {
+    /** The climb a new change builds on: the one queued last, else the one saved. */
+    private climbAsked(): Climb {
+        const c = this.wantedClimb ?? this.state.climb;
+        return { auto: c.auto, oneBelow: c.oneBelow, twoBelow: c.twoBelow };
+    }
+
+    /**
+     * Saves the whole climb tuple; state.climb takes it once saved. ChatPush
+     * saves one change after the other, so the tuple stays the base of the
+     * next change until it settles (wantedClimb); a refused one then leaves
+     * state.climb, the last saved.
+     */
+    private async saveClimb(climb: Climb): Promise<void> {
         this.state.message = "";
+        this.wantedClimb = climb;
         try {
             await this.chatService.push.setClimb(climb);
             this.state.climb = climb;
         } catch (e) {
             this.fail(e);
+        } finally {
+            if (this.wantedClimb === climb) this.wantedClimb = null;
         }
     }
 
     async onClimbAuto(ev: { target: any }): Promise<void> {
-        await this.saveClimb({ ...this.state.climb, auto: !!ev.target.checked });
+        await this.saveClimb({ ...this.climbAsked(), auto: !!ev.target.checked });
     }
 
     /** A value outside CLIMB_THRESHOLDS changes nothing. */
@@ -510,12 +528,12 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
 
     async onClimbOne(ev: { target: any }): Promise<void> {
         const v = this.thresholdOf(ev);
-        if (v !== null) await this.saveClimb({ ...this.state.climb, oneBelow: v });
+        if (v !== null) await this.saveClimb({ ...this.climbAsked(), oneBelow: v });
     }
 
     async onClimbTwo(ev: { target: any }): Promise<void> {
         const v = this.thresholdOf(ev);
-        if (v !== null) await this.saveClimb({ ...this.state.climb, twoBelow: v });
+        if (v !== null) await this.saveClimb({ ...this.climbAsked(), twoBelow: v });
     }
 
     /**

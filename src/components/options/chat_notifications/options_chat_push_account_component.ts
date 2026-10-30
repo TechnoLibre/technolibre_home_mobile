@@ -48,6 +48,9 @@ const FILTER_CHOICES: { value: PhoneFilter; label: string }[] = [
     { value: "none", label: "chat.push_filter_none" },
 ];
 
+type FilterChoice = { filter: PhoneFilter; inbox: boolean; inboxMentions: boolean };
+type QuietChoice = { on: boolean; from: number; to: number };
+
 /** "HH:MM" of an <input type="time"> as minutes from midnight, null when empty or malformed. */
 function minutesOf(value: string): number | null {
     const m = /^(\d{2}):(\d{2})/.exec(value);
@@ -62,7 +65,10 @@ function minutesOf(value: string): number | null {
  * record-mentions switch, quiet hours, and what the browser mode does on
  * this server given its module level. Each change goes through ChatPush
  * and is written on the card only once saved; without native code
- * (props.native null) nothing is saved, so nothing changes.
+ * (props.native null) nothing is saved, so nothing changes. ChatPush
+ * saves one change after the other, so a change made while an earlier one
+ * is queued builds on the values asked for (wantedFilter, wantedQuiet),
+ * which the card does not hold yet.
  */
 export class OptionsChatPushAccountComponent extends EnhancedComponent {
     static props = { card: Object, push: Object, native: [Object, { value: null }], pushFlags: Boolean };
@@ -119,6 +125,10 @@ export class OptionsChatPushAccountComponent extends EnhancedComponent {
 
     lockChoices = LOCK_CHOICES;
     filterChoices = FILTER_CHOICES;
+    /** The filter last asked for while its save is queued, null once it settled. */
+    private wantedFilter: FilterChoice | null = null;
+    /** The quiet hours last asked for while their save is queued, null once it settled. */
+    private wantedQuiet: QuietChoice | null = null;
 
     setup() {
         this.state = useState({ message: "" });
@@ -172,57 +182,84 @@ export class OptionsChatPushAccountComponent extends EnhancedComponent {
         await this.save(() => this.props.push.setLockScreen(this.card.configId, mode), (c) => { c.lockScreen = mode; });
     }
 
-    private async saveFilter(filter: PhoneFilter, inbox: boolean, inboxMentions: boolean): Promise<void> {
+    /** The filter a new change builds on: the one queued last, else the card's. */
+    private filterAsked(): FilterChoice {
+        const c = this.card;
+        return this.wantedFilter ?? { filter: c.filter, inbox: c.inboxNotify, inboxMentions: c.inboxMentions };
+    }
+
+    /**
+     * Saves the whole filter tuple. It stays the base of the next change
+     * until it settles; a refused one then leaves the card's, which holds
+     * the last saved.
+     */
+    private async saveFilter(next: FilterChoice): Promise<void> {
+        if (!this.props.native) return;
+        this.wantedFilter = next;
         await this.save(
-            () => this.props.push.setFilter(this.card.configId, filter, inbox, inboxMentions),
+            () => this.props.push.setFilter(this.card.configId, next.filter, next.inbox, next.inboxMentions),
             (c) => {
-                c.filter = filter;
-                c.inboxNotify = inbox;
-                c.inboxMentions = inboxMentions;
+                c.filter = next.filter;
+                c.inboxNotify = next.inbox;
+                c.inboxMentions = next.inboxMentions;
             },
         );
+        if (this.wantedFilter === next) this.wantedFilter = null;
     }
 
     async onFilter(filter: PhoneFilter): Promise<void> {
-        await this.saveFilter(filter, this.card.inboxNotify, this.card.inboxMentions);
+        await this.saveFilter({ ...this.filterAsked(), filter });
     }
 
     async onInbox(ev: { target: any }): Promise<void> {
-        await this.saveFilter(this.card.filter, !!ev.target.checked, this.card.inboxMentions);
+        await this.saveFilter({ ...this.filterAsked(), inbox: !!ev.target.checked });
     }
 
     async onInboxMentions(ev: { target: any }): Promise<void> {
-        await this.saveFilter(this.card.filter, this.card.inboxNotify, !!ev.target.checked);
+        await this.saveFilter({ ...this.filterAsked(), inboxMentions: !!ev.target.checked });
     }
 
-    /** Saves the quiet hours; equal bounds while on are refused here, before ChatPush would. */
-    private async saveQuiet(on: boolean, from: number, to: number): Promise<void> {
-        if (on && from === to) {
+    /** The quiet hours a new change builds on: the ones queued last, else the card's. */
+    private quietAsked(): QuietChoice {
+        const c = this.card;
+        return this.wantedQuiet ?? { on: c.quietOn, from: c.quietFrom, to: c.quietTo };
+    }
+
+    /**
+     * Saves the quiet hours, base of the next change until settled as the
+     * filter is; equal bounds while on are refused here, before ChatPush
+     * would, and leave the base as it was.
+     */
+    private async saveQuiet(next: QuietChoice): Promise<void> {
+        if (next.on && next.from === next.to) {
             this.state.message = t("chat.push_quiet_equal");
             return;
         }
+        if (!this.props.native) return;
+        this.wantedQuiet = next;
         await this.save(
-            () => this.props.push.setQuietHours(this.card.configId, { on, from, to }),
+            () => this.props.push.setQuietHours(this.card.configId, next),
             (c) => {
-                c.quietOn = on;
-                c.quietFrom = from;
-                c.quietTo = to;
+                c.quietOn = next.on;
+                c.quietFrom = next.from;
+                c.quietTo = next.to;
             },
         );
+        if (this.wantedQuiet === next) this.wantedQuiet = null;
     }
 
     async onQuietOn(ev: { target: any }): Promise<void> {
-        await this.saveQuiet(!!ev.target.checked, this.card.quietFrom, this.card.quietTo);
+        await this.saveQuiet({ ...this.quietAsked(), on: !!ev.target.checked });
     }
 
     /** A cleared time field changes nothing. */
     async onQuietFrom(ev: { target: any }): Promise<void> {
         const from = minutesOf(String(ev.target.value ?? ""));
-        if (from !== null) await this.saveQuiet(this.card.quietOn, from, this.card.quietTo);
+        if (from !== null) await this.saveQuiet({ ...this.quietAsked(), from });
     }
 
     async onQuietTo(ev: { target: any }): Promise<void> {
         const to = minutesOf(String(ev.target.value ?? ""));
-        if (to !== null) await this.saveQuiet(this.card.quietOn, this.card.quietFrom, to);
+        if (to !== null) await this.saveQuiet({ ...this.quietAsked(), to });
     }
 }
