@@ -356,11 +356,14 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
     /**
      * Chooses a level. Levels 1 to 4 ask for the notification right; 1 and 2
      * also request the battery exemption from the system dialog when the
-     * app lacks it, and keep the level whatever the answer. From the choice
-     * of a level 1 or 2 on a realtime build until Android's answer, the
-     * screen shows the exemption as pending (exemptionPending). The answer
-     * is read when the app resumes after the dialog (refreshExemption),
-     * which then says what a refusal costs and offers level 3.
+     * app lacks it, and keep the level whatever the answer. The exemption
+     * is read first, before any dialog: from the choice of a level 1 or 2
+     * on a realtime build, for an app not exempt, until Android's answer,
+     * the screen shows the exemption as pending (exemptionPending); an app
+     * already exempt shows no wait, even while the notification dialog is
+     * open. The answer is read when the app resumes after the dialog
+     * (refreshExemption), which then says what a refusal costs and offers
+     * level 3.
      */
     async onLevel(level: NotifyLevel): Promise<void> {
         const native = this.native;
@@ -368,14 +371,19 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
         this.state.busy = true;
         this.state.message = "";
         this.state.exemptionRefused = false;
-        const asks = level <= 2 && this.state.realtime;
-        this.state.exemptionPending = asks;
-        this.exemptionStage = asks ? "asking" : "idle";
+        const mayAsk = level <= 2 && this.state.realtime;
+        // "asking" from the start: no resume concludes before the exemption is read
+        this.state.exemptionPending = false;
+        this.exemptionStage = mayAsk ? "asking" : "idle";
         this.levelAsked = level;
         let failed = false;
         try {
+            const needsExemption = level <= 2 && !(await native.batteryExempt()).exempt;
+            const asks = mayAsk && needsExemption;
+            if (mayAsk && !asks) this.endExemptionWait(false);
+            this.state.exemptionPending = asks;
             this.state.permDenied = level <= 4 ? !(await this.ensurePermission()) : false;
-            if (level <= 2 && !(await native.batteryExempt()).exempt) {
+            if (needsExemption) {
                 // The dialog opens over the app: the next resume is its answer
                 if (asks) this.exemptionStage = "launched";
                 try {
@@ -385,8 +393,6 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
                     this.exemptionStage = "idle";
                     throw e;
                 }
-            } else if (asks) {
-                this.endExemptionWait(false);
             }
             await this.chatService.push.setLevel(level);
             this.state.level = level;

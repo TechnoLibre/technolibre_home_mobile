@@ -233,11 +233,12 @@ describe("OptionsChatNotificationsComponent", () => {
     /**
      * Plays onLevel(1) with the notification right still to ask: its
      * dialog stays open until `allow()`, and the screen resumes when it
-     * closes, before the exemption is asked.
+     * closes, before the exemption is asked. exempt is whether Android
+     * already exempts the app.
      */
-    async function askedThroughBothDialogs() {
+    async function askedThroughBothDialogs(exempt = false) {
         const s = setup();
-        s.native.exempt = false;
+        s.native.exempt = exempt;
         await s.c.load();
         let allow: (v: { display: string }) => void = () => {};
         (LocalNotifications.checkPermissions as any).mockResolvedValueOnce({ display: "prompt" });
@@ -276,6 +277,18 @@ describe("OptionsChatNotificationsComponent", () => {
         expect(c.state.exemptionPending).toBe(true);
         native.exempt = true;
         await resumeListener()({ isActive: true });
+        expect(c.state.exemptionPending).toBe(false);
+        expect(c.state.exemptionRefused).toBe(false);
+    });
+
+    it("an app already exempt shows no wait while the notification dialog is open", async () => {
+        const { c, native, choosing, allow } = await askedThroughBothDialogs(true);
+        expect(c.state.exemptionPending).toBe(false);
+        await resumeListener()({ isActive: true });
+        expect(c.state.exemptionPending).toBe(false);
+        allow();
+        await choosing;
+        expect(native.callsOf("requestBatteryExemption")).toHaveLength(0);
         expect(c.state.exemptionPending).toBe(false);
         expect(c.state.exemptionRefused).toBe(false);
     });
