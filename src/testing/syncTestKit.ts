@@ -73,7 +73,7 @@ export type { ChatMailboxItem, SearchResults };
 export { parseNtfyLink, decryptWebPush, pollNtfy, pushNodeNative, chatMarker };
 export type { NtfyLink, NodeSubscription, NtfyMessage, PushNodeNative };
 
-export const HARNESS_API = 7;
+export const HARNESS_API = 8;
 
 /** Migrations that read what an older install left (secure storage, video files): none on a new database. */
 const SKIPPED_MIGRATIONS = new Set([2026031801, 2026032401]);

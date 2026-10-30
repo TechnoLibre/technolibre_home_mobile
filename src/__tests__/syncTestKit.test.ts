@@ -25,8 +25,8 @@ describe("syncTestKit", () => {
 		resetMocks();
 	});
 
-	it("is at API 7", () => {
-		expect(HARNESS_API).toBe(7);
+	it("is at API 8", () => {
+		expect(HARNESS_API).toBe(8);
 	});
 
 	it("gives the chat's finding rules: folded text, the server's body term, inbox kinds, the note of a record", () => {

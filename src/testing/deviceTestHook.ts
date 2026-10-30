@@ -22,17 +22,17 @@ import { SyncService } from "../services/syncService";
 import { ChatCapture } from "../services/chat/chatCapture";
 import {
 	messageKeyOf, type ChatAttachment, type ChatPushRow, type LockScreen, type ChatMailboxItem, type ChatMessage, type ChatReaction, type MessageTarget,
-	type OutgoingFile,
+	type OdooNotify, type OutgoingFile, type PhoneFilter,
 } from "../models/chat";
 import { EMPTY_MENTIONS, type Mentions } from "../services/chat/chatCompose";
 import type { SearchResults, ServerResults } from "../services/chat/chatSearch";
 import type { ChatSource } from "../services/chat/chatSources";
 import { parseNtfyLink } from "../services/chat/chatPushLink";
-import type { NotifyLevel } from "../services/chat/chatSettings";
+import type { BrowserMode, ClimbThreshold, NotifyLevel } from "../services/chat/chatSettings";
 import type { ChatPushNative, NativeAction, PushHealth } from "../plugins/chatPushPlugin";
 import type { DrainResult } from "../services/chat/chatPushActions";
 
-export const DEVICE_HOOK_API = 8;
+export const DEVICE_HOOK_API = 9;
 
 /** The stage limit the composer takes while the server's is unknown: Odoo's default. */
 const DEFAULT_STAGE_LIMIT = 128 * 1024 * 1024;
@@ -348,6 +348,34 @@ export function deviceTestHook(env: DeviceHookEnv) {
 		/** What the account's notifications show on the lock screen, as the settings' choice. */
 		chatPushLockScreen(configId: string, mode: LockScreen): Promise<void> {
 			return env.syncService.chat.push.setLockScreen(configId, mode);
+		},
+		/**
+		 * Which of the account's pushes the phone shows, as the account card
+		 * sets it: the chat filter, the record and activity pushes (inbox)
+		 * and, with inbox off, the record pushes that mention the user.
+		 */
+		chatPushFilter(configId: string, filter: PhoneFilter, inbox: boolean, inboxMentions: boolean): Promise<void> {
+			return env.syncService.chat.push.setFilter(configId, filter, inbox, inboxMentions);
+		},
+		/** The account's quiet hours (minutes from local midnight), as the account card sets them; rejects what the card refuses. */
+		chatPushQuietHours(configId: string, q: { on: boolean; from: number; to: number }): Promise<void> {
+			return env.syncService.chat.push.setQuietHours(configId, q);
+		},
+		/** What a push does while a browser of the user is active, as the settings' choice; every account's device is marked again. */
+		chatPushBrowserMode(mode: BrowserMode): Promise<void> {
+			return env.syncService.chat.push.setBrowserMode(mode);
+		},
+		/** The battery climb: the switch and the two thresholds (0: none), as the settings set them. */
+		chatPushClimb(c: { auto: boolean; oneBelow: ClimbThreshold; twoBelow: ClimbThreshold }): Promise<void> {
+			return env.syncService.chat.push.setClimb(c);
+		},
+		/** Odoo's general setting for the account's channels, as « Canaux (réglage d'Odoo) » sets it (sent by the outbox). */
+		chatGlobalNotify(configId: string, value: OdooNotify): Promise<void> {
+			return env.syncService.chat.setGlobalNotify(configId, value);
+		},
+		/** Odoo's setting of one channel (null: the general one applies), as the conversation's choice sets it (sent by the outbox). */
+		chatNotify(configId: string, channelId: number, value: OdooNotify | null): Promise<void> {
+			return env.syncService.chat.setNotify(configId, channelId, value);
 		},
 		/** Takes the account off its ntfy, as the settings' « Retirer ». */
 		chatPushRemove(configId: string): Promise<void> {

@@ -8,7 +8,11 @@
  * which decrypts what Odoo pushed (decryptWebPush, pollNtfy). The action
  * store holds what the phone's receiver would have ended or handed over:
  * a test adds a record (addAction) and the app drains it (actions,
- * ackActions) as it drains the phone's.
+ * ackActions) as it drains the phone's. The mirror published last is kept
+ * whole (settings); nothing here applies its filter, quiet hours, browser
+ * mode or climb, which native code applies on the phone. status() reports
+ * the chosen level as effective unless a test sets effectiveLevel and
+ * climbReason, as a battery would climb it.
  */
 import type { PluginListenerHandle } from "@capacitor/core";
 import { generateKeyPairSync, randomBytes, randomInt, randomUUID, type KeyObject } from "node:crypto";
@@ -29,7 +33,12 @@ export interface NodeSubscription {
 export interface PushNodeNative extends ChatPushNative {
 	/** Every call, method and argument, in order. */
 	calls: { method: string; args: unknown }[];
+	/** The mirror published last, as given; null before the first. */
 	settings: PushSettingsMirror | null;
+	/** The level status() reports as effective, its mode following it; null: the chosen level. */
+	effectiveLevel: number | null;
+	/** The climb reason status() reports. */
+	climbReason: PushHealth["climbReason"];
 	ntfys: Map<string, { token: string; prefix: string; cacheSeconds: number }>;
 	subscriptions: Map<string, NodeSubscription>;
 	sessions: Map<string, { odooUrl: string; database: string; sessionId: string }>;
@@ -102,6 +111,8 @@ export function pushNodeNative(): PushNodeNative {
 	const native: PushNodeNative = {
 		calls: [],
 		settings: null,
+		effectiveLevel: null,
+		climbReason: null,
 		ntfys: new Map(),
 		subscriptions: new Map(),
 		sessions: new Map(),
@@ -189,12 +200,13 @@ export function pushNodeNative(): PushNodeNative {
 		async status(): Promise<PushHealth> {
 			record("status");
 			const level = native.settings?.level ?? 3;
+			const effective = native.effectiveLevel ?? level;
 			return {
 				at: Date.now(),
 				level,
-				effectiveLevel: level,
-				climbReason: null,
-				mode: level <= 2 ? "realtime" : level === 3 ? "poll_15" : level === 4 ? "poll_60" : "off",
+				effectiveLevel: effective,
+				climbReason: native.climbReason,
+				mode: effective <= 2 ? "realtime" : effective === 3 ? "poll_15" : effective === 4 ? "poll_60" : "off",
 				realtimeBuild: true,
 				serviceAlive: false,
 				ntfys: [...native.ntfys.keys()].map((url) => ({
