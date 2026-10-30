@@ -5,8 +5,8 @@
 
     <application>
         <!-- La porte de test des notifications du clavardage : exportée, mais
-             réservée aux détenteurs de DUMP, que le shell adb tient et
-             qu'aucune app ne reçoit. Elle envoie les vraies PendingIntent
+             réservée aux détenteurs de DUMP : le shell adb, ou une app à qui
+             `adb shell pm grant` l'a accordée. Elle envoie les vraies PendingIntent
              des notifications de l'app elle-même, sans toucher au volet. -->
         <receiver
             android:name="ca.erplibre.home.chatpush.ChatTestDoor"

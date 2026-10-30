@@ -141,7 +141,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   celle de l'utilisateur.
 - **Porte de test des notifications du clavardage** — seule la construction
   `-PsyncTest` porte `ChatTestDoor` (`android/app/src/synctest/`), un
-  récepteur que seul le shell adb atteint (`android.permission.DUMP`) : il
+  récepteur que seuls le shell adb, ou une app à qui `adb pm grant` a accordé
+  DUMP, atteignent (`android.permission.DUMP`) : il
   envoie la vraie PendingIntent d'action ou de contenu de la notification de
   l'app de test, retrouvée par son étiquette ; les scénarios d'appareil
   d'ERPLibre agissent ainsi sur une notification sans toucher au volet. Les

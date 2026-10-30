@@ -131,8 +131,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `window.__erplibreTest` to its device tests, and `-PsyncTest` builds the
   app as `ca.erplibre.home.synctest`, beside the user's own.
 - **Chat notifications test door** — the `-PsyncTest` build alone carries
-  `ChatTestDoor` (`android/app/src/synctest/`), a receiver only the adb shell
-  reaches (`android.permission.DUMP`): it sends the real action or content
+  `ChatTestDoor` (`android/app/src/synctest/`), a receiver reachable only by the adb
+  shell, or by an app granted DUMP through `adb pm grant`
+  (`android.permission.DUMP`): it sends the real action or content
   PendingIntent of the test app's own notification by tag, so ERPLibre's
   device scenarios act on a notification without touching the shade. The
   normal and `-PnoChatRealtime` builds carry neither the class nor the
@@ -706,7 +707,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   celle de l'utilisateur.
 - **Porte de test des notifications du clavardage** — seule la construction
   `-PsyncTest` porte `ChatTestDoor` (`android/app/src/synctest/`), un
-  récepteur que seul le shell adb atteint (`android.permission.DUMP`) : il
+  récepteur que seuls le shell adb, ou une app à qui `adb pm grant` a accordé
+  DUMP, atteignent (`android.permission.DUMP`) : il
   envoie la vraie PendingIntent d'action ou de contenu de la notification de
   l'app de test, retrouvée par son étiquette ; les scénarios d'appareil
   d'ERPLibre agissent ainsi sur une notification sans toucher au volet. Les

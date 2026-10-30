@@ -125,8 +125,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `window.__erplibreTest` to its device tests, and `-PsyncTest` builds the
   app as `ca.erplibre.home.synctest`, beside the user's own.
 - **Chat notifications test door** — the `-PsyncTest` build alone carries
-  `ChatTestDoor` (`android/app/src/synctest/`), a receiver only the adb shell
-  reaches (`android.permission.DUMP`): it sends the real action or content
+  `ChatTestDoor` (`android/app/src/synctest/`), a receiver reachable only by the adb
+  shell, or by an app granted DUMP through `adb pm grant`
+  (`android.permission.DUMP`): it sends the real action or content
   PendingIntent of the test app's own notification by tag, so ERPLibre's
   device scenarios act on a notification without touching the shade. The
   normal and `-PnoChatRealtime` builds carry neither the class nor the
