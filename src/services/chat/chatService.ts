@@ -509,6 +509,23 @@ export class ChatService {
   }
 
   /**
+   * After the app installed or upgraded the account's server module and
+   * stored its new level: queues the account's registration
+   * (ensureRegistered), which marks the device again for that level when
+   * this session already registered it. Settles once queued work did;
+   * never rejects, a failure is logged. An application gone meanwhile
+   * queues nothing.
+   */
+  async afterModuleChange(configId: string): Promise<void> {
+    try {
+      const src = await this.sourceOf(configId);
+      if (src) await this.push.ensureRegistered(src);
+    } catch (e) {
+      console.warn("[chat] push after a module change failed:", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /**
    * A probe for the account's erasure: take it before an await on the
    * server, call it after; true when forgetSource ran meanwhile, so the
    * answer must not be written.

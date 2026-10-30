@@ -105,6 +105,12 @@ export class ChatPush {
   private done = new Map<string, RegisterResult>();
   /** Accounts whose device mark this session did not reach Odoo (offline, an error): sent at their next registration. */
   private owed = new Set<string>();
+  /**
+   * Per account, the module level its device mark of this foreground
+   * session was sent for and answered at (ok true or false); a stored
+   * level that differs marks the device again (registerOnce).
+   */
+  private markedLevel = new Map<string, ChatModuleLevel | null>();
   /** Per account, the i18n key of why its last registration failed; cleared by a success. */
   private failures = new Map<string, string>();
   /** Per account, the session id last copied to native code in this foreground session. */
@@ -172,6 +178,7 @@ export class ChatPush {
     this.done.clear();
     this.mirrored.clear();
     this.owed.clear();
+    this.markedLevel.clear();
   }
 
   /**
@@ -273,6 +280,7 @@ export class ChatPush {
       await native.unsubscribe({ configId, pendingEndpoint: null });
       await this.repo.setPushRow({ configId, ...NO_NTFY, staleEndpoints: withEndpoint(row.staleEndpoints, row.endpoint) });
       this.done.delete(configId);
+      this.markedLevel.delete(configId);
       await this.dropUnusedNtfy(row.ntfyUrl);
       const src = (await this.liveSources()).find((s) => s.configId === configId);
       if (src && (await this.isOnline())) {
@@ -335,8 +343,8 @@ export class ChatPush {
 
   /**
    * Saves the browser mode, publishes it, then marks the device of every
-   * account again (remarkAll), since each server holds the mode per
-   * device. The marks run even when native code refuses the mirror (the
+   * account registered in this session again (remarkAll), since each
+   * server holds the mode per device. The marks run even when native code refuses the mirror (the
    * rejection follows them), so a mark not sent stays owed (markOwed).
    */
   setBrowserMode(mode: BrowserMode): Promise<void> {
@@ -457,6 +465,7 @@ export class ChatPush {
       }
     }
     this.done.delete(configId);
+    this.markedLevel.delete(configId);
     this.failures.delete(configId);
     this.mirrored.delete(configId);
     this.leaving.add(configId);
@@ -492,6 +501,7 @@ export class ChatPush {
       }
       for (const id of [oldId, newId]) {
         this.done.delete(id);
+        this.markedLevel.delete(id);
         this.failures.delete(id);
         this.mirrored.delete(id);
       }
@@ -623,6 +633,7 @@ export class ChatPush {
       ...(same ? {} : { vapidKey: null, registeredAt: null }),
     });
     this.done.delete(row.configId);
+    this.markedLevel.delete(row.configId);
   }
 
   /**
@@ -649,12 +660,18 @@ export class ChatPush {
    * Registers the account's endpoint unless this session did; the row is
    * updated only while it is still stored under this id (a rename may
    * have moved it during the calls). An offline or refused result keeps
-   * its reason for registrationError until a registration succeeds.
+   * its reason for registrationError until a registration succeeds. An
+   * account registered in this session is marked again when its mark is
+   * owed, or when the stored module level (at 1.5 or above) is not the
+   * one its mark was answered at: an install or upgrade of the module
+   * during the session changes the argument the device route takes.
    */
   private async registerOnce(src: ChatSource): Promise<RegisterResult> {
     const known = this.done.get(src.configId);
     if (known) {
-      if (known === "registered" && this.owed.has(src.configId)) await this.markAppDevice(src);
+      if (known === "registered" && (this.owed.has(src.configId) || (await this.levelChanged(src.configId)))) {
+        await this.markAppDevice(src);
+      }
       return known;
     }
     const row = await this.repo.pushRow(src.configId);
@@ -687,6 +704,12 @@ export class ChatPush {
     }
   }
 
+  /** Whether the account's stored module level is at 1.5 or above and not the one its last answered mark used. */
+  private async levelChanged(configId: string): Promise<boolean> {
+    const level = await this.moduleLevel(configId);
+    return levelAtLeast(level, "1.5") && this.markedLevel.get(configId) !== level;
+  }
+
   /**
    * Marks the account's device as the app's own on a module at 1.5
    * (POST /erplibre_mobile_chat/push/device), which tells the server that
@@ -700,7 +723,8 @@ export class ChatPush {
    * logged without the endpoint; a success clears it. A mark offline or
    * failed with an error is owed (markOwed): the account's next
    * registerOnce of the session sends it again; an ok false is Odoo's
-   * answer and is not. Never throws. True when marked.
+   * answer and is not. Either answer records the level used (markedLevel).
+   * Never throws. True when marked.
    */
   async markAppDevice(src: ChatSource): Promise<boolean> {
     try {
@@ -722,6 +746,7 @@ export class ChatPush {
         `${PUSH_DEVICE_ROUTE}`,
       );
       this.owed.delete(src.configId);
+      this.markedLevel.set(src.configId, level);
       if (answer?.ok === true) {
         if (this.failures.get(src.configId) === MARK_FAILED) this.failures.delete(src.configId);
         return true;
@@ -737,9 +762,16 @@ export class ChatPush {
     }
   }
 
-  /** markAppDevice for every chat account, in turn; each one skips or owes its mark as markAppDevice says. */
+  /**
+   * markAppDevice for every chat account registered in this session, in
+   * turn; each one skips or owes its mark as markAppDevice says. An
+   * account not registered (refused, offline, not yet tried) keeps its
+   * registration's reason: its next full registration marks it.
+   */
   private async remarkAll(): Promise<void> {
-    for (const src of await this.liveSources()) await this.markAppDevice(src);
+    for (const src of await this.liveSources()) {
+      if (this.done.get(src.configId) === "registered") await this.markAppDevice(src);
+    }
   }
 
   /** The promise's result, rejecting after PUSH_RPC_TIMEOUT_MS without one. */

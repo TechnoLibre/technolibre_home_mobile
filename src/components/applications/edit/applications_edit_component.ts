@@ -315,7 +315,11 @@ export class ApplicationsEditComponent extends EnhancedComponent {
         }
     }
 
-    /** Upgrades the module for a system user, persists and shows the state returned; a failure shows an error line. */
+    /**
+     * Upgrades the module for a system user, persists and shows the state
+     * returned, and queues the account's device mark for the new level
+     * (afterModuleChange, not awaited); a failure shows an error line.
+     */
     async upgradeChatModule(): Promise<void> {
         const target = this.chatTarget();
         if (!target || !this.state.chatCanUpgrade || this.state.chatInstalling) return;
@@ -326,6 +330,7 @@ export class ApplicationsEditComponent extends EnhancedComponent {
             await this.chatService.repo.setSourceState({
                 configId: target.configId, moduleState: next.state, moduleLevel: next.level,
             });
+            void this.chatService.afterModuleChange(target.configId);
             this.state.chatModule = next.state;
             await this.refreshChatCanUpgrade(target.creds);
         } catch {
@@ -335,7 +340,11 @@ export class ApplicationsEditComponent extends EnhancedComponent {
         }
     }
 
-    /** Installs the module, persists and shows the state returned; a failure shows an error line. */
+    /**
+     * Installs the module, persists and shows the state returned, and
+     * queues the account's device mark for the new level
+     * (afterModuleChange, not awaited); a failure shows an error line.
+     */
     async installChatModule(): Promise<void> {
         const target = this.chatTarget();
         if (!target || this.state.chatInstalling) return;
@@ -346,6 +355,7 @@ export class ApplicationsEditComponent extends EnhancedComponent {
             await this.chatService.repo.setSourceState({
                 configId: target.configId, moduleState: next.state, moduleLevel: next.level,
             });
+            void this.chatService.afterModuleChange(target.configId);
             this.state.chatModule = next.state;
         } catch {
             this.state.chatError = t("chat.module_install_error");

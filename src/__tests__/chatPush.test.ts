@@ -660,6 +660,49 @@ describe("ChatPush", () => {
       expect(ids.map((id) => chat.push.markOwed(id))).toEqual([true, true]);
     });
 
+    it("a module upgraded in the session marks the device again for its new level", async () => {
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      expect(odoo.state.marked).toEqual([{ endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: false }]);
+      await at("1.6");
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(odoo.state.marked).toEqual([
+        { endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: false },
+        { endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "wait" },
+      ]);
+      // Marked for 1.6: the next registration of the session sends nothing more
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(odoo.state.marked).toHaveLength(2);
+      expect(odoo.kw("register_devices")).toHaveLength(1);
+    });
+
+    it("an install or upgrade from the app queues the account's mark", async () => {
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      await at("1.6");
+      await chat.afterModuleChange(ids[0]);
+      await chat.push.idle();
+      expect(odoo.state.marked.at(-1)).toEqual({ endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "wait" });
+      expect(odoo.state.marked).toHaveLength(2);
+      // An application gone meanwhile queues nothing
+      await chat.afterModuleChange("https://absent.exemple.test|alice|db1");
+      await chat.push.idle();
+      expect(odoo.state.marked).toHaveLength(2);
+    });
+
+    it("changing the browser mode keeps a refused registration's reason", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await at("1.6");
+      odoo.state.refuseRegister = true;
+      await chat.push.applyLink([ids[0]], link());
+      expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_refused");
+      odoo.calls.length = 0;
+      await chat.push.setBrowserMode("quiet");
+      expect(routeCalls()).toEqual([]);
+      expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_refused");
+      expect(lastMirror().browserMode).toBe("quiet");
+    });
+
     it("an account without the module is never marked", async () => {
       await at(null, 0);
       await at("1.4", 1);

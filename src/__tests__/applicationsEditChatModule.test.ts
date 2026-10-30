@@ -23,6 +23,7 @@ function make(version: string) {
         removeItem: () => {},
     };
     const setSourceState = vi.fn().mockResolvedValue(undefined);
+    const afterModuleChange = vi.fn().mockResolvedValue(undefined);
     const app = {
         url: "https://odoo.example.test", username: "alice", password: "pw",
         database: "db1", odooVersion: version, autoSync: false, pollIntervalMinutes: 5,
@@ -34,11 +35,11 @@ function make(version: string) {
         appService: { getMatch: vi.fn().mockResolvedValue(app) },
         syncService: {
             rpc: { sessionInfo: async () => ({ isSystem }) }, capabilities: {},
-            chat: { repo: { setSourceState } },
+            chat: { repo: { setSourceState }, afterModuleChange },
         },
     };
     c.setup();
-    return { c, setSourceState };
+    return { c, setSourceState, afterModuleChange };
 }
 
 afterEach(() => {
@@ -84,9 +85,11 @@ describe("ApplicationsEditComponent chat module line", () => {
     it("install updates the line to installed and persists it", async () => {
         moduleState.mockResolvedValue("available");
         installModule.mockResolvedValue({ state: "installed", level: "1.2" });
-        const { c, setSourceState } = make("18.0");
+        const { c, setSourceState, afterModuleChange } = make("18.0");
         await c.loadAppData();
         await c.installChatModule();
+        expect(afterModuleChange).toHaveBeenCalledWith("https://odoo.example.test|alice|db1");
+        expect(afterModuleChange.mock.invocationCallOrder[0]).toBeGreaterThan(setSourceState.mock.invocationCallOrder[0]);
         expect(c.state.chatModule).toBe("installed");
         expect(c.state.chatInstalling).toBe(false);
         expect(c.state.chatError).toBe("");
@@ -98,9 +101,10 @@ describe("ApplicationsEditComponent chat module line", () => {
     it("an install failure shows an error line and keeps the button", async () => {
         moduleState.mockResolvedValue("available");
         installModule.mockRejectedValue(new Error("nope"));
-        const { c, setSourceState } = make("18.0");
+        const { c, setSourceState, afterModuleChange } = make("18.0");
         await c.loadAppData();
         await c.installChatModule();
+        expect(afterModuleChange).not.toHaveBeenCalled();
         expect(c.state.chatModule).toBe("available");
         expect(c.state.chatInstalling).toBe(false);
         expect(c.state.chatError).not.toBe("");
@@ -143,9 +147,10 @@ describe("ApplicationsEditComponent chat module line", () => {
     it("upgrade updates the line to installed and persists it", async () => {
         moduleState.mockResolvedValue("outdated");
         upgradeModule.mockResolvedValue({ state: "installed", level: "1.4" });
-        const { c, setSourceState } = make("18.0");
+        const { c, setSourceState, afterModuleChange } = make("18.0");
         await c.loadAppData();
         await c.upgradeChatModule();
+        expect(afterModuleChange).toHaveBeenCalledWith("https://odoo.example.test|alice|db1");
         expect(c.state.chatModule).toBe("installed");
         expect(c.state.chatCanUpgrade).toBe(false);
         expect(c.state.chatInstalling).toBe(false);
@@ -166,9 +171,10 @@ describe("ApplicationsEditComponent chat module line", () => {
     it("an upgrade failure shows an error line and keeps the button", async () => {
         moduleState.mockResolvedValue("outdated");
         upgradeModule.mockRejectedValue(new Error("nope"));
-        const { c } = make("18.0");
+        const { c, afterModuleChange } = make("18.0");
         await c.loadAppData();
         await c.upgradeChatModule();
+        expect(afterModuleChange).not.toHaveBeenCalled();
         expect(c.state.chatModule).toBe("outdated");
         expect(c.state.chatCanUpgrade).toBe(true);
         expect(c.state.chatError).not.toBe("");
