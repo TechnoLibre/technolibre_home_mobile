@@ -479,7 +479,7 @@ public final class ChatPushRuntime {
         engine.runPeriod(effective(), serviceRunning);
     }
 
-    /** The level the settings give, climbed by the power state now (BatteryClimber). */
+    /** The level the settings give, climbed by the power state now and the held climb (BatteryClimber). */
     PushLevelPolicy.Effective effective() {
         return resolve(settings, context, realPowerState(context));
     }
@@ -494,11 +494,14 @@ public final class ChatPushRuntime {
         return resolve(new PushSettingsStore(new PrefsKeyValue(c, SETTINGS_FILE)), c, real);
     }
 
-    /** The mirrored level and climbing prefs resolved against real, as the test door overrides it. */
+    /**
+     * The mirrored level and climbing prefs resolved against real, as the
+     * test door overrides it, holding the climb the last decision stored
+     * (BatteryClimber.resolveStored, which stores this one in turn).
+     */
     private static PushLevelPolicy.Effective resolve(PushSettingsStore s, Context c,
             PushLevelPolicy.PowerState real) {
-        return PushLevelPolicy.resolve(s.level(), testPowerOver(c, real), REALTIME_BUILD,
-                BatteryClimber.of(s.prefs()));
+        return BatteryClimber.resolveStored(s, testPowerOver(c, real), REALTIME_BUILD);
     }
 
     /** Removes the account's notifications NotificationModel.Clear names, by their post time. */

@@ -64,7 +64,7 @@ export type PushHealth = {
     level: number;
     effectiveLevel: number;
     mode: "realtime" | "poll_15" | "poll_60" | "off";
-    /** Why effectiveLevel is above level: the battery saver, or the battery under a threshold; null otherwise. */
+    /** Why effectiveLevel is above level: the battery saver, or a threshold the battery went under (held until 5 points above it); null otherwise. */
     climbReason: "saver" | "below_one" | "below_two" | null;
     realtimeBuild: boolean;
     serviceAlive: boolean;

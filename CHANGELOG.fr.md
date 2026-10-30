@@ -257,7 +257,9 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   est retiré quand il est lu dans le navigateur) et « Économiser
   automatiquement » : un ou deux niveaux de plus sous des seuils (30 % et 15 %
   par défaut), jamais au-delà du niveau 4, le niveau 3 au moins sous
-  l'économiseur, retour au niveau choisi une fois branché, avec « En ce
+  l'économiseur, retour au niveau choisi une fois branché, une montée relâchée
+  seulement 5 points au-dessus de son seuil (une jauge qui oscille ne fait
+  monter qu'une fois, et la dernière montée survit au processus), avec « En ce
   moment : niveau {level} ({why}) » dans les options. Les niveaux 1 et 2
   demandent la dispense de batterie par la boîte de dialogue d'Android, et les
   options disent quand Android la refuse. Le panneau d'état compte « Messages

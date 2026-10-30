@@ -9,6 +9,7 @@ import { useFeatureSection } from "../../../utils/featureSection";
 import { t } from "../../../i18n";
 import type { PushHealth } from "../../../plugins/chatPushPlugin";
 import {
+    CLIMB_RELEASE_MARGIN,
     CLIMB_THRESHOLDS,
     chatSettings,
     type BrowserMode,
@@ -625,15 +626,19 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
      * the battery climbed to (climbReason); null otherwise, a build that
      * maps 1 and 2 to 3 included. A threshold reason names the threshold
      * the stored settings hold, which is what the mirror hands native
-     * code (a refused publish keeps it there), not the one on screen.
+     * code (a refused publish keeps it there), not the one on screen, and
+     * the percentage that releases it (CLIMB_RELEASE_MARGIN above): the
+     * wording holds both under the threshold and while the margin keeps
+     * the climb, which health does not tell apart.
      */
     effectiveLine(): string | null {
         const h: PushHealth | null = this.state.health;
         if (!h?.climbReason) return null;
         const settings = chatSettings();
+        const pct = h.climbReason === "below_two" ? settings.climbTwoBelow : settings.climbOneBelow;
         const why = h.climbReason === "saver"
             ? t("chat.push_effective_saver")
-            : t("chat.push_effective_below", { pct: String(h.climbReason === "below_two" ? settings.climbTwoBelow : settings.climbOneBelow) });
+            : t("chat.push_effective_below", { pct: String(pct), release: String(pct + CLIMB_RELEASE_MARGIN) });
         return t("chat.push_effective", { level: String(h.effectiveLevel), why });
     }
 

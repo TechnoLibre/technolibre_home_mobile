@@ -377,12 +377,17 @@ serveur n'a pas appris un changement.
 aucun, 10, 15, 20, 30, 40 et 50 %. Chaque seuil fait ce que dit son libellé :
 sous le second, le niveau monte de deux même quand le premier est « aucun » ou
 plus bas. La montée ne dépasse jamais le niveau 4 : les notifications ne
-s'arrêtent qu'à un niveau 5 choisi par l'utilisateur. L'économiseur de batterie
-d'Android veut dire le niveau 3 au moins, même l'interrupteur désactivé.
-Branché, le téléphone revient au niveau choisi, quel que soit le pourcentage.
-Pendant une montée, les options affichent « En ce moment : niveau {level}
-({why}) », la raison étant « économiseur de batterie » ou « batterie sous
-{pct} % ». Une tâche attend le chargeur : le service permanent revient une
+s'arrêtent qu'à un niveau 5 choisi par l'utilisateur. En remontant, une montée
+n'est relâchée que 5 points au-dessus de son seuil (montée sous 15 %, retour à
+20 % ou plus) : une jauge qui oscille autour d'un seuil ne fait monter qu'une
+fois ; la dernière montée est conservée, et une relève lancée après la mort du
+processus de l'app la poursuit. L'économiseur de batterie d'Android veut dire
+le niveau 3 au moins, même l'interrupteur désactivé, et cesse avec lui.
+Branché, le téléphone revient aussitôt au niveau choisi, quel que soit le
+pourcentage. Pendant une montée, les options affichent « En ce moment : niveau
+{level} ({why}) », la raison étant « économiseur de batterie » ou « batterie
+passée sous {pct} %, jusqu'à {release} % ou au branchement », vrai sous le
+seuil comme dans les 5 points qui la retiennent encore. Une tâche attend le chargeur : le service permanent revient une
 fois branché sans attendre la relève aux 15 minutes (jusqu'à 15 minutes quand
 Android diffère cette tâche).
 

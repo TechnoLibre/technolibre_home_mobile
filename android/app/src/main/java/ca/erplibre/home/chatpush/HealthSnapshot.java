@@ -57,7 +57,11 @@ final class HealthSnapshot {
     final long at;
     final int level;
     final int effectiveLevel;
-    /** Why effectiveLevel is above the chosen level: saver, below_one or below_two; "" when it is not. */
+    /**
+     * Why effectiveLevel is above the chosen level: saver, below_one or
+     * below_two (the threshold the battery went under, still held within
+     * BatteryClimber.MARGIN above it); "" when it is not.
+     */
     final String climbReason;
     /** realtime, poll_15, poll_60 or off. */
     final String mode;

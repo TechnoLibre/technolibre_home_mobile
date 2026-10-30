@@ -234,7 +234,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   when read in the browser) and « Save battery automatically »: one or two
   levels more under thresholds (30 % and 15 % by default), never past level 4,
   level 3 at least under battery saver, back to the chosen level once plugged,
-  with « Right now: level {level} ({why}) » in the options. Levels 1 and 2 ask
+  a climb released only 5 points above its threshold (a wavering gauge climbs
+  once, and the last climb survives the process), with « Right now: level {level} ({why}) » in the options. Levels 1 and 2 ask
   for the battery exemption through Android's dialog, and the options say
   when Android refuses it. The status panel counts « Held messages lost:
   {n} ». `erplibre_mobile_chat` 1.6 adds the mention and browser flags, and

@@ -32,14 +32,24 @@ final class PushLevelPolicy {
         }
     }
 
-    /** A climber's answer: the level to apply and why, "" when nothing raised it. */
+    /**
+     * A climber's answer: the level to apply and why, "" when nothing raised
+     * it, and the threshold steps in force (0, 1 or 2), which the next
+     * decision takes as its held steps (BatteryClimber).
+     */
     static final class Climb {
         final int level;
         final String reason;
+        final int steps;
 
         Climb(int level, String reason) {
+            this(level, reason, 0);
+        }
+
+        Climb(int level, String reason, int steps) {
             this.level = level;
             this.reason = reason == null ? "" : reason;
+            this.steps = steps;
         }
     }
 
@@ -57,13 +67,21 @@ final class PushLevelPolicy {
         final boolean odooDirect;
         /** The climber's reason (saver, below_one, below_two), "" when the level is the chosen one. */
         final String climbReason;
+        /** The climber's threshold steps in force (Climb.steps), whatever the level shows. */
+        final int climbSteps;
 
         Effective(int level, Mode mode, boolean permanentService, boolean odooDirect, String climbReason) {
+            this(level, mode, permanentService, odooDirect, climbReason, 0);
+        }
+
+        Effective(int level, Mode mode, boolean permanentService, boolean odooDirect, String climbReason,
+                int climbSteps) {
             this.level = level;
             this.mode = mode;
             this.permanentService = permanentService;
             this.odooDirect = odooDirect;
             this.climbReason = climbReason;
+            this.climbSteps = climbSteps;
         }
     }
 
@@ -100,7 +118,7 @@ final class PushLevelPolicy {
                 mode = Mode.OFF;
                 break;
         }
-        return new Effective(level, mode, permanent, level <= 4, reason);
+        return new Effective(level, mode, permanent, level <= 4, reason, climb.steps);
     }
 
     /**
@@ -108,7 +126,7 @@ final class PushLevelPolicy {
      * polls every 15 minutes, keeping its level and its want of the service.
      */
     static Effective withoutService(Effective e) {
-        return new Effective(e.level, Mode.POLL_15, e.permanentService, e.odooDirect, e.climbReason);
+        return new Effective(e.level, Mode.POLL_15, e.permanentService, e.odooDirect, e.climbReason, e.climbSteps);
     }
 
     private static int buildLevel(int level, boolean realtimeBuild) {

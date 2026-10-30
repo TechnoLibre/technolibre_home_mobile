@@ -26,6 +26,13 @@ export type ClimbThreshold = 0 | 10 | 15 | 20 | 30 | 40 | 50;
 export const CLIMB_THRESHOLDS: readonly ClimbThreshold[] = [0, 10, 15, 20, 30, 40, 50];
 
 /**
+ * Points above a threshold at which native code releases a climb under it
+ * (BatteryClimber.MARGIN): climbed under 15 %, the level comes back at 20 %
+ * or once plugged in.
+ */
+export const CLIMB_RELEASE_MARGIN = 5;
+
+/**
  * What a chat push does while a browser of the user is active on the
  * server: ring at once, wait for a read before ringing, or not reach the
  * phone at all.

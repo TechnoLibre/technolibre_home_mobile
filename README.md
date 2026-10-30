@@ -362,11 +362,16 @@ more under » a battery percentage (30 % by default) and « Two levels more
 under » another (15 % by default), each chosen among none, 10, 15, 20, 30, 40
 and 50 %. Each threshold does what its label says: under the second the level
 climbs two even when the first is « none » or lower. The climb never goes past
-level 4: notifications stop only at a level 5 the user chose. Android's
-battery saver means level 3 at least, even with the switch off. Plugged in,
-the phone returns to the chosen level at any percentage. While climbed, the
-options show « Right now: level {level} ({why}) », the reason being « battery
-saver » or « battery under {pct} % ». A job waits for the charger, so the
+level 4: notifications stop only at a level 5 the user chose. On the way back
+up a climb is released only 5 points above its threshold (climbed under 15 %,
+back at 20 % or more), so a battery gauge wavering around a threshold climbs
+once; the last climb is stored, and a check run after the app's process died
+continues it. Android's battery saver means level 3 at least, even with the
+switch off, and ends when the saver turns off. Plugged in, the phone returns
+to the chosen level at once, at any percentage. While climbed, the options
+show « Right now: level {level} ({why}) », the reason being « battery saver »
+or « battery went under {pct} %, until {release} % or plugged in », true
+both under the threshold and in the 5 points that still hold it. A job waits for the charger, so the
 permanent service comes back once plugged without waiting for the 15-minute
 check (up to 15 minutes when Android defers that job).
 

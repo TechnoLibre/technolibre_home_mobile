@@ -12,7 +12,7 @@ import { App } from "@capacitor/app";
 import { OptionsChatNotificationsComponent } from "../components/options/chat_notifications/options_chat_notifications_component";
 import { OptionsChatPushAccountComponent } from "../components/options/chat_notifications/options_chat_push_account_component";
 import { fakeChatPushNative, type FakeChatPushNative } from "../__mocks__/chatPushNative";
-import { chatSettings, setChatSettings, type BrowserMode, type ClimbThreshold, type NotifyLevel } from "../services/chat/chatSettings";
+import { CLIMB_RELEASE_MARGIN, chatSettings, setChatSettings, type BrowserMode, type ClimbThreshold, type NotifyLevel } from "../services/chat/chatSettings";
 import { t } from "../i18n";
 import { translations as fr } from "../i18n/fr";
 
@@ -691,22 +691,29 @@ describe("OptionsChatNotificationsComponent", () => {
         await c.load();
         native.health = { level: 1, effectiveLevel: 3, climbReason: "below_two" };
         await c.refreshStatus();
-        expect(c.effectiveLine()).toBe(t("chat.push_effective", { level: "3", why: t("chat.push_effective_below", { pct: "15" }) }));
+        expect(c.effectiveLine()).toBe(t("chat.push_effective", { level: "3", why: t("chat.push_effective_below", { pct: "15", release: "20" }) }));
         native.health = { level: 1, effectiveLevel: 2, climbReason: "below_one" };
         await c.refreshStatus();
         expect(c.effectiveLine()).toContain("30 %");
+        expect(c.effectiveLine()).toContain("35 %");
         localStorage.setItem("app_lang", "fr");
         native.health = { level: 1, effectiveLevel: 3, climbReason: "saver" };
         await c.refreshStatus();
         expect(c.effectiveLine()).toBe("En ce moment : niveau 3 (économiseur de batterie)");
         native.health = { level: 1, effectiveLevel: 3, climbReason: "below_two" };
         await c.refreshStatus();
-        expect(c.effectiveLine()).toBe("En ce moment : niveau 3 (batterie sous 15 %)");
+        // Worded true both under the threshold and while the margin holds the climb (16 to 19 %)
+        expect(c.effectiveLine()).toBe("En ce moment : niveau 3 (batterie passée sous 15 %, jusqu'à 20 % ou au branchement)");
         // The threshold named is the one the stored settings hand native code, not the one the screen holds
         setChatSettings({ ...chatSettings(), climbTwoBelow: 20 });
         expect(c.state.climb.twoBelow).toBe(15);
-        expect(c.effectiveLine()).toBe("En ce moment : niveau 3 (batterie sous 20 %)");
+        expect(c.effectiveLine()).toBe("En ce moment : niveau 3 (batterie passée sous 20 %, jusqu'à 25 % ou au branchement)");
         expect(source).toContain("effectiveLine()");
+    });
+
+    it("the release margin is native code's", () => {
+        const java = readFileSync(resolve(DIR, "..", "..", "..", "..", "android/app/src/main/java/ca/erplibre/home/chatpush/BatteryClimber.java"), "utf8");
+        expect(java).toMatch(new RegExp(`static final int MARGIN = ${CLIMB_RELEASE_MARGIN};`));
     });
 
     it("no status line when effective differs without a climb reason", async () => {

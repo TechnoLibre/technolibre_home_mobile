@@ -165,6 +165,26 @@ final class PushSettingsStore {
     }
 
     /**
+     * The threshold steps (0, 1 or 2) the last climb decision answered,
+     * which the next one holds (BatteryClimber.resolveStored); put() leaves
+     * them alone. Absent or unreadable reads as 0.
+     */
+    int climbSteps() {
+        String v = kv.get("climbSteps");
+        if (v == null) return 0;
+        try {
+            int n = Integer.parseInt(v);
+            return n >= 0 && n <= 2 ? n : 0;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    void setClimbSteps(int steps) {
+        kv.put("climbSteps", Integer.toString(steps));
+    }
+
+    /**
      * The engine's own durable state (shown summary counts, failed runs,
      * poll times, status shown), under "eng:&lt;key&gt;"; put() leaves it
      * alone. Null when absent.

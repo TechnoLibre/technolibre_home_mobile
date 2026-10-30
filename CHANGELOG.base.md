@@ -240,7 +240,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   when read in the browser) and « Save battery automatically »: one or two
   levels more under thresholds (30 % and 15 % by default), never past level 4,
   level 3 at least under battery saver, back to the chosen level once plugged,
-  with « Right now: level {level} ({why}) » in the options. Levels 1 and 2 ask
+  a climb released only 5 points above its threshold (a wavering gauge climbs
+  once, and the last climb survives the process), with « Right now: level {level} ({why}) » in the options. Levels 1 and 2 ask
   for the battery exemption through Android's dialog, and the options say
   when Android refuses it. The status panel counts « Held messages lost:
   {n} ». `erplibre_mobile_chat` 1.6 adds the mention and browser flags, and
@@ -847,7 +848,9 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   est retiré quand il est lu dans le navigateur) et « Économiser
   automatiquement » : un ou deux niveaux de plus sous des seuils (30 % et 15 %
   par défaut), jamais au-delà du niveau 4, le niveau 3 au moins sous
-  l'économiseur, retour au niveau choisi une fois branché, avec « En ce
+  l'économiseur, retour au niveau choisi une fois branché, une montée relâchée
+  seulement 5 points au-dessus de son seuil (une jauge qui oscille ne fait
+  monter qu'une fois, et la dernière montée survit au processus), avec « En ce
   moment : niveau {level} ({why}) » dans les options. Les niveaux 1 et 2
   demandent la dispense de batterie par la boîte de dialogue d'Android, et les
   options disent quand Android la refuse. Le panneau d'état compte « Messages

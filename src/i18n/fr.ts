@@ -1433,7 +1433,7 @@ export const translations: Record<string, string> = {
   "chat.push_climb_none": "aucun",
   "chat.push_effective": "En ce moment : niveau {level} ({why})",
   "chat.push_effective_saver": "économiseur de batterie",
-  "chat.push_effective_below": "batterie sous {pct} %",
+  "chat.push_effective_below": "batterie passée sous {pct} %, jusqu'à {release} % ou au branchement",
   "chat.push_registered": "Enregistré auprès d'Odoo.",
   "chat.push_not_registered": "Pas encore enregistré auprès d'Odoo.",
   "chat.push_registration_offline": "Dernier essai d'enregistrement : Odoo injoignable.",
