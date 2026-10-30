@@ -63,3 +63,21 @@
 	font-size: 0.9em;
 	overflow-wrap: anywhere;
 }
+
+// A row of choice buttons (browser mode, lock screen, filter, account
+// actions): the row wraps and a long label breaks inside its button, so
+// every label reads whole from 320 px wide, without horizontal scroll. The
+// chip rule has two classes to outrank .chat-new__chip, which keeps its
+// labels on one line for the chat's own scrolling rows.
+.chat-notifications__choices {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+}
+
+.chat-notifications__choices .chat-new__chip {
+	max-width: 100%;
+	white-space: normal;
+	overflow-wrap: break-word;
+	text-align: left;
+}

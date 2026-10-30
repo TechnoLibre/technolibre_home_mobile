@@ -118,7 +118,7 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
             </select>
           </label>
           <h4 t-esc="t('chat.push_browser')"/>
-          <div class="chat-new__chips" role="radiogroup" t-att-aria-label="t('chat.push_browser')">
+          <div class="chat-notifications__choices" role="radiogroup" t-att-aria-label="t('chat.push_browser')">
             <button t-foreach="browserChoices" t-as="b" t-key="b.value" type="button" class="chat-new__chip" role="radio"
                     t-att-aria-checked="state.browserMode === b.value ? 'true' : 'false'"
                     t-att-class="{'chat-new__chip--on': state.browserMode === b.value}"
@@ -137,7 +137,7 @@ export class OptionsChatNotificationsComponent extends EnhancedComponent {
                t-esc="t(a.registrationError)"/>
             <p t-if="a.ntfyUrl" class="options-sync__info"
                t-esc="t(a.appPush ? 'chat.push_actions_full' : 'chat.push_actions_no_react')"/>
-            <div class="chat-new__chips">
+            <div class="chat-notifications__choices">
               <button type="button" class="chat-new__chip" t-att-disabled="state.busy"
                       t-on-click="() => this.onScan(a.configId)" t-esc="t('chat.push_scan')"/>
               <button type="button" class="chat-new__chip" t-att-disabled="state.busy"

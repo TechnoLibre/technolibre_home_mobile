@@ -77,7 +77,7 @@ export class OptionsChatPushAccountComponent extends EnhancedComponent {
     <div class="chat-push-account">
       <div class="chat-notifications__lock" role="radiogroup" t-att-aria-label="t('chat.push_lock')">
         <span class="chat-notifications__label" t-esc="t('chat.push_lock')"/>
-        <div class="chat-new__chips">
+        <div class="chat-notifications__choices">
           <button t-foreach="lockChoices" t-as="c" t-key="c.value" type="button" class="chat-new__chip" role="radio"
                   t-att-aria-checked="props.card.lockScreen === c.value ? 'true' : 'false'"
                   t-att-class="{'chat-new__chip--on': props.card.lockScreen === c.value}"
@@ -86,7 +86,7 @@ export class OptionsChatPushAccountComponent extends EnhancedComponent {
       </div>
       <div role="radiogroup" t-att-aria-label="t('chat.push_filter')">
         <span class="chat-notifications__label" t-esc="t('chat.push_filter')"/>
-        <div class="chat-new__chips">
+        <div class="chat-notifications__choices">
           <button t-foreach="filterChoices" t-as="f" t-key="f.value" type="button" class="chat-new__chip" role="radio"
                   t-att-aria-checked="props.card.filter === f.value ? 'true' : 'false'"
                   t-att-class="{'chat-new__chip--on': props.card.filter === f.value}"
