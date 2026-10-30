@@ -241,6 +241,30 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   le type de canal, partent après la validation et ne journalisent rien) et
   ajoute les push « lu » et « boîte de réception faite » qui retirent aussitôt
   une notification lue ou traitée ailleurs.
+- **Préférences des notifications du clavardage** — les réglages de
+  notification d'Odoo se changent depuis l'app : « Canaux (réglage d'Odoo) »
+  par serveur dans Options › Clavardage (écrit false pour « mentions », canaux
+  seulement, comme Odoo l'applique) et « Ce canal (réglage d'Odoo) » dans
+  l'écran d'information d'un canal, envoyés par la file et suivis depuis le
+  navigateur par le bus. Par serveur, un filtre du téléphone (« Tout ce qu'Odoo
+  envoie », « Mentions et messages directs », « Rien de ce serveur »),
+  l'interrupteur de la boîte de réception, qui fait aussi taire les mentions
+  d'enregistrement sauf si « Sonner quand même si on me mentionne dans un
+  enregistrement » est cochée, et des heures calmes qui affichent sans son,
+  ne retirent rien et peuvent passer minuit. Pour tout le téléphone, le choix
+  du navigateur actif (« Sonner tout de suite », « Attendre 10 s » par défaut,
+  « Ne pas envoyer au téléphone » ; un message retenu survit au processus et
+  est retiré quand il est lu dans le navigateur) et « Économiser
+  automatiquement » : un ou deux niveaux de plus sous des seuils (30 % et 15 %
+  par défaut), jamais au-delà du niveau 4, le niveau 3 au moins sous
+  l'économiseur, retour au niveau choisi une fois branché, avec « En ce
+  moment : niveau {level} ({why}) » dans les options. Les niveaux 1 et 2
+  demandent la dispense de batterie par la boîte de dialogue d'Android.
+  `erplibre_mobile_chat` 1.6 ajoute les drapeaux de mention et de navigateur ;
+  sans lui, le filtre laisse passer les messages de canal et « Attendre 10 s »
+  sonne tout de suite. La migration 2026103001 ajoute les colonnes de
+  préférences de `chat_push` et `chat_sources` ; `doc/GOOGLE_PLAY.md` consigne
+  les justifications et les écarts pour Play
 
 ### Modifié
 - **La lecture faite dans l'app borne le nettoyage de la boîte de réception**

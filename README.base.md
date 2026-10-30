@@ -435,8 +435,11 @@ Options › Chat notifications makes the phone ring for a chat message while the
 app is closed, on Android. Odoo 18 publishes an encrypted push to a topic of a
 ntfy server that you run; the phone reads it, decrypts it, and draws the
 notification. The `erplibre_mobile_chat` module is not needed (version 1.5 adds
-the message id, the « read » push and the 👍 button; without it everything else
-works); the phone registers itself with Odoo, under its own session.
+the message id, the « read » push and the 👍 button; version 1.6 adds, per
+recipient, whether the user is mentioned and whether a browser of theirs is
+active, which the phone's filter and its browser setting read; without it
+everything else works); the phone registers itself with Odoo, under its own
+session.
 
 1. **Prepare ntfy** on the machine that runs it, in `TODO › Deploy › Prepare
    ntfy for ERPLibre mobile`, on that machine or over ssh. The command sets
@@ -465,7 +468,8 @@ works); the phone registers itself with Odoo, under its own session.
    the user refuses, the app says so and offers level 3. One permanent
    notification, shared with the SMS gateway (its former « Passerelle SMS »
    channel is replaced) and at the minimum priority, shows while a permanent
-   connection runs.
+   connection runs. The app may climb to a more economical level by itself
+   (« Save battery automatically », below).
 5. **The lock screen**, per server: « Hidden when locked » (the default) is a
    guarantee. When Android hides sensitive content on the lock screen, the
    notification shows « Nouveau message — <server> » there, and the author and
@@ -510,10 +514,69 @@ works); the phone registers itself with Odoo, under its own session.
    next start. An action that cannot even be recorded shows « Action non
    envoyée — <server> ».
 
-What rings follows Odoo's own settings: the general one (all, mentions,
-nothing) and a conversation's mute. Chat and group pushes ignore a
-conversation's own notification setting; only a mute stops them. Odoo never
-retries a push, and nothing marks a message read: a phone silent for longer
+**Odoo's settings, changed from the app.** What Odoo pushes is decided by the
+same settings as in the browser, and the app reads and changes them. Options ›
+Chat, per server, offers « Channels (Odoo's setting) »: « All messages »,
+« Mentions only » or « Nothing ». Odoo applies it to channels only, as the
+line under it says: « Chats and groups always ring; to silence them, use
+mute ». A channel's info screen offers « This channel (Odoo's setting) », with
+« Default ({value}) » naming the general value; chats and groups offer the
+mute only, since Odoo ignores their own setting. A change waits in the queue
+when offline, and a change made in the browser reaches the app through
+Odoo's bus.
+
+**What the phone lets through, per server.** On top of Odoo's settings, each
+account's card in Options › Chat notifications holds a filter that can only be
+stricter. « Conversations »: « Everything Odoo sends » (the default),
+« Mentions and direct messages » (chats and groups always ring, a channel only
+when the message mentions the user, `@everyone` included), or « Nothing from
+this server » (the registration stays and Odoo still pushes; the phone shows
+nothing, not even a summary). Without module 1.6 the push does not say whether
+the user is mentioned, so « Mentions and direct messages » lets every channel
+message through, and the card says « approximate filter without module 1.6 ».
+« Inbox (records and activities) » is on by default; off, no record or
+activity notification rings at all, a mention included, unless « Ring anyway
+when I am mentioned in a record » is checked under it (off by default; it
+needs module 1.6).
+
+**Quiet hours, per server.** « Quiet hours » is off by default, from 22:00 to
+07:00 when turned on; the window may cross midnight, and a start equal to the
+end is refused. Inside it, in the phone's time zone, chat, inbox and summary
+notifications arrive without sound or vibration; none is dropped.
+
+**While a browser is active**, one setting for the whole phone, applied to
+each server with the module: « Ring at once », « Wait 10 s » (the default) or
+« Do not send to the phone ». A browser is active when the user was active in
+a connected browser within the last 5 minutes (the module's own threshold;
+the status Odoo displays keeps its own delay). Under « Wait 10 s » a chat
+message pushed while a browser is active is held 10 seconds and dropped if it
+is read in the browser meanwhile, otherwise drawn. A held message survives the
+process: it is drawn after the next catch-up of the ntfy, unless its read came
+in the meantime. When the permanent service stops at level 1 or 2 (a climb, a
+swipe), a held message waits for the next periodic check (15 minutes, longer
+under Android's Doze) instead of 10 seconds. « Do not send to the phone »
+asks module 1.6 to push nothing to the phone while a browser is active. With
+module 1.5 « Wait 10 s » rings at once, and « Do not send to the phone »
+silences the phone until 30 minutes after the last activity in the browser,
+which the card states; without the module every push rings. Each card says
+what applies on its server (« Browser active, on this server: {mode} »), and
+« not applied on this server yet » while the server has not been told of a
+change.
+
+**Save battery automatically**, on by default, for the whole phone: « One level
+more under » a battery percentage (30 % by default) and « Two levels more
+under » another (15 % by default), each chosen among none, 10, 15, 20, 30, 40
+and 50 %. Each threshold does what its label says: under the second the level
+climbs two even when the first is « none » or lower. The climb never goes past
+level 4: notifications stop only at a level 5 the user chose. Android's
+battery saver means level 3 at least, even with the switch off. Plugged in,
+the phone returns to the chosen level at any percentage. While climbed, the
+options show « Right now: level {level} ({why}) », the reason being « battery
+saver » or « battery under {pct} % ». A job waits for the charger, so the
+permanent service comes back once plugged without waiting for the 15-minute
+check (up to 15 minutes when Android defers that job).
+
+Odoo never retries a push, and nothing marks a message read: a phone silent for longer
 than the ntfy cache, or an account
 without ntfy, gets one summary per server, counted from Odoo's unread counters.
 Odoo publishes inside the request that posts the message (when fewer than 5
@@ -531,8 +594,12 @@ accepted on ntfy's 200 without
 logging the topic; a « read » push removes the notification at once when the
 conversation is read elsewhere, and an « inbox done » push removes the inbox
 notification of a record done elsewhere (only the phone's marked devices
-receive them). A phone setting that stays silent while a browser is online
-comes with a later version. Without module 1.5 there is no 👍 (a reaction found by time
+receive them). The module marks each device with the phone's browser setting;
+module 1.6 adds to the pushes, per recipient, whether the user is mentioned
+and whether a browser of theirs is active, which the filter and « Wait 10 s »
+read. The app sends the setting in the form the server's module level reads:
+Odoo 18 ignores a route argument it does not know, so a 1.5 server would take
+1.6's argument and ring. Without module 1.5 there is no 👍 (a reaction found by time
 could land on another message), « Mark read » finds the newest message by
 date, and a notification goes at the next check or when the app opens.
 
@@ -547,8 +614,11 @@ du clavardage quand l'app est fermée, sur Android. Odoo 18 publie un push
 chiffré sur un sujet d'un serveur ntfy que vous faites tourner ; le téléphone
 le lit, le déchiffre et affiche la notification. Le module
 `erplibre_mobile_chat` n'est pas requis (la version 1.5 ajoute l'identifiant du
-message, le push « lu » et le bouton 👍 ; sans lui, tout le reste fonctionne) ;
-le téléphone s'enregistre lui-même auprès d'Odoo, sous sa propre session.
+message, le push « lu » et le bouton 👍 ; la version 1.6 ajoute, pour chaque
+destinataire, si l'utilisateur est mentionné et si un de ses navigateurs est
+actif, que lisent le filtre du téléphone et son réglage du navigateur ; sans
+lui, tout le reste fonctionne) ; le téléphone s'enregistre lui-même auprès
+d'Odoo, sous sa propre session.
 
 1. **Préparer ntfy** sur la machine qui le fait tourner, dans `TODO › Déployer
    › Préparer ntfy pour ERPLibre mobile`, sur cette machine ou par ssh. La
@@ -579,6 +649,8 @@ le téléphone s'enregistre lui-même auprès d'Odoo, sous sa propre session.
    propose le niveau 3. Une seule notification permanente, partagée avec la
    passerelle SMS (son ancien canal « Passerelle SMS » est remplacé) et à la
    priorité minimale, s'affiche tant qu'une connexion permanente tourne.
+   L'app peut monter d'elle-même à un niveau plus économe (« Économiser
+   automatiquement », plus bas).
 5. **L'écran verrouillé**, par serveur : « Masqué quand verrouillé » (le défaut)
    est garanti. Quand Android masque le contenu sensible sur l'écran verrouillé,
    la notification y montre « Nouveau message — <serveur> », et l'auteur et le
@@ -627,10 +699,77 @@ le téléphone s'enregistre lui-même auprès d'Odoo, sous sa propre session.
    son prochain démarrage. Une action qui ne peut même pas être enregistrée
    affiche « Action non envoyée — <serveur> ».
 
-Ce qui sonne suit les réglages d'Odoo : le réglage général (tout, mentions,
-rien) et la sourdine d'une conversation. Les push d'un clavardage ou d'un
-groupe ignorent le réglage de notification propre à la conversation ; seule la
-sourdine les arrête. Odoo ne réessaie jamais un push, et
+**Les réglages d'Odoo, changés depuis l'app.** Ce qu'Odoo pousse se décide par
+les mêmes réglages que dans le navigateur, et l'app les lit et les change.
+Options › Clavardage, par serveur, offre « Canaux (réglage d'Odoo) » : « Tous
+les messages », « Mentions seulement » ou « Rien ». Odoo ne l'applique qu'aux
+canaux, comme le dit la ligne en dessous : « Les discussions et les groupes
+sonnent toujours ; pour les faire taire, utilisez la sourdine ». L'écran
+d'information d'un canal offre « Ce canal (réglage d'Odoo) », avec « Par défaut
+({value}) » qui nomme la valeur générale ; les discussions et les groupes
+n'offrent que la sourdine, puisqu'Odoo ignore leur propre réglage. Un
+changement attend dans la file hors ligne, et un changement fait dans le
+navigateur arrive dans l'app par le bus d'Odoo.
+
+**Ce que le téléphone laisse passer, par serveur.** Par-dessus les réglages
+d'Odoo, la carte de chaque compte dans Options › Notifications du clavardage
+porte un filtre qui ne peut qu'être plus strict. « Conversations » : « Tout ce
+qu'Odoo envoie » (le défaut), « Mentions et messages directs » (les
+discussions et les groupes sonnent toujours, un canal seulement quand le
+message mentionne l'utilisateur, `@everyone` compris) ou « Rien de ce
+serveur » (l'enregistrement reste et Odoo pousse toujours ; le téléphone
+n'affiche rien, pas même un sommaire). Sans le module 1.6, le push ne dit pas
+si l'utilisateur est mentionné : « Mentions et messages directs » laisse alors
+passer tout message de canal, et la carte dit « filtre approximatif sans le
+module 1.6 ». « Boîte de réception (enregistrements et activités) » est
+activée par défaut ; désactivée, aucune notification d'enregistrement ou
+d'activité ne sonne, une mention comprise, sauf si « Sonner quand même si on
+me mentionne dans un enregistrement » est cochée en dessous (désactivée par
+défaut ; elle demande le module 1.6).
+
+**Les heures calmes, par serveur.** « Heures calmes » est désactivé par
+défaut, de 22:00 à 07:00 une fois activé ; la fenêtre peut passer minuit, et
+un début égal à la fin est refusé. Pendant la fenêtre, dans le fuseau du
+téléphone, les notifications du clavardage, de la boîte de réception et le
+sommaire arrivent sans son ni vibration ; aucune n'est retirée.
+
+**Quand un navigateur est actif**, un seul réglage pour tout le téléphone,
+appliqué à chaque serveur qui a le module : « Sonner tout de suite »,
+« Attendre 10 s » (le défaut) ou « Ne pas envoyer au téléphone ». Un
+navigateur est actif quand l'utilisateur y a eu une activité, connecté, dans
+les 5 dernières minutes (le seuil propre au module ; le statut qu'Odoo affiche
+garde son délai). Avec « Attendre 10 s », un message de clavardage poussé
+pendant qu'un navigateur est actif est retenu 10 secondes et retiré s'il est
+lu dans le navigateur entre-temps, sinon affiché. Un message retenu survit au
+processus : il est affiché après le prochain rattrapage du ntfy, à moins que
+sa lecture soit arrivée entre-temps. Quand le service permanent s'arrête au
+niveau 1 ou 2 (une montée, un balayage), un message retenu attend la prochaine
+relève périodique (15 minutes, davantage sous le Doze d'Android) au lieu de
+10 secondes. « Ne pas envoyer au téléphone » demande au module 1.6 de ne rien
+pousser au téléphone tant qu'un navigateur est actif. Avec le module 1.5,
+« Attendre 10 s » sonne tout de suite, et « Ne pas envoyer au téléphone » fait
+taire le téléphone jusqu'à 30 minutes après la dernière activité dans le
+navigateur, ce que dit la carte ; sans le module, tout push sonne. Chaque
+carte dit ce qui s'applique sur son serveur (« Navigateur actif, sur ce
+serveur : {mode} »), et « pas encore appliqué sur ce serveur » tant que le
+serveur n'a pas appris un changement.
+
+**Économiser automatiquement**, activé par défaut, pour tout le téléphone :
+« Un niveau de plus sous » un pourcentage de batterie (30 % par défaut) et
+« Deux niveaux de plus sous » un autre (15 % par défaut), chacun choisi parmi
+aucun, 10, 15, 20, 30, 40 et 50 %. Chaque seuil fait ce que dit son libellé :
+sous le second, le niveau monte de deux même quand le premier est « aucun » ou
+plus bas. La montée ne dépasse jamais le niveau 4 : les notifications ne
+s'arrêtent qu'à un niveau 5 choisi par l'utilisateur. L'économiseur de batterie
+d'Android veut dire le niveau 3 au moins, même l'interrupteur désactivé.
+Branché, le téléphone revient au niveau choisi, quel que soit le pourcentage.
+Pendant une montée, les options affichent « En ce moment : niveau {level}
+({why}) », la raison étant « économiseur de batterie » ou « batterie sous
+{pct} % ». Une tâche attend le chargeur : le service permanent revient une
+fois branché sans attendre la relève aux 15 minutes (jusqu'à 15 minutes quand
+Android diffère cette tâche).
+
+Odoo ne réessaie jamais un push, et
 rien ne marque un message comme lu : un téléphone muet plus longtemps que le
 cache de ntfy, ou un compte sans ntfy, reçoit un sommaire par serveur, compté
 sur les compteurs de non lus d'Odoo. Odoo publie dans la requête qui poste le
@@ -648,9 +787,13 @@ canal, partent après la validation de la transaction (2 secondes au plus par
 appareil) et sont acceptés sur le 200 de ntfy sans journaliser le sujet ; un push « lu » retire aussitôt la
 notification quand la conversation est lue ailleurs, et un push « boîte de
 réception faite » retire celle d'un enregistrement traité ailleurs (seuls les
-appareils marqués du téléphone les reçoivent). Un réglage du téléphone pour se
-taire quand un navigateur est en ligne vient avec une prochaine version. Sans
-le module 1.5,
+appareils marqués du téléphone les reçoivent). Le module marque chaque
+appareil du réglage du navigateur du téléphone ; le module 1.6 ajoute aux
+push, pour chaque destinataire, si l'utilisateur est mentionné et si un de ses
+navigateurs est actif, que lisent le filtre et « Attendre 10 s ». L'app envoie
+le réglage sous la forme que lit le niveau du module du serveur : Odoo 18
+ignore un argument de route qu'il ne connaît pas, si bien qu'un serveur 1.5
+prendrait l'argument de la 1.6 et sonnerait. Sans le module 1.5,
 il n'y a pas de 👍 (une réaction trouvée par l'heure pourrait tomber sur un
 autre message), « Marquer lu » trouve le plus récent message par sa date, et
 une notification part au prochain contrôle ou à l'ouverture de l'app.
