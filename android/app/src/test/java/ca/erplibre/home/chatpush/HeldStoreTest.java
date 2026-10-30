@@ -108,4 +108,22 @@ public class HeldStoreTest {
         assertEquals("m0", due.get(0).message.id);
         assertEquals(HeldStore.MAX + 1, held.of(LINK).size());
     }
+
+    @Test
+    public void anUnreadableEntryIsRemovedAndCounted() throws Exception {
+        kv.put("held:m0", "{\"link\":");
+        held.add(LINK, message("m1"), "cfg1", 4, 26, now + 10);
+        assertEquals(1, held.of(LINK).size());
+        assertFalse(kv.map.containsKey("held:m0"));
+        assertEquals(1, held.takeUnreadable());
+        assertEquals(0, held.takeUnreadable());
+    }
+
+    @Test
+    public void linkUrlsNamesEveryServerHolding() throws Exception {
+        held.add(LINK, message("a"), "cfg1", 4, 1, now + 100);
+        held.add(LINK, message("b"), "cfg1", 4, 2, now + 200);
+        held.add("https://autre.exemple.test", message("c"), "cfg2", 4, 3, now + 150);
+        assertEquals(new java.util.HashSet<>(Arrays.asList(LINK, "https://autre.exemple.test")), held.linkUrls());
+    }
 }

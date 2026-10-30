@@ -37,10 +37,13 @@ import org.json.JSONException;
  * it, before the seen ids and the cursor are saved, so a death inside the
  * hold replays it rather than losing it. A read push drops the held entries
  * up to its read point; the others are drawn when due, only once their ntfy
- * has caught up from its saved cursor in this process (the read push of a
- * dead process's hold comes first). A stream releases them from the hold
- * timer, under the hold's own wakelock; a periodic run waits for them on the
- * Sleeper, polls once more and draws what is left before it ends.
+ * has caught up from its saved cursor since its stream last dropped (the
+ * read push sent meanwhile comes first). A stream releases them from the
+ * hold timer, under the hold's own wakelock; a periodic run waits for them
+ * on the Sleeper, polls once more and draws what is left before it ends,
+ * except, while the streams run, what is not due yet. An entry of an ntfy
+ * no link carries any more is drawn at once, or counted in heldLost when it
+ * cannot be read; one that no longer parses is counted too.
  *
  * Threading: stream callbacks arrive on OkHttp threads, the other entry
  * points on the caller's. Every piece of state is guarded by one monitor,
@@ -213,9 +216,11 @@ final class PushEngine {
         long contactSavedAt;
         SeenIds seen;
         /**
-         * Read from its saved cursor in this process, by a catch-up poll or by a
-         * stream opened with nothing held for it: the hold timer releases only
-         * the entries of such a link. Never reset while the process lives.
+         * Read from its saved cursor since its stream last dropped, by a
+         * catch-up poll or by a stream opened with nothing held for it: the
+         * hold timer releases only the entries of such a link. Cleared when the
+         * stream closes on its own (a read push may come during the outage),
+         * kept by stopRealtime, whose cancel the stream sees as stale.
          */
         boolean caughtUp;
         /** Bumped by every catch-up a stream open starts: a retry of an earlier one stops. */
@@ -569,11 +574,13 @@ final class PushEngine {
             }
         }
 
+        /** The stream ended on its own: its link must catch up again before the hold timer releases. */
         @Override
         public void onClosed(NtfyException cause) {
             synchronized (lock) {
                 if (stale()) return;
                 link.call = null;
+                link.caughtUp = false;
                 closed(link, cause == null ? null : cause.kind());
                 publishStatus();
             }
@@ -930,6 +937,9 @@ final class PushEngine {
      * until the latest due time (HOLD_MS at most), polls those links once
      * more without counting a failure (a read push in that batch drops its
      * entry), then draws every entry left at once, without a third wait.
+     * While realtime (a job that polls before the service applied a new
+     * level), a stream may hold a message during that wait: only the due
+     * entries are drawn, the others stay for the hold timer.
      */
     private void releaseAfterPolls(List<Link> polled) {
         List<Link> holding = new ArrayList<>();
@@ -953,7 +963,7 @@ final class PushEngine {
             for (Link l : holding) poll(l, false);
         }
         synchronized (lock) {
-            for (Link l : holding) release(l.url, true);
+            for (Link l : holding) release(l.url, !realtime);
             afterRelease();
         }
     }
@@ -1331,8 +1341,9 @@ final class PushEngine {
      * sorted, a server first seen gets its contact time recorded (the start
      * of its reading when it has no cursor). While realtime, a new link, a
      * changed token or topic set, or every link when reopenAll, is reopened.
-     * The entries held for a server dropped are released at once. Returns
-     * the links reopened. Monitor held.
+     * The entries held for a server no link carries, dropped now or before
+     * this process started, are released at once. Returns the links
+     * reopened. Monitor held.
      */
     private Set<Link> syncLinks(boolean reopenAll) {
         Map<String, Link> wanted = new LinkedHashMap<>();
@@ -1370,19 +1381,20 @@ final class PushEngine {
             wanted.put(s.url, l);
             if (realtime && (changed || reopenAll)) toOpen.add(l);
         }
-        List<String> gone = new ArrayList<>();
         for (Link old : links.values()) {
             if (!wanted.containsKey(old.url)) {
                 stop(old);
                 settings.setEngineState("poll:" + old.url, null);
                 clearFailures(ntfyKey(old.url));
-                gone.add(old.url);
             }
         }
         links.clear();
         links.putAll(wanted);
-        // no catch-up comes for a server removed: what it held is drawn, or counted lost without its key
-        for (String url : gone) release(url, true);
+        // no catch-up comes for a server without a link: what it held is drawn, or counted lost without its key
+        for (String url : held.linkUrls()) {
+            if (!links.containsKey(url)) release(url, true);
+        }
+        releaseHoldWakeIfEmpty();
         for (Link l : toOpen) reopen(l);
         return new HashSet<>(toOpen);
     }
@@ -1451,6 +1463,7 @@ final class PushEngine {
         for (AccountView a : settings.accounts()) as.add(accountHealth(a.configId, polling, now));
         String mode = realtime ? "realtime" : e.mode.name().toLowerCase(Locale.ROOT);
         boolean alive = e.permanentService && now - settings.lastBeat() < BEAT_MAX_AGE_MS;
+        heldLost += held.takeUnreadable();
         return new HealthSnapshot(now, level, e.level, e.climbReason, mode, realtimeBuild, alive, ns, as,
                 undecryptable, faults, heldLost);
     }

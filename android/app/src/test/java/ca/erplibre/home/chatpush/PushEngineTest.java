@@ -18,7 +18,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import javax.crypto.spec.SecretKeySpec;
@@ -1661,11 +1663,18 @@ public class PushEngineTest {
         for (HandScheduler.Task t : now0) t.r.run();
     }
 
-    /** One stream carrying lines after its open; returns once the stream closed. */
-    private void streamOnce(Subscription a, String lines) throws Exception {
-        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + lines));
+    /**
+     * One stream carrying lines after its open and kept open (the body promises
+     * more than it sends): returns once its last line is handled and the
+     * engine's monitor is free again.
+     */
+    private void streamOpen(Subscription a, String lines) throws Exception {
+        String[] sent = lines.trim().split("\n");
+        String last = new JSONObject(sent[sent.length - 1]).getString("id");
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + lines).setHeader("Content-Length", "100000"));
         engine().startRealtime();
-        awaitClosed(1);
+        await(() -> last.equals(store.cursor(a.ntfyUrl)), "the stream's last line");
+        engine.health();
     }
 
     /**
@@ -1692,7 +1701,7 @@ public class PushEngineTest {
         mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
-        streamOnce(a, chatOnline(a, "m1"));
+        streamOpen(a, chatOnline(a, "m1"));
         assertTrue(notifier.shown.isEmpty());
         assertEquals(1, held.of(n.url).size());
         assertEquals(26L, held.of(n.url).get(0).messageId);
@@ -1707,7 +1716,7 @@ public class PushEngineTest {
         mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
-        streamOnce(a, chatOnline(a, "m1") + readPush(a, "r1", 4, 26));
+        streamOpen(a, chatOnline(a, "m1") + readPush(a, "r1", 4, 26));
         assertTrue(held.isEmpty());
         now += PushEngine.HOLD_MS;
         holdTimer.runAll();
@@ -1719,7 +1728,7 @@ public class PushEngineTest {
         mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
-        streamOnce(a, chatOnline(a, "m1"));
+        streamOpen(a, chatOnline(a, "m1"));
         now += PushEngine.HOLD_MS - 1;
         holdTimer.runAll();
         assertTrue(notifier.shown.isEmpty());
@@ -1739,7 +1748,7 @@ public class PushEngineTest {
         mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
-        streamOnce(a, encrypted(a, "m1", resourceText("push16_chat.json")));
+        streamOpen(a, encrypted(a, "m1", resourceText("push16_chat.json")));
         assertEquals(1, notifier.shown.size());
         assertTrue(held.isEmpty());
         assertTrue(holdTimer.tasks.isEmpty());
@@ -1750,7 +1759,7 @@ public class PushEngineTest {
         mirrorMode(1, BrowserMode.RING, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
-        streamOnce(a, chatOnline(a, "m1"));
+        streamOpen(a, chatOnline(a, "m1"));
         assertEquals(1, notifier.shown.size());
         assertTrue(held.isEmpty());
         assertTrue(holdTimer.tasks.isEmpty());
@@ -1761,7 +1770,7 @@ public class PushEngineTest {
         mirrorMode(1, BrowserMode.QUIET, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
-        streamOnce(a, chatOnline(a, "m1"));
+        streamOpen(a, chatOnline(a, "m1"));
         assertTrue(notifier.shown.isEmpty());
         assertEquals(1, held.of(n.url).size());
         now += PushEngine.HOLD_MS;
@@ -1774,7 +1783,7 @@ public class PushEngineTest {
         mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
-        streamOnce(a, modulePush(a, "m1", 4, 26) + encrypted(a, "m2", resourceText("push16_v1_device.json")));
+        streamOpen(a, modulePush(a, "m1", 4, 26) + encrypted(a, "m2", resourceText("push16_v1_device.json")));
         assertEquals(2, notifier.shown.size());
         assertTrue(held.isEmpty());
     }
@@ -1784,7 +1793,7 @@ public class PushEngineTest {
         mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
-        streamOnce(a, chatOnline(a, "m1"));
+        streamOpen(a, chatOnline(a, "m1"));
         engine.stopRealtime();
         assertTrue(scheduler.tasks.isEmpty());
         assertEquals(1, holdTimer.tasks.size());
@@ -1811,10 +1820,11 @@ public class PushEngineTest {
             public void release() { message.add("release"); }
         });
         // a held chat, a push that rings at once, then a held group due at the same time
-        streamOnce(a, chatOnline(a, "m1") + encrypted(a, "m2", resourceText("push16_chat.json"))
+        streamOpen(a, chatOnline(a, "m1") + encrypted(a, "m2", resourceText("push16_chat.json"))
                 + groupOnline(a, "m3"));
         assertEquals(Collections.singletonList("acquire:" + (PushEngine.HOLD_MS + 2_000)), hold);
-        assertEquals(6, message.size());
+        // the message wakelock is let go after the monitor
+        await(() -> message.size() == 6, "three message wakelock pairs");
         assertEquals(1, notifier.shown.size());
         now += PushEngine.HOLD_MS;
         holdTimer.runAll();
@@ -1981,7 +1991,7 @@ public class PushEngineTest {
         mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
-        streamOnce(a, chatOnline(a, "m1"));
+        streamOpen(a, chatOnline(a, "m1"));
         // the key changed meanwhile
         JSONObject rec = new JSONObject(storeKv.get("sub:cfg1"));
         rec.put("priv", "v1:AAAAAAAAAAAAAAAA:AAAA");
@@ -2000,7 +2010,7 @@ public class PushEngineTest {
         mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
-        streamOnce(a, chatOnline(a, "m1"));
+        streamOpen(a, chatOnline(a, "m1"));
         // no catch-up comes for a server without subscriptions: its entry goes at once
         store.unsubscribe("cfg1");
         engine.onStoresChanged();
@@ -2058,12 +2068,150 @@ public class PushEngineTest {
         mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
         NtfyServer n = addNtfy(ntfyServer, CACHE);
         Subscription a = store.subscribe("cfg1", n.url, false);
-        streamOnce(a, chatOnline(a, "m1"));
+        streamOpen(a, chatOnline(a, "m1"));
         settings.setForeground(true);
         now += PushEngine.HOLD_MS;
         holdTimer.runAll();
         assertTrue(notifier.shown.isEmpty());
         assertTrue(held.isEmpty());
         assertEquals(0, engine.health().toJson().getInt("heldLost"));
+    }
+
+    /**
+     * The stream's reconnect opens and stays open, then its catch-up poll
+     * answers pollBody: returns once that catch-up ran.
+     */
+    private void reconnectAndCatchUp(Subscription a, String pollBody) throws Exception {
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic)).setHeader("Content-Length", "100000"));
+        ntfyServer.enqueue(new MockResponse().setBody(pollBody));
+        scheduler.runAll();
+        await(() -> !immediate().isEmpty(), "the reconnect's catch-up");
+        runImmediate();
+    }
+
+    @Test
+    public void aStreamDroppedInsideTheHoldReleasesNothingBeforeItsReconnectCatchesUp() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        // the stream holds m1 and drops: the read push is published while it is down
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + chatOnline(a, "m1")));
+        engine().startRealtime();
+        awaitClosed(1);
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals(1, held.of(n.url).size());
+
+        reconnectAndCatchUp(a, readPush(a, "r1", 4, 26));
+        assertTrue(held.isEmpty());
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+    }
+
+    @Test
+    public void aStreamDroppedInsideTheHoldDrawsAfterItsReconnectCatchesUp() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        ntfyServer.enqueue(new MockResponse().setBody(open(a.topic) + chatOnline(a, "m1")));
+        engine().startRealtime();
+        awaitClosed(1);
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertTrue(notifier.shown.isEmpty());
+
+        reconnectAndCatchUp(a, "");
+        assertEquals(1, notifier.shown.size());
+        assertEquals("chat:cfg1:4", notifier.shown.get(0).tag);
+        assertTrue(held.isEmpty());
+    }
+
+    @Test
+    public void aHeldEntryOfANtfyRemovedWhileTheProcessWasDeadIsCounted() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        // held by an earlier process on a server since removed with its subscription
+        store.putNtfy(new NtfyServer("https://ntfy.exemple.test/", TOKEN, PREFIX, CACHE));
+        Subscription b = store.subscribe("cfg2", "https://ntfy.exemple.test/", false);
+        held.add(b.ntfyUrl, NtfyMessage.parse(chatOnline(b, "g1").trim()), "cfg2", 4, 26, NOW + PushEngine.HOLD_MS);
+        store.unsubscribe("cfg2");
+        store.removeNtfy(b.ntfyUrl);
+
+        List<String> hold = new CopyOnWriteArrayList<>();
+        engine = newEngine();
+        engine.setHoldWake(new PushEngine.Wake() {
+            public void acquire() { hold.add("acquire"); }
+            public void acquire(long timeoutMs) { hold.add("acquire:" + timeoutMs); }
+            public void release() { hold.add("release"); }
+        });
+        assertTrue(held.isEmpty());
+        assertTrue(notifier.shown.isEmpty());
+        assertEquals(1, engine.health().toJson().getInt("heldLost"));
+
+        // the live hold read, nothing stale keeps the hold's wakelock
+        streamOpen(a, chatOnline(a, "m1") + readPush(a, "r1", 4, 26));
+        assertEquals(Arrays.asList("acquire:" + (PushEngine.HOLD_MS + 2_000), "release"), hold);
+    }
+
+    @Test
+    public void anUnreadableHeldEntryIsCounted() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        store.subscribe("cfg1", n.url, false);
+        heldKv.put("held:m1", "{\"link\":");
+        assertEquals(1, engine().health().toJson().getInt("heldLost"));
+        assertTrue(heldKv.map.isEmpty());
+        assertEquals(1, engine.health().toJson().getInt("heldLost"));
+    }
+
+    @Test
+    public void aPollingRunWhileAStreamIsUpLeavesTheStreamsFreshHoldToTheTimer() throws Exception {
+        mirrorMode(1, BrowserMode.WAIT, account("cfg1", "Serveur A"));
+        NtfyServer n = addNtfy(ntfyServer, CACHE);
+        Subscription a = store.subscribe("cfg1", n.url, false);
+        String m1 = chatOnline(a, "m1");
+        String m2 = groupOnline(a, "m2");
+        String r2 = readPush(a, "r2", 3, 27);
+        CountDownLatch streamGate = new CountDownLatch(1);
+        AtomicInteger polls = new AtomicInteger();
+        ntfyServer.setDispatcher(new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest r) throws InterruptedException {
+                if (!r.getPath().contains("poll=1")) {
+                    // the stream answers once the run waits
+                    streamGate.await(5, TimeUnit.SECONDS);
+                    return new MockResponse().setBody(open(a.topic) + m2).setHeader("Content-Length", "100000");
+                }
+                switch (polls.incrementAndGet()) {
+                    case 1: return new MockResponse().setBody(m1);
+                    case 2: return new MockResponse().setBody("");
+                    default: return new MockResponse().setBody(r2);
+                }
+            }
+        });
+        engine().startRealtime();
+        // the run's wait: the stream holds m2, due HOLD_MS after it
+        engine.setSleeper(ms -> {
+            sleeps.add(ms);
+            now += ms;
+            streamGate.countDown();
+            await(() -> held.of(n.url).size() == 2, "the stream's hold");
+        });
+        // a level the job reads as a poll while the service has not closed the stream yet
+        engine.runDue(level(3));
+        assertEquals(Collections.singletonList(PushEngine.HOLD_MS), sleeps);
+        assertEquals(1, notifier.shown.size());
+        assertEquals("chat:cfg1:4", notifier.shown.get(0).tag);
+        assertEquals(1, held.of(n.url).size());
+        assertEquals(27L, held.of(n.url).get(0).messageId);
+
+        // the stream's catch-up brings m2's read: never drawn
+        runImmediate();
+        assertTrue(held.isEmpty());
+        now += PushEngine.HOLD_MS;
+        holdTimer.runAll();
+        assertEquals(1, notifier.shown.size());
     }
 }

@@ -75,8 +75,8 @@ final class HealthSnapshot {
     final int faults;
     /**
      * Messages held while a browser was active, then dropped at their
-     * release: no longer decryptable (subscription gone, key changed) or
-     * failing to draw.
+     * release: no longer decryptable (subscription gone, key changed),
+     * failing to draw, or unreadable in the held store.
      */
     final int heldLost;
 

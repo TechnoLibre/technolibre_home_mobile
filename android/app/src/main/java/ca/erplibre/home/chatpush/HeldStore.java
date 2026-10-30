@@ -3,7 +3,10 @@ package ca.erplibre.home.chatpush;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -21,7 +24,9 @@ import org.json.JSONObject;
  * sorted by due time, then by ntfy id.
  *
  * Beyond MAX entries the oldest ones are made due at once, so the next
- * release draws them first rather than the store growing without bound.
+ * release draws them first rather than the store growing without bound. An
+ * entry whose stored value no longer parses is removed when read and
+ * counted until takeUnreadable collects it.
  *
  * Capacitor-free and Android-free.
  */
@@ -64,6 +69,8 @@ final class HeldStore {
 
     private final KeyValue kv;
     private final LongSupplier clock;
+    /** Unparsable entries removed since the last takeUnreadable. */
+    private final AtomicInteger unreadable = new AtomicInteger();
 
     HeldStore(KeyValue kv, LongSupplier clock) {
         this.kv = kv;
@@ -136,7 +143,19 @@ final class HeldStore {
         kv.remove(PREFIX + ntfyId);
     }
 
-    /** Every readable entry, sorted; an unreadable one is removed. */
+    /** How many unparsable entries were removed since the last call; the count restarts at 0. */
+    int takeUnreadable() {
+        return unreadable.getAndSet(0);
+    }
+
+    /** The URLs of the ntfy servers that have entries held. */
+    Set<String> linkUrls() {
+        Set<String> out = new HashSet<>();
+        for (Held h : all()) out.add(h.linkUrl);
+        return out;
+    }
+
+    /** Every readable entry, sorted; an unreadable one is removed and counted. */
     private List<Held> all() {
         List<Held> out = new ArrayList<>();
         for (String k : kv.keys()) {
@@ -145,6 +164,7 @@ final class HeldStore {
             Held h = raw == null ? null : parse(raw);
             if (h == null) {
                 kv.remove(k);
+                unreadable.incrementAndGet();
                 continue;
             }
             out.add(h);
