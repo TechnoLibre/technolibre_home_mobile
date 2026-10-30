@@ -262,17 +262,35 @@ export function resetMocks(): void {
  * A bus transport over Node's global WebSocket (Node 22+), for the long tests
  * that run the chat bus against a real server. The headers (cookie, user
  * agent) go in the second constructor argument, which undici accepts.
+ * onClose fires once per opened socket, as BusTransport requires: undici
+ * fires only "error" when the handshake fails, which is reported as a
+ * close 1006, and a "close" after it is then ignored.
  */
 export function nodeTransport(): BusTransport {
 	let ws: WebSocket | null = null;
 	const transport: BusTransport = {
 		open(url, headers) {
-			ws = new (WebSocket as any)(url, { headers });
-			ws!.onopen = () => transport.onOpen();
-			ws!.onmessage = (event: MessageEvent) => {
+			const socket: WebSocket = new (WebSocket as any)(url, { headers });
+			ws = socket;
+			let opened = false;
+			let closed = false;
+			const close = (code: number, reason: string) => {
+				if (closed) return;
+				closed = true;
+				transport.onClose(code, reason);
+			};
+			socket.onopen = () => {
+				opened = true;
+				transport.onOpen();
+			};
+			socket.onmessage = (event: MessageEvent) => {
 				if (typeof event.data === "string") transport.onMessage(event.data);
 			};
-			ws!.onclose = (event: CloseEvent) => transport.onClose(event.code, event.reason);
+			// After an open, "close" follows an error and carries the real code
+			socket.onerror = () => {
+				if (!opened) close(1006, "");
+			};
+			socket.onclose = (event: CloseEvent) => close(event.code, event.reason);
 		},
 		send: (text) => ws?.send(text),
 		close: () => ws?.close(),

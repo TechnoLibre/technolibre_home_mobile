@@ -255,6 +255,24 @@ describe("syncTestKit", () => {
 			}
 			expect(() => t.send("x")).not.toThrow();
 		});
+
+		it("nodeTransport reports a refused handshake as one close, as a device's socket does", async () => {
+			// Node's WebSocket fires only "error" when the upgrade fails: without onClose the bus never reconnects
+			const server = http.createServer((_req, res) => res.end());
+			server.on("upgrade", (_req, socket) => socket.destroy());
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			try {
+				const t = nodeTransport();
+				const closes: [number, string][] = [];
+				t.onClose = (code, reason) => closes.push([code, reason]);
+				t.open(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/websocket`, {});
+				await vi.waitFor(() => expect(closes).toEqual([[1006, ""]]));
+				await new Promise((resolve) => setTimeout(resolve, 200));
+				expect(closes).toHaveLength(1);
+			} finally {
+				await new Promise<void>((resolve) => server.close(() => resolve()));
+			}
+		});
 	});
 
 	describe("nodeChatHttp", () => {
